@@ -89,6 +89,9 @@ const capabilities: Record<string, readonly string[]> = {
   runner: [],
   // A proxy for rows a service outside this process publishes: no Merv capability at all.
   sandboxes: [],
+  // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
+  fleet: ['state', 'scope', 'sandboxes'],
+  fleetWorkflow: ['fleet', 'sessions', 'scope'],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
@@ -683,6 +686,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
 
       'experiments',
       'feed',
+      'fleet',
       'knowledge',
       'paper',
       'reflections',
@@ -700,6 +704,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
 
       'experiments',
       'feed',
+      'fleet',
       'knowledge',
       'mounts',
       'paper',

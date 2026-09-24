@@ -3,19 +3,13 @@ import test, { type TestContext } from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { Context } from 'cordis';
 import { SandboxService, sandboxesPlugin } from '../packages/sandboxes/src/index.js';
+import { deferred } from './fixtures/deferred.js';
 
 const tokenEnv = 'MERV_SANDBOXES_UNLOAD_TEST_TOKEN';
 const urlEnv = 'MERV_SANDBOXES_UNLOAD_TEST_URL';
 const connection = { projectId: 'project_unload', namespace: 'unload', tokenEnv };
 const caller = { actorId: 'actor_unload', projectId: connection.projectId };
 const config = { urlEnv, connections: [connection] };
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-};
 
 function fixture(t: TestContext, handle: (url: URL, options: RequestInit) => Promise<Response>) {
   for (const [key, value] of [

@@ -17,14 +17,8 @@ import {
   type UserKey,
 } from '../packages/ui/web/api.js';
 import { browserAuth, setAuthMode } from '../packages/ui/web/auth.js';
+import { deferred } from './fixtures/deferred.js';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 function setup(t: TestContext) {
   const values = new Map<string, string>();
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');

@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from './fixtures/app.js';
+import { storedContext } from './fixtures/state.js';
 import { check, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
 
 test('a new program registers guidance and guards without engine cases; reads, preflight, disposal and revision fences agree', async () => {
@@ -411,7 +412,7 @@ test('task guidance follows caller, evidence, review claims, recovery, context, 
     await app.stop();
     app = await createApp({ directory });
     assert.deepEqual(await guidance(producer), finished);
-    assert.deepEqual(await app.ctx.contextBuilder.get(producer, context.id), context);
+    assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
     await app.setEnabled('tasks', false);
     // Historical terminal records remain terminal without inventing active checks.
     assert.equal((await guidance(producer)).terminal, true);

@@ -629,8 +629,17 @@ test('project reads remain scoped and metadata-only, support borrowed transactio
     worker = await f.ready(),
     input = await f.input(worker);
   const first = await f.seal(worker.caller, input);
-  for (let index = 1; index <= 100; index++)
-    await f.seal(worker.caller, { ...input, requestId: `seal-${index}` });
+  // Revisions 2-101 as sealing would store them: the reads under test see only rows. Revision
+  // allocation by real seals is the concern of the tests above.
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO code_proposals(id,project_id,instance_id,revision,session_id,request_id,input_hash,proposal_json)
+       SELECT id||'-'||n, project_id, instance_id, n, session_id, 'seal-'||(n-1), input_hash,
+         jsonb_set(jsonb_set(proposal_json::jsonb,'{revision}',to_jsonb(n)),'{id}',to_jsonb(id||'-'||n))::text
+       FROM code_proposals, generate_series(2,101) AS n WHERE id=?`,
+      first.id,
+    ),
+  );
   const otherBoot = await f.scope.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',

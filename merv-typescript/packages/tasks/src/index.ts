@@ -1,8 +1,11 @@
 import {
   check,
+  checkReceipt,
+  childRequest,
   clip,
   createService,
   digest,
+  folded,
   excludedFromReview,
   inTransaction,
   mapAsync,
@@ -10,6 +13,7 @@ import {
   newId,
   now,
   plain,
+  receipted,
   recorded,
   releasedLease,
   reviewHistory,
@@ -51,7 +55,6 @@ import {
   type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowExecutionReferences,
-  type WorkflowLease,
   type WorkflowPolicy,
   type Workflows,
   type WorkflowSnapshot,
@@ -229,7 +232,6 @@ const GIT_REVIEW =
  */
 const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it. Claim it only as that worker. A claim made without a lease can return or fail the task but never pass it, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
-const normalized = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
@@ -392,12 +394,7 @@ export class TaskService implements Tasks {
       acquire: async (context) => await this.acquireLease(context),
       check: async ({ caller, snapshot, tx }, receipt) => {
         const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
-        check(
-          digest(receipt) === digest(JSON.parse(lease.receipt)),
-          'stale_lease',
-          'Lease ownership receipt no longer matches',
-          409,
-        );
+        checkReceipt(lease, receipt, 'Lease ownership receipt no longer matches');
         if (lease.purpose === 'review') {
           const review = await this.reviews.checkSubmit(caller, lease.review_id!, undefined, tx);
           check(
@@ -414,7 +411,10 @@ export class TaskService implements Tasks {
           artifacts: (await this.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
         };
       },
-      release: async ({ lease, reason, tx }) => await this.releaseLease(lease, reason, tx),
+      release: async ({ lease, reason, tx }) =>
+        await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
+          task_id: lease.instanceId,
+        }),
     };
   }
 
@@ -495,16 +495,10 @@ export class TaskService implements Tasks {
     context: WorkflowCheckContext & { source: Caller; leaseId: string },
   ): Promise<Data> {
     const { caller, source, snapshot, tx, leaseId } = context;
-    const role = await this.leaseRole({ ...context, caller: source });
-    check(
-      caller.session?.id === leaseId && caller.projectId === source.projectId,
-      'invalid_lease',
-      'Worker does not match the offered lease',
-      403,
-    );
-    await this.scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
+    // workflows.offerLease ran lease.role(source) in this transaction just before this hook,
+    // matched the worker's role to it and checked worker.session.id === leaseId.
     const row = await this.row(tx, caller, snapshot.id);
-    const purpose = role === 'reviewer' ? 'review' : 'work';
+    const purpose = snapshot.state === 'in_review' ? 'review' : 'work';
     // The base is fixed with the lease it serves: Workflows reads references() right after
     // this hook in the same transaction, and a refused offer takes the pin back with it.
     if (purpose === 'work' && derivedBase(snapshot.version)) {
@@ -561,12 +555,6 @@ export class TaskService implements Tasks {
       JSON.stringify(checkpoints),
     );
     return receipt;
-  }
-
-  private async releaseLease(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
-      task_id: lease.instanceId,
-    });
   }
 
   private async leaseArtifactIds(
@@ -1136,33 +1124,10 @@ export class TaskService implements Tasks {
       'invalid_request',
       'requestId is required',
     );
-    const hash = digest(input);
-    const old = await tx.get<{ operation: string; input_hash: string; result: string }>(
-      'SELECT operation, input_hash, result FROM task_commands WHERE project_id = ? AND actor_id = ? AND request_id = ?',
-      caller.projectId,
-      caller.actorId,
-      requestId,
-    );
-    if (old) {
-      check(
-        old.operation === operation && old.input_hash === hash,
-        'request_conflict',
-        'requestId was already used with different input',
-        409,
-      );
-      return JSON.parse(old.result) as T;
-    }
-    const result = await fn();
-    await tx.run(
-      'INSERT INTO task_commands VALUES (?, ?, ?, ?, ?, ?)',
-      caller.projectId,
-      caller.actorId,
-      requestId,
+    return await receipted(tx, caller, requestId, digest(input), fn, {
+      table: 'task_commands',
       operation,
-      hash,
-      JSON.stringify(result),
-    );
-    return result;
+    });
   }
 
   /** The binding captures its provider; a public create can never select this version. */
@@ -1289,7 +1254,7 @@ export class TaskService implements Tasks {
           'Task requires at least one nonempty single-line Done-when check',
         );
         check(
-          new Set(input.checks.map(normalized)).size === input.checks.length,
+          new Set(input.checks.map(folded)).size === input.checks.length,
           'invalid_checks',
           'Done-when checks must be distinct',
         );
@@ -1297,9 +1262,7 @@ export class TaskService implements Tasks {
         // caller already wrote is kept where they put it.
         const checks = [
           ...input.checks,
-          ...required.filter(
-            (item) => !input.checks.some((own) => normalized(own) === normalized(item)),
-          ),
+          ...required.filter((item) => !input.checks.some((own) => folded(own) === folded(item))),
         ];
         const brief =
           input.briefId === undefined
@@ -1335,10 +1298,9 @@ export class TaskService implements Tasks {
           'invalid_brief',
           'The brief (goal and checks) must fit 32,000 characters',
         );
-        const text = normalized(document.content);
+        const text = folded(document.content);
         check(
-          text.includes(normalized(input.goal)) &&
-            checks.every((item) => text.includes(normalized(item))),
+          text.includes(folded(input.goal)) && checks.every((item) => text.includes(folded(item))),
           'invalid_brief',
           'The pinned brief must contain the task goal and every Done-when check',
         );
@@ -1357,7 +1319,7 @@ export class TaskService implements Tasks {
           {
             workflow: 'task',
             version,
-            requestId: `${caller.actorId}:task:create:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'create', input.requestId),
             ...(input.dependsOn === undefined ? {} : { dependsOn: input.dependsOn }),
             data: {
               title: input.title,
@@ -1982,12 +1944,19 @@ export class TaskService implements Tasks {
     return await this.records(caller);
   }
 
+  /** With a proposed delivery, answers the commit and confirmations it checked, for reuse. */
   private async checkDelivery({
     caller,
     snapshot: current,
     tx,
     input: proposed,
-  }: WorkflowCheckContext): Promise<void> {
+  }: WorkflowCheckContext): Promise<
+    | {
+        commit: Awaited<ReturnType<TaskService['deliveredCommit']>> | null;
+        confirmations: TaskConfirmation[];
+      }
+    | undefined
+  > {
     await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller, current.id);
     check(
@@ -2003,7 +1972,7 @@ export class TaskService implements Tasks {
       'Task must be in progress to submit a delivery',
       409,
     );
-    if (!proposed) return;
+    if (!proposed) return undefined;
     const input = proposed as unknown as TaskDelivery;
     check(
       input.taskId === undefined || input.taskId === current.id,
@@ -2031,7 +2000,7 @@ export class TaskService implements Tasks {
       'A scratch task cannot attach an unrelated commit',
       409,
     );
-    if (git) await this.deliveredCommit(caller, current, input.commandId, tx);
+    const commit = git ? await this.deliveredCommit(caller, current, input.commandId, tx) : null;
     // No task's brief is a delivery, this task's least of all; nor is a record Merv rendered
     // for an earlier delivery, which every delivery records in history. A Git task that
     // delivers its commit alone names no artifact to look up.
@@ -2068,7 +2037,15 @@ export class TaskService implements Tasks {
       'invalid_delivery',
       'Delivery artifacts must be nonempty and belong to the producer',
     );
-    validateConfirmations(input.confirmations, JSON.parse(row.checks), input.artifactIds, git);
+    return {
+      commit,
+      confirmations: validateConfirmations(
+        input.confirmations,
+        JSON.parse(row.checks),
+        input.artifactIds,
+        git,
+      ),
+    };
   }
 
   /**
@@ -2247,7 +2224,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action: 'mark_failed',
             input: { ...input, expectedRevision: current.revision },
-            requestId: `${caller.actorId}:task:failure:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'failure', input.requestId),
             data: {
               outcome: input.reason,
               failure: { ...failure },
@@ -2279,12 +2256,14 @@ export class TaskService implements Tasks {
         const row = await this.row(tx, caller, input.taskId);
         const checks: string[] = JSON.parse(row.checks);
         const current = await this.workflows.get(caller, row.id, tx);
-        await this.checkDelivery({ caller, snapshot: current, tx, input: { ...input } });
+        const delivered = (await this.checkDelivery({
+          caller,
+          snapshot: current,
+          tx,
+          input: { ...input },
+        }))!;
         await this.workflows.checkDependencies(caller, row.id, tx);
-        const git = taskWorkspace(current.version) !== 'none';
-        const commit = git
-          ? await this.deliveredCommit(caller, current, input.commandId, tx)
-          : null;
+        const commit = delivered.commit;
         // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
         // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
         const codeArtifact = commit
@@ -2298,12 +2277,7 @@ export class TaskService implements Tasks {
             )
           : null;
         // A met claim that cites no file is backed by the delivered commit, which is always there.
-        const confirmations = validateConfirmations(
-          input.confirmations,
-          checks,
-          input.artifactIds,
-          git,
-        ).map((item) =>
+        const confirmations = delivered.confirmations.map((item) =>
           codeArtifact && item.status === 'met' && !item.evidenceIds.length
             ? { ...item, evidenceIds: [codeArtifact.id] }
             : item,
@@ -2339,7 +2313,7 @@ export class TaskService implements Tasks {
             expectedRevision: input.expectedRevision,
             action: 'submit_delivery',
             input: { ...input },
-            requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'delivery', input.requestId),
             data: {
               deliveryIds,
               deliveryConfirmations: confirmations.map((item) => ({ ...item })),
@@ -2354,7 +2328,7 @@ export class TaskService implements Tasks {
         // The checks a task type requires are the ones its review may not waive. They are found
         // by their text, because the caller may have written one of them anywhere in the list.
         const requiredCriteria = (TYPE_REQUIRED_CHECKS[row.type_name] ?? [])
-          .map((item) => checks.findIndex((own) => normalized(own) === normalized(item)) + 1)
+          .map((item) => checks.findIndex((own) => folded(own) === folded(item)) + 1)
           .filter((number) => number > 0);
         const review = await this.reviews.request(
           caller,
@@ -2391,7 +2365,7 @@ export class TaskService implements Tasks {
             criteria: checks,
             formatVersion: 2,
             ...(requiredCriteria.length ? { requiredCriteria } : {}),
-            requestId: `${caller.actorId}:task:delivery:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'delivery', input.requestId),
           },
           tx,
         );
@@ -2436,7 +2410,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action: 'reissue_review',
             input: { ...input },
-            requestId: `${caller.actorId}:task:reissue:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'reissue', input.requestId),
             data: { reviewReissueReason: input.reason },
           },
           tx,
@@ -2447,7 +2421,7 @@ export class TaskService implements Tasks {
           {
             reviewId: previous.id,
             subjectRevision: moved.revision,
-            requestId: `${caller.actorId}:task:reissue:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'reissue', input.requestId),
           },
           tx,
         );
@@ -2518,7 +2492,7 @@ export class TaskService implements Tasks {
             expectedRevision: current.revision,
             action,
             input: { ...input },
-            requestId: `${caller.actorId}:task:review:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'review', input.requestId),
             data: {
               verdict: input.verdict,
               reviewId: input.reviewId,
@@ -2568,7 +2542,7 @@ export class TaskService implements Tasks {
             ...(input.synopsis === undefined ? {} : { synopsis: input.synopsis }),
             ...(input.findings === undefined ? {} : { findings: input.findings }),
             ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
-            requestId: `${caller.actorId}:task:review:${input.requestId}`,
+            requestId: childRequest(caller, 'task', 'review', input.requestId),
           },
           tx,
         );

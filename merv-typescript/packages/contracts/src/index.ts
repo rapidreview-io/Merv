@@ -2,7 +2,7 @@ export {
   patchSchema as paperPatchSchema,
   changesSchema as paperChangesSchema,
 } from './paper-edit.js';
-export { mapAsync, filterAsync, someAsync, everyAsync, findAsync, forEachAsync } from './async.js';
+export { mapAsync, filterAsync, someAsync, everyAsync } from './async.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,
@@ -17,6 +17,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
+export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
@@ -347,11 +348,80 @@ export function parsed<T>(
   );
   return result.data;
 }
+/** Where a domain keeps its receipts and how it compares and replays them; see receipted(). */
+export interface Receipt<T> {
+  table: string;
+  /** Column names; the defaults are actor_id, input_hash and result. */
+  actor?: string;
+  hash?: string;
+  result?: string;
+  /** Set when the table stores the operation beside a hash of the input alone. */
+  operation?: string;
+  /** An older hash recipe whose receipts still replay. */
+  legacyHash?: string;
+  conflict?: string;
+  /** Runs between the work and its record, for a domain that rechecks authority after yielding. */
+  after?: () => Promise<unknown>;
+  /** Runs on a replayed answer: a recheck, or defaults for fields older answers lack. */
+  replay?: (result: T) => T | Promise<T>;
+}
 /**
- * One durable answer per (project, actor, requestId): a retry with the same operation and
- * input replays it, a different input conflicts. Each domain keeps its own table with the
- * columns project_id, actor_id, request_id, a hash and the answer. `after` runs between the
- * work and its record, for a domain that rechecks authority once the work has yielded.
+ * One durable answer per (project, actor, requestId): a retry with the same hash replays it, a
+ * different one conflicts. The caller validates the requestId and computes the hash, so each
+ * table keeps the recipe its stored receipts were written with.
+ *
+ * Receipts deliberately kept elsewhere: wf_requests has no actor (workflow requests are shared
+ * by a project) and wf_system_requests belongs to a provider; a Sessions grant is its own
+ * receipt, so the secret digest commits with it; createProject keys on the user, since no actor
+ * exists yet; ContextBuilder replays before it rebuilds live inputs. Derived requests that one
+ * command makes of another name themselves with childRequest().
+ */
+export async function receipted<T>(
+  tx: Transaction,
+  caller: Caller,
+  requestId: string,
+  hash: string,
+  execute: () => T | Promise<T>,
+  receipt: Receipt<T>,
+): Promise<T> {
+  const { table, actor = 'actor_id', operation } = receipt;
+  const hashColumn = receipt.hash ?? 'input_hash';
+  const resultColumn = receipt.result ?? 'result';
+  const previous = await tx.get<{ hash: string; result: string; operation?: string }>(
+    `SELECT ${hashColumn} AS hash,${resultColumn} AS result${operation === undefined ? '' : ',operation'} FROM ${table} WHERE project_id=? AND ${actor}=? AND request_id=?`,
+    caller.projectId,
+    caller.actorId,
+    requestId,
+  );
+  if (previous) {
+    check(
+      (operation === undefined || previous.operation === operation) &&
+        (previous.hash === hash ||
+          (receipt.legacyHash !== undefined && previous.hash === receipt.legacyHash)),
+      'request_conflict',
+      receipt.conflict ?? 'requestId was already used with different input',
+      409,
+    );
+    const result = JSON.parse(previous.result) as T;
+    return receipt.replay ? await receipt.replay(result) : result;
+  }
+  const result = await execute();
+  await receipt.after?.();
+  const columns = [actor, 'request_id', ...(operation === undefined ? [] : ['operation'])];
+  await tx.run(
+    `INSERT INTO ${table}(project_id,${[...columns, hashColumn, resultColumn].join(',')}) VALUES(?,?,?,?,?${operation === undefined ? '' : ',?'})`,
+    caller.projectId,
+    caller.actorId,
+    requestId,
+    ...(operation === undefined ? [] : [operation]),
+    hash,
+    JSON.stringify(result),
+  );
+  return result;
+}
+/**
+ * receipted() for a requestId of 1–200 visible characters, hashing the operation with the
+ * input. `options` names the table's hash and result columns and an `after` recheck.
  */
 export async function replayed<T>(
   tx: Transaction,
@@ -362,8 +432,6 @@ export async function replayed<T>(
   execute: () => T | Promise<T>,
   options: { hash?: string; result?: string; after?: () => Promise<unknown> } = {},
 ): Promise<T> {
-  const hashColumn = options.hash ?? 'input_hash';
-  const resultColumn = options.result ?? 'result';
   check(
     typeof input.requestId === 'string' &&
       visible(input.requestId) &&
@@ -371,34 +439,17 @@ export async function replayed<T>(
     'invalid_request_id',
     'A stable requestId of 1–200 characters with visible text is required',
   );
-  const hash = digest({ operation, input });
-  const previous = await tx.get<{ hash: string; result: string }>(
-    `SELECT ${hashColumn} AS hash,${resultColumn} AS result FROM ${table} WHERE project_id=? AND actor_id=? AND request_id=?`,
-    caller.projectId,
-    caller.actorId,
-    input.requestId,
-  );
-  if (previous) {
-    check(
-      previous.hash === hash,
-      'request_conflict',
-      'requestId was already used with different input',
-      409,
-    );
-    return JSON.parse(previous.result) as T;
-  }
-  const result = await execute();
-  await options.after?.();
-  await tx.run(
-    `INSERT INTO ${table}(project_id,actor_id,request_id,${hashColumn},${resultColumn}) VALUES(?,?,?,?,?)`,
-    caller.projectId,
-    caller.actorId,
-    input.requestId,
-    hash,
-    JSON.stringify(result),
-  );
-  return result;
+  return await receipted(tx, caller, input.requestId, digest({ operation, input }), execute, {
+    table,
+    ...options,
+  });
 }
+/**
+ * The requestId one command gives the request it makes of another service: fixed in length
+ * whatever the caller's requestId, distinct per actor and step, and the same on every retry.
+ */
+export const childRequest = (caller: Caller, scope: string, step: string, requestId: string) =>
+  `${scope}:${step}:${digest({ actorId: caller.actorId, requestId })}`;
 /** Markdown with comments and fenced blocks blanked: nothing inside them is a heading or a figure. */
 export function visibleMarkdown(text: string): string {
   let fence: { character: string; count: number } | undefined;
@@ -617,6 +668,19 @@ export const recorded = async (
  * Release a domain's lease row by its exact ownership receipt: the worker's review claim goes
  * back with it, and a row already released is left alone. `where` adds the domain's columns.
  */
+/** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
+export function checkReceipt<T extends { receipt: string }>(
+  lease: T | undefined,
+  receipt: unknown,
+  message: string,
+): asserts lease is T {
+  check(
+    !!lease && digest(JSON.parse(lease.receipt)) === digest(receipt),
+    'stale_lease',
+    message,
+    409,
+  );
+}
 export async function releasedLease(
   tx: Transaction,
   reviews: Pick<Reviews, 'releaseClaim'>,
@@ -646,12 +710,7 @@ export async function releasedLease(
       .join(' AND ')}`,
     ...Object.values(match),
   );
-  check(
-    row && digest(JSON.parse(row.receipt)) === digest(lease.receipt),
-    'stale_lease',
-    'Release must name the exact ownership receipt',
-    409,
-  );
+  checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
   if (row.released_at) return;
   if (row.review_id && row.claim_id)
     await reviews.releaseClaim(
@@ -1073,6 +1132,20 @@ export type WorkflowExecutionBinding =
   | { kind: 'oneOf'; name: string }
   | { kind: 'subset'; name: string };
 export type WorkflowExecutionReferences = Record<string, string | string[]>;
+/** The argument bindings an execution policy grants a tool with. */
+export const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
+  kind: 'target',
+  field,
+});
+export const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
+export const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
+export const grant = (
+  name: string,
+  ...alternatives: Record<string, WorkflowExecutionBinding>[]
+) => ({
+  name,
+  alternatives,
+});
 /** JSON declarations, separate from guidance and deployed callback implementations. */
 export interface WorkflowExecutionPolicy {
   /** Describes the work environment; explicit protocol/checkpoint writes remain permitted. */
@@ -1563,7 +1636,6 @@ export interface ContextRegistration {
 }
 export interface ContextBuilder {
   register(definition: TaskTypeDefinition): Promise<ContextRegistration>;
-  get(caller: Caller, contextId: string): Promise<ContextPackage>;
   /** Text documents are embedded while they leave the recipe `room` for the rest of the
    *  context; past that they are listed and the reader opens them itself. */
   mode(
@@ -1716,3 +1788,21 @@ export type {
   GitHubPullDetails,
   GitHubAutomationInput,
 } from './github-models.js';
+
+/** The caller a delegation source acts as, for work done later on its behalf. */
+export function sourceCaller(source: DelegationSource): Caller {
+  const base = { actorId: source.actorId, projectId: source.projectId };
+  if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };
+  if (source.kind === 'key')
+    return { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
+  // Delegation follows the captured membership epoch, not the original short-lived login JWT.
+  return {
+    ...base,
+    human: {
+      issuer: source.issuer,
+      subject: source.subject,
+      membershipId: source.membershipId,
+      expiresAt: '9999-12-31T23:59:59.999Z',
+    },
+  };
+}

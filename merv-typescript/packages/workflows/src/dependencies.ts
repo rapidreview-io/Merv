@@ -1,4 +1,4 @@
-import { check, now } from '@merv/contracts';
+import { canonical, check, now } from '@merv/contracts';
 import type {
   Sql,
   Transaction,
@@ -6,7 +6,6 @@ import type {
   WorkflowDependency,
   WorkflowSnapshot,
 } from '@merv/contracts';
-import { canonical } from './definition.js';
 
 export function normalizeDependencies(value: unknown): string[] {
   if (value === undefined || value === null) return [];
@@ -64,29 +63,28 @@ interface NodeRow {
   data_json: string;
 }
 
+/** What an instance is called: its title, else its name, else the workflow it runs. */
+export const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
+  [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
+
+/** Without declared success states an instance never settles, so it never counts as failed. */
 function classify(
   node: NodeRow | undefined,
   id: string,
   workflow: string,
   version: number,
-  successJson?: string,
-  terminalJson?: string,
+  success: string[] | undefined,
+  terminal: string[],
 ): WorkflowDependency {
-  const data = node ? JSON.parse(node.data_json) : {};
-  const success: string[] = successJson ? JSON.parse(successJson) : [];
-  const terminal: string[] = terminalJson ? JSON.parse(terminalJson) : [];
-  const settled = !!node && success.includes(node.state);
+  const settled = !!node && !!success?.includes(node.state);
   return {
     id,
     workflow: node?.workflow ?? workflow,
     version: node?.version ?? version,
-    name:
-      [data.title, data.name].find((item) => typeof item === 'string') ??
-      node?.workflow ??
-      workflow,
+    name: instanceName(node ? JSON.parse(node.data_json) : {}, node?.workflow ?? workflow),
     state: node?.state ?? 'missing',
     settled,
-    failed: !!node && successJson !== undefined && terminal.includes(node.state) && !settled,
+    failed: !!node && success !== undefined && terminal.includes(node.state) && !settled,
   };
 }
 
@@ -119,8 +117,9 @@ export async function relations(
           edge.target_id,
           edge.target_workflow,
           edge.target_version,
-          edge.target_success_json,
-          edge.target_terminal_json,
+          // The contract the edge pinned when it was made, whatever version the target runs now.
+          JSON.parse(edge.target_success_json) as string[],
+          JSON.parse(edge.target_terminal_json) as string[],
         ),
         ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
       });
@@ -148,10 +147,8 @@ export async function relations(
           source.id,
           source.workflow,
           source.version,
-          semantics?.success_json,
-          graph
-            ? canonical((JSON.parse(graph.definition_json) as WorkflowDefinition).terminal)
-            : undefined,
+          semantics ? (JSON.parse(semantics.success_json) as string[]) : undefined,
+          graph ? (JSON.parse(graph.definition_json) as WorkflowDefinition).terminal : [],
         ),
         ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
       });

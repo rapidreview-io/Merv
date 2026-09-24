@@ -1,5 +1,4 @@
 import { postgresMigrations } from './agents.postgres.js';
-import { createHash } from 'node:crypto';
 import { ownerOf } from './common.js';
 import {
   visible,
@@ -7,6 +6,7 @@ import {
   digest,
   newId,
   sessionSecretPattern,
+  sha256Hex,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -15,23 +15,8 @@ import {
 } from '@merv/contracts';
 import type { Agent, AgentRegistration } from './types.js';
 
-export const tokenDigest = (secret: string) => createHash('sha256').update(secret).digest('hex');
-export function sourceCaller(source: DelegationSource): Caller {
-  const base = { actorId: source.actorId, projectId: source.projectId };
-  if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };
-  if (source.kind === 'key')
-    return { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
-  // Delegation follows the captured membership epoch, not the original short-lived login JWT.
-  return {
-    ...base,
-    human: {
-      issuer: source.issuer,
-      subject: source.subject,
-      membershipId: source.membershipId,
-      expiresAt: '9999-12-31T23:59:59.999Z',
-    },
-  };
-}
+export const tokenDigest = sha256Hex;
+export { sourceCaller } from '@merv/contracts';
 interface AgentRow {
   id: string;
   owner_hash: string;

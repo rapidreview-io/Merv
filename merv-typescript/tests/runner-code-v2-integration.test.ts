@@ -13,14 +13,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, CodeStoreOperation, Data } from '@merv/contracts';
+import type { Caller, Data } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeService } from '@merv/code-research/service';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { git, gitSource } from './fixtures/code-store.js';
+import { git, gitSource, importBundle } from './fixtures/code-store.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -212,23 +211,7 @@ test(
     const { codeResearch: code, tasks, sessions, reviews, state } = app.ctx;
 
     await boundProject(state, owner.projectId, main, 'fixture-repository');
-    const v2 = (code as unknown as CodeService).v2!;
-    const bundle = operator.bundle(main);
-    const begun = await code.importRepository(owner, {
-      source: 'bundle',
-      tip: main,
-      bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-      requestId: 'import',
-    });
-    await v2.putPart(owner, begun.id, 0, bundle.content);
-    let imported = begun;
-    for (let tries = 0; imported.status === 'prepared' && tries < 200; tries++) {
-      ({ operation: imported } = (await v2.call(owner, `uploads/${begun.id}/complete`, {})) as {
-        operation: CodeStoreOperation;
-      });
-      await delay(25);
-    }
-    assert.equal(imported.status, 'completed');
+    await importBundle(code, owner, operator.bundle(main));
     // Naming main again records that Code holds it, which is what new work starts from.
     assert.equal((await code.status(owner)).project?.durability, 'code');
 

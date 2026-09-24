@@ -46,35 +46,18 @@ const enrollment = z
   })
   .strict();
 
-export interface ManagedRunnerBindingIdentity {
-  allocationId: string;
-  epoch: number;
-  source: DelegationSource;
-  runtimeProfileId: string;
-  platform: RunnerPlatform;
-  capabilities: string[];
-  expiresAt: string;
-}
-export type ManagedRunnerValidator = {
-  current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
-  admits(allocationId: string, epoch: number, tx: Transaction): Promise<boolean>;
-};
-export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
-  capabilities?: string[];
-};
-export interface ManagedRunnerInspection {
-  runnerId: string | null;
-  session: {
-    id: string;
-    instanceId: string;
-    expectedRevision: number;
-    status: 'offered' | 'active' | 'released' | 'expired';
-    closedAt: string | null;
-    outcome: Session['outcome'];
-    releaseAcknowledged: boolean;
-    capturePending: boolean;
-  } | null;
-}
+import type {
+  ManagedEnrollmentInput,
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed-types.js';
+export type {
+  ManagedEnrollmentInput,
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed-types.js';
 export interface ManagedBindingRow {
   allocation_id: string;
   epoch: number;

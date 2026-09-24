@@ -255,11 +255,7 @@ async function reviewFlow(t: TestContext) {
   return f;
 }
 
-test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces', async (t) => {
-  await reviewFlow(t);
-});
-
-test('PostgreSQL full application retains task delivery, independent review and live reflection metadata', async (t) => {
+test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces; the application retains their work and reflection metadata across restart', async (t) => {
   const f = await reviewFlow(t);
   assert.equal((await f.http('/account/keys', f.human)).status, 200);
   const caller = await f.source();

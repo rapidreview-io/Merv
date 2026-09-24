@@ -9,8 +9,8 @@ import {
   type Scope,
   type Transaction,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
-import { sourceCaller } from '@merv/sessions/agents';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
@@ -293,6 +293,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
 }
 
+declare module 'cordis' {
+  interface Context {
+    fleetWorkflow: FleetWorkflowAdapter;
+  }
+}
+
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope'],
@@ -300,6 +306,7 @@ export const fleetWorkflowPlugin = {
     const adapter = new FleetWorkflowAdapter(ctx.fleet, ctx.sessions, ctx.scope, config);
     await adapter.start();
     ctx.effect(() => () => adapter.close());
+    ctx.provide('fleetWorkflow', adapter);
   },
 };
 export default fleetWorkflowPlugin;

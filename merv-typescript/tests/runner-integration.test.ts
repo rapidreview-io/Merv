@@ -530,7 +530,12 @@ test(
       },
     ];
     const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
-    const profile = { name: 'test-worker', harness: 'codex' as const, enabled: true, parallelism: 1 };
+    const profile = {
+      name: 'test-worker',
+      harness: 'codex' as const,
+      enabled: true,
+      parallelism: 1,
+    };
     const unregister = f.app.ctx.sessions.registerManagedValidator({
       current: async (binding) => binding.allocationId === allocationId,
       admits: async () => true,

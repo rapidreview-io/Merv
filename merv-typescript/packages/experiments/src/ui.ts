@@ -36,12 +36,7 @@ export const experimentsUiPlugin = {
         },
         // Open work: an experiment still on its way to a result. A complete,
         // abandoned or failed record is read, not worked, so it is not counted.
-        status: async (caller) => ({
-          count: (await experiments.list(caller)).filter(
-            (experiment) =>
-              !['complete', 'abandoned', 'failed'].includes(experiment.workflow.state),
-          ).length,
-        }),
+        status: async (caller) => ({ count: (await experiments.occupancy(caller)).active }),
       }),
     );
   },

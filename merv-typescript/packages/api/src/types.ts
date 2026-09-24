@@ -9,21 +9,21 @@ import type {
   CodeCommitCommand,
 } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodTypeAny } from 'zod';
+import type { z, ZodTypeAny } from 'zod';
 import type {} from 'cordis';
 
-export interface ToolDefinition {
+/** A tool whose handler receives the input its schema parsed. */
+export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
-  inputSchema: ZodTypeAny;
+  inputSchema: S;
   readOnly?: boolean;
-  handler(caller: Caller, input: any): unknown | Promise<unknown>;
+  handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
 }
 /** Public tool metadata, including the native project-selection envelope. */
 export type ToolDescription = Tool;
-/** Remote protocol descriptions retain schemas and MCP metadata without Zod conversion. */
-export type RemoteToolDescription = ToolDescription;
-export interface RemoteToolDefinition extends RemoteToolDescription {
+/** A remote tool keeps its protocol description, schemas and MCP metadata without Zod conversion. */
+export interface RemoteToolDefinition extends ToolDescription {
   kind: 'mcp';
   handler(caller: Caller, input: any): CallToolResult | Promise<CallToolResult>;
 }

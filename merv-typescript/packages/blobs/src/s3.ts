@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  CopyObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -35,8 +34,8 @@ export interface S3BlobOptions {
 /** Also the plugin Config defaults, which bound both values; direct callers may omit them. */
 export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
 
-/** Offline migration and direct downloads only; ordinary get/put remain limited to 2 MB. */
-export const MAX_TRANSFER_BYTES = 512 * 1024 * 1024;
+/** Presigned downloads only; ordinary get/put remain limited to 2 MB. */
+const MAX_TRANSFER_BYTES = 512 * 1024 * 1024;
 const transferSize = (size: number) =>
   check(
     Number.isSafeInteger(size) && size >= 0 && size <= MAX_TRANSFER_BYTES,
@@ -50,7 +49,6 @@ export class S3Blobs implements Blobs {
   private prefix: string;
   private timeoutMs: number;
   private maxAttempts: number;
-  private endpoint: string;
   private operations = new BlobOperations();
 
   constructor(options: S3BlobOptions) {
@@ -98,7 +96,6 @@ export class S3Blobs implements Blobs {
     this.timeoutMs = options.timeoutMs ?? S3_DEFAULTS.timeoutMs;
     this.maxAttempts = options.maxAttempts ?? S3_DEFAULTS.maxAttempts;
     this.bucket = options.bucket;
-    this.endpoint = endpoint.origin;
     this.client = new S3Client({
       endpoint: endpoint.origin,
       region: options.region ?? 'auto',
@@ -169,24 +166,15 @@ export class S3Blobs implements Blobs {
     });
   }
 
-  private async consume(
-    namespace: string,
-    hash: string,
-    signal: AbortSignal,
-    options: { collect: boolean; expectedSize?: number; ifMatch?: string },
-  ) {
+  private async read(namespace: string, hash: string, signal: AbortSignal): Promise<Buffer> {
     const key = this.key(namespace, hash);
-    const limit = options.collect ? MAX_BLOB_BYTES : MAX_TRANSFER_BYTES;
     let body: Readable | undefined;
     const abort = () => body?.destroy(new Error('Blob download timed out'));
     try {
       const response = await this.request(signal, () =>
-        this.client.send(
-          new GetObjectCommand({ Bucket: this.bucket, Key: key, IfMatch: options.ifMatch }),
-          {
-            abortSignal: signal,
-          },
-        ),
+        this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+          abortSignal: signal,
+        }),
       );
       body = response.Body as Readable | undefined;
       check(
@@ -198,7 +186,7 @@ export class S3Blobs implements Blobs {
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
       check(
-        response.ContentLength === undefined || response.ContentLength <= limit,
+        response.ContentLength === undefined || response.ContentLength <= MAX_BLOB_BYTES,
         'blob_size',
         'Blob exceeds the maximum size',
       );
@@ -208,15 +196,9 @@ export class S3Blobs implements Blobs {
       for await (const chunk of body!) {
         const bytes = Buffer.from(chunk);
         length += bytes.byteLength;
-        check(length <= limit, 'blob_size', 'Blob exceeds the maximum size');
-        check(
-          options.expectedSize === undefined || length <= options.expectedSize,
-          'blob_corrupt',
-          'Stored blob exceeds its retained size',
-          500,
-        );
+        check(length <= MAX_BLOB_BYTES, 'blob_size', 'Blob exceeds the maximum size');
         digest.update(bytes);
-        if (options.collect) chunks.push(bytes);
+        chunks.push(bytes);
       }
       check(
         response.ContentLength === undefined || response.ContentLength === length,
@@ -225,22 +207,12 @@ export class S3Blobs implements Blobs {
         500,
       );
       check(
-        options.expectedSize === undefined || length === options.expectedSize,
-        'blob_corrupt',
-        'Stored blob size does not match retained metadata',
-        500,
-      );
-      check(
         digest.digest('hex') === hash,
         'blob_corrupt',
         'Stored blob failed its integrity check',
         500,
       );
-      return {
-        size: length,
-        etag: response.ETag,
-        bytes: options.collect ? Buffer.concat(chunks, length) : undefined,
-      };
+      return Buffer.concat(chunks, length);
     } catch (error) {
       if (error instanceof MervError) throw error;
       if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404)
@@ -250,10 +222,6 @@ export class S3Blobs implements Blobs {
       signal.removeEventListener('abort', abort);
       body?.destroy();
     }
-  }
-
-  private async read(namespace: string, hash: string, signal: AbortSignal): Promise<Buffer> {
-    return (await this.consume(namespace, hash, signal, { collect: true })).bytes!;
   }
 
   download(namespace: string, hash: string, expectedSize: number) {
@@ -291,106 +259,6 @@ export class S3Blobs implements Blobs {
         throw new MervError('blob_unavailable', 'Blob download could not be prepared', 503);
       }
     });
-  }
-
-  private async verifyRetained(
-    namespace: string,
-    hash: string,
-    size: number | undefined,
-    signal: AbortSignal,
-  ) {
-    let head;
-    try {
-      head = await this.request(signal, () =>
-        this.client.send(
-          new HeadObjectCommand({ Bucket: this.bucket, Key: this.key(namespace, hash) }),
-          { abortSignal: signal },
-        ),
-      );
-    } catch (error) {
-      if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404)
-        throw new MervError('blob_not_found', 'Blob not found', 404);
-      throw new MervError('blob_unavailable', 'Blob verification failed', 503);
-    }
-    check(
-      size === undefined || head.ContentLength === size,
-      'blob_corrupt',
-      'Stored blob size does not match retained metadata',
-      500,
-    );
-    transferSize(head.ContentLength!);
-    const verifiedSize = head.ContentLength!;
-    check(head.ETag, 'blob_copy_unsupported', 'Object must expose a version ETag');
-    await this.consume(namespace, hash, signal, {
-      collect: false,
-      expectedSize: verifiedSize,
-      ifMatch: head.ETag,
-    });
-    return { etag: head.ETag, size: verifiedSize };
-  }
-
-  /** Trusted offline import only: namespace/hash derive both keys, never caller-supplied URLs. */
-  copyVerifiedFrom(
-    source: S3Blobs,
-    namespace: string,
-    hash: string,
-    size?: number,
-    options: { timeoutMs?: number; destinationCondition?: 's3' | 'r2' } = {},
-  ) {
-    const key = this.key(namespace, hash);
-    const sourceKey = source.key(namespace, hash);
-    if (size !== undefined) transferSize(size);
-    check(
-      this.endpoint === source.endpoint,
-      'blob_copy_unsupported',
-      'Server-side copy requires the same storage endpoint',
-    );
-    const timeoutMs = options.timeoutMs ?? 120_000;
-    check(
-      Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 900_000,
-      'invalid_blob_config',
-      'Migration timeout must be between 1 and 900000 milliseconds',
-    );
-    return this.operations.run(async () => {
-      const signal = AbortSignal.timeout(timeoutMs);
-      const original = await source.verifyRetained(namespace, hash, size, signal);
-      const verifiedSize = original.size;
-      check(original.etag, 'blob_copy_unsupported', 'Source object must expose a version ETag');
-      if (this.bucket === source.bucket && key === sourceKey) return { hash, size: verifiedSize };
-      const r2 =
-        options.destinationCondition === 'r2' ||
-        (options.destinationCondition === undefined &&
-          new URL(this.endpoint).hostname.endsWith('.r2.cloudflarestorage.com'));
-      const command = new CopyObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        CopySource: `${source.bucket}/${sourceKey}`,
-        CopySourceIfMatch: original.etag,
-        IfNoneMatch: r2 ? undefined : '*',
-      });
-      if (r2)
-        command.middlewareStack.add(
-          (next) => async (args) => {
-            (args.request as { headers: Record<string, string> }).headers[
-              'cf-copy-destination-if-none-match'
-            ] = '*';
-            return next(args);
-          },
-          { step: 'build', name: 'r2ImmutableDestination' },
-        );
-      try {
-        await this.request(signal, () => this.client.send(command, { abortSignal: signal }));
-      } catch (error) {
-        if (
-          (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 412
-        )
-          throw new MervError('blob_unavailable', 'Verified blob copy failed', 503);
-        // Source races and existing destinations both produce 412. Only verified destination
-        // bytes prove the intended immutable object is present; an absent/corrupt one fails.
-      }
-      await this.verifyRetained(namespace, hash, verifiedSize, signal);
-      return { hash, size: verifiedSize };
-    }, [source.operations]);
   }
 
   get(namespace: string, hash: string): Promise<Buffer> {

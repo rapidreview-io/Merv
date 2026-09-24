@@ -9,7 +9,7 @@ import { after } from 'node:test';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import pg from 'pg';
-import type { Transaction } from '@merv/contracts';
+import type { ContextPackage, State, Transaction } from '@merv/contracts';
 import { PostgresState, statePlugin, type PostgresConfig } from '@merv/state';
 
 type StateConfig = Parameters<typeof statePlugin.apply>[1];
@@ -76,6 +76,14 @@ export function cliEnv(directory: string) {
 }
 
 /** Counts the INSERT/UPDATE/DELETE statements a state runs, rolled back or not. */
+/** A context package exactly as Context Builder stored it. */
+export async function storedContext(state: State, id: string): Promise<ContextPackage> {
+  const row = await state.read(
+    async (sql) =>
+      await sql.get<{ package: string }>('SELECT package FROM context_packages WHERE id=?', id),
+  );
+  return JSON.parse(row!.package) as ContextPackage;
+}
 export function countWrites(state: PostgresState): () => number {
   let writes = 0;
   const write = /^\s*(INSERT|UPDATE|DELETE)\b/i;

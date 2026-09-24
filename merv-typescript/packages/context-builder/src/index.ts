@@ -393,25 +393,6 @@ export class RecipeContextBuilder implements ContextBuilder {
       .reduce((n, a) => n + a.size, 0);
     return inline > room ? 'references' : 'auto';
   }
-  async get(caller: Caller, id: string): Promise<ContextPackage> {
-    caller = structuredClone(caller);
-    check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
-    const actor = await this.scope.require(caller, 'read');
-    return await this.state.read(async (sql) => {
-      const row = await sql.get<{ actor_id: string; package: string }>(
-        'SELECT actor_id,package FROM context_packages WHERE id=? AND project_id=?',
-        id,
-        caller.projectId,
-      );
-      check(
-        row && (row.actor_id === actor.id || actor.role === 'operator'),
-        'not_found',
-        'Context package not found',
-        404,
-      );
-      return JSON.parse(row.package);
-    });
-  }
   close(): void {
     this.closed = true;
     this.registrations.clear();

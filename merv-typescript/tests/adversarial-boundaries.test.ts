@@ -9,19 +9,13 @@ import { ArtifactStore } from '../packages/artifacts/src/index.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { createService } from '../packages/contracts/src/index.js';
 import { openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-};
 const tokenEnv = 'MERV_ADVERSARIAL_TEST_TOKEN';
 const connection = { projectId: 'project_test', namespace: 'test', tokenEnv };
 

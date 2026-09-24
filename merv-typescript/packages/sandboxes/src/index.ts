@@ -1,4 +1,11 @@
-import { check, digest, type Caller, type Json, type UiManifestRow } from '@merv/contracts';
+import {
+  check,
+  digest,
+  idSchema,
+  type Caller,
+  type Json,
+  type UiManifestRow,
+} from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';
@@ -49,7 +56,7 @@ const renewRoute = '/v1/sandboxes/{id}/renew';
 
 const connection = z
   .object({
-    projectId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    projectId: idSchema,
     namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
     // Only the name of an environment variable: a secret never enters configuration.
     tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),

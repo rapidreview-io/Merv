@@ -418,10 +418,12 @@ export class RunnerClient {
   /** The release route also acknowledges that a managed runner stopped locally. */
   async reportUsage(id: string, runnerId: string, usage?: SessionUsageReport): Promise<Session> {
     return this.session(
-      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
-        runnerId,
-        ...(usage ? { usage } : {}),
-      }))?.session,
+      (
+        await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
+          runnerId,
+          ...(usage ? { usage } : {}),
+        })
+      )?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }

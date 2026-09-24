@@ -5,14 +5,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Caller, CodeStoreOperation } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
-import type { CodeService } from '@merv/code-research/service';
 import type { Session } from '@merv/sessions/types';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, importBundle } from './fixtures/code-store.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 
@@ -222,23 +221,7 @@ test(
     await modern.accepting(false);
 
     // The project is imported, and new Git work is the version that lives in Code.
-    const v2 = (code as unknown as CodeService).v2!;
-    const bundle = operator.bundle(main);
-    const begun = await code.importRepository(owner, {
-      source: 'bundle',
-      tip: main,
-      bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-      requestId: 'import',
-    });
-    await v2.putPart(owner, begun.id, 0, bundle.content);
-    let imported = begun;
-    for (let tries = 0; imported.status === 'prepared' && tries < 200; tries++) {
-      ({ operation: imported } = (await v2.call(owner, `uploads/${begun.id}/complete`, {})) as {
-        operation: CodeStoreOperation;
-      });
-      await delay(25);
-    }
-    assert.equal(imported.status, 'completed');
+    await importBundle(code, owner, operator.bundle(main));
     const hosted = await create('hosted');
     assert.equal(hosted.workflow.version, 5);
 

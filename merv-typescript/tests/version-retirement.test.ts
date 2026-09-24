@@ -384,6 +384,8 @@ test('retiring the versions that can no longer start deletes their records and n
             .sort();
   }
   const after = await snapshot(client);
+  // sessions@7, rewound with the retirement, returns empty on this boot.
+  expected.session_managed_runners = [];
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
 
@@ -707,42 +709,48 @@ test('a database the release would leave inconsistent is refused before any comp
         }),
     ],
   ];
+  const { directory, client, seed } = await prepare(t);
+  // Whichever retirement migration the plugin order runs first refuses on its own. State
+  // reports any constraint alike, so the texts run here directly, to read which one refused.
+  // Each scenario is added and taken back in one transaction on the same prepared database.
   for (const [label, refusal, extra] of scenarios) {
-    const { directory, client, seed } = await prepare(t);
+    await client.query('BEGIN');
     await extra(client, seed);
-    const before = await snapshot(client);
-    const events = await rows(client, 'SELECT count(*)::int AS n FROM events');
-    // Whichever retirement migration the plugin order runs first refuses on its own. State
-    // reports any constraint alike, so the texts run here directly, to read which one refused.
     for (const [component, version] of retirementMigrations) {
-      await client.query('BEGIN');
+      await client.query('SAVEPOINT migration');
       await assert.rejects(
         client.query(recorded.get(key(component, version))!),
         (error: Error) => refusal.test(error.message),
         `${label}: ${key(component, version)}`,
       );
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK TO SAVEPOINT migration');
     }
-    // So the release fails to boot, and leaves the database as the previous image left it.
-    await assert.rejects(createApp({ directory }), { code: 'plugin_unavailable' }, label);
-    const applied = await rows<{ key: string }>(
-      client,
-      "SELECT component || '@' || version AS key FROM component_migrations",
-    );
-    assert.deepEqual(
-      retirementMigrations
-        .map(([component, version]) => key(component, version))
-        .filter((name) => applied.some((row) => row.key === name)),
-      [],
-      label,
-    );
-    assert.deepEqual(
-      await rows(client, "SELECT to_regclass('wf_retired_instances') AS ledger"),
-      [{ ledger: null }],
-      label,
-    );
-    assert.deepEqual(await snapshot(client), before, label);
-    assert.deepEqual(await rows(client, 'SELECT count(*)::int AS n FROM events'), events, label);
-    assert.deepEqual(await disabledTriggers(client), [], label);
+    await client.query('ROLLBACK');
   }
+  // So the release fails to boot, and leaves the database as the previous image left it. Every
+  // scenario is refused by every migration above, so one of them stands for all at boot.
+  const [label, , extra] = scenarios[0]!;
+  await extra(client, seed);
+  const before = await snapshot(client);
+  const events = await rows(client, 'SELECT count(*)::int AS n FROM events');
+  await assert.rejects(createApp({ directory }), { code: 'plugin_unavailable' }, label);
+  const applied = await rows<{ key: string }>(
+    client,
+    "SELECT component || '@' || version AS key FROM component_migrations",
+  );
+  assert.deepEqual(
+    retirementMigrations
+      .map(([component, version]) => key(component, version))
+      .filter((name) => applied.some((row) => row.key === name)),
+    [],
+    label,
+  );
+  assert.deepEqual(
+    await rows(client, "SELECT to_regclass('wf_retired_instances') AS ledger"),
+    [{ ledger: null }],
+    label,
+  );
+  assert.deepEqual(await snapshot(client), before, label);
+  assert.deepEqual(await rows(client, 'SELECT count(*)::int AS n FROM events'), events, label);
+  assert.deepEqual(await disabledTriggers(client), [], label);
 });

@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type {} from '@merv/sandboxes';
+import type {} from '@merv/sandboxes/types';
 import { z } from 'zod';
 import {
   check,
@@ -13,7 +13,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
+import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
 import { migration } from './schema.js';
 import type {
   Fleet,

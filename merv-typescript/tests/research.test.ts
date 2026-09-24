@@ -1,25 +1,16 @@
-import { CodeService } from '@merv/code-research/service';
-import type {
-  Caller,
-  CodeStoreOperation,
-  Data,
-  ReviewApplication,
-  SessionWorkspace,
-} from '@merv/contracts';
+import type { Caller, ReviewApplication } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchDigest, ResearchRecord } from '../packages/research/src/types.js';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, importBundle } from './fixtures/code-store.js';
 import { hostedCode, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -37,21 +28,19 @@ async function fixture(t: TestContext, store = false) {
       !entry.id.endsWith('-ui'),
   );
   let app = await createApp({ directory, config });
-  const service = async (digests = true) =>
-    await createService(
-      new ResearchService(
-        app.ctx.state,
-        app.ctx.scope,
-        app.ctx.workflows,
-        app.ctx.paper,
-        app.ctx.reflections,
-        app.ctx.knowledge,
-        app.ctx.tasks,
-        app.ctx.experiments,
-        digests ? app.ctx.artifacts : undefined,
-        app.ctx.codeResearch,
-      ),
+  const service = async (digests = true) => {
+    const research = await createService(
+      new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows),
     );
+    research.bindPaper(app.ctx.paper);
+    research.bindReflections(app.ctx.reflections);
+    research.bindKnowledge(app.ctx.knowledge);
+    research.bindTasks(app.ctx.tasks);
+    research.bindExperiments(app.ctx.experiments);
+    if (digests) research.bindArtifacts(app.ctx.artifacts);
+    research.bindCode(app.ctx.codeResearch);
+    return research;
+  };
   let research = await service(),
     sequence = 0;
   const boot = await app.ctx.scope.bootstrap({
@@ -203,9 +192,11 @@ async function fixture(t: TestContext, store = false) {
 }
 
 test('Research requests retain their admitted caller and reflection inputs', async (t) => {
+  // One application for every case: each makes its own record, and t.mock restores per case.
+  const f = await fixture(t);
+  await f.definition();
   for (const method of ['get', 'list'] as const) {
     await t.test(method, async (t) => {
-      const f = await fixture(t);
       const record = await f.create();
       const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
       const caller = { projectId: other.project.id, actorId: other.actor.id };
@@ -222,8 +213,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
   }
   for (const method of ['advance', 'replan', 'end'] as const) {
     await t.test(method, async (t) => {
-      const f = await fixture(t);
-      await f.definition();
       const record = await f.create();
       const caller = await f.issue('producer');
       const get = f.research.get.bind(f.research);
@@ -248,7 +237,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
     });
   }
   await t.test('creation', async (t) => {
-    const f = await fixture(t);
     const producer = await f.issue('producer');
     const caller = { ...f.owner };
     const creating = f.research.create(caller, { name: 'Original', requestId: f.id() });
@@ -256,7 +244,6 @@ test('Research requests retain their admitted caller and reflection inputs', asy
     assert.equal((await creating).ownerId, f.owner.actorId);
   });
   await t.test('reflection creation', async (t) => {
-    const f = await fixture(t);
     const producer = await f.issue('producer');
     const caller = { ...f.owner };
     const input = { title: 'Original reflection', requestId: f.id() };
@@ -269,32 +256,28 @@ test('Research requests retain their admitted caller and reflection inputs', asy
   });
 });
 
-test('failed Research activation releases its earlier workflow registration', async (t) => {
+test('a failed Research activation holds nothing that blocks the next one', async (t) => {
   const f = await fixture(t);
   f.research.close();
-  // Binding runs after the workflow is registered, so a binding that throws leaves a handle to
-  // release: a second activation could not register research@6 again if it were still held.
-  const refusing = new Proxy(f.app.ctx.tasks, {
-    get: (tasks, key) =>
-      key === 'serviceTasks'
-        ? () => {
-            throw new Error('binding refused');
+  const refusing = new Proxy(f.app.ctx.workflows, {
+    get: (workflows, key) =>
+      key === 'register'
+        ? async () => {
+            throw new Error('registration refused');
           }
-        : Reflect.get(tasks, key),
+        : Reflect.get(workflows, key),
   });
-  const activate = async (tasks = f.app.ctx.tasks) =>
-    await createService(
-      new ResearchService(
-        f.app.ctx.state,
-        f.app.ctx.scope,
-        f.app.ctx.workflows,
-        f.app.ctx.paper,
-        f.app.ctx.reflections,
-        f.app.ctx.knowledge,
-        tasks,
-      ),
+  const activate = async (workflows = f.app.ctx.workflows) => {
+    const research = await createService(
+      new ResearchService(f.app.ctx.state, f.app.ctx.scope, workflows),
     );
-  await assert.rejects(activate(refusing), /binding refused/);
+    research.bindPaper(f.app.ctx.paper);
+    research.bindReflections(f.app.ctx.reflections);
+    research.bindKnowledge(f.app.ctx.knowledge);
+    research.bindTasks(f.app.ctx.tasks);
+    return research;
+  };
+  await assert.rejects(activate(refusing), /registration refused/);
   const restarted = await activate();
   try {
     assert.equal(
@@ -379,17 +362,6 @@ const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
   return task;
 };
 
-test('a version-6 cycle whose accepted code is all on main completes at reflection approval', async (t) => {
-  const f = await fixture(t);
-  const { published, advance } = await hosted(f, { unitIds: [] });
-  const done = await advance();
-  assert.equal(done.workflow.version, 6);
-  assert.equal(done.workflow.state, 'complete');
-  assert.deepEqual(done.integrations, []);
-  assert.deepEqual(published, []);
-  assert.equal((await digestOf(f, done)).digest.integration, null);
-});
-
 /**
  * Accepted Git work of an instance the 2026-09-22 retirement deleted: Code keeps the acceptance,
  * and only the retirement ledger still names the instance.
@@ -426,9 +398,11 @@ test('accepted code of a retired instance is history no cycle integrates', async
   const g = await fixture(t);
   const only = await hosted(g, { unitIds: [await retired(g)] });
   const done = await only.advance();
+  assert.equal(done.workflow.version, 6);
   assert.equal(done.workflow.state, 'complete');
   assert.deepEqual(done.integrations, []);
   assert.deepEqual(only.published, []);
+  assert.equal((await digestOf(g, done)).digest.integration, null);
 });
 
 test('accepted code main lacks injects one consolidation task marked to publish, and the cycle waits on it', async (t) => {
@@ -1336,24 +1310,6 @@ test('a plan that cannot be created rolls the whole advance back, and skip compl
   });
 });
 
-test('materialised work rolls back with the caller transaction', async (t) => {
-  const f = await fixture(t);
-  const { record, command } = await reflected(f, planned());
-  const before = await counts(f);
-  const input = command('create');
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.state.transaction(async (tx) => {
-        await f.research.advance(f.owner, input, tx);
-        throw new Error('caller rollback');
-      }),
-    /caller rollback/,
-  );
-  assert.deepEqual(await counts(f), before);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-  assert.ok((await f.research.advance(f.owner, input)).successorId);
-});
-
 test('a stop plan and a text change specification complete as before and ignore nextWave', async (t) => {
   const f = await fixture(t);
   const stop = planned({
@@ -1570,7 +1526,9 @@ test('a mixed workspace plan is atomic, replayable and uses legacy Git until hos
     /caller rollback/,
   );
   assert.deepEqual(await counts(f), before);
-  assert.equal((await f.research.get(f.owner, record.id)).successorId, null);
+  const rolledBack = await f.research.get(f.owner, record.id);
+  assert.equal(rolledBack.successorId, null);
+  assert.equal(rolledBack.workflow.state, 'reflecting');
   const done = await f.research.advance(f.owner, input);
   const successor = await f.research.get(f.owner, done.successorId!);
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
@@ -1624,39 +1582,18 @@ for (const firstCode of ['task', 'experiment'] as const)
     assert.ok((await f.research.advance(f.owner, input)).successorId);
   });
 
-test("a materialised hosted experiment derives its base from its task's reviewed acceptance", async (t) => {
+test('a materialised hosted experiment waits on its hosted task and pins no base before its acceptance', async (t) => {
   const f = await fixture(t, true);
   const source = gitSource(t);
   const main = source.commit({ 'README.md': 'Research harness\n' });
-  const { codeResearch: code, sessions, tasks, workflows, artifacts } = f.app.ctx;
-  const protocol = (code as CodeService).v2!;
+  const { codeResearch: code, tasks } = f.app.ctx;
   await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
-  const complete = async (operation: CodeStoreOperation) => {
-    for (let attempt = 0; operation.status === 'prepared' && attempt < 200; attempt++) {
-      operation = (
-        (await protocol.call(f.owner, `uploads/${operation.id}/complete`, {})) as {
-          operation: CodeStoreOperation;
-        }
-      ).operation;
-      if (operation.status === 'prepared') await delay(25);
-    }
-    assert.equal(operation.status, 'completed', JSON.stringify(operation));
-    return operation;
-  };
-  const initial = source.bundle(main);
-  const imported = await code.importRepository(f.owner, {
-    source: 'bundle',
-    tip: main,
-    bundle: { sha256: initial.sha256, bytes: initial.bytes },
-    requestId: f.id(),
-  });
-  await protocol.putPart(f.owner, imported.id, 0, initial.content);
-  await complete(imported);
+  await importBundle(code, f.owner, source.bundle(main), f.id());
   const { command } = await reflected(f, workspacePlan());
   const done = await f.research.advance(f.owner, command('create'));
   const successor = await f.research.get(f.owner, done.successorId!);
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
-  let task = await tasks.get(f.owner, ids.harness);
+  const task = await tasks.get(f.owner, ids.harness);
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
   assert.equal(task.workflow.version, 5);
   assert.equal(experiment.workflow.version, 8);
@@ -1664,194 +1601,15 @@ test("a materialised hosted experiment derives its base from its task's reviewed
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.equal((await code.unit(f.owner, experiment.id)).base, null);
 
-  const heartbeat = async (caller: Caller, runnerId: string) =>
-    sessions.heartbeatRunner(caller, {
-      runnerId,
-      machine: { hostname: runnerId, system: 'test', architecture: 'test' },
-      platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
-      capacity: 1,
-      capabilities: ['code.v2'],
-    });
-  await heartbeat(f.owner, 'producer');
-  const secret = `ms_${randomBytes(32).toString('base64url')}`;
-  const session = await sessions.offer(f.owner, {
-    instanceId: task.id,
-    expectedRevision: task.workflow.revision,
-    runnerId: 'producer',
-    requestId: f.id(),
-    secret,
-  });
-  const control = { sessionId: session.id, runnerId: 'producer', hostRef: 'producer-launch' };
-  const workspace: SessionWorkspace = {
-    repositoryId: 'fixture-repository',
-    workspaceId: task.id,
-    mode: 'persistent',
-    branch: `merv/work/${task.id}`,
-    baseOid: main,
-    headOid: main,
-    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-  };
-  await sessions.attach(f.owner, { ...control, workspace });
-  await f.app.ctx.domainEvents.drain();
-  const worker = await sessions.authenticate(secret);
-  const run = async <T>(
-    caller: Caller,
-    tool: string,
-    input: Data,
-    fn: (caller: Caller, input: Data) => Promise<T>,
-  ) => sessions.run(await sessions.prepare(caller, tool, input), fn);
-  const requested = await run(
-    worker,
-    'code.commit',
-    { expectedHead: main, message: 'Build harness', requestId: f.id() },
-    (caller, input) => code.commit(caller, input as unknown as Parameters<typeof code.commit>[1]),
+  // It waits on the task it was planned after, whose reviewed acceptance Code turns into its
+  // base: automatic-base 'one accepted commit becomes the base...' pins it from an acceptance,
+  // and runner-code-v2-integration accepts a hosted task's commit in Code end to end.
+  assert.deepEqual(
+    (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
+      (dependency) => dependency.id,
+    ),
+    [task.id],
   );
-  const queued = (await code.nextCommand(f.owner, control))!;
-  assert.equal(queued.id, requested.command.id);
-  const head = source.commit({ 'harness.ts': 'export const measured = 1;\n' });
-  const bundle = source.bundle(head, [main]);
-  const generation = (await code.unit(f.owner, task.id)).generation;
-  const upload = (
-    (await protocol.call(f.owner, 'uploads', {
-      ...control,
-      unitId: task.id,
-      generation,
-      leaseId: session.id,
-      expectedHead: main,
-      proposedHead: head,
-      treeOid: source.git('rev-parse', `${head}^{tree}`),
-      bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
-      kind: 'checkpoint',
-      commandId: queued.id,
-      requestId: queued.id,
-    })) as { operation: CodeStoreOperation }
-  ).operation;
-  await protocol.putPart(f.owner, upload.id, 0, bundle.content);
-  await complete(upload);
-  await code.completeCommand(f.owner, {
-    ...control,
-    commandId: queued.id,
-    receipt: {
-      commandId: queued.id,
-      repositoryId: workspace.repositoryId,
-      workspaceId: workspace.workspaceId,
-      baseOid: main,
-      parentOid: main,
-      headOid: head,
-      treeOid: source.git('rev-parse', `${head}^{tree}`),
-      stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 0 },
-    },
-  });
-  const evidence = await run(
-    worker,
-    'artifact.create',
-    { title: 'Harness evidence', content: 'The harness runs.' },
-    (caller, input) =>
-      artifacts.create(caller, input as unknown as Parameters<typeof artifacts.create>[1]),
-  );
-  task = await run(
-    worker,
-    'task.submit_delivery',
-    {
-      ...confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [evidence.id],
-        commandId: queued.id,
-      }),
-      expectedRevision: task.workflow.revision,
-      requestId: f.id(),
-    },
-    (caller, input) =>
-      tasks.submitDelivery(caller, input as unknown as Parameters<typeof tasks.submitDelivery>[1]),
-  );
-  await sessions.release(f.owner, { sessionId: session.id, runnerId: 'producer' });
-  await f.app.ctx.domainEvents.drain();
-  await complete(
-    (
-      (await protocol.call(f.owner, 'finalize', {
-        ...control,
-        unitId: task.id,
-        generation,
-        leaseId: session.id,
-        expectedHead: head,
-        proposedHead: head,
-        treeOid: source.git('rev-parse', `${head}^{tree}`),
-        bundle: null,
-        kind: 'final',
-      })) as { operation: CodeStoreOperation }
-    ).operation,
-  );
-  const issuedReviewer = await f.app.ctx.scope.issueActor(f.owner, {
-    name: 'Independent review machine',
-    role: 'operator',
-  });
-  const reviewRunner: Caller = {
-    projectId: f.owner.projectId,
-    actorId: issuedReviewer.actor.id,
-    credentialId: issuedReviewer.credential.id,
-  };
-  await heartbeat(reviewRunner, 'reviewer');
-  const reviewSecret = `ms_${randomBytes(32).toString('base64url')}`;
-  const reviewSession = await sessions.offer(reviewRunner, {
-    instanceId: task.id,
-    expectedRevision: task.workflow.revision,
-    runnerId: 'reviewer',
-    requestId: f.id(),
-    secret: reviewSecret,
-  });
-  await sessions.attach(reviewRunner, {
-    sessionId: reviewSession.id,
-    runnerId: 'reviewer',
-    hostRef: 'review-launch',
-    workspace: {
-      ...workspace,
-      workspaceId: reviewSession.id,
-      mode: 'ephemeral',
-      branch: null,
-      baseOid: head,
-      headOid: head,
-    },
-  });
-  const reviewer = await sessions.authenticate(reviewSecret);
-  const review = await f.app.ctx.reviews.get(f.owner, task.reviewId!);
-  await run(
-    reviewer,
-    'review.submit',
-    {
-      reviewId: review.id,
-      claimId: review.claimId!,
-      expectedRevision: task.workflow.revision,
-      verdict: 'pass',
-      notes: 'Verified the admitted harness commit.',
-      synopsis:
-        'The admitted harness was checked independently against the delivery and its checks.',
-      findings: review.criteria.map((_, i) => ({
-        criterionNumber: i + 1,
-        status: 'met',
-        evidenceIds: [evidence.id],
-        notes: 'Ran the harness.',
-      })),
-      requestId: f.id(),
-    },
-    (caller, input) => f.app.ctx.reviews.apply(caller, input as unknown as ReviewApplication),
-  );
-  const accepted = (await code.unit(f.owner, task.id)).acceptance!;
-  assert.equal(accepted.reference, head);
-  assert.equal(accepted.storage, 'code');
-  assert.ok(accepted.receipt);
-  await f.app.ctx.domainEvents.drain();
-  const planner = await sessions.offer(f.owner, {
-    instanceId: experiment.id,
-    expectedRevision: (await workflows.get(f.owner, experiment.id)).revision,
-    runnerId: 'producer',
-    secret: `ms_${randomBytes(32).toString('base64url')}`,
-    requestId: f.id(),
-  });
-  const pin = (await code.unit(f.owner, experiment.id)).base!;
-  assert.equal(pin.reference, accepted.reference);
-  assert.notEqual(pin.reference, main);
-  assert.deepEqual(pin.sources, [{ unitId: task.id, acceptanceHash: accepted.hash }]);
-  await sessions.release(f.owner, { sessionId: planner.id, runnerId: 'producer' });
 });
 
 test('an automatic v2 wave exposes Code absence and rolls back before retry', async (t) => {

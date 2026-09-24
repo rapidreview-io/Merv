@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { digest, type Migration, type State } from '@merv/contracts';
 import { StateStore } from '@merv/state/base';
 import { createApp } from './fixtures/app.js';
-import { importLegacyFoundation } from '../src/legacy-import.js';
+import { initializeLegacyFoundationImports } from '../src/legacy-import.js';
 import { initializeLegacyHistory } from '../src/legacy-history.js';
 
 interface Row {
@@ -53,8 +53,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   } finally {
     StateStore.prototype.migrate = original;
   }
-  // The legacy importers migrate outside a normal boot, so they are driven far enough to
-  // register and then abandoned. Refusing to open a database keeps this a census, not an import.
+  // The legacy tables migrate outside a normal boot, so they are driven far enough to register
+  // and then abandoned. Refusing to open a database keeps this a census, not an import.
   const abandon = Symbol('census');
   const recorder = {
     async migrate(component: string, migrations: Migration[]) {
@@ -63,19 +63,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
     },
   } as unknown as State;
   for (const start of [
-    () =>
-      importLegacyFoundation(
-        { state: recorder, sourceBlobs: {} as never, destinationBlobs: {} as never },
-        {
-          sourceId: 'census',
-          schemaVersion: 81,
-          issuer: 'https://census.supabase.co/auth/v1',
-          projects: [],
-          memberships: [],
-          artifacts: [],
-          claims: [],
-        },
-      ),
+    () => initializeLegacyFoundationImports(recorder),
     () => initializeLegacyHistory(recorder),
   ]) {
     try {
@@ -88,7 +76,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   const hashes = new Map<string, string>();
   for (const { component, migration } of seen) {
     const key = `${component}@${migration.version}`;
-    // The legacy importers are recorded without reaching State, so check their shape here too.
+    // The legacy migrations are recorded without reaching State, so check their shape here too.
     assert.deepEqual(
       Object.keys(migration).sort(),
       ['sql', 'version'],

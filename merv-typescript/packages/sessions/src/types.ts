@@ -33,13 +33,13 @@ import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
-} from './managed.js';
+} from './managed-types.js';
 export type {
   ManagedEnrollmentInput,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
-} from './managed.js';
+} from './managed-types.js';
 export type {
   AgentObservation,
   AgentSummary,

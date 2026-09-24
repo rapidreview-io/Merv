@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, type Json } from '@merv/contracts';
+import { check, idSchema, MervError, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import {
   initializeLegacyHistory,
@@ -31,7 +31,7 @@ const request = z.discriminatedUnion('action', [
 /** Optional migration reader; no new domain capability, agent tool, or live workflow adapter. */
 export const legacyHistoryUiPlugin = {
   name: 'merv-legacy-history-ui',
-  Config: z.object({ sourceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/) }).strict(),
+  Config: z.object({ sourceId: idSchema }).strict(),
   inject: ['state', 'scope', 'ui'],
   async apply(ctx: Context, config: { sourceId: string }) {
     const state = ctx.state;

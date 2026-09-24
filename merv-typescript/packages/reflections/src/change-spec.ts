@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, ordered, parsed, visible } from '@merv/contracts';
+import { check, folded, idSchema, ordered, parsed, visible } from '@merv/contracts';
 import type { ChangeSpec } from './types.js';
 
 /**
@@ -24,7 +24,7 @@ const line = (max: number) =>
 const text = (max: number) => z.string().min(1).max(max).refine(visible);
 const reason = text(1000);
 const key = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
-const workflowId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
+const workflowId = idSchema;
 const dependsOn = z.array(key).max(CHANGE_SPEC_LIMITS.items);
 
 const task = z
@@ -91,10 +91,9 @@ const changeSpecSchema = z
   })
   .strict();
 
-// Reflections cannot import Tasks, so its sense of two checks being the same one is repeated
-// here. A pair Tasks would refuse is refused while the author can still reword it, not after
-// the plan is approved and can only be skipped.
-const folded = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
+// Two checks are the same one by folded(), which Tasks uses too. A pair Tasks would refuse is
+// refused while the author can still reword it, not after the plan is approved and can only be
+// skipped.
 
 const refuse: (condition: unknown, message: string) => asserts condition = (condition, message) =>
   check(condition, 'invalid_change_spec', message);

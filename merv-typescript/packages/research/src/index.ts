@@ -3,13 +3,13 @@ import {
   check,
   clip,
   createService,
-  digest,
   inTransaction,
   mapAsync,
   MervError,
   now,
   ordered,
   recorded,
+  childRequest,
   replayed,
   visible,
   type Artifact,
@@ -132,8 +132,6 @@ const ENDING_REASON_CHARS = 2000;
 const DIGEST_LIST_LIMIT = 100;
 /** How far research.lineage walks back before it says the chain goes on. */
 const LINEAGE_LIMIT = 20;
-/** Experiments counts these states as no longer active; the plan's experiments are sized against the rest. */
-const finishedExperiment = new Set(['complete', 'abandoned', 'failed']);
 const instructions: Record<Stage, string> = {
   defining:
     'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
@@ -192,13 +190,6 @@ export class ResearchService implements Research {
     private state: State,
     private scope: Scope,
     private workflows: Workflows,
-    paper?: Paper,
-    reflections?: Reflections,
-    knowledge?: Knowledge,
-    tasks?: Tasks,
-    experiments?: Experiments,
-    artifacts?: Artifacts,
-    code?: ResearchCode,
   ) {
     this.initialize = async () => {
       await state.migrate('research', [
@@ -238,19 +229,8 @@ export class ResearchService implements Research {
           sql: postgresMigrations[7],
         },
       ]);
-      try {
-        this.handle = await workflows.register(definition, this.policy());
-        if (paper) this.bindPaper(paper);
-        if (reflections) this.bindReflections(reflections);
-        if (knowledge) this.bindKnowledge(knowledge);
-        if (tasks) this.bindTasks(tasks);
-        if (experiments) this.bindExperiments(experiments);
-        if (artifacts) this.bindArtifacts(artifacts);
-        if (code) this.bindCode(code);
-      } catch (error) {
-        this.handle?.dispose();
-        throw error;
-      }
+      // Providers bind later, each as it arrives; see researchPlugin.
+      this.handle = await workflows.register(definition, this.policy());
     };
   }
 
@@ -543,7 +523,7 @@ export class ResearchService implements Research {
       {
         workflow: 'research',
         version: 6,
-        requestId: this.request(caller, input.requestId, step),
+        requestId: childRequest(caller, 'research', step, input.requestId),
         dependsOn: input.dependsOn,
         data: { name: input.name },
       },
@@ -810,18 +790,16 @@ export class ResearchService implements Research {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
     if (planned.length) {
-      const existing = await this.use('experiments', checks, (service) => service.list(caller, tx));
-      const taken = new Set(existing.map((experiment) => experiment.name.toLowerCase()));
+      const { names, active } = await this.use('experiments', checks, (service) =>
+        service.occupancy(caller, tx),
+      );
       for (const name of planned)
         check(
-          !taken.has(name.toLowerCase()),
+          !names.includes(name.toLowerCase()),
           'experiment_name_conflict',
           `An experiment already uses the planned name ${name}. Complete this cycle with nextWave: "skip" and create the work under another name`,
           409,
         );
-      const active = existing.filter(
-        (experiment) => !finishedExperiment.has(experiment.workflow.state),
-      ).length;
       check(
         active + planned.length <= 7,
         'experiment_limit',
@@ -885,7 +863,7 @@ export class ResearchService implements Research {
       // this line is what lets a reader of the record trace it back to the reviewed plan.
       const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
-      const itemRequestId = this.request(caller, requestId, `item:${item.key}`);
+      const itemRequestId = childRequest(caller, 'research', `item:${item.key}`, requestId);
       const workspace = item.workspace.provider === 'code' ? ('git' as const) : undefined;
       const work =
         item.kind === 'task'
@@ -966,7 +944,7 @@ export class ResearchService implements Research {
       service.create(
         {
           projectId: caller.projectId,
-          requestId: this.request(caller, requestId, step),
+          requestId: childRequest(caller, 'research', step, requestId),
           title: `${clip(record.name, 180)}: consolidation`,
           goal: `${integrationGoal}${origin(approved, pinned('report', approved.report), pinned('change specification', approved.changeSpec))}`,
           checks: integrationChecks,
@@ -1301,7 +1279,7 @@ export class ResearchService implements Research {
             expectedRevision: input.expectedRevision,
             dependsOn: input.dependsOn.filter((id) => !current.includes(id)),
             drop: current.filter((id) => !input.dependsOn.includes(id)),
-            requestId: this.request(caller, input.requestId, 'replan'),
+            requestId: childRequest(caller, 'research', 'replan', input.requestId),
           },
           tx,
         );
@@ -1338,7 +1316,7 @@ export class ResearchService implements Research {
             input: { outcome: input.outcome, reason: input.reason },
             // Kept on the cycle, clipped, so a digest composed later can still say why it ended.
             data: { reason: clip(input.reason, ENDING_REASON_CHARS) },
-            requestId: this.request(caller, input.requestId, 'end'),
+            requestId: childRequest(caller, 'research', 'end', input.requestId),
           },
           tx,
         );
@@ -1429,7 +1407,7 @@ export class ResearchService implements Research {
                   ...(record.automation ? { requirePlan: true } : {}),
                   // Absent rather than null, so a cycle that follows nothing replays as before.
                   ...(carried ? { previousCycleDigestId: carried.id } : {}),
-                  requestId: this.request(caller, input.requestId, 'reflection'),
+                  requestId: childRequest(caller, 'research', 'reflection', input.requestId),
                 },
                 tx,
               ),
@@ -1457,7 +1435,7 @@ export class ResearchService implements Research {
             expectedRevision: input.expectedRevision,
             action: move === 'inject' ? 'advance' : move,
             input: choice,
-            requestId: this.request(caller, input.requestId, 'advance'),
+            requestId: childRequest(caller, 'research', 'advance', input.requestId),
           },
           tx,
         );
@@ -1479,7 +1457,7 @@ export class ResearchService implements Research {
               instanceId: record.id,
               expectedRevision: moved.revision,
               dependsOn: childIds,
-              requestId: this.request(caller, input.requestId, 'children'),
+              requestId: childRequest(caller, 'research', 'children', input.requestId),
             },
             tx,
           );
@@ -1803,9 +1781,6 @@ export class ResearchService implements Research {
   private children(record: ResearchRecord): string[] {
     return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
   }
-  private request(caller: Caller, requestId: string, step: string) {
-    return `research:${step}:${digest({ actorId: caller.actorId, requestId })}`;
-  }
   private async command<T>(
     caller: Caller,
     operation: string,
@@ -1835,6 +1810,7 @@ export const researchPlugin = {
       ctx.inject(['domainEvents'], (ctx) => {
         ctx.effect(async () => await service.bindAutomatic(ctx.domainEvents));
       });
+      // Each provider is optional: bound while it is loaded, and a bound one may unblock a cycle.
       ctx.inject(['paper'], (ctx) => {
         ctx.effect(async function* () {
           yield service.bindPaper(ctx.paper);

@@ -1,12 +1,12 @@
-import type { WorkflowExecutionBinding, WorkflowExecutionPolicy } from '@merv/contracts';
+import {
+  grant,
+  reference,
+  target,
+  type WorkflowExecutionBinding,
+  type WorkflowExecutionPolicy,
+} from '@merv/contracts';
 
 type Bindings = Record<string, WorkflowExecutionBinding>;
-const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-const grant = (name: string, ...alternatives: Bindings[]) => ({ name, alternatives });
 
 /** Where a task version's private Git checkout starts, or 'none' for the original scratch task. */
 export type TaskWorkspace = 'none' | 'central' | 'reference' | 'code' | 'resolution';

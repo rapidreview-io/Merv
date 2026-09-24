@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, MervError } from '@merv/contracts';
+import { canonical, check, digest, MervError } from '@merv/contracts';
 import type {
   Data,
   Sql,
@@ -14,7 +14,7 @@ import type {
   WorkflowExecutionReferences,
   WorkflowPolicy,
 } from '@merv/contracts';
-import { canonical, fingerprint } from './definition.js';
+import { toolName } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
 
 const field = z
@@ -82,7 +82,7 @@ const policySchema = z
       .array(
         z
           .object({
-            name: z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/),
+            name: z.string().regex(toolName),
             alternatives: z.array(z.record(field, binding)).min(1).max(32),
           })
           .strict(),
@@ -178,7 +178,7 @@ export async function persistExecution(
 }
 
 export function executionFingerprint(policy: WorkflowExecutionPolicy | null): string {
-  return fingerprint({ formatVersion: 1, policy });
+  return digest({ formatVersion: 1, policy });
 }
 
 export async function executionReferences(
@@ -216,8 +216,8 @@ export function admitDispatch(
 ): WorkflowDispatchAdmission {
   const grant = execution.policy.tools.find((grant) => grant.name === tool);
   check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
-  // A worker's tool input is bounded like anyone's request body, not like policy metadata.
-  const original = dispatchInput(input);
+  // Detached and bounded by dispatchInput() where the request entered.
+  const original = input;
   check(
     original && typeof original === 'object' && !Array.isArray(original),
     'invalid_input',
