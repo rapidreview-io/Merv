@@ -1,0 +1,22 @@
+{
+  "name": "merv-fleet-codex-20260923",
+  "account_id": "ac27350cd4a42855004ab960c906b6d5",
+  "main": "deploy/cloudflare-sandbox/worker/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": { "SHAPE": "standard-1" },
+  "containers": [
+    {
+      "name": "merv-fleet-codex-20260923-sandboxcontainer",
+      "class_name": "SandboxContainer",
+      "image": "",
+      "instance_type": "standard-1",
+      "max_instances": 50,
+      "authorized_keys": [],
+      "trusted_user_ca_keys": [],
+      "ssh": { "enabled": false, "port": 2223 }
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "SANDBOX", "class_name": "SandboxContainer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SandboxContainer"] }]
+}

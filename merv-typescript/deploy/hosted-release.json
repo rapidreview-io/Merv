@@ -1,0 +1,51 @@
+{
+  "canary": {
+    "projectId": "project_3b538d73b68d4306937c226e742f61c1",
+    "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
+  },
+  "base": {
+    "sourceCommit": "c04b88db1875c22c7a7d720da21dc3d58ee6c43c",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:1d823e64c1a8927c9d30f1bdcda59b3e0e30fc935c490aabef75403768acd8bb",
+    "localId": "sha256:0abdc44c5d9711dbbbe91b37e570785730c056d9e48d3464e91a6b9398d0380e"
+  },
+  "current": {
+    "sourceCommit": "c04b88db1875c22c7a7d720da21dc3d58ee6c43c",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:1d823e64c1a8927c9d30f1bdcda59b3e0e30fc935c490aabef75403768acd8bb",
+    "localId": "sha256:0abdc44c5d9711dbbbe91b37e570785730c056d9e48d3464e91a6b9398d0380e",
+    "releaseId": "rt1_ae4b27ada35598ec5f4fa688373de3a45fe6c0c9eaf53db13597872ef1d5b608"
+  },
+  "inputs": [
+    "packages/code/src/driver/git.ts",
+    "packages/code/src/driver/index.ts",
+    "packages/code/src/files.ts",
+    "packages/code/src/merge-settings.ts",
+    "packages/contracts/src/async.ts",
+    "packages/contracts/src/code-github.ts",
+    "packages/contracts/src/code-publications.ts",
+    "packages/contracts/src/code-store.ts",
+    "packages/contracts/src/code-transport.ts",
+    "packages/contracts/src/code.ts",
+    "packages/contracts/src/index.ts",
+    "packages/contracts/src/order.ts",
+    "packages/contracts/src/paper-edit.ts",
+    "packages/contracts/src/review-history.ts",
+    "packages/contracts/src/schemas.ts",
+    "packages/contracts/src/session-inputs.ts",
+    "packages/contracts/src/text.ts",
+    "packages/contracts/src/ui-manifest.ts",
+    "packages/contracts/src/usage-report.ts",
+    "packages/contracts/src/workspace-driver.ts",
+    "packages/contracts/src/workspace.ts",
+    "packages/pi/src/checkpoint.ts",
+    "packages/pi/src/tool-names.ts",
+    "packages/pi/src/worker-main.ts",
+    "packages/pi/src/worker.ts",
+    "packages/runner/src/client.ts",
+    "packages/runner/src/index.ts",
+    "packages/runner/src/ledger.ts",
+    "packages/runner/src/process-host.ts",
+    "packages/runner/src/profiles.ts",
+    "packages/runner/src/workspaces.ts",
+    "scripts/hosted-runner/smoke-supervisor.ts"
+  ]
+}
