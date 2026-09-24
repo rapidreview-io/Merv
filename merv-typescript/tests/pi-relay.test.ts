@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { PiModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
+import {
+  PiModelRelay,
+  type PiRelayConfig,
+  type PiRelayFailureRecord,
+  type PiRelayGrant,
+} from '../packages/pi/src/relay.js';
 
 const token = `pir_${'a'.repeat(43)}`;
 const request = {
@@ -522,6 +527,115 @@ test('does not expose provider errors or upstream headers', async (t) => {
   assert.equal(response.status, 502);
   assert.equal(response.headers.get('x-private'), null);
   assert.doesNotMatch(await response.text(), /private|upstream error/);
+});
+
+test('failure diagnostics are bounded metadata only, after admission', async (t) => {
+  const records: PiRelayFailureRecord[] = [];
+  const secret = 'private-provider-prompt-token-header';
+  const cases: {
+    name: string;
+    fetchImpl: typeof fetch;
+    expectedStatus: number;
+    expectedPhase: PiRelayFailureRecord['phase'];
+    upstreamHttpStatus?: number;
+  }[] = [
+    {
+      name: 'non-OK upstream',
+      fetchImpl: async () =>
+        new Response(secret, {
+          status: 401,
+          headers: { 'content-type': 'application/json', 'x-private': secret },
+        }),
+      expectedStatus: 502,
+      expectedPhase: 'upstream',
+      upstreamHttpStatus: 401,
+    },
+    {
+      name: 'SSE error frame',
+      fetchImpl: async () => eventStream(`event: error\ndata: {"message":"${secret}"}\n\n`),
+      expectedStatus: 502,
+      expectedPhase: 'stream',
+      upstreamHttpStatus: 200,
+    },
+    {
+      name: 'network exception',
+      fetchImpl: async () => {
+        throw new Error(secret);
+      },
+      expectedStatus: 502,
+      expectedPhase: 'upstream',
+    },
+    {
+      name: 'idle timeout',
+      fetchImpl: async () =>
+        new Response(new ReadableStream(), { headers: { 'content-type': 'text/event-stream' } }),
+      expectedStatus: 504,
+      expectedPhase: 'stream',
+      upstreamHttpStatus: 200,
+    },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, async (context) => {
+      const f = await fixture({
+        fetchImpl: scenario.fetchImpl,
+        idleTimeoutMs: 25,
+        onFailure: (record) => {
+          records.push(record);
+        },
+      });
+      context.after(() => f.close());
+      const unauthorized = await send(f, request, {
+        headers: { authorization: 'Bearer rejected', 'content-type': 'application/json' },
+      });
+      assert.equal(unauthorized.status, 401);
+      assert.equal(records.length, 0);
+      const response = await send(f);
+      assert.equal(response.status, scenario.expectedStatus);
+      assert.doesNotMatch(await response.text(), /private/);
+      assert.equal(records.length, 1);
+      const record = records.pop()!;
+      assert.deepEqual(
+        Object.keys(record).sort(),
+        [
+          'code',
+          'elapsedMs',
+          'event',
+          'phase',
+          ...(scenario.upstreamHttpStatus === undefined ? [] : ['upstreamHttpStatus']),
+        ].sort(),
+      );
+      assert.equal(record.event, 'pi_relay_failure');
+      assert.equal(record.phase, scenario.expectedPhase);
+      assert.equal(
+        record.code,
+        scenario.expectedStatus === 504 ? 'relay_timeout' : 'upstream_failed',
+      );
+      assert.equal(record.upstreamHttpStatus, scenario.upstreamHttpStatus);
+      assert.ok(
+        Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0 && record.elapsedMs <= 900_000,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(record),
+        /private|grant-1|command-1|conversation-1|runtime-1|pir_/,
+      );
+    });
+  }
+});
+
+test('throwing diagnostics callback does not change the public error or hold relay admission', async (t) => {
+  const f = await fixture({
+    fetchImpl: async () => new Response('private failure', { status: 400 }),
+    onFailure: () => {
+      throw new Error('private callback failure');
+    },
+  });
+  t.after(() => f.close());
+  const first = await send(f);
+  assert.equal(first.status, 502);
+  assert.deepEqual(JSON.parse(await first.text()), { error: 'upstream_failed' });
+  const second = await send(f);
+  assert.equal(second.status, 502);
+  assert.deepEqual(JSON.parse(await second.text()), { error: 'upstream_failed' });
 });
 
 test('streams complete SSE frames incrementally but sanitizes upstream SSE errors', async (t) => {

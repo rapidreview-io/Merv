@@ -223,6 +223,9 @@ export const piApiPlugin = {
         validate: (grant) => ctx.pi.validateModel(grant),
       },
       totalTimeoutMs: ctx.pi.config.turnTimeoutSeconds * 1000,
+      onFailure: (record) => {
+        process.stderr.write(`${JSON.stringify(record)}\n`);
+      },
     });
     ctx.effect(() => () => {
       http.close();

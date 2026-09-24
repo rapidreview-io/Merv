@@ -1,5 +1,31 @@
 # Read-only Pi pilot — 2026-09-24
 
+## Published production release — 2026-09-24 16:26 UTC
+
+Main14656e830 is pushed and deployed as image8ef2027551fd, release
+`20260924T161517Z-14656e83-56e6f2e1d51c`. Its health,60/60 plugins, public
+UI/assets and authentication/origin checks pass. This includes the UI accumulator
+simplification. Hosted8438/application12 and Sandboxes32025 remain unchanged,
+with diagnostic SSH disabled and temporary administrator keys absent.
+
+The first new-release browser turn reached working, then reported
+`worker_interrupted` without assistant output. Its cause is not yet established;
+this regression is **not accepted**, and health checks are not functional proof.
+The failed evidence is retained, its temporary actor credential revoked, and all
+allocations/native instances drained. The USD100 all-time cap, accounting and
+concurrency limits remain unchanged. Four CI fixture failures are corrected in
+aa065749a with focused tests passing; the new broad CI result is pending.
+
+The production consumer is now finite30days, expiring2026-10-24T16:14:06Z;
+renew by2026-10-17T16:14:06Z through the existing scoped path. There is no
+automatic renewal. Superseded-grant cleanup is pending. Provider operator
+credentials have their separate September30 expiry; this consumer lifetime does
+not extend them. The pilot project still has no human membership, so normal
+human onboarding remains unverified. See [Pi operations](../deploy/PI_OPERATIONS.md).
+
+The following entries are historical; their earlier image/expiry statements do
+not describe this new release.
+
 ## Main publication — 2026-09-24 16:09 UTC
 
 The approved Fleet/Pi changes and post-verification UI simplification are being

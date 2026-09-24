@@ -1,5 +1,18 @@
 # Production releases
 
+## Published Fleet/Pi release, 2026-09-24 16:17 UTC
+
+Release `20260924T161517Z-14656e83-56e6f2e1d51c` is built from published
+main14656e830 and runs image
+`sha256:8ef2027551fd270ba6a02b7e18e6107e432c254c9d2304bf6ea8cd48c55e987a`.
+All60 plugins, VM health/UI/auth/origin checks, public health/UI and both assets
+pass. JavaScript is `/ui/assets/index-zkqdI0I9.js`; CSS is
+`/ui/assets/index-DesGAEoi.css`. The retained rollback image is
+`sha256:51bcfd0576003c81ba7d6ec44edbe23e75f2c91f2e601f8899b3495a7ac528e6`.
+The first new-release Pi turn interrupted; functional regression acceptance is
+pending. This release record does not replace the earlier bounded pilot evidence.
+See `docs/PI_IMPLEMENTATION_STATUS.md` for current acceptance and access limits.
+
 Each row is one immutable image built on the VM by `node deploy/release.mjs` from an allowlisted archive of the working tree (the git revision alone does not identify a release in this checkout; the release id carries the content hash). Evidence per release lives under `/opt/merv-typescript/releases/<id>/` on the VM (`source-manifest.json`, `build.log`, `deploy.log`, `staging-refresh-acceptance.json`) and the rollback record under `/var/backups/merv/typescript-staging-refresh/<id>/`.
 
 Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.shell` (401), approved-origin `/auth/config` (200), unapproved-origin tool call (403); then public HTTPS `/health` and `/ui/`; then each served asset.

@@ -6,6 +6,29 @@ import { piRelayGrantSchema, piResponsesSchema, validPiPayload } from './relay-s
 
 export type { PiRelayGrant } from './types.js';
 
+const failureCodes = [
+  'disconnected',
+  'grant_forbidden',
+  'invalid_json',
+  'invalid_payload',
+  'relay_busy',
+  'relay_timeout',
+  'relay_unavailable',
+  'request_aborted',
+  'request_too_large',
+  'response_too_large',
+  'unsupported_media_type',
+  'upstream_failed',
+] as const;
+
+export interface PiRelayFailureRecord {
+  event: 'pi_relay_failure';
+  phase: 'request' | 'upstream' | 'stream';
+  code: (typeof failureCodes)[number];
+  elapsedMs: number;
+  upstreamHttpStatus?: number;
+}
+
 export interface PiRelayConfig {
   enabled?: boolean;
   model: string;
@@ -23,6 +46,7 @@ export interface PiRelayConfig {
   maxConcurrent?: number;
   maxRequestsPerGrant?: number;
   maxGrantEntries?: number;
+  onFailure?: (record: PiRelayFailureRecord) => void | Promise<void>;
 }
 
 class RelayFailure extends Error {
@@ -189,6 +213,9 @@ export class PiModelRelay {
     let fence: NodeJS.Timeout | undefined;
     let admittedUser: string | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let admittedAt = 0;
+    let phase: PiRelayFailureRecord['phase'] = 'request';
+    let upstreamHttpStatus: number | undefined;
     try {
       const authority = this.config.authority;
       let grant: PiRelayGrant;
@@ -214,6 +241,7 @@ export class PiModelRelay {
       if (this.users.has(grant.userId)) reject(429, 'relay_busy');
       this.users.add(grant.userId);
       admittedUser = grant.userId;
+      admittedAt = Date.now();
       const raw = await interruptible(
         readRequest(req, this.options.maxRequestBytes, signal),
         signal,
@@ -228,6 +256,7 @@ export class PiModelRelay {
         !validPiPayload(request, grant.toolNames)
       )
         reject(400, 'invalid_payload');
+      phase = 'upstream';
       const key = await interruptible(
         Promise.resolve().then(() => this.config.providerKey()),
         signal,
@@ -262,6 +291,8 @@ export class PiModelRelay {
         }),
         signal,
       );
+      if (Number.isInteger(upstream.status) && upstream.status >= 100 && upstream.status <= 599)
+        upstreamHttpStatus = upstream.status;
       if (
         !upstream.ok ||
         !upstream.body ||
@@ -269,6 +300,7 @@ export class PiModelRelay {
       )
         reject(502, 'upstream_failed');
       await validate();
+      phase = 'stream';
       reader = upstream.body!.getReader();
       const startStream = () => {
         if (!res.headersSent)
@@ -329,6 +361,20 @@ export class PiModelRelay {
     } catch (error) {
       const failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
+      if (admittedUser && this.config.onFailure) {
+        const code =
+          failureCodes.find((candidate) => candidate === failure.code) ?? 'upstream_failed';
+        const record: PiRelayFailureRecord = {
+          event: 'pi_relay_failure',
+          phase,
+          code,
+          elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
+          ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
+        };
+        try {
+          void Promise.resolve(this.config.onFailure(record)).catch(() => {});
+        } catch {}
+      }
       if (failure.status !== 499 && !res.destroyed) {
         if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');
         else this.error(res, failure.status, failure.code);
