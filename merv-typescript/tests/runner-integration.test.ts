@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   mkdirSync,
   mkdtempSync,
@@ -550,7 +550,9 @@ test(
       capabilities: [],
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {});
+    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
+      workerNonce: randomBytes(32).toString('hex'),
+    });
     process.env[f.credentialEnv] = control.controlToken;
     const releases: unknown[] = [];
     let dropFirstAcknowledgement = true;

@@ -385,8 +385,6 @@ test('retiring the versions that can no longer start deletes their records and n
   }
   expected.session_managed_runners = [];
   const after = await snapshot(client);
-  // sessions@7, rewound with the retirement, returns empty on this boot.
-  expected.session_managed_runners = [];
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
 

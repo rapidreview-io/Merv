@@ -392,16 +392,15 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
     await client.query('DROP TABLE session_managed_runners');
-    await client.query("DELETE FROM component_migrations WHERE component='sessions' AND version=7");
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='sessions' AND version IN (7,8)",
+    );
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)
         .join(' OR ')}`,
     );
     await client.query('DROP TABLE wf_retired_instances');
-    // sessions@7 (managed runners) came after the retirement; rewinding sessions@6 undoes it too.
-    await client.query("DELETE FROM component_migrations WHERE component='sessions' AND version=7");
-    await client.query('DROP TABLE session_managed_runners');
     for (const version of [1, 2] as const) {
       await client.query(consolidationMigrations[version]);
       await insert(client, 'component_migrations', {
