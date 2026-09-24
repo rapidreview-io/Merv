@@ -5,7 +5,7 @@ import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
 import { UiRegistry } from '@merv/ui';
-import { FleetService, type FleetOwner } from '../packages/fleet/src/index.js';
+import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -15,6 +15,14 @@ function deferred<T>() {
     resolve = yes;
   });
   return { promise, resolve };
+}
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function within(ms: number, ok: () => boolean | Promise<boolean>) {
+  const end = Date.now() + ms;
+  while (!(await ok())) {
+    assert.ok(Date.now() < end, `not within ${ms} ms`);
+    await sleep(5);
+  }
 }
 
 class FakeRuntimes implements SandboxRuntimes {
@@ -30,6 +38,7 @@ class FakeRuntimes implements SandboxRuntimes {
   readonly acknowledgements: string[] = [];
   readonly stopped: string[] = [];
   readonly renewed: string[] = [];
+  readonly inspected: string[] = [];
   failCreateOnce = false;
   createError?: Error;
   inspectError?: Error;
@@ -66,6 +75,7 @@ class FakeRuntimes implements SandboxRuntimes {
     return this.copy(handle);
   }
   async inspect(_projectId: string, current: SandboxRuntimeHandle) {
+    this.inspected.push(current.sandboxId);
     if (this.inspectError) throw this.inspectError;
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
@@ -141,7 +151,7 @@ class FakeRuntimes implements SandboxRuntimes {
   }
 }
 
-async function fixture(t: TestContext, limits = { globalLimit: 2, projectLimit: 1 }) {
+async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, projectLimit: 1 }) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const admin = await scope.bootstrap({ projectName: 'Fleet', actorName: 'Operator' });
@@ -181,6 +191,7 @@ async function fixture(t: TestContext, limits = { globalLimit: 2, projectLimit: 
     caller,
     runtimes,
     fleet,
+    owner,
     unregister,
     advance: (milliseconds: number) => {
       now += milliseconds;
@@ -651,4 +662,104 @@ test('drain waits for owner completion and close leaves pending delete for a suc
   await successor.tick();
   assert.equal((await successor.inspect(f.caller, allocation.id)).phase, 'released');
   await successor.close();
+});
+
+test('a started Fleet acts on a request at once, watches start-up often, then slows', async (t) => {
+  // A one-second interval checks start-up every 200 ms; the fake clock never moves.
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2, pollIntervalMs: 1000 });
+  f.fleet.registerOwner('steady', {
+    valid: async () => true,
+    bootstrap: async () => 'stable-bootstrap',
+    observe: async () => 'running',
+  });
+  await f.fleet.request(f.caller, { requestId: 'steady', owner: { kind: 'steady', id: 'x' } });
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  let reads = 0;
+  const read = f.state.read.bind(f.state);
+  f.state.read = ((fn) => (reads++, read(fn))) as typeof f.state.read;
+  const inspected = (id: string) => f.runtimes.inspected.filter((item) => item === id).length;
+  f.setObservation('starting');
+  f.fleet.start();
+  const allocation = await f.fleet.request(f.caller, input('kicked'));
+  await within(300, () => f.runtimes.createKeys.length === 2);
+  const phase = async () => (await f.fleet.inspect(f.caller, allocation.id)).phase;
+  await within(1000, async () => (await phase()) === 'starting');
+  const [running, starting] = [inspected('sbx_1'), inspected('sbx_2')];
+  await sleep(700);
+  assert.ok(inspected('sbx_2') - starting >= 2, 'start-up is checked more often than the interval');
+  assert.ok(inspected('sbx_1') - running <= 1, 'a running machine waits for the interval');
+  f.setObservation('running');
+  await within(1000, async () => (await phase()) === 'running');
+  await sleep(450);
+  const before = reads;
+  await sleep(800);
+  // Each pass reads the allocations twice: once all are running, only the interval passes.
+  assert.ok(reads - before <= 2, 'Fleet slows down once nothing is starting or stopping');
+});
+
+test('a kick from inside a transaction runs outside it', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 1, pollIntervalMs: 60_000 });
+  f.setObservation('starting');
+  const { id } = await f.fleet.request(f.caller, input('starting'));
+  await f.fleet.tick();
+  f.fleet.kick();
+  await sleep(50);
+  assert.deepEqual(f.runtimes.launchKeys, [], 'an unstarted Fleet does nothing on its own');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, id)).phase, 'starting');
+  f.fleet.start();
+  f.setObservation('finished');
+  await f.state.transaction(async () => f.fleet.kick());
+  await within(300, () => f.runtimes.stopped.includes('sbx_1'));
+});
+
+test('a request made inside a transaction gets its machine once that commits', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2, pollIntervalMs: 60_000 });
+  f.fleet.start();
+  await f.fleet.request(f.caller, input('before-first-pass'));
+  await sleep(100);
+  assert.deepEqual(f.runtimes.createKeys, [], 'kicks wait for the first full pass');
+  await f.fleet.tick();
+  await f.state.transaction(async (tx) => {
+    await f.fleet.request(f.caller, input('in-transaction'), tx);
+    await sleep(50);
+  });
+  await within(300, () => f.runtimes.createKeys.length === 2);
+});
+
+for (const how of ['cancel', 'cancelOwned'] as const)
+  test(`${how} stops a running machine at once`, async (t) => {
+    const f = await fixture(t, { globalLimit: 2, projectLimit: 1, pollIntervalMs: 60_000 });
+    const { id } = await f.fleet.request(f.caller, input(how));
+    for (const _ of [1, 2, 3]) await f.fleet.tick();
+    f.fleet.start();
+    await (how === 'cancel' ? f.fleet.cancel(f.caller, id) : f.fleet.cancelOwned(f.owner, id));
+    await within(300, () => f.runtimes.stopped.includes('sbx_1'));
+  });
+
+test('a new machine whose launch is refused is retried after a second; an older one backs off', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const launches = (id: string) => f.runtimes.launchKeys.filter((key) => key.startsWith(id)).length;
+  const fresh = await f.fleet.request(f.caller, input('fresh'));
+  await f.fleet.tick();
+  f.runtimes.failLaunchOnce = true;
+  await f.fleet.tick();
+  const refused = await f.fleet.inspect(f.caller, fresh.id);
+  assert.deepEqual([refused.phase, refused.failures], ['uncertain', 0]);
+  f.advance(1000);
+  await f.fleet.tick();
+  assert.equal(launches(fresh.id), 2);
+  assert.equal((await f.fleet.inspect(f.caller, fresh.id)).phase, 'starting');
+  const old = await f.fleet.request(f.caller, input('old'));
+  await f.fleet.tick();
+  f.advance(61_000);
+  f.runtimes.failLaunchOnce = true;
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, old.id)).failures, 1);
+  f.advance(1000);
+  await f.fleet.tick();
+  assert.equal(launches(old.id), 1);
+  f.advance(1000);
+  await f.fleet.tick();
+  assert.equal(launches(old.id), 2);
 });
