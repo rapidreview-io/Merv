@@ -163,8 +163,8 @@ if (fleetEnabled) {
       name: '@merv/fleet',
       config: {
         enabled: true,
-        globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 3, 1, 32),
-        projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 1, 1, 32),
+        globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 50, 1, 64),
+        projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 5, 1, 64),
         allocationTimeoutSeconds: integer(
           'MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS',
           3600,

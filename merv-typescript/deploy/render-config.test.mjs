@@ -236,7 +236,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       { MERV_FLEET_ENABLED: 'true' },
       { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },
       { ...fleet, MERV_FLEET_RUNTIME_LEASE_SECONDS: '0' },
-      { ...fleet, MERV_FLEET_GLOBAL_LIMIT: '33' },
+      { ...fleet, MERV_FLEET_GLOBAL_LIMIT: '65' },
       { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '59' },
       { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '86401' },
       { ...fleet, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1.5' },
