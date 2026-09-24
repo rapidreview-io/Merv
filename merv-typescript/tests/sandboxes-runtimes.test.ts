@@ -104,6 +104,17 @@ test('runtime admission is absent when no profile is configured', async (t) => {
   await disabled.close();
 });
 
+test('a project is connected only while its grant is configured', async (t) => {
+  const { service } = fixture(t, () => Response.json({}));
+  const runtimes = service.runtimes!;
+  assert.equal(runtimes.leaseSeconds, profile.leaseSeconds);
+  assert.equal(runtimes.connected(connection.projectId), true);
+  assert.equal(runtimes.connected('project_other'), false);
+  delete process.env[tokenEnv];
+  assert.equal(runtimes.connected(connection.projectId), false);
+  await service.close();
+});
+
 test('provision and launch use one fixed profile and return metadata without bootstrap', async (t) => {
   const { calls, service } = fixture(t, (call) => {
     if (call.path === '/v1/sandboxes' && call.method === 'POST')

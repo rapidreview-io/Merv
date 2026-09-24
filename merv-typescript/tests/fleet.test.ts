@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { createService, type Caller } from '@merv/contracts';
+import { Context } from 'cordis';
+import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
+import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetOwner } from '../packages/fleet/src/index.js';
+import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
 
 function deferred<T>() {
@@ -16,6 +19,7 @@ function deferred<T>() {
 
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'fixed-profile';
+  leaseSeconds = 600;
   readonly disconnected = new Set<string>();
   connected(projectId: string) {
     return !this.disconnected.has(projectId);
@@ -27,6 +31,8 @@ class FakeRuntimes implements SandboxRuntimes {
   readonly stopped: string[] = [];
   readonly renewed: string[] = [];
   failCreateOnce = false;
+  createError?: Error;
+  inspectError?: Error;
   failLaunchOnce = false;
   failAcknowledgeOnce = false;
   heartbeatOnInspect = false;
@@ -38,6 +44,7 @@ class FakeRuntimes implements SandboxRuntimes {
   }
   async provision(_projectId: string, operationKey: string) {
     this.createKeys.push(operationKey);
+    if (this.createError) throw this.createError;
     let handle = this.byKey.get(operationKey);
     if (!handle) {
       handle = {
@@ -59,6 +66,7 @@ class FakeRuntimes implements SandboxRuntimes {
     return this.copy(handle);
   }
   async inspect(_projectId: string, current: SandboxRuntimeHandle) {
+    if (this.inspectError) throw this.inspectError;
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
     if (this.heartbeatOnInspect) live.revision++;
@@ -285,6 +293,137 @@ test('a project without a sandbox connection never holds the only slot', async (
   assert.equal(f.runtimes.createKeys.length, 1);
 });
 
+test('a refused first create frees the only slot; an ambiguous one is retried', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  const refused = await f.fleet.request(f.caller, input('refused'));
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, refused.id);
+  assert.deepEqual(
+    [current.phase, current.intent, current.error],
+    ['released', 'stop', 'runtime_refused'],
+  );
+  // A conflict could hide a machine made by an earlier reply, so it proves nothing.
+  f.runtimes.createError = new MervError('sandbox_operation_state', 'Conflict', 409);
+  const retried = await f.fleet.request(f.caller, input('retried'));
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, retried.id)).phase, 'uncertain');
+});
+
+test('a stopped create without a machine recovers once, then waits out the lease', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  // A lost reply hid a machine: the last attempt after Stop finds it, and it is deleted.
+  f.runtimes.failCreateOnce = true;
+  const lost = await f.fleet.request(f.caller, input('lost'));
+  await f.fleet.tick();
+  await f.fleet.cancel(f.caller, lost.id);
+  f.advance(2000);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, lost.id)).phase, 'released');
+  // An ambiguous failure, then refusals: nothing proves no machine, so the slot waits.
+  f.runtimes.createError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  const stuck = await f.fleet.request(f.caller, input('stuck'));
+  await f.fleet.tick();
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  f.advance(2000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'uncertain');
+  await f.fleet.cancel(f.caller, stuck.id);
+  f.advance(4000);
+  await f.fleet.tick();
+  const attempts = f.runtimes.createKeys.length;
+  f.advance(600_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'releasing');
+  f.advance(61_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'released');
+  assert.equal(f.runtimes.createKeys.length, attempts, 'nothing is created while waiting');
+});
+
+test('a machine the service stops answering for keeps running, then frees its slot', async (t) => {
+  const f = await fixture(t);
+  const allocation = await f.fleet.request(f.caller, input('unanswered'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  f.runtimes.inspectError = new MervError('sandbox_forbidden', 'The grant was revoked', 403);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'running');
+  await f.fleet.cancel(f.caller, allocation.id);
+  f.advance(2000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
+  f.advance(661_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
+});
+
+test('the machine deadline starts when the allocation leaves the queue', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  const first = await f.fleet.request(f.caller, input('first'));
+  f.advance(1000);
+  const second = await f.fleet.request(f.caller, input('second'));
+  await f.fleet.tick();
+  f.advance(2_999_000);
+  await f.fleet.cancel(f.caller, first.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const reserved = await f.fleet.inspect(f.caller, second.id);
+  assert.equal(reserved.phase, 'provisioning');
+  assert.equal(reserved.deadlineAt, '2026-09-22T01:50:00.000Z');
+});
+
+test('the Fleet page lists open work and bounded history in plain words', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  const ctx = new Context();
+  const ui = new UiRegistry();
+  ctx.provide('fleet', f.fleet);
+  ctx.provide('ui', ui);
+  await ctx.plugin(fleetUiPlugin);
+  t.after(() => ctx.fiber.dispose());
+  for (const id of ['a', 'b']) {
+    await f.fleet.cancel(f.caller, (await f.fleet.request(f.caller, input(id))).id);
+    f.advance(1000);
+  }
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  await f.fleet.request(f.caller, input('c'));
+  await f.fleet.tick();
+  f.advance(1000);
+  f.runtimes.createError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  const open = await f.fleet.request(f.caller, input('open'));
+  await f.fleet.tick();
+  const since = (await f.fleet.inspect(f.caller, open.id)).updatedAt;
+  for (const seconds of [2, 4, 8, 16]) {
+    f.advance(seconds * 1000);
+    await f.fleet.tick();
+  }
+  assert.deepEqual(
+    (await f.fleet.list(f.caller, 2)).map((a) => a.requestId),
+    ['b', 'c', 'open'],
+  );
+  const rows = (await ui.read(f.caller, 'fleet')) as Record<string, string | null>[];
+  assert.deepEqual(
+    rows.map((row) => [row.title, row.status, row.intent]),
+    [
+      ['Workflow agent', 'stopped', null],
+      ['Workflow agent', 'stopped', null],
+      ['Workflow agent', 'refused', null],
+      ['Workflow agent', 'retrying', 'run'],
+    ],
+  );
+  assert.deepEqual(
+    rows.map((row) => !!row.attention),
+    [false, false, false, true],
+  );
+  assert.match(rows[3].attention!, /^No machine yet:/);
+  assert.equal(rows[3].updatedAt, since, 'retries do not reset the standing clock');
+});
+
 test('lost create and launch replies retry stable keys and consumed bootstrap remains live', async (t) => {
   const f = await fixture(t);
   f.runtimes.failCreateOnce = true;
@@ -322,7 +461,9 @@ test('exchange waits for owner proof, retries lost reply, and precedes stop', as
   f.runtimes.failAcknowledgeOnce = true;
   f.setObservation('running');
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'uncertain');
+  // One failed call within the lease neither changes the phase nor fences the worker.
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'starting');
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), true);
   assert.deepEqual(f.runtimes.stopped, []);
   f.advance(2000);
   await f.fleet.tick();
@@ -424,7 +565,7 @@ test('active unchanged observations perform no writes; admission requires launch
   assert.equal(writes(), before);
 });
 
-test('profile change leaves an uncertain create occupied and never reprovisions a new image', async (t) => {
+test('profile change never reprovisions a new image and frees an uncertain create after its lease', async (t) => {
   const f = await fixture(t);
   f.runtimes.failCreateOnce = true;
   const allocation = await f.fleet.request(f.caller, input('profile-change'));
@@ -435,6 +576,9 @@ test('profile change leaves an uncertain create occupied and never reprovisions 
   const current = await f.fleet.inspect(f.caller, allocation.id);
   assert.equal(current.intent, 'stop');
   assert.notEqual(current.phase, 'released');
+  f.advance(661_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
   assert.equal(f.runtimes.createKeys.length, 1);
 });
 

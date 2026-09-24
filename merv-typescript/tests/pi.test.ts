@@ -62,6 +62,7 @@ function checkpointTree(text = 'Earlier', branch = 'active'): string {
 
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'pi-test-profile';
+  leaseSeconds = 600;
   connected = () => true;
   readonly handles = new Map<string, SandboxRuntimeHandle>();
   readonly launched: string[] = [];

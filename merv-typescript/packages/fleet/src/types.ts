@@ -26,8 +26,13 @@ export interface FleetAllocation {
   /** Durable intent written before create; false proves no provider call has begun. */
   createAttempted: boolean;
   createdAt: string;
+  /** While queued, when the request gives up; once reserved, when the machine must stop. */
   deadlineAt: string;
+  /** When phase or intent last changed; retries and provider observations leave it alone. */
   updatedAt: string;
+  /** Set once stopping stalls: Fleet renews nothing after stop, so the provider lease has
+   * ended any machine this allocation could hold by then, and the slot is freed. */
+  releaseBy?: string;
   retryAt: string | null;
   failures: number;
   error: FleetError | null;
@@ -67,7 +72,8 @@ export interface Fleet {
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
   inspect(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
-  list(caller: Caller): Promise<FleetAllocation[]>;
+  /** Open allocations, oldest first, with only the `recent` latest released ones when given. */
+  list(caller: Caller, recent?: number): Promise<FleetAllocation[]>;
   cancel(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   drain(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   /** Sessions must call this inside the same transaction that enrolls or claims work. */

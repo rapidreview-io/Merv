@@ -13,10 +13,11 @@ export const fleetToolsPlugin = {
     const definitions = [
       {
         name: 'fleet.list',
-        description: 'List the project’s Fleet allocations and machine lifecycle status.',
+        description:
+          'List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
-        handler: (caller: Caller) => ctx.fleet.list(caller),
+        handler: (caller: Caller) => ctx.fleet.list(caller, 50),
       },
       {
         name: 'fleet.get',

@@ -184,7 +184,11 @@ export class SandboxService implements Sandboxes {
       );
       this.runtimes = {
         profileId: runner.profileId,
-        connected: (projectId) => this.#connections.some((entry) => entry.projectId === projectId),
+        leaseSeconds: parsed.data.runtime.leaseSeconds,
+        connected: (projectId) =>
+          this.#connections.some(
+            (entry) => entry.projectId === projectId && this.#client.configured(entry),
+          ),
         provision: (projectId, operationKey) =>
           this.#run({ projectId, operationKey }, ({ projectId, operationKey }) =>
             runner.provision(projectId, operationKey),
