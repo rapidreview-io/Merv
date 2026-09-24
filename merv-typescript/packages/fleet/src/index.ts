@@ -45,6 +45,17 @@ export const fleetConfig = z
 type Row = { data_json: string };
 const decode = (row: Row): FleetAllocation => JSON.parse(row.data_json);
 const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 'released';
+/** A 4xx other than timeout, conflict or rate limit, or a local precondition: nothing was made. */
+const refused = (error: unknown) =>
+  error instanceof MervError &&
+  error.status >= 400 &&
+  error.status < 500 &&
+  ![408, 409, 429].includes(error.status);
+/** Provider and owner messages may carry credentials; operators get the finite code only. */
+const report = (event: string, a: FleetAllocation, error: unknown) => {
+  const code = error instanceof MervError ? error.code : 'unexpected';
+  process.stderr.write(`${JSON.stringify({ event, allocation: a.id, code })}\n`);
+};
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
@@ -100,6 +111,9 @@ export class FleetService implements Fleet {
   private time() {
     return new Date(this.clock()).toISOString();
   }
+  private deadline() {
+    return new Date(this.clock() + this.config.allocationTimeoutSeconds * 1000).toISOString();
+  }
   private async get(sql: Sql, id: string): Promise<FleetAllocation> {
     const row = await sql.get<Row>('SELECT data_json FROM fleet_allocations WHERE id=?', id);
     check(row, 'fleet_not_found', 'Fleet allocation not found', 404);
@@ -138,14 +152,15 @@ export class FleetService implements Fleet {
   }
   private async save(tx: Transaction, a: FleetAllocation, before: FleetAllocation): Promise<void> {
     if (digest(a) === digest(before)) return;
-    a.updatedAt = this.time();
+    const moved = a.phase !== before.phase || a.intent !== before.intent;
+    if (moved) a.updatedAt = this.time();
     await tx.run(
       'UPDATE fleet_allocations SET phase=?,data_json=? WHERE id=?',
       a.phase,
       JSON.stringify(a),
       a.id,
     );
-    if (a.phase !== before.phase || a.intent !== before.intent)
+    if (moved)
       await this.state.appendEvent(tx, {
         projectId: a.projectId,
         actorId: a.source.actorId,
@@ -208,9 +223,7 @@ export class FleetService implements Fleet {
         createAttempted: false,
         createdAt: this.time(),
         updatedAt: this.time(),
-        deadlineAt: new Date(
-          this.clock() + this.config.allocationTimeoutSeconds * 1000,
-        ).toISOString(),
+        deadlineAt: this.deadline(),
         retryAt: null,
         failures: 0,
         error: null,
@@ -253,14 +266,18 @@ export class FleetService implements Fleet {
       ? inTransaction(this.state, tx, read)
       : this.state.snapshot(() => this.state.transaction(read));
   }
-  async list(caller: Caller): Promise<FleetAllocation[]> {
+  async list(caller: Caller, recent?: number): Promise<FleetAllocation[]> {
     return this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
         await this.scope.require(caller, 'read', tx);
         return (
           await tx.all<Row>(
-            'SELECT data_json FROM fleet_allocations WHERE project_id=? ORDER BY created_at,id',
+            `SELECT data_json FROM fleet_allocations WHERE project_id=? AND (phase<>'released' OR id IN
+              (SELECT id FROM fleet_allocations WHERE project_id=? AND phase='released'
+               ORDER BY created_at DESC,id DESC LIMIT ?)) ORDER BY created_at,id`,
             caller.projectId,
+            caller.projectId,
+            recent ?? null,
           )
         ).map(decode);
       }),
@@ -301,7 +318,10 @@ export class FleetService implements Fleet {
     )
       return false;
     const owner = this.owners.get(a.owner.kind);
-    if (!owner) return false;
+    return !!owner && this.authorized(a, owner, tx);
+  }
+  /** Current source authority, then the owner's own check; a revoked source is simply invalid. */
+  private async authorized(a: FleetAllocation, owner: FleetOwner, tx: Transaction) {
     try {
       await this.scope.requireDelegation(a.source, owner.sourcePermission ?? 'write', tx);
     } catch (error) {
@@ -356,6 +376,8 @@ export class FleetService implements Fleet {
           (byProject.get(a.projectId) ?? 0) < this.config.projectLimit
         ) {
           a.phase = 'provisioning';
+          // The machine's time starts here; waiting in the queue does not spend it.
+          a.deadlineAt = this.deadline();
           count++;
           byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
         }
@@ -441,13 +463,7 @@ export class FleetService implements Fleet {
           current.runtime.launch?.deliveryState === 'launched'
         )
           return false;
-        try {
-          await this.scope.requireDelegation(current.source, owner.sourcePermission ?? 'write', tx);
-        } catch (error) {
-          if (error instanceof MervError && [401, 403].includes(error.status)) return false;
-          throw error;
-        }
-        return owner.valid(current, tx);
+        return this.authorized(current, owner, tx);
       }),
     );
   }
@@ -471,13 +487,7 @@ export class FleetService implements Fleet {
           current.runtime.launch?.deliveryState !== 'launched'
         )
           return false;
-        try {
-          await this.scope.requireDelegation(current.source, owner.sourcePermission ?? 'write', tx);
-        } catch (error) {
-          if (error instanceof MervError && [401, 403].includes(error.status)) return false;
-          throw error;
-        }
-        return owner.valid(current, tx);
+        return this.authorized(current, owner, tx);
       }),
     );
   }
@@ -491,11 +501,17 @@ export class FleetService implements Fleet {
         .map(async (a) => {
           try {
             await this.advance(a);
-          } catch {
-            // Provider/owner errors may contain credentials. Persist only our finite vocabulary.
+          } catch (error) {
+            report('fleet.retry', a, error);
             await this.update(a.id, (current) => {
               if (current.phase === 'released') return;
-              current.phase = current.intent === 'stop' ? 'releasing' : 'uncertain';
+              if (current.intent === 'stop') this.waitOutLease(current);
+              // A launched machine keeps its phase, and its worker admission, within its lease.
+              else if (
+                !['starting', 'running'].includes(current.phase) ||
+                (current.runtime?.leaseExpiresAt ?? '') <= this.time()
+              )
+                current.phase = 'uncertain';
               current.failures++;
               current.error = 'runtime_unavailable';
               current.retryAt = new Date(
@@ -521,20 +537,7 @@ export class FleetService implements Fleet {
       });
     if (a.intent !== 'stop' && owner) {
       const valid = await this.state.snapshot(() =>
-        this.state.transaction(async (tx) => {
-          const current = await this.get(tx, a.id);
-          try {
-            await this.scope.requireDelegation(
-              current.source,
-              owner.sourcePermission ?? 'write',
-              tx,
-            );
-          } catch (error) {
-            if (error instanceof MervError && [401, 403].includes(error.status)) return false;
-            throw error;
-          }
-          return owner.valid(current, tx);
-        }),
+        this.state.transaction(async (tx) => this.authorized(await this.get(tx, a.id), owner, tx)),
       );
       if (!valid)
         a = await this.update(a.id, (current) => {
@@ -542,30 +545,40 @@ export class FleetService implements Fleet {
         });
     }
     if (!a.runtime) {
-      // Even after cancellation, an uncertain create is recovered with the same key,
-      // then deleted. Skipping it could leak a machine created before a lost reply.
-      // A false marker proves no create could have happened; cancel without renting.
-      // Missing markers from older records are conservatively treated as attempted.
-      if (a.createAttempted === false) {
-        a = await this.update(a.id, (current) => {
-          if (current.createAttempted !== false) return;
-          if (
-            current.intent !== 'run' ||
-            !this.owners.has(current.owner.kind) ||
-            current.profileId !== runtime.profileId ||
-            !runtime.connected(current.projectId)
-          ) {
-            current.intent = 'stop';
-            current.phase = 'released';
-          } else current.createAttempted = true;
+      // A false marker proves no create could have happened; older records count as attempted.
+      let first = false;
+      let create = false;
+      a = await this.update(a.id, (current) => {
+        if (current.runtime || current.phase === 'released') return;
+        const connected = runtime.connected(current.projectId);
+        const sameProfile = current.profileId === runtime.profileId;
+        if (current.intent === 'run' && connected && sameProfile && owner) {
+          first = current.createAttempted === false;
+          create = current.createAttempted = true;
+          return;
+        }
+        // One last same-key create recovers a machine made before a lost reply, to delete it
+        // (never under a changed profile). Then Fleet waits out the lease of any such machine.
+        create =
+          current.createAttempted !== false && !current.releaseBy && connected && sameProfile;
+        if (!connected && current.createAttempted === false) current.error = 'runtime_refused';
+        current.intent = 'stop';
+        this.waitOutLease(current);
+      });
+      if (!create) return;
+      const handle = await runtime.provision(a.projectId, `${a.id}:create`).catch((error) => {
+        // Refusing the first attempt proves no machine exists: free the slot, do not retry.
+        if (!first || !refused(error)) throw error;
+        report('fleet.refused', a, error);
+      });
+      if (handle) await this.observed(a, handle, 'provisioning');
+      else
+        await this.update(a.id, (current) => {
+          if (current.runtime) return;
+          current.intent = 'stop';
+          current.phase = 'released';
+          current.error = 'runtime_refused';
         });
-        if (a.phase === 'released') return;
-      }
-      // A changed profile cannot safely replay an attempted create: retain this slot until
-      // the original profile is restored or an operator resolves the uncertain create.
-      if (a.profileId !== runtime.profileId) return;
-      const handle = await runtime.provision(a.projectId, `${a.id}:create`);
-      await this.observed(a, handle, 'provisioning');
       return;
     }
     const handle = await runtime.inspect(a.projectId, a.runtime);
@@ -623,6 +636,18 @@ export class FleetService implements Fleet {
       )
         await this.observed(a, await runtime.renew(a.projectId, exchanged), status);
     }
+  }
+  /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any
+   * machine this allocation could hold (a minute covers a reply still in flight). Without a
+   * create attempt there is none to wait for. */
+  private waitOutLease(a: FleetAllocation): void {
+    a.releaseBy ??= new Date(
+      this.clock() + (this.runtimes!.leaseSeconds + 60) * 1000,
+    ).toISOString();
+    a.phase =
+      (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
+        ? 'released'
+        : 'releasing';
   }
   /** Disposal fences admission durably, then makes one bounded provider cleanup pass.
    * Pending deletes remain counted and are reconciled when the plugin is re-enabled.

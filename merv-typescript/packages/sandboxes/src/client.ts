@@ -184,15 +184,19 @@ export class SandboxClient {
     return await this.#send(connection, secret, method, path, body);
   }
 
+  /** Whether this connection's grant is present at all; without it no call can be made. */
+  configured(connection: SandboxConnection): boolean {
+    return grant.test(process.env[connection.tokenEnv] ?? '');
+  }
+
   #credential(connection: SandboxConnection): string {
-    const secret = process.env[connection.tokenEnv];
     check(
-      typeof secret === 'string' && grant.test(secret),
+      this.configured(connection),
       'sandbox_credential_unavailable',
       'The configured sandbox consumer grant is unavailable or malformed',
       503,
     );
-    return secret;
+    return process.env[connection.tokenEnv]!;
   }
 
   async #prove(connection: SandboxConnection): Promise<string> {

@@ -90,15 +90,21 @@ const configuration = z
   .strict();
 
 const secretNames = new Set(['token', 'secret', 'authorization', 'credential']);
-/** The service's own JSON, minus anything named like a credential, at any depth. */
-export function withoutSecrets(value: Json, depth = 0): Json {
+/** A hosted agent's machine belongs to Fleet: no project row lists it and no tool acts on it. */
+const hosted = (value: Json) =>
+  (value as { request?: { protected_runtime?: unknown } } | null)?.request?.protected_runtime ===
+  true;
+/** What a project may see of the service's JSON: nothing named like a credential, at any depth,
+ * and no hosted agent's machine in any list. */
+export function visible(value: Json, depth = 0): Json {
   if (depth > 64) return null;
-  if (Array.isArray(value)) return value.map((entry) => withoutSecrets(entry, depth + 1));
+  if (Array.isArray(value))
+    return value.filter((entry) => !hosted(entry)).map((entry) => visible(entry, depth + 1));
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => !secretNames.has(key.toLowerCase()))
-      .map(([key, entry]) => [key, withoutSecrets(entry, depth + 1)]),
+      .map(([key, entry]) => [key, visible(entry, depth + 1)]),
   );
 }
 
@@ -178,7 +184,11 @@ export class SandboxService implements Sandboxes {
       );
       this.runtimes = {
         profileId: runner.profileId,
-        connected: (projectId) => this.#connections.some((entry) => entry.projectId === projectId),
+        leaseSeconds: parsed.data.runtime.leaseSeconds,
+        connected: (projectId) =>
+          this.#connections.some(
+            (entry) => entry.projectId === projectId && this.#client.configured(entry),
+          ),
         provision: (projectId, operationKey) =>
           this.#run({ projectId, operationKey }, ({ projectId, operationKey }) =>
             runner.provision(projectId, operationKey),
@@ -318,6 +328,12 @@ export class SandboxService implements Sandboxes {
     return entry;
   }
 
+  async #record(entry: SandboxConnection, path: string): Promise<Json> {
+    const record = await this.#client.read(entry, path);
+    check(!hosted(record), 'sandbox_protected', 'This machine belongs to a hosted agent', 403);
+    return record;
+  }
+
   async extend(caller: Caller, input: SandboxExtend): Promise<Json> {
     return this.#run({ caller, input }, async ({ caller, input }) => {
       const entry = this.#connectionFor(caller.projectId);
@@ -325,7 +341,7 @@ export class SandboxService implements Sandboxes {
       // Carry the remaining lifetime and its revision together: the service must refuse a
       // stale calculation rather than shortening a lease another client just extended.
       // The service publishes no maximum, so an over-long total is its refusal to give, not ours.
-      const record = (await this.#client.read(entry, sandboxRoute(sandboxRecord, input.id))) as {
+      const record = (await this.#record(entry, sandboxRoute(sandboxRecord, input.id))) as {
         lease_expires_at?: unknown;
         revision?: unknown;
       } | null;
@@ -341,7 +357,7 @@ export class SandboxService implements Sandboxes {
       const left = Number.isNaN(expires)
         ? 0
         : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
-      return withoutSecrets(
+      return visible(
         await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
           lease_seconds: left + input.seconds,
           expected_revision: record.revision,
@@ -357,8 +373,9 @@ export class SandboxService implements Sandboxes {
       // The guard the browser shows is the retention confirmation the legacy tool asked for in a
       // second call. Deleting an already-stopped sandbox deletes nothing twice, so the answer is
       // the record either way: releasing twice is the same as releasing once.
+      await this.#record(entry, path);
       await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
-      return withoutSecrets(await this.#client.read(entry, path));
+      return visible(await this.#client.read(entry, path));
     });
   }
 
@@ -370,12 +387,10 @@ export class SandboxService implements Sandboxes {
       // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
       const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
       if (id === undefined || id === null || id === '')
-        return withoutSecrets(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
+        return visible(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
       check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');
       check(spec.record, 'sandbox_record_unavailable', 'This row publishes no record', 404);
-      const record = withoutSecrets(
-        await this.#client.read(entry, sandboxRoute(spec.record.read, id)),
-      );
+      const record = visible(await this.#record(entry, sandboxRoute(spec.record.read, id)));
       // The manifest's console link may be a path on the service; say where that path lives.
       return record !== null && typeof record === 'object' && !Array.isArray(record)
         ? { ...record, console_origin: this.#client.origin }

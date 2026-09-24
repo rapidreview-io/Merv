@@ -1,43 +1,41 @@
 import type { Context } from 'cordis';
 import { check, type Json, type UiCollectionSpec, type UiRecordSpec } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import type { FleetAllocation } from './types.js';
+import type { FleetAllocation, FleetPhase } from './types.js';
 
-const live = [
-  'queued',
-  'provisioning',
-  'launching',
-  'starting',
-  'running',
-  'uncertain',
-  'releasing',
-];
+/** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
+const words: Partial<Record<FleetPhase, string>> = {
+  queued: 'waiting',
+  provisioning: 'starting',
+  uncertain: 'retrying',
+};
+const live = ['waiting', 'starting', 'running', 'retrying', 'finishing', 'stopping'];
+const titles: Record<string, string> = { pi: 'Agent conversation', workflow: 'Workflow agent' };
 const collection: UiCollectionSpec = {
   noun: { singular: 'agent', plural: 'agents' },
   read: '/v1/fleet',
   key: 'id',
   title: 'title',
   search: ['owner.kind', 'owner.id'],
-  states: { field: 'phase', open: live, live, failed: ['uncertain'] },
+  states: { field: 'status', open: live, live, failed: ['refused'] },
   attention: { field: 'attention' },
   columns: [
     { type: 'name', label: 'Agent', field: 'title' },
-    { type: 'state', label: 'Status', field: 'phase' },
-    { type: 'text', label: 'Requested state', field: 'intent' },
-    { type: 'ago', label: 'Started', field: 'createdAt' },
+    { type: 'state', label: 'Status', field: 'status' },
+    { type: 'ago', label: 'Requested', field: 'createdAt' },
     { type: 'countdown', label: 'Time remaining', field: 'deadlineAt' },
   ],
   empty: {
     title: 'No agents allocated',
     hint: 'Agents appear here when a connected workflow or chat requests a machine.',
   },
-  cadence: { liveMs: 5000, idleMs: 30_000, liveWhen: { field: 'phase', in: live } },
+  cadence: { liveMs: 5000, idleMs: 30_000, liveWhen: { field: 'status', in: live } },
 };
 const record: UiRecordSpec = {
   read: '/v1/fleet/{id}',
   title: 'title',
-  state: 'phase',
-  standing: { verdict: 'phase', clause: 'attention', clock: 'updatedAt' },
+  state: 'status',
+  standing: { verdict: 'status', clause: 'attention', clock: 'updatedAt' },
   act: [
     {
       id: 'drain',
@@ -51,10 +49,10 @@ const record: UiRecordSpec = {
       label: 'Stop now',
       verb: 'halt',
       tool: 'fleet.halt',
-      when: { field: 'phase', in: live },
+      when: { field: 'intent', in: ['run', 'drain'] },
       guard: {
         title: 'Stop this agent?',
-        consequence: 'The machine will be deleted. Work that has not been saved may be lost.',
+        consequence: 'Any machine it holds is deleted. Work that has not been saved may be lost.',
       },
     },
   ],
@@ -66,20 +64,29 @@ const record: UiRecordSpec = {
     { label: 'Deadline', field: 'deadlineAt', unit: 'instant' },
   ],
 };
-const present = (a: FleetAllocation): Json => ({
-  id: a.id,
-  title: `${a.owner.kind} agent`,
-  owner: a.owner,
-  phase: a.phase,
-  intent: a.intent,
-  createdAt: a.createdAt,
-  updatedAt: a.updatedAt,
-  deadlineAt: a.deadlineAt,
-  attention: a.error
-    ? 'Waiting for the runtime service; this machine still counts toward capacity.'
-    : null,
-  runtime: a.runtime ? { sandboxId: a.runtime.sandboxId, state: a.runtime.state } : null,
-});
+const present = (a: FleetAllocation): Json => {
+  const open = a.phase !== 'released';
+  return {
+    id: a.id,
+    title: titles[a.owner.kind] ?? 'Hosted agent',
+    owner: a.owner,
+    status: open
+      ? { run: words[a.phase] ?? a.phase, drain: 'finishing', stop: 'stopping' }[a.intent]
+      : a.error === 'runtime_refused'
+        ? 'refused'
+        : 'stopped',
+    intent: open ? a.intent : null,
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+    deadlineAt: open ? a.deadlineAt : null,
+    // Retries back off to a minute; only a live request failing that long needs a person.
+    attention:
+      open && a.intent !== 'stop' && a.error && a.failures >= 5
+        ? `${a.runtime ? 'This machine is not answering' : 'No machine yet'}: the sandbox service keeps failing. Check the project's sandbox connection.`
+        : null,
+    runtime: a.runtime ? { sandboxId: a.runtime.sandboxId, state: a.runtime.state } : null,
+  };
+};
 /** Uses the existing collection view; no browser bundle or research dependency. */
 export const fleetUiPlugin = {
   name: 'merv-fleet-ui',
@@ -112,7 +119,8 @@ export const fleetUiPlugin = {
             );
             return present(await ctx.fleet.inspect(caller, params.id));
           }
-          return (await ctx.fleet.list(caller)).map(present);
+          // Open work and the 50 latest ended allocations.
+          return (await ctx.fleet.list(caller, 50)).map(present);
         },
       }),
     );
