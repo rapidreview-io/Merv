@@ -167,5 +167,5 @@ test('sandbox shutdown drains a release through its follow-up read', async (t) =
   release.resolve();
   assert.deepEqual(await active, { id: 'sbx_test', state: 'stopped' });
   await stopping;
-  assert.deepEqual(methods, ['DELETE', 'GET']);
+  assert.deepEqual(methods, ['GET', 'DELETE', 'GET']);
 });

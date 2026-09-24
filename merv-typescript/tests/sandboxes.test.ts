@@ -57,8 +57,18 @@ const manifest = (rest: Json = {}) => ({
     },
   ],
 });
+/** A hosted agent's machine in the same namespace: Fleet's, never a project row's. */
+const hostedBody = {
+  id: 'sbx_agent',
+  name: 'agent',
+  state: 'ready',
+  request: { protected_runtime: true },
+};
 const listBody = {
-  sandboxes: [{ id: 'sbx_one', name: 'one', state: 'ready', token: 'sbxt_leaked_list' }],
+  sandboxes: [
+    { id: 'sbx_one', name: 'one', state: 'ready', token: 'sbxt_leaked_list' },
+    hostedBody,
+  ],
 };
 const recordBody = {
   id: 'sbx_one',
@@ -113,7 +123,9 @@ async function fixture(t: TestContext, options: Options = {}) {
                 }
               : path === '/v1/sandboxes/sbx_one'
                 ? recordBody
-                : undefined;
+                : path === '/v1/sandboxes/sbx_agent'
+                  ? hostedBody
+                  : undefined;
     if (body === undefined) {
       response.writeHead(404, { 'content-type': 'application/json' });
       return response.end(JSON.stringify({ error: { code: 'not_found' } }));
@@ -330,6 +342,10 @@ test('reads proxy the collection and one record, namespace-scoped and free of se
     assert.equal(entry.authorization, 'Bearer sbxt_test_consumer_grant');
   }
   await assert.rejects(
+    ui.read(caller, 'sandboxes-sandboxes', { id: 'sbx_agent' }),
+    failure('sandbox_protected'),
+  );
+  await assert.rejects(
     ui.read(stranger, 'sandboxes-sandboxes'),
     failure('sandbox_not_connected'),
     'another project has no connection, and input never selects one',
@@ -480,8 +496,8 @@ test('the two tools send the service exactly one change, under a write grant', a
   );
   assert.match(
     service.seen.map((entry) => entry.method).join(' '),
-    /GET POST DELETE GET$/,
-    'a lease is read before it is renewed, and a release answers the record as it then reads',
+    /GET POST GET DELETE GET$/,
+    'a lease is read before it is renewed; a release reads the record before and after',
   );
   const refused: [string, Caller, Json, string][] = [
     ['sandbox.extend', reader, { id: 'sbx_one', seconds: 3600 }, 'forbidden'],
@@ -492,9 +508,14 @@ test('the two tools send the service exactly one change, under a write grant', a
     ['sandbox.release', caller, {}, 'invalid_input'],
     ['sandbox.release', caller, { id: 'sbx_one', force: true }, 'invalid_input'],
     ['sandbox.release', caller, { id: 'sbx one' }, 'invalid_sandbox_id'],
+    ['sandbox.release', caller, { id: 'sbx_agent' }, 'sandbox_protected'],
+    ['sandbox.extend', caller, { id: 'sbx_agent', seconds: 3600 }, 'sandbox_protected'],
   ];
   for (const [name, actor, input, code] of refused)
     await assert.rejects(call(name, actor, input), failure(code), JSON.stringify(input));
+  assert.ok(
+    service.seen.every((entry) => entry.method === 'GET' || entry.path.includes('sbx_one')),
+  );
 });
 
 test('sandbox operations retain their original project and target while queued', async (t) => {
