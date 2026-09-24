@@ -206,6 +206,42 @@ test('opening an empty Agent warms one conversation, and the first message goes 
   assert.match(text(), /Waiting for a free machine/);
   assert.equal(stream.headers[0].get('authorization'), 'Bearer fixture-token');
   assert.equal(stream.headers[0].get('x-merv-project-id'), 'p1');
+  // New conversation asks under a request of its own, not the one warming opened this under.
+  const created: unknown[] = [];
+  serve('/tools/pi.create', (_count, input) => {
+    created.push(input.requestId);
+    return { body: { result: conversation('conversation_2') } };
+  });
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+  await click('New conversation');
+  assert.equal(created.length, 1);
+  assert.notEqual(created[0], warmed[0].requestId);
+});
+
+test('a question sent while the first warm-up waits out a release goes to the conversation it opened', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  const warmed: unknown[] = [];
+  serve('/tools/pi.warm', (_count, input) => {
+    warmed.push(input.requestId);
+    return {
+      status: 409,
+      body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
+    };
+  });
+  const created: unknown[] = [];
+  serve('/tools/pi.create', (_count, input) => {
+    created.push(input.requestId);
+    return { body: { result: conversation() } };
+  });
+  serve('/tools/pi.send', { body: { result: command('command_1', 'waiting') } });
+  await open();
+  await settle(10);
+  await write('What is known?');
+  await click('Send');
+  // The same request: pi.create answers the conversation that warm-up opened, not a second one.
+  assert.deepEqual(created, [warmed[0]]);
 });
 
 test('the StrictMode page still loads after effect replay', async (t) => {

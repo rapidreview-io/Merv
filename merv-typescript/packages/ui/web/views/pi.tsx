@@ -108,8 +108,8 @@ async function whileReleasing<T>(
   }
 }
 /** Starts the agent's machine before anything is sent, quietly: it never holds up a question. */
-const warm = (id: string | null, alive: () => boolean) => {
-  const input = { requestId: identifier(), ...(id ? { conversationId: id } : {}) };
+const warm = (id: string | null, alive: () => boolean, requestId = identifier()) => {
+  const input = { requestId, ...(id ? { conversationId: id } : {}) };
   return whileReleasing(() => call<PiSnapshot>('pi.warm', input), alive).catch(() => null);
 };
 /** How long the current wait has lasted; a screen reader hears only what is waited on. */
@@ -203,6 +203,7 @@ function PiConversationPage() {
     setSelected(id);
   };
   const adopt = (item: PiConversation) => {
+    createId.current = identifier();
     setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
     choose(item.id);
   };
@@ -236,8 +237,9 @@ function PiConversationPage() {
           items.find((item) => item.runtimeId) ??
           items[0];
         if (kept) choose(kept.id);
+        // A question sent while this waits out a release opens the same conversation, not another.
         else
-          void warm(null, fresh).then((next) => {
+          void warm(null, fresh, createId.current).then((next) => {
             if (next && fresh()) adopt(next.conversation);
           });
         setListed(true);
@@ -421,7 +423,6 @@ function PiConversationPage() {
   const open = async () => {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
     if (!valid()) return null;
-    createId.current = identifier();
     adopt(item);
     return item.id;
   };
