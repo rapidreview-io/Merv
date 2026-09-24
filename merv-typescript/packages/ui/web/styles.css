@@ -4403,7 +4403,9 @@ del.cut {
   align-items: center;
   gap: var(--space-2);
 }
+/* On a phone the turn's state takes a line of its own rather than the conversation's name. */
 .pi-bar {
+  flex-wrap: wrap;
   justify-content: space-between;
 }
 .pi-switch {
@@ -4471,13 +4473,19 @@ del.cut {
   white-space: nowrap;
 }
 .pi-state-dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--ghost);
 }
+/* Green and still once the agent is ready; the amber of work in flight breathes while it waits. */
+.pi-state-dot--ready {
+  background: var(--supports);
+}
 .pi-state-dot--active {
   background: var(--qualifies);
+  animation: map-breathe 1.8s ease-in-out infinite;
 }
 .pi-messages {
   flex: 1;

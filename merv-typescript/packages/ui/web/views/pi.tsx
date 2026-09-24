@@ -9,7 +9,7 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
-import { Ago } from '../components';
+import { Ago, useNow } from '../components';
 import { ChevronsIcon } from '../icons';
 import { Markdown } from '../markdown';
 import {
@@ -48,6 +48,19 @@ const STATUS: Record<string, string> = {
   saving: 'Saving',
   interrupted: 'Stopped',
 };
+/** What the person waits on, in a cold turn's order; the waits count their seconds. */
+const STAGE: Record<string, string> = {
+  idle: 'Idle',
+  queued: 'Waiting for a free machine',
+  machine: 'Starting a machine',
+  agent: 'Loading the agent',
+  ready: 'Agent ready',
+  thinking: 'Thinking',
+  tool: 'Using a tool',
+  writing: 'Writing…',
+  saving: 'Saving…',
+};
+const WAITS = ['queued', 'machine', 'agent', 'thinking'];
 /** Why a turn ended early, with the step after it. Stopping it yourself needs no sentence. */
 const STOPPED: Record<string, string> = {
   worker_interrupted: 'The agent stopped unexpectedly. Ask again.',
@@ -74,6 +87,39 @@ const said = (cause: unknown, fallback: string): string => {
     return 'Something went wrong on the server. Try again.';
   return cause.message;
 };
+/** The previous agent refuses for a moment while it is released; the same request asks again. */
+async function whileReleasing<T>(
+  request: () => Promise<T>,
+  alive: () => boolean,
+  waiting = () => {},
+) {
+  const until = Date.now() + 60_000;
+  for (;;) {
+    try {
+      return await request();
+    } catch (cause) {
+      const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
+      if (!releasing || Date.now() > until) throw cause;
+      waiting();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (!alive()) return null;
+    }
+  }
+}
+/** Starts the agent's machine before anything is sent, quietly: it never holds up a question. */
+const warm = (id: string | null, alive: () => boolean) => {
+  const input = { requestId: identifier(), ...(id ? { conversationId: id } : {}) };
+  return whileReleasing(() => call<PiSnapshot>('pi.warm', input), alive).catch(() => null);
+};
+/** How long the current wait has lasted; a screen reader hears only what is waited on. */
+function Seconds({ since }: { since: string }) {
+  const now = useNow(1000);
+  return (
+    <span className="tabular" aria-hidden="true">
+      {` · ${Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) || 0} s`}
+    </span>
+  );
+}
 
 function PiConversationPage() {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
@@ -152,10 +198,15 @@ function PiConversationPage() {
     following.current = true;
     setSelected(id);
   };
+  const adopt = (item: PiConversation) => {
+    setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
+    choose(item.id);
+  };
 
-  // Opening the page reads the conversations there are; the first message creates one.
+  // Opening the page reads the conversations there are; with none, warming the agent opens one.
   useEffect(() => {
     let cancelled = false;
+    const fresh = () => !cancelled && valid() && !selection.current;
     setError('');
     call<PiConversation[]>('pi.list').then(
       (items) => {
@@ -163,6 +214,10 @@ function PiConversationPage() {
         setConversations(items);
         const kept = items.find((item) => item.id === selection.current) ?? items[0];
         if (kept) choose(kept.id);
+        else
+          void warm(null, fresh).then((next) => {
+            if (next && fresh()) adopt(next.conversation);
+          });
         setListed(true);
       },
       (cause) => {
@@ -243,7 +298,13 @@ function PiConversationPage() {
     void refresh()
       .catch(() => {})
       .then(() => {
-        if (alive()) void connect();
+        if (!alive()) return;
+        void connect();
+        // A machine starts while the question is still being written (a turn has one already).
+        if (canonical.current?.available && !canonical.current.conversation.runtimeId)
+          void warm(selected, alive).then((next) => {
+            if (next && alive()) replace(next);
+          });
       });
     return () => {
       stopped = true;
@@ -271,6 +332,25 @@ function PiConversationPage() {
     !command.messages.some((message) => message.role === 'assistant')
       ? response
       : null;
+  const stage = snapshot?.stage;
+  // Streamed words say the answer is being written before the next snapshot does.
+  const step = stage?.name === 'thinking' && visible?.text ? 'writing' : (stage?.name ?? '');
+  const since = !unavailable && !finishing && WAITS.includes(step) ? stage?.since : undefined;
+  const state = (
+    <>
+      <span
+        className={`pi-state-dot${active || WAITS.includes(step) ? ' pi-state-dot--active' : step === 'ready' ? ' pi-state-dot--ready' : ''}`}
+      />
+      <span>
+        {unavailable
+          ? 'Unavailable'
+          : finishing
+            ? 'Finishing the previous agent…'
+            : (step === 'tool' && stage?.detail) || STAGE[step] || (STATUS[status] ?? 'Ready')}
+        {since && <Seconds since={since} />}
+      </span>
+    </>
+  );
   useLayoutEffect(() => {
     const list = transcript.current;
     if (list && following.current) list.scrollTop = list.scrollHeight;
@@ -314,8 +394,7 @@ function PiConversationPage() {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
     if (!valid()) return null;
     createId.current = identifier();
-    setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
-    choose(item.id);
+    adopt(item);
     return item.id;
   };
   const create = async () => {
@@ -344,20 +423,11 @@ function PiConversationPage() {
     try {
       id ??= await open();
       if (!id) return;
-      // The previous agent refuses for a moment while it is released; the same command asks again.
-      const until = Date.now() + 60_000;
-      for (;;) {
-        try {
-          await call('pi.send', { id, commandId, text });
-          break;
-        } catch (cause) {
-          const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
-          if (!releasing || Date.now() > until) throw cause;
-          setFinishing(true);
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          if (!valid() || selection.current !== id) return;
-        }
-      }
+      await whileReleasing(
+        () => call('pi.send', { id, commandId, text }),
+        () => valid() && selection.current === id,
+        () => setFinishing(true),
+      );
       if (!valid() || selection.current !== id) return;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
@@ -451,14 +521,7 @@ function PiConversationPage() {
           </div>
           {!blocked && (snapshot || finishing) && (
             <div className="pi-state" role="status">
-              <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
-              <span>
-                {unavailable
-                  ? 'Unavailable'
-                  : finishing
-                    ? 'Finishing the previous agent…'
-                    : (STATUS[status] ?? 'Ready')}
-              </span>
+              {state}
               {snapshot?.conversation.runtimeId && (
                 <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
                   Fleet details
@@ -500,6 +563,12 @@ function PiConversationPage() {
               {visible.text && <Markdown source={visible.text} />}
               {visible.progress && <p className="muted">{visible.progress}</p>}
             </article>
+          )}
+          {active && !unavailable && (
+            // Where the eye waits; the bar above already says it aloud.
+            <p className="pi-state" aria-hidden="true">
+              {state}
+            </p>
           )}
           {selected && !snapshot ? (
             <p className="muted">Loading conversation…</p>

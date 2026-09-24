@@ -19,7 +19,14 @@ export interface PiEvent {
   type: 'text' | 'progress' | 'changed';
   text: string;
 }
+/** What the person is waiting on, and since when; an older server leaves it out. */
+export interface PiStage {
+  name: string;
+  since: string;
+  detail?: string;
+}
 export interface PiSnapshot {
+  stage?: PiStage;
   /** False when this project cannot run the agent at all. */
   available: boolean;
   conversation: PiConversation;

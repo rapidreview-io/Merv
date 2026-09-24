@@ -77,6 +77,11 @@ const snapshot = (
   sequence,
   tail,
 });
+/** A snapshot standing at one stage, begun `ago` milliseconds before now. */
+const staged = (value: ReturnType<typeof snapshot>, name: string, ago = 0, detail?: string) => ({
+  ...value,
+  stage: { name, since: new Date(Date.now() - ago).toISOString(), detail },
+});
 const frame = (event: string, data: unknown) =>
   `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const originalFetch = globalThis.fetch;
@@ -159,11 +164,17 @@ const cleanup = async () => {
   setProject(null);
 };
 
-test('opening an empty Agent creates nothing; the first message creates its conversation', async (t) => {
+test('opening an empty Agent warms one conversation, and the first message goes to it', async (t) => {
   t.after(cleanup);
   setProject('p1');
   let state = snapshot(conversation());
   const stream = boot(() => state);
+  const warmed: Record<string, unknown>[] = [];
+  serve('/tools/pi.warm', (_count, input) => {
+    warmed.push(input);
+    state = staged(snapshot({ ...conversation(), runtimeId: 'runtime_1' }), 'machine');
+    return { body: { result: state } };
+  });
   const sent: Record<string, unknown>[] = [];
   serve('/tools/pi.send', (_count, input) => {
     sent.push(input);
@@ -174,17 +185,23 @@ test('opening an empty Agent creates nothing; the first message creates its conv
   });
   await open();
   await settle(10);
+  // The machine starts as the page opens, in the conversation warming found or made.
+  assert.deepEqual(
+    warmed.map((input) => Object.keys(input)),
+    [['requestId']],
+  );
   assert.equal(
     requests.some((request) => /pi.create|pi.send|task.create|fleet.request/.test(request)),
     false,
   );
   // One terse hint, and none of the copy that explained the system.
   assert.match(text(), /Ask a question to begin/);
+  assert.match(text(), /Starting a machine · 0 s/);
   for (const gone of ['pilot', 'No task is created', 'Ctrl + Enter', 'Ready'])
     assert.ok(!text().includes(gone), `“${gone}” is on the page: ${text()}`);
   await write('What is known?');
   await click('Send');
-  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 1);
+  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 0);
   assert.equal(sent[0].id, 'conversation_1');
   assert.match(text(), /Waiting for a free machine/);
   assert.equal(stream.headers[0].get('authorization'), 'Bearer fixture-token');
@@ -533,8 +550,13 @@ test('a project that cannot run the agent says so calmly and never reads Ready',
   assert.match(text(), /Agent isn’t set up for this project yet/);
   assert.doesNotMatch(text(), /Ready/);
   assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
+  // Nothing is warmed where no machine can start.
+  assert.equal(
+    requests.some((request) => request.includes('/tools/pi.warm')),
+    false,
+  );
   await unmount();
-  // A project with no conversation learns it from the first refusal, in the same words.
+  // A project with no conversation, whose warming failed, learns it from the first refusal.
   setProject('p1');
   boot(() => snapshot(conversation()));
   serve('/tools/pi.send', {
@@ -617,6 +639,129 @@ test('a send refused while the previous agent finishes is asked again with the s
   await settle(3100);
   assert.deepEqual(sent, [sent[0], sent[0]]);
   assert.match(text(), /Preparing a machine/);
+});
+
+test('a machine warms on the open conversation, a switch and a new one, quietly past a releasing agent', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const second = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
+  let current = 'conversation_1';
+  boot(
+    () => snapshot(conversation(current)),
+    () => [conversation(), second],
+  );
+  serve('/tools/pi.create', { body: { result: conversation('conversation_3') } });
+  const warmed: Record<string, unknown>[] = [];
+  serve('/tools/pi.warm', (attempt, input) => {
+    warmed.push(input);
+    if (attempt === 1)
+      return {
+        status: 409,
+        body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
+      };
+    const item = { ...conversation(input.conversationId as string), runtimeId: 'runtime_1' };
+    return { body: { result: staged(snapshot(item), 'machine') } };
+  });
+  await open();
+  await settle(10);
+  // The agent released elsewhere is waited for without a word, and nothing is held up.
+  assert.equal(warmed.length, 1);
+  assert.doesNotMatch(text(), /Finishing|still finishing|releasing/);
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.readOnly, false);
+  await settle(3100);
+  assert.equal(warmed[1].requestId, warmed[0].requestId);
+  assert.match(text(), /Starting a machine/);
+  const choose = async (index: number) => {
+    await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+    await act(async () =>
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[index].click(),
+    );
+    await settle(10);
+  };
+  current = 'conversation_2';
+  await choose(1);
+  current = 'conversation_3';
+  await choose(0);
+  assert.deepEqual(
+    warmed.map((input) => input.conversationId),
+    ['conversation_1', 'conversation_1', 'conversation_2', 'conversation_3'],
+  );
+});
+
+test('the bar and the transcript say what the turn waits on, counting the seconds of each wait', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = { ...conversation(), activeCommandId: 'command_1', runtimeId: 'runtime_1' };
+  const asked = [{ role: 'user', text: 'Hello' }];
+  let sequence = 0;
+  const stream = boot(
+    () => staged(snapshot(active, [command('command_1', 'starting', asked)]), 'machine', 6000),
+    () => [active],
+  );
+  const bar = () => document.querySelector('.pi-bar [role="status"]')?.textContent ?? '';
+  const row = () => document.querySelector('.pi-messages .pi-state');
+  const push = (name: string, status = 'working', detail?: string) =>
+    act(async () =>
+      stream.push(
+        'snapshot',
+        staged(
+          snapshot(active, [command('command_1', status, asked)], ++sequence),
+          name,
+          0,
+          detail,
+        ),
+      ),
+    );
+  await open();
+  assert.match(bar(), /^Starting a machine · 6 s/);
+  // The same words under the question, for the eye alone: the bar already says them aloud.
+  assert.match(row()?.textContent ?? '', /^Starting a machine · 6 s$/);
+  assert.equal(row()?.getAttribute('aria-hidden'), 'true');
+  assert.equal(
+    document.querySelector('[role="status"] [aria-hidden="true"]')?.textContent,
+    ' · 6 s',
+  );
+  assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
+  await jump(60_000);
+  assert.match(bar(), /^Starting a machine · 6\d s/);
+  await push('agent', 'starting');
+  assert.match(bar(), /^Loading the agent · 0 s/);
+  await push('tool', 'working', 'Reading a file');
+  assert.match(bar(), /^Reading a file(Fleet details)?$/);
+  await push('thinking');
+  assert.match(bar(), /^Thinking · 0 s/);
+  await act(async () =>
+    stream.push('delta', {
+      streamId: 'stream_1',
+      sequence: ++sequence,
+      commandId: 'command_1',
+      type: 'text',
+      text: 'Partial',
+    }),
+  );
+  await settle(10);
+  assert.match(bar(), /^Writing…/);
+  await push('saving', 'saving');
+  assert.match(row()?.textContent ?? '', /^Saving…$/);
+  await act(async () =>
+    stream.push(
+      'snapshot',
+      staged(
+        snapshot(
+          { ...active, activeCommandId: null },
+          [command('command_1', 'completed')],
+          ++sequence,
+        ),
+        'ready',
+      ),
+    ),
+  );
+  assert.match(bar(), /^Agent ready/);
+  assert.doesNotMatch(bar(), /·/);
+  assert.equal(row(), null);
+  assert.ok(document.querySelector('.pi-state-dot--ready'));
+  assert.equal(document.querySelector('.pi-state-dot--active'), null);
 });
 
 test('the transcript follows new text until the reader scrolls up, and reads answers as Markdown', async (t) => {
