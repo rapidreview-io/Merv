@@ -1267,6 +1267,8 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   const { firstTextAt } = (await snapshot()).commands[0];
   assert.equal(Date.parse(firstTextAt!) - Date.parse(startedAt!), 1000);
   assert.deepEqual(await stage(), { name: 'writing', since: firstTextAt });
+  // Seconds are counted against the server's own clock, not the reader's.
+  assert.equal((await snapshot()).now, firstTextAt);
   const result = f.completion(input.commandId, input.workerId, checkpointTree());
   f.failStorage(true);
   assert.deepEqual(await f.pi.complete(token, result), { saved: false });

@@ -892,6 +892,25 @@ test('the bar and the transcript say what the turn waits on, counting the second
   assert.ok(!document.querySelector('.pi-state-dot--active'));
 });
 
+test('a wait counts its seconds by the server’s clock, however far this one is off', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  // The server's clock runs a minute ahead; by it, the machine began starting six seconds ago.
+  const warm = { ...conversation(), runtimeId: 'runtime_1' };
+  boot(
+    () => ({
+      ...staged(snapshot(warm), 'machine', 6000 - 60_000),
+      now: new Date(Date.now() + 60_000).toISOString(),
+    }),
+    () => [warm],
+  );
+  await open();
+  assert.match(
+    document.querySelector('.pi-bar [role="status"]')?.textContent ?? '',
+    /^Starting a machine · 6 s/,
+  );
+});
+
 test('the transcript follows new text until the reader scrolls up, and reads answers as Markdown', async (t) => {
   t.after(cleanup);
   setProject('p1');

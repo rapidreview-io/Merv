@@ -86,6 +86,8 @@ export interface PiStage {
 }
 export interface PiSnapshot {
   stage: PiStage;
+  /** The server's clock when this was read, which a stage's `since` is counted against. */
+  now: string;
   /** False when this project cannot run the agent at all (no sandbox connection). */
   available: boolean;
   conversation: PiConversation;

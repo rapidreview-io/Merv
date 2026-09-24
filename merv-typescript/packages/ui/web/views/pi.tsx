@@ -112,12 +112,13 @@ const warm = (id: string | null, alive: () => boolean, requestId = identifier())
   const input = { requestId, ...(id ? { conversationId: id } : {}) };
   return whileReleasing(() => call<PiSnapshot>('pi.warm', input), alive).catch(() => null);
 };
-/** How long the current wait has lasted; a screen reader hears only what is waited on. */
-function Seconds({ since }: { since: string }) {
+/** How long the current wait has lasted by the server's clock, `skew` ms ahead of this one; a
+ * screen reader hears only what is waited on. */
+function Seconds({ since, skew }: { since: string; skew: number }) {
   const now = useNow(1000);
   return (
     <span className="tabular" aria-hidden="true">
-      {` · ${Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) || 0} s`}
+      {` · ${Math.max(0, Math.floor((now + skew - Date.parse(since)) / 1000)) || 0} s`}
     </span>
   );
 }
@@ -146,6 +147,8 @@ function PiConversationPage() {
   const following = useRef(true);
   const createId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
+  // How far the server's clock ran ahead of this one when the latest snapshot arrived.
+  const skew = useRef(0);
   const selection = useRef<string | null>(null);
   // The page's first conversation warms at once; another only once a question is begun in it.
   const eager = useRef(true);
@@ -173,6 +176,7 @@ function PiConversationPage() {
     const previous = canonical.current;
     if (previous?.streamId === next.streamId && previous.sequence > next.sequence) return;
     canonical.current = next;
+    skew.current = Date.parse(next.now ?? '') - Date.now() || 0;
     setSnapshot(next);
     const tail = next.tail
       .filter((event) => event.type === 'text' || event.type === 'progress')
@@ -377,7 +381,7 @@ function PiConversationPage() {
       <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
       <span>
         {words}
-        {since && <Seconds since={since} />}
+        {since && <Seconds since={since} skew={skew.current} />}
       </span>
     </>
   );

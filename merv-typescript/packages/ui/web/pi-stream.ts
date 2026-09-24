@@ -27,6 +27,8 @@ export interface PiStage {
 }
 export interface PiSnapshot {
   stage?: PiStage;
+  /** The server's clock when this was read; an older server leaves it out. */
+  now?: string;
   /** False when this project cannot run the agent at all. */
   available: boolean;
   conversation: PiConversation;

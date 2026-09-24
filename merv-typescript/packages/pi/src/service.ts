@@ -357,6 +357,7 @@ export class PiService implements Pi, FleetOwner {
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
     return {
       stage: this.stage(conversation, turn ?? null, allocation),
+      now: this.time(),
       available: this.fleet.connected(caller.projectId),
       conversation: publicConversation(conversation),
       commands: commands.map(publicCommand),
