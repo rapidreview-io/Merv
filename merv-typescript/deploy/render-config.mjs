@@ -167,7 +167,7 @@ if (fleetEnabled) {
         projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 5, 1, 64),
         allocationTimeoutSeconds: integer(
           'MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS',
-          3600,
+          86_400,
           60,
           86_400,
         ),
@@ -227,7 +227,7 @@ if (piEnabled) {
         model,
         baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
-        idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 30, 5, 300),
+        idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),
       },
     },
   );

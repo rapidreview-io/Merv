@@ -160,7 +160,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       model: 'gpt-6-luna',
       baseUrl: 'https://merv.example',
       turnTimeoutSeconds: 300,
-      idleTimeoutSeconds: 30,
+      idleTimeoutSeconds: 600,
     });
     assert.equal(JSON.stringify(piConfig).includes(pi.PI_PRIVATE_SECRET), false);
     assert.equal(JSON.stringify(piConfig).includes(pi.PI_PROVIDER_KEY), false);
@@ -179,7 +179,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       enabled: true,
       globalLimit: 50,
       projectLimit: 5,
-      allocationTimeoutSeconds: 3600,
+      allocationTimeoutSeconds: 86_400,
     });
     assert.deepEqual(config.plugins.find((p) => p.id === 'sessions').config, {
       managedSecretEnv: 'MANAGED_SECRET',
@@ -211,7 +211,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       enabled: true,
       globalLimit: 2,
       projectLimit: 2,
-      allocationTimeoutSeconds: 3600,
+      allocationTimeoutSeconds: 86_400,
     });
     assert.equal(run({ ...workflow, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1800' }).status, 0);
     config = JSON.parse(readFileSync(output));

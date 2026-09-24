@@ -51,7 +51,7 @@ export const piConfig = z
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .default('MERV_PI_MODEL_API_KEY'),
     turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
-    idleTimeoutSeconds: z.number().int().min(5).max(300).default(30),
+    idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
     pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),
   })
   .strict();

@@ -208,7 +208,7 @@ async function fixture(
       state,
       scope,
       runtimes,
-      { enabled: true, globalLimit: 4, projectLimit: 4 },
+      { enabled: true, globalLimit: 4, projectLimit: 4, allocationTimeoutSeconds: 3600 },
       clock,
     ),
   );

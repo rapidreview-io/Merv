@@ -39,7 +39,7 @@ export const fleetConfig = z
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
-    allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(3600),
+    allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
   })
   .strict();
 type Row = { data_json: string };

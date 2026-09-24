@@ -161,7 +161,13 @@ async function fixture(t: TestContext, limits = { globalLimit: 2, projectLimit: 
     observe: async () => observation,
   };
   const fleet = await createService(
-    new FleetService(state, scope, runtimes, { enabled: true, ...limits }, () => now),
+    new FleetService(
+      state,
+      scope,
+      runtimes,
+      { enabled: true, allocationTimeoutSeconds: 3600, ...limits },
+      () => now,
+    ),
   );
   const unregister = fleet.registerOwner('workflow', owner);
   t.after(async () => {
