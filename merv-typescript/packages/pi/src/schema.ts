@@ -13,6 +13,7 @@ export const createInput = z
 export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000) })
   .strict();
+export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
 export const workerInput = z.object({ workerId: id }).strict();
 export const commandInput = workerInput.extend({ commandId: id }).strict();
 export const message = z

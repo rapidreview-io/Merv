@@ -315,10 +315,12 @@ test(
       });
       assert.equal(result.status, 200, await result.text());
     };
-    const beforeProgress = { ...counts.progress };
+    // The first text records when the answer began to show: one write per turn, not per token.
     await progress(0);
+    assert.equal(counts.progress.writes, 1, 'only the first text of a turn writes State');
+    const beforeProgress = { ...counts.progress };
     const streaming = (async () => {
-      for (let batch = 1; batch < 24; batch++) await progress(batch);
+      for (let batch = 1; batch < 25; batch++) await progress(batch);
     })();
     const streamedDispatch = await admission('dispatch', lease);
     assert.equal((streamedDispatch.result as Awaited<ReturnType<typeof lease>>).reason, 'offered');
@@ -340,13 +342,13 @@ test(
     const firstStageWrites = counts.progress.writes - beforeProgress.writes;
     assert.equal(firstStageWrites, 0, 'progress alongside admissions must not write State');
     const beforeMoreTokens = { ...counts.progress };
-    for (let batch = 24; batch < 48; batch++) await progress(batch);
+    for (let batch = 25; batch < 49; batch++) await progress(batch);
     const extraStageWrites = counts.progress.writes - beforeMoreTokens.writes;
     assert.equal(extraStageWrites, 0, 'doubling the token count must not write State');
     assert.equal(
       counts.progress.writerTransactions,
-      0,
-      'streaming must never take a writer transaction',
+      1,
+      'streaming takes one writer transaction, for its first text',
     );
     await stream.cancel();
     await streamDone;

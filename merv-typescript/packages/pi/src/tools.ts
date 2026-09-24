@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
-import { createInput, id, sendInput } from './schema.js';
+import { createInput, id, sendInput, warmInput } from './schema.js';
 
 export const piToolsPlugin = {
   name: 'merv-pi-tools',
@@ -42,6 +42,14 @@ export const piToolsPlugin = {
           caller: Parameters<typeof ctx.pi.send>[0],
           input: { id: string; commandId: string; text: string },
         ) => ctx.pi.send(caller, input.id, { commandId: input.commandId, text: input.text }),
+      },
+      {
+        name: 'pi.warm',
+        description:
+          'Start an agent machine for a conversation before its first message; without an id, your latest empty conversation or a new one.',
+        inputSchema: warmInput,
+        handler: (caller: Parameters<typeof ctx.pi.warm>[0], input: unknown) =>
+          ctx.pi.warm(caller, input),
       },
       {
         name: 'pi.stop',

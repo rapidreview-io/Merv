@@ -14,6 +14,7 @@ interface Tail {
 
 export class PiStreams {
   private readonly tails = new Map<string, Tail>();
+  private readonly waiters = new Map<string, Set<() => void>>();
 
   constructor(
     private readonly maxBytes = 64_000,
@@ -41,7 +42,24 @@ export class PiStreams {
     return { streamId: tail.id, sequence: tail.sequence, tail: structuredClone(tail.events) };
   }
 
+  /** Resolves at this conversation's next event, or after `ms`; no reader slot is taken. */
+  wait(id: string, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const waiters = this.waiters.get(id) ?? new Set();
+      this.waiters.set(id, waiters);
+      const wake = () => {
+        clearTimeout(timer);
+        waiters.delete(wake);
+        if (!waiters.size) this.waiters.delete(id);
+        resolve();
+      };
+      const timer = setTimeout(wake, ms);
+      waiters.add(wake);
+    });
+  }
+
   publish(id: string, event: Omit<PiEvent, 'sequence'>): void {
+    for (const wake of this.waiters.get(id) ?? []) wake();
     const tail = this.get(id);
     const value = { ...event, sequence: ++tail.sequence };
     const bytes = Buffer.byteLength(JSON.stringify(value));
@@ -71,6 +89,7 @@ export class PiStreams {
   }
 
   close(): void {
+    for (const waiters of [...this.waiters.values()]) for (const wake of waiters) wake();
     for (const tail of this.tails.values()) {
       for (const listener of tail.listeners) listener();
       tail.listeners.clear();

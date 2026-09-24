@@ -16,7 +16,12 @@ import { FleetService } from '../packages/fleet/src/index.js';
 import { PiService } from '../packages/pi/src/index.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
-import type { PiBootstrap, PiCompletion, PiConversation } from '../packages/pi/src/types.js';
+import type {
+  PiBootstrap,
+  PiCompletion,
+  PiConversation,
+  PiStage,
+} from '../packages/pi/src/types.js';
 import { countWrites, openState } from './fixtures/state.js';
 
 process.env.MERV_PI_SECRET ??= 'pi-service-integration-tests-only-32-characters';
@@ -212,6 +217,9 @@ async function fixture(
       clock,
     ),
   );
+  // Tests tick Fleet themselves; a kick is only counted.
+  let kicks = 0;
+  fleet.kick = () => void kicks++;
   const disk = new DiskBlobs(join(directory, 'blobs'));
   let failPut = false;
   const blobs: Blobs = {
@@ -286,6 +294,9 @@ async function fixture(
     },
     get mutations() {
       return mutations;
+    },
+    get kicks() {
+      return kicks;
     },
     failStorage: (value: boolean) => {
       failPut = value;
@@ -953,8 +964,11 @@ test('progress bursts do not add durable writes; stop and revocation fence work'
       { accepted: true },
     );
   }
-  assert.equal(writes() - before, 0);
+  // Only the first text is recorded, as when the answer began to show.
+  assert.equal(writes() - before, 1);
+  const kicks = f.kicks;
   const stopped = await f.pi.stop(f.operator, conversation.id);
+  assert.ok(f.kicks > kicks);
   assert.equal(stopped.commands[0].error, 'cancelled');
   assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
   await assert.rejects(
@@ -1133,6 +1147,124 @@ test('a queued turn waits for capacity; its clock restarts out of the queue and 
   );
   // A warm machine needs no queue.
   assert.equal((await f.send(conversation)).status, 'starting');
+});
+
+test('warming rents a machine for the latest empty conversation, once, and yields to a turn', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.connected = () => false;
+  const unavailable = await f.pi.warm(f.operator, { requestId: 'warm_1' });
+  assert.deepEqual([unavailable.available, unavailable.stage.name], [false, 'idle']);
+  assert.deepEqual(await f.fleet.list(f.operator), []);
+  f.runtimes.connected = () => true;
+  const warmed = await f.pi.warm(f.operator, { requestId: 'warm_2' });
+  assert.equal(warmed.conversation.id, unavailable.conversation.id);
+  assert.deepEqual([warmed.commands, warmed.stage.name, f.kicks], [[], 'machine', 1]);
+  const [allocation] = await f.fleet.list(f.operator);
+  assert.equal(allocation.id, warmed.conversation.runtimeId);
+  assert.equal(allocation.owner.id, `${warmed.conversation.id}:1`);
+  for (const input of [
+    { requestId: 'warm_3' },
+    { requestId: 'warm_4', conversationId: warmed.conversation.id },
+  ])
+    assert.deepEqual((await f.pi.warm(f.operator, input)).conversation, warmed.conversation);
+  assert.equal((await f.fleet.list(f.operator)).length, 1);
+  assert.equal(f.kicks, 1);
+  const command = await f.send(warmed.conversation);
+  assert.equal(command.runtimeId, allocation.id);
+  // The one conversation now has a turn: a new one opens, and the person's busy runtime stays.
+  const other = await f.pi.warm(f.operator, { requestId: 'warm_5' });
+  assert.notEqual(other.conversation.id, warmed.conversation.id);
+  assert.deepEqual([other.conversation.runtimeId, other.stage.name], [null, 'idle']);
+  const bound = await f.claimed(
+    (await f.pi.snapshot(f.operator, warmed.conversation.id)).conversation,
+  );
+  await f.pi.begin(bound.token, bound.input);
+  await f.pi.complete(
+    bound.token,
+    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
+  );
+  await assert.rejects(
+    f.pi.warm(f.operator, { requestId: 'warm_6', conversationId: other.conversation.id }),
+    code('pi_runtime_releasing'),
+  );
+  assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
+});
+
+test('a warm machine shows its stages and, unused, is released after the idle timeout', async (t) => {
+  const f = await fixture(t);
+  const { conversation } = await f.pi.warm(f.operator, { requestId: 'warm' });
+  const stage = async () => (await f.pi.snapshot(f.operator, conversation.id)).stage.name;
+  await f.fleet.tick();
+  assert.equal(await stage(), 'machine');
+  await f.fleet.tick();
+  assert.equal(await stage(), 'agent');
+  const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
+  const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
+  assert.equal(await f.pi.next(token, { workerId: 'worker_1' }), null);
+  assert.equal(await stage(), 'ready');
+  f.advance(5_000);
+  assert.equal(await stage(), 'idle');
+  await assert.rejects(
+    f.pi.warm(f.operator, { requestId: 'again', conversationId: conversation.id }),
+    code('pi_runtime_releasing'),
+  );
+  assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
+});
+
+test('a cold turn shows what it waits on, from the queue to the answer; a held worker gets the next at once', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  await f.send(conversation);
+  assert.equal(f.kicks, 1);
+  const snapshot = () => f.pi.snapshot(f.operator, conversation.id);
+  const stage = async () => (await snapshot()).stage;
+  assert.equal((await stage()).name, 'machine');
+  // Still queued a while later means capacity is full; Pi's own pass tells open pages.
+  f.advance(3_001);
+  const sequence = f.pi.streams.snapshot(conversation.id).sequence;
+  await f.pi.tick();
+  assert.equal(f.pi.streams.snapshot(conversation.id).sequence, sequence + 1);
+  assert.equal((await stage()).name, 'queued');
+  await f.fleet.tick();
+  assert.equal((await stage()).name, 'machine');
+  await f.fleet.tick();
+  assert.equal((await stage()).name, 'agent');
+  const { token, input } = await f.claimed((await snapshot()).conversation);
+  assert.equal((await stage()).name, 'agent');
+  await f.pi.begin(token, input);
+  const { startedAt } = (await snapshot()).commands[0];
+  assert.deepEqual(await stage(), { name: 'thinking', since: startedAt });
+  const call = f.tools.call.bind(f.tools);
+  let reading: PiStage | undefined;
+  f.tools.call = async (...args) => ((reading = await stage()), call(...args));
+  await f.pi.tool(token, { ...input, name: 'project.get', input: {} });
+  f.tools.call = call;
+  assert.deepEqual([reading?.name, reading?.detail], ['tool', 'Reading the project']);
+  assert.equal((await stage()).name, 'thinking');
+  f.advance(1000);
+  await f.pi.progress(token, { ...input, events: [{ type: 'text', text: 'Answer' }] });
+  const { firstTextAt } = (await snapshot()).commands[0];
+  assert.equal(Date.parse(firstTextAt!) - Date.parse(startedAt!), 1000);
+  assert.deepEqual(await stage(), { name: 'writing', since: firstTextAt });
+  const result = f.completion(input.commandId, input.workerId, checkpointTree());
+  f.failStorage(true);
+  assert.deepEqual(await f.pi.complete(token, result), { saved: false });
+  assert.equal((await stage()).name, 'saving');
+  f.failStorage(false);
+  await f.pi.complete(token, result);
+  assert.equal((await stage()).name, 'ready');
+  assert.equal(f.kicks, 2);
+  assert.equal(await f.pi.next(token, { workerId: 'worker_2' }, 50), null);
+  const held = f.pi.next(token, { workerId: 'worker_2' }, 5_000);
+  await pause(50);
+  const sentAt = Date.now();
+  const sent = await f.send(conversation, 'More');
+  assert.equal((await held)?.command.id, sent.id);
+  assert.ok(Date.now() - sentAt < 1000);
+  // Warming during a turn leaves its runtime alone, even past the machine's deadline.
+  f.advance(3_600_000);
+  await f.pi.warm(f.operator, { requestId: 'warm', conversationId: conversation.id });
+  assert.equal((await f.fleet.inspect(f.operator, sent.runtimeId)).intent, 'run');
 });
 
 test('idle timeout releases only after successful retention, never while a checkpoint is saving', async (t) => {
