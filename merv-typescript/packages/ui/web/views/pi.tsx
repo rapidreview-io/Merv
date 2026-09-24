@@ -9,6 +9,8 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
+import { Ago } from '../components';
+import { ChevronsIcon } from '../icons';
 import { Markdown } from '../markdown';
 import {
   PiStreamError,
@@ -18,6 +20,7 @@ import {
   type PiEvent,
   type PiSnapshot,
 } from '../pi-stream';
+import { stepped } from '../record-picker';
 import type { ViewProps } from './index';
 
 type TransientResponse = { commandId: string; text: string; progress: string };
@@ -57,6 +60,9 @@ const STOPPED: Record<string, string> = {
   checkpoint_unavailable: 'The answer could not be saved. Ask again.',
 };
 const NOT_SET_UP = 'Agent isn’t set up for this project yet.';
+/** What the server calls a conversation until Pi names it; until then its first question does. */
+const UNNAMED = 'New conversation';
+const clip = (text: string) => (text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text);
 const RECONNECTING = 'Reconnecting…';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
 const said = (cause: unknown, fallback: string): string => {
@@ -75,7 +81,7 @@ function PiConversationPage() {
   const [snapshot, setSnapshot] = useState<PiSnapshot | null>(null);
   const [response, setResponse] = useState<TransientResponse | null>(null);
   const [draft, setDraft] = useState('');
-  const [newTitle, setNewTitle] = useState('');
+  const [menu, setMenu] = useState(false);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [finishing, setFinishing] = useState(false);
@@ -88,6 +94,7 @@ function PiConversationPage() {
   const pending = useRef<{ id: string; text: string } | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
+  const switcher = useRef<HTMLDivElement>(null);
   // The transcript follows new text until the reader scrolls away from its end.
   const following = useRef(true);
   const createId = useRef(identifier());
@@ -268,15 +275,45 @@ function PiConversationPage() {
     const list = transcript.current;
     if (list && following.current) list.scrollTop = list.scrollHeight;
   });
+  const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
+  const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
+  const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
+  // Operated as the account menu is: the cursor goes to its first item, the arrows, Home and
+  // End move it, Escape hands it back to the button, and Tab or a click elsewhere shuts it.
+  useEffect(() => {
+    if (!menu) return;
+    const items = () => [
+      ...(switcher.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []),
+    ];
+    items()[0]?.focus();
+    const click = (event: MouseEvent) => {
+      if (!switcher.current?.contains(event.target as Node)) setMenu(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenu(false);
+        switcher.current?.querySelector('button')?.focus();
+      } else if (event.key === 'Tab') setMenu(false);
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const all = items();
+        all[
+          stepped(all.indexOf(document.activeElement as HTMLElement), all.length, event.key)
+        ]?.focus();
+        event.preventDefault();
+      }
+    };
+    document.addEventListener('mousedown', click);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', click);
+      document.removeEventListener('keydown', key);
+    };
+  }, [menu]);
 
   const open = async () => {
-    const item = await call<PiConversation>('pi.create', {
-      requestId: createId.current,
-      title: newTitle.trim() || 'New conversation',
-    });
+    const item = await call<PiConversation>('pi.create', { requestId: createId.current });
     if (!valid()) return null;
     createId.current = identifier();
-    setNewTitle('');
     setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
     choose(item.id);
     return item.id;
@@ -357,66 +394,79 @@ function PiConversationPage() {
     <div className="page-stage pi-page">
       {!listed && !error && <p role="status">Opening conversations…</p>}
       {listed && (
-        <div className="pi-toolbar">
-          {conversations.length > 0 && (
-            <>
-              <label htmlFor="pi-conversation">Conversation</label>
-              <select
-                id="pi-conversation"
-                className="pi-select"
-                value={selected ?? ''}
-                disabled={busy}
-                onChange={(event) => {
-                  pending.current = null;
-                  setDraft('');
-                  setError('');
-                  choose(event.target.value);
-                }}
-              >
-                {conversations.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-          <input
-            className="pi-title"
-            aria-label="New conversation title"
-            placeholder="New conversation title"
-            maxLength={200}
-            value={newTitle}
-            disabled={busy}
-            onChange={(event) => setNewTitle(event.target.value)}
-          />
-          <button className="btn" type="button" disabled={busy} onClick={() => void create()}>
-            New conversation
-          </button>
-        </div>
-      )}
-      {blocked ? (
-        <p className="muted" role="status">
-          {NOT_SET_UP}
-        </p>
-      ) : (
-        (snapshot || finishing) && (
-          <div className="pi-state" role="status">
-            <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
-            <span>
-              {unavailable
-                ? 'Unavailable'
-                : finishing
-                  ? 'Finishing the previous agent…'
-                  : (STATUS[status] ?? 'Ready')}
-            </span>
-            {snapshot?.conversation.runtimeId && (
-              <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
-                Fleet details
-              </Link>
+        <div className="pi-bar">
+          <div className="pi-switch" ref={switcher}>
+            <button
+              type="button"
+              className="pi-switch-button"
+              aria-haspopup="menu"
+              aria-expanded={menu}
+              title={title}
+              disabled={busy}
+              onClick={() => setMenu((value) => !value)}
+            >
+              <span>{title}</span>
+              <ChevronsIcon />
+            </button>
+            {menu && (
+              <div className="pi-menu" role="menu" aria-label="Conversations">
+                <button
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  className="pi-menu-item"
+                  onClick={() => {
+                    setMenu(false);
+                    void create();
+                  }}
+                >
+                  New conversation
+                </button>
+                {[...conversations]
+                  .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      className="pi-menu-item"
+                      aria-current={item.id === selected || undefined}
+                      onClick={() => {
+                        setMenu(false);
+                        switcher.current?.querySelector('button')?.focus();
+                        if (item.id === selected) return;
+                        pending.current = null;
+                        setDraft('');
+                        setError('');
+                        choose(item.id);
+                      }}
+                    >
+                      <span>{item.id === selected ? title : item.title}</span>
+                      <Ago at={item.updatedAt} />
+                    </button>
+                  ))}
+              </div>
             )}
           </div>
-        )
+          {!blocked && (snapshot || finishing) && (
+            <div className="pi-state" role="status">
+              <span className={`pi-state-dot${active ? ' pi-state-dot--active' : ''}`} />
+              <span>
+                {unavailable
+                  ? 'Unavailable'
+                  : finishing
+                    ? 'Finishing the previous agent…'
+                    : (STATUS[status] ?? 'Ready')}
+              </span>
+              {snapshot?.conversation.runtimeId && (
+                <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
+                  Fleet details
+                </Link>
+              )}
+            </div>
+          )}
+        </div>
       )}
       {listed && (
         <div
@@ -453,8 +503,11 @@ function PiConversationPage() {
           )}
           {selected && !snapshot ? (
             <p className="muted">Loading conversation…</p>
+          ) : blocked ? (
+            <p className="muted" role="status">
+              {NOT_SET_UP}
+            </p>
           ) : (
-            !blocked &&
             !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
           )}
         </div>
@@ -491,7 +544,9 @@ function PiConversationPage() {
             void send();
           }}
         >
-          <label htmlFor="pi-draft">Message Agent</label>
+          <label htmlFor="pi-draft" className="sr-only">
+            Message Agent
+          </label>
           <textarea
             id="pi-draft"
             ref={composer}

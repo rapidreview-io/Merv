@@ -319,7 +319,8 @@ function TitleLine({ rows, facts }: { rows: Row[]; facts: PageFacts }) {
         );
   if (!current) return null;
   return (
-    <header className="page-lede">
+    // Agent gives the window to its conversation, whose bar says which one: the place is heard.
+    <header className={cx('page-lede', current.view.kind === 'pi' && 'sr-only')}>
       <h1 className="lede-line">
         <span className="lede-here">{current.label}</span>
         {/* A counted row says its total, a measured zero included; a row that

@@ -373,8 +373,8 @@ test('project change aborts old stream and opens a clean project conversation', 
   await settle(20);
   assert.ok(stream.aborted >= 1);
   assert.equal(
-    document.querySelector<HTMLSelectElement>('#pi-conversation')?.value,
-    'conversation_2',
+    requests.filter((request) => request.endsWith('/events')).at(-1),
+    'GET /pi/conversation_2/events',
   );
   assert.equal(stream.headers.at(-1)?.get('x-merv-project-id'), 'p2');
 });
@@ -420,40 +420,74 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
   assert.equal(requests.length, before);
 });
 
-test('selecting and creating conversations resets the transcript without sending', async (t) => {
+test('one bar names the conversation and switches between them, newest first, by keyboard or pointer', async (t) => {
   t.after(cleanup);
   setProject('p1');
   let current = 'conversation_1';
-  const first = conversation('conversation_1');
-  const second = { ...conversation('conversation_2'), title: 'Earlier inquiry' };
+  const asked = 'How do proteins fold into their native shapes so quickly?';
+  const second = {
+    ...conversation('conversation_2'),
+    title: 'Earlier inquiry',
+    updatedAt: '2026-09-21T00:00:00Z',
+  };
   boot(
-    () => snapshot(conversation(current)),
-    () => [first, second],
+    () =>
+      current === 'conversation_1'
+        ? snapshot(conversation(), [
+            command('command_1', 'completed', [{ role: 'user', text: asked }]),
+          ])
+        : snapshot(current === second.id ? second : conversation(current)),
+    () => [conversation(), second],
   );
-  let title = '';
+  let created: Record<string, unknown> = {};
   serve('/tools/pi.create', (_count, input) => {
-    title = input.title as string;
-    return { body: { result: { ...conversation('conversation_3'), title } } };
+    created = input;
+    return { body: { result: conversation('conversation_3') } };
   });
   await open();
-  const select = document.querySelector<HTMLSelectElement>('#pi-conversation')!;
+  const bar = () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!;
+  const items = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+  const key = (name: string) =>
+    act(async () => {
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: name, bubbles: true }));
+    });
+  // Until Pi names it, a conversation is called by its first question.
+  assert.equal(bar().textContent, `${asked.slice(0, 47)}…`);
+  assert.equal(bar().getAttribute('aria-haspopup'), 'menu');
+  for (const gone of ['Conversation', 'New conversation title'])
+    assert.ok(!text().includes(gone), `“${gone}” is on the page`);
+  assert.equal(document.querySelector('label[for="pi-draft"]')?.className, 'sr-only');
+  await act(async () => bar().click());
+  assert.equal(bar().getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(
+    items().map((item) => item.firstChild?.textContent),
+    ['New conversation', 'Earlier inquiry', bar().textContent],
+  );
+  assert.ok(items()[1].querySelector('time'));
+  assert.equal(document.activeElement, items()[0]);
+  await key('ArrowDown');
+  assert.equal(document.activeElement, items()[1]);
+  await key('Escape');
+  assert.equal(items().length, 0);
+  assert.equal(document.activeElement, bar());
+  await act(async () => bar().click());
+  await act(async () => {
+    document.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  });
+  assert.equal(items().length, 0);
   current = second.id;
-  await act(async () => {
-    select.value = current;
-    select.dispatchEvent(new window.Event('change', { bubbles: true }));
-  });
+  await act(async () => bar().click());
+  await act(async () => items()[1].click());
   await settle(10);
-  assert.equal(select.value, second.id);
+  assert.equal(bar().textContent, 'Earlier inquiry');
+  assert.equal(document.activeElement, bar());
   current = 'conversation_3';
-  const input = document.querySelector<HTMLInputElement>('.pi-title')!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-  await act(async () => {
-    setter.call(input, 'Second inquiry');
-    input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  });
-  await click('New conversation');
-  assert.equal(title, 'Second inquiry');
-  assert.equal(document.querySelector<HTMLSelectElement>('#pi-conversation')?.value, current);
+  await act(async () => bar().click());
+  await act(async () => items()[0].click());
+  await settle(10);
+  // Pi names the conversation; nobody types a title.
+  assert.deepEqual(Object.keys(created), ['requestId']);
+  assert.equal(bar().textContent, 'New conversation');
   assert.equal(document.activeElement?.id, 'pi-draft');
   assert.equal(
     requests.some((request) => request.includes('/tools/pi.send')),
