@@ -34,44 +34,25 @@ Git is implemented and locally tested. Cloudflare isolation, cleanup, and
 provider acceptance remain pending. This script is not a production Fleet owner
 or a substitute for those gates.
 
-## Build and pin a Cloudflare candidate
+## Releasing to production
 
-From `merv-typescript`, one command creates a fresh minimal sandbox Docker
-context from the isolated sandbox checkout, bundles the existing supervisor,
-builds both `linux/amd64` images, and records source hashes, image IDs, and the
-installed `/opt/merv/runtime/start-runner` SHA-256:
+`node deploy/hosted-release.mjs` releases changes to these files: it layers the compiled hosted
+files on the pinned base image, runs the Linux probes below against that exact image, and moves
+the Cloudflare app, the Sandboxes catalog and Main together, with a live canary turn and automatic
+rollback. `deploy/release.mjs` runs it after every production release.
+
+It never rebuilds the base image, which holds `Dockerfile` and `packages/pi/worker-runtime`. To
+change those, build a new base from `merv-typescript` with the isolated sandbox checkout:
 
 ```sh
 node scripts/hosted-runner/package.mjs build \
   ../output/fleet-sandboxes ../output/hosted-candidate-1 merv-hosted-codex:candidate-1
 ```
 
-The output is `../output/hosted-candidate-1/build.json`. Use a new output
-directory and tag for each candidate. The staged Docker context contains only
-the Cloudflare Dockerfile's explicit COPY inputs and the amd64 agent binary;
-unrelated changes in either checkout are not copied. The bundle hash records
-the compiled Runner payload, while source revisions and file hashes record the
-inputs selected for this build. The image ID identifies the actual result even
-when upstream base tags or package downloads change.
-
-After separately pushing and independently checking the immutable registry
-reference, pin that externally obtained digest:
-
-```sh
-node scripts/hosted-runner/package.mjs finalize \
-  ../output/hosted-candidate-1/build.json \
-  registry.cloudflare.com/ACCOUNT/IMAGE@sha256:64_LOWERCASE_HEX_DIGITS cloudflare
-```
-
-This writes `releases.json` in the strict `RuntimeReleases` catalog format and
-`release.json` with its `rt1_…` release ID and registry reference. The service's
-operator catalog enables the same release; the trusted sandbox bootstrap writes
-`/opt/merv/runtime/releases.json` as a root-owned mode-0600 file before protected
-launch. The catalog is finalized after the image digest is known, so it is not
-baked into the image it identifies. This helper never pushes, deploys, accesses
-Cloudflare credentials, or asserts that the registry digest matches the locally
-built image. The operator must verify that link and the live provider image and
-runtime gates before enabling Fleet.
+The output is `../output/hosted-candidate-1/build.json`, with source hashes, image IDs and the
+installed `/opt/merv/runtime/start-runner` SHA-256. Use a new output directory and tag each time.
+The staged Docker context holds only the Cloudflare Dockerfile's explicit COPY inputs and the
+amd64 agent binary. Push it, then pin it as `base` in `deploy/hosted-release.json`.
 
 ## Combined Pi and workflow Linux probes
 

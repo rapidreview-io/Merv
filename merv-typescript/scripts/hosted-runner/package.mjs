@@ -1,4 +1,4 @@
-/** Build a combined hosted Codex/Pi candidate, then pin a separately pushed digest. */
+/** Build a combined hosted Codex/Pi base image; deploy/hosted-release.mjs releases on top of it. */
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
@@ -211,65 +211,6 @@ function build(sandboxPath, outputPath, tag) {
   process.stdout.write(`${join(out, 'build.json')}\n`);
 }
 
-function finalize(buildPath, registryImage, provider) {
-  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(provider)) throw new Error('Invalid provider');
-  const match = /^.+@(sha256:[0-9a-f]{64})$/.exec(registryImage);
-  if (!match) throw new Error('Registry image must have an immutable SHA-256 digest');
-  const input = JSON.parse(readFileSync(buildPath, 'utf8'));
-  const image = input.image;
-  if (
-    input.schema !== 'merv-hosted-image-build-v1' ||
-    image?.platform !== 'linux/amd64' ||
-    image.executable !== executable ||
-    !/^[0-9a-f]{64}$/.test(image.executableSha256)
-  ) {
-    throw new Error('Invalid hosted image build manifest');
-  }
-  const release = {
-    provider,
-    image_digest: match[1],
-    executable,
-    executable_sha256: image.executableSha256,
-    arguments: [],
-    enrollment_timeout_seconds: 60,
-  };
-  // Exactly RuntimeRelease.release_id in merv-sandboxes/runtimes/releases.py.
-  const identity = [
-    'merv-runtime-release-v1',
-    release.provider,
-    release.image_digest,
-    release.executable,
-    release.executable_sha256,
-    release.arguments,
-    release.enrollment_timeout_seconds,
-  ];
-  const releaseId = `rt1_${sha256(JSON.stringify(identity))}`;
-  const result = { releases: [release] };
-  const directory = dirname(resolve(buildPath));
-  writeFileSync(join(directory, 'releases.json'), JSON.stringify(result, null, 2) + '\n', {
-    mode: 0o600,
-  });
-  writeFileSync(
-    join(directory, 'release.json'),
-    JSON.stringify(
-      {
-        schema: 'merv-hosted-image-release-v1',
-        buildManifest: resolve(buildPath),
-        registryImage,
-        releaseId,
-      },
-      null,
-      2,
-    ) + '\n',
-    { mode: 0o600 },
-  );
-  process.stdout.write(`${releaseId}\n`);
-}
-
 const [action, ...args] = process.argv.slice(2);
 if (action === 'build' && args.length === 3) build(...args);
-else if (action === 'finalize' && args.length === 3) finalize(...args);
-else
-  throw new Error(
-    'Usage: package.mjs build <sandbox-checkout> <fresh-output-dir> <image-tag> | finalize <build.json> <registry-image@sha256:digest> <provider>',
-  );
+else throw new Error('Usage: package.mjs build <sandbox-checkout> <fresh-output-dir> <image-tag>');
