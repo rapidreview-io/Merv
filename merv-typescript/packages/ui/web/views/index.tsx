@@ -8,6 +8,7 @@ import { ExperimentsView } from './experiments';
 import { FeedView } from './feed';
 import { LegacyHistoryView } from './legacy-history';
 import { PaperView } from './paper';
+import { PiView } from './pi';
 import { CollectionView, RecordView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
@@ -38,6 +39,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   experiments: ExperimentsView,
   knowledge: moved('/paper'),
   paper: PaperView,
+  pi: PiView,
   research: ResearchView,
   reflections: ReflectionsView,
   'legacy-history': LegacyHistoryView,

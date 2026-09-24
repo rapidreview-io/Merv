@@ -3,6 +3,7 @@ import type {
   Caller,
   Data,
   SessionToolPolicy,
+  ConversationToolPolicy,
   CodeCommandCompletion,
   CodeCommandControl,
   CodeCommandRecord,
@@ -107,6 +108,7 @@ export interface Api {
   mount(prefix: string, handler: MountHandler): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;
+  registerPi(provider: import('./pi.js').PiApiProvider): () => void;
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
@@ -119,6 +121,7 @@ export interface Tools {
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
+  registerConversationPolicy(provider: ConversationToolPolicy): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
 }

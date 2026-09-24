@@ -48,6 +48,7 @@ export interface FleetConfig {
  * Workflow and chat own authority, enrollment and completion. Fleet owns machines only.
  */
 export interface FleetOwner {
+  sourcePermission?: 'read' | 'write';
   /** Read-only transactional check; false fences new authority and starts cleanup. */
   valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** Stable bytes for this allocation/epoch across retries, never persisted by Fleet. */
@@ -57,6 +58,8 @@ export interface FleetOwner {
 }
 export interface Fleet {
   registerOwner(kind: string, owner: FleetOwner): () => void;
+  inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
+  cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
   inspect(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   list(caller: Caller): Promise<FleetAllocation[]>;

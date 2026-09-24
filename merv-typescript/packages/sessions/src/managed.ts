@@ -13,6 +13,13 @@ import {
 } from '@merv/contracts';
 import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
+import type {
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerValidator,
+  ManagedEnrollmentInput,
+  ManagedRunnerInspection,
+  ManagedBindingRow,
+} from './managed-types.js';
 
 const profile = z
   .object({
@@ -45,37 +52,6 @@ const enrollment = z
     expiresAt: z.string().datetime({ offset: true }),
   })
   .strict();
-
-import type {
-  ManagedEnrollmentInput,
-  ManagedRunnerBindingIdentity,
-  ManagedRunnerInspection,
-  ManagedRunnerValidator,
-} from './managed-types.js';
-export type {
-  ManagedEnrollmentInput,
-  ManagedRunnerBindingIdentity,
-  ManagedRunnerInspection,
-  ManagedRunnerValidator,
-} from './managed-types.js';
-export interface ManagedBindingRow {
-  allocation_id: string;
-  epoch: number;
-  project_id: string;
-  source_json: string;
-  source_hash: string;
-  runtime_profile_id: string;
-  platform_json: string;
-  capabilities_json: string;
-  enrollment_hash: string;
-  enrollment_expires_at: string;
-  control_hash: string;
-  control_expires_at: string;
-  runner_id: string | null;
-  bound_session_id: string | null;
-  runner_released_at: string | null;
-  created_at: string;
-}
 
 export class ManagedRunnerBindings {
   private validator?: ManagedRunnerValidator;
@@ -113,9 +89,14 @@ export class ManagedRunnerBindings {
     this.secret = secret;
     return secret;
   }
-  private token(kind: 'me' | 'mr', allocationId: string, epoch: number): string {
-    return `${kind}_${createHmac('sha256', this.signingSecret())
-      .update(canonical({ domain: `merv-managed-${kind}-v1`, allocationId, epoch }))
+  private token(allocationId: string, epoch: number): string {
+    return `me_${createHmac('sha256', this.signingSecret())
+      .update(canonical({ domain: 'merv-managed-me-v1', allocationId, epoch }))
+      .digest('hex')}`;
+  }
+  private controlToken(allocationId: string, epoch: number, workerNonce: string): string {
+    return `mr_${createHmac('sha256', this.signingSecret())
+      .update(canonical({ domain: 'merv-managed-mr-v2', allocationId, epoch, workerNonce }))
       .digest('hex')}`;
   }
   private identity(row: ManagedBindingRow): ManagedRunnerBindingIdentity {
@@ -157,8 +138,7 @@ export class ManagedRunnerBindings {
       'invalid_managed_enrollment',
       'Managed allocation deadline has passed',
     );
-    const enrollmentToken = this.token('me', value.allocationId, value.epoch);
-    const controlToken = this.token('mr', value.allocationId, value.epoch);
+    const enrollmentToken = this.token(value.allocationId, value.epoch);
     const identity = { ...value, capabilities: value.capabilities ?? [] };
     return await this.state.transaction(async (tx) => {
       check(this.validator, 'managed_unavailable', 'Managed validator is unavailable', 503);
@@ -199,7 +179,7 @@ export class ManagedRunnerBindings {
           canonical(identity.capabilities),
           tokenDigest(enrollmentToken),
           new Date(Math.min(this.clock() + 900_000, Date.parse(value.expiresAt))).toISOString(),
-          tokenDigest(controlToken),
+          tokenDigest(`unbound:${enrollmentToken}`),
           value.expiresAt,
           now,
         );
@@ -214,14 +194,16 @@ export class ManagedRunnerBindings {
       'Invalid managed enrollment',
       401,
     );
+    const parsed = z
+      .object({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
+      .strict()
+      .safeParse(input);
     check(
-      input !== null &&
-        typeof input === 'object' &&
-        !Array.isArray(input) &&
-        Object.keys(input).length === 0,
+      parsed.success,
       'invalid_managed_enrollment',
-      'Managed enrollment accepts an empty object only',
+      'Managed enrollment requires a 32-byte hex worker nonce',
     );
+    const workerNonce = parsed.data.workerNonce;
     return await this.state.transaction(async (tx) => {
       const row = await tx.get<ManagedBindingRow>(
         'SELECT * FROM session_managed_runners WHERE enrollment_hash=?',
@@ -234,9 +216,26 @@ export class ManagedRunnerBindings {
         401,
       );
       await this.admits(row, tx);
+      const nonceHash = tokenDigest(workerNonce);
+      check(
+        row.worker_nonce_hash === null || row.worker_nonce_hash === nonceHash,
+        'managed_binding_conflict',
+        'Managed worker nonce cannot change',
+        409,
+      );
+      const controlToken = this.controlToken(row.allocation_id, Number(row.epoch), workerNonce);
+      const controlHash = tokenDigest(controlToken);
+      if (row.worker_nonce_hash === null) {
+        await tx.run(
+          'UPDATE session_managed_runners SET worker_nonce_hash=?, control_hash=? WHERE allocation_id=? AND worker_nonce_hash IS NULL',
+          nonceHash,
+          controlHash,
+          row.allocation_id,
+        );
+      }
       return {
-        controlToken: this.token('mr', row.allocation_id, Number(row.epoch)),
-        caller: this.caller(row),
+        controlToken,
+        caller: this.caller({ ...row, worker_nonce_hash: nonceHash, control_hash: controlHash }),
       };
     });
   }
@@ -267,7 +266,9 @@ export class ManagedRunnerBindings {
           tokenDigest(token),
         );
         check(
-          row && Date.parse(row.control_expires_at) > this.clock(),
+          row &&
+            row.worker_nonce_hash !== null &&
+            Date.parse(row.control_expires_at) > this.clock(),
           'unauthorized',
           'Managed runner credential expired or invalid',
           401,
@@ -290,6 +291,7 @@ export class ManagedRunnerBindings {
     check(
       row &&
         Number(row.epoch) === managed.epoch &&
+        row.worker_nonce_hash !== null &&
         row.control_hash === managed.credentialHash &&
         row.project_id === caller.projectId &&
         Date.parse(row.control_expires_at) > this.clock() &&

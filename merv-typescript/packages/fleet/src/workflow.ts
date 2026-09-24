@@ -9,7 +9,6 @@ import {
   type Scope,
   type Transaction,
 } from '@merv/contracts';
-import { sourceCaller } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
 
@@ -152,13 +151,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
     if (
       this.closed ||
       !this.source ||
+      !this.caller ||
       digest(binding.source) !== digest(this.source) ||
       canonical(binding.platform) !== canonical(hostedCodexPlatform) ||
       canonical(binding.capabilities) !== canonical([...hostedCodexCapabilities])
     )
       return false;
     try {
-      const a = await this.fleet.inspect(sourceCaller(binding.source), binding.allocationId, tx);
+      const a = await this.fleet.inspect(this.caller, binding.allocationId, tx);
       return (
         this.accepted(a) &&
         a.phase !== 'released' &&

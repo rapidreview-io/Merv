@@ -74,6 +74,7 @@ export interface SandboxRuntimes {
     operationKey: string,
     bootstrap: string,
   ): Promise<SandboxRuntimeHandle>;
+  acknowledge(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   stop(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   /** Renew to the operator's configured lease, never an agent-selected lifetime. */
   renew(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;

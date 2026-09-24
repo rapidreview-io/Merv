@@ -2,6 +2,7 @@ import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
+import { managedNoncePostgresMigration } from './managed-nonce.postgres.js';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
@@ -33,12 +34,12 @@ import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations, lastActivity } from './observations.js';
 import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
-import {
-  ManagedRunnerBindings,
-  type ManagedEnrollmentInput,
-  type ManagedRunnerInspection,
-  type ManagedRunnerValidator,
-} from './managed.js';
+import { ManagedRunnerBindings } from './managed.js';
+import type {
+  ManagedEnrollmentInput,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed-types.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
@@ -360,6 +361,7 @@ export class LeasedSessions implements Sessions {
           sql: postgresMigrations[6],
         },
         { version: 7, sql: postgresMigrations[7] },
+        { version: 8, sql: managedNoncePostgresMigration },
       ]);
       this.managed = new ManagedRunnerBindings(state, scope, this.clock, config.managedSecretEnv);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));

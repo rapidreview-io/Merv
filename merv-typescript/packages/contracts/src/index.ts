@@ -9,6 +9,7 @@ export type {
   ToolGrant,
   SessionToolPolicy,
   SessionToolInvocation,
+  ConversationToolPolicy,
 } from './tool-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { types } from 'node:util';
@@ -617,6 +618,7 @@ export interface Caller {
   key?: { id: string; membershipId: string };
   /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
   session?: { id: string; agentSessionId?: string; invocationId?: string };
+  conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
   /** Server-authenticated supervisor; the binding is rechecked on every control. */
   managed?: {
     allocationId: string;
@@ -633,6 +635,9 @@ export type DelegationSource = { actorId: string; projectId: string } & (
 );
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
+  require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
+}
+export interface ConversationAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
 /** Optional Sessions authority for allocation-bound supervisors, separate from assignment tools. */
@@ -860,6 +865,7 @@ export interface Scope {
     tx?: Transaction,
   ): Promise<Actor>;
   registerSessionAuthority(authority: SessionAuthority): () => void;
+  registerConversationAuthority(authority: ConversationAuthority): () => void;
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
   createSessionActor(
     source: DelegationSource,

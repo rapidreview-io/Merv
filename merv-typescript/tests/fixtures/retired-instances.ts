@@ -386,6 +386,13 @@ export async function insert(client: pg.Client, table: string, row: Record<strin
 export async function seedRetirement(client: pg.Client, seed: Seed): Promise<void> {
   await client.query('BEGIN');
   try {
+    const managed = await client.query(
+      'SELECT count(*)::integer AS count FROM session_managed_runners',
+    );
+    if (managed.rows[0].count !== 0)
+      throw new Error('Cannot rewind a fixture with managed runners');
+    await client.query('DROP TABLE session_managed_runners');
+    await client.query("DELETE FROM component_migrations WHERE component='sessions' AND version=7");
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)

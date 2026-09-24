@@ -201,6 +201,52 @@ test('stop reports pending deletion until the provider confirms stopped', async 
   await service.close();
 });
 
+test('acknowledge sends only the bound job and rejects changed or unlaunched receipts', async (t) => {
+  let reply = launchReceipt('consumed');
+  const { calls, service } = fixture(t, (call) => {
+    if (call.path === '/v1/runtime/launches/rln_1/exchange') return Response.json(reply);
+    throw new Error(`unexpected route ${call.method} ${call.path}`);
+  });
+  const current: SandboxRuntimeHandle = {
+    sandboxId: 'sbx_1',
+    state: 'ready',
+    ready: true,
+    deleted: false,
+    leaseExpiresAt: null,
+    revision: 1,
+    launch: {
+      sandboxId: 'sbx_1',
+      launchId: 'rln_1',
+      jobId: 'rtj_1',
+      operationKey: 'run_1',
+      releaseId,
+      state: 'pending',
+      deliveryState: 'launched',
+      expiresAt: '2026-09-22T00:05:00Z',
+    },
+  };
+  const exchanged = await service.runtimes!.acknowledge(connection.projectId, current);
+  assert.equal(exchanged.launch?.state, 'consumed');
+  await service.runtimes!.acknowledge(connection.projectId, exchanged);
+  assert.equal(calls.filter((call) => call.path.endsWith('/exchange')).length, 2);
+  assert.deepEqual(calls.at(-1)?.body, { job_id: 'rtj_1' });
+  assert.ok(calls.every((call) => call.authorization === 'Bearer sbxt_runtime_fixture'));
+  reply = { ...reply, job_id: 'rtj_other' };
+  await assert.rejects(service.runtimes!.acknowledge(connection.projectId, current), {
+    code: 'sandbox_runtime_unavailable',
+  });
+  const count = calls.length;
+  await assert.rejects(
+    service.runtimes!.acknowledge(connection.projectId, {
+      ...current,
+      launch: { ...current.launch!, deliveryState: 'uncertain' },
+    }),
+    { code: 'sandbox_runtime_unavailable' },
+  );
+  assert.equal(calls.length, count);
+  await service.close();
+});
+
 test('remote launch errors cannot echo the bootstrap into Fleet', async (t) => {
   const secret = 'highly-sensitive-bootstrap';
   const { service } = fixture(t, (call) => {

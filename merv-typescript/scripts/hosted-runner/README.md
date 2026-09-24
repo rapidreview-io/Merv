@@ -72,3 +72,64 @@ baked into the image it identifies. This helper never pushes, deploys, accesses
 Cloudflare credentials, or asserts that the registry digest matches the locally
 built image. The operator must verify that link and the live provider image and
 runtime gates before enabling Fleet.
+
+## Combined Pi and workflow Linux probes
+
+The candidate now includes a fixed dispatcher for the workflow supervisor and
+the isolated Pi SDK worker. Pi receives allocation-bound authority on private
+stdin, not a provider key. Its pinned dependencies and lockfile come from
+`packages/pi/worker-runtime`.
+
+Run these probes on a Linux Docker host against the built combined image:
+
+```sh
+docker run --rm --network none --cap-add SYS_PTRACE \
+  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
+  -v "$PWD/scripts/hosted-runner/linux-pi-gate.py:/opt/merv/runtime/probe.py:ro" \
+  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
+docker run --rm --network none \
+  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
+  -v "$PWD/scripts/hosted-runner/linux-workflow-gate.py:/opt/merv/runtime/probe.py:ro" \
+  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
+```
+
+`SYS_PTRACE` is for the root test inspector only; the Pi worker and assignment
+probe must have zero effective, permitted, inheritable, bounding and ambient
+capabilities. The Pi probe checks identity, bootstrap removal, private parent
+files/descriptors, ptrace, signal permission, sudo and a synthetic root-only
+control socket. The workflow probe uses synthetic credentials and a loopback
+enrollment endpoint to verify the real Codex login and fixed supervisor path.
+Neither probe calls a model or contacts Merv production. Neither replaces the
+actual Cloudflare security, task execution, retention or cleanup gates. Current
+candidate and deployment evidence is in `docs/PI_IMPLEMENTATION_STATUS.md`.
+
+## Pre-harness isolation evidence
+
+The next candidate uses `assignment-probed.py` around the existing fixed
+assignment launcher. Only validated Codex `exec`, not login or Git, invokes
+`isolation_probe.py` before the final identity handoff. It pins the actual root
+supervisor, guardian and group ancestry by executable, arguments, PID and start
+time, and verifies the guardian owns its listening control socket. A bounded
+child uses the same UID/GID/capability drop, attempts all required denials, and
+exits before the assignment begins. Missing targets and unexpected error codes
+refuse launch; they never count as denials.
+
+After rechecking target identities, the launcher writes an exclusive root-owned
+0444 report under `/run/merv-isolation/<workspace-hash>.json`. Only safe identity,
+namespace, inode and denial results enter that report. The fixed v2 Cloudflare
+shell probe compares its own namespace/visibility with this pre-harness evidence
+instead of guessing a supervisor from the process name `node`.
+
+`linux-isolation-probe-gate.mjs` is a synthetic-ancestry Linux integration fixture,
+not a release payload or actual-provider acceptance. It requires neither network
+nor added capabilities. Its success does not prove the actual Cloudflare
+supervisor is hidden by a namespace: that comparison still requires a new pinned
+release and live evidence.
+
+The supervisor now sends one random 32-byte hex `workerNonce` across enrollment
+retries. This requires the coordinated Sessions v8 server migration/protocol;
+old empty-body enrollment is intentionally rejected. The trusted Fleet owner
+acknowledges a verified running exchange through the protected runtime service,
+which purges its encrypted bootstrap without waiting for runtime stop. Deploy
+the server, Sandboxes service and hosted image as a coordinated release, with
+all admission drained and a migration-compatible rollback plan.

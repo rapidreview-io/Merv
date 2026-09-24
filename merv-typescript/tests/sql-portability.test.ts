@@ -26,9 +26,12 @@ import { postgresMigrations as migrations18 } from '../packages/scope/src/user-k
 import { postgresMigrations as migrations19 } from '../packages/sessions/src/agents.postgres.js';
 import { postgresMigrations as migrations20 } from '../packages/sessions/src/dispatch.postgres.js';
 import { postgresMigrations as migrations21 } from '../packages/sessions/src/index.postgres.js';
+import { managedNoncePostgresMigration } from '../packages/sessions/src/managed-nonce.postgres.js';
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
+import { migration as fleetMigration } from '../packages/fleet/src/schema.js';
+import { migration as piMigration } from '../packages/pi/src/schema.js';
 
 type DomainMigration = { owner: string; version: number; postgres: string };
 /** Every native migration file (`<owner>.postgres.ts`), keyed by the owner that registers it. */
@@ -53,6 +56,7 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/sessions/src/agents.ts': migrations19,
   'packages/sessions/src/dispatch.ts': migrations20,
   'packages/sessions/src/index.ts': migrations21,
+  'packages/sessions/src/managed-nonce.ts': { 8: managedNoncePostgresMigration },
   'packages/sessions/src/observations.ts': migrations22,
   'packages/tasks/src/index.ts': migrations23,
   'packages/workflows/src/index.ts': migrations24,
@@ -101,7 +105,13 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 77);
+  assert.equal(all.length, 78);
+  all.push(
+    ...[
+      { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },
+      { owner: 'pi', version: piMigration.version, postgres: piMigration.sql },
+    ],
+  );
   for (const migration of all) {
     assert.ok(migration.postgres?.trim(), `${migration.owner}@${migration.version}`);
     assert.doesNotMatch(

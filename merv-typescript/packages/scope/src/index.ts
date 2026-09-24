@@ -31,6 +31,7 @@ import {
   type UserKey,
   type DelegationSource,
   type SessionAuthority,
+  type ConversationAuthority,
   type ManagedRunnerAuthority,
 } from '@merv/contracts';
 import { identityValid, Memberships, membershipMigration } from './memberships.js';
@@ -98,6 +99,8 @@ export class ProjectScope implements Scope {
   private userKeys!: UserKeys;
   private sessionAuthority?: SessionAuthority;
   private sessionAuthorityRegistration?: symbol;
+  private conversationAuthority?: ConversationAuthority;
+  private conversationAuthorityRegistration?: symbol;
   private managedAuthority?: ManagedRunnerAuthority;
   private managedAuthorityRegistration?: symbol;
   /** Complete storage migrations before publishing this service. */
@@ -244,6 +247,22 @@ export class ProjectScope implements Scope {
       this.sessionAuthority = undefined;
     };
   }
+  registerConversationAuthority(authority: ConversationAuthority): () => void {
+    check(
+      !this.conversationAuthority,
+      'conversation_authority_registered',
+      'Conversation authority is already installed',
+      409,
+    );
+    const registration = Symbol('conversation-authority');
+    this.conversationAuthority = authority;
+    this.conversationAuthorityRegistration = registration;
+    return () => {
+      if (this.conversationAuthorityRegistration !== registration) return;
+      this.conversationAuthority = undefined;
+      this.conversationAuthorityRegistration = undefined;
+    };
+  }
   private requireAuthorityRegistration(registration: symbol | undefined): void {
     check(
       registration !== undefined && this.sessionAuthorityRegistration === registration,
@@ -282,6 +301,7 @@ export class ProjectScope implements Scope {
       'A worker session cannot delegate another session',
       403,
     );
+    check(!caller.conversation, 'nested_session', 'A conversation cannot delegate', 403);
     await this.require(caller, 'read', tx);
     const base = { actorId: caller.actorId, projectId: caller.projectId };
     if (caller.human) {
@@ -657,6 +677,7 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     const registration = this.sessionAuthorityRegistration;
     const managedRegistration = this.managedAuthorityRegistration;
+    const conversationRegistration = this.conversationAuthorityRegistration;
     if (tx) this.state.assertTransaction(tx);
     const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
       const row = await sql.get<ActorRow>(
@@ -673,15 +694,48 @@ export class ProjectScope implements Scope {
         403,
       );
       check(
-        [caller.human, caller.credentialId, caller.key, caller.session, caller.managed].filter(
-          (value) => value !== undefined,
-        ).length <= 1,
+        [
+          caller.human,
+          caller.credentialId,
+          caller.key,
+          caller.session,
+          caller.managed,
+          caller.conversation,
+        ].filter((value) => value !== undefined).length <= 1,
         'forbidden',
         'A caller cannot combine human, actor-credential and user-key authority',
         403,
       );
       let source: DelegationSource | undefined;
-      if (caller.managed) {
+      if (caller.conversation) {
+        check(
+          permission === 'read' && !row.session_id,
+          'conversation_forbidden',
+          'Conversations only read as their original source actor',
+          403,
+        );
+        if (!('transactionId' in sql))
+          return await this.state.snapshot(() =>
+            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
+          );
+        const authority = this.conversationAuthority;
+        check(authority, 'conversation_unavailable', 'Conversation authority is unavailable', 503);
+        source = await authority.require(caller, sql as Transaction);
+        check(
+          source && source.actorId === caller.actorId && source.projectId === caller.projectId,
+          'conversation_forbidden',
+          'Conversation source does not match this caller',
+          403,
+        );
+        const original = await this.requireDelegation(source, 'read', sql as Transaction);
+        check(
+          !original.sessionId && original.id === row.id && original.projectId === row.project_id,
+          'conversation_forbidden',
+          'Conversation source must be the original actor',
+          403,
+        );
+        return { actor: original, source };
+      } else if (caller.managed) {
         check(
           permission === 'read' && !row.session_id,
           'managed_runner_forbidden',
@@ -785,6 +839,14 @@ export class ProjectScope implements Scope {
           this.managedAuthorityRegistration === managedRegistration,
         'managed_runner_unavailable',
         'Managed runner authority changed during authorization',
+        503,
+      );
+    if (caller.conversation)
+      check(
+        conversationRegistration !== undefined &&
+          this.conversationAuthorityRegistration === conversationRegistration,
+        'conversation_unavailable',
+        'Conversation authority changed during authorization',
         503,
       );
     const allowed = permits(value.actor.role, permission);

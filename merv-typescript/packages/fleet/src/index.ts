@@ -109,6 +109,30 @@ export class FleetService implements Fleet {
       )
     ).map(decode);
   }
+  async inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
+    if (tx) this.state.assertTransaction(tx);
+    const read = async (sql: Sql) => {
+      const allocation = await this.get(sql, id);
+      check(
+        this.owners.get(allocation.owner.kind) === owner,
+        'fleet_owner_denied',
+        'Only the registered owner may inspect this allocation',
+        403,
+      );
+      return structuredClone(allocation);
+    };
+    return tx ? read(tx) : this.state.read(read);
+  }
+  async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
+    return inTransaction(this.state, tx, async (tx) => {
+      const allocation = await this.inspectOwned(owner, id, tx);
+      const before = structuredClone(allocation);
+      if (allocation.phase !== 'released') allocation.intent = 'stop';
+      if (allocation.phase === 'queued') allocation.phase = 'released';
+      await this.save(tx, allocation, before);
+      return structuredClone(allocation);
+    });
+  }
   private async save(tx: Transaction, a: FleetAllocation, before: FleetAllocation): Promise<void> {
     if (digest(a) === digest(before)) return;
     a.updatedAt = this.time();
@@ -141,7 +165,7 @@ export class FleetService implements Fleet {
     const owner = this.owners.get(input.owner.kind);
     check(owner, 'fleet_owner_unavailable', 'Fleet owner is unavailable', 503);
     return inTransaction(this.state, tx, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      await this.scope.require(caller, owner.sourcePermission ?? 'write', tx);
       const source = await this.scope.delegationSource(caller, tx);
       const sourceHash = digest(source);
       const fingerprint = digest(input);
@@ -269,7 +293,7 @@ export class FleetService implements Fleet {
     const owner = this.owners.get(a.owner.kind);
     if (!owner) return false;
     try {
-      await this.scope.requireDelegation(a.source, 'write', tx);
+      await this.scope.requireDelegation(a.source, owner.sourcePermission ?? 'write', tx);
     } catch (error) {
       if (error instanceof MervError && [401, 403].includes(error.status)) return false;
       throw error;
@@ -408,7 +432,7 @@ export class FleetService implements Fleet {
         )
           return false;
         try {
-          await this.scope.requireDelegation(current.source, 'write', tx);
+          await this.scope.requireDelegation(current.source, owner.sourcePermission ?? 'write', tx);
         } catch (error) {
           if (error instanceof MervError && [401, 403].includes(error.status)) return false;
           throw error;
@@ -438,7 +462,7 @@ export class FleetService implements Fleet {
         )
           return false;
         try {
-          await this.scope.requireDelegation(current.source, 'write', tx);
+          await this.scope.requireDelegation(current.source, owner.sourcePermission ?? 'write', tx);
         } catch (error) {
           if (error instanceof MervError && [401, 403].includes(error.status)) return false;
           throw error;
@@ -490,7 +514,11 @@ export class FleetService implements Fleet {
         this.state.transaction(async (tx) => {
           const current = await this.get(tx, a.id);
           try {
-            await this.scope.requireDelegation(current.source, 'write', tx);
+            await this.scope.requireDelegation(
+              current.source,
+              owner.sourcePermission ?? 'write',
+              tx,
+            );
           } catch (error) {
             if (error instanceof MervError && [401, 403].includes(error.status)) return false;
             throw error;
@@ -564,19 +592,25 @@ export class FleetService implements Fleet {
       return;
     }
     const status = await owner.observe(structuredClone(a));
+    let exchanged = handle;
+    if (status === 'running') {
+      if (handle.launch?.state === 'pending')
+        exchanged = await runtime.acknowledge(a.projectId, handle);
+      a = await this.observed(a, exchanged, status);
+    }
     if (status === 'finished') {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
       await this.observed(a, await runtime.stop(a.projectId, a.runtime!), 'releasing');
     } else {
-      await this.observed(a, handle, status);
+      if (status === 'starting') await this.observed(a, handle, status);
       if (
         handle.leaseExpiresAt &&
         Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
         (await this.renewalAllowed(a, owner, handle))
       )
-        await this.observed(a, await runtime.renew(a.projectId, handle), status);
+        await this.observed(a, await runtime.renew(a.projectId, exchanged), status);
     }
   }
   /** Disposal fences admission durably, then makes one bounded provider cleanup pass.

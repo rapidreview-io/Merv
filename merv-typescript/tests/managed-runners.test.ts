@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createService, type Caller, type WorkflowPolicy } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
@@ -18,7 +18,10 @@ const profile = {
 };
 const machine = { hostname: 'managed-test', system: 'Linux', architecture: 'x64' };
 
-async function fixture(t: TestContext, options: { codeWorkspace?: boolean } = {}) {
+async function fixture(
+  t: TestContext,
+  options: { codeWorkspace?: boolean; clock?: () => number } = {},
+) {
   const env = `MERV_MANAGED_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = randomBytes(48).toString('hex');
   const state = await openState();
@@ -115,21 +118,23 @@ async function fixture(t: TestContext, options: { codeWorkspace?: boolean } = {}
     credentialId: issued.credential.id,
   };
   const sourceIdentity = await scope.delegationSource(source);
-  const sessions = await createService(
+  let sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, {
       managedSecretEnv: env,
       sweepIntervalMs: 60_000,
+      clock: options.clock,
     }),
   );
   let current = true,
     admits = true;
-  sessions.registerManagedValidator({
+  const validator: Parameters<LeasedSessions['registerManagedValidator']>[0] = {
     current: async (binding) =>
       current &&
       binding.source.projectId === boot.project.id &&
       binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
-  });
+  };
+  sessions.registerManagedValidator(validator);
   t.after(async () => {
     await sessions.close();
     await events.close();
@@ -145,10 +150,11 @@ async function fixture(t: TestContext, options: { codeWorkspace?: boolean } = {}
     runtimeProfileId: 'codex-profile',
     platform: profile,
     capabilities: options.codeWorkspace ? ['code.v2'] : [],
-    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    expiresAt: new Date((options.clock?.() ?? Date.now()) + 3_600_000).toISOString(),
   };
+  const workerNonce = randomBytes(32).toString('hex');
   const enrollment = await sessions.ensureManagedEnrollment(input);
-  const enrolled = await sessions.enrollManaged(enrollment.enrollmentToken, {});
+  const enrolled = await sessions.enrollManaged(enrollment.enrollmentToken, { workerNonce });
   const caller = await sessions.authenticateManaged(enrolled.controlToken);
   const runnerId = `managed-${allocationId}`;
   const heartbeat = (capacity: number) => ({
@@ -178,8 +184,21 @@ async function fixture(t: TestContext, options: { codeWorkspace?: boolean } = {}
       admits = value;
     },
     input,
+    workerNonce,
     enrollment,
     enrolled,
+    restart: async () => {
+      await sessions.close();
+      sessions = await createService(
+        new LeasedSessions(state, scope, workflows, events, {
+          managedSecretEnv: env,
+          sweepIntervalMs: 60_000,
+          clock: options.clock,
+        }),
+      );
+      sessions.registerManagedValidator(validator);
+      return sessions;
+    },
     caller,
     runnerId,
     heartbeat,
@@ -200,7 +219,8 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
     f.enrollment.enrollmentToken,
   );
   assert.equal(
-    (await f.sessions.enrollManaged(f.enrollment.enrollmentToken, {})).controlToken,
+    (await f.sessions.enrollManaged(f.enrollment.enrollmentToken, { workerNonce: f.workerNonce }))
+      .controlToken,
     f.enrolled.controlToken,
   );
   await assert.rejects(
@@ -214,6 +234,8 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
     ),
   );
   assert.ok(row);
+  assert.equal(row.worker_nonce_hash, createHash('sha256').update(f.workerNonce).digest('hex'));
+  assert.equal(JSON.stringify(row).includes(f.workerNonce), false);
   assert.equal(JSON.stringify(row).includes(f.enrolled.controlToken), false);
   assert.equal(JSON.stringify(row).includes(f.enrollment.enrollmentToken), false);
   assert.deepEqual(await f.sessions.inspectManaged(f.input.allocationId, 1), {
@@ -244,6 +266,125 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
       secret: secret(),
     }),
     { code: 'forbidden' },
+  );
+});
+
+test('lost enrollment response replays the same control after restart; changed nonce conflicts', async (t) => {
+  const f = await fixture(t);
+  const changed = { workerNonce: randomBytes(32).toString('hex') };
+  await assert.rejects(f.sessions.enrollManaged(f.enrollment.enrollmentToken, changed), {
+    code: 'managed_binding_conflict',
+    status: 409,
+  });
+  const restarted = await f.restart();
+  const replay = await restarted.enrollManaged(f.enrollment.enrollmentToken, {
+    workerNonce: f.workerNonce,
+  });
+  assert.equal(replay.controlToken, f.enrolled.controlToken);
+  await assert.rejects(restarted.enrollManaged(f.enrollment.enrollmentToken, changed), {
+    code: 'managed_binding_conflict',
+    status: 409,
+  });
+  assert.equal(
+    (await restarted.authenticateManaged(replay.controlToken)).managed?.credentialHash,
+    f.caller.managed?.credentialHash,
+  );
+});
+
+test('only an admitted enrollment pins the nonce and control identity once', async (t) => {
+  const f = await fixture(t);
+  const allocationId = randomUUID();
+  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+    ...f.input,
+    allocationId,
+  });
+  const binding = async () =>
+    f.state.read((tx) =>
+      tx.get<{ worker_nonce_hash: string | null; control_hash: string }>(
+        'SELECT worker_nonce_hash, control_hash FROM session_managed_runners WHERE allocation_id=?',
+        allocationId,
+      ),
+    );
+  const before = await binding();
+  assert.equal(before?.worker_nonce_hash, null);
+  f.admits(false);
+  await assert.rejects(
+    f.sessions.enrollManaged(enrollmentToken, {
+      workerNonce: f.workerNonce,
+    }),
+    { code: 'managed_not_admitted' },
+  );
+  assert.deepEqual(await binding(), before);
+  f.admits(true);
+  const enrolled = await f.sessions.enrollManaged(enrollmentToken, {
+    workerNonce: f.workerNonce,
+  });
+  assert.equal(
+    (await binding())?.worker_nonce_hash,
+    createHash('sha256').update(f.workerNonce).digest('hex'),
+  );
+  assert.notEqual((await binding())?.control_hash, before?.control_hash);
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE session_managed_runners SET control_hash=? WHERE allocation_id=?',
+        'a'.repeat(64),
+        allocationId,
+      ),
+    ),
+    { code: 'state_constraint' },
+  );
+  assert.equal(
+    (await f.sessions.authenticateManaged(enrolled.controlToken)).managed?.allocationId,
+    allocationId,
+  );
+});
+
+test('enrollment rejects absent, malformed and extra nonce fields', async (t) => {
+  const f = await fixture(t);
+  for (const input of [
+    {},
+    { workerNonce: '' },
+    { workerNonce: 'F'.repeat(64) },
+    { workerNonce: randomBytes(32).toString('base64url') },
+    { workerNonce: f.workerNonce, allocationId: f.input.allocationId },
+    null,
+    [],
+  ]) {
+    await assert.rejects(f.sessions.enrollManaged(f.enrollment.enrollmentToken, input), {
+      code: 'invalid_managed_enrollment',
+    });
+  }
+});
+
+test('enrollment retries fail closed after allocation expiry or source revocation', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  const allocationId = randomUUID();
+  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+    ...f.input,
+    allocationId,
+  });
+  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await assert.rejects(
+    f.sessions.enrollManaged(enrollmentToken, {
+      workerNonce: f.workerNonce,
+    }),
+    (error: any) => error?.status === 401 || error?.status === 403,
+  );
+  const unbound = await f.state.read((tx) =>
+    tx.get<{ worker_nonce_hash: string | null }>(
+      'SELECT worker_nonce_hash FROM session_managed_runners WHERE allocation_id=?',
+      allocationId,
+    ),
+  );
+  assert.equal(unbound?.worker_nonce_hash, null);
+  now += 3_600_001;
+  await assert.rejects(
+    f.sessions.enrollManaged(f.enrollment.enrollmentToken, {
+      workerNonce: f.workerNonce,
+    }),
+    { code: 'unauthorized' },
   );
 });
 

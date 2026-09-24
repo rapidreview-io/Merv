@@ -1,6 +1,18 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash.",
   "migrations": [
+    {
+      "component": "fleet",
+      "version": 1,
+      "hash": "1d4245772a1b522cc544809d15de2e719c4a6f33fc2ff42133762a18509616ec",
+      "published": true
+    },
+    {
+      "component": "pi",
+      "version": 1,
+      "hash": "bb4a74f2353cce89e52d3b26fc0cdc9f05b4861f74838413fb99d025b8e6a62e",
+      "published": true
+    },
     {
       "component": "agents",
       "version": 1,
@@ -458,6 +470,12 @@
       "component": "sessions",
       "version": 7,
       "hash": "2aa873bc008d62d6459416873d0832904b03cfbb4ca35746f31bca4d6c6a5eab",
+      "published": true
+    },
+    {
+      "component": "sessions",
+      "version": 8,
+      "hash": "1becbd4cb8544cc3a14d8b83b215fa46b1bb1b4c36f18037122d5854c25ddcaa",
       "published": true
     },
     {

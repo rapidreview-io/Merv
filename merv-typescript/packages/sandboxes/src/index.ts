@@ -192,6 +192,10 @@ export class SandboxService implements Sandboxes {
             ({ projectId, handle, operationKey, bootstrap }) =>
               runner.launch(projectId, handle, operationKey, bootstrap),
           ),
+        acknowledge: (projectId, handle) =>
+          this.#run({ projectId, handle }, ({ projectId, handle }) =>
+            runner.acknowledge(projectId, handle),
+          ),
         stop: (projectId, handle) =>
           this.#run({ projectId, handle }, ({ projectId, handle }) =>
             runner.stop(projectId, handle),

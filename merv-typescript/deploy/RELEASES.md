@@ -4,6 +4,70 @@ Each row is one immutable image built on the VM by `node deploy/release.mjs` fro
 
 Checks column: VM status codes for `/health`, `/ui/`, anonymous `POST /tools/ui.shell` (401), approved-origin `/auth/config` (200), unapproved-origin tool call (403); then public HTTPS `/health` and `/ui/`; then each served asset.
 
+## Coordinated Pi security candidate, 2026-09-23 20:44 UTC
+
+Main source `/opt/merv-typescript/releases/20260923-pi-gates-candidate/source`
+is deployed as `sha256:0bf6be67e558eea97b98068966b504b05c530204b04ba5559105a664172566a4`;
+Sandboxes control/pipelines use
+`sha256:32025c65ddd1f2d08392cec1dbf3da5b9508fec5d58e0c92a35dfd9fde1e8c56`.
+The peer-preserving input manifest, candidate checks and migration-only offline
+rollback are recorded in `output/fleet-cloudflare-canary/pi-candidate-evidence/`.
+Main env SHA256 is `946c492bdc8441d69624ca87b62418d59bc4f0e09013d87009db44cae9aeddfe`.
+**Pi and workflow remain disabled. This rollout is not security acceptance.**
+
+Cloudflare version **6**, capacity three, independently verified amd64 manifest
+`sha256:41d820f3f35ba601d88ea4e6165c28bf07cffddf8901714a72d10638cecad383`
+and drained inventory were verified before maintenance resumed. The additive
+fifth catalog release is
+`rt1_00213dc552528fb3c1d5483f0b4bdcfa775a6f9ea429850b7626d0db65657115`.
+Sandboxes Compose is
+`/home/azureuser/research-suite-vm/pilot-a740864090ba/pi-gates-compose.authority.json`.
+
+Production schema `merv_ts_prod_20260916a` contains exact `sessions@8` hash
+`1becbd4cb8544cc3a14d8b83b215fa46b1bb1b4c36f18037122d5854c25ddcaa`;
+no Pi migration is applied. **Old main cannot boot this ledger.** The prepared
+migration-only rollback must remain offline unless legacy managed ingress is
+independently fenced; never restore/delete migration data to boot the old image.
+Finite source/consumer grants expire at22:40/22:41UTC. Full live Gates A/B and
+the already-approved Pi/UI acceptance are outstanding; no new acceptance task
+has run on this pin. Cap$0.10 and unrelated peer changes are preserved.
+
+## Previous Pi candidate acceptance rollout, 2026-09-23
+
+The peer-preserving, operator-staged source at
+`/opt/merv-typescript/releases/20260923-pi-shutdown-candidate/source` is deployed
+as `sha256:3c5b42a2c86eb8cb925f731d35d1a373eea39c51278d7fcc0fa1ffae37b96a96`.
+This preserves the concurrent release and managed Code-attach fix rather than
+replacing them with local HEAD. Its Linux suite has 1,681 passes, zero failures
+and one optional skip. Main is healthy; **Pi and Fleet workflow are disabled**.
+Current environment SHA256:
+`6d97bd4cc7adf8daea6e70a8560a74264cff85022fa35fed4f2fcb71d3c94c67`.
+
+Verified local Wrangler OAuth published the existing combined runtime; the
+independent registry manifest is
+`sha256:8a8696f56afc778329bf11d7018f5e18f917a3f3ce2905cc3d86b9afcd2e48d5`.
+The guarded maintenance/deploy/verify/resume procedure installed application
+version 5 at capacity three. Release
+`rt1_c5aae9ebdac331960e0dd4879d0ddbfa3804d32330ac3a6fc2c54cd21676d77b`
+was added alongside the three previous releases. Sandboxes control/pipelines
+retain image `c6edb8cc...`; their current private Compose is
+`/home/azureuser/research-suite-vm/pilot-a740864090ba/pi-rollout-compose.json`.
+
+A real protected workflow completed delivery, review handoff and automatic
+release, with native VM absence confirmed. The expanded isolation probe did
+**not** complete: `assert roots` found no visible root-owned `node` process.
+Its task was marked failed, not accepted. The old eleven-line subset passed,
+but full Gate A/B and hosted Pi/UI acceptance remain open. Source/consumer test
+credentials were revoked; account cap remains $0.10, accrued $0.07426394093504.
+See `docs/PI_IMPLEMENTATION_STATUS.md` and the sanitized
+`output/fleet-cloudflare-canary/pi-candidate-evidence/cloudflare-acceptance-status.json`.
+
+The previous main image is `dcc3b748...`, with its exact environment retained at
+`/var/lib/merv-fleet-pilot/pi-image-20260923/typescript.env.before-pi`.
+The same directory retains publication, maintenance and idle-state receipts.
+Rollback must coordinate the hosted image/catalog and main runtime release ID;
+an old release ID against the new hosted digest correctly fails closed.
+
 ## Preserving the attach fix across a concurrent release, 2026-09-23
 
 A concurrent release `20260923T091229Z-193d9376-4aeea6a3c2c9` arrived during the

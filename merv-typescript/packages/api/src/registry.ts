@@ -11,7 +11,7 @@ import type {
   Tools,
 } from './types.js';
 import { cloneJson, compileSchema } from './schema.js';
-import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
+import type { ConversationToolPolicy, SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 
 export type { ToolDescription } from './types.js';
 export function isRemoteTool(tool: AnyToolDefinition): tool is RemoteToolDefinition {
@@ -67,6 +67,7 @@ const mountPattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const namespace = '_';
 /** Identity, not provider: re-registering the same provider still retires calls it began. */
 type SessionRegistration = { provider: SessionToolPolicy };
+type ConversationRegistration = { provider: ConversationToolPolicy };
 
 /** Reserved even while a catalog is absent, so remote arguments keep their meaning. */
 export const isMountedToolName = (name: string): boolean => name.startsWith(namespace);
@@ -77,6 +78,7 @@ export class ToolRegistry implements Tools {
   private readonly running = new Set<Promise<ToolInvocation>>();
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
+  private conversations?: ConversationRegistration;
   private stopping = false;
 
   constructor(
@@ -298,6 +300,77 @@ export class ToolRegistry implements Tools {
     };
   }
 
+  registerConversationPolicy(provider: ConversationToolPolicy): () => void {
+    if (this.conversations)
+      throw new MervError(
+        'conversation_provider_conflict',
+        'Conversation policy is already registered',
+        409,
+      );
+    const registration = { provider };
+    this.conversations = registration;
+    return () => {
+      if (this.conversations === registration) this.conversations = undefined;
+    };
+  }
+
+  private conversationPolicy(): ConversationRegistration {
+    if (!this.conversations)
+      throw new MervError('conversation_unavailable', 'Conversation policy is unavailable', 503);
+    return this.conversations;
+  }
+
+  private requireConversationCaller(caller: Caller): void {
+    if (
+      caller.conversation &&
+      (caller.session ||
+        caller.managed ||
+        caller.human ||
+        caller.key ||
+        caller.credentialId !== undefined)
+    )
+      throw new MervError('forbidden', 'A conversation cannot combine authorities', 403);
+  }
+
+  private fenceConversation(registration: ConversationRegistration): void {
+    if (this.conversations !== registration)
+      throw new MervError(
+        'conversation_unavailable',
+        'Conversation policy changed during authorization',
+        503,
+      );
+  }
+
+  private async conversationDecision<T>(
+    registration: ConversationRegistration,
+    decision: Promise<T>,
+  ): Promise<T> {
+    const result = await decision;
+    this.fenceConversation(registration);
+    return result;
+  }
+
+  private async admitConversation(
+    registration: ConversationRegistration,
+    caller: Caller,
+    entry: Entry,
+    input: Data,
+  ): Promise<void> {
+    this.fenceConversation(registration);
+    if (
+      !this.reads(entry) ||
+      !(await this.conversationDecision(
+        registration,
+        registration.provider.allowsTool(caller, entry.name),
+      ))
+    )
+      throw new MervError('tool_forbidden', 'Conversation tool is not admitted', 403);
+    await this.conversationDecision(
+      registration,
+      registration.provider.validate(caller, entry.name, input),
+    );
+  }
+
   private sessionPolicy(): SessionRegistration {
     if (!this.sessions)
       throw new MervError('session_unavailable', 'Session policy is unavailable', 503);
@@ -334,11 +407,20 @@ export class ToolRegistry implements Tools {
 
   private async visible(caller?: Caller): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
+    if (caller) this.requireConversationCaller(caller);
+    const conversation = caller?.conversation ? this.conversationPolicy() : undefined;
     if (caller) await this.scope.require(caller, 'read');
+    if (conversation) this.fenceConversation(conversation);
     const session = caller?.session ? this.sessionPolicy() : undefined;
-    return await filterAsync(
+    const visible = await filterAsync(
       [...this.entries.values()],
       async (entry) =>
+        (!conversation ||
+          (this.reads(entry) &&
+            (await this.conversationDecision(
+              conversation,
+              conversation.provider.allowsTool(caller!, entry.name),
+            )))) &&
         (!caller ||
           !session ||
           (await this.fenced(
@@ -350,6 +432,11 @@ export class ToolRegistry implements Tools {
           (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
             true),
     );
+    if (conversation) {
+      await this.scope.require(caller!, 'read');
+      this.fenceConversation(conversation);
+    }
+    return visible;
   }
 
   async describe(caller?: Caller): Promise<ToolDescription[]> {
@@ -375,15 +462,24 @@ export class ToolRegistry implements Tools {
   async invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
+    this.requireConversationCaller(caller);
     if (caller.managed)
       throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
+    const conversation = caller.conversation ? this.conversationPolicy() : undefined;
     const entry = this.entries.get(name);
     if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
+    if (conversation && !this.reads(entry))
+      throw new MervError(
+        'tool_forbidden',
+        'Conversations may only invoke native read-only tools',
+        403,
+      );
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       // A session caller is authorized by its admission in prepare, below.
       if (!caller.session) await this.scope.require(caller, 'read');
+      if (conversation) this.fenceConversation(conversation);
       if (entry.remote) {
         if (!this.access)
           throw new MervError(
@@ -409,15 +505,25 @@ export class ToolRegistry implements Tools {
         const validate = async (caller: Caller) => {
           if (session)
             await this.fenced(session, session.provider.validate(caller, name, parsed as Data));
+          if (conversation)
+            await this.admitConversation(conversation, caller, entry, parsed as Data);
         };
         await validate(dispatchCaller);
         let completed: ToolInvocation | undefined;
         const dispatch = async (activeCaller: Caller) => {
           // The provider's run validates a session again right before this handler.
           if (!prepared) await this.scope.require(activeCaller, 'read');
+          if (conversation) this.fenceConversation(conversation);
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
-          const run = async () => await entry.definition.handler(activeCaller, parsed);
+          const run = async () => {
+            if (conversation) {
+              await this.scope.require(activeCaller, 'read');
+              this.fenceConversation(conversation);
+              await validate(activeCaller);
+            }
+            return await entry.definition.handler(activeCaller, parsed);
+          };
           const result =
             this.readScope && this.reads(entry) ? await this.readScope(run) : await run();
           // Read handlers can wait for external storage while their PostgreSQL snapshot
@@ -427,6 +533,7 @@ export class ToolRegistry implements Tools {
           if (this.reads(entry)) {
             await this.scope.require(activeCaller, 'read');
             await validate(activeCaller);
+            if (conversation) this.fenceConversation(conversation);
           }
           completed = entry.complete(result);
           return result;

@@ -31,3 +31,22 @@ export interface ManagedRunnerInspection {
     capturePending: boolean;
   } | null;
 }
+export interface ManagedBindingRow {
+  allocation_id: string;
+  epoch: number;
+  project_id: string;
+  source_json: string;
+  source_hash: string;
+  runtime_profile_id: string;
+  platform_json: string;
+  capabilities_json: string;
+  enrollment_hash: string;
+  enrollment_expires_at: string;
+  control_hash: string;
+  worker_nonce_hash: string | null;
+  control_expires_at: string;
+  runner_id: string | null;
+  bound_session_id: string | null;
+  runner_released_at: string | null;
+  created_at: string;
+}

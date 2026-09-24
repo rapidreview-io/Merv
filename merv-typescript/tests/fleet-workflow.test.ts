@@ -475,6 +475,13 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       }
       return structuredClone(runtimeHandle);
     },
+    async acknowledge(_projectId, handle) {
+      const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
+      if (!runtimeHandle.launch || runtimeHandle.launch.deliveryState !== 'launched')
+        throw new Error('runtime exchange requires a launched receipt');
+      runtimeHandle.launch.state = 'consumed';
+      return structuredClone(runtimeHandle);
+    },
     async stop(_projectId, handle) {
       const runtimeHandle = runtimeHandles.get(handle.sandboxId)!;
       stopped.add(handle.sandboxId);
@@ -584,7 +591,9 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
         runnerId: null,
         session: null,
       });
-      const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {});
+      const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {
+        workerNonce: randomBytes(32).toString('hex'),
+      });
       const managed = await sessions.authenticateManaged(enrolled.controlToken);
       const runnerId = `managed-${allocation.id}`;
       await sessions.heartbeatRunner(managed, heartbeat(runnerId));

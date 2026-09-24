@@ -1,5 +1,5 @@
 /** Fixed one-assignment supervisor. Bootstrap carries expiring enrollment only. */
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -16,7 +16,7 @@ const schema = z
   })
   .strict();
 const directory = '/var/lib/merv-runner';
-const launcher = '/opt/merv/python/merv_sandboxes/runtimes/assignment.py';
+const launcher = '/opt/merv/runtime/assignment-probed.py';
 const codex = '/opt/merv/bin/codex';
 const assignmentRoot = '/workspace/assignments';
 const status = (state: string) =>
@@ -54,6 +54,7 @@ async function main() {
   // Enrollment can precede Fleet observing the protected launch receipt. Retry the
   // same token briefly; never fall back to an ordinary project credential.
   let controlToken = '';
+  const workerNonce = randomBytes(32).toString('hex');
   const enrollUntil = Date.now() + 60_000;
   while (Date.now() < enrollUntil) {
     const response = await fetch(`${data.baseUrl.replace(/\/$/, '')}/sessions/runners/enroll`, {
@@ -63,7 +64,7 @@ async function main() {
         'content-type': 'application/json',
         'x-merv-project-id': data.projectId,
       },
-      body: '{}',
+      body: JSON.stringify({ workerNonce }),
       signal: AbortSignal.timeout(10_000),
     }).catch(() => null);
     if (response?.ok) {

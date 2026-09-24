@@ -19,10 +19,12 @@ class FakeRuntimes implements SandboxRuntimes {
   readonly byKey = new Map<string, SandboxRuntimeHandle>();
   readonly createKeys: string[] = [];
   readonly launchKeys: string[] = [];
+  readonly acknowledgements: string[] = [];
   readonly stopped: string[] = [];
   readonly renewed: string[] = [];
   failCreateOnce = false;
   failLaunchOnce = false;
+  failAcknowledgeOnce = false;
   heartbeatOnInspect = false;
   holdCreate?: ReturnType<typeof deferred<SandboxRuntimeHandle>>;
   initialState: SandboxRuntimeHandle['state'] = 'ready';
@@ -92,6 +94,18 @@ class FakeRuntimes implements SandboxRuntimes {
       live.state = 'deleting';
       live.ready = false;
       live.revision++;
+    }
+    return this.copy(live);
+  }
+  async acknowledge(_projectId: string, current: SandboxRuntimeHandle) {
+    assert.equal(current.launch?.deliveryState, 'launched');
+    const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
+    assert.ok(live?.launch);
+    this.acknowledgements.push(live.launch.jobId);
+    live.launch.state = 'consumed';
+    if (this.failAcknowledgeOnce) {
+      this.failAcknowledgeOnce = false;
+      throw new Error('lost exchange reply');
     }
     return this.copy(live);
   }
@@ -262,6 +276,54 @@ test('lost create and launch replies retry stable keys and consumed bootstrap re
   assert.equal(active.phase, 'running');
   assert.equal(active.runtime?.launch?.state, 'consumed');
   assert.deepEqual(f.runtimes.stopped, []);
+});
+
+test('exchange waits for owner proof, retries lost reply, and precedes stop', async (t) => {
+  const f = await fixture(t);
+  f.setObservation('starting');
+  const allocation = await f.fleet.request(f.caller, input('exchange'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'starting');
+  assert.deepEqual(f.runtimes.acknowledgements, []);
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.acknowledgements, []);
+  f.runtimes.failAcknowledgeOnce = true;
+  f.setObservation('running');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'uncertain');
+  assert.deepEqual(f.runtimes.stopped, []);
+  f.advance(2000);
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.acknowledgements, ['rtj_sbx_1']);
+  assert.deepEqual(f.runtimes.stopped, []);
+  f.setObservation('finished');
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).runtime?.launch?.state, 'consumed');
+});
+
+test('finished without a running observation stops without claiming successful exchange', async (t) => {
+  const f = await fixture(t);
+  const allocation = await f.fleet.request(f.caller, input('finished-before-ready'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  f.setObservation('finished');
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.acknowledgements, []);
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
+});
+
+test('owner observation failure never acknowledges a launch receipt', async (t) => {
+  const f = await fixture(t);
+  const allocation = await f.fleet.request(f.caller, input('observe-failure'));
+  await f.fleet.tick();
+  await f.fleet.tick();
+  f.setObservation('starting');
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.acknowledgements, []);
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'starting');
 });
 
 test('cancellation during create retains capacity until provider reports stopped', async (t) => {

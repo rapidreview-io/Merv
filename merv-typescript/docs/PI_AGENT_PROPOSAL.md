@@ -1,5 +1,9 @@
 # Optional Pi — later read-only pilot
 
+Implementation tracking: [read-only Pi candidate status](PI_IMPLEMENTATION_STATUS.md). The proposal below remains the acceptance contract; candidate code is not proof of deployment.
+
+**Evidence gate (acceptance-owner decision 2026-09-23T23:04Z).** Complete Merv-controlled isolation, credential protection, capture and canary scans remain mandatory. Enumerate and scan all available Cloudflare logs with source/time/pagination/sampling/truncation checks, while explicitly recording provider-internal/platform-generated visibility limits. Do not demand impossible proof of zero inaccessible provider logs or claim provider-complete coverage. Independent review of the actual evidence and Gates A/B precedes any live Pi API/UI enablement; a clean scanner result is not acceptance.
+
 Deferred until workflow Fleet v1 passes acceptance. Replaces the broader initial Pi plan. [Joint sequence](FLEET_PI_PROPOSAL.md).
 
 **Product boundary.** Agent sidebar opens a conversation, never a synthetic task. Sending a message requests Fleet capacity. Pi hard-depends on Fleet; external clients depend on neither. One package with server/API/UI/worker entries; only sandbox worker imports Pi SDK. Verify upstream package/tarball before pinning. Disable ambient extensions, credentials and resource discovery; explicitly configure tools/settings.

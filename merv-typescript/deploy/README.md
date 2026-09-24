@@ -87,6 +87,20 @@ Password login works through the same Supabase project. OAuth through this tunne
 
 ## Public routing and temporary UI pause
 
+For optional read-only Pi, see [Pi operations](PI_OPERATIONS.md) for scoped service
+credential rotation, verified human access, release gates and current safeguards.
+
+When enabling Pi behind a site-wide Caddy `encode` directive, exclude `/pi/*/events` and `/pi-model/responses` from compression. The live pilot reproduced gzip buffering until SSE connection close, despite immediate uncompressed upstream events. Replace only that site's encoding directive with the following [request-matched encoding configuration](https://caddyserver.com/docs/caddyfile/directives/encode), preserving its existing upstream, authentication and other hosts:
+
+```caddyfile
+@pi_compressible {
+    not path /pi/*/events /pi-model/responses
+}
+encode @pi_compressible zstd gzip
+```
+
+Validate the merged configuration before reload, then verify prompt arrival of decompressed public SSE events with a normal browser/fetch client, unchanged unauthorized denials, and retained compression on unrelated pages. A successful HTTP200 or early gzip header bytes alone does not prove streaming.
+
 `Caddyfile.cutover.snippet` shows the intended backend origin after a **full** approved cutover. Merge it into the saved current configuration, preserving unrelated host blocks and any required logging/security settings. Validate with Caddy before reload; do not install the snippet as the complete Caddyfile. Preserve the Python container, its immutable image and private configuration for rollback, but keep its writers stopped after the final snapshot. Save and test the previous upstream `127.0.0.1:8787` before the controlled pause. Follow the final-snapshot sequence below; an old writable backend must not silently diverge while TypeScript goes live.
 
 After the new HTTPS UI passes acceptance, apply `rapidreview-redirect.fragment.json` to the current `RR_Site/vercel.json` as four narrow additional temporary UI redirects. See `UI_CUTOVER_PLAN.md` for the exact route patterns. This file is a fragment, not a complete Vercel configuration. Preserve every existing redirect, `/nisa`, `/docs`, sitemap rewrite, and catch-all route. Publish only the routing change, then verify the four UI route patterns, existing `/merv` installer/skill asset paths, `/nisa`, `/docs`, and the normal homepage. Old deep links cannot be interpreted as TypeScript project IDs, so they go to the new project selector.

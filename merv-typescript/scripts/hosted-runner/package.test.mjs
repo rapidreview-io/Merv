@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -110,6 +111,54 @@ if (args[0] === 'image') {
     assert.equal(manifest.schema, 'merv-hosted-image-build-v1');
     assert.equal(manifest.image.platform, 'linux/amd64');
     assert.match(manifest.image.executableSha256, /^[0-9a-f]{64}$/);
+    const bundle = join(output, 'bundle');
+    assert.equal(
+      readFileSync(join(bundle, 'start'), 'utf8'),
+      '#!/bin/sh\nexec /usr/bin/python3 /opt/merv/runtime/start-runtime.py\n',
+    );
+    const worker = readFileSync(join(bundle, 'pi/worker-main.mjs'), 'utf8');
+    assert.match(worker, /from "@earendil-works\/pi-coding-agent"/);
+    assert.match(worker, /from "@earendil-works\/pi-ai"/);
+    assert.ok(!existsSync(join(bundle, 'pi/node_modules')));
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(bundle, 'pi/package-lock.json'), 'utf8')),
+      JSON.parse(
+        readFileSync(resolve(here, '../../packages/pi/worker-runtime/package-lock.json'), 'utf8'),
+      ),
+    );
+    const dockerfile = readFileSync(join(bundle, 'Dockerfile'), 'utf8');
+    assert.match(dockerfile, /FROM node:22\.19\.0-bookworm-slim AS pi-deps/);
+    assert.match(dockerfile, /npm ci --omit=dev --ignore-scripts --engine-strict/);
+    assert.match(dockerfile, /COPY --from=pi-deps \/opt\/merv\/pi\/node_modules/);
+    assert.match(dockerfile, /find node_modules -type d -name \.bin -prune/);
+    const compiled = JSON.parse(readFileSync(join(bundle, 'input-hashes.json'), 'utf8'));
+    for (const relative of [
+      'packages/pi/src/worker-main.ts',
+      'packages/pi/src/worker.ts',
+      'packages/pi/src/checkpoint.ts',
+      'scripts/hosted-runner/smoke-supervisor.ts',
+    ]) {
+      assert.equal(
+        compiled[relative],
+        createHash('sha256')
+          .update(readFileSync(resolve(here, '../..', relative)))
+          .digest('hex'),
+      );
+    }
+    assert.equal(
+      manifest.source.hashes.merv['scripts/hosted-runner/start-runtime.py'],
+      createHash('sha256')
+        .update(readFileSync(join(bundle, 'start-runtime.py')))
+        .digest('hex'),
+    );
+    for (const [relative, digest] of Object.entries(manifest.bundleHashes)) {
+      assert.equal(
+        digest,
+        createHash('sha256')
+          .update(readFileSync(join(bundle, relative)))
+          .digest('hex'),
+      );
+    }
     assert.ok(
       existsSync(
         join(output, 'sandbox-context/deploy/cloudflare-sandbox/bin/sandboxes-agent-linux-amd64'),

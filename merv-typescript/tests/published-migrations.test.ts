@@ -8,6 +8,8 @@ import { StateStore } from '@merv/state/base';
 import { createApp } from './fixtures/app.js';
 import { initializeLegacyFoundationImports } from '../src/legacy-import.js';
 import { initializeLegacyHistory } from '../src/legacy-history.js';
+import { FleetService } from '../packages/fleet/src/index.js';
+import { PiService } from '../packages/pi/src/index.js';
 
 interface Row {
   component: string;
@@ -64,6 +66,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   } as unknown as State;
   for (const start of [
     () => initializeLegacyFoundationImports(recorder),
+    () => new FleetService(recorder, {} as never, undefined).initialize(),
+    () => new PiService(recorder, {} as never, {} as never, {} as never, {} as never).initialize(),
     () => initializeLegacyHistory(recorder),
   ]) {
     try {
@@ -118,6 +122,11 @@ test('registered migrations match every version applied in production', async (t
   // The other direction: a registered version this file does not list would be frozen by its
   // first release with nothing here to catch a later edit.
   const listed = new Set(published.migrations.map((row) => `${row.component}@${row.version}`));
+  assert.equal(
+    listed.size,
+    published.migrations.length,
+    'Published migration entries must be unique',
+  );
   assert.deepEqual(
     [...hashes].filter(([key]) => !listed.has(key)).map(([key, hash]) => `${key} ${hash}`),
     [],

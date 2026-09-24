@@ -74,6 +74,7 @@ async function fixture(t: TestContext) {
     owner,
     actorToken: boot.token,
     enrollmentToken: enrollment.enrollmentToken,
+    workerNonce: randomBytes(32).toString('hex'),
     projectId: boot.project.id,
     request,
   };
@@ -82,16 +83,42 @@ async function fixture(t: TestContext) {
 test('managed HTTP credentials stay on enrollment and control routes', async (t) => {
   const f = await fixture(t);
   assert.match(f.enrollmentToken, /^me_[0-9a-f]{64}$/);
-  const enrolled = await f.request(
+  const missing = await f.request(
     '/sessions/runners/enroll',
     f.enrollmentToken,
     'POST',
     {},
     f.projectId,
   );
+  assert.equal(missing.status, 400);
+  const enrolled = await f.request(
+    '/sessions/runners/enroll',
+    f.enrollmentToken,
+    'POST',
+    { workerNonce: f.workerNonce },
+    f.projectId,
+  );
   assert.equal(enrolled.status, 200, JSON.stringify(enrolled));
   const token: string = enrolled.body.controlToken;
   assert.match(token, /^mr_[0-9a-f]{64}$/);
+  const replay = await f.request(
+    '/sessions/runners/enroll',
+    f.enrollmentToken,
+    'POST',
+    { workerNonce: f.workerNonce },
+    f.projectId,
+  );
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.controlToken, token);
+  const conflict = await f.request(
+    '/sessions/runners/enroll',
+    f.enrollmentToken,
+    'POST',
+    { workerNonce: randomBytes(32).toString('hex') },
+    f.projectId,
+  );
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.error?.code, 'managed_binding_conflict');
   const heartbeat = {
     runnerId: 'managed-api-runner',
     machine: { hostname: 'api-host', system: 'Linux', architecture: 'x64' },
@@ -163,6 +190,20 @@ test('managed HTTP credentials stay on enrollment and control routes', async (t)
 
 test('enrollment rejects spoofed fields and managed caller cannot reach registry or general Scope authority', async (t) => {
   const f = await fixture(t);
+  for (const workerNonce of ['', 'A'.repeat(64), randomBytes(32).toString('base64url')]) {
+    assert.equal(
+      (
+        await f.request(
+          '/sessions/runners/enroll',
+          f.enrollmentToken,
+          'POST',
+          { workerNonce },
+          f.projectId,
+        )
+      ).status,
+      400,
+    );
+  }
   assert.equal(
     (
       await f.request(
@@ -197,7 +238,7 @@ test('enrollment rejects spoofed fields and managed caller cannot reach registry
     '/sessions/runners/enroll',
     f.enrollmentToken,
     'POST',
-    {},
+    { workerNonce: f.workerNonce },
     f.projectId,
   );
   assert.equal(enrolled.status, 200);

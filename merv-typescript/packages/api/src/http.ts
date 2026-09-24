@@ -37,6 +37,7 @@ import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { githubCallback, githubRequest } from './code-github.js';
 import { publicationRequest } from './code-publications.js';
+import type { PiApiProvider } from './pi.js';
 
 export { describeTool } from './registry.js';
 
@@ -280,6 +281,7 @@ export class ApiServer {
     'Sessions are unavailable',
   );
   private readonly code = slot<CodeApiProvider>('code', 'Code', 'Code controls are unavailable');
+  private readonly pi = slot<PiApiProvider>('pi', 'Pi', 'Agent conversations are unavailable');
   private stopping = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
@@ -401,6 +403,7 @@ export class ApiServer {
         '/projects',
         '/sessions',
         '/code',
+        '/pi',
       ].includes(prefix)
     )
       throw new MervError('invalid_mount', 'Mount prefix must be one unreserved lowercase segment');
@@ -419,6 +422,9 @@ export class ApiServer {
 
   registerSessions(provider: SessionApiProvider): () => void {
     return this.sessions.register(provider);
+  }
+  registerPi(provider: PiApiProvider): () => void {
+    return this.pi.register(provider);
   }
 
   registerCode(provider: CodeApiProvider): () => void {
@@ -547,6 +553,7 @@ export class ApiServer {
       req.method === 'GET' &&
       this.options.snapshot &&
       !path.startsWith('/sessions/self') &&
+      !path.startsWith('/pi/') &&
       !path.startsWith('/code/')
     ) {
       // A verified user's first request records that user, which is a write, so the caller
@@ -643,6 +650,18 @@ export class ApiServer {
       throw new MervError('not_found', 'Unknown agent control route', 404);
     }
     const principal = authenticated ?? (await this.authenticate(req));
+    if (path.startsWith('/pi/')) {
+      const match = /^\/pi\/([A-Za-z0-9_-]{1,200})\/events$/.exec(path);
+      if (req.method !== 'GET' || !match || url.search)
+        throw new MervError('not_found', 'Unknown conversation route', 404);
+      const caller = await this.selectedCaller(
+        principal,
+        projectSelection(req.headers['x-merv-project-id']),
+      );
+      await this.scope.require(caller, 'read');
+      await this.pi.get().stream(caller, match[1], req, res);
+      return;
+    }
     if (path === '/code/publications' || path.startsWith('/code/publications/')) {
       const caller = await this.selectedCaller(
         principal,

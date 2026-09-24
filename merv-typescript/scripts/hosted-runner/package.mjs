@@ -1,11 +1,11 @@
-/** Build the existing hosted Codex image, then pin a separately pushed digest. */
+/** Build a combined hosted Codex/Pi candidate, then pin a separately pushed digest. */
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -29,10 +29,15 @@ const mervFiles = [
   'scripts/hosted-runner/package.mjs',
   'scripts/hosted-runner/build.mjs',
   'scripts/hosted-runner/Dockerfile',
+  'scripts/hosted-runner/start-runtime.py',
+  'scripts/hosted-runner/assignment-probed.py',
+  'scripts/hosted-runner/isolation_probe.py',
   'scripts/hosted-runner/smoke-supervisor.ts',
   'packages/runner/src/supervisor.mjs',
   'package.json',
   'package-lock.json',
+  'packages/pi/worker-runtime/package.json',
+  'packages/pi/worker-runtime/package-lock.json',
 ];
 
 function command(program, args, cwd, capture = false) {
@@ -55,7 +60,7 @@ function fileHashes(root, files) {
   return Object.fromEntries(
     files.map((relative) => {
       const file = join(root, relative);
-      if (!statSync(file).isFile()) throw new Error(`Not a regular file: ${file}`);
+      if (!lstatSync(file).isFile()) throw new Error(`Not a regular file: ${file}`);
       return [relative, sha256(readFileSync(file))];
     }),
   );
@@ -91,7 +96,47 @@ function build(sandboxPath, outputPath, tag) {
   const bundle = join(out, 'bundle');
   copyInputs(sandbox, context);
   command(process.execPath, ['scripts/hosted-runner/build.mjs', bundle], mervRoot);
-  const bundleHashes = fileHashes(bundle, ['smoke-supervisor.mjs', 'supervisor.mjs', 'start']);
+  copyFileSync(join(mervRoot, 'scripts/hosted-runner/Dockerfile'), join(bundle, 'Dockerfile'));
+  const compiledInputs = JSON.parse(readFileSync(join(bundle, 'input-hashes.json'), 'utf8'));
+  if (
+    Object.keys(compiledInputs).length === 0 ||
+    Object.entries(compiledInputs).some(
+      ([relative, digest]) =>
+        !/^[0-9a-f]{64}$/.test(digest) ||
+        !relative ||
+        relative.startsWith('/') ||
+        relative.split('/').includes('..') ||
+        !lstatSync(join(mervRoot, relative)).isFile() ||
+        sha256(readFileSync(join(mervRoot, relative))) !== digest,
+    )
+  )
+    throw new Error('Bundled inputs changed during build');
+  for (const [relative, digest] of Object.entries(sourceHashes.merv)) {
+    if (sha256(readFileSync(join(mervRoot, relative))) !== digest)
+      throw new Error('Packaging input changed during build');
+  }
+  for (const [relative, digest] of Object.entries(sourceHashes.sandboxes)) {
+    const staged =
+      relative === 'agent/bin/sandboxes-agent-linux-amd64'
+        ? 'deploy/cloudflare-sandbox/bin/sandboxes-agent-linux-amd64'
+        : relative;
+    if (sha256(readFileSync(join(context, staged))) !== digest)
+      throw new Error('Sandbox staging input changed during build');
+  }
+  const bundleHashes = fileHashes(bundle, [
+    'smoke-supervisor.mjs',
+    'supervisor.mjs',
+    'start',
+    'start-runtime.py',
+    'assignment-probed.py',
+    'isolation_probe.py',
+    'Dockerfile',
+    'pi/worker-main.mjs',
+    'pi/package.json',
+    'pi/package-lock.json',
+    'input-hashes.json',
+  ]);
+  sourceHashes.merv = { ...sourceHashes.merv, ...compiledInputs };
   const baseTag = `${tag}-base`;
   command(
     'docker',
@@ -114,7 +159,7 @@ function build(sandboxPath, outputPath, tag) {
       '--platform',
       'linux/amd64',
       '-f',
-      join(mervRoot, 'scripts/hosted-runner/Dockerfile'),
+      join(bundle, 'Dockerfile'),
       '--build-arg',
       `SANDBOX_IMAGE=${baseTag}`,
       '-t',

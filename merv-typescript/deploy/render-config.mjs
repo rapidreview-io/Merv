@@ -40,7 +40,9 @@ const optIn = (name) => {
 };
 const fleetEnabled = optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = optIn('MERV_FLEET_WORKFLOW_ENABLED');
+const piEnabled = optIn('MERV_PI_ENABLED');
 if (workflowEnabled && !fleetEnabled) throw new Error('Fleet workflow requires MERV_FLEET_ENABLED');
+if (piEnabled && !fleetEnabled) throw new Error('Pi requires MERV_FLEET_ENABLED');
 const mode = required('MERV_TS_AUTH_MODE');
 if (!['hs256', 'jwks'].includes(mode)) throw new Error('Invalid MERV_TS_AUTH_MODE');
 // Refuse to silently place new objects among the legacy Python objects.
@@ -163,7 +165,12 @@ if (fleetEnabled) {
         enabled: true,
         globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 3, 1, 32),
         projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 1, 1, 32),
-        allocationTimeoutSeconds: integer('MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS', 3600, 60, 86_400),
+        allocationTimeoutSeconds: integer(
+          'MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS',
+          3600,
+          60,
+          86_400,
+        ),
       },
     },
   );
@@ -194,6 +201,36 @@ if (fleetEnabled) {
       },
     });
   }
+}
+if (piEnabled) {
+  const secretEnv = envName('MERV_PI_SECRET_ENV');
+  const modelApiKeyEnv = envName('MERV_PI_MODEL_API_KEY_ENV');
+  if (
+    Buffer.byteLength(process.env[secretEnv] ?? '') < 32 ||
+    !process.env[modelApiKeyEnv]?.trim()
+  ) {
+    throw new Error('Pi credentials are unavailable');
+  }
+  const model = process.env.MERV_PI_MODEL ?? 'gpt-6-luna';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(model)) throw new Error('Invalid MERV_PI_MODEL');
+  config.plugins.push(
+    { id: 'pi-tools', name: '@merv/pi/tools' },
+    { id: 'pi-api', name: '@merv/pi/api' },
+    { id: 'pi-ui', name: '@merv/pi/ui', required: false },
+    {
+      id: 'pi',
+      name: '@merv/pi',
+      config: {
+        enabled: true,
+        secretEnv,
+        modelApiKeyEnv,
+        model,
+        baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
+        turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
+        idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 30, 5, 300),
+      },
+    },
+  );
 }
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {

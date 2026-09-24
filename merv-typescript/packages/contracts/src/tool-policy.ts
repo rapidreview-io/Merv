@@ -34,6 +34,10 @@ export interface SessionToolPolicy {
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T>;
 }
+export interface ConversationToolPolicy {
+  allowsTool(caller: Caller, name: string): Promise<boolean>;
+  validate(caller: Caller, name: string, input: Data): Promise<void>;
+}
 export interface ToolPolicy {
   allows(caller: Caller, mountId: string, toolName: string): Promise<boolean>;
   require(caller: Caller, mountId: string, toolName: string): Promise<void>;

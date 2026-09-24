@@ -101,6 +101,33 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       SANDBOX_GRANT: 'sbxt_fixture',
     };
     assert.equal(run(fleet).status, 0);
+    assert.notEqual(run({ MERV_PI_ENABLED: 'true' }).status, 0);
+    assert.notEqual(run({ ...fleet, MERV_PI_ENABLED: 'true' }).status, 0);
+    const pi = {
+      ...fleet,
+      MERV_PI_ENABLED: 'true',
+      MERV_PI_SECRET_ENV: 'PI_PRIVATE_SECRET',
+      MERV_PI_MODEL_API_KEY_ENV: 'PI_PROVIDER_KEY',
+      PI_PRIVATE_SECRET: 'p'.repeat(40),
+      PI_PROVIDER_KEY: 'fixture-provider-key',
+    };
+    assert.equal(run(pi).status, 0);
+    const piConfig = JSON.parse(readFileSync(output));
+    assert.deepEqual(piConfig.plugins.find((entry) => entry.id === 'pi').config, {
+      enabled: true,
+      secretEnv: 'PI_PRIVATE_SECRET',
+      modelApiKeyEnv: 'PI_PROVIDER_KEY',
+      model: 'gpt-6-luna',
+      baseUrl: 'https://merv.example',
+      turnTimeoutSeconds: 300,
+      idleTimeoutSeconds: 30,
+    });
+    assert.equal(JSON.stringify(piConfig).includes(pi.PI_PRIVATE_SECRET), false);
+    assert.equal(JSON.stringify(piConfig).includes(pi.PI_PROVIDER_KEY), false);
+    assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-api'));
+    assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-ui'));
+    assert.notEqual(run({ ...pi, MERV_PI_MODEL: 'https://untrusted.example' }).status, 0);
+    assert.equal(run(fleet).status, 0);
     config = JSON.parse(readFileSync(output));
     assert.deepEqual(config.plugins.find((p) => p.id === 'sandboxes').config.runtime, {
       provider: 'cloudflare',

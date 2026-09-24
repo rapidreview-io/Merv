@@ -262,6 +262,39 @@ export class SandboxRuntimeRunner implements SandboxRuntimes {
     return await this.inspect(projectId, fresh);
   }
 
+  async acknowledge(
+    projectId: string,
+    current: SandboxRuntimeHandle,
+  ): Promise<SandboxRuntimeHandle> {
+    const launch = current.launch;
+    check(
+      launch?.sandboxId === current.sandboxId &&
+        launch.deliveryState === 'launched' &&
+        ['pending', 'consumed'].includes(launch.state),
+      'sandbox_runtime_unavailable',
+      'A launched protected runtime receipt is required',
+      409,
+    );
+    const row = await this.client.write(
+      this.connectionFor(projectId),
+      'POST',
+      `${sandboxRoute(launchPath, launch.launchId)}/exchange`,
+      { job_id: launch.jobId },
+    );
+    const confirmed = receipt(row, current.sandboxId, launch.releaseId);
+    check(
+      confirmed.launchId === launch.launchId &&
+        confirmed.jobId === launch.jobId &&
+        confirmed.operationKey === launch.operationKey &&
+        confirmed.state === 'consumed' &&
+        confirmed.deliveryState === 'launched',
+      'sandbox_runtime_unavailable',
+      'The sandbox service returned another runtime exchange',
+      502,
+    );
+    return { ...current, launch: confirmed };
+  }
+
   async renew(projectId: string, current: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle> {
     const fresh = await this.#inspect(projectId, current, true);
     check(
