@@ -31,6 +31,8 @@ const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 const MAX_RESPONSE_BYTES = 2_100_000;
 const DELAY = 250;
 const STARTUP_WAIT_MS = 60_000;
+// The server may hold /next open until work exists.
+const NEXT_TIMEOUT_MS = 30_000;
 // A relay request carries at most 512 KiB in 512 items of 100k characters and asks for at most 4096
 // tokens. History and tool output leave room for a turn's prompt, its answers and JSON re-escaping.
 const MAX_OUTPUT_TOKENS = 4096;
@@ -53,6 +55,10 @@ const transient = (error: unknown) =>
     ? error.status === 429 || error.status >= 500
     : error instanceof TypeError ||
       (error instanceof DOMException && error.name === 'TimeoutError');
+
+/** A boot milestone, in milliseconds since this process started, for the supervisor's diagnostics. */
+export const mark = (milestone: string) =>
+  process.stderr.write(`Pi worker ${milestone} ${Math.round(performance.now())} ms\n`);
 
 /** Our own messages carry no credential or URL; any other cause is reported only as unexpected. */
 export function cause(error: unknown): string {
@@ -152,7 +158,10 @@ export async function runPiWorker(
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000),
+        ...(signal ? [signal] : []),
+      ]),
     });
     if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) {
       void response.body?.cancel().catch(() => {});
@@ -200,6 +209,7 @@ export async function runPiWorker(
   let enrolled = false;
   while (!options.signal?.aborted && Date.now() < Date.parse(bootstrap.expiresAt)) {
     let work: PiWork | null;
+    const asked = Date.now();
     try {
       const startupSignal = !enrolled
         ? AbortSignal.timeout(Math.max(1, startupDeadline - Date.now()))
@@ -213,6 +223,7 @@ export async function runPiWorker(
             : options.signal,
         )
       ).work;
+      if (!enrolled) mark('enrolled');
       enrolled = true;
     } catch (error) {
       if (options.signal?.aborted) return;
@@ -231,7 +242,8 @@ export async function runPiWorker(
       continue;
     }
     if (!work) {
-      await until(Math.min(options.pollIntervalMs ?? 500, 1_000));
+      // A held (long-polled) request asks again at once; a short-polling server keeps the interval.
+      await until(asked + Math.min(options.pollIntervalMs ?? 500, 1_000) - Date.now());
       continue;
     }
     const commandId = work.command.id;

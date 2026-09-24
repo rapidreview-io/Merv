@@ -552,6 +552,39 @@ test('requested shutdown during an in-flight next poll exits normally before or 
     });
 });
 
+test('a next poll held for 25 s is asked again at once; a quick empty reply keeps the interval', async (t) => {
+  // Time runs 40x faster: the server holds the second poll for "25 s" before saying no work exists.
+  const timeout = AbortSignal.timeout;
+  t.mock.method(AbortSignal, 'timeout', (delay: number) =>
+    timeout.call(AbortSignal, Math.ceil(delay / 40)),
+  );
+  const app = await fixture();
+  const asked: number[] = [];
+  let heldExpired = true;
+  const logged = await stderrOf(() =>
+    runPiWorker(app.bootstrap, {
+      signal: app.controller.signal,
+      pollIntervalMs: 400,
+      fetchImpl: async (_input, init) => {
+        asked.push(Date.now());
+        if (asked.length === 4) app.controller.abort();
+        if (asked.length === 2) {
+          await new Promise((resolve) => setTimeout(resolve, 25_000 / 40));
+          heldExpired = init!.signal!.aborted;
+        }
+        init!.signal!.throwIfAborted();
+        return json({ work: null });
+      },
+    }),
+  );
+  assert.equal(asked.length, 4);
+  assert.equal(heldExpired, false);
+  assert.ok(asked[1] - asked[0] >= 390);
+  assert.ok(asked[2] - asked[1] < 25_000 / 40 + 200);
+  assert.ok(asked[3] - asked[2] >= 390);
+  assert.equal(logged.match(/^Pi worker enrolled \d+ ms$/gm)?.length, 1);
+});
+
 test('slow progress delivery permits only one outstanding batch or heartbeat', async () => {
   const app = await fixture({ cancel: true, slowProgress: true });
   const stop = setTimeout(() => app.controller.abort(), 1_100);
