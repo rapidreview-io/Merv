@@ -68,7 +68,7 @@ const configuration = z
     connections: z
       .array(connection)
       .min(1)
-      .max(32)
+      .max(256)
       .refine(
         (entries) => new Set(entries.map((entry) => entry.projectId)).size === entries.length,
         'Each project has at most one sandbox connection',

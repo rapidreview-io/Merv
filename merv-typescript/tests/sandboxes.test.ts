@@ -139,6 +139,38 @@ const configuration = {
   connections: [{ projectId: caller.projectId, namespace: 'demo', tokenEnv }],
   refreshMs: 3_600_000,
 };
+test('configured project connections accept 33 and 256, but reject 257 and duplicates', (t) => {
+  const previousUrl = process.env[urlEnv];
+  process.env[urlEnv] = 'https://sandboxes.example';
+  t.after(() => {
+    if (previousUrl === undefined) delete process.env[urlEnv];
+    else process.env[urlEnv] = previousUrl;
+  });
+  const connections = Array.from({ length: 257 }, (_, index) => ({
+    projectId: `project_${index}`,
+    namespace: `namespace_${index}`,
+    tokenEnv: `SANDBOX_GRANT_${index}`,
+  }));
+  for (const count of [33, 256]) {
+    const service = new SandboxService({
+      ...configuration,
+      connections: connections.slice(0, count),
+    });
+    service.close();
+  }
+  assert.throws(
+    () => new SandboxService({ ...configuration, connections }),
+    failure('invalid_sandboxes_config'),
+  );
+  assert.throws(
+    () =>
+      new SandboxService({
+        ...configuration,
+        connections: [...connections.slice(0, 32), connections[0]],
+      }),
+    failure('invalid_sandboxes_config'),
+  );
+});
 /** The real composition: the service under a Cordis context with the UI registry. */
 async function composed(t: TestContext) {
   const ctx = new Context();

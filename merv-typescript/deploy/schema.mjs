@@ -19,8 +19,8 @@ export function sandboxConnections(value = process.env.MERV_SANDBOXES_CONNECTION
   } catch {
     throw new Error('MERV_SANDBOXES_CONNECTIONS must be a JSON array');
   }
-  if (!Array.isArray(entries) || !entries.length || entries.length > 32) {
-    throw new Error('MERV_SANDBOXES_CONNECTIONS must hold 1-32 connections');
+  if (!Array.isArray(entries) || !entries.length || entries.length > 256) {
+    throw new Error('MERV_SANDBOXES_CONNECTIONS must hold 1-256 connections');
   }
   const connections = entries.map((entry) => {
     const { projectId, namespace, tokenEnv, ...rest } = entry ?? {};

@@ -89,6 +89,34 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtime, undefined);
     assert.equal(config.plugins.find((p) => p.id === 'fleet'), undefined);
 
+    const projectConnections = (count) =>
+      Array.from({ length: count }, (_, index) => ({
+        projectId: `project_${index}`,
+        namespace: `namespace_${index}`,
+        tokenEnv: `SANDBOX_GRANT_${index}`,
+      }));
+    for (const count of [33, 256]) {
+      const connections = projectConnections(count);
+      assert.equal(
+        run({ ...connected, MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections) }).status,
+        0,
+      );
+      config = JSON.parse(readFileSync(output));
+      assert.deepEqual(
+        config.plugins.find((p) => p.id === 'sandboxes').config.connections,
+        connections,
+      );
+    }
+    for (const connections of [
+      projectConnections(257),
+      [...projectConnections(32), projectConnections(1)[0]],
+    ]) {
+      assert.notEqual(
+        run({ ...connected, MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections) }).status,
+        0,
+      );
+    }
+
     const fleet = {
       ...connected,
       MERV_FLEET_ENABLED: 'true',
