@@ -23,7 +23,8 @@ import {
 import { stepped } from '../record-picker';
 import type { ViewProps } from './index';
 
-type TransientResponse = { commandId: string; text: string; progress: string };
+/** The answer as it streams; `written` is the sequence of its latest words. */
+type TransientResponse = { commandId: string; text: string; progress: string; written: number };
 
 const inFlight = (status: string) =>
   status === 'waiting' || status === 'starting' || status === 'working' || status === 'saving';
@@ -31,9 +32,9 @@ const accumulateResponse = (before: TransientResponse | null, event: PiEvent) =>
   const previous =
     before?.commandId === event.commandId
       ? before
-      : { commandId: event.commandId, text: '', progress: '' };
+      : { commandId: event.commandId, text: '', progress: '', written: 0 };
   return event.type === 'text'
-    ? { ...previous, text: (previous.text + event.text).slice(-16_384) }
+    ? { ...previous, text: (previous.text + event.text).slice(-16_384), written: event.sequence }
     : { ...previous, progress: event.text.slice(-300) };
 };
 const identifier = () =>
@@ -146,6 +147,9 @@ function PiConversationPage() {
   const createId = useRef(identifier());
   const canonical = useRef<PiSnapshot | null>(null);
   const selection = useRef<string | null>(null);
+  // The page's first conversation warms at once; another only once a question is begun in it.
+  const eager = useRef(true);
+  const warming = useRef<string | null>(null);
   const scope = useRef({
     epoch: scopeVersion(),
     identity: identityVersion(),
@@ -179,7 +183,7 @@ function PiConversationPage() {
         ? tail.reduce<TransientResponse>(
             (transient, event) =>
               event.commandId !== commandId ? transient : accumulateResponse(transient, event),
-            { commandId, text: '', progress: '' },
+            { commandId, text: '', progress: '', written: 0 },
           )
         : null,
     );
@@ -202,8 +206,23 @@ function PiConversationPage() {
     setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
     choose(item.id);
   };
+  /** Starts a machine for the open conversation if it has none; merely looking at one leaves the
+   * person's warm machine where it is. */
+  const warmUp = () => {
+    const id = selection.current;
+    const current = canonical.current;
+    const item = current?.conversation;
+    if (!id || warming.current === id || item?.id !== id || !current?.available) return;
+    if (item.runtimeId || item.activeCommandId) return;
+    warming.current = id;
+    void warm(id, () => valid() && selection.current === id).then((next) => {
+      if (warming.current === id) warming.current = null;
+      if (next) replace(next);
+    });
+  };
 
-  // Opening the page reads the conversations there are; with none, warming the agent opens one.
+  // Opening the page reads the conversations there are and opens the one whose machine is warm,
+  // else the newest; with none, warming the agent opens one.
   useEffect(() => {
     let cancelled = false;
     const fresh = () => !cancelled && valid() && !selection.current;
@@ -212,7 +231,10 @@ function PiConversationPage() {
       (items) => {
         if (cancelled || !valid()) return;
         setConversations(items);
-        const kept = items.find((item) => item.id === selection.current) ?? items[0];
+        const kept =
+          items.find((item) => item.id === selection.current) ??
+          items.find((item) => item.runtimeId) ??
+          items[0];
         if (kept) choose(kept.id);
         else
           void warm(null, fresh).then((next) => {
@@ -300,11 +322,9 @@ function PiConversationPage() {
       .then(() => {
         if (!alive()) return;
         void connect();
-        // A machine starts while the question is still being written (a turn has one already).
-        if (canonical.current?.available && !canonical.current.conversation.runtimeId)
-          void warm(selected, alive).then((next) => {
-            if (next && alive()) replace(next);
-          });
+        // New conversation hands the composer the cursor, which begins a question there too.
+        if (eager.current || document.activeElement === composer.current) warmUp();
+        eager.current = false;
       });
     return () => {
       stopped = true;
@@ -333,20 +353,28 @@ function PiConversationPage() {
       ? response
       : null;
   const stage = snapshot?.stage;
-  // Streamed words say the answer is being written before the next snapshot does.
-  const step = stage?.name === 'thinking' && visible?.text ? 'writing' : (stage?.name ?? '');
-  const since = !unavailable && !finishing && WAITS.includes(step) ? stage?.since : undefined;
+  // Words streamed after the stage was read say the answer is being written before it does.
+  const step =
+    stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
+      ? 'writing'
+      : (stage?.name ?? '');
+  const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
+  // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
+  // while the stream that would end it is away.
+  const [words, tone, since]: [string, string, string?] = unavailable
+    ? ['Unavailable', '']
+    : finishing
+      ? ['Finishing the previous agent…', 'active']
+      : !phrase
+        ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
+        : WAITS.includes(step)
+          ? [phrase, 'active', streamError ? undefined : stage?.since]
+          : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
   const state = (
     <>
-      <span
-        className={`pi-state-dot${active || WAITS.includes(step) ? ' pi-state-dot--active' : step === 'ready' ? ' pi-state-dot--ready' : ''}`}
-      />
+      <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
       <span>
-        {unavailable
-          ? 'Unavailable'
-          : finishing
-            ? 'Finishing the previous agent…'
-            : (step === 'tool' && stage?.detail) || STAGE[step] || (STATUS[status] ?? 'Ready')}
+        {words}
         {since && <Seconds since={since} />}
       </span>
     </>
@@ -626,6 +654,7 @@ function PiConversationPage() {
             // Read-only rather than disabled while sending, so the cursor stays where it was.
             readOnly={busy}
             disabled={blocked}
+            onFocus={warmUp}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {

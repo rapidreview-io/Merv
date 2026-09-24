@@ -419,7 +419,7 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
   t.after(cleanup);
   setProject('p1');
   boot(
-    () => snapshot(conversation()),
+    () => staged(snapshot(conversation()), 'machine', 5000),
     () => [conversation()],
   );
   const withStream = globalThis.fetch;
@@ -429,7 +429,8 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
       : withStream(input, init)) as typeof fetch;
   await open();
   assert.match(text(), /Unavailable/);
-  assert.doesNotMatch(text(), /404/);
+  assert.doesNotMatch(text(), /404|·/);
+  assert.ok(!document.querySelector('.pi-state-dot--active'));
   const sendButton = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Send');
   assert.equal(sendButton?.disabled, true);
   const before = requests.length;
@@ -611,7 +612,10 @@ test('a rotated stream reconnects at once and silently; a busy one waits quietly
 test('a send refused while the previous agent finishes is asked again with the same command', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  let state = snapshot({ ...conversation(), runtimeId: 'runtime_1' });
+  let state: ReturnType<typeof snapshot> = staged(
+    snapshot({ ...conversation(), runtimeId: 'runtime_1' }),
+    'agent',
+  );
   boot(
     () => state,
     () => [conversation()],
@@ -635,43 +639,42 @@ test('a send refused while the previous agent finishes is asked again with the s
   await write('Again');
   await click('Send');
   assert.match(text(), /Finishing the previous agent…/);
-  assert.doesNotMatch(text(), /pi_runtime_releasing/);
+  assert.doesNotMatch(text(), /pi_runtime_releasing|·/);
+  assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
   await settle(3100);
   assert.deepEqual(sent, [sent[0], sent[0]]);
   assert.match(text(), /Preparing a machine/);
 });
 
-test('a machine warms on the open conversation, a switch and a new one, quietly past a releasing agent', async (t) => {
+test('a machine warms as the page opens and in a new conversation, but a switch waits for a question', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const second = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
+  const known = (id: string) => (id === second.id ? second : conversation(id));
   let current = 'conversation_1';
   boot(
-    () => snapshot(conversation(current)),
+    () => snapshot(known(current)),
     () => [conversation(), second],
   );
   serve('/tools/pi.create', { body: { result: conversation('conversation_3') } });
   const warmed: Record<string, unknown>[] = [];
   serve('/tools/pi.warm', (attempt, input) => {
     warmed.push(input);
-    if (attempt === 1)
+    if (attempt === 1 || attempt === 3)
       return {
         status: 409,
         body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
       };
-    const item = { ...conversation(input.conversationId as string), runtimeId: 'runtime_1' };
+    const item = { ...known(input.conversationId as string), runtimeId: 'runtime_1' };
     return { body: { result: staged(snapshot(item), 'machine') } };
   });
-  await open();
-  await settle(10);
-  // The agent released elsewhere is waited for without a word, and nothing is held up.
-  assert.equal(warmed.length, 1);
-  assert.doesNotMatch(text(), /Finishing|still finishing|releasing/);
-  assert.equal(document.querySelector('[role="alert"]'), null);
-  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.readOnly, false);
-  await settle(3100);
-  assert.equal(warmed[1].requestId, warmed[0].requestId);
-  assert.match(text(), /Starting a machine/);
+  const ids = () => warmed.map((input) => input.conversationId);
+  const area = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
+  const focus = () =>
+    act(async () => {
+      area().blur();
+      area().focus();
+    });
   const choose = async (index: number) => {
     await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
     await act(async () =>
@@ -679,13 +682,93 @@ test('a machine warms on the open conversation, a switch and a new one, quietly 
     );
     await settle(10);
   };
+  await open();
+  await settle(10);
+  // The agent released elsewhere is waited for without a word, and nothing is held up.
+  assert.deepEqual(ids(), ['conversation_1']);
+  assert.doesNotMatch(text(), /Finishing|still finishing|releasing/);
+  assert.ok(!document.querySelector('[role="alert"]'));
+  assert.equal(area().readOnly, false);
+  await focus();
+  assert.equal(warmed.length, 1);
+  await settle(3100);
+  assert.equal(warmed[1].requestId, warmed[0].requestId);
+  assert.match(text(), /Starting a machine/);
+  // Looking at another conversation and coming back leaves the warm machine where it is.
   current = 'conversation_2';
   await choose(1);
+  current = 'conversation_1';
+  await choose(2);
+  assert.deepEqual(ids(), ['conversation_1', 'conversation_1']);
+  // A question begun there warms it, and a conversation the person has left is not retried.
+  current = 'conversation_2';
+  await choose(1);
+  await focus();
+  current = 'conversation_1';
+  await choose(2);
+  await settle(3100);
+  assert.deepEqual(ids(), ['conversation_1', 'conversation_1', 'conversation_2']);
+  current = 'conversation_2';
+  await choose(1);
+  await focus();
+  await focus();
   current = 'conversation_3';
   await choose(0);
+  assert.deepEqual(ids(), [
+    'conversation_1',
+    'conversation_1',
+    'conversation_2',
+    'conversation_2',
+    'conversation_3',
+  ]);
   assert.deepEqual(
-    warmed.map((input) => input.conversationId),
-    ['conversation_1', 'conversation_1', 'conversation_2', 'conversation_3'],
+    requests
+      .filter((request) => request.endsWith('/events'))
+      .map((request) => request.slice(8, 22)),
+    ['1', '2', '1', '2', '1', '2', '3'].map((n) => `conversation_${n}`),
+  );
+});
+
+test('opening Agent goes to the conversation whose machine is warm, and warms nothing', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const warm = { ...conversation('conversation_2'), runtimeId: 'runtime_1' };
+  boot(
+    () => snapshot(warm),
+    () => [conversation(), warm],
+  );
+  await open();
+  assert.deepEqual(
+    requests.filter((request) => /events|pi.warm/.test(request)),
+    ['GET /pi/conversation_2/events'],
+  );
+});
+
+test('a warm-up that answers late leaves the page where the person went', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.warm', { body: { result: snapshot(conversation('conversation_9')) } });
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  const withStream = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.warm')) await held;
+    return withStream(input, init);
+  }) as typeof fetch;
+  await open();
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+  await settle(10);
+  answer();
+  await settle(10);
+  assert.equal(
+    requests.some((request) => request.includes('conversation_9')),
+    false,
+  );
+  assert.equal(
+    requests.filter((request) => request.endsWith('/events')).at(-1),
+    'GET /pi/conversation_1/events',
   );
 });
 
@@ -701,12 +784,12 @@ test('the bar and the transcript say what the turn waits on, counting the second
   );
   const bar = () => document.querySelector('.pi-bar [role="status"]')?.textContent ?? '';
   const row = () => document.querySelector('.pi-messages .pi-state');
-  const push = (name: string, status = 'working', detail?: string) =>
+  const push = (name: string, status = 'working', detail?: string, tail: PiEvent[] = []) =>
     act(async () =>
       stream.push(
         'snapshot',
         staged(
-          snapshot(active, [command('command_1', status, asked)], ++sequence),
+          snapshot(active, [command('command_1', status, asked)], ++sequence, tail),
           name,
           0,
           detail,
@@ -725,23 +808,32 @@ test('the bar and the transcript say what the turn waits on, counting the second
   assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
   await jump(60_000);
   assert.match(bar(), /^Starting a machine · 6\d s/);
+  // Nothing is counted while the stream that would end the wait is away.
+  stream.drop();
+  await settle(10);
+  assert.match(text(), /Reconnecting…/);
+  assert.doesNotMatch(bar(), /·/);
+  await settle(2100);
+  assert.match(bar(), /^Starting a machine · 6 s/);
   await push('agent', 'starting');
   assert.match(bar(), /^Loading the agent · 0 s/);
   await push('tool', 'working', 'Reading a file');
   assert.match(bar(), /^Reading a file(Fleet details)?$/);
   await push('thinking');
   assert.match(bar(), /^Thinking · 0 s/);
-  await act(async () =>
-    stream.push('delta', {
-      streamId: 'stream_1',
-      sequence: ++sequence,
-      commandId: 'command_1',
-      type: 'text',
-      text: 'Partial',
-    }),
-  );
+  const partial: PiEvent = {
+    sequence: ++sequence,
+    commandId: 'command_1',
+    type: 'text',
+    text: 'Partial',
+  };
+  await act(async () => stream.push('delta', { streamId: 'stream_1', ...partial }));
   await settle(10);
   assert.match(bar(), /^Writing…/);
+  // Words the stage already counted are no news: after a tool the model thinks again.
+  await push('thinking', 'working', undefined, [partial]);
+  assert.match(bar(), /^Thinking · 0 s/);
+  assert.match(text(), /Partial/);
   await push('saving', 'saving');
   assert.match(row()?.textContent ?? '', /^Saving…$/);
   await act(async () =>
@@ -759,9 +851,9 @@ test('the bar and the transcript say what the turn waits on, counting the second
   );
   assert.match(bar(), /^Agent ready/);
   assert.doesNotMatch(bar(), /·/);
-  assert.equal(row(), null);
+  assert.ok(!row());
   assert.ok(document.querySelector('.pi-state-dot--ready'));
-  assert.equal(document.querySelector('.pi-state-dot--active'), null);
+  assert.ok(!document.querySelector('.pi-state-dot--active'));
 });
 
 test('the transcript follows new text until the reader scrolls up, and reads answers as Markdown', async (t) => {
