@@ -5,10 +5,14 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
+import warnings
 
 SANDBOX = Path(__file__).resolve().parents[3] / 'output/fleet-sandboxes/control/src'
 sys.path.insert(0, str(SANDBOX))
@@ -33,6 +37,12 @@ class DispatchTests(unittest.TestCase):
         self.dumpability = patch.object(runtime, '_prctl')
         self.prctl = self.dumpability.start()
         self.addCleanup(self.dumpability.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        prestart = patch.object(runtime, 'PRESTART', self.directory / 'prestart/worker.sock')
+        prestart.start()
+        self.addCleanup(prestart.stop)
 
     def test_pi_bootstrap_rejects_untrusted_fields(self):
         valid = bootstrap()
@@ -160,30 +170,42 @@ class DispatchTests(unittest.TestCase):
             self.assertFalse(filename.exists())
             self.assertEqual(raw, bytearray(len(raw)))
 
-    def test_malicious_worker_dependency_cannot_be_trusted(self):
+    def test_malicious_worker_dependency_or_compile_cache_cannot_be_trusted(self):
         with tempfile.TemporaryDirectory() as directory:
-            dependencies = Path(directory) / 'node_modules'
+            dependencies, cache = Path(directory) / 'node_modules', Path(directory) / 'compile-cache'
             dependencies.mkdir()
             (dependencies / 'safe').write_text('safe')
+            (cache / 'v22-x64-tag-12001').mkdir(parents=True)
+            owners, real = {}, os.lstat
 
             def trust(filename):
-                if filename != dependencies and dependencies not in filename.parents:
-                    return os.stat_result((stat.S_IFREG | 0o755,) + (0,) * 9)
-                info = filename.lstat()
-                if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o022:
-                    raise ValueError('untrusted file')
-                return info
+                if filename in (dependencies, cache):
+                    return filename.stat()
+                return os.stat_result((stat.S_IFREG | 0o755,) + (0,) * 9)
 
-            with patch.object(runtime, 'DEPENDENCIES', dependencies), patch.object(runtime, '_trusted_path', side_effect=trust):
-                runtime.trusted_runtime()
-                (dependencies / 'unsafe').symlink_to(dependencies / 'safe')
-                with self.assertRaises(ValueError):
+            def lstat(filename):
+                info = real(filename)
+                return os.stat_result((info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
+                                       owners.get(str(filename), 0), 0, *info[6:10]))
+
+            with patch.object(runtime, 'DEPENDENCIES', dependencies), patch.object(runtime, 'COMPILE_CACHE', cache):
+                with patch.object(runtime, '_trusted_path', side_effect=trust), patch.object(runtime.os, 'lstat', side_effect=lstat):
                     runtime.trusted_runtime()
-                (dependencies / 'unsafe').unlink()
-                (dependencies / 'unsafe').write_text('writable')
-                (dependencies / 'unsafe').chmod(0o666)
-                with self.assertRaises(ValueError):
+                    (dependencies / 'unsafe').symlink_to(dependencies / 'safe')
+                    with self.assertRaises(ValueError):
+                        runtime.trusted_runtime()
+                    (dependencies / 'unsafe').unlink()
+                    (dependencies / 'unsafe').write_text('writable')
+                    (dependencies / 'unsafe').chmod(0o666)
+                    with self.assertRaises(ValueError):
+                        runtime.trusted_runtime()
+                    (dependencies / 'unsafe').unlink()
                     runtime.trusted_runtime()
+                    entry = cache / 'v22-x64-tag-12001' / 'entry'
+                    entry.write_bytes(b'bytecode')
+                    owners[str(entry)] = 12001
+                    with self.assertRaises(ValueError):
+                        runtime.trusted_runtime()
 
     def test_worker_drops_identity_and_uses_only_private_pipe_and_home(self):
         class ExecCalled(BaseException):
@@ -205,6 +227,7 @@ class DispatchTests(unittest.TestCase):
         environment = execve.call_args.args[2]
         self.assertEqual(environment['CODEX_HOME'], '/home/assignment/.codex')
         self.assertEqual(environment['TMPDIR'], '/home/assignment')
+        self.assertEqual(environment['NODE_COMPILE_CACHE'], '/opt/merv/pi/compile-cache')
         self.assertNotIn('MERV_BOOTSTRAP_FILE', environment)
         self.assertNotIn('OPENAI_API_KEY', environment)
         with patch.object(runtime, '_root_linux'), patch.object(runtime, 'trusted_runtime'):
@@ -212,6 +235,89 @@ class DispatchTests(unittest.TestCase):
                 with patch.object(runtime.os, 'fstat', return_value=worker_info):
                     with self.assertRaises(ValueError):
                         runtime.worker()
+
+
+class PrestartTests(unittest.TestCase):
+    """The real holder and supervisor, with a stand-in worker that echoes its private stdin."""
+
+    def setUp(self):
+        DispatchTests.setUp(self)
+        # Production closes these pipes by exiting or exec; here the collector does.
+        warnings.simplefilter('ignore', ResourceWarning)
+
+    def hold(self, script):
+        if runtime.PRESTART.parent.exists():
+            runtime.PRESTART.parent.rmdir()
+        workers = []
+
+        def spawn():
+            workers.append(subprocess.Popen(
+                [sys.executable, '-c', script, str(self.directory / 'received')],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                close_fds=True, start_new_session=True,
+            ))
+            return workers[0]
+
+        with patch.object(runtime, '_root_linux'), patch.object(runtime, 'spawn_worker', spawn):
+            with patch.object(runtime, '_trusted_path', side_effect=lambda path: path.stat()):
+                holder = threading.Thread(target=runtime.prestart, daemon=True)
+                holder.start()
+                deadline = time.monotonic() + 5
+                while not runtime.PRESTART.exists() and holder.is_alive() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+        self.addCleanup(lambda: workers and workers[0].poll() is None and workers[0].kill())
+        return holder, workers
+
+    def test_pi_supervisor_hands_its_bootstrap_to_the_worker_loaded_at_boot(self):
+        holder, workers = self.hold(
+            'import sys; sys.stderr.write("Pi worker ready 5 ms\\n"); sys.stderr.flush(); '
+            'open(sys.argv[1], "wb").write(sys.stdin.buffer.read()); sys.exit(3)')
+        self.assertTrue(runtime.PRESTART.exists())
+        filename = self.directory / 'bootstrap-pi'
+        raw = bytearray(json.dumps(bootstrap()).encode())
+        filename.write_bytes(raw)
+        original = json.loads(raw)
+        with patch.object(runtime, '_root_linux'), patch.object(runtime, 'read_bootstrap', return_value=(filename, raw)):
+            with patch.object(runtime, 'spawn_worker', side_effect=AssertionError), patch.object(runtime.os, 'write') as write:
+                self.assertEqual(runtime.supervisor(), 3)
+        holder.join(5)
+        self.assertFalse(holder.is_alive())
+        self.assertEqual(workers[0].returncode, 3)
+        self.assertEqual(json.loads((self.directory / 'received').read_bytes()), original)
+        write.assert_called_once_with(2, b'Pi worker ready 5 ms\n')
+        self.assertFalse(runtime.PRESTART.exists())
+        self.assertFalse(filename.exists())
+        self.assertEqual(raw, bytearray(len(raw)))
+
+    def test_workflow_stops_the_worker_loaded_at_boot_and_a_lost_supervisor_does_too(self):
+        class ExecCalled(BaseException):
+            pass
+
+        for workflow in (True, False):
+            with self.subTest(workflow=workflow):
+                holder, workers = self.hold('import time; time.sleep(60)')
+                if workflow:
+                    filename = self.directory / 'bootstrap-workflow'
+                    raw = bytearray(b'{"baseUrl":"https://api.example.test/","projectId":"test"}')
+                    with patch.object(runtime, '_root_linux'), patch.object(runtime, '_trusted_path'):
+                        with patch.object(runtime, 'read_bootstrap', return_value=(filename, raw)):
+                            with patch.object(runtime.os, 'execve', side_effect=ExecCalled):
+                                with self.assertRaises(ExecCalled):
+                                    runtime.supervisor()
+                else:
+                    runtime.prestarted().connection.close()
+                holder.join(5)
+                self.assertFalse(holder.is_alive())
+                self.assertIsNotNone(workers[0].poll())
+                self.assertIsNone(runtime.prestarted())
+
+    def test_holder_leaves_when_its_worker_fails_before_any_claim(self):
+        holder, workers = self.hold('raise SystemExit(1)')
+        holder.join(5)
+        self.assertFalse(holder.is_alive())
+        self.assertEqual(workers[0].returncode, 1)
+        self.assertFalse(runtime.PRESTART.exists())
+        self.assertIsNone(runtime.prestarted())
 
 
 if __name__ == '__main__':

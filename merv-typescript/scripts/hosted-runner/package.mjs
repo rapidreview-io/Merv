@@ -127,6 +127,7 @@ function build(sandboxPath, outputPath, tag) {
     'smoke-supervisor.mjs',
     'supervisor.mjs',
     'start',
+    'boot',
     'start-runtime.py',
     'assignment-probed.py',
     'isolation_probe.py',

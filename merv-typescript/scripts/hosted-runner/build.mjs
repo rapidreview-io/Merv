@@ -49,6 +49,14 @@ writeFileSync(
   '#!/bin/sh\nexec /usr/bin/python3 /opt/merv/runtime/start-runtime.py\n',
   { mode: 0o755 },
 );
+// Pi loads while the sandbox boots; the first Pi launch then hands the waiting worker its bootstrap.
+writeFileSync(
+  `${destination}/boot`,
+  '#!/bin/sh\n/usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 /usr/bin/python3 ' +
+    '/opt/merv/runtime/start-runtime.py --prestart </dev/null >/dev/null 2>&1 &\n' +
+    'exec /usr/local/bin/sandbox-entrypoint "$@"\n',
+  { mode: 0o755 },
+);
 writeFileSync(
   `${destination}/input-hashes.json`,
   JSON.stringify(

@@ -116,6 +116,10 @@ if (args[0] === 'image') {
       readFileSync(join(bundle, 'start'), 'utf8'),
       '#!/bin/sh\nexec /usr/bin/python3 /opt/merv/runtime/start-runtime.py\n',
     );
+    assert.match(
+      readFileSync(join(bundle, 'boot'), 'utf8'),
+      /^#!\/bin\/sh\n\/usr\/bin\/env -i .* \/opt\/merv\/runtime\/start-runtime\.py --prestart <\/dev\/null >\/dev\/null 2>&1 &\nexec \/usr\/local\/bin\/sandbox-entrypoint "\$@"\n$/,
+    );
     const worker = readFileSync(join(bundle, 'pi/worker-main.mjs'), 'utf8');
     assert.match(worker, /from "@earendil-works\/pi-coding-agent"/);
     assert.match(worker, /from "@earendil-works\/pi-ai"/);
@@ -131,6 +135,12 @@ if (args[0] === 'image') {
     assert.match(dockerfile, /npm ci --omit=dev --ignore-scripts --engine-strict/);
     assert.match(dockerfile, /COPY --from=pi-deps \/opt\/merv\/pi\/node_modules/);
     assert.match(dockerfile, /find node_modules -type d -name \.bin -prune/);
+    assert.match(
+      dockerfile,
+      /^USER 12001:12001\nRUN .*NODE_COMPILE_CACHE=\/opt\/merv\/pi\/compile-cache/m,
+    );
+    assert.match(dockerfile, /chown -R 0:0 \/opt\/merv\/pi\/compile-cache/);
+    assert.match(dockerfile, /^ENTRYPOINT \["\/opt\/merv\/runtime\/boot"\]$/m);
     const compiled = JSON.parse(readFileSync(join(bundle, 'input-hashes.json'), 'utf8'));
     for (const relative of [
       'packages/pi/src/worker-main.ts',

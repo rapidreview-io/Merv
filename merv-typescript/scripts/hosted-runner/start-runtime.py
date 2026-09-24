@@ -5,7 +5,9 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -22,6 +24,8 @@ NODE = Path('/usr/local/bin/node')
 PYTHON = Path('/usr/bin/python3.11')
 WORKER = Path('/opt/merv/pi/worker-main.mjs')
 DEPENDENCIES = Path('/opt/merv/pi/node_modules')
+COMPILE_CACHE = Path('/opt/merv/pi/compile-cache')
+PRESTART = Path('/run/merv-prestart/worker.sock')
 WORKER_HOME = Path('/home/assignment')
 DIAGNOSTIC = re.compile(rb'(?:Pi worker|Protected runtime) [A-Za-z0-9 ():]{1,160}\n')
 
@@ -34,13 +38,16 @@ def trusted_runtime():
         info = _trusted_path(filename)
         if not stat.S_ISREG(info.st_mode):
             raise ValueError('invalid runtime file')
-    if not stat.S_ISDIR(_trusted_path(DEPENDENCIES).st_mode):
-        raise ValueError('missing worker dependencies')
-    for directory, folders, files in os.walk(DEPENDENCIES, onerror=failed_walk, followlinks=False):
-        for name in (*folders, *files):
-            info = _trusted_path(Path(directory) / name)
-            if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-                raise ValueError('invalid worker dependency')
+    for tree in (DEPENDENCIES, COMPILE_CACHE):
+        if not stat.S_ISDIR(_trusted_path(tree).st_mode):
+            raise ValueError('missing worker dependencies')
+        # The walk enters only directories it already checked, so one lstat per entry suffices.
+        for directory, folders, files in os.walk(tree, onerror=failed_walk, followlinks=False):
+            for name in (*folders, *files):
+                info = os.lstat(os.path.join(directory, name))
+                if (info.st_uid != 0 or info.st_mode & 0o022 or
+                        not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))):
+                    raise ValueError('invalid worker dependency')
 
 
 def worker():
@@ -60,6 +67,7 @@ def worker():
         'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': str(WORKER_HOME),
         'CODEX_HOME': str(WORKER_HOME / '.codex'), 'TMPDIR': str(WORKER_HOME),
         'LANG': 'C.UTF-8', 'USER': 'assignment', 'LOGNAME': 'assignment',
+        'NODE_COMPILE_CACHE': str(COMPILE_CACHE),
     })
 
 
@@ -126,12 +134,97 @@ def forward_diagnostics(stream):
                 os.write(2, line)
 
 
+def spawn_worker():
+    return subprocess.Popen(
+        [str(PYTHON), str(Path(__file__).resolve()), '--worker'],
+        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+        close_fds=True, start_new_session=True,
+    )
+
+
+class Prestarted:
+    """A worker loaded at boot, handed over with its pipes; only its holder signals and reaps it."""
+
+    def __init__(self, connection):
+        message, descriptors, _flags, _address = socket.recv_fds(connection, 1, 2)
+        if message != b'W' or len(descriptors) != 2:
+            raise ValueError('invalid prestarted worker')
+        self.connection, self.returncode = connection, None
+        self.stdin, self.stderr = os.fdopen(descriptors[0], 'wb'), os.fdopen(descriptors[1], 'rb')
+
+    def poll(self):
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            return self.wait(0)
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            if not select.select([self.connection], [], [], timeout)[0]:
+                raise subprocess.TimeoutExpired('worker', timeout)
+            try:
+                status = self.connection.recv(1)
+            except ConnectionError:
+                status = b''
+            self.returncode = status[0] if status else 1
+        return self.returncode
+
+
+def prestarted():
+    connection = socket.socket(socket.AF_UNIX)
+    try:
+        connection.settimeout(5)
+        connection.connect(str(PRESTART))
+        return Prestarted(connection)
+    except (OSError, ValueError):
+        connection.close()
+        return None
+
+
 def stop_group(process, method):
     if process.poll() is None:
         try:
-            os.killpg(process.pid, method)
-        except ProcessLookupError:
+            if isinstance(process, Prestarted):
+                process.connection.send(bytes([method]))
+            else:
+                os.killpg(process.pid, method)
+        except OSError:  # Already gone (macOS reports a zombie group as EPERM) or holder closed.
             pass
+
+
+def prestart():
+    # Pi loads while the sandbox boots, then waits on its private stdin for the first Pi supervisor.
+    _root_linux()
+    _prctl(4, 0)
+    PRESTART.parent.mkdir(mode=0o700)
+    _trusted_path(PRESTART.parent)
+    process = spawn_worker()
+    try:
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind(str(PRESTART))
+            server.listen(1)
+            while not select.select([server], [], [], 1)[0]:
+                if process.poll() is not None:
+                    return
+            connection = server.accept()[0]
+        PRESTART.unlink()
+        with connection:
+            socket.send_fds(connection, [b'W'], [process.stdin.fileno(), process.stderr.fileno()])
+            process.stdin.close()
+            process.stderr.close()
+            # The supervisor asks and this parent signals and reaps: no stop reaches a reused PID.
+            while process.poll() is None:
+                if select.select([connection], [], [], 1)[0]:
+                    request = connection.recv(1)
+                    if not request:
+                        return
+                    stop_group(process, signal.SIGTERM if request[0] == signal.SIGTERM
+                               else signal.SIGKILL)
+            connection.sendall(bytes([process.returncode & 255]))
+    finally:
+        PRESTART.unlink(missing_ok=True)
+        if process.poll() is None:
+            stop_group(process, signal.SIGKILL)
+            process.wait()
 
 
 def supervisor():
@@ -144,6 +237,8 @@ def supervisor():
             raise ValueError('invalid bootstrap')
         if 'kind' not in data:
             _trusted_path(NODE)
+            # A Pi worker loaded at boot never meets a workflow: its holder kills it once claimed.
+            prestarted()
             os.execve(str(NODE), [str(NODE), '/opt/merv/runner/smoke-supervisor.mjs'], {
                 'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8',
                 'MERV_BOOTSTRAP_FILE': str(filename),
@@ -160,12 +255,7 @@ def supervisor():
     os.environ.pop('MERV_BOOTSTRAP_FILE', None)
     process = None
     try:
-        process = subprocess.Popen(
-            [str(PYTHON), str(Path(__file__).resolve()), '--worker'],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
-            close_fds=True, start_new_session=True,
-        )
+        process = prestarted() or spawn_worker()
         reader = threading.Thread(target=forward_diagnostics, args=(process.stderr,), daemon=True)
         reader.start()
         stopping_at = None
@@ -179,7 +269,6 @@ def supervisor():
         signal.signal(signal.SIGINT, stop)
         process.stdin.write(payload)
         process.stdin.close()
-        payload[:] = b'\x00' * len(payload)
         payload[:] = b'\x00' * len(payload)
         deadline = time.monotonic() + lifetime
         while process.poll() is None:
@@ -206,6 +295,8 @@ def main():
     try:
         if sys.argv[1:] == ['--worker']:
             worker()
+        elif sys.argv[1:] == ['--prestart']:
+            prestart()
         elif not sys.argv[1:]:
             sys.exit(supervisor())
         else:
