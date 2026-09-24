@@ -6,10 +6,10 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { click, mount, resize, settle, text, unmount } from './ui-render.js';
+import { click, mount, resize, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
-const { Link, MemoryRouter, useLocation } = await import('react-router-dom');
+const { Link, MemoryRouter, Route, Routes, useLocation } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 // components.tsx first: it and list-filters.tsx import each other through a view, and
 // only this order has every module evaluated before another one calls into it.
@@ -18,6 +18,7 @@ const { ListPage, mixesKinds, splitRoutes, stateCounts, useListFilter } =
   await import('../packages/ui/web/list-filters.js');
 const { fileIcon } = await import('../packages/ui/web/icons.js');
 const { reviewClause } = await import('../packages/ui/web/states.js');
+const { CollectionView } = await import('../packages/ui/web/views/remote.js');
 
 interface Item {
   id: string;
@@ -191,6 +192,52 @@ test('a search or a chip that empties the reader’s own rows does not say they 
     search.dispatchEvent(new window.Event('input', { bubbles: true }));
   });
   assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing matches');
+});
+
+test('a published list whose rows have all ended flags none of them for attention', async (t) => {
+  t.after(async () => await unmount());
+  const live = ['queued', 'running'];
+  const spec = {
+    noun: { singular: 'agent', plural: 'agents' },
+    key: 'id',
+    title: 'title',
+    states: { field: 'phase', open: live, live },
+    attention: { field: 'attention' },
+    columns: [{ type: 'state', label: 'Status', field: 'phase' }],
+    empty: { title: 'No agents allocated' },
+  };
+  const row = {
+    id: 'fleet',
+    label: 'Fleet',
+    group: 'operations',
+    order: 20,
+    path: '/fleet',
+    view: { kind: 'collection', spec },
+    status: {},
+    readable: true,
+  };
+  const attention = 'Waiting for the runtime service';
+  serve('/tools/ui.read', {
+    body: { result: [{ id: 'flt_1', title: 'pi agent', phase: 'released', attention }] },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/fleet'] },
+      createElement(
+        Routes,
+        null,
+        createElement(Route, {
+          path: '/fleet/*',
+          element: createElement(CollectionView, { row, shell: { rows: [row], plugins: [] } }),
+        }),
+      ),
+    ),
+  );
+  await settle(20);
+  assert.equal(document.querySelectorAll('.rows > .row').length, 1);
+  for (const gone of ['attention', attention, 'Nothing matches'])
+    assert.ok(!text().includes(gone), `“${gone}” is on the page: ${text()}`);
 });
 
 test('every state a record stands in has a tone, and a review gate never reads as stopped', () => {
