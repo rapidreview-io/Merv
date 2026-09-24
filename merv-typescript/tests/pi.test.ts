@@ -1296,10 +1296,13 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   await f.fleet.tick();
   assert.equal((await stage()).name, 'agent');
   const { token, input } = await f.claimed((await snapshot()).conversation);
-  assert.equal((await stage()).name, 'agent');
+  // A live worker has picked the turn up: the person sees it thinking from here, not loading.
+  const claimed = await stage();
+  assert.equal(claimed.name, 'thinking');
   await f.pi.begin(token, input);
   const { startedAt } = (await snapshot()).commands[0];
-  assert.deepEqual(await stage(), { name: 'thinking', since: startedAt });
+  assert.deepEqual(await stage(), claimed);
+  assert.ok(claimed.since <= startedAt!);
   const call = f.tools.call.bind(f.tools);
   let reading: PiStage | undefined;
   f.tools.call = async (...args) => ((reading = await stage()), call(...args));

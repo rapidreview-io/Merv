@@ -430,20 +430,26 @@ function PiConversationPage() {
     adopt(item);
     return item.id;
   };
-  const create = async () => {
-    if (busy) return;
-    setBusy(true);
+  // A new conversation opens at once and never locks the composer: a question sent before the
+  // server answers goes to the conversation this creates, because pi.create is keyed by createId.
+  const create = () => {
+    pending.current = null;
+    selection.current = null;
+    canonical.current = null;
+    setSelected(null);
+    setSnapshot(null);
+    setDraft('');
     setError('');
-    try {
-      if (!(await open())) return;
-      pending.current = null;
-      setDraft('');
-      composer.current?.focus();
-    } catch (cause) {
-      if (valid()) setError(said(cause, 'Could not create a conversation.'));
-    } finally {
-      if (valid()) setBusy(false);
-    }
+    composer.current?.focus();
+    call<PiConversation>('pi.create', { requestId: createId.current }).then(
+      (item) => {
+        if (valid() && !selection.current) adopt(item);
+      },
+      (cause) => {
+        if (valid() && !selection.current)
+          setError(said(cause, 'Could not create a conversation.'));
+      },
+    );
   };
   const send = async () => {
     const text = draft.trim();
@@ -520,7 +526,7 @@ function PiConversationPage() {
                   className="pi-menu-item"
                   onClick={() => {
                     setMenu(false);
-                    void create();
+                    create();
                   }}
                 >
                   New conversation

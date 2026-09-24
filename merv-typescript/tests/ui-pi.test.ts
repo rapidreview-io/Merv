@@ -218,6 +218,47 @@ test('opening an empty Agent warms one conversation, and the first message goes 
   assert.notEqual(created[0], warmed[0].requestId);
 });
 
+test('a question typed right after New conversation is kept and sent into it', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.warm', { body: { result: snapshot(conversation()) } });
+  const created: unknown[] = [];
+  serve('/tools/pi.create', (_count, input) => {
+    created.push(input.requestId);
+    return { body: { result: conversation('conversation_2') } };
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  const withStream = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.create')) await held;
+    return withStream(input, init);
+  }) as typeof fetch;
+  await open();
+  await settle(10);
+  await write('First?');
+  await click('Send');
+  await settle(10);
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+  // The box stays editable while the conversation is being made, and the question is not lost.
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')!.readOnly, false);
+  await write('Asked at once?');
+  await click('Send');
+  answer();
+  await settle(10);
+  assert.equal(new Set(created).size, 1);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].id, 'conversation_2');
+  assert.equal(sent[1].text, 'Asked at once?');
+});
+
 test('a question sent while the first warm-up waits out a release goes to the conversation it opened', async (t) => {
   t.after(cleanup);
   setProject('p1');

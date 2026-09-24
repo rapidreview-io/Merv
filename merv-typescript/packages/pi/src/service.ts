@@ -394,9 +394,9 @@ export class PiService implements Pi, FleetOwner {
         name: allocation.phase === 'queued' && waited ? 'queued' : 'machine',
       });
     }
-    return this.show(id, {
-      name: command || live?.runtimeId !== allocation.id ? 'agent' : 'ready',
-    });
+    // A live worker picks a new turn up at once, so the turn reads as thinking, not loading.
+    const loaded = live?.runtimeId === allocation.id;
+    return this.show(id, { name: !loaded ? 'agent' : command ? 'thinking' : 'ready' });
   }
   /** Keeps a stage's start while it lasts, and wakes open pages when it moves. */
   private show(id: string, next: Omit<PiStage, 'since'> & { since?: string }): PiStage {
