@@ -3,10 +3,10 @@
 One row per run of [`hosted-release.mjs`](hosted-release.mjs) that changed, or tried to change,
 the hosted worker image. `release.mjs` runs it after every passing production release. Source is
 the commit and the content hash of its allowlisted archive; both are also image labels
-(`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`). Image is the amd64 manifest
-digest that Cloudflare and the Sandboxes catalog pin, and Release is the `rt1_` id Main uses. The
-live pins and the bundle inputs that change detection watches are in
-[`hosted-release.json`](hosted-release.json).
+(`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`), beside
+`org.merv.hosted.sandboxes-commit`. Image is the amd64 manifest digest that Cloudflare and the
+Sandboxes catalog pin, and Release is the `rt1_` id Main uses. The host keeps the live pins;
+[`hosted-release.json`](hosted-release.json) seeds them and records the latest release.
 
 | UTC               | Run            | Source       | Lane   | Image          | Release        | App | Gates             | Canary                 | Result | Notes                                                                                                                                                       |
 | ----------------- | -------------- | ------------ | ------ | -------------- | -------------- | --- | ----------------- | ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |

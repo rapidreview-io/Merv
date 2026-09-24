@@ -3,16 +3,12 @@
     "projectId": "project_3b538d73b68d4306937c226e742f61c1",
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
-  "base": {
-    "sourceCommit": "c04b88db1875c22c7a7d720da21dc3d58ee6c43c",
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:1d823e64c1a8927c9d30f1bdcda59b3e0e30fc935c490aabef75403768acd8bb",
-    "localId": "sha256:0abdc44c5d9711dbbbe91b37e570785730c056d9e48d3464e91a6b9398d0380e"
-  },
   "current": {
     "sourceCommit": "c04b88db1875c22c7a7d720da21dc3d58ee6c43c",
     "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:1d823e64c1a8927c9d30f1bdcda59b3e0e30fc935c490aabef75403768acd8bb",
     "localId": "sha256:0abdc44c5d9711dbbbe91b37e570785730c056d9e48d3464e91a6b9398d0380e",
-    "releaseId": "rt1_ae4b27ada35598ec5f4fa688373de3a45fe6c0c9eaf53db13597872ef1d5b608"
+    "releaseId": "rt1_ae4b27ada35598ec5f4fa688373de3a45fe6c0c9eaf53db13597872ef1d5b608",
+    "sandboxesCommit": "d7a7382da56db0edb16a6e460943d7509a1093a2"
   },
   "inputs": [
     "packages/code/src/driver/git.ts",

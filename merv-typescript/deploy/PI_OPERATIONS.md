@@ -124,8 +124,9 @@ keeps the canary grant.
   and dry-run the render before any recreate.
 - A new `MERV_FLEET_RUNTIME_RELEASE_ID` changes the Fleet profile, and every
   existing allocation is then asked to stop. Roll it out drained. The hosted
-  runtime is digest-pinned; `hosted-release.mjs` (run by `release.mjs`) moves
-  its image, catalog and release id together, drained, gated and canaried.
+  runtime is digest-pinned; `hosted-release.mjs` (run by `release.mjs`) builds
+  it from committed sources and moves its image, catalog and release id
+  together, drained, gated and canaried, with automatic rollback.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Otherwise Sandboxes refuses the extra creates, and those turns

@@ -9,9 +9,10 @@
 // public HTTPS checks against --public and appends one row to the release log. Never prints
 // private env files. --public also selects that log: the production origin writes
 // deploy/RELEASES.md, and any other origin (a staging VM) writes deploy/STAGING_RELEASES.md,
-// so a staging deploy can never be mistaken for a production one. A passing production release
-// then runs deploy/hosted-release.mjs, which does nothing unless the hosted Pi/Codex image's
-// sources changed; --skip-hosted leaves the hosted image for an emergency Main-only release.
+// so a staging deploy can never be mistaken for a production one. A production release first lets
+// deploy/hosted-release.mjs finish any open hosted-image run, and after passing runs it again, which
+// does nothing unless the hosted Pi/Codex image's sources changed; --skip-hosted leaves the hosted
+// image for an emergency Main-only release.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -41,9 +42,9 @@ const ssh = (script, opts = {}) =>
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
 const remoteJob = ({ release, archiveSha256 }) => `
 set -euo pipefail
-# A hosted-image rollout between its catalog and canary steps owns Main's recreates.
+# An open hosted-image run owns Main's recreates; it checks for this job after claiming the marker.
 HOSTED=$(cat /var/lib/merv-fleet-pilot/hosted-release/active 2>/dev/null || true)
-if [ -n "$HOSTED" ]; then echo "hosted rollout $HOSTED is open: node deploy/hosted-release.mjs --resume $HOSTED" >&2; exit 1; fi
+if [ -n "$HOSTED" ]; then echo "hosted run $HOSTED is open; node deploy/hosted-release.mjs finishes it" >&2; exit 1; fi
 REL=/opt/merv-typescript/releases/${release}
 IMG=merv-typescript:${release}
 BK=/var/backups/merv/typescript-staging-refresh/${release}
@@ -169,6 +170,15 @@ if (local)
     }),
   );
 if (dryRun) process.exit(0);
+const hosted = (...extra) =>
+  spawnSync(process.execPath, [join(root, 'deploy/hosted-release.mjs'), '--host', host, ...extra], {
+    stdio: 'inherit',
+  }).status;
+// A hosted run left open would make the VM job refuse; finish it (forward or back) first.
+if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
+  console.error('A hosted image run is still open; Main was not released.');
+  process.exit(1);
+}
 const release = resume ?? local.release;
 if (local) upload(local);
 const vm = waitForVm(release);
@@ -202,10 +212,7 @@ appendFileSync(
 );
 execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
 if (!ok) process.exit(1);
-if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted')) {
-  const hosted = [join(root, 'deploy/hosted-release.mjs'), '--host', host];
-  if (spawnSync(process.execPath, hosted, { stdio: 'inherit' }).status !== 0) {
-    console.error('Main is released; the hosted image release did not complete (see above).');
-    process.exit(1);
-  }
+if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted() !== 0) {
+  console.error('Main is released; the hosted image release did not complete (see above).');
+  process.exit(1);
 }

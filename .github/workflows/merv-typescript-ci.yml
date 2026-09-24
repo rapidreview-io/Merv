@@ -55,6 +55,11 @@ jobs:
       - name: Check formatting
         run: npx prettier --check packages src tests
 
+      # The release scripts: pure logic, the host steps in Python, and the hosted release run end
+      # to end against a fake host. No database.
+      - name: Test the release scripts
+        run: npm run test:deploy
+
       # The server runs on PostgreSQL only, and so does every server test. Each test creates its
       # own schema, so the role owns the database; the suite opens far more than the default 100
       # connections.

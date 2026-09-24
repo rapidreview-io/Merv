@@ -1,12 +1,18 @@
 """Root-side steps of deploy/hosted-release.mjs on the production host; read that file first.
 
-The orchestrator runs each step from the run's own copy of committed HEAD:
-  sudo python3 <run>/source/deploy/hosted-release-vm.py <step> <run>   (one JSON object on stdin)
-and reads one JSON line back. Every step is idempotent or recorded in <run>/<step>.json, and a
-dropped SSH session does not stop a step (SIGHUP is ignored), so --resume can pick it up.
+Each step runs from the run's own copy of committed HEAD:
+  sudo python3 <run>/source/deploy/hosted-release-vm.py <step> <run>   ({"driver", "arg"} on stdin)
+and prints one JSON line. Results land in <run>/<step>.json, so an interrupted run resumes.
+One run at a time holds HOME/active from preflight to finish; release.mjs's Main job refuses to
+start while it exists. One driver at a time holds the run's lease: a running step keeps it fresh,
+and a lease unseen for LEASE seconds may be taken over. SIGHUP is ignored, so a dropped SSH
+session does not stop a step. From the Cloudflare deploy until finish a systemd timer runs
+`guard`: when the driver has gone silent it points Main at whichever release Cloudflare runs, so
+a lost laptop never leaves Pi refusing every launch.
 Never prints a secret: the registry credential and the canary token stay inside this process,
 and every backup of the env file or the Sandboxes catalog is root-private inside the run.
 """
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -18,7 +24,9 @@ import signal
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -26,45 +34,33 @@ from pathlib import Path
 
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 ENV = Path('/etc/merv/typescript.env')
-HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock + the open run's id
+HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
 KEY, CATALOG, PROVIDER = 'MERV_FLEET_RUNTIME_RELEASE_ID', 'SANDBOXES_RUNTIME_RELEASES', 'cloudflare-fleet'
 NAMESPACE = 'fleet-cloudflare-canary'  # resolves the provider for native reads
 ACTIVE = ('waiting', 'starting', 'working', 'saving')
 KEEP = 16  # releases per provider; every protected launch copies them into a 32-entry VM file
+LEASE = 300
 CANARY_NAME = 'Hosted release canary'
-# Installed paths of the one overlay layer, with the modes the original image gave them.
-OVERLAY = {
-    '/opt/merv/runner/': ('0644', ['smoke-supervisor.mjs', 'supervisor.mjs']),
-    '/opt/merv/pi/': ('0644', ['pi/worker-main.mjs', 'pi/package.json']),
-    '/opt/merv/runtime/': ('0755', ['start-runtime.py', 'assignment-probed.py']),
-    '/opt/merv/runtime/isolation_probe.py': ('0644', ['isolation_probe.py']),
-    '/opt/merv/runtime/start-runner': ('0755', ['start']),
-    '/usr/share/merv/hosted-inputs.json': ('0444', ['input-hashes.json']),
-}
-INSTALLED = [t + f.split('/')[-1] if t.endswith('/') else t for t, (_, files) in OVERLAY.items() for f in files]
-STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
-         'status', 'mint_canary'}
-GATES = {  # name: (docker run flags, mount targets, command, expected gate)
+GO_IMAGE = 'golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452'
+WORKER_TESTS = 'tests/pi-worker.test.ts tests/pi-worker-relay-protocol.test.ts tests/pi-relay.test.ts'
+# All a worker-lane release may change in the image: the Pi worker bundle and its compile cache.
+WORKER_FILES = ('/opt/merv/pi/worker-main.mjs', '/opt/merv/pi/compile-cache/')
+LANES = ('none', 'worker', 'boundary')
+GATES = {  # name: (docker run flags, mount targets, command, expected gate, report lines)
     'linux-pi-gate.py': (['--cap-add', 'SYS_PTRACE', '--tmpfs', '/run/merv-runtime:mode=0700',
                           '--entrypoint', '/usr/bin/python3.11'],
-                         ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-pi-protected-launch'),
+                         ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-pi-protected-launch', 2),
     'linux-workflow-gate.py': (['--tmpfs', '/run/merv-runtime:mode=0700', '--entrypoint', '/usr/bin/python3.11'],
-                               ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-workflow-dispatch'),
+                               ['/opt/merv/runtime/probe.py'], '/opt/merv/runtime/probe.py', 'linux-workflow-dispatch', 1),
     'linux-isolation-probe-gate.mjs': (['--entrypoint', '/usr/local/bin/node'],
                                        ['/opt/merv/runner/supervisor.mjs', '/opt/merv/runner/smoke-supervisor.mjs'],
-                                       '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry'),
+                                       '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry', 1),
 }
-WALK = r'''import hashlib,json,os,stat
-out={}
-for d,dirs,files in os.walk('/opt/merv',followlinks=False):
- for n in sorted(dirs+files):
-  p=os.path.join(d,n);i=os.lstat(p);m=i.st_mode;r=[i.st_uid,i.st_gid,stat.S_IMODE(m)]
-  if stat.S_ISREG(m):
-   with open(p,'rb') as f: r+=['file',hashlib.file_digest(f,'sha256').hexdigest()]
-  elif stat.S_ISLNK(m): r+=['link',os.readlink(p)]
-  else: r+=['dir' if stat.S_ISDIR(m) else 'other']
-  out[p]=r
-print(json.dumps(out,sort_keys=True))'''
+LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
+GATE_FACTS, GATE_FALSE = {'prestarted'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
+RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
+STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
+         'status', 'guard', 'mint_canary'}
 # One read-only row from Main's database; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();
@@ -144,6 +140,10 @@ def atomic(path, raw, mode=0o600):
     os.replace(tmp, path)
 
 
+def read(path):
+    return json.loads(path.read_bytes()) if path.exists() else None
+
+
 def inspect(name):
     return json.loads(run(['docker', 'inspect', name]))[0]
 
@@ -172,6 +172,60 @@ def sbx(**env):
 
 def native():
     return sbx(MERV_NAMESPACE=NAMESPACE)
+
+
+def owner():
+    try:
+        return (HOME / 'active').read_text().strip()
+    except FileNotFoundError:
+        return ''
+
+
+def claim(name):
+    """Takes HOME/active for this run, atomically and with its content already written."""
+    staged = HOME / f'.active-{name}'
+    staged.write_text(name)
+    try:
+        os.link(staged, HOME / 'active')
+    except FileExistsError:
+        need(owner() == name, f'hosted run {owner()} is open; `node deploy/hosted-release.mjs` finishes it first')
+    finally:
+        staged.unlink()
+
+
+def main_release_running():
+    # release.mjs's job is visible here before it reads HOME/active, and this run claims HOME/active
+    # before looking: one of the two always sees the other.
+    return subprocess.run(['pgrep', '-f', '/opt/merv-typescript/releases/.*/release-job.sh'],
+                          capture_output=True).returncode == 0
+
+
+def guard_unit(directory):
+    return 'merv-hosted-guard-' + directory.name
+
+
+@contextlib.contextmanager
+def leased(directory, driver):
+    """One driver per run; the step refreshes the lease while it runs."""
+    path, held = directory / 'lease.json', read(directory / 'lease.json') or {}
+    age = time.time() - held.get('seen', 0)
+    need(driver and (held.get('driver') in (None, driver) or age > LEASE),
+         f'hosted run {directory.name} is driven by another process (seen {age:.0f}s ago)')
+
+    def beat():
+        atomic(path, json.dumps({'driver': driver, 'seen': time.time()}).encode())
+    def beating():
+        while not stop.wait(30):
+            beat()
+    stop, thread = threading.Event(), threading.Thread(target=beating, daemon=True)
+    beat()
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+        beat()
 
 
 def env_value(raw, key):
@@ -206,25 +260,86 @@ def with_release(doc, entry, keep=KEEP, protect=()):
     return doc, True
 
 
+def image_lane(changed, config_changed):
+    if not changed and not config_changed:
+        return 'none'
+    worker = not config_changed and all(p == WORKER_FILES[0] or p.startswith(WORKER_FILES[1]) for p in changed)
+    return 'worker' if worker else 'boundary'
+
+
+def final_lane(plan, changed, config_changed):
+    """The image diff decides; the plan's source lane is a floor and a bridge Worker change is the boundary."""
+    bridge = plan.get('sandboxChanged') is None or any(
+        p.startswith('deploy/cloudflare-sandbox/worker/') for p in plan['sandboxChanged'])
+    lane = image_lane(changed, config_changed)
+    if lane == 'none' and not bridge:
+        return 'none'
+    return LANES[max(LANES.index(lane), LANES.index(plan['lane']), 2 if bridge else 0)]
+
+
+def gate_passed(output, expected, lines):
+    """Every report line of a gate passes: its checks true, its synthetic-evidence flags false."""
+    reports = []
+    for line in output.splitlines():
+        with contextlib.suppress(ValueError):
+            report = json.loads(line)
+            if isinstance(report, dict) and 'gate' in report:
+                reports.append(report)
+    return len(reports) == lines and all(
+        r['gate'] == expected and r.get('report', {'ok': True}).get('ok') is True and
+        all(v is (k not in GATE_FALSE) for k, v in r.items() if isinstance(v, bool) and k not in GATE_FACTS)
+        for r in reports)
+
+
+def rootfs(image):
+    """Every path in the image: type, owner, mode and content hash or link target; mtimes ignored."""
+    container = run(['docker', 'create', image]).decode().strip()
+    try:
+        export = subprocess.Popen(['docker', 'export', container], stdout=subprocess.PIPE)
+        entries = {}
+        with tarfile.open(fileobj=export.stdout, mode='r|') as tar:
+            for m in tar:
+                content = m.linkname
+                if m.isreg():
+                    digest, stream = hashlib.sha256(), tar.extractfile(m)
+                    for chunk in iter(lambda: stream.read(1 << 20), b''):
+                        digest.update(chunk)
+                    content = digest.hexdigest()
+                entries['/' + m.name.removeprefix('./').rstrip('/')] = [m.type.decode(), m.uid, m.gid, m.mode, content]
+        need(export.wait() == 0, 'docker export failed: ' + image)
+        return entries
+    finally:
+        subprocess.run(['docker', 'rm', container], capture_output=True)
+
+
+def busy():
+    """Pi turns and launches in flight, by id; idle warm runtimes do not count."""
+    agg = "coalesce((SELECT json_agg({}) FROM {} WHERE {}), '[]'::json)::text"
+    main = main_read('SELECT ' + agg.format("conversation_id || '/' || id", '{s}.pi_commands',
+                                            f"status IN {ACTIVE}") + ' AS turns, ' +
+                     agg.format('id', '{s}.fleet_allocations',
+                                "phase IN ('queued','provisioning','launching','starting')") + ' AS launches')
+    lists = {**main,
+             'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider='cloudflare-fleet' AND "
+                                                                             "state IN ('provisioning','deleting')")),
+             'bootstraps': sbx(MERV_Q='SELECT ' + agg.format('launch_id', 'runtime_bootstraps',
+                                                            "state='pending' AND expires_at > now()"))}
+    return {key: ids for key, ids in ((k, json.loads(v)) for k, v in lists.items()) if ids}
+
+
 def quiet(limit):
-    """Wait, bounded, until no Pi turn or runtime launch is in flight for 10 s; idle runtimes may stay."""
+    """Wait, bounded, until nothing is in flight for 10 s."""
     deadline, calm = time.monotonic() + limit, None
     while True:
-        counts = {**main_read("SELECT (SELECT count(*) FROM {s}.pi_commands WHERE data_json::jsonb->>'status' IN "
-                              "('waiting','starting','working','saving'))::int AS turns, (SELECT count(*) FROM "
-                              "{s}.fleet_allocations WHERE phase IN ('queued','provisioning','launching','starting'))"
-                              "::int AS launches"),
-                  'machines': sbx(MERV_Q="SELECT (SELECT count(*) FROM sandboxes WHERE provider='cloudflare-fleet' "
-                                  "AND state IN ('provisioning','deleting')) + (SELECT count(*) FROM runtime_bootstraps "
-                                  "WHERE state='pending' AND expires_at > now())")}
-        if any(counts.values()):
+        now = busy()
+        if now:
             calm = None
-        elif calm and time.monotonic() - calm >= 10:
-            return counts
-        else:
-            calm = calm or time.monotonic()
-        need(time.monotonic() < deadline, f'not_drained_after_{limit}s {json.dumps(counts)}: nothing was changed '
-             'by this step; rerun when Pi is quieter, or raise --drain-minutes')
+        elif calm is None:
+            calm = time.monotonic()
+        elif time.monotonic() - calm >= 10:
+            return {'drained': True}
+        need(time.monotonic() < deadline, f'not_drained_after_{limit}s {json.dumps({k: v[:5] for k, v in now.items()})}'
+             ': nothing was changed by this step; rerun when Pi is quieter, or raise --drain-minutes')
         time.sleep(5)
 
 
@@ -276,75 +391,82 @@ class Step:
         self.run, self.plan = run, plan
 
     def preflight(self, _):
-        open_run = (HOME / 'active').read_text().strip() if (HOME / 'active').exists() else ''
-        need(open_run in ('', self.run.name), f'hosted rollout {open_run} is still open: '
-             f'node deploy/hosted-release.mjs --resume {open_run}')
-        need(subprocess.run(['pgrep', '-f', '/opt/merv-typescript/releases/.*/release-job.sh'],
-                            capture_output=True).returncode != 0, 'a Main release job is running')
-        need(shutil.disk_usage('/').free >= 5 << 30, 'less than 5 GiB free on /')
-        for image in {self.plan['base']['localId'], self.plan['current']['localId']}:
-            run(['docker', 'image', 'inspect', '--format', '{{.Id}}', image])
-        cred = credential(Path(self.plan['canary']['credential']))
-        whoami(cred)
-        catalog = json.loads(env_of(CONTROL)[CATALOG])
-        need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
-        return {'native': native(), 'mainReleaseId': env_of(MAIN).get(KEY),
-                'fileReleaseId': env_value(ENV.read_bytes(), KEY), 'canaryActor': cred['actorId'],
-                'catalog': [r['image_digest'] for r in catalog if r['provider'] == PROVIDER]}
+        """Claims the host for this run, then reads the live pins; changes nothing else."""
+        claim(self.run.name)
+        try:
+            need(not main_release_running(), 'a Main release job is running')
+            need(shutil.disk_usage('/').free >= 8 << 30, 'less than 8 GiB free on /')
+            run(['docker', 'image', 'inspect', '--format', '{{.Id}}', self.plan['current']['localId']])
+            cred = credential(Path(self.plan['canary']['credential']))
+            whoami(cred)
+            catalog = json.loads(env_of(CONTROL)[CATALOG])
+            need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
+            return {'native': native(), 'mainReleaseId': env_of(MAIN).get(KEY),
+                    'fileReleaseId': env_value(ENV.read_bytes(), KEY), 'canaryActor': cred['actorId'],
+                    'catalog': [r['image_digest'] for r in catalog if r['provider'] == PROVIDER]}
+        except BaseException:
+            if owner() == self.run.name:
+                (HOME / 'active').unlink()
+            raise
 
     def build(self, _):
-        """One layer of Merv's compiled hosted files on the pinned base; diffed against the deployed image."""
-        plan, base = self.plan, 'merv-hosted-codex:base'
-        run(['docker', 'tag', plan['base']['localId'], base])
-        if subprocess.run(['docker', 'image', 'inspect', plan['nodeImage']], capture_output=True).returncode:
-            run(['docker', 'pull', plan['nodeImage']], timeout=600)
-        copies = '\n'.join(f'COPY --from=build --chmod={mode} {" ".join("/bundle/" + f for f in files)} {target}'
-                           for target, (mode, files) in OVERLAY.items())
-        (self.run / 'Dockerfile.hosted').write_text(
-            f'FROM {plan["nodeImage"]} AS build\nWORKDIR /app\nCOPY . .\n'
-            'RUN npm ci --no-audit --no-fund && node scripts/hosted-runner/build.mjs /bundle \\\n'
-            ' && node --import tsx --test tests/pi-worker.test.ts tests/pi-worker-relay-protocol.test.ts tests/pi-relay.test.ts\n'
-            f'FROM {base}\n{copies}\n')
-        tag = 'merv-hosted-codex:' + self.run.name
-        run(['docker', 'build', '--pull=false', '--platform', 'linux/amd64', '-f', self.run / 'Dockerfile.hosted',
-             '--label', 'org.merv.hosted.source-commit=' + plan['sourceCommit'],
-             '--label', 'org.merv.hosted.source-sha256=' + plan['contentSha256'],
-             '-t', tag, self.run / 'source'], timeout=1800, log=self.run / 'build.log')
+        """The whole image from committed sources: the Sandboxes base (with its agent built from Go
+        source), the compiled bundle with the worker tests, then scripts/hosted-runner/Dockerfile.
+        Its filesystem and config, diffed against the deployed image, decide the lane."""
+        plan, work = self.plan, self.run
+        tag, base, sandboxes = 'merv-hosted-codex:' + work.name, 'merv-hosted-sandbox:' + work.name, work / 'sandboxes'
+
+        def build(dockerfile, context, *flags, log):
+            run(['docker', 'build', '--platform', 'linux/amd64', '-f', dockerfile, *flags, context], timeout=1800,
+                log=work / log)
+        (work / 'agent.Dockerfile').write_text(
+            f'FROM {GO_IMAGE} AS agent\nWORKDIR /src\nCOPY agent/ .\nRUN CGO_ENABLED=0 go build -trimpath -ldflags '
+            f'"-s -w -X main.version={plan["sandboxesCommit"][:7]}" -o /out/sandboxes-agent-linux-amd64 '
+            './cmd/sandboxes-agent\nFROM scratch\nCOPY --from=agent /out/ /\n')
+        build(work / 'agent.Dockerfile', sandboxes, '--output',
+              f'type=local,dest={sandboxes}/deploy/cloudflare-sandbox/bin', log='build-agent.log')
+        build(sandboxes / 'deploy/cloudflare-sandbox/Dockerfile', sandboxes, '-t', base, log='build-sandbox.log')
+        (work / 'bundle.Dockerfile').write_text(
+            f'FROM {plan["nodeImage"]} AS build\nWORKDIR /app\nCOPY . .\nRUN --mount=type=cache,target=/root/.npm '
+            'npm ci --no-audit --no-fund && node scripts/hosted-runner/build.mjs /bundle \\\n'
+            f' && node --import tsx --test {WORKER_TESTS}\nFROM scratch\nCOPY --from=build /bundle/ /\n')
+        build(work / 'bundle.Dockerfile', work / 'source', '--output', f'type=local,dest={work}/bundle',
+              log='build-bundle.log')
+        build(work / 'source/scripts/hosted-runner/Dockerfile', work / 'bundle', '--build-arg', 'SANDBOX_IMAGE=' + base,
+              '--label', 'org.merv.hosted.source-commit=' + plan['sourceCommit'],
+              '--label', 'org.merv.hosted.source-sha256=' + plan['contentSha256'],
+              '--label', 'org.merv.hosted.sandboxes-commit=' + plan['sandboxesCommit'], '-t', tag, log='build.log')
         deployed, candidate = inspect(plan['current']['localId']), inspect(tag)
         need(candidate['Architecture'] == 'amd64', 'candidate is not linux/amd64')
-        before, after = (json.loads(run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint',
-                                         '/usr/bin/python3.11', image, '-c', WALK], timeout=180))
-                         for image in (plan['current']['localId'], tag))
-        bare = [{k: v for k, v in image['Config'].items() if k != 'Labels'} for image in (deployed, candidate)]
-        inputs = json.loads(run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'cat', tag,
-                                 '/usr/share/merv/hosted-inputs.json']))
-        return {'candidate': candidate['Id'], 'tag': tag, 'configChanged': bare[0] != bare[1],
-                'changed': sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p)),
+        before, after = rootfs(plan['current']['localId']), rootfs(tag)
+        changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
+        config_changed = [{k: v for k, v in i['Config'].items() if k != 'Labels'} for i in (deployed, candidate)]
+        config_changed = config_changed[0] != config_changed[1]
+        inputs = json.loads((work / 'bundle/input-hashes.json').read_bytes())
+        return {'candidate': candidate['Id'], 'tag': tag, 'lane': final_lane(plan, changed, config_changed),
+                'imageLane': image_lane(changed, config_changed), 'configChanged': config_changed,
+                'changed': changed[:100], 'changedCount': len(changed),
                 'executableSha256': after['/opt/merv/runtime/start-runner'][4],
-                'bundleSha256': sha(''.join(f'{after[p][4]}  {p}\n' for p in sorted(INSTALLED) if p in after).encode()),
                 'inputs': sorted(k for k in inputs if not k.startswith(('node_modules/', '../')))}
 
-    def gates(self, arg):
-        """The Linux gates of this change's lane against the exact candidate, failing closed."""
-        candidate, results = json.loads((self.run / 'build.json').read_bytes())['candidate'], {}
-        for name in arg['gates']:
-            flags, targets, command, expected = GATES[name]
+    def gates(self, _):
+        """The Linux gates of the lane this host decided, against the exact candidate, failing closed."""
+        build = read(self.run / 'build.json')
+        results = {}
+        for name in LANE_GATES[build['lane']]:
+            flags, targets, command, expected, lines = GATES[name]
             gate = self.run / 'source/scripts/hosted-runner' / name
             mounts = [part for target in targets for part in ('-v', f'{gate}:{target}:ro')]
-            out = run(['docker', 'run', '--rm', '--network', 'none', *flags, *mounts, candidate, command],
-                      timeout=300, log=self.run / f'gate-{name}.log').decode().strip().splitlines()
-            report = json.loads(out[-1]) if out else {}
-            flags_ok = all(v is True for k, v in report.items() if isinstance(v, bool)
-                           and k not in ('actualProtectedWorkflow', 'cloudflareEvidence'))
-            need(report.get('gate') == expected and flags_ok and report.get('cloudflareEvidence') is not True and
-                 report.get('report', {'ok': True}).get('ok') is True, 'gate_failed: ' + name)
+            out = run(['docker', 'run', '--rm', '--network', 'none', *flags, *mounts, build['candidate'], command],
+                      timeout=300, log=self.run / f'gate-{name}.log').decode()
+            need(gate_passed(out, expected, lines), 'gate_failed: ' + name)
             results[name] = 'pass'
         return results
 
     def push(self, arg):
         """Pushes the gated candidate with a short-lived credential kept in RAM, then pins its amd64 digest."""
-        cred, candidate = arg['credential'], json.loads((self.run / 'build.json').read_bytes())['candidate']
-        repo = self.plan['base']['image'].split('@')[0]
+        cred, candidate = arg['credential'], read(self.run / 'build.json')['candidate']
+        repo = self.plan['current']['image'].split('@')[0]
         target = f'{repo}:hosted-{self.run.name}'
         config = tempfile.mkdtemp(dir='/run', prefix='merv-hosted-docker-')  # /run is tmpfs: never on disk
         env = dict(os.environ, DOCKER_CONFIG=config)
@@ -374,35 +496,50 @@ class Step:
             shutil.rmtree(config, ignore_errors=True)
 
     def catalog(self, arg):
-        """Adds the release to both Sandboxes services, keeping earlier releases, and recreates them."""
-        # From here until finish this run owns the pins: release.mjs refuses to recreate Main meanwhile.
-        atomic(HOME / 'active', self.run.name.encode())
-        entry, labels = arg['entry'], inspect(CONTROL)['Config']['Labels']
-        need(sbx(MERV_RELEASE=json.dumps(entry)) == arg['releaseId'], 'Sandboxes derives a different release id')
+        """Adds the release to both Sandboxes services, keeping earlier releases, and recreates them.
+        {"restore": true} puts back the file this run replaced, for a restore that failed."""
+        labels = inspect(CONTROL)['Config']['Labels']
         path, project = Path(labels['com.docker.compose.project.config_files']), labels['com.docker.compose.project']
         need(path.is_file(), 'catalog file is not a single file')
-        raw = path.read_bytes()
-        doc, changed = with_release(json.loads(raw), entry, protect=arg['protect'])
-        expected = json.loads(doc['services']['control']['environment'][CATALOG])
-        if not changed and all(json.loads(env_of(c)[CATALOG]) == expected for c in (CONTROL, PIPELINE)):
-            return {'changed': False, 'releases': len(expected)}
-        quiet(self.plan['drainSeconds'])
-        backup = self.run / 'catalog.before'
-        if not backup.exists():
-            atomic(backup, raw)
+        need(not main_release_running(), 'a Main release job is running')
         up = ['docker', 'compose', '-p', project, '-f', path, 'up', '-d', '--no-deps', 'control', 'pipelines-worker']
-        atomic(path, (json.dumps(doc, indent=2) + '\n').encode(), stat.S_IMODE(path.stat().st_mode))
-        try:
+        mode, backup = stat.S_IMODE(path.stat().st_mode), self.run / 'catalog.before'
+
+        def apply(raw):
+            atomic(path, raw, mode)
             run(up, timeout=240)
             healthy(CONTROL, 90, 2)
+            expected = json.loads(json.loads(raw)['services']['control']['environment'][CATALOG])
             for name in (CONTROL, PIPELINE):
                 need(inspect(name)['State']['Running'] and json.loads(env_of(name)[CATALOG]) == expected,
                      'catalog not live in ' + name)
+        if arg.get('restore'):
+            if backup.exists():
+                apply(backup.read_bytes())
+            self.note({'catalogBroken': False})
+            return {'restored': backup.exists()}
+        entry = arg['entry']
+        need(sbx(MERV_RELEASE=json.dumps(entry)) == arg['releaseId'], 'Sandboxes derives a different release id')
+        raw = path.read_bytes()
+        doc, changed = with_release(json.loads(raw), entry, protect=arg['protect'])
+        result = {'releaseId': arg['releaseId'], 'digest': entry['image_digest'],
+                  'releases': len(json.loads(doc['services']['control']['environment'][CATALOG]))}
+        if not changed and all(json.loads(env_of(c)[CATALOG]) == json.loads(doc['services']['control']['environment']
+                                                                              [CATALOG]) for c in (CONTROL, PIPELINE)):
+            return {**result, 'changed': False}
+        quiet(self.plan['drainSeconds'])
+        if not backup.exists():
+            atomic(backup, raw)
+        try:
+            apply((json.dumps(doc, indent=2) + '\n').encode())
         except BaseException:
-            atomic(path, raw, stat.S_IMODE(path.stat().st_mode))
-            run(up, timeout=240)
+            try:
+                apply(raw)
+            except BaseException as error:
+                self.note({'catalogBroken': True})
+                raise RuntimeError(f'catalog restore failed too: {error}') from None
             raise
-        return {'changed': True, 'releases': len(expected), 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
+        return {**result, 'changed': True, 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
 
     def drain(self, _):
         return quiet(self.plan['drainSeconds'])
@@ -411,14 +548,14 @@ class Step:
         return native()
 
     def switch(self, arg):
-        """Points Main at a release id and recreates it on its own image; restores the env on failure."""
+        """Points Main at a release id and recreates it on its own image; restores the env on failure.
+        It never waits for a drain: by now Cloudflare runs one release and Main must name it."""
         target = arg['releaseId']
         need(re.fullmatch(r'rt1_[0-9a-f]{64}', target), 'invalid release id')
         raw = ENV.read_bytes()
         if env_value(raw, KEY) == target and env_of(MAIN).get(KEY) == target:
             return {'changed': False}
-        if arg.get('wait', True):
-            quiet(self.plan['drainSeconds'])
+        need(not main_release_running(), 'a Main release job is running')
         state = inspect(MAIN)
         image, directory = state['Image'], state['Config']['Labels']['com.docker.compose.project.working_dir']
         if not (self.run / 'env.before').exists():
@@ -447,7 +584,7 @@ class Step:
         nonce = secrets.token_hex(4)
         word, started = 'canary-' + nonce, time.monotonic()
         conversation = tool(cred, 'pi.create', {'requestId': 'hosted-' + nonce, 'title': CANARY_NAME})['id']
-        owner = conversation + ':%'
+        owner_id = conversation + ':%'
         command = {}
         try:
             sent = tool(cred, 'pi.send', {'id': conversation, 'commandId': word,
@@ -459,15 +596,13 @@ class Step:
                     break
                 time.sleep(3)
         finally:
-            try:
+            with contextlib.suppress(RuntimeError):
                 tool(cred, 'pi.stop', {'id': conversation}, tries=3)
-            except RuntimeError:
-                pass
         served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE data_json::jsonb->'owner'->>'id' "
-                           "LIKE $1 AND data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", owner, target)['n']
+                           "LIKE $1 AND data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", owner_id, target)['n']
         for _ in range(60):
             live = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE "
-                             "data_json::jsonb->'owner'->>'id' LIKE $1 AND phase <> 'released'", owner)['n']
+                             "data_json::jsonb->'owner'->>'id' LIKE $1 AND phase <> 'released'", owner_id)['n']
             if not live:
                 break
             time.sleep(3)
@@ -481,22 +616,57 @@ class Step:
         return result
 
     def note(self, arg):
+        """Records progress; the first deployAttempted arms the guard timer before it is recorded."""
         path = self.run / 'progress.json'
-        value = {**(json.loads(path.read_bytes()) if path.exists() else {}), **arg}
-        atomic(path, json.dumps(value).encode())
-        return value
+        before = read(path) or {}
+        if arg.get('deployAttempted') and not before.get('deployAttempted'):
+            run(['systemd-run', '--unit', guard_unit(self.run), '--on-active=300', '--on-unit-active=120',
+                 sys.executable, Path(__file__).resolve(), 'guard', self.run])
+        atomic(path, json.dumps({**before, **arg}).encode())
+        return {**before, **arg}
 
-    def finish(self, _):
+    def finish(self, arg):
+        """Closes the run: the new pins (on success), the guard, the backups, the marker."""
+        if arg.get('state'):
+            atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
         for name in ('catalog.before', 'env.before'):  # they hold secrets
             if (self.run / name).exists():
                 subprocess.run(['shred', '-u', self.run / name], capture_output=True)
-        if (HOME / 'active').exists() and (HOME / 'active').read_text().strip() == self.run.name:
+        if owner() == self.run.name:
             (HOME / 'active').unlink()
-        return {'finished': True}
+        for tidy in (['systemctl', 'stop', guard_unit(self.run) + '.timer'],
+                     ['docker', 'image', 'rm', 'merv-hosted-sandbox:' + self.run.name],
+                     ['docker', 'builder', 'prune', '-f', '--filter', 'until=168h']):  # best effort
+            with contextlib.suppress(subprocess.SubprocessError):
+                subprocess.run(tidy, capture_output=True, timeout=600)
+        return {'finished': True, 'result': arg.get('result')}
 
     def status(self, _):
-        return {p.stem: json.loads(p.read_bytes()) for p in sorted(self.run.glob('*.json'))
-                if p.stem in ('plan', 'preflight', 'build', 'gates', 'push', 'progress', 'finish')}
+        out = {p.stem: read(p) for p in sorted(self.run.glob('*.json')) if p.stem in RECORDED}
+        lease = read(self.run / 'lease.json')
+        return {**out, 'open': owner() == self.run.name, 'lease': lease,
+                'leaseAge': lease and time.time() - lease['seen']}
+
+    def guard(self, _):
+        """Systemd timer from the Cloudflare deploy until finish. When the driver has been silent for
+        LEASE seconds, points Main at whichever release Cloudflare settled on; the run stays open
+        for the next hosted-release.mjs to canary or roll back."""
+        if (self.run / 'finish.json').exists() or owner() != self.run.name:
+            subprocess.run(['systemctl', 'stop', guard_unit(self.run) + '.timer'], capture_output=True)
+            return {'guard': 'closed'}
+        lease = read(self.run / 'lease.json') or {}
+        if time.time() - lease.get('seen', 0) < LEASE:
+            return {'guard': 'driver alive'}
+        live, catalog, current = native(), read(self.run / 'catalog.json'), self.plan['current']
+        targets = {current['image']: current['releaseId']}
+        if catalog:
+            targets[read(self.run / 'push.json')['image']] = catalog['releaseId']
+        target = targets.get(live['image'])
+        if not target or live.get('rollout'):
+            return {'guard': 'waiting for Cloudflare to settle'}
+        result = self.switch({'releaseId': target})
+        self.note({'guard': {'at': time.time(), 'releaseId': target}})
+        return {'guard': 'switched' if result['changed'] else 'consistent', 'releaseId': target}
 
     def mint_canary(self, _):
         """Once: a non-expiring reader key for the service pilot, minted inside Main and stored root-only."""
@@ -517,24 +687,40 @@ class Step:
         return {'existing': False, 'actorId': issued['actorId'], 'credentialId': issued['credentialId']}
 
 
-def step(name, directory, arg):
+def locked(lock, seconds):
+    for _ in range(max(1, seconds // 2)):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            time.sleep(2 if seconds else 0)
+    return False
+
+
+def step(name, directory, payload):
     need(os.geteuid() == 0, 'run as root')
     need(name in STEPS, 'unknown step')
-    need(directory.is_dir(), f'no hosted run at {directory}')
+    need(directory.is_dir() and not directory.is_symlink(), f'no hosted run at {directory}')
     need(directory.stat().st_uid == 0 and directory.stat().st_mode & 0o077 == 0, 'run directory must be root-private')
+    driver, arg = payload.get('driver'), payload.get('arg') or {}
     if name in ('preflight', 'mint_canary'):  # the plan arrives with the first step of a run
         atomic(directory / 'plan.json', json.dumps(arg).encode())
         arg = {}
-    plan = json.loads((directory / 'plan.json').read_bytes())
+    work = Step(directory, json.loads((directory / 'plan.json').read_bytes()))
     HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if name == 'status':
+        return work.status(arg)
     with (HOME / 'lock').open('a') as lock:
-        if name != 'status':
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise RuntimeError('another hosted-release step is running on this host') from None
-        result = getattr(Step(directory, plan), name)(arg)
-    if name in ('preflight', 'build', 'gates', 'push', 'finish'):
+        if not locked(lock, 0 if name == 'guard' else 1200):
+            need(name == 'guard', 'another hosted-release step held the host lock for 20 minutes')
+            return {'guard': 'busy'}
+        if name == 'guard':
+            return work.guard(arg)
+        if name not in ('preflight', 'mint_canary', 'finish'):
+            need(owner() == directory.name, f'hosted run {directory.name} does not hold {HOME / "active"}')
+        with leased(directory, driver) if name != 'mint_canary' else contextlib.nullcontext():
+            result = getattr(work, name)(arg)
+    if name in RECORDED and not arg.get('restore'):
         atomic(directory / f'{name}.json', json.dumps(result).encode())
     return result
 

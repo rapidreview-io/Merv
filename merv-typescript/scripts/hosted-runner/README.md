@@ -36,23 +36,12 @@ or a substitute for those gates.
 
 ## Releasing to production
 
-`node deploy/hosted-release.mjs` releases changes to these files: it layers the compiled hosted
-files on the pinned base image, runs the Linux probes below against that exact image, and moves
-the Cloudflare app, the Sandboxes catalog and Main together, with a live canary turn and automatic
+`node deploy/hosted-release.mjs` releases changes to these files, to `packages/pi/worker-runtime`
+and to the Sandboxes base (its Cloudflare Dockerfile, agent and bridge Worker). On the production
+host it builds this Dockerfile from committed sources, over a Sandboxes base built from the
+committed Sandboxes checkout, runs the Linux probes below against that exact image, and moves the
+Cloudflare app, the Sandboxes catalog and Main together, with a live canary turn and automatic
 rollback. `deploy/release.mjs` runs it after every production release.
-
-It never rebuilds the base image, which holds `Dockerfile` and `packages/pi/worker-runtime`. To
-change those, build a new base from `merv-typescript` with the isolated sandbox checkout:
-
-```sh
-node scripts/hosted-runner/package.mjs build \
-  ../output/fleet-sandboxes ../output/hosted-candidate-1 merv-hosted-codex:candidate-1
-```
-
-The output is `../output/hosted-candidate-1/build.json`, with source hashes, image IDs and the
-installed `/opt/merv/runtime/start-runner` SHA-256. Use a new output directory and tag each time.
-The staged Docker context holds only the Cloudflare Dockerfile's explicit COPY inputs and the
-amd64 agent binary. Push it, then pin it as `base` in `deploy/hosted-release.json`.
 
 ## Combined Pi and workflow Linux probes
 
@@ -67,18 +56,8 @@ that worker the supervisor starts one itself. The worker's module compile cache
 is filled at image build under its UID and sealed root-owned; V8 ignores it
 where the CPU features differ from the build host's.
 
-Run these probes on a Linux Docker host against the built combined image:
-
-```sh
-docker run --rm --network none --cap-add SYS_PTRACE \
-  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
-  -v "$PWD/scripts/hosted-runner/linux-pi-gate.py:/opt/merv/runtime/probe.py:ro" \
-  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
-docker run --rm --network none \
-  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
-  -v "$PWD/scripts/hosted-runner/linux-workflow-gate.py:/opt/merv/runtime/probe.py:ro" \
-  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
-```
+`GATES` in `deploy/hosted-release-vm.py` holds the exact `docker run` flags for each probe
+against a built combined image; the release runs them with the probe scripts from its archive.
 
 `SYS_PTRACE` is for the root test inspector only; the Pi worker and assignment
 probe must have zero effective, permitted, inheritable, bounding and ambient

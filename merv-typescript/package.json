@@ -16,6 +16,7 @@
     "pretest": "node scripts/test-schemas.mjs 6",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:sweep": "node scripts/test-schemas.mjs",
+    "test:deploy": "node --test deploy/*.test.mjs scripts/hosted-runner/*.test.mjs",
     "start": "node --import tsx src/cli.ts serve",
     "init": "node --import tsx src/cli.ts init",
     "cli": "node --import tsx src/cli.ts",
