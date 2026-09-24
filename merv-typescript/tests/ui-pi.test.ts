@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PiEvent } from '../packages/ui/web/pi-stream.js';
-import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
 
@@ -68,7 +68,9 @@ const snapshot = (
   commands: ReturnType<typeof command>[] = [],
   sequence = 0,
   tail: PiEvent[] = [],
+  available = true,
 ) => ({
+  available,
   conversation: item,
   commands,
   streamId: 'stream_1',
@@ -157,19 +159,34 @@ const cleanup = async () => {
   setProject(null);
 };
 
-test('opening an empty Agent creates a conversation, never sends or creates a task', async (t) => {
+test('opening an empty Agent creates nothing; the first message creates its conversation', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  const stream = boot(() => snapshot(conversation()));
+  let state = snapshot(conversation());
+  const stream = boot(() => state);
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    state = snapshot({ ...conversation(), activeCommandId: input.commandId as string }, [
+      command(input.commandId as string, 'waiting', [{ role: 'user', text: input.text as string }]),
+    ]);
+    return { body: { result: state.commands[0] } };
+  });
   await open();
   await settle(10);
-  assert.match(text(), /Read-only native-query pilot/);
-  assert.match(text(), /Ready/);
-  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 1);
   assert.equal(
-    requests.some((request) => /pi.send|task.create|fleet.request/.test(request)),
+    requests.some((request) => /pi.create|pi.send|task.create|fleet.request/.test(request)),
     false,
   );
+  // One terse hint, and none of the copy that explained the system.
+  assert.match(text(), /Ask a question to begin/);
+  for (const gone of ['pilot', 'No task is created', 'Ctrl + Enter', 'Ready'])
+    assert.ok(!text().includes(gone), `“${gone}” is on the page: ${text()}`);
+  await write('What is known?');
+  await click('Send');
+  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 1);
+  assert.equal(sent[0].id, 'conversation_1');
+  assert.match(text(), /Waiting for a free machine/);
   assert.equal(stream.headers[0].get('authorization'), 'Bearer fixture-token');
   assert.equal(stream.headers[0].get('x-merv-project-id'), 'p1');
 });
@@ -177,10 +194,13 @@ test('opening an empty Agent creates a conversation, never sends or creates a ta
 test('the StrictMode page still loads after effect replay', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  boot(() => snapshot(conversation()));
+  boot(
+    () => snapshot(conversation()),
+    () => [conversation()],
+  );
   await open(row.status, true);
   assert.match(text(), /Ready/);
-  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 1);
+  assert.equal(requests.filter((request) => request.includes('/tools/pi.create')).length, 0);
   assert.equal(
     requests.some((request) => request.includes('/tools/pi.send')),
     false,
@@ -224,14 +244,16 @@ test('sending explicitly uses one command ID, stopping replaces canonical status
   assert.equal(sent.length, 1);
   assert.equal(sent[0].text, 'What is known?');
   assert.ok(typeof sent[0].commandId === 'string');
-  assert.match(text(), /Working/);
+  assert.match(text(), /Answering/);
   assert.match(text(), /What is known\?/);
+  // The cursor is back where the next question is written.
+  assert.equal(document.activeElement?.id, 'pi-draft');
   assert.equal(
     document.querySelector<HTMLAnchorElement>('a[href="/fleet/runtime_1"]')?.textContent,
     'Fleet details',
   );
   await click('Stop');
-  assert.match(text(), /Interrupted/);
+  assert.match(text(), /Stopped/);
   assert.equal(requests.filter((request) => request.includes('/tools/pi.stop')).length, 1);
 });
 
@@ -247,7 +269,7 @@ test('an ambiguous send retry retains its command ID', async (t) => {
   await open();
   await write('Look up evidence');
   await click('Send');
-  assert.match(text(), /server did not answer/);
+  assert.match(text(), /Merv didn’t answer. Try again./);
   await click('Retry send');
   assert.deepEqual(sent, [sent[0], sent[0]]);
 });
@@ -275,7 +297,7 @@ test('snapshot tail and live deltas share ordered, bounded transient output', as
     () => [active],
   );
   const transientText = () =>
-    document.querySelector<HTMLElement>('.pi-message--transient .pi-message-text')?.textContent;
+    document.querySelector<HTMLElement>('.pi-message--transient .md')?.textContent;
   const transientProgress = () =>
     document.querySelector<HTMLElement>('.pi-message--transient .muted')?.textContent;
   await open();
@@ -390,7 +412,9 @@ test('terminal SSE errors disable commands without reconnecting in the backgroun
       : withStream(input, init)) as typeof fetch;
   await open();
   assert.match(text(), /Unavailable/);
-  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
+  assert.doesNotMatch(text(), /404/);
+  const sendButton = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Send');
+  assert.equal(sendButton?.disabled, true);
   const before = requests.length;
   await settle(2150);
   assert.equal(requests.length, before);
@@ -430,10 +454,176 @@ test('selecting and creating conversations resets the transcript without sending
   await click('New conversation');
   assert.equal(title, 'Second inquiry');
   assert.equal(document.querySelector<HTMLSelectElement>('#pi-conversation')?.value, current);
+  assert.equal(document.activeElement?.id, 'pi-draft');
   assert.equal(
     requests.some((request) => request.includes('/tools/pi.send')),
     false,
   );
+});
+
+test('a turn that ended early says why in a sentence, and stopping it yourself says nothing', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const ended = (error: string) => ({
+    ...command('command_1', 'interrupted', [{ role: 'user', text: 'Hello' }]),
+    error,
+  });
+  let state = snapshot(conversation(), [ended('turn_expired')]);
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  await open();
+  assert.match(text(), /The answer took too long. Ask again./);
+  assert.doesNotMatch(text(), /turn_expired/);
+  await unmount();
+  state = snapshot(conversation(), [ended('cancelled')]);
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  await open();
+  assert.match(text(), /Stopped/);
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  assert.doesNotMatch(text(), /cancelled/);
+});
+
+test('a project that cannot run the agent says so calmly and never reads Ready', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(
+    () => snapshot(conversation(), [], 0, [], false),
+    () => [conversation()],
+  );
+  await open();
+  assert.match(text(), /Agent isn’t set up for this project yet/);
+  assert.doesNotMatch(text(), /Ready/);
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
+  await unmount();
+  // A project with no conversation learns it from the first refusal, in the same words.
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.send', {
+    status: 403,
+    body: { error: { code: 'sandbox_not_connected', message: 'sandbox_not_connected' } },
+  });
+  await open();
+  await write('Hello');
+  await click('Send');
+  assert.match(text(), /Agent isn’t set up for this project yet/);
+  assert.doesNotMatch(text(), /sandbox_not_connected/);
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
+});
+
+test('a rotated stream reconnects at once and silently; a busy one waits quietly', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const stream = boot(
+    () => snapshot(conversation()),
+    () => [conversation()],
+  );
+  await open();
+  const opened = () => requests.filter((request) => request.endsWith('/events')).length;
+  assert.equal(opened(), 1);
+  // A stream that lived its while; one closed at once would wait like any other failure.
+  await jump(6000, 0);
+  stream.push('rotate', {});
+  stream.drop();
+  await settle(20);
+  assert.equal(opened(), 2);
+  assert.doesNotMatch(text(), /Reconnecting|disconnected/);
+  await unmount();
+
+  setProject('p1');
+  boot(
+    () => snapshot(conversation()),
+    () => [conversation()],
+  );
+  const withStream = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith('/events')
+      ? Promise.resolve(
+          Response.json({ error: { code: 'pi_stream_busy', message: 'busy' } }, { status: 429 }),
+        )
+      : withStream(input, init)) as typeof fetch;
+  await open();
+  await settle(2100);
+  assert.doesNotMatch(text(), /Reconnecting|unavailable|429/i);
+  assert.match(text(), /Ready/);
+});
+
+test('a send refused while the previous agent finishes is asked again with the same command', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  let state = snapshot({ ...conversation(), runtimeId: 'runtime_1' });
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  const sent: string[] = [];
+  serve('/tools/pi.send', (attempt, input) => {
+    sent.push(input.commandId as string);
+    if (attempt === 1)
+      return {
+        status: 409,
+        body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
+      };
+    state = snapshot(
+      { ...conversation(), activeCommandId: sent[0], runtimeId: 'runtime_2' },
+      [command(sent[0], 'starting', [{ role: 'user', text: 'Again' }])],
+      1,
+    );
+    return { body: { result: state.commands[0] } };
+  });
+  await open();
+  await write('Again');
+  await click('Send');
+  assert.match(text(), /Finishing the previous agent…/);
+  assert.doesNotMatch(text(), /pi_runtime_releasing/);
+  await settle(3100);
+  assert.deepEqual(sent, [sent[0], sent[0]]);
+  assert.match(text(), /Preparing a machine/);
+});
+
+test('the transcript follows new text until the reader scrolls up, and reads answers as Markdown', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = { ...conversation(), activeCommandId: 'command_1' };
+  const stream = boot(
+    () =>
+      snapshot(active, [
+        command('command_1', 'working', [{ role: 'user', text: 'Hello' }]),
+        command('command_0', 'completed', [{ role: 'assistant', text: 'A **bold** answer' }]),
+      ]),
+    () => [active],
+  );
+  await open();
+  assert.equal(document.querySelector('.pi-message--assistant strong')?.textContent, 'bold');
+  const list = document.querySelector<HTMLElement>('.pi-messages')!;
+  let height = 900;
+  Object.defineProperty(list, 'scrollHeight', { get: () => height });
+  Object.defineProperty(list, 'clientHeight', { get: () => 300 });
+  const delta = (sequence: number) =>
+    act(async () =>
+      stream.push('delta', {
+        streamId: 'stream_1',
+        sequence,
+        commandId: 'command_1',
+        type: 'text',
+        text: 'more ',
+      }),
+    );
+  await delta(1);
+  await settle(10);
+  assert.equal(list.scrollTop, 900);
+  await act(async () => {
+    list.scrollTop = 100;
+    list.dispatchEvent(new window.Event('scroll'));
+  });
+  height = 1200;
+  await delta(2);
+  await settle(10);
+  assert.equal(list.scrollTop, 100);
 });
 
 test('unavailable Agent is inert, including SSE and list', async (t) => {

@@ -19,6 +19,8 @@ export interface PiEvent {
   text: string;
 }
 export interface PiSnapshot {
+  /** False when this project cannot run the agent at all. */
+  available: boolean;
   conversation: PiConversation;
   commands: PiCommand[];
   streamId: string;
@@ -87,12 +89,13 @@ export function piFrameParser(accept: (frame: Frame) => void, maxFrameChars = 65
   };
 }
 
+/** Resolves true when the server closed the stream on purpose, so reconnecting says nothing. */
 export async function readPiEvents(
   id: string,
   signal: AbortSignal,
   onSnapshot: (snapshot: PiSnapshot) => void,
   onDelta: (delta: PiDelta) => void,
-): Promise<void> {
+): Promise<boolean> {
   const response = await fetch(`/pi/${encodeURIComponent(id)}/events`, {
     signal,
     credentials: 'omit',
@@ -105,8 +108,10 @@ export async function readPiEvents(
   if (!response.ok || !response.body) throw new PiStreamError(response.status);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  let rotated = false;
   const parse = piFrameParser(
     ({ event, data }) => {
+      if (event === 'rotate') rotated = true;
       try {
         const value: unknown = JSON.parse(data);
         if (!value || typeof value !== 'object') return;
@@ -136,4 +141,5 @@ export async function readPiEvents(
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+  return rotated;
 }

@@ -4476,10 +4476,6 @@ del.cut {
 .pi-compose-actions {
   justify-content: flex-end;
 }
-.pi-compose-actions .muted {
-  margin-right: auto;
-  font-size: var(--text-xs);
-}
 .pi-error {
   color: var(--refutes);
   overflow-wrap: anywhere;
@@ -4489,8 +4485,5 @@ del.cut {
   .pi-select,
   .pi-title {
     flex: 1 1 100%;
-  }
-  .pi-compose-actions .muted {
-    flex-basis: 100%;
   }
 }
