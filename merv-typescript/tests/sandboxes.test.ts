@@ -614,6 +614,7 @@ test('a deployment composes the sandboxes plugins only when the service is named
   const named = {
     MERV_SANDBOXES_URL: 'https://sandboxes.example',
     MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections),
+    MERV_SANDBOXES_TOKEN: 'sbxt_fixture',
   };
   assert.equal(run(named), 0);
   assert.deepEqual(
