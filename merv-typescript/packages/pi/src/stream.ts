@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { check } from '@merv/contracts';
 import type { PiEvent } from './types.js';
+
+const busy = 'Too many agent streams are open; retry shortly';
 
 interface Tail {
   id: string;
@@ -22,7 +25,7 @@ export class PiStreams {
     if (!tail) {
       if (this.tails.size >= this.maxConversations) {
         const available = [...this.tails].find(([, item]) => item.listeners.size === 0);
-        if (!available) throw new Error('Pi stream capacity reached');
+        check(available, 'pi_stream_busy', busy, 429);
         this.tails.delete(available[0]);
       }
       tail = { id: randomUUID(), sequence: 0, bytes: 0, events: [], listeners: new Set() };
@@ -58,7 +61,7 @@ export class PiStreams {
 
   subscribe(id: string, listener: () => void): () => void {
     const tail = this.get(id);
-    if (tail.listeners.size >= 8) throw new Error('Pi stream subscriber limit reached');
+    check(tail.listeners.size < 8, 'pi_stream_busy', busy, 429);
     tail.listeners.add(listener);
     return () => {
       tail.listeners.delete(listener);

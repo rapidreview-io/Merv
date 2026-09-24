@@ -200,6 +200,30 @@ test('relays only the fixed provider call and supports Pi function/reasoning tra
   assert.deepEqual(JSON.parse(String(call.init.body)), payload);
 });
 
+test('replayed history keeps undeclared tool calls and forwards known reasoning fields only', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const reasoning = {
+    type: 'reasoning',
+    id: 'rs_1',
+    encrypted_content: null,
+    status: 'incomplete',
+  };
+  const summary = [{ type: 'summary_text', text: 'thought' }];
+  const input = [
+    ...request.input,
+    { ...reasoning, summary: summary.map((item) => ({ ...item, extra: 1 })), extra: true },
+    { type: 'function_call', call_id: 'call_1', name: 'task.get', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'call_1', output: 'Tool task.get not found' },
+  ];
+  assert.equal((await send(f, { ...request, input })).status, 200);
+  assert.deepEqual(JSON.parse(String(f.upstreamCalls[0]!.init.body)).input, [
+    ...request.input,
+    { ...reasoning, summary },
+    ...input.slice(2),
+  ]);
+});
+
 test('denies alternate routes, origins, tokens, unsafe payload fields and tools', async (t) => {
   const f = await fixture();
   t.after(() => f.close());
@@ -278,7 +302,6 @@ test('denies alternate routes, origins, tokens, unsafe payload fields and tools'
         },
       ],
     },
-    { input: [{ type: 'function_call', name: 'write_notes', call_id: 'call_1', arguments: '{}' }] },
     {
       input: [
         {
@@ -422,7 +445,10 @@ test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upst
   const reader = response.body!.getReader();
   assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
   f.revoke();
-  controller.enqueue(new TextEncoder().encode('data: should-not-pass\n\n'));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  try {
+    controller.enqueue(new TextEncoder().encode('data: should-not-pass\n\n'));
+  } catch {} // the fence may already have cancelled the upstream
   const rest = await new Response(
     new ReadableStream({
       async start(stream) {
@@ -464,6 +490,27 @@ test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upst
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(signals[2]?.aborted, true);
   assert.equal((await send(g)).status, 503);
+});
+
+test('streamed frames reuse a recent authority read, and a turn fits dozens of model calls', async (t) => {
+  let validations = 0;
+  const bound = grant();
+  const f = await fixture({
+    authority: {
+      authorize: async () => bound,
+      validate: async () => {
+        validations++;
+      },
+    },
+    fetchImpl: async () => eventStream('data: {"type":"delta"}\n\n'.repeat(200)),
+  });
+  t.after(() => f.close());
+  for (let turn = 0; turn < 20; turn++) {
+    const response = await send(f);
+    assert.equal(response.status, 200);
+    assert.equal((await response.text()).split('\n\n').length, 201);
+  }
+  assert.equal(validations, 60, 'three admission checks per call, none per frame');
 });
 
 test('stalled downstream writes abort upstream at the idle deadline', async (t) => {
