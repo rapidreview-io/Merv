@@ -492,7 +492,10 @@ export class PiService implements Pi, FleetOwner {
       conversation.epoch === Number(epoch) &&
       (!conversation.runtimeId || conversation.runtimeId === allocation.id) &&
       digest(conversation.source) === digest(allocation.source) &&
-      (conversation.activeCommandId !== null || conversation.idleSince !== null)
+      // Idle, only a launched runtime stays warm; renting one for no turn is waste.
+      (conversation.activeCommandId !== null ||
+        (conversation.idleSince !== null &&
+          allocation.runtime?.launch?.deliveryState === 'launched'))
     );
   }
 

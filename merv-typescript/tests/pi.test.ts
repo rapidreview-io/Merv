@@ -946,6 +946,27 @@ test('a turn that expires before its machine launches releases the allocation un
   assert.equal((await f.fleet.inspect(f.operator, command.runtimeId)).phase, 'released');
   await f.fleet.tick();
   assert.deepEqual(f.runtimes.launched, []);
+  // A turn that ended unlaunched before this fix is refused by valid() instead of provisioned.
+  const stale = await f.send(conversation);
+  await f.state.transaction(async (tx) => {
+    const row = await tx.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_conversations WHERE id=?',
+      conversation.id,
+    );
+    const record = {
+      ...JSON.parse(row!.data_json),
+      activeCommandId: null,
+      idleSince: '2026-09-23T00:00:00.000Z',
+    };
+    await tx.run(
+      'UPDATE pi_conversations SET data_json=? WHERE id=?',
+      JSON.stringify(record),
+      conversation.id,
+    );
+  });
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.operator, stale.runtimeId)).phase, 'released');
+  assert.equal(f.runtimes.handles.size, 0);
 });
 
 test('a machine being prepared reads as starting, and the turn clock starts at the claim', async (t) => {
