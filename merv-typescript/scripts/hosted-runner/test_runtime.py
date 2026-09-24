@@ -105,6 +105,8 @@ class DispatchTests(unittest.TestCase):
                     self.argv = argv
                     self.stdin = io.BytesIO()
                     self.stdin.close = lambda: None
+                    self.stderr = io.BytesIO(b'Pi worker turn failed: Turn expired\n')
+                    self.returncode = 0
                     self.pid = 42
                     instances.append(self)
 
@@ -115,10 +117,11 @@ class DispatchTests(unittest.TestCase):
                     return 0
 
             with patch.object(runtime, '_root_linux'), patch.object(runtime, 'read_bootstrap', return_value=(filename, raw)):
-                with patch.object(runtime.subprocess, 'Popen', Child):
+                with patch.object(runtime.subprocess, 'Popen', Child), patch.object(runtime.os, 'write') as write:
                     with patch.dict(os.environ, {'MERV_BOOTSTRAP_FILE': str(filename)}):
                         self.assertEqual(runtime.supervisor(), 0)
                         self.assertNotIn('MERV_BOOTSTRAP_FILE', os.environ)
+            write.assert_called_once_with(2, b'Pi worker turn failed: Turn expired\n')
             child = instances[0]
             self.assertFalse(filename.exists())
             self.assertEqual(raw, bytearray(len(raw)))
@@ -126,7 +129,25 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(child.argv[-1], '--worker')
             self.assertNotIn('piw_flt_', str(child.options['env']))
             self.assertEqual(child.options['stdin'], runtime.subprocess.PIPE)
+            self.assertEqual(child.options['stderr'], runtime.subprocess.PIPE)
             self.assertTrue(child.options['close_fds'] and child.options['start_new_session'])
+
+    def test_worker_diagnostics_forward_only_bounded_known_lines(self):
+        stream = io.BytesIO(b''.join([
+            b'Pi worker unavailable: Worker request failed with HTTP 401\n',
+            b'Pi worker unavailable: piw_flt_test.' + b'a' * 43 + b'\n',
+            b'Pi worker turn failed: ' + b'x' * 300 + b'\n',
+            b'Model token pir_' + b'b' * 43 + b'\n',
+            b'Protected runtime failed\n',
+            b'Pi worker turn failed: Turn expired\n' * 80,
+        ]))
+        with patch.object(runtime.os, 'write') as write:
+            runtime.forward_diagnostics(stream)
+        lines = [call.args[1] for call in write.call_args_list]
+        self.assertEqual(lines[:2], [b'Pi worker unavailable: Worker request failed with HTTP 401\n',
+                                     b'Protected runtime failed\n'])
+        self.assertEqual(len(lines), 64)
+        self.assertEqual(set(lines[2:]), {b'Pi worker turn failed: Turn expired\n'})
 
     def test_unknown_kind_fails_closed_and_removes_file(self):
         with tempfile.TemporaryDirectory() as directory:
