@@ -49,6 +49,7 @@ export interface FleetConfig {
   enabled?: boolean;
   globalLimit?: number;
   projectLimit?: number;
+  /** How often running machines are checked; one starting or stopping is checked each second. */
   pollIntervalMs?: number;
   allocationTimeoutSeconds?: number;
 }
@@ -65,7 +66,9 @@ export interface FleetOwner {
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
 }
 export interface Fleet {
-  /** Reconcile soon instead of at the next tick; safe to call at any time, even inside a transaction. */
+  /** Look again now, not at the next tick, at everything not yet running steadily (requests,
+   * starts, stops). Safe at any time, even inside a transaction; a no-op until the first full
+   * pass after start, since owners register after Fleet starts. */
   kick(): void;
   /** Whether this project can rent machines at all; false means every request is refused. */
   connected(projectId: string): boolean;

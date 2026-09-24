@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import type { Context } from 'cordis';
 import type {} from '@merv/sandboxes/types';
 import { z } from 'zod';
@@ -45,6 +46,8 @@ export const fleetConfig = z
 type Row = { data_json: string };
 const decode = (row: Row): FleetAllocation => JSON.parse(row.data_json);
 const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 'released';
+/** A machine in use needs only the slow watch; one on its way up or down is watched often. */
+const steady = (a: FleetAllocation) => a.phase === 'running' && a.intent !== 'stop';
 /** A 4xx other than timeout, conflict or rate limit, or a local precondition: nothing was made. */
 const refused = (error: unknown) =>
   error instanceof MervError &&
@@ -61,8 +64,15 @@ const report = (event: string, a: FleetAllocation, error: unknown) => {
 export class FleetService implements Fleet {
   private readonly config: z.infer<typeof fleetConfig>;
   private readonly owners = new Map<string, FleetOwner>();
-  private pending?: Promise<void>;
-  private timer?: ReturnType<typeof setInterval>;
+  private pending?: Promise<boolean>;
+  private timer?: ReturnType<typeof setTimeout>;
+  private due = Infinity;
+  private fullAt = 0;
+  private watching = false;
+  private awake = false;
+  private unlisten?: () => void;
+  /** Timers never inherit a caller's database scope: kicks come from inside transactions. */
+  private readonly detached = AsyncResource.bind((fn: () => void) => fn());
   private closed = false;
   private closing?: Promise<void>;
   constructor(
@@ -87,17 +97,42 @@ export class FleetService implements Fleet {
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
-    this.timer ??= setInterval(
-      () => void this.tick().catch(() => undefined),
-      this.config.pollIntervalMs,
-    );
-    this.timer.unref();
+    if (this.unlisten) return;
+    // A kick inside a transaction acts again at the next commit that records an event: its own,
+    // since writers share one lock (Fleet's own requests and stops always record one).
+    this.unlisten = this.state.onEventsCommitted(() => {
+      if (this.watching) this.wake(0);
+      this.watching = false;
+    });
+    // The first pass waits a full interval so owners can register before anything is judged.
+    this.fullAt = Date.now() + this.config.pollIntervalMs;
+    this.wake(this.config.pollIntervalMs);
   }
   connected(projectId: string): boolean {
     return this.config.enabled && !!this.runtimes?.connected(projectId);
   }
+  /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {
-    if (!this.closed) setTimeout(() => void this.tick().catch(() => undefined), 0).unref();
+    // Owners register after Fleet starts and a pass stops what has none: wait for the first.
+    if (!this.unlisten || !this.awake || this.closed) return;
+    this.watching = true;
+    this.wake(0);
+  }
+  private wake(ms: number): void {
+    if (this.closed || Date.now() + ms >= this.due) return;
+    clearTimeout(this.timer);
+    this.due = Date.now() + ms;
+    this.detached(() => (this.timer = setTimeout(() => void this.pass(), ms).unref()));
+  }
+  /** A full pass each poll interval; in between, each second, only what is not yet steady. */
+  private async pass(): Promise<void> {
+    this.due = Infinity;
+    // Never join a reconcile that began before the change this pass was woken for.
+    await this.pending?.catch(() => undefined);
+    const full = Date.now() >= this.fullAt;
+    if (full) this.fullAt = Date.now() + this.config.pollIntervalMs;
+    const busy = await this.run(full).catch(() => false);
+    this.wake(busy ? Math.min(1000, this.config.pollIntervalMs / 5) : this.fullAt - Date.now());
   }
   registerOwner(kind: string, owner: FleetOwner): () => void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -150,6 +185,7 @@ export class FleetService implements Fleet {
       if (allocation.phase !== 'released') allocation.intent = 'stop';
       if (allocation.phase === 'queued') allocation.phase = 'released';
       await this.save(tx, allocation, before);
+      this.kick();
       return structuredClone(allocation);
     });
   }
@@ -255,6 +291,7 @@ export class FleetService implements Fleet {
         subjectId: a.id,
         data: { owner: a.owner },
       });
+      this.kick();
       return structuredClone(a);
     });
   }
@@ -296,6 +333,7 @@ export class FleetService implements Fleet {
       if (a.phase !== 'released' && a.intent !== 'stop') a.intent = intent;
       if (a.phase === 'queued' && a.intent !== 'run') a.phase = 'released';
       await this.save(tx, a, before);
+      this.kick();
       return a;
     });
   }
@@ -333,9 +371,13 @@ export class FleetService implements Fleet {
     }
     return owner.valid(a, tx);
   }
-  tick(): Promise<void> {
-    if (this.closed) return Promise.resolve();
-    return (this.pending ??= this.reconcile().finally(() => {
+  async tick(): Promise<void> {
+    await this.run(true);
+  }
+  /** Only a full pass looks at steady machines; true while anything is not steady. */
+  private run(full: boolean): Promise<boolean> {
+    if (this.closed) return Promise.resolve(false);
+    return (this.pending ??= this.reconcile(full).finally(() => {
       this.pending = undefined;
     }));
   }
@@ -494,13 +536,16 @@ export class FleetService implements Fleet {
       }),
     );
   }
-  private async reconcile(): Promise<void> {
+  private async reconcile(full = true): Promise<boolean> {
+    this.awake ||= full;
     await this.reserve();
     const allocations = await this.state.read((sql) => this.all(sql));
-    if (!this.runtimes) return;
+    if (!this.runtimes) return false;
     await Promise.all(
       allocations
-        .filter((a) => occupied(a) && (!a.retryAt || a.retryAt <= this.time()))
+        .filter(
+          (a) => occupied(a) && (full || !steady(a)) && (!a.retryAt || a.retryAt <= this.time()),
+        )
         .map(async (a) => {
           try {
             await this.advance(a);
@@ -515,15 +560,22 @@ export class FleetService implements Fleet {
                 (current.runtime?.leaseExpiresAt ?? '') <= this.time()
               )
                 current.phase = 'uncertain';
-              current.failures++;
+              // Cloudflare lists a new machine a second or two after making it, so its first
+              // launch is often refused: retry that each second for a minute before counting.
+              const launching =
+                current.runtime?.launch === null &&
+                Date.parse(current.updatedAt) > this.clock() - 60_000;
+              if (!launching) current.failures++;
               current.error = 'runtime_unavailable';
               current.retryAt = new Date(
-                this.clock() + Math.min(60_000, 1000 * 2 ** Math.min(current.failures, 6)),
+                this.clock() +
+                  (launching ? 1000 : Math.min(60_000, 1000 * 2 ** Math.min(current.failures, 6))),
               ).toISOString();
             });
           }
         }),
     );
+    return allocations.some((a) => !steady(a));
   }
   private async advance(a: FleetAllocation): Promise<void> {
     const runtime = this.runtimes!;
@@ -658,7 +710,8 @@ export class FleetService implements Fleet {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
-    clearInterval(this.timer);
+    clearTimeout(this.timer);
+    this.unlisten?.();
     this.closing = (async () => {
       await this.pending?.catch(() => undefined);
       await this.state.transaction(async (tx) => {
