@@ -727,6 +727,22 @@ test('a request made inside a transaction gets its machine once that commits', a
   await within(300, () => f.runtimes.createKeys.length === 2);
 });
 
+test('a request committed while a pass is in flight is acted on right after it, not an interval later', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2, pollIntervalMs: 60_000 });
+  f.fleet.start();
+  await f.fleet.tick();
+  const hold = deferred<SandboxRuntimeHandle>();
+  f.runtimes.holdCreate = hold;
+  await f.fleet.request(f.caller, input('first'));
+  // The pass this request kicked read the allocations and now waits on its create.
+  await within(300, () => f.runtimes.createKeys.length === 1);
+  await f.fleet.request(f.caller, input('second'));
+  await sleep(50);
+  f.runtimes.holdCreate = undefined;
+  hold.resolve(f.runtimes.byKey.values().next().value!);
+  await within(300, () => f.runtimes.createKeys.length === 2);
+});
+
 for (const how of ['cancel', 'cancelOwned'] as const)
   test(`${how} stops a running machine at once`, async (t) => {
     const f = await fixture(t, { globalLimit: 2, projectLimit: 1, pollIntervalMs: 60_000 });
