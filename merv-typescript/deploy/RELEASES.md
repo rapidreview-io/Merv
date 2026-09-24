@@ -1,5 +1,17 @@
 # Production releases
 
+## Pi enabled for all existing user projects, 2026-09-24 18:17 UTC
+
+Release `20260924T181249Z-38de7628-b78543a9330e` from published main38de76289
+runs image `sha256:2557054df2f31a70619ee724959ce2cbf1a3dcddc77b0f326bc5cd4abaf9315e`.
+Pi is enabled for all34 human-accessible projects, with35 connections including
+the service pilot. Authenticated Agent sidebar/Pi list and public health/UI pass.
+A fresh production Pi turn completed at18:18:23UTC with the expected reply.
+USD100 all-time accounting and concurrency1/1/1 are preserved; workflow stays off.
+This owner-directed enablement is not full security/API/UI acceptance. See the
+current implementation status for outstanding acceptance, credential incident,
+diagnostic cleanup and finite-grant renewal limitations.
+
 ## Published Fleet/Pi release, 2026-09-24 16:17 UTC
 
 Release `20260924T161517Z-14656e83-56e6f2e1d51c` is built from published
@@ -391,3 +403,4 @@ repository is linked and write automation is turned on.
 | 2026-09-23T08:31Z | `20260923T082914Z-2e1b7d45-20df33170035` | `9e270311d366` | 57/57                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CuZKWTfW.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `sha256:89cb4998714b4e8810dad1e4d73819e9f5eaaf8d8a99e03b9346bf9d83c9df4e` |
 | 2026-09-23T09:13Z | `20260923T091229Z-193d9376-4aeea6a3c2c9` | `8b41c45dcd4c` | 57/57                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CuZKWTfW.js 200; /ui/assets/index-DOKmk6ae.css 200                                                                                                                                                                                                                                                                                         | rollback `sha256:05a3bb0b321c6ec16a54e5fb28fbdada112dd4b2be373b9013197709cbb21da8` |
 | 2026-09-24T16:33Z | `20260924T163159Z-33d1e88c-d4431900f461` | `4b7ec0cdef96` | 60/60                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-zkqdI0I9.js 200; /ui/assets/index-DesGAEoi.css 200                                                                                                                                                                                                                                                                                         | rollback `merv-typescript:20260924T161517Z-14656e83-56e6f2e1d51c`                  |
+| 2026-09-24T18:14Z | `20260924T181249Z-38de7628-b78543a9330e` | `2557054df2f3` | 56/56                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-zkqdI0I9.js 200; /ui/assets/index-DesGAEoi.css 200                                                                                                                                                                                                                                                                                         | rollback `sha256:4b7ec0cdef965d02842241b1f7b0764e81fc6f77b77df64545a11231378ec919` |

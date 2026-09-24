@@ -5,6 +5,13 @@ The production configuration keeps workflow dispatch disabled and uses the
 authenticated, model-restricted relay with `gpt-6-luna`. Provider credentials stay
 on the main server; workers receive only bounded per-command relay authority.
 
+As of2026-09-24 18:17UTC, Pi is enabled for all34 existing human-accessible
+projects, with35 connections including the service pilot. The33 new connections
+use distinct namespaces and finite30-day consumers; renew by October17.
+New projects require the same scoped connection onboarding, not just membership.
+Owner-authorized enablement does not certify unfinished security or full UI
+acceptance; see `docs/PI_IMPLEMENTATION_STATUS.md` for current limitations.
+
 ## Credentials and access
 
 - Browser callers use normal authenticated human project membership. The old

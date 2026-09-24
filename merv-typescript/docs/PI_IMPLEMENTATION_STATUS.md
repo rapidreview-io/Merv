@@ -1,5 +1,31 @@
 # Read-only Pi pilot — 2026-09-24
 
+## Enabled for all existing user projects — 2026-09-24 18:17 UTC
+
+At the owner's explicit request, Pi is ON for all34 projects with active human
+membership. Main38de76289 is pushed and deployed in release
+`20260924T181249Z-38de7628-b78543a9330e`, image
+`sha256:2557054df2f31a70619ee724959ce2cbf1a3dcddc77b0f326bc5cd4abaf9315e`.
+The authenticated Agent sidebar and Pi list API, public health and UI pass.
+A fresh bounded production turn completed at18:18:23UTC and returned the exact
+requested assistant reply, "Pi is ready." This is functional API evidence, not
+a replacement for the broader unfinished acceptance suite.
+Refresh Merv and select **Agent** in an existing project. This enables access;
+it does not claim completed fresh API/UI or security acceptance.
+
+There are35 configured connections including the existing service pilot.
+The33 newly connected projects have separate namespaces and finite30-day
+consumer grants. Normal sign-in and project permissions remain required.
+New projects still require normal connection onboarding. Renew these consumers
+by October17; provider credentials retain their separate September30 expiry.
+The USD100 all-time cap, accrued accounting, concurrency1/1/1 and native maximum3
+are unchanged. Workflow dispatch remains off; hosted Pi usesgpt-6-luna.
+
+Hosted1d823/application13 and Sandboxes32025 remain deployed. Full fresh
+acceptance, temporary diagnostic access cleanup and the previously disclosed
+private-transcript credential incident remain outstanding. Owner-directed
+enablement is not a Gate A/B verdict; earlier failed evidence stays retained.
+
 ## Worker burst candidate — 2026-09-24 16:51 UTC
 
 The receipt-bound Stop continuation did not reach Stop: its third worker
