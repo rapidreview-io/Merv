@@ -154,7 +154,8 @@ UI=$(code http://127.0.0.1:3081/ui/)
 ANON=$(code -X POST -H 'content-type: application/json' -d '{}' http://127.0.0.1:3081/tools/ui.shell)
 OKORIGIN=$(code -H 'Origin: ${PUBLIC}' http://127.0.0.1:3081/auth/config)
 BADORIGIN=$(code -X POST -H 'Origin: http://evil.example' -H 'content-type: application/json' -d '{}' http://127.0.0.1:3081/tools/ui.shell)
-PLUGINS=$(docker logs merv-typescript-control-1 2>&1 | grep -m1 '"status":"ready"' | python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(sum(p["state"]=="active" for p in d["plugins"]), len(d["plugins"]))' 2>/dev/null || echo '?')
+# What the running process reported, with its optional plugins: later env-only changes get no row.
+PLUGINS=$(docker logs merv-typescript-control-1 2>&1 | grep '"status":"ready"' | tail -n1 | python3 -c 'import json,sys; p=json.loads(sys.stdin.read())["plugins"]; i={x["id"] for x in p}; print("%d/%d %s" % (sum(x["state"]=="active" for x in p), len(p), "+".join(k for k in ("fleet","fleet-workflow","pi") if k in i) or "no fleet/pi"))' 2>/dev/null || echo '?')
 ASSETS=$(curl -s http://127.0.0.1:3081/ui/ | grep -oE '/ui/assets/[^"]+\\.(js|css)' | sort -u | while read -r a; do printf '%s %s %s\\n' "$a" "$(code http://127.0.0.1:3081$a)" "$(curl -s http://127.0.0.1:3081$a | sha256sum | cut -c1-64)"; done | tr '\\n' ';')
 printf '{"release":"%s","image":"%s","imageId":"%s","health":"%s","ui":"%s","anonymous":"%s","approvedOrigin":"%s","unapprovedOrigin":"%s","containerHealth":"%s","plugins":"%s","assets":"%s","previousImage":"%s"}\\n' \\
   "${release}" "$IMG" "$IMAGE_ID" "$HEALTH" "$UI" "$ANON" "$OKORIGIN" "$BADORIGIN" "$H" "$PLUGINS" "$ASSETS" "$PREV" > staging-refresh-acceptance.json
@@ -257,7 +258,7 @@ const ok =
   pub.ui === 200;
 appendFileSync(
   join(root, RELEASES),
-  `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins.replace(' ', '/')} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\` |\n`,
+  `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\` |\n`,
 );
 execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
 if (!ok) process.exit(1);

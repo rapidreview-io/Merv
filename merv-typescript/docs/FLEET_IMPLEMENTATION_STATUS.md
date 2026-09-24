@@ -3,8 +3,13 @@
 The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
-Neither Fleet nor chat depends on the research workflow. Fleet is deployed for
-one disposable project. Pi has not started.
+Neither Fleet nor chat depends on the research workflow.
+
+**Current (2026-09-24):** Fleet serves hosted Pi in production for every
+connected project, with limits 1/1 and the workflow adapter off. The account cap
+is USD 100 all-time; the $0.10 figures below are historical. Pi state is in
+[PI_IMPLEMENTATION_STATUS.md](PI_IMPLEMENTATION_STATUS.md), and operations and
+deadlines are in [PI_OPERATIONS.md](../deploy/PI_OPERATIONS.md).
 
 The user approved read-only access to `rapidreview-io/merv-github-smoke` and a
 four-hour project operator credential. Both were configured in the human-created
@@ -71,9 +76,9 @@ and disabled project dispatch. Evidence is retained in `git-retry-result.json`,
 Fleet's workflow adapter is disabled, project dispatch is off, and all Merv capacity
 limits are one. The Cloudflare application retains capacity three; this does not keep three
 VMs running. Native verification confirmed zero instances and all three fault-test deployment
-IDs cleared at 09:16:13Z. The provider account cap remains $0.10: accrued
+IDs cleared at 09:16:13Z. The provider account cap was then $0.10: accrued
 $0.07290789560832, reserved $0, available $0.02709210439168, with no accounting
-gaps. Pi has not started.
+gaps.
 
 The earlier protected workspace-free producer completed its isolation probe and
 released automatically. Fleet's credential setup UI and configurable allocation
@@ -297,7 +302,8 @@ own newly created bridge credential and spending controls.
 The operator-owned `cloudflare-fleet` provider and dedicated native verification
 credential are installed. Workers Containers **Read** permission was verified
 against application and instance GET endpoints, restricted to the control host's
-egress IP and expiring on 2026-09-30. The developer Wrangler OAuth credential
+egress IP and expiring on 2026-09-30; the founder must replace it before then,
+or every runtime delivery is refused. The developer Wrangler OAuth credential
 remains local. The user explicitly approved transferring the supplied OpenAI key
 to root-private host configuration for `gpt-6-luna` tests. Acceptance collectors
 execute on the host; project and sandbox bearers remain there.

@@ -10,7 +10,8 @@ export function deploymentSchema(value = process.env.MERV_TS_DB_SCHEMA ?? 'merv_
  * One sandbox connection per project, as a JSON array of { projectId, namespace, tokenEnv }.
  * `tokenEnv` names the environment variable holding that project's `sbxt_` consumer grant: a
  * literal grant is refused here as well as by the plugin, so deployment configuration — which
- * is written to a file and checksummed — can never carry one.
+ * is written to a file and checksummed — can never carry one. The named variable must hold a
+ * grant of the plugin's shape now, not fail the first send after a healthy start.
  */
 export function sandboxConnections(value = process.env.MERV_SANDBOXES_CONNECTIONS) {
   let entries;
@@ -31,6 +32,9 @@ export function sandboxConnections(value = process.env.MERV_SANDBOXES_CONNECTION
       !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(tokenEnv ?? '')
     ) {
       throw new Error('Invalid MERV_SANDBOXES_CONNECTIONS entry');
+    }
+    if (!/^sbxt_[A-Za-z0-9_-]{4,512}$/.test(process.env[tokenEnv] ?? '')) {
+      throw new Error(`Missing or invalid ${tokenEnv}`);
     }
     return { projectId, namespace, tokenEnv };
   });

@@ -2,29 +2,48 @@
 
 ## Enabled for all existing user projects — 2026-09-24 18:17 UTC
 
-At the owner's explicit request, Pi is ON for all34 projects with active human
-membership. Main38de76289 is pushed and deployed in release
+At the owner's explicit request, Pi is on for all 34 projects with active human
+membership. Main 38de76289 is deployed in release
 `20260924T181249Z-38de7628-b78543a9330e`, image
 `sha256:2557054df2f31a70619ee724959ce2cbf1a3dcddc77b0f326bc5cd4abaf9315e`.
-The authenticated Agent sidebar and Pi list API, public health and UI pass.
-A fresh bounded production turn completed at18:18:23UTC and returned the exact
-requested assistant reply, "Pi is ready." This is functional API evidence, not
-a replacement for the broader unfinished acceptance suite.
-Refresh Merv and select **Agent** in an existing project. This enables access;
-it does not claim completed fresh API/UI or security acceptance.
+The authenticated Agent sidebar, the Pi list API, public health and UI pass.
 
-There are35 configured connections including the existing service pilot.
-The33 newly connected projects have separate namespaces and finite30-day
-consumer grants. Normal sign-in and project permissions remain required.
-New projects still require normal connection onboarding. Renew these consumers
-by October17; provider credentials retain their separate September30 expiry.
-The USD100 all-time cap, accrued accounting, concurrency1/1/1 and native maximum3
-are unchanged. Workflow dispatch remains off; hosted Pi usesgpt-6-luna.
+**What this evidence covers.** The checks after enablement ran only in the
+service pilot project (`project_3b538…`: no human membership, shared
+`fleet-cloudflare-canary` namespace) with the pilot actor token. The one fresh
+turn completed at 18:18:23 UTC with the requested reply, "Pi is ready.", and it
+was told not to use tools. No human project, no `merv-pi-*` namespace and no
+native read tool was exercised. It is not acceptance for the other projects, nor
+for API, UI or security.
 
-Hosted1d823/application13 and Sandboxes32025 remain deployed. Full fresh
-acceptance, temporary diagnostic access cleanup and the previously disclosed
+**Provider scope gap, 18:17–19:33 UTC.** The 33 new `merv-pi-*` namespaces were
+missing from the explicit namespace list of `cloudflare-fleet`, so a create from
+any of those projects would have failed with `provider is not configured`. The
+QA project's onboarding at 19:33 UTC added every `merv-pi-*` namespace and
+verified that each one resolves the provider;
+[`pi-connect-project.py`](../deploy/pi-connect-project.py) repeats that step.
+
+**Wedged Fleet slot, 18:28 UTC.** An Agent message in the QA project, which had
+no sandbox connection yet, created allocation `flt_480e9542…`. Its create failed
+before any network call, and the row stayed `uncertain`. It held the only global
+slot and blocked Pi in every project. It was released by hand at 18:31:52 UTC:
+the column and `data_json` were both set to `released` with intent `stop`, and
+`error` was left set. Fix f955c0010 refuses such requests at admission.
+
+The 33 newly connected projects have separate namespaces and finite 30-day
+consumer grants. The one earlier human connection still shares the pilot's
+namespace, and probably its grant. Normal sign-in and project permissions remain
+required, and new projects need the same connection onboarding. Grants must be
+renewed by October 17. The founder must replace the Cloudflare native verification
+credential before it expires on September 30. See
+[Pi operations](../deploy/PI_OPERATIONS.md). The USD 100 all-time cap, accrued
+accounting, concurrency 1/1/1 and native maximum 3 are unchanged. Workflow
+dispatch remains off, and hosted Pi uses `gpt-6-luna`.
+
+Hosted 1d823/application 13 and Sandboxes 32025 remain deployed. Full fresh
+acceptance, cleanup of temporary diagnostic access and the previously disclosed
 private-transcript credential incident remain outstanding. Owner-directed
-enablement is not a Gate A/B verdict; earlier failed evidence stays retained.
+enablement is not a Gate A/B verdict, and earlier failed evidence is retained.
 
 ## Worker burst candidate — 2026-09-24 16:51 UTC
 

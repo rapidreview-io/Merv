@@ -25,12 +25,9 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     writeFileSync(
       join(directory, 'dist/config/default.json'),
       JSON.stringify({
-        plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code', 'code-research', 'sessions'].map(
-          (id) => ({
-            id,
-            name: id,
-          }),
-        ),
+        plugins: 'state scope blobs identity api ui code code-research sessions'
+          .split(' ')
+          .map((id) => ({ id, name: id })),
       }),
     );
     const output = join(directory, 'rendered.json');
@@ -82,12 +79,16 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       MERV_SANDBOXES_CONNECTIONS: JSON.stringify([
         { projectId: 'project_1', namespace: 'research', tokenEnv: 'SANDBOX_GRANT' },
       ]),
+      SANDBOX_GRANT: 'sbxt_fixture',
     };
     assert.equal(run(connected).status, 0);
     config = JSON.parse(readFileSync(output));
     assert.equal(config.plugins.length, 12);
     assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtime, undefined);
-    assert.equal(config.plugins.find((p) => p.id === 'fleet'), undefined);
+    assert.equal(
+      config.plugins.find((p) => p.id === 'fleet'),
+      undefined,
+    );
 
     const projectConnections = (count) =>
       Array.from({ length: count }, (_, index) => ({
@@ -95,12 +96,14 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
         namespace: `namespace_${index}`,
         tokenEnv: `SANDBOX_GRANT_${index}`,
       }));
+    const listed = (connections) => ({
+      ...connected,
+      ...Object.fromEntries(connections.map((entry) => [entry.tokenEnv, 'sbxt_fixture'])),
+      MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections),
+    });
     for (const count of [33, 256]) {
       const connections = projectConnections(count);
-      assert.equal(
-        run({ ...connected, MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections) }).status,
-        0,
-      );
+      assert.equal(run(listed(connections)).status, 0);
       config = JSON.parse(readFileSync(output));
       assert.deepEqual(
         config.plugins.find((p) => p.id === 'sandboxes').config.connections,
@@ -111,10 +114,20 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       projectConnections(257),
       [...projectConnections(32), projectConnections(1)[0]],
     ]) {
-      assert.notEqual(
-        run({ ...connected, MERV_SANDBOXES_CONNECTIONS: JSON.stringify(connections) }).status,
-        0,
-      );
+      assert.notEqual(run(listed(connections)).status, 0);
+    }
+    // A connection whose grant variable is unset, empty or not a grant fails the render, naming
+    // only the variable, instead of starting healthy and wedging the first send.
+    for (const [broken, name] of [
+      [{ SANDBOX_GRANT: undefined }, 'SANDBOX_GRANT'],
+      [{ SANDBOX_GRANT: '' }, 'SANDBOX_GRANT'],
+      [{ SANDBOX_GRANT: "'sbxt_quoted'" }, 'SANDBOX_GRANT'],
+      [{ ...listed(projectConnections(2)), SANDBOX_GRANT_1: 'secret-value' }, 'SANDBOX_GRANT_1'],
+    ]) {
+      const result = run({ ...connected, ...broken });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`Error: Missing or invalid ${name}\\n`));
+      assert.ok(!/sbxt_quoted|secret-value/.test(result.stderr));
     }
 
     const fleet = {
@@ -126,7 +139,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
       MERV_FLEET_RUNTIME_LEASE_SECONDS: '900',
       MERV_FLEET_MANAGED_SECRET_ENV: 'MANAGED_SECRET',
       MANAGED_SECRET: 's'.repeat(32),
-      SANDBOX_GRANT: 'sbxt_fixture',
     };
     assert.equal(run(fleet).status, 0);
     assert.notEqual(run({ MERV_PI_ENABLED: 'true' }).status, 0);
@@ -174,7 +186,10 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     });
     assert.ok(config.plugins.some((p) => p.id === 'fleet-ui'));
     assert.ok(config.plugins.some((p) => p.id === 'fleet-tools'));
-    assert.equal(config.plugins.find((p) => p.id === 'fleet-workflow'), undefined);
+    assert.equal(
+      config.plugins.find((p) => p.id === 'fleet-workflow'),
+      undefined,
+    );
     assert.ok(!readFileSync(output, 'utf8').includes(fleet.MANAGED_SECRET));
     assert.ok(!readFileSync(output, 'utf8').includes(fleet.SANDBOX_GRANT));
 
@@ -200,7 +215,10 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     });
     assert.equal(run({ ...workflow, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1800' }).status, 0);
     config = JSON.parse(readFileSync(output));
-    assert.equal(config.plugins.find((p) => p.id === 'fleet').config.allocationTimeoutSeconds, 1800);
+    assert.equal(
+      config.plugins.find((p) => p.id === 'fleet').config.allocationTimeoutSeconds,
+      1800,
+    );
     assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
       enabled: true,
       projectId: 'project_1',
