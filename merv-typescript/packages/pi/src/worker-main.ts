@@ -1,4 +1,4 @@
-import { runPiWorker } from './worker.js';
+import { cause, runPiWorker } from './worker.js';
 import type { PiBootstrap } from './types.js';
 import { pathToFileURL } from 'node:url';
 
@@ -36,29 +36,15 @@ export async function readBootstrap(
     typeof bootstrap.expiresAt !== 'string'
   )
     throw new Error('Invalid Pi bootstrap');
-  const url = new URL(bootstrap.baseUrl);
-  if (
-    !(
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
-    ) ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash ||
-    !Number.isFinite(Date.parse(bootstrap.expiresAt)) ||
-    Date.parse(bootstrap.expiresAt) <= Date.now()
-  )
-    throw new Error('Invalid Pi bootstrap');
+  // runPiWorker checks the origin, lifetime and credential before any request.
   return bootstrap as unknown as PiBootstrap;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   readBootstrap()
     .then((bootstrap) => runPiWorker(bootstrap))
-    .catch(() => {
-      process.stderr.write('Pi worker unavailable\n');
+    .catch((error: unknown) => {
+      process.stderr.write(`Pi worker unavailable: ${cause(error)}\n`);
       process.exitCode = 1;
     });
 }

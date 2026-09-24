@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import contextlib
 import datetime
 import json
 import os
@@ -8,6 +9,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -21,6 +23,7 @@ PYTHON = Path('/usr/bin/python3.11')
 WORKER = Path('/opt/merv/pi/worker-main.mjs')
 DEPENDENCIES = Path('/opt/merv/pi/node_modules')
 WORKER_HOME = Path('/home/assignment')
+DIAGNOSTIC = re.compile(rb'(?:Pi worker|Protected runtime) [A-Za-z0-9 ():]{1,160}\n')
 
 
 def trusted_runtime():
@@ -113,6 +116,16 @@ def read_bootstrap():
         raise
 
 
+def forward_diagnostics(stream):
+    # Only fixed-vocabulary lines leave the lower-privileged worker, at most 64; the rest is drained.
+    forwarded = 0
+    for line in iter(lambda: stream.readline(200), b''):
+        if forwarded < 64 and DIAGNOSTIC.fullmatch(line):
+            forwarded += 1
+            with contextlib.suppress(OSError):
+                os.write(2, line)
+
+
 def stop_group(process, method):
     if process.poll() is None:
         try:
@@ -149,10 +162,12 @@ def supervisor():
     try:
         process = subprocess.Popen(
             [str(PYTHON), str(Path(__file__).resolve()), '--worker'],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8'},
             close_fds=True, start_new_session=True,
         )
+        reader = threading.Thread(target=forward_diagnostics, args=(process.stderr,), daemon=True)
+        reader.start()
         stopping_at = None
 
         def stop(_signal, _frame):
@@ -177,7 +192,9 @@ def supervisor():
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
-        return process.wait()
+        process.wait()
+        reader.join(1)
+        return process.returncode
     finally:
         payload[:] = b'\x00' * len(payload)
         if process is not None and process.poll() is None:

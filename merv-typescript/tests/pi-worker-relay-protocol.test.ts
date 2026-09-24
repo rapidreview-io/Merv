@@ -284,6 +284,7 @@ for (const upstreamStatus of [
       upstreamStatus === 'reasoning' ? 3 : upstreamStatus === 'tool' ? 2 : 1,
     );
     assert.equal(forwarded[0]?.model, 'gpt-6-luna');
+    assert.equal(forwarded[0]?.max_output_tokens, 4096);
     assert.deepEqual(forwarded[0]?.reasoning, { effort: 'none' });
     assert.equal(
       completions.length,

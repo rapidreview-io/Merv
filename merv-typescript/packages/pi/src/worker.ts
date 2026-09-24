@@ -15,7 +15,8 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api/openai-responses';
-import { decodeCheckpoint, encodeCheckpoint } from './checkpoint.js';
+import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
+import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
 import { piModelToolName } from './tool-names.js';
 import type { PiBootstrap, PiCompletion, PiToolOutcome, PiWork } from './types.js';
 
@@ -30,12 +31,33 @@ const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 const MAX_RESPONSE_BYTES = 2_100_000;
 const DELAY = 250;
 const STARTUP_WAIT_MS = 60_000;
+// A relay request carries at most 512 KiB in 512 items of 100k characters and asks for at most 4096
+// tokens. History and tool output leave room for a turn's prompt, its answers and JSON re-escaping.
+const MAX_OUTPUT_TOKENS = 4096;
+const TOOL_OUTPUT_BYTES = 64_000;
+const HISTORY_BYTES = 128_000;
+const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
+type Post = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
 
 class WorkerHttpError extends Error {
-  constructor(readonly status: number) {
-    super('Worker authority unavailable');
+  constructor(
+    readonly status: number,
+    readonly detail?: { message?: unknown },
+  ) {
+    super(`Worker request failed with HTTP ${status}`);
   }
+}
+const transient = (error: unknown) =>
+  error instanceof WorkerHttpError
+    ? error.status === 429 || error.status >= 500
+    : error instanceof TypeError ||
+      (error instanceof DOMException && error.name === 'TimeoutError');
+
+/** Our own messages carry no credential or URL; any other cause is reported only as unexpected. */
+export function cause(error: unknown): string {
+  const text = error instanceof Error ? error.message : '';
+  return /^[A-Za-z0-9 ()]{1,120}$/.test(text) ? text : 'Unexpected error';
 }
 
 export interface WorkerOptions {
@@ -72,7 +94,7 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     work.command.messages.at(-1)?.role !== 'user' ||
     !work.command.expiresAt ||
     !Number.isFinite(Date.parse(work.command.expiresAt)) ||
-    !/^[A-Za-z0-9_-]{1,128}$/.test(work.model) ||
+    !/^[A-Za-z0-9_.-]{1,128}$/.test(work.model) ||
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
     work.tools.length > 5 ||
@@ -121,7 +143,7 @@ export async function runPiWorker(
   )
     throw new Error('Invalid worker bootstrap');
   const seen = new Set<string>();
-  const request = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
+  const send = async <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> => {
     const response = await fetchImpl(new URL(`/pi-worker/${path}`, url), {
       method: 'POST',
       redirect: 'error',
@@ -132,20 +154,15 @@ export async function runPiWorker(
       body: JSON.stringify(body),
       signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]),
     });
-    if (!response.ok) {
-      void response.body?.cancel().catch(() => {});
-      throw new WorkerHttpError(response.status);
-    }
     if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) {
       void response.body?.cancel().catch(() => {});
       throw new Error('Worker response exceeds limit');
     }
-    if (!response.body) throw new Error('Invalid worker response');
-    const reader = response.body.getReader();
+    const reader = response.body?.getReader();
     const parts: Uint8Array[] = [];
     let length = 0;
     try {
-      while (true) {
+      while (reader) {
         const part = await reader.read();
         if (part.done) break;
         length += part.value.byteLength;
@@ -156,12 +173,25 @@ export async function runPiWorker(
         parts.push(part.value);
       }
     } finally {
-      reader.releaseLock();
+      reader?.releaseLock();
     }
+    let value: unknown;
     try {
-      return JSON.parse(Buffer.concat(parts, length).toString('utf8')) as T;
+      value = JSON.parse(Buffer.concat(parts, length).toString('utf8'));
     } catch {
-      throw new Error('Invalid worker response');
+      if (response.ok) throw new Error('Invalid worker response');
+    }
+    if (!response.ok) throw new WorkerHttpError(response.status, (value as { error?: {} })?.error);
+    return value as T;
+  };
+  const request: Post = async (path, body, signal, tries = 1) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await send(path, body, signal);
+      } catch (error) {
+        if (attempt >= tries || signal?.aborted || !transient(error)) throw error;
+        await until(DELAY * 2 ** attempt);
+      }
     }
   };
   const until = (time: number) =>
@@ -186,26 +216,25 @@ export async function runPiWorker(
       enrolled = true;
     } catch (error) {
       if (options.signal?.aborted) return;
+      // Before enrollment the grant may not be visible yet; after it, only an outage is waited out.
       if (
-        enrolled ||
-        Date.now() >= startupDeadline ||
-        !(error instanceof WorkerHttpError
-          ? error.status === 401 || error.status === 403 || error.status >= 500
-          : error instanceof TypeError ||
-            (error instanceof DOMException && error.name === 'TimeoutError'))
+        enrolled
+          ? !transient(error)
+          : Date.now() >= startupDeadline ||
+            !(
+              transient(error) ||
+              (error instanceof WorkerHttpError && [401, 403].includes(error.status))
+            )
       )
         throw error;
-      await until(Math.min(DELAY, startupDeadline - Date.now()));
+      await until(enrolled ? 1_000 : Math.min(DELAY, startupDeadline - Date.now()));
       continue;
     }
     if (!work) {
       await until(Math.min(options.pollIntervalMs ?? 500, 1_000));
       continue;
     }
-    validateWork(work, bootstrap);
     const commandId = work.command.id;
-    if (seen.has(commandId)) throw new Error('Duplicate worker assignment');
-    seen.add(commandId);
     const deadline = Math.min(Date.parse(bootstrap.expiresAt), Date.parse(work.command.expiresAt));
     const controller = new AbortController();
     const expire = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
@@ -214,6 +243,9 @@ export async function runPiWorker(
     let begun = false;
     let savedResult = false;
     try {
+      validateWork(work, bootstrap);
+      if (seen.has(commandId)) throw new Error('Duplicate worker assignment');
+      seen.add(commandId);
       if (controller.signal.aborted) throw new Error('Turn expired');
       const reply = await request<{ apply: boolean }>(
         'begin',
@@ -249,11 +281,12 @@ export async function runPiWorker(
         await until(DELAY);
       }
       if (controller.signal.aborted && !savedResult) throw new Error('Turn expired');
-    } catch {
+    } catch (error) {
       controller.abort();
+      process.stderr.write(`Pi worker turn failed: ${cause(error)}\n`);
       if (!savedResult && (begun || !options.signal?.aborted)) {
         try {
-          await request('fail', { workerId, commandId });
+          await request('fail', { workerId, commandId }, undefined, 3);
         } catch {}
       }
     } finally {
@@ -266,20 +299,25 @@ export async function runPiWorker(
 async function executeTurn(
   work: PiWork,
   workerId: string,
-  request: <T>(path: string, body: unknown, signal?: AbortSignal) => Promise<T>,
+  request: Post,
   fetchImpl: typeof fetch,
   signal: AbortSignal,
   pollIntervalMs: number,
 ): Promise<PiCompletion> {
   const commandId = work.command.id;
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
-  const manager = checkpoint
-    ? SessionManager.inMemory('/pi-worker', undefined, [
-        checkpoint.header,
-        ...checkpoint.entries,
-      ] as Parameters<typeof SessionManager.inMemory>[2])
-    : SessionManager.inMemory('/pi-worker');
-  if (checkpoint && checkpoint.leafId !== manager.getLeafId()) {
+  const contextWindow = Object.hasOwn(OPENAI_MODELS, work.model)
+    ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS].contextWindow
+    : 32_000;
+  // A token is at least a byte, so a smaller window keeps history within it too.
+  const entries = checkpoint && recent(checkpoint, Math.min(HISTORY_BYTES, contextWindow));
+  const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
+  const manager = SessionManager.inMemory(
+    '/pi-worker',
+    undefined,
+    restored as Parameters<typeof SessionManager.inMemory>[2],
+  );
+  if (checkpoint && entries === checkpoint.entries && checkpoint.leafId !== manager.getLeafId()) {
     if (checkpoint.leafId) manager.branch(checkpoint.leafId);
     else manager.resetLeaf();
   }
@@ -301,8 +339,8 @@ async function executeTurn(
     reasoning: true,
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32_000,
-    maxTokens: 2048,
+    contextWindow,
+    maxTokens: MAX_OUTPUT_TOKENS,
   };
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
@@ -314,6 +352,7 @@ async function executeTurn(
   });
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
+  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
   const flush = (heartbeat = false) => {
@@ -326,11 +365,12 @@ async function executeTurn(
           'progress',
           { workerId, commandId, events: batch },
           signal,
+          3,
         );
         if (receipt.accepted !== true) throw new Error('Conversation revoked');
       })
-      .catch(() => {
-        failure = new Error('Conversation revoked');
+      .catch((error: unknown) => {
+        failure = error instanceof Error ? error : new Error('Conversation revoked');
         session.abort().catch(() => {});
       })
       .finally(() => {
@@ -379,45 +419,51 @@ async function executeTurn(
         typeof input !== 'object' ||
         Array.isArray(input) ||
         !allowedInput(tool.name, input as Record<string, unknown>)
-      ) {
-        failure = new Error('Tool arguments forbidden');
-        session.abort().catch(() => {});
-        throw new Error('Tool arguments forbidden');
-      }
+      )
+        throw new Error('Tool arguments are not allowed');
       let output: { result: unknown };
       try {
         output = await request<{ result: unknown }>(
           'tool',
           { workerId, commandId, name: tool.name, input },
           toolSignal ? AbortSignal.any([signal, toolSignal]) : signal,
+          3,
         );
-      } catch {
-        failure = new Error('Tool unavailable');
-        session.abort().catch(() => {});
-        throw new Error('Tool unavailable');
+        if (!Object.hasOwn(output ?? {}, 'result')) throw new Error('Invalid tool response');
+      } catch (error) {
+        // Lost authority ends the turn; any other failure is a tool result the model can answer.
+        if (error instanceof WorkerHttpError && [401, 403, 409].includes(error.status)) {
+          failure = new Error('Tool authority unavailable');
+          session.abort().catch(() => {});
+        }
+        if (signal.aborted || failure) throw new Error('Turn cancelled');
+        const detail = error instanceof WorkerHttpError ? error.detail?.message : undefined;
+        throw new Error(typeof detail === 'string' ? detail : cause(error));
       }
       if (signal.aborted || failure) throw new Error('Turn cancelled');
-      if (!Object.hasOwn(output, 'result')) {
-        failure = new Error('Invalid tool response');
-        session.abort().catch(() => {});
-        throw failure;
-      }
       const canonicalCallId = callId.split('|')[0];
       if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId) || outcomes.length >= 64) {
         failure = new Error('Invalid tool result');
         session.abort().catch(() => {});
         throw failure;
       }
+      const text = JSON.stringify(output.result) ?? 'null';
+      const size = Buffer.byteLength(text);
+      const kept = Buffer.from(text).subarray(0, toolBytes).toString();
+      const shown =
+        size <= toolBytes
+          ? text
+          : `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]`;
+      toolBytes = Math.max(0, toolBytes - size);
       outcomes.push({
         callId: canonicalCallId,
         name: tool.name,
         input: input as PiToolOutcome['input'],
-        output: output.result as PiToolOutcome['output'],
+        output: (shown === text
+          ? output.result
+          : { truncated: true, text: kept }) as PiToolOutcome['output'],
       });
-      return {
-        content: [{ type: 'text', text: JSON.stringify(output.result) ?? 'null' }],
-        details: undefined,
-      };
+      return { content: [{ type: 'text', text: shown }], details: undefined };
     },
   }));
   const { session } = await createAgentSession({
@@ -447,7 +493,8 @@ async function executeTurn(
         accept: 'text/event-stream',
       },
       body: await outgoing.text(),
-      signal: outgoing.signal,
+      // A Request's own signal stops following its source once that Request is collected.
+      signal: init?.signal ?? outgoing.signal,
     });
   };
   session.agent.streamFunction = (_model, context, options) =>
@@ -487,19 +534,27 @@ async function executeTurn(
       flush();
       if (sending) await sending;
     }
-    if (failure || signal.aborted) throw new Error('Turn cancelled');
+    if (failure || signal.aborted) throw failure ?? new Error('Turn cancelled');
     const assistant = session.messages
       .slice(previousMessageCount)
       .filter((message) => message.role === 'assistant');
-    if (
-      assistant.some((message) => message.stopReason !== 'stop' && message.stopReason !== 'toolUse')
-    )
-      throw new Error('Model response failed');
+    const failed = assistant.find(
+      (message) => !['stop', 'toolUse', 'length'].includes(message.stopReason),
+    );
+    if (failed) throw new Error(`Model response failed (${failed.stopReason})`);
     const messages = assistant.flatMap((message) => {
-      const text = message.content
-        .filter((part) => part.type === 'text')
-        .map((part) => part.text)
-        .join('');
+      const text = [
+        message.content
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join(''),
+        // A cut-off tool call is failed back to the model, which then answers.
+        message.stopReason === 'length' && !message.content.some((part) => part.type === 'toolCall')
+          ? '[Answer cut off at the response length limit.]'
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       return text ? [{ role: 'assistant' as const, text }] : [];
     });
     if (
@@ -523,4 +578,25 @@ async function executeTurn(
     unsubscribe();
     session.dispose();
   }
+}
+
+/** The whole tree while its active branch fits a request; otherwise the newest whole exchanges that do. */
+function recent(checkpoint: WorkerCheckpoint, bytes: number): WorkerCheckpoint['entries'] {
+  type Entry = WorkerCheckpoint['entries'][number] & {
+    message?: { role: string; content: unknown[] };
+  };
+  const byId = new Map(checkpoint.entries.map((entry) => [entry.id, entry as Entry]));
+  const branch: Entry[] = [];
+  for (let entry = byId.get(checkpoint.leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
+    branch.unshift(entry);
+  let start = branch.length;
+  for (let index = branch.length - 1, size = 0, items = 0; index >= 0; index--) {
+    const { message } = branch[index];
+    size += Buffer.byteLength(JSON.stringify(branch[index]));
+    items += message?.role === 'assistant' ? message.content.length : 1;
+    if (size > bytes || items > HISTORY_ITEMS) break;
+    if (index === 0 || message?.role === 'user') start = index;
+  }
+  if (start === 0) return checkpoint.entries;
+  return branch.slice(start).map((entry, index) => (index ? entry : { ...entry, parentId: null }));
 }
