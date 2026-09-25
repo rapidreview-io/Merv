@@ -236,7 +236,7 @@ export class ExperimentService implements Experiments {
     };
   }
   async computeOffers(caller: Caller): Promise<Data> {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    if (!this.compute) return { entitled: false, available: false, allowance: null, offers: [] };
     return (await this.compute.offers(caller)) as Data;
   }
   async computeRun(caller: Caller, input: ComputeInput) {
