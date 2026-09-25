@@ -18,6 +18,10 @@ flowchart BT
     feed["feed"]
     merv_feed_tools["merv-feed-tools"]
     merv_feed_ui["merv-feed-ui"]
+    fleet["fleet"]
+    merv_fleet_tools["merv-fleet-tools"]
+    merv_fleet_ui["merv-fleet-ui"]
+    fleetWorkflow["fleetWorkflow"]
     identity["identity"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
@@ -27,6 +31,10 @@ flowchart BT
     paper["paper"]
     merv_paper_tools["merv-paper-tools"]
     merv_paper_ui["merv-paper-ui"]
+    pi["pi"]
+    merv_pi_api["merv-pi-api"]
+    merv_pi_tools["merv-pi-tools"]
+    merv_pi_ui["merv-pi-ui"]
     merv_reflection_tools["merv-reflection-tools"]
     merv_reflection_ui["merv-reflection-ui"]
     reflections["reflections"]
@@ -108,6 +116,16 @@ flowchart BT
   merv_feed_tools --> tools
   merv_feed_ui --> feed
   merv_feed_ui --> ui
+  fleet --> state
+  fleet --> scope
+  fleet --> sandboxes
+  merv_fleet_tools --> fleet
+  merv_fleet_tools --> tools
+  merv_fleet_ui --> fleet
+  merv_fleet_ui --> ui
+  fleetWorkflow --> fleet
+  fleetWorkflow --> sessions
+  fleetWorkflow --> scope
   knowledge --> state
   knowledge --> scope
   knowledge --> tasks
@@ -131,6 +149,17 @@ flowchart BT
   merv_paper_tools --> tools
   merv_paper_ui --> paper
   merv_paper_ui --> ui
+  pi --> state
+  pi --> scope
+  pi --> fleet
+  pi --> tools
+  pi --> blobs
+  merv_pi_api --> pi
+  merv_pi_api --> api
+  merv_pi_tools --> pi
+  merv_pi_tools --> tools
+  merv_pi_ui --> pi
+  merv_pi_ui --> ui
   merv_reflection_tools --> reflections
   merv_reflection_tools --> tools
   merv_reflection_ui --> reflections
@@ -179,6 +208,7 @@ flowchart BT
   sessions --> scope
   sessions --> workflows
   sessions --> domainEvents
+  sessions -. optional .-> tools
   merv_sessions_api --> sessions
   merv_sessions_api --> api
   merv_sessions_tools --> sessions

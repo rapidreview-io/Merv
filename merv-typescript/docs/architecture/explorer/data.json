@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-22",
+  "snapshot": "2026-09-25",
   "groups": [
     {
       "id": "front",
@@ -102,7 +102,10 @@
       "label": "New providers",
       "caption": "Discovered in source",
       "members": [
-        "codeResearch"
+        "codeResearch",
+        "fleet",
+        "fleetWorkflow",
+        "pi"
       ],
       "description": "These providers were discovered automatically and await a visual grouping in notes.json."
     }
@@ -165,7 +168,7 @@
         },
         {
           "name": "artifact.read",
-          "description": "Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
           "readOnly": true
         }
       ]
@@ -227,7 +230,7 @@
         },
         {
           "name": "artifact.read",
-          "description": "Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
           "readOnly": true
         }
       ]
@@ -792,6 +795,130 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-fleet",
+      "source": "packages/fleet/src/index.ts",
+      "provides": [
+        "fleet"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "sandboxes"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "fleet",
+      "group": "other",
+      "owner": "fleet",
+      "label": "fleet",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": [
+        {
+          "name": "fleet.drain",
+          "description": "Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.",
+          "readOnly": false
+        },
+        {
+          "name": "fleet.get",
+          "description": "Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.",
+          "readOnly": true
+        },
+        {
+          "name": "fleet.halt",
+          "description": "Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.",
+          "readOnly": false
+        },
+        {
+          "name": "fleet.list",
+          "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-fleet-tools",
+      "source": "packages/fleet/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "fleet",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-fleet-tools",
+      "group": "front",
+      "owner": "fleet",
+      "label": "fleet · tools adapter",
+      "purpose": "Connects fleet to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "fleet.drain",
+          "description": "Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.",
+          "readOnly": false
+        },
+        {
+          "name": "fleet.get",
+          "description": "Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.",
+          "readOnly": true
+        },
+        {
+          "name": "fleet.halt",
+          "description": "Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.",
+          "readOnly": false
+        },
+        {
+          "name": "fleet.list",
+          "description": "List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-fleet-ui",
+      "source": "packages/fleet/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "fleet",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-fleet-ui",
+      "group": "front",
+      "owner": "fleet",
+      "label": "fleet · ui adapter",
+      "purpose": "Connects fleet to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-fleet-workflow",
+      "source": "packages/fleet/src/workflow.ts",
+      "provides": [
+        "fleetWorkflow"
+      ],
+      "requires": [
+        "fleet",
+        "sessions",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "fleetWorkflow",
+      "group": "other",
+      "owner": "fleetWorkflow",
+      "label": "fleetWorkflow",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-identity",
       "source": "packages/identity/src/index.ts",
       "provides": [
@@ -843,7 +970,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -873,7 +1000,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing, unsupported or unpublished references. Published reflection references remain unavailable until a real reflection is published. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -970,7 +1097,7 @@
         },
         {
           "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.",
           "readOnly": true
         }
       ]
@@ -1005,7 +1132,7 @@
         },
         {
           "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.",
           "readOnly": true
         }
       ]
@@ -1030,6 +1157,189 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-pi",
+      "source": "packages/pi/src/index.ts",
+      "provides": [
+        "pi"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "fleet",
+        "tools",
+        "blobs"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "pi",
+      "group": "other",
+      "owner": "pi",
+      "label": "pi",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": [
+        {
+          "name": "pi.create",
+          "description": "Open a private agent conversation: the agent acts for you in this project with exactly your permissions, and proposes what only you may run. Opening a conversation does not start an agent or create a task.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.list",
+          "description": "List your private agent conversations in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "pi.machine.set",
+          "description": "Choose the machine your agent runs on in this project. It starts before the current one stops, so answers under way finish where they began.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.machine.stop",
+          "description": "Stop your agent machine in this project now, ending every answer under way; the next message starts it again.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.model.set",
+          "description": "Choose the model that answers your next message in this conversation; your new conversations here start on it too. An answer under way keeps its model.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.run",
+          "description": "Run a call your agent proposed in this conversation, once, as you. Its result comes back only to you.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.send",
+          "description": "Send one message and request agent capacity. Reuse commandId only to retry the exact same message.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.snapshot",
+          "description": "Read the canonical messages and available transient stream tail of your conversation.",
+          "readOnly": true
+        },
+        {
+          "name": "pi.stop",
+          "description": "Interrupt this conversation's turn; your agent machine keeps serving your other conversations.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.warm",
+          "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-pi-api",
+      "source": "packages/pi/src/api.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-pi-api",
+      "group": "front",
+      "owner": "pi",
+      "label": "pi · api adapter",
+      "purpose": "Connects pi to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-pi-tools",
+      "source": "packages/pi/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-pi-tools",
+      "group": "front",
+      "owner": "pi",
+      "label": "pi · tools adapter",
+      "purpose": "Connects pi to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "pi.create",
+          "description": "Open a private agent conversation: the agent acts for you in this project with exactly your permissions, and proposes what only you may run. Opening a conversation does not start an agent or create a task.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.list",
+          "description": "List your private agent conversations in this project.",
+          "readOnly": true
+        },
+        {
+          "name": "pi.machine.set",
+          "description": "Choose the machine your agent runs on in this project. It starts before the current one stops, so answers under way finish where they began.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.machine.stop",
+          "description": "Stop your agent machine in this project now, ending every answer under way; the next message starts it again.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.model.set",
+          "description": "Choose the model that answers your next message in this conversation; your new conversations here start on it too. An answer under way keeps its model.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.run",
+          "description": "Run a call your agent proposed in this conversation, once, as you. Its result comes back only to you.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.send",
+          "description": "Send one message and request agent capacity. Reuse commandId only to retry the exact same message.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.snapshot",
+          "description": "Read the canonical messages and available transient stream tail of your conversation.",
+          "readOnly": true
+        },
+        {
+          "name": "pi.stop",
+          "description": "Interrupt this conversation's turn; your agent machine keeps serving your other conversations.",
+          "readOnly": false
+        },
+        {
+          "name": "pi.warm",
+          "description": "Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).",
+          "readOnly": false
+        }
+      ]
+    },
+    {
+      "plugin": "merv-pi-ui",
+      "source": "packages/pi/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-pi-ui",
+      "group": "front",
+      "owner": "pi",
+      "label": "pi · ui adapter",
+      "purpose": "Connects pi to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-reflection-tools",
       "source": "packages/reflections/src/tools.ts",
       "provides": [],
@@ -1047,6 +1357,11 @@
       "label": "Reflections · tools adapter",
       "purpose": "Connects Reflections to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "reflection.end",
+          "description": "Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.",
+          "readOnly": false
+        },
         {
           "name": "reflection.get",
           "description": "Read a reflection wave, current lens submissions and exact synthesis review. A wave uses live research through project.records.",
@@ -1118,6 +1433,11 @@
       "label": "Reflections",
       "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required.",
       "exposedTools": [
+        {
+          "name": "reflection.end",
+          "description": "Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.",
+          "readOnly": false
+        },
         {
           "name": "reflection.get",
           "description": "Read a reflection wave, current lens submissions and exact synthesis review. A wave uses live research through project.records.",
@@ -1326,7 +1646,7 @@
         },
         {
           "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.",
           "readOnly": false
         },
         {
@@ -1389,7 +1709,7 @@
         },
         {
           "name": "review.start",
-          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.",
+          "description": "Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.",
           "readOnly": false
         },
         {
@@ -1668,7 +1988,9 @@
         "workflows",
         "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "tools"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -1678,6 +2000,21 @@
       "label": "Agent Sessions",
       "purpose": "Owns continuing agent identity, context-reset history and authenticated sessions. Attaches one workflow assignment at a time, freezes its context and tool permissions, and fences each execution independently. Runner launches fresh agents; external agents can explicitly change assignments.",
       "exposedTools": [
+        {
+          "name": "session.dispatch",
+          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.",
+          "readOnly": false
+        },
+        {
+          "name": "session.halt",
+          "description": "Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.",
+          "readOnly": false
+        },
+        {
+          "name": "session.observe",
+          "description": "Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.",
+          "readOnly": true
+        },
         {
           "name": "session.release_hold",
           "description": "Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.",
@@ -1737,6 +2074,21 @@
       "label": "Agent Sessions · tools adapter",
       "purpose": "Connects Agent Sessions to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "session.dispatch",
+          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.",
+          "readOnly": false
+        },
+        {
+          "name": "session.halt",
+          "description": "Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.",
+          "readOnly": false
+        },
+        {
+          "name": "session.observe",
+          "description": "Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.",
+          "readOnly": true
+        },
         {
           "name": "session.release_hold",
           "description": "Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.",
@@ -1826,7 +2178,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -1913,7 +2265,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. experiment.plan requires research and constraints artifact IDs in contextInputs, and Merv appends a required feasibility check to its checks (and rendered brief) that the delivery review cannot waive; a briefId of your own must contain that check; project.reflection requires experiments and projectKnowledge. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -2355,6 +2707,56 @@
       "optional": false
     },
     {
+      "from": "fleet",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "fleet",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "fleet",
+      "to": "sandboxes",
+      "optional": false
+    },
+    {
+      "from": "merv-fleet-tools",
+      "to": "fleet",
+      "optional": false
+    },
+    {
+      "from": "merv-fleet-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-fleet-ui",
+      "to": "fleet",
+      "optional": false
+    },
+    {
+      "from": "merv-fleet-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "fleetWorkflow",
+      "to": "fleet",
+      "optional": false
+    },
+    {
+      "from": "fleetWorkflow",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "fleetWorkflow",
+      "to": "scope",
+      "optional": false
+    },
+    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -2466,6 +2868,61 @@
     },
     {
       "from": "merv-paper-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "pi",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "pi",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "pi",
+      "to": "fleet",
+      "optional": false
+    },
+    {
+      "from": "pi",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "pi",
+      "to": "blobs",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-api",
+      "to": "pi",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-api",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-tools",
+      "to": "pi",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-tools",
+      "to": "tools",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-ui",
+      "to": "pi",
+      "optional": false
+    },
+    {
+      "from": "merv-pi-ui",
       "to": "ui",
       "optional": false
     },
@@ -2710,6 +3167,11 @@
       "optional": false
     },
     {
+      "from": "sessions",
+      "to": "tools",
+      "optional": true
+    },
+    {
       "from": "merv-sessions-api",
       "to": "sessions",
       "optional": false
@@ -2831,10 +3293,10 @@
     }
   ],
   "counts": {
-    "plugins": 55,
-    "providers": 25,
-    "adapters": 30,
-    "dependencies": 145
+    "plugins": 63,
+    "providers": 28,
+    "adapters": 35,
+    "dependencies": 167
   },
   "network": [
     {
