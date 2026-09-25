@@ -44,7 +44,7 @@ function allowedAt({ now, person, conversationId }: PiMoveContext, to: string): 
   const after = (move: PiMove | undefined, ms: number) => (move ? Date.parse(move.at) + ms : 0);
   const within = (ms: number) => person.moves.filter((move) => Date.parse(move.at) > now - ms);
   const agent = within(day).filter((move) => move.by === 'agent');
-  const failed = within(hour).filter((move) => move.outcome === 'failed');
+  const failed = within(day).filter((move) => move.outcome === 'failed');
   return Math.max(
     // At most 3 agent moves a day, and 1 an hour per conversation.
     agent.length >= 3 ? after(agent.at(-3), day) : 0,
@@ -54,9 +54,9 @@ function allowedAt({ now, person, conversationId }: PiMoveContext, to: string): 
     ),
     // At least 10 minutes on a machine between moves.
     after(person.moves.findLast(changed), 10 * minute),
-    // Hidden for an hour after the person picks another machine, or after 2 failed moves.
+    // Hidden for an hour after the person picks another machine, or after a second failed move.
     person.choseAt && person.preferred !== to ? Date.parse(person.choseAt) + hour : 0,
-    failed.length >= 2 ? after(failed.at(-2), hour) : 0,
+    failed.length >= 2 ? after(failed.at(-1), hour) : 0,
   );
 }
 
@@ -84,10 +84,12 @@ export function moveTool(context: PiMoveContext): PiWork['tools'][number] | null
     description: [
       'Move to a bigger machine.',
       `You run on ${current.label} (${spec(current)}), shared with this person's other conversations.`,
-      ...targets.map(
-        (machine) =>
-          `${machine.label} has ${spec(machine)} and costs about ${Math.round(machine.maxHourlyUsd / current.maxHourlyUsd)}× as much.`,
-      ),
+      ...targets.map((machine) => {
+        const ratio = machine.maxHourlyUsd / current.maxHourlyUsd;
+        const cost =
+          ratio > 0 && ratio < Infinity ? ` and costs about ${+ratio.toFixed(1)}× as much` : '';
+        return `${machine.label} has ${spec(machine)}${cost}.`;
+      }),
       'Use it only when the machine limits the work (out of memory or disk, far too slow); the model is the same.',
       `This answer finishes here; later turns run on ${targets.map((machine) => machine.label).join(' or ')} once ready.`,
       'Files do not carry over; the conversation does. Say what failed in `reason`.',
@@ -105,16 +107,20 @@ export function moveTool(context: PiMoveContext): PiWork['tools'][number] | null
 }
 
 /** The lines a turn's PiWork.notes carry: its machine, a move under way, and a move that did not
- * happen within the hour. A failed move's reason is the service's phrase, never the agent's. */
+ * happen within the hour. Deadline rollovers (same machine) say nothing. A failed move's reason is
+ * the service's phrase, never the agent's. */
 export function moveNotes({ now, host, person, current, targets }: PiMoveContext): string[] {
   const label = (key: string) =>
     [current, ...targets].find((machine) => machine.key === key)?.label ?? key;
   const moved = person.moves.findLast(changed);
-  const last = person.moves.at(-1);
+  const last = person.moves.findLast((move) => move.from !== move.to);
+  // Only a move onto this host's machine; an earlier host's files are gone.
   const since =
-    moved?.to === current.key ? ` since ${new Date(moved.at).toISOString().slice(11, 16)} UTC` : '';
+    moved?.to === current.key && Date.parse(moved.at) >= Date.parse(host.createdAt)
+      ? ` since ${new Date(moved.at).toISOString().slice(11, 16)} UTC`
+      : '';
   const notes = [`Machine: ${current.label} (${spec(current)})${since}.`];
-  if (host.next)
+  if (host.next && host.next.machine !== current.key)
     notes.push(`A move to ${label(host.next.machine)} is starting; this answer stays here.`);
   if (last && last.outcome !== 'moved' && Date.parse(last.at) > now - hour)
     notes.push(

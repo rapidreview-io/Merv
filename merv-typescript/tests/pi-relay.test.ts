@@ -408,15 +408,20 @@ test('holds 200 calls at once by default and refuses the 201st', async (t) => {
   t.after(() => f.close());
   const held = Array.from({ length: 200 }, () => send(f));
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal((await send(f)).status, 429);
+  // An admitted 201st would wait on the held key, so it gets a deadline instead of hanging.
+  const overflow = await Promise.race([
+    send(f).then((response) => response.status),
+    new Promise((resolve) => setTimeout(resolve, 1_000, 'admitted')),
+  ]);
   release('private-provider-key');
+  assert.equal(overflow, 429);
   assert.deepEqual(
     new Set((await Promise.all(held)).map((response) => response.status)),
     new Set([200]),
   );
 });
 
-test('declares switch_machine only under a grant from a turn that offered it', async (t) => {
+test('passes the switch_machine moveTool offers only under a grant that lists it', async (t) => {
   const f = await fixture();
   t.after(() => f.close());
   const offered = moveTool({

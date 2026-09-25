@@ -195,14 +195,33 @@ test('hidden for an hour after the person picks a smaller machine', () => {
   assert.equal(refusal({}, { preferred: 'large', choseAt: ago(20) }), null, 'the person chose it');
 });
 
-test('hidden for an hour after two failed moves', () => {
+test('hidden for an hour after the second failed move', () => {
   const failed = [move(50, { by: 'person' }), move(30, { by: 'deadline', to: 'standard' })];
   assert.deepEqual(refusal({}, { moves: failed }), {
     code: 'move_limit',
-    retryAfterSeconds: 10 * 60,
+    retryAfterSeconds: 30 * 60,
   });
   assert.equal(moveTool(context({}, { moves: failed })), null);
   assert.equal(refusal({}, { moves: failed.slice(1) }), null);
+  // Failures 59 minutes apart: still a full hour from the second.
+  assert.deepEqual(refusal({}, { moves: [move(60, { by: 'person' }), move(1)] }), {
+    code: 'move_limit',
+    retryAfterSeconds: 59 * 60,
+  });
+});
+
+test('the cost is a ratio to the current price, and left out when that price is unknown', () => {
+  const medium = {
+    ...large,
+    key: 'medium',
+    label: 'Medium',
+    vcpu: 1,
+    memoryGiB: 4,
+    maxHourlyUsd: 0.1,
+  };
+  assert.match(moveTool(context({ targets: [medium] }))!.description, /costs about 1\.4× as much/);
+  const unpriced = moveTool(context({ current: { ...standard, maxHourlyUsd: 0 } }))!.description;
+  assert.match(unpriced, /Large has 2 vCPU, 8 GiB, 16 GB disk\. Use it/);
 });
 
 test('notes tell a turn its machine, a move under way, and a recent move that did not happen', () => {
@@ -211,6 +230,17 @@ test('notes tell a turn its machine, a move under way, and a recent move that di
   assert.deepEqual(moveNotes(context({ current: large, targets: [large] }, { moves: [moved] })), [
     'Machine: Large (2 vCPU, 8 GiB, 16 GB disk) since 14:03 UTC.',
   ]);
+  assert.deepEqual(
+    moveNotes(context({}, { moves: [moved] })),
+    ['Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).'],
+    'the latest move went elsewhere',
+  );
+  const fresh = { ...context().host, createdAt: ago(10) };
+  assert.deepEqual(
+    moveNotes(context({ host: fresh, current: large, targets: [large] }, { moves: [moved] })),
+    ['Machine: Large (2 vCPU, 8 GiB, 16 GB disk).'],
+    'a new host of the same kind since that move',
+  );
   assert.deepEqual(moveNotes(context({}, { moves: [move(5, { reason: 'no free machine' })] })), [
     'Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).',
     'The move to Large failed (no free machine); still on Standard.',
@@ -235,6 +265,15 @@ test('notes tell a turn its machine, a move under way, and a recent move that di
   assert.equal(
     moveNotes(context({ host: { ...host, next } })).at(-1),
     'A move to Large is starting; this answer stays here.',
+  );
+  // A deadline's rollover to a fresh machine of the same kind is not news to the model.
+  const rollover = { ...next, ...slot('standard'), by: 'deadline' as const };
+  assert.equal(moveNotes(context({ host: { ...host, next: rollover } })).length, 1);
+  const lapsed = move(5, { by: 'deadline', to: 'standard', reason: 'no free machine' });
+  assert.equal(moveNotes(context({}, { moves: [lapsed] })).length, 1);
+  assert.equal(
+    moveNotes(context({}, { moves: [move(20), lapsed] })).at(-1),
+    'The move to Large failed; still on Standard.',
   );
   const long = moveNotes(context({}, { moves: [move(5, { reason: 'x'.repeat(400) })] }));
   assert.ok(long.every((note) => note.length <= 300));
