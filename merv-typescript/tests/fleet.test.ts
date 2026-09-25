@@ -3,7 +3,11 @@ import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
+import type {
+  SandboxRuntimeHandle,
+  SandboxRuntimeProfileRef,
+  SandboxRuntimes,
+} from '@merv/sandboxes';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
@@ -28,10 +32,14 @@ async function within(ms: number, ok: () => boolean | Promise<boolean>) {
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'fixed-profile';
   leaseSeconds = 600;
+  large?: SandboxRuntimeProfileRef;
   get profiles() {
-    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
+    const standard = { key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds };
+    return this.large ? [standard, this.large] : [standard];
   }
-  describe = async () => null;
+  describe: SandboxRuntimes['describe'] = async () => null;
+  /** `${call} ${operation key or sandbox} ${profile}` for each call that names a profile. */
+  readonly profiled: string[] = [];
   readonly disconnected = new Set<string>();
   connected(projectId: string) {
     return !this.disconnected.has(projectId);
@@ -55,8 +63,9 @@ class FakeRuntimes implements SandboxRuntimes {
   private copy(handle: SandboxRuntimeHandle) {
     return structuredClone(handle);
   }
-  async provision(_projectId: string, operationKey: string) {
+  async provision(_projectId: string, operationKey: string, profileId?: string) {
     this.createKeys.push(operationKey);
+    this.profiled.push(`provision ${operationKey} ${profileId}`);
     if (this.createError) throw this.createError;
     let handle = this.byKey.get(operationKey);
     if (!handle) {
@@ -92,8 +101,10 @@ class FakeRuntimes implements SandboxRuntimes {
     current: SandboxRuntimeHandle,
     operationKey: string,
     _bootstrap: string,
+    profileId?: string,
   ) {
     this.launchKeys.push(operationKey);
+    this.profiled.push(`launch ${operationKey} ${profileId}`);
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
     live.launch ??= {
@@ -135,8 +146,9 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async renew(_projectId: string, current: SandboxRuntimeHandle) {
+  async renew(_projectId: string, current: SandboxRuntimeHandle, profileId?: string) {
     this.renewed.push(current.sandboxId);
+    this.profiled.push(`renew ${current.sandboxId} ${profileId}`);
     return this.inspect(_projectId, current);
   }
   confirmStopped(sandboxId: string) {
@@ -324,6 +336,7 @@ test('a refused first create frees the only slot; an ambiguous one is retried', 
     [current.phase, current.intent, current.error],
     ['released', 'stop', 'runtime_refused'],
   );
+  assert.equal(await f.fleet.free(f.caller.projectId), 1);
   // A conflict could hide a machine made by an earlier reply, so it proves nothing.
   f.runtimes.createError = new MervError('sandbox_operation_state', 'Conflict', 409);
   const retried = await f.fleet.request(f.caller, input('retried'));
@@ -407,8 +420,13 @@ test('the Fleet page lists open work and bounded history in plain words', async 
   ctx.provide('ui', ui);
   await ctx.plugin(fleetUiPlugin);
   t.after(() => ctx.fiber.dispose());
-  for (const id of ['a', 'b']) {
-    await f.fleet.cancel(f.caller, (await f.fleet.request(f.caller, input(id))).id);
+  f.fleet.registerOwner('pi-host', f.owner);
+  for (const [id, kind] of [
+    ['a', 'workflow'],
+    ['b', 'pi-host'],
+  ]) {
+    const owner = { kind, id: 'x' };
+    await f.fleet.cancel(f.caller, (await f.fleet.request(f.caller, { requestId: id, owner })).id);
     f.advance(1000);
   }
   f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
@@ -432,7 +450,7 @@ test('the Fleet page lists open work and bounded history in plain words', async 
     rows.map((row) => [row.title, row.status, row.intent]),
     [
       ['Workflow agent', 'stopped', null],
-      ['Workflow agent', 'stopped', null],
+      ['Agent machine', 'stopped', null],
       ['Workflow agent', 'refused', null],
       ['Workflow agent', 'retrying', 'run'],
     ],
@@ -601,6 +619,87 @@ test('profile change never reprovisions a new image and frees an uncertain creat
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
   assert.equal(f.runtimes.createKeys.length, 1);
+});
+
+test('each machine is rented, launched and renewed under its own profile', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 900 };
+  const standard = await f.fleet.request(f.caller, input('standard'));
+  const large = await f.fleet.request(f.caller, { ...input('large'), profile: 'large' });
+  assert.deepEqual([standard.profileId, large.profileId], ['fixed-profile', 'large-profile']);
+  // The profile is part of the request: the same id cannot name another machine.
+  await assert.rejects(f.fleet.request(f.caller, input('large')), { code: 'request_conflict' });
+  await assert.rejects(f.fleet.request(f.caller, { ...input('huge'), profile: 'huge' }), {
+    code: 'fleet_profile_unavailable',
+  });
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  for (const id of [standard.id, large.id]) f.runtimes.leaseSoon(await machine(id));
+  await f.fleet.tick();
+  assert.deepEqual(
+    f.runtimes.profiled.sort(),
+    [
+      `launch ${large.id}:launch large-profile`,
+      `launch ${standard.id}:launch fixed-profile`,
+      `provision ${large.id}:create large-profile`,
+      `provision ${standard.id}:create fixed-profile`,
+      `renew ${await machine(large.id)} large-profile`,
+      `renew ${await machine(standard.id)} fixed-profile`,
+    ].sort(),
+  );
+});
+
+test('dropping a profile from configuration stops only its machines', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 900 };
+  const standard = await f.fleet.request(f.caller, input('standard'));
+  const large = await f.fleet.request(f.caller, { ...input('large'), profile: 'large' });
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const admits = (id: string) => f.state.transaction((tx) => f.fleet.admits(id, 1, tx));
+  assert.deepEqual([await admits(standard.id), await admits(large.id)], [true, true]);
+  f.runtimes.large = undefined;
+  assert.deepEqual([await admits(standard.id), await admits(large.id)], [true, false]);
+  await f.fleet.tick();
+  const [kept, dropped] = await Promise.all(
+    [standard.id, large.id].map((id) => f.fleet.inspect(f.caller, id)),
+  );
+  assert.deepEqual([kept.phase, kept.intent], ['running', 'run']);
+  assert.equal(dropped.intent, 'stop');
+  assert.deepEqual(f.runtimes.stopped, [dropped.runtime!.sandboxId]);
+});
+
+test('a project named in projectLimits has its own cap, and free() counts what waits', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.initialState = 'provisioning';
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const host = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, {
+      enabled: true,
+      globalLimit: 4,
+      projectLimit: 1,
+      projectLimits: { [f.caller.projectId]: 3 },
+    }),
+  );
+  host.registerOwner('workflow', f.owner);
+  const free = async () => [await host.free(f.caller.projectId), await host.free(other.project.id)];
+  assert.deepEqual(await free(), [3, 1]);
+  for (const id of ['a', 'b', 'c', 'd']) await host.request(f.caller, input(id));
+  // Queued work is served first: all four count against both rooms.
+  assert.deepEqual(await free(), [0, 0]);
+  assert.equal(await f.state.transaction((tx) => host.free(f.caller.projectId, tx)), 0);
+  await host.tick();
+  const phases = (await host.list(f.caller)).map((a) => a.phase);
+  assert.deepEqual(phases, ['provisioning', 'provisioning', 'provisioning', 'queued']);
+  await host.cancel(f.caller, (await host.list(f.caller)).at(-1)!.id);
+  assert.deepEqual(await free(), [0, 1]);
+  const machine = { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074016 };
+  f.runtimes.describe = async (_projectId, key) => (key === 'standard' ? machine : null);
+  assert.deepEqual(await host.describe(f.caller.projectId, 'standard'), machine);
+  // A project that cannot rent has no room and no machines.
+  f.runtimes.disconnected.add(f.caller.projectId);
+  assert.equal(await host.free(f.caller.projectId), 0);
+  assert.equal(await host.describe(f.caller.projectId, 'standard'), null);
+  await host.close();
 });
 
 test('missing owner releases an untouched allocation without renting a machine', async (t) => {

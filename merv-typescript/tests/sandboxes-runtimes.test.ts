@@ -23,16 +23,16 @@ interface Call {
   namespace: string | null;
 }
 
-function record(state: string, revision = 1) {
+function record(state: string, revision = 1, { provider, offerId } = profile) {
   return {
     id: 'sbx_1',
     namespace: connection.namespace,
-    provider: profile.provider,
+    provider,
     state,
     revision,
     request: {
-      provider: profile.provider,
-      offer_id: profile.offerId,
+      provider,
+      offer_id: offerId,
       protected_runtime: true,
     },
     lease_expires_at: '2099-01-01T00:00:00Z',
@@ -61,7 +61,7 @@ function launchReceipt(state = 'pending', deliveryState = 'launched') {
 function fixture(
   t: TestContext,
   reply: (call: Call) => Response,
-  runtime: typeof profile | null = profile,
+  runtimes: (typeof profile & { key: string })[] | null = [{ key: 'standard', ...profile }],
 ) {
   const oldUrl = process.env[urlEnv];
   const oldToken = process.env[tokenEnv];
@@ -93,7 +93,7 @@ function fixture(
     service: new SandboxService({
       urlEnv,
       connections: [connection],
-      ...(runtime ? { runtime } : {}),
+      ...(runtimes ? { runtimes } : {}),
     }),
   };
 }
@@ -102,6 +102,119 @@ test('runtime admission is absent when no profile is configured', async (t) => {
   const disabled = fixture(t, () => Response.json({}), null).service;
   assert.equal(disabled.runtimes, undefined);
   await disabled.close();
+  const standard = { key: 'standard', ...profile };
+  assert.throws(() => fixture(t, () => Response.json({}), [standard, standard]), {
+    code: 'invalid_sandboxes_config',
+  });
+});
+
+const large = {
+  key: 'large',
+  provider: 'cloudflare-fleet-large',
+  offerId: 'standard-3:cloudflare',
+  releaseId: `rt1_${'b'.repeat(64)}`,
+  leaseSeconds: 3600,
+  ttlSeconds: 120,
+};
+
+test('each profile rents, launches and renews its own machine; the default keeps its id', async (t) => {
+  const { calls, service } = fixture(
+    t,
+    (call) => {
+      const shape = call.body?.provider === profile.provider ? profile : large;
+      if (call.path === '/v1/sandboxes') return Response.json(record('provisioning', 1, shape));
+      if (call.path === '/v1/sandboxes/sbx_1') return Response.json(record('ready', 1, large));
+      if (call.path === '/v1/sandboxes/sbx_1/runtime' || call.path === '/v1/runtime/launches/rln_1')
+        return Response.json({ ...launchReceipt(), release_id: large.releaseId });
+      if (call.path === '/v1/sandboxes/sbx_1/renew')
+        return Response.json(record('ready', 2, large));
+      throw new Error(`unexpected route ${call.method} ${call.path}`);
+    },
+    [{ key: 'standard', ...profile }, large],
+  );
+  const runtimes = service.runtimes!;
+  // The id hashes the profile without its key, so the machines Fleet already holds stay current.
+  const legacy = 'srp_48546695cae70da2b2420381a0880e6cad796d39a468bb596ea2d4f04ec4163c';
+  const [standardRef, largeRef] = runtimes.profiles;
+  assert.deepEqual(standardRef, { key: 'standard', id: legacy, leaseSeconds: 1800 });
+  assert.deepEqual([largeRef.key, largeRef.leaseSeconds], ['large', 3600]);
+  assert.match(largeRef.id, /^srp_[0-9a-f]{64}$/);
+  assert.deepEqual([runtimes.profileId, runtimes.leaseSeconds], [legacy, 1800]);
+  await runtimes.provision(connection.projectId, 'standard-create');
+  const created = await runtimes.provision(connection.projectId, 'large-create', largeRef.id);
+  const launched = await runtimes.launch(connection.projectId, created, 'run_1', 'x', largeRef.id);
+  await runtimes.renew(connection.projectId, launched, largeRef.id);
+  const [standardCreate, largeCreate, largeLaunch, largeRenew] = calls
+    .filter((call) => call.method === 'POST')
+    .map((call) => call.body!);
+  assert.deepEqual(
+    [standardCreate.provider, standardCreate.offer_id, standardCreate.lease_seconds],
+    [profile.provider, profile.offerId, 1800],
+  );
+  assert.deepEqual(
+    [largeCreate.provider, largeCreate.offer_id, largeCreate.lease_seconds],
+    [large.provider, large.offerId, 3600],
+  );
+  assert.deepEqual([largeLaunch.release_id, largeLaunch.ttl_seconds], [large.releaseId, 120]);
+  assert.equal(largeRenew.lease_seconds, 3600);
+  const count = calls.length;
+  await assert.rejects(runtimes.provision(connection.projectId, 'gone', 'srp_gone'), {
+    code: 'sandbox_runtime_profile_unknown',
+  });
+  assert.equal(calls.length, count);
+  await service.close();
+});
+
+test('a machine is described from the service options, read once a refresh period', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-24T00:00:00Z') });
+  const standard = { ...large, key: 'standard', offerId: 'standard-1:cloudflare' };
+  const shape = (offerId: string, cpu: number, memory: number, disk: number, usd: string) => ({
+    provider: large.provider,
+    plugin: 'cloudflare',
+    offer_id: offerId,
+    instance_type: offerId.split(':')[0],
+    region: 'cloudflare',
+    // Cloudflare lists a fractional share as its whole-core ceiling and says the share here.
+    resources: { cpu: Math.ceil(cpu), memory_mb: memory, disk_gb: disk, gpu_count: 0 },
+    hourly_price: { currency: 'USD', amount: usd },
+    available: true,
+    description: `${cpu.toFixed(1)} vCPU, ${memory} MiB memory, ${disk} GB disk`,
+  });
+  let offers: unknown[] | null = [
+    shape('standard-1:cloudflare', 0.5, 4096, 8, '0.074016'),
+    shape('standard-3:cloudflare', 2, 8192, 16, '0.220032'),
+  ];
+  const { calls, service } = fixture(
+    t,
+    (call) => {
+      if (call.path === '/v1/options')
+        return offers ? Response.json({ offers }) : new Response(null, { status: 503 });
+      throw new Error(`unexpected route ${call.method} ${call.path}`);
+    },
+    [standard, large],
+  );
+  const describe = (key: string) => service.runtimes!.describe(connection.projectId, key);
+  const reads = () => calls.filter((call) => call.path === '/v1/options').length;
+  assert.deepEqual(await Promise.all(['standard', 'large', 'huge'].map(describe)), [
+    { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074016 },
+    { key: 'large', vcpu: 2, memoryGiB: 8, diskGB: 16, maxHourlyUsd: 0.220032 },
+    null,
+  ]);
+  assert.equal(reads(), 1);
+  // The service stops listing Large: once the period passes, Large is hidden.
+  offers = offers.slice(0, 1);
+  t.mock.timers.tick(299_000);
+  assert.notEqual(await describe('large'), null);
+  t.mock.timers.tick(1000);
+  assert.equal(await describe('large'), null);
+  assert.equal((await describe('standard'))?.vcpu, 0.5);
+  assert.equal(reads(), 2);
+  // An unreachable service keeps the last answer until the next period.
+  offers = null;
+  t.mock.timers.tick(300_000);
+  assert.equal((await describe('standard'))?.memoryGiB, 4);
+  assert.equal(reads(), 3);
+  await service.close();
 });
 
 test('a project is connected only while its grant is configured', async (t) => {
@@ -299,7 +412,7 @@ test('an old protected sandbox remains inspectable and stoppable after profile c
       }
       throw new Error(`unexpected route ${call.method} ${call.path}`);
     },
-    { ...profile, provider: 'other_provider', offerId: 'different_offer' },
+    [{ key: 'standard', ...profile, provider: 'other_provider', offerId: 'different_offer' }],
   );
   const old: SandboxRuntimeHandle = {
     sandboxId: 'sbx_1',
