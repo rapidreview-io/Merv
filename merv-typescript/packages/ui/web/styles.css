@@ -4407,14 +4407,26 @@ del.cut {
 .pi-bar > .pi-state {
   margin-left: auto;
 }
-/* On a phone the conversation's name keeps a line of its own, so it never moves with the words
-   of the turn and the machine under it; the machine's note drops its figures there. */
+/* On a phone the conversation's name keeps its line, shared only with the model, which changes
+   only when picked: so it never moves with the words of the turn and the machine under it. The
+   machine's note drops its figures there. */
 @media (max-width: 720px) {
   .pi-bar {
     flex-wrap: wrap;
   }
   .pi-bar > .pi-switch:first-child {
     flex-basis: 100%;
+  }
+  .pi-bar:has(> .pi-model) > .pi-switch:first-child {
+    flex-basis: calc(100% - 9rem - var(--space-2));
+  }
+  /* At the edge, a long label ending in an ellipsis; the menu opens leftward from there. */
+  .pi-model {
+    max-width: 9rem;
+    margin-left: auto;
+  }
+  .pi-model .pi-menu {
+    inset: calc(100% + 4px) -8px auto auto;
   }
   .pi-bar > .pi-state {
     margin-left: 0;
@@ -4455,11 +4467,21 @@ del.cut {
 .pi-switch-button[aria-expanded='true'] {
   background: var(--bg-soft);
 }
+.pi-model-button,
 .pi-machine-button {
-  margin: 0 -8px 0 0;
   font-size: var(--text-sm);
   font-weight: 400;
   color: var(--muted);
+}
+/* A label is short: the conversation's name gives way first. */
+.pi-model {
+  flex: none;
+}
+.pi-model-button {
+  margin-left: 0;
+}
+.pi-machine-button {
+  margin: 0 -8px 0 0;
   text-align: left;
 }
 .pi-switch-button span,
