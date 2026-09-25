@@ -270,10 +270,18 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     ids: (agent) => [agent.id],
   });
   const live = (status?.sessions ?? []).filter((session) => holding(session, now));
+  // A lease that ended more than a day ago is history, one control away rather than the page.
+  const [older, showOlder] = useState(false);
+  const leases = (status?.sessions ?? []).filter(
+    (session) =>
+      older ||
+      holding(session, now) ||
+      now.at - Date.parse(session.closedAt ?? session.expiresAt) < 86_400_000,
+  );
   // What an agent is on, named by its own record or, failing that, by the lease.
-  const leases = new Map((status?.sessions ?? []).map((session) => [session.id, session]));
+  const byId = new Map((status?.sessions ?? []).map((session) => [session.id, session]));
   const assigned = (agent: AgentSummary) => {
-    const on = agent.currentAssignment ?? leases.get(agent.currentExecutionId ?? '');
+    const on = agent.currentAssignment ?? byId.get(agent.currentExecutionId ?? '');
     return agent.currentExecutionId
       ? `${on ? workName(on.label) : 'Assignment execution'} · ${on?.role ?? ''} · `
       : '';
@@ -433,7 +441,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               )}
             </div>
             {haltAll.receipt}
-            {status.sessions.length > 0 && (
+            {leases.length > 0 && (
               <div className="ruled lease-list">
                 <div className="ruled-head">
                   {['Agent', 'Work', 'Role', 'Expires'].map((head) => (
@@ -442,7 +450,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     </span>
                   ))}
                 </div>
-                {status.sessions.map((session) => (
+                {leases.map((session) => (
                   <LeaseRow
                     key={session.id}
                     session={session}
@@ -457,6 +465,13 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     }
                   />
                 ))}
+              </div>
+            )}
+            {leases.length < status.sessions.length && (
+              <div>
+                <button type="button" className="btn-text" onClick={() => showOlder(true)}>
+                  Show all {status.sessions.length}
+                </button>
               </div>
             )}
           </section>

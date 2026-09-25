@@ -206,6 +206,42 @@ test('dispatch switched on with no live runner reads as waiting, never as runnin
   assert.ok(pill.classList.contains('status--warn'));
 });
 
+test('leases open on what is live or recent; the older history is one control away', async (t) => {
+  t.after(unmount);
+  const now = Date.now();
+  const at = (ms: number) => new Date(now + ms).toISOString();
+  const ended = (id: string, label: string, closed: number) => ({
+    ...status().sessions[0],
+    id,
+    label,
+    status: 'released',
+    closeReason: 'host_failed',
+    createdAt: at(closed - 600_000),
+    activatedAt: at(closed - 540_000),
+    expiresAt: at(closed),
+    closedAt: at(closed),
+  });
+  const sessions = [
+    status().sessions[0],
+    ended('sess_2', 'Recent run', -3_600_000),
+    ended('sess_3', 'Week-old run', -7 * 24 * 3_600_000),
+    ended('sess_4', 'Older run', -8 * 24 * 3_600_000),
+  ];
+  serve('/tools/ui.read', () => read({ sessions, sessionTotal: 4 }));
+  await mount(page());
+  const leases = () => document.querySelector('.lease-list')?.textContent ?? '';
+  assert.ok(leases().includes('Sweep weight decay'), leases());
+  assert.ok(leases().includes('Recent run'), leases());
+  assert.ok(!leases().includes('Week-old run'), `history is not the page: ${leases()}`);
+  assert.ok(!leases().includes('Older run'), leases());
+  // The heading still counts every lease the read holds.
+  assert.ok(text().includes('Leases 4 · 1 live'), text().slice(0, 600));
+  await click('Show all 4');
+  assert.ok(leases().includes('Week-old run'), leases());
+  assert.ok(leases().includes('Older run'), leases());
+  assert.ok(!text().includes('Show all'), 'nothing is left to show');
+});
+
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
   t.after(unmount);
   serve('/tools/ui.read', (call) => (call === 1 ? read() : { network: true }));
