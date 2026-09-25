@@ -30,10 +30,13 @@ import type { IdentityProvider } from '@merv/identity/types';
 import type {
   Tools,
   ToolInvocation,
+  ModelRelayConfig,
+  ModelRelayGrant,
   MountHandler,
   SessionApiProvider,
   CodeApiProvider,
 } from './types.js';
+import { ModelRelay } from './model-relay.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { githubCallback, githubRequest } from './code-github.js';
@@ -418,6 +421,17 @@ export class ApiServer {
       if (!active) return;
       active = false;
       if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
+    };
+  }
+  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+    prefix: string,
+    config: ModelRelayConfig<G, N>,
+  ): () => void {
+    const relay = new ModelRelay(config);
+    const unmount = this.mount(prefix, relay.handle);
+    return () => {
+      unmount();
+      relay.close();
     };
   }
 

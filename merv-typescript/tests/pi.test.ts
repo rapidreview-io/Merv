@@ -13,12 +13,16 @@ import {
   type Role,
 } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
+
+/** Pi's relay hooks over the shared core, as the API mounts them. */
+const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
   const f = await fixture(t);
@@ -1748,7 +1752,7 @@ test(
     let http = new PiHttp(f.pi);
     let modelRequests = 0;
     const requests: Record<string, unknown>[] = [];
-    const relay = new PiModelRelay({
+    const relay = piRelay({
       enabled: true,
       models: f.pi.config.models,
       providerKey: () => 'server-only-test-key',

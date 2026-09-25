@@ -428,7 +428,7 @@ function assertComponentReferences(
             (owner === 'pi' &&
               specifier === 'node:http' &&
               typeOnly &&
-              ['api.ts', 'relay.ts'].includes(path.split(sep).at(-1)!))),
+              path.split(sep).at(-1) === 'api.ts')),
         `${path} embeds an API transport`,
       );
     }

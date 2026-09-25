@@ -3,10 +3,14 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
-import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';
 import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
+
+/** Pi's relay hooks over the shared core, as the API mounts them. */
+const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
 const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
 const modelToken = `pir_${'b'.repeat(43)}`;
@@ -137,7 +141,7 @@ for (const upstreamStatus of [
     const longDeltas = Array.from({ length: 80 }, (_, index) => `${index}`.padEnd(8192, 'x'));
     const grantExpiresAt = expiresAt();
     let toolInvocations = 0;
-    const relay = new PiModelRelay({
+    const relay = piRelay({
       enabled: true,
       models: [{ id: 'gpt-6-luna', effort: 'none' }],
       providerKey: () => 'synthetic-provider-key',
@@ -415,7 +419,7 @@ test('a conversation moved from Astra to Luna replays Astra’s reasoning to Ast
   const completions: PiCompletion[] = [];
   const grantEnds = expiresAt();
   let turn = { commandId: 'cmd_astra', model: 'gpt-6-astra' };
-  const relay = new PiModelRelay({
+  const relay = piRelay({
     enabled: true,
     models: [
       { id: 'gpt-6-luna', effort: 'none' },
