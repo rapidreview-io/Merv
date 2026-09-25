@@ -229,8 +229,6 @@ export interface PiHostView {
   /** How long a host stays up after the last turn in any of its conversations
    * (config.idleTimeoutSeconds). */
   idleSeconds: number;
-  /** How many of this person's conversations, in how many projects, share the machine. */
-  shared: { conversations: number; projects: number };
   moving: { to: string; by: PiMoveBy; since: string } | null;
   /** The latest move in PiPersonRecord.moves, for the failure line. */
   lastMove: PiMove | null;

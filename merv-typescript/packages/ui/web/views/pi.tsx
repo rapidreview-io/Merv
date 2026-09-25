@@ -173,13 +173,6 @@ function Machine({
   const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
   if (!on) return null;
   const chosen = moving?.to ?? on.key;
-  const { conversations, projects } = host.shared;
-  const minutes = Math.max(1, Math.round(host.idleSeconds / 60));
-  const facts = [
-    `Shared by your ${conversations > 1 ? `${conversations} ` : ''}conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
-    `Stops ${minutes} minute${minutes > 1 ? 's' : ''} after the last answer in any of them.`,
-    `Up to $${on.maxHourlyUsd.toFixed(2)}/h.`,
-  ];
   const close = (then = () => {}) => {
     setMenu(false);
     box.current?.querySelector('button')?.focus();
@@ -225,11 +218,13 @@ function Machine({
           className="pi-menu"
           role="menu"
           aria-label="Machine"
-          aria-describedby="pi-machine-facts"
+          aria-describedby={menu === 'stop' ? 'pi-machine-stop' : undefined}
         >
-          <p className="pi-menu-note" id="pi-machine-facts" role="none">
-            {menu === 'stop' ? 'Answers still running here stop too.' : facts.join(' ')}
-          </p>
+          {menu === 'stop' && (
+            <p className="pi-menu-note" id="pi-machine-stop" role="none">
+              Answers still running here stop too.
+            </p>
+          )}
           {menu === 'pick' &&
             host.catalog.map((machine) => (
               <button

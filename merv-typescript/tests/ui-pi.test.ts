@@ -86,7 +86,6 @@ const host = (state: 'none' | 'starting' | 'ready' = 'ready', extra: object = {}
   state,
   idleEndsAt: null,
   idleSeconds: 600,
-  shared: { conversations: 1, projects: 1 },
   moving: null,
   lastMove: null,
   ...extra,
@@ -1101,28 +1100,24 @@ test('the bar names the machine every conversation here shares, and its picker s
   t.after(cleanup);
   setProject('p1');
   const shared = host('ready', {
-    shared: { conversations: 3, projects: 1 },
-    idleSeconds: 900,
     catalog: [
       { ...standard, available: true },
       { ...large, available: false, reason: 'needs write access in this project' },
     ],
   });
-  const stream = boot(
+  boot(
     () => snapshot(conversation(), [], 0, [], true, shared),
     () => [conversation()],
   );
-  const facts = () =>
-    document.getElementById(
-      document.querySelector('.pi-machine [role="menu"]')!.getAttribute('aria-describedby')!,
-    )?.textContent;
   await open();
   assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
   assert.equal(note().getAttribute('aria-haspopup'), 'menu');
   await act(async () => note().click());
+  // The picker is its machines alone: no note explains the machine.
+  assert.equal(document.querySelector('.pi-machine .pi-menu-note'), null);
   assert.equal(
-    facts(),
-    'Shared by your 3 conversations here. Stops 15 minutes after the last answer in any of them. Up to $0.07/h.',
+    document.querySelector('.pi-machine [role="menu"]')!.hasAttribute('aria-describedby'),
+    false,
   );
   assert.deepEqual(
     picker().map((item) => [item.textContent, item.getAttribute('aria-checked')]),
@@ -1146,13 +1141,6 @@ test('the bar names the machine every conversation here shares, and its picker s
   await act(async () => picker()[0].click());
   assert.equal(picker().length, 0);
   assert.ok(!requests.some((request) => request.includes('pi.machine')));
-  // A machine keyed to the person alone is shared across their projects, and says so.
-  const everywhere = { ...shared, shared: { conversations: 4, projects: 2 } };
-  await act(async () =>
-    stream.push('snapshot', snapshot(conversation(), [], 1, [], true, everywhere)),
-  );
-  await act(async () => note().click());
-  assert.match(facts()!, /^Shared by your 4 conversations in 2 projects\. /);
 });
 
 test('picking Large counts the move while the machine still serves, and a failure says where it stays', async (t) => {
@@ -1249,10 +1237,6 @@ test('releasing the machine asks first, then releases it for every conversation 
   );
   await open();
   await act(async () => note().click());
-  assert.match(
-    text(),
-    /Shared by your conversations here\. Stops 10 minutes after the last answer in any of them\./,
-  );
   await act(async () => picker()[2].click());
   assert.equal(stopped, 0);
   assert.match(text(), /Answers still running here stop too./);
