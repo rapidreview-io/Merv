@@ -75,7 +75,7 @@ export async function runFeedUnloadScenario(
     const r = await connect(url, reviewer.token);
     clients.push(r);
     const beforeTools = (await p.listTools()).tools.map((tool) => tool.name);
-    assert.equal(beforeTools.length, 91);
+    assert.equal(beforeTools.length, 98);
     const post = await call(p, 'feed.post', {
       body: 'Starting a task before feed removal.',
       requestId: 'before-unload',

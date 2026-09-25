@@ -29,6 +29,7 @@ import type {
   SandboxCompute,
 } from './types.js';
 import { SandboxComputeAdapter } from './compute.js';
+import { SandboxArtifactStorage } from './artifact-storage.js';
 
 export type {
   Sandboxes,
@@ -489,6 +490,19 @@ export const sandboxesPlugin = {
   Config: configuration,
   apply(ctx: Context, config: SandboxesConfig) {
     const service = new SandboxService(config);
+    if (config.ml?.storageOrigins.length) {
+      ctx.inject(['artifacts'], (child) => {
+        child.effect(() =>
+          child.artifacts.bindLarge(
+            new SandboxArtifactStorage(
+              process.env[config.urlEnv]!,
+              config.timeoutMs ?? 15_000,
+              config.ml!,
+            ),
+          ),
+        );
+      });
+    }
     ctx.effect(() => service.start());
     ctx.provide('sandboxes', service);
   },

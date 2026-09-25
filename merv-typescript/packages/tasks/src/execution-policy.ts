@@ -25,6 +25,7 @@ const CODE_DRIVER = 'code.v2';
 export function taskExecutionPolicy(
   purpose: 'work' | 'review',
   workspace: TaskWorkspace = 'none',
+  largeUploads = false,
 ): WorkflowExecutionPolicy {
   const driver = ['code', 'resolution'].includes(workspace) ? { driver: CODE_DRIVER } : {};
   const instance = { instanceId: target('instanceId') };
@@ -79,6 +80,13 @@ export function taskExecutionPolicy(
       ...(purpose === 'work'
         ? [
             grant('artifact.create', {}),
+            ...(largeUploads
+              ? [
+                  grant('artifact.upload_begin', {}),
+                  grant('artifact.upload_resume', {}),
+                  grant('artifact.upload_complete', {}),
+                ]
+              : []),
             grant('task.submit_delivery', { taskId: reference('producerTaskId'), ...revision }),
             grant('task.mark_failed', { ...task, ...revision }),
             ...(workspace === 'none'

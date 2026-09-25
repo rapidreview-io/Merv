@@ -93,13 +93,20 @@ export class SandboxComputeAdapter implements SandboxCompute {
         },
       },
     ];
-    if (objectId)
+    const inputs = [
+      ...(objectId ? [{ object_id: objectId, path: '/tmp/merv/src.tgz' }] : []),
+      ...(spec.objectInputs ?? []).map((item) => ({
+        object_id: item.objectId,
+        path: `/tmp/merv/inputs/${item.path}`,
+      })),
+    ];
+    if (inputs.length)
       nodes.push({
         id: 'stage',
         kind: 'stage',
         vm: 'provision',
         depends_on: ['provision'],
-        inputs: [{ object_id: objectId, path: '/tmp/merv/src.tgz' }],
+        inputs,
       });
     const script = [
       'set -u',
@@ -114,7 +121,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
       id: 'run',
       kind: 'run',
       vm: 'provision',
-      depends_on: [objectId ? 'stage' : 'provision'],
+      depends_on: [inputs.length ? 'stage' : 'provision'],
       main: true,
       job: { command: script, timeout_seconds: spec.minutes * 60 + 300 },
     });

@@ -28,6 +28,7 @@ export interface ComputeInput {
   minutes: number;
   maxUsd: number;
   commandId?: string;
+  inputs?: { artifactId: string; path: string }[];
 }
 
 export interface Experiments {

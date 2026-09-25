@@ -7,5 +7,6 @@ export interface Artifact {
   mediaType: string;
   hash: string;
   size: number;
+  objectId?: string;
   createdAt: string;
 }

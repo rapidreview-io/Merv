@@ -121,6 +121,20 @@ test('ML workflow uses the project subject, stages only approved source, and rea
   assert.equal(plain.timeout_seconds, 1200);
   assert.equal(plain.capture_grace_seconds, 60);
   assert.equal(plain.max_cost, 2);
+  await compute.submit('project_a', {
+    ...spec,
+    objectInputs: [{ objectId: 'obj_data', path: 'dataset/train.csv' }],
+  });
+  const withArtifact = seen
+    .filter((row) => row.url.endsWith('/v1/workflows') && row.method === 'POST')
+    .at(-1)!.body;
+  assert.deepEqual(withArtifact.nodes.find((node: { id: string }) => node.id === 'stage').inputs, [
+    { object_id: 'obj_data', path: '/tmp/merv/inputs/dataset/train.csv' },
+  ]);
+  assert.deepEqual(
+    withArtifact.nodes.find((node: { id: string }) => node.id === 'run').depends_on,
+    ['stage'],
+  );
   await compute.submit('project_b', {
     ...spec,
     source: { bytes: new Uint8Array([1, 2, 3]), sha256: 'a'.repeat(64) },

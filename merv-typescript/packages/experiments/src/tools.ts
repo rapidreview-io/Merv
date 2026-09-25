@@ -22,52 +22,53 @@ export const experimentsToolsPlugin = {
   inject: ['experiments', 'tools'],
   apply(ctx: Context) {
     const experiments = ctx.experiments;
-    ctx.inject(['sandboxes'], (optional) => {
-      if (!optional.sandboxes.compute) return;
-      const run = z
-        .object({
-          experimentId: z.string().min(1),
-          attemptIndex: z.number().int().positive(),
-          key: z.string().min(1).max(128),
-          provider: z.string().min(1).max(64),
-          offerId: z.string().min(1).max(256),
-          command: z.string().min(1).max(65536),
-          minutes: z.number().int().min(5).max(1380),
-          maxUsd: z.number().finite().nonnegative(),
-          commandId: z.string().min(1).optional(),
-        })
-        .strict();
-      const cancel = z
-        .object({ experimentId: z.string().min(1), runId: z.string().min(1) })
-        .strict();
-      for (const definition of [
-        {
-          name: 'compute.offers',
-          description: 'Read this project’s ML allowance and available GPU offers.',
-          inputSchema: z.object({}).strict(),
-          readOnly: true,
-          handler: async (caller: Caller) => await experiments.computeOffers(caller),
-        },
-        {
-          name: 'compute.run',
-          description:
-            'Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.',
-          inputSchema: run,
-          conversation: 'propose' as const,
-          handler: async (caller: Caller, input: ComputeInput) =>
-            await experiments.computeRun(caller, input),
-        },
-        {
-          name: 'compute.cancel',
-          description: 'Propose cancellation of one run owned by this experiment.',
-          inputSchema: cancel,
-          conversation: 'propose' as const,
-          handler: async (caller: Caller, input: { experimentId: string; runId: string }) =>
-            await experiments.computeCancel(caller, input.experimentId, input.runId),
-        },
-      ])
-        ctx.effect(() => ctx.tools.register(definition));
-    });
+    const run = z
+      .object({
+        experimentId: z.string().min(1),
+        attemptIndex: z.number().int().positive(),
+        key: z.string().min(1).max(128),
+        provider: z.string().min(1).max(64),
+        offerId: z.string().min(1).max(256),
+        command: z.string().min(1).max(65536),
+        minutes: z.number().int().min(5).max(1380),
+        maxUsd: z.number().finite().nonnegative(),
+        commandId: z.string().min(1).optional(),
+        inputs: z
+          .array(
+            z.object({ artifactId: z.string().min(1), path: z.string().min(1).max(240) }).strict(),
+          )
+          .max(16)
+          .optional(),
+      })
+      .strict();
+    const cancel = z.object({ experimentId: z.string().min(1), runId: z.string().min(1) }).strict();
+    for (const definition of [
+      {
+        name: 'compute.offers',
+        description: 'Read this project’s ML allowance and available GPU offers.',
+        inputSchema: z.object({}).strict(),
+        readOnly: true,
+        handler: async (caller: Caller) => await experiments.computeOffers(caller),
+      },
+      {
+        name: 'compute.run',
+        description:
+          'Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.',
+        inputSchema: run,
+        conversation: 'propose' as const,
+        handler: async (caller: Caller, input: ComputeInput) =>
+          await experiments.computeRun(caller, input),
+      },
+      {
+        name: 'compute.cancel',
+        description: 'Propose cancellation of one run owned by this experiment.',
+        inputSchema: cancel,
+        conversation: 'propose' as const,
+        handler: async (caller: Caller, input: { experimentId: string; runId: string }) =>
+          await experiments.computeCancel(caller, input.experimentId, input.runId),
+      },
+    ])
+      ctx.effect(() => ctx.tools.register(definition));
     for (const definition of [
       {
         name: 'experiment.create',

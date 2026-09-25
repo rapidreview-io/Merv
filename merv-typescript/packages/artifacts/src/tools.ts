@@ -12,7 +12,7 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
-      conversation?: (input: z.infer<S>) => 'secret' | undefined,
+      conversation?: (input: z.infer<S>) => 'secret' | 'propose' | undefined,
     ) =>
       ctx.effect(() =>
         ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
@@ -31,13 +31,57 @@ export const artifactToolsPlugin = {
       async (c, i) => await ctx.artifacts.create(c, i),
     );
     register(
+      'artifact.upload_begin',
+      'Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.',
+      z
+        .object({
+          title: z.string().min(1).max(300),
+          size: z.number().int().positive(),
+          sha256: z.string().regex(/^[0-9a-f]{64}$/),
+          mediaType: z.string().min(3).max(150),
+          requestId: z.string().min(1).max(128).optional(),
+        })
+        .strict(),
+      async (c, i) => await ctx.artifacts.uploadBegin(c, i),
+      false,
+      () => 'secret',
+    );
+    register(
+      'artifact.upload_resume',
+      'Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.',
+      z
+        .object({
+          uploadId: z.string().min(1),
+          startPart: z.number().int().min(1).max(10000).optional(),
+        })
+        .strict(),
+      async (c, i) => await ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
+      false,
+      () => 'secret',
+    );
+    register(
+      'artifact.upload_complete',
+      'Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.',
+      z.object({ uploadId: z.string().min(1) }).strict(),
+      async (c, i) => await ctx.artifacts.uploadComplete(c, i.uploadId),
+      false,
+      () => 'propose',
+    );
+    register(
       'artifact.get',
       'Read immutable artifact metadata.',
       z.object({ artifactId: z.string().min(1) }).strict(),
-      async (c, i) => ({
-        ...(await ctx.artifacts.get(c, i.artifactId)),
-        downloadAvailable: ctx.artifacts.downloadSupported,
-      }),
+      async (c, i) => {
+        const artifact = await ctx.artifacts.get(c, i.artifactId);
+        return { ...artifact, downloadAvailable: ctx.artifacts.canDownload(artifact) };
+      },
+      true,
+    );
+    register(
+      'artifact.storage_status',
+      'Whether this project can retain large files in Sandboxes object storage.',
+      z.object({}).strict(),
+      async () => ({ available: ctx.artifacts.largeUploadAvailable }),
       true,
     );
     register(
@@ -63,7 +107,11 @@ export const artifactToolsPlugin = {
       'artifact.list',
       'List this project’s immutable artifacts, newest first (at most 1,000).',
       z.object({}).strict(),
-      async (c) => await ctx.artifacts.list(c),
+      async (c) =>
+        (await ctx.artifacts.list(c)).map((artifact) => ({
+          ...artifact,
+          downloadAvailable: ctx.artifacts.canDownload(artifact),
+        })),
       true,
     );
   },

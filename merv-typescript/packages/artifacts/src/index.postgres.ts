@@ -20,4 +20,10 @@ $merv$;
 CREATE TRIGGER artifacts_immutable_delete BEFORE DELETE ON artifacts
 FOR EACH ROW EXECUTE FUNCTION artifacts_immutable_delete_guard();
 `,
+  2: `
+ALTER TABLE artifacts ADD COLUMN object_id TEXT;
+CREATE UNIQUE INDEX artifacts_project_object ON artifacts(project_id, object_id) WHERE object_id IS NOT NULL;
+CREATE TABLE artifact_uploads(upload_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size BIGINT NOT NULL,object_id TEXT,artifact_id TEXT,created_at TEXT NOT NULL);
+CREATE INDEX artifact_uploads_project ON artifact_uploads(project_id, created_by);
+`,
 };

@@ -226,7 +226,13 @@ export class ExperimentService implements Experiments {
   bindCompute(adapter: SandboxCompute): () => void {
     this.open();
     this.compute?.close();
-    const service = new ExperimentCompute(this.state, this.scope, adapter, () => this.code);
+    const service = new ExperimentCompute(
+      this.state,
+      this.scope,
+      adapter,
+      () => this.code,
+      this.artifacts,
+    );
     this.compute = service;
     return () => {
       if (this.compute === service) {
@@ -451,6 +457,7 @@ export class ExperimentService implements Experiments {
               input.workspace === 'git' &&
                 input.baseTaskId === undefined &&
                 (await this.code!.hosted(caller, tx)),
+              this.artifacts.largeUploadAvailable,
             ),
           )
         ).start(

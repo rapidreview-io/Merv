@@ -147,18 +147,26 @@ const workspaces: Record<number, TaskWorkspace> = {
   4: 'reference',
   5: 'code',
   6: 'resolution',
+  7: 'none',
+  8: 'central',
+  9: 'reference',
+  10: 'code',
+  11: 'resolution',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
   workspace: TaskCreate['workspace'],
   baseTaskId: string | undefined,
   hosted: boolean,
+  largeUploads = false,
 ): number =>
-  workspace !== 'git' ? TASK_WORKFLOW.version : baseTaskId !== undefined ? 4 : hosted ? 5 : 3;
+  (workspace !== 'git' ? 2 : baseTaskId !== undefined ? 4 : hosted ? 5 : 3) +
+  (largeUploads ? 5 : 0);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-const derivedBase = (version: number) => version === 5 || serviceOwned(version);
+const derivedBase = (version: number) => version === 5 || version === 10 || serviceOwned(version);
 /** Only the internal service binding may create these tasks; their producer has no credential. */
-const serviceOwned = (version: number) => version === TASK_WORKFLOW_SERVICE.version;
+const serviceOwned = (version: number) =>
+  version === TASK_WORKFLOW_SERVICE.version || version === 11;
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
@@ -176,6 +184,13 @@ export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = {
     { from: 'suspended', action: 'resume', to: 'in_progress' },
   ],
 };
+export const TASK_WORKFLOW_LARGE = [
+  { ...TASK_WORKFLOW, version: 7 },
+  { ...TASK_WORKFLOW_GIT, version: 8 },
+  { ...TASK_WORKFLOW_GIT_BASED, version: 9 },
+  { ...TASK_WORKFLOW_GIT_HOSTED, version: 10 },
+  { ...TASK_WORKFLOW_SERVICE, version: 11 },
+];
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
@@ -284,6 +299,7 @@ export class TaskService implements Tasks {
           TASK_WORKFLOW_GIT_BASED,
           TASK_WORKFLOW_GIT_HOSTED,
           TASK_WORKFLOW_SERVICE,
+          ...TASK_WORKFLOW_LARGE,
         ]) {
           this.registrations.set(
             definition.version,
@@ -662,7 +678,7 @@ export class TaskService implements Tasks {
             await this.unleased(caller, snapshot.id, snapshot.revision, tx);
           },
           build: async (context) => await this.workflowAssignment(context),
-          execution: taskExecutionPolicy('work', taskWorkspace(version)),
+          execution: taskExecutionPolicy('work', taskWorkspace(version), version >= 7),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
         },
@@ -672,7 +688,7 @@ export class TaskService implements Tasks {
             await this.workflowAssignmentFacts(context);
           },
           build: async (context) => await this.workflowAssignment(context),
-          execution: taskExecutionPolicy('review', taskWorkspace(version)),
+          execution: taskExecutionPolicy('review', taskWorkspace(version), version >= 7),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
         },
@@ -1302,8 +1318,15 @@ export class TaskService implements Tasks {
           input.baseTaskId === undefined &&
           (await this.requireCode().hosted(caller, tx));
         const version = service
-          ? TASK_WORKFLOW_SERVICE.version
-          : taskVersion(input.workspace, input.baseTaskId, hosted);
+          ? this.artifacts.largeUploadAvailable
+            ? 11
+            : TASK_WORKFLOW_SERVICE.version
+          : taskVersion(
+              input.workspace,
+              input.baseTaskId,
+              hosted,
+              this.artifacts.largeUploadAvailable,
+            );
         const workflow = await (
           await this.registration(version)
         ).start(

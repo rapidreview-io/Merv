@@ -1006,8 +1006,42 @@ export interface ArtifactInput {
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
 }
+export interface ArtifactUploadInput {
+  title: string;
+  size: number;
+  sha256: string;
+  mediaType: string;
+  requestId?: string;
+}
+export interface ArtifactUploadStatus {
+  uploadId: string;
+  partSize: number;
+  partCount: number;
+  parts: { partNumber: number; url: string; size: number; headers: Record<string, string> }[];
+  completedParts: number[];
+  nextPart: number | null;
+}
+export interface LargeArtifactStorage {
+  begin(
+    projectId: string,
+    uploadId: string,
+    input: ArtifactUploadInput,
+  ): Promise<{ objectId: string; status: ArtifactUploadStatus }>;
+  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadStatus>;
+  complete(
+    projectId: string,
+    objectId: string,
+  ): Promise<{ objectId: string; size: number; sha256: string; state: string }>;
+  download(projectId: string, objectId: string): Promise<{ url: string; expiresAt: string }>;
+}
 export interface Artifacts {
   readonly downloadSupported: boolean;
+  canDownload(artifact: Artifact): boolean;
+  readonly largeUploadAvailable: boolean;
+  bindLarge(storage: LargeArtifactStorage): () => void;
+  uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
+  uploadResume(caller: Caller, uploadId: string, startPart?: number): Promise<ArtifactUploadStatus>;
+  uploadComplete(caller: Caller, uploadId: string): Promise<Artifact>;
   download(
     caller: Caller,
     artifactId: string,

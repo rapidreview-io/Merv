@@ -13,6 +13,7 @@ const walletReasons = new Set([
   'provider_disabled',
   'usage_unresolved',
   'concurrency_exceeded',
+  'storage_cap_exceeded',
 ]);
 const bodyLimit = 4_000_000;
 
@@ -172,10 +173,14 @@ export class SandboxClient {
   }
 
   /** GET one route for one connection, after the connection's identity is established. */
-  async read(connection: SandboxConnection, path: string): Promise<Json> {
+  async read(
+    connection: SandboxConnection,
+    path: string,
+    query?: { start_part: number },
+  ): Promise<Json> {
     connection = { ...connection };
     const secret = await this.#prove(connection);
-    return await this.#send(connection, secret, 'GET', path);
+    return await this.#send(connection, secret, 'GET', path, undefined, query);
   }
 
   /** Change one sandbox, under the same proved grant. The body is the service's own request. */
@@ -184,11 +189,12 @@ export class SandboxClient {
     method: 'POST' | 'DELETE',
     path: string,
     body: Json,
+    timeoutMs?: number,
   ): Promise<Json> {
     connection = { ...connection };
     body = structuredClone(body);
     const secret = await this.#prove(connection);
-    return await this.#send(connection, secret, method, path, body);
+    return await this.#send(connection, secret, method, path, body, undefined, timeoutMs);
   }
 
   /** Whether this connection's grant is present at all; without it no call can be made. */
@@ -244,6 +250,8 @@ export class SandboxClient {
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: Json,
+    query?: { start_part: number },
+    timeoutMs = this.#timeoutMs,
   ): Promise<Json> {
     check(
       this.#credential(connection) === secret,
@@ -252,6 +260,14 @@ export class SandboxClient {
       503,
     );
     const url = new URL(sandboxRoute(path), this.#origin);
+    if (query) {
+      check(
+        Number.isInteger(query.start_part) && query.start_part >= 1 && query.start_part <= 10000,
+        'invalid_upload_part',
+        'Upload part must be between 1 and 10,000',
+      );
+      url.searchParams.set('start_part', String(query.start_part));
+    }
     check(
       url.origin === this.#origin,
       'sandbox_origin_refused',
@@ -272,7 +288,7 @@ export class SandboxClient {
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(this.#timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new MervError('sandbox_unavailable', 'merv-sandboxes is unreachable', 503);

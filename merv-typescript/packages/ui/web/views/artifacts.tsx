@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Hash } from 'fast-sha256';
 import { Link, useParams } from 'react-router-dom';
-import { call, useScopeVersion, useTool } from '../api';
+import { call, refreshTools, useScopeVersion, useTool } from '../api';
 import { Ago, KV, LoadState, RecordPage, Short, timeRows } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
@@ -74,6 +75,155 @@ export async function fileInput(file: File) {
       : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
         'application/octet-stream'),
   };
+}
+
+type UploadPlan = {
+  uploadId: string;
+  partSize: number;
+  partCount: number;
+  parts: { partNumber: number; url: string; size: number; headers: Record<string, string> }[];
+  completedParts: number[];
+  nextPart: number | null;
+};
+
+async function fileHash(file: File, progress: (value: number) => void): Promise<string> {
+  const hash = new Hash();
+  for (let at = 0; at < file.size; at += 8 * 1024 * 1024) {
+    hash.update(new Uint8Array(await file.slice(at, at + 8 * 1024 * 1024).arrayBuffer()));
+    progress(Math.min(1, (at + 8 * 1024 * 1024) / file.size));
+  }
+  return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function putPart(
+  part: UploadPlan['parts'][number],
+  blob: Blob,
+  progress: (loaded: number) => void,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', part.url);
+    for (const [name, value] of Object.entries(part.headers)) request.setRequestHeader(name, value);
+    request.upload.onprogress = (event) => progress(event.loaded);
+    request.onerror = () => reject(new Error('Object storage is unreachable'));
+    request.onabort = () => reject(new Error('Part upload was interrupted'));
+    request.onload = () =>
+      request.status >= 200 && request.status < 300
+        ? resolve()
+        : reject(
+            new Error(`Object storage refused part ${part.partNumber} (HTTP ${request.status})`),
+          );
+    request.send(blob);
+  });
+}
+
+export function UploadForm({ available, close }: { available: boolean; close(): void }) {
+  const [file, setFile] = useState<File>();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [fraction, setFraction] = useState(0);
+  const pending = useRef<{ file: File; uploadId: string }>();
+  const requestId = useRef(crypto.randomUUID());
+  const submit = async () => {
+    if (!file || file.size < 1) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      if (file.size <= MAX_FILE) {
+        await call('artifact.create', await fileInput(file));
+      } else {
+        if (!available) throw new Error('Large-file storage is unavailable for this project');
+        let plan: UploadPlan;
+        if (pending.current?.file === file) {
+          plan = await call<UploadPlan>('artifact.upload_resume', {
+            uploadId: pending.current.uploadId,
+          });
+        } else {
+          setMessage('Hashing file…');
+          const sha256 = await fileHash(file, (value) => setFraction(value * 0.1));
+          const said = file.type.toLowerCase().split(';')[0]!.trim();
+          plan = await call<UploadPlan>('artifact.upload_begin', {
+            title: file.name.trim().slice(0, 300) || 'File',
+            size: file.size,
+            sha256,
+            mediaType: MEDIA_TYPE.test(said)
+              ? said
+              : (ENDING_TYPES.find(([ending]) => ending.test(file.name))?.[1] ??
+                'application/octet-stream'),
+            requestId: requestId.current,
+          });
+          pending.current = { file, uploadId: plan.uploadId };
+        }
+        let sent = 0;
+        while (true) {
+          for (const part of plan.parts) {
+            if (plan.completedParts.includes(part.partNumber)) {
+              sent += part.size;
+              continue;
+            }
+            setMessage(`Uploading part ${part.partNumber} of ${plan.partCount}…`);
+            const start = (part.partNumber - 1) * plan.partSize;
+            await putPart(part, file.slice(start, start + part.size), (loaded) =>
+              setFraction(0.1 + 0.9 * ((sent + loaded) / file.size)),
+            );
+            sent += part.size;
+            setFraction(0.1 + 0.9 * (sent / file.size));
+          }
+          if (plan.nextPart === null) break;
+          plan = await call<UploadPlan>('artifact.upload_resume', {
+            uploadId: plan.uploadId,
+            startPart: plan.nextPart,
+          });
+        }
+        setMessage('Verifying file…');
+        await call('artifact.upload_complete', { uploadId: plan.uploadId });
+      }
+      refreshTools('artifact.list');
+      close();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <fieldset disabled={busy}>
+        <label>
+          File{' '}
+          <input
+            type="file"
+            onChange={(event) => {
+              setFile(event.target.files?.[0]);
+              pending.current = undefined;
+              requestId.current = crypto.randomUUID();
+              setFraction(0);
+              setMessage('');
+            }}
+          />
+        </label>
+        <p className="muted">
+          {available
+            ? 'Large files upload directly to project storage.'
+            : 'Files over 2 MB need project storage, which is unavailable.'}
+        </p>
+        <button
+          className="btn btn--primary"
+          type="submit"
+          disabled={!file || (file.size > MAX_FILE && !available)}
+        >
+          {pending.current ? 'Resume upload' : 'Upload file'}
+        </button>
+      </fieldset>
+      {busy && <progress max={1} value={fraction} aria-label="Upload progress" />}
+      {message && <p role="status">{message}</p>}
+    </form>
+  );
 }
 
 /** URLs are issued on demand and discarded when their account/project or artifact changes. */
@@ -370,6 +520,7 @@ function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
 
 function ArtifactList() {
   const list = useTool<Artifact[]>('artifact.list', {}, { every: 10000 });
+  const storage = useTool<{ available: boolean }>('artifact.storage_status', {});
   const nameOf = useActorNames();
   const { actor } = useSession();
   const filter = useListFilter(list.data, {
@@ -385,6 +536,10 @@ function ArtifactList() {
       filter={filter}
       rows={filter.rows}
       opens
+      create={{
+        label: 'Upload file',
+        form: (close) => <UploadForm available={!!storage.data?.available} close={close} />,
+      }}
       emptyTitle="No files"
       // A file has no state; what it stands as is its type, its exact weight and its keeper.
       line={(a) => ({

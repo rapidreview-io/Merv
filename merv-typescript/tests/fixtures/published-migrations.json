@@ -38,6 +38,12 @@
       "published": true
     },
     {
+      "component": "artifacts",
+      "version": 2,
+      "hash": "eb040da5a039e77ee7225d046fa38c3cb1a48a84af11f37753579e36c5887301",
+      "published": false
+    },
+    {
       "component": "claims",
       "version": 1,
       "hash": "da705fe4a1574098d71f9a9674e7b09ce3d66216bf3c06d566d63dd23eb42a95",
