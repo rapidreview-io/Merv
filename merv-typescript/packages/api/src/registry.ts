@@ -137,7 +137,7 @@ export class ToolRegistry implements Tools {
             'invalid_input',
             'Tool input failed validation',
             400,
-            parsed.error.issues.map(({ path, message }) => ({ path, message })),
+            parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
           );
         return parsed.data;
       },

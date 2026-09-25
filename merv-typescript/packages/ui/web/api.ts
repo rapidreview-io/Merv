@@ -183,19 +183,15 @@ export async function accountRequest<T>(
         code: response.ok ? 'invalid_response' : `http_${response.status}`,
         message: response.statusText || 'The server returned an invalid response',
       };
-      // A validation answer names its fields; the page says them with the sentence.
+      // A validation answer's own sentences say what to fix; only a generic check needs its field.
       const details = Array.isArray(failure.details)
         ? failure.details
-            .map((d: { path?: unknown[]; message?: string }) =>
-              [d.path?.join('.'), d.message].filter(Boolean).join(' '),
+            .map((d: { path?: unknown[]; message?: string; code?: string }) =>
+              [d.code !== 'custom' && d.path?.join('.'), d.message].filter(Boolean).join(' '),
             )
             .join('; ')
         : '';
-      const error = new ApiError(
-        failure.code,
-        details ? `${failure.message}: ${details}` : failure.message,
-        response.status,
-      );
+      const error = new ApiError(failure.code, details || failure.message, response.status);
       if (response.status === 401 || error.code === 'membership_required') {
         for (const listener of authListeners) listener(error);
       }
