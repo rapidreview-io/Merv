@@ -272,6 +272,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   const app = await createApp({
     directory: join(directory, 'data'),
     config: { plugins: plugins(assets) },
+    feed: true,
   });
   t.after(() => app.stop());
   const url = app.ctx.api.url!;

@@ -54,6 +54,8 @@ export async function runFeedUnloadScenario(
     onCheckpoint(item);
   };
   try {
+    // The default configuration keeps Feed switched off; switch it on to take it away again.
+    for (const id of ['feed', 'feed-tools']) await app.setEnabled(id, true);
     const credentials = await app.ctx.scope.bootstrap({
       projectName: 'Feed unload acceptance',
       actorName: 'Operator',

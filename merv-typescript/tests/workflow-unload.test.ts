@@ -102,7 +102,6 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       scope: app.ctx.scope,
       artifacts: app.ctx.artifacts,
       reviews: app.ctx.reviews,
-      feed: app.ctx.feed,
       tools: app.ctx.tools,
       api: app.ctx.api,
     };
@@ -174,11 +173,11 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       (await call(client, 'artifact.read', { artifactId: artifact.id })).content,
       'Retained during workflow removal.',
     );
-    const post = await call(client, 'feed.post', {
-      body: 'Other services remain usable.',
-      requestId: 'during-unload',
+    const written = await call(client, 'artifact.create', {
+      title: 'Other services remain usable.',
+      content: 'Written during workflow removal.',
     });
-    assert.equal(post.body, 'Other services remain usable.');
+    assert.equal(written.title, 'Other services remain usable.');
     for (const [name, service] of Object.entries(original))
       assert.equal(app.ctx.get(name), service, `${name} was replaced`);
 

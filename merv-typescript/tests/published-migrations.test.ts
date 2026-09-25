@@ -47,7 +47,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   };
   try {
     const directory = mkdtempSync(join(tmpdir(), 'merv-migrations-'));
-    const app = await createApp({ directory, api: true, port: 0 });
+    const app = await createApp({ directory, api: true, port: 0, feed: true });
     stop(async () => {
       await app.stop();
       rmSync(directory, { recursive: true, force: true });

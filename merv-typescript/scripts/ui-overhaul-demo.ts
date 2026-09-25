@@ -215,19 +215,6 @@ async function main() {
     briefId: brief2.id,
     requestId: 'demo-task-2',
   });
-  await p('feed.post', {
-    body: 'Grokking reproduced at seed 7; validation crosses 95% near step 9.8k. Delivery submitted.',
-    artifactIds: [delivery.id],
-    requestId: 'demo-post-1',
-  });
-  await r('feed.post', {
-    body: 'Reviewed the curve against the brief: passes all three checks.',
-    requestId: 'demo-post-2',
-  });
-  await p('feed.post', {
-    body: 'Starting the weight-decay sweep next; expecting the step to move earlier with stronger decay.',
-    requestId: 'demo-post-3',
-  });
 
   // Real local session/registry calls using disposable demo data, not live agent processes.
   const owner = operator;
@@ -379,10 +366,6 @@ async function main() {
       goal: 'Define a bounded comparison.',
       checks: ['Write a clear hypothesis.'],
       requestId: 'preview-secondary-task',
-    });
-    await app.ctx.feed.post(caller, {
-      body: 'Synthetic preview: the project is ready for its first planning pass.',
-      requestId: 'preview-secondary-feed',
     });
   }
 

@@ -13,8 +13,8 @@ import { fakeGitHub, seedGit } from './ui-demo-git.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
- * two tasks (one reviewed and done, one awaiting delivery), a pinned review, and feed posts.
- * Type `disable feed`, `enable feed`, `disable ui`, `enable ui`, or `quit` on stdin.
+ * two tasks (one reviewed and done, one awaiting delivery) and a pinned review.
+ * Type `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) or `quit` on stdin.
  *
  * `--git` seeds the Git model as well: a bound and imported repository, units with their
  * commits, the bases the server merged from them and one publication. It runs in this process
@@ -184,19 +184,6 @@ async function main() {
     checks: ['Four runs complete', 'Grokking step reported per run'],
     briefId: brief2.id,
     requestId: 'demo-task-2',
-  });
-  await p('feed.post', {
-    body: 'Grokking reproduced at seed 7; validation crosses 95% near step 9.8k. Delivery submitted.',
-    artifactIds: [delivery.id],
-    requestId: 'demo-post-1',
-  });
-  await r('feed.post', {
-    body: 'Reviewed the curve against the brief: passes all three checks.',
-    requestId: 'demo-post-2',
-  });
-  await p('feed.post', {
-    body: 'Starting the weight-decay sweep next; expecting the step to move earlier with stronger decay.',
-    requestId: 'demo-post-3',
   });
 
   // Real local session/registry calls using disposable demo data, not live agent processes.

@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { FiberState } from 'cordis';
 import { MervError } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import { loadConfiguration, type ApplicationConfig } from '../src/config.js';
 import { resources } from './fixtures/loader-marker.js';
 
 const provider = {
@@ -126,14 +125,9 @@ test('configuration validation failures are reported as failed even when Cordis 
   }
 });
 
-test('disabling only optional feed in configuration leaves the API and task program available', async (t) => {
+test('the default configuration switches Feed off and leaves the API and task program available', async (t) => {
   const directory = temporary(t);
-  const config: ApplicationConfig = {
-    plugins: loadConfiguration({ directory, api: true, port: 0 }).entries.map((entry) =>
-      entry.id === 'feed' ? { ...entry, disabled: true } : entry,
-    ),
-  };
-  const app = await createApp({ directory, config });
+  const app = await createApp({ directory, api: true, port: 0 });
   try {
     const credentials = await app.ctx.scope.bootstrap({
       projectName: 'Configured feed removal',
@@ -144,13 +138,10 @@ test('disabling only optional feed in configuration leaves the API and task prog
     });
     const { tools } = (await response.json()) as { tools: { name: string }[] };
     assert.equal(response.status, 200);
-    assert.equal(tools.length, 83);
     assert.ok(tools.some((tool) => tool.name === 'task.create'));
     assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
-    assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'pending');
-    await app.setEnabled('feed', true);
-    assert.equal((await app.ctx.tools.list()).length, 87);
-    assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'active');
+    for (const id of ['feed', 'feed-tools'])
+      assert.equal(app.status().find((entry) => entry.id === id)?.state, 'disabled');
   } finally {
     await app.stop();
   }

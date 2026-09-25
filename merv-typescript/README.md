@@ -1,6 +1,6 @@
 # Merv TypeScript
 
-A small, durable Merv built from real [Cordis](https://github.com/cordiverse/cordis) plugins. Create a task, pin its brief, submit immutable evidence, and have a different actor review the submission. Share progress through the independent feed. Verdicts and task transitions commit together; work survives a server restart.
+A small, durable Merv built from real [Cordis](https://github.com/cordiverse/cordis) plugins. Create a task, pin its brief, submit immutable evidence, and have a different actor review the submission. Verdicts and task transitions commit together; work survives a server restart.
 
 ```mermaid
 flowchart LR
@@ -92,7 +92,7 @@ A JSON configuration has a `plugins` array. Each entry has a stable `id`, a modu
 
 `${directory}`, `${host}`, and `${port}` are the supported substitutions inside configuration values. An exact `${port}` retains its numeric type. Command-line host/port values supply substitutions; literal plugin values stay literal. State, blobs, registry, and API also validate their own configuration before acquiring resources or publishing services. `init` and `actor` keep their minimal State/Scope composition and do not accept `--config`.
 
-Cordis's loader waits for the whole dependency tree. Merv then checks required entries and their activation errors before reporting readiness. An entry defaults to required; disabled entries are intentional absences. Feed and its tool adapter are optional in the default configuration, so disabling only the feed provider lets the rest of the application start. Code, CodeResearch and their adapters are also optional; [the no-Code configuration](config/no-code.example.json) supports research without Git. Existing Git obligations remain pending when their provider is unavailable. Other custom optional failures remain visible in status. Dependencies are never silently installed to repair an invalid composition.
+Cordis's loader waits for the whole dependency tree. Merv then checks required entries and their activation errors before reporting readiness. An entry defaults to required; disabled entries are intentional absences. Feed, its tool adapter and its page are kept but disabled in the default configuration; clear `disabled` on all three to switch Feed on. Code, CodeResearch and their adapters are also optional; [the no-Code configuration](config/no-code.example.json) supports research without Git. Existing Git obligations remain pending when their provider is unavailable. Other custom optional failures remain visible in status. Dependencies are never silently installed to repair an invalid composition.
 
 Startup JSON includes `plugins` status without configuration values. In an embedded application, `app.status()` returns current entry IDs, module names, lifecycle states, readiness requirements, and missing dependencies; `app.getFiber(id)` resolves the current Cordis handle. `app.setEnabled(id, false)` and `app.setEnabled(id, true)` operate through the loader and await completion. Runtime toggles are in-memory; edit the JSON configuration to retain a choice across restarts. Source-file watching and automatic code reload are not enabled by this step.
 

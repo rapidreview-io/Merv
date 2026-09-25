@@ -38,7 +38,7 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 87);
+    assert.equal(catalog.length, 83);
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     for (const name of [

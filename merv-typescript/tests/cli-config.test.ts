@@ -242,11 +242,9 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
       'required',
       'state',
     ]);
-    assert.equal(entry.state, 'active');
-    assert.equal(
-      entry.required,
-      config.plugins.find((configured) => configured.id === entry.id)!.required !== false,
-    );
+    const configured = config.plugins.find(({ id }) => id === entry.id)!;
+    assert.equal(entry.state, configured.disabled ? 'disabled' : 'active');
+    assert.equal(entry.required, configured.required !== false);
     assert.deepEqual(entry.missingDependencies, []);
   }
   assert.doesNotMatch(process.stdout, /SYNTHETIC_CONFIG_VALUE_MUST_NOT_BE_LOGGED/);
@@ -257,10 +255,10 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   });
   assert.equal(response.status, 200);
   const catalog = (await response.json()) as { tools: { name: string }[] };
-  assert.equal(catalog.tools.length, 90);
+  assert.equal(catalog.tools.length, 86);
   assert.ok(catalog.tools.some((tool) => tool.name === 'task.reissue_review'));
   assert.ok(catalog.tools.some((tool) => tool.name === 'ui.shell'));
-  assert.ok(catalog.tools.some((tool) => tool.name === 'feed.post'));
+  assert.ok(!catalog.tools.some((tool) => tool.name.startsWith('feed.')));
   assert.ok(await stored(dataDirectory), 'serve keeps its state in the data directory schema');
   assert.equal((await process.stop()).code, 0);
   await assert.rejects(fetch(`${ready.url}/health`));

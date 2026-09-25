@@ -59,7 +59,7 @@ Type `quit` on the fixture terminal, or send SIGINT, to close it. `disable <plug
 - Six tasks in the main project: reviewed/done, working, awaiting independent review, blocked on a prerequisite, failed, and prior agent work. Two secondary projects each have one planning task.
 - Three continuing agents: one live assignment, one idle agent, one retired agent. Real registry calls recorded tool-call history and payload-token estimates; a local heartbeat keeps the active assignment alive.
 - Five claims across three projects; three experiments, including an abandoned experiment.
-- A research cycle in the researching stage, a populated problem document and feed posts.
+- A research cycle in the researching stage and a populated problem document.
 - Sixty-five synthetic archived experiments, sufficient to test archive pagination and list/detail navigation. The optional history adapter uses the existing archive import and reader APIs.
 
 ## Verification and limits

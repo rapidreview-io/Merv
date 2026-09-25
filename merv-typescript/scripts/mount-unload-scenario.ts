@@ -76,6 +76,8 @@ export async function runMountUnloadScenario(
     const config = JSON.parse(
       readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
     ) as ApplicationConfig;
+    // Feed is off by default; here it is native work that continues beside the mount.
+    for (const entry of config.plugins) if (entry.id.startsWith('feed')) entry.disabled = false;
     config.plugins.find((entry) => entry.id === 'scope')!.config = {
       grants: [identity.operator, caller].map((who) => ({
         ...who,

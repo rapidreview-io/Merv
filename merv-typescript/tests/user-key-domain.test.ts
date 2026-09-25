@@ -10,7 +10,7 @@ import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js
 
 test('machine domain writes preserve key provenance, while key withdrawal preserves the owner and review claim', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-key-domain-'));
-  const app = await createApp({ directory });
+  const app = await createApp({ directory, feed: true });
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

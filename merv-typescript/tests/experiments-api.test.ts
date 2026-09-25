@@ -18,7 +18,7 @@ async function fixture(t: TestContext) {
   config.plugins.find((entry) => entry.id === 'ui')!.config = {
     assets: join(directory, 'unused-assets'),
   };
-  const app = await createApp({ directory, config, port: 0 });
+  const app = await createApp({ directory, config, port: 0, feed: true });
   const clients: Client[] = [];
   t.after(async () => {
     await Promise.allSettled(clients.map((client) => client.close()));

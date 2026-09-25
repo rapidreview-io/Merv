@@ -209,7 +209,8 @@ async function prepare(
 ): Promise<Prepared> {
   const directory = await mkdtemp(join(tmpdir(), 'merv-version-retirement-'));
   t.after(async () => await rm(directory, { recursive: true, force: true }));
-  const app = await createApp({ directory });
+  // Feed is off by default, but production's database keeps its posts: boot it to hold them.
+  const app = await createApp({ directory, feed: true });
   let seed: Seed;
   let live: Caller;
   let dependentTaskId: string | undefined;
