@@ -359,36 +359,27 @@ function Model({
   );
 }
 
-/** Where a turn's machine or model changed, against the last earlier turn that recorded each: a
- * turn stopped before a worker claimed it recorded no model. */
-function Changed({
-  turns,
-  host,
-  models,
-}: {
-  turns: PiCommand[];
-  host?: PiHostView;
-  models?: PiModel[];
-}) {
-  const turn = turns.at(-1)!;
+/** Where turn `at` moved machine or switched model, against the last earlier turn that recorded
+ * each: a turn stopped before a worker claimed it recorded no model. */
+function changed(all: PiCommand[], at: number, host?: PiHostView, models?: PiModel[]) {
   const since = (key: 'machine' | 'model') => {
-    const before = turns
-      .slice(0, -1)
+    const before = all
+      .slice(0, at)
       .reverse()
-      .find((earlier) => earlier[key])?.[key];
-    return before && turn[key] !== before ? turn[key] : undefined;
+      .find((turn) => turn[key])?.[key];
+    return before && all[at][key] !== before ? all[at][key] : undefined;
   };
   const [machine, model] = [since('machine'), since('model')];
-  if (!machine && !model) return null;
+  const words = [
+    machine && `Moved to ${label(host, machine)}`,
+    model && `Switched to ${models?.find(({ id }) => id === model)?.label ?? model}`,
+  ].filter(Boolean);
   return (
-    <p className="pi-divider">
-      {[
-        machine && `Moved to ${label(host, machine)}`,
-        model && `Switched to ${models?.find(({ id }) => id === model)?.label ?? model}`,
-      ]
-        .filter(Boolean)
-        .join(' · ')}
-    </p>
+    words.length > 0 && (
+      <p className="pi-divider" key={`${all[at].id}-changed`}>
+        {words.join(' · ')}
+      </p>
+    )
   );
 }
 
@@ -881,12 +872,7 @@ function PiConversationPage() {
           }}
         >
           {snapshot?.commands.flatMap((item, at, all) => [
-            <Changed
-              key={`${item.id}-changed`}
-              turns={all.slice(0, at + 1)}
-              host={host}
-              models={snapshot.models}
-            />,
+            changed(all, at, host, snapshot.models),
             ...item.messages.map((message, index) => (
               <article
                 className={`pi-message pi-message--${message.role}`}
