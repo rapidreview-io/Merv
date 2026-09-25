@@ -132,6 +132,8 @@ test('each change of the machine reaches every open page that shares it, and onl
   const elsewhere = await f.create(await f.scope.caller(alice, two.id));
   const heard = new Set<string>();
   for (const { id } of [b, elsewhere]) f.pi.streams.subscribe(id, () => heard.add(id));
+  // An answer streaming in b keeps its text through the machine's changes.
+  f.pi.streams.publish(b.id, { commandId: 'turn', type: 'text', text: 'Half an answer' });
   for (const change of [
     () => f.pi.warm(inOne, { requestId: 'warm', conversationId: a.id }),
     () => f.pi.setMachine(inOne, { machine: 'large' }),
@@ -141,6 +143,7 @@ test('each change of the machine reaches every open page that shares it, and onl
     await change();
     assert.deepEqual([...heard], [b.id]);
   }
+  assert.equal(f.pi.streams.snapshot(b.id).tail[0]?.text, 'Half an answer');
   // The popover's idle wait is the configured one.
   assert.equal((await f.pi.snapshot(inOne, b.id)).host.idleSeconds, 5);
 });

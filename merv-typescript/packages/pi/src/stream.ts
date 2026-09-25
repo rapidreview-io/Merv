@@ -75,6 +75,13 @@ export class PiStreams {
     for (const listener of tail.listeners) listener();
   }
 
+  /** Asks the open pages of `id`, if any, to re-read, keeping its tail: a turn there may be
+   * streaming. */
+  nudge(id: string): void {
+    if (this.tails.get(id)?.listeners.size)
+      this.publish(id, { commandId: '', type: 'changed', text: '' });
+  }
+
   changed(id: string, commandId = ''): void {
     const tail = this.get(id);
     tail.events = [];

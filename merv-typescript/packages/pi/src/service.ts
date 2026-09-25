@@ -165,6 +165,8 @@ export class PiService implements Pi, FleetOwner {
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
    * announcement only makes an open page read again. */
   private readonly unsent = new Set<string>();
+  /** Conversations sharing a host a transaction saved: they read it from their own snapshots. */
+  private readonly sharers = new Set<string>();
   /** The Pi host identity, which rents every slot; never the person. */
   private renter?: Caller;
   private timer?: ReturnType<typeof setInterval>;
@@ -312,8 +314,8 @@ export class PiService implements Pi, FleetOwner {
     );
     return row ? decode(row) : null;
   }
-  /** Every conversation sharing the host reads it from its own snapshot, so each open page of
-   * them re-reads once the transaction commits (announce). */
+  /** Each open page of the conversations sharing the host re-reads once the transaction commits
+   * (announce). */
   private async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
     host.revision++;
     await tx.run(
@@ -324,7 +326,7 @@ export class PiService implements Pi, FleetOwner {
       host.createdAt,
       JSON.stringify(host),
     );
-    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.unsent.add(id);
+    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.sharers.add(id);
   }
   /** The person's conversations that share the host `key`. */
   private async sharing(sql: Sql, userId: string, key: string) {
@@ -653,11 +655,14 @@ export class PiService implements Pi, FleetOwner {
     this.live.set(id, { ...this.live.get(id), turn });
     this.show(id, turn);
   }
-  /** Open pages re-read what a committed transaction changed: the turns it ended or moved, every
-   * conversation of a host it saved, and `ids`. Fleet reconciles now, not at its tick. */
+  /** Open pages re-read what a committed transaction changed: the turns it ended or moved, and
+   * `ids`; and, keeping any text streaming there, every conversation of a host it saved. Fleet
+   * reconciles now, not at its tick. */
   private announce(...ids: string[]): void {
     for (const id of [...this.unsent, ...ids]) this.streams.changed(id);
+    for (const id of this.sharers) this.streams.nudge(id);
     this.unsent.clear();
+    this.sharers.clear();
     this.fleet.kick();
   }
   async authorizeStream(caller: Caller, id: string): Promise<void> {
