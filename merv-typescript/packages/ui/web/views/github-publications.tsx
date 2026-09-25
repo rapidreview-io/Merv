@@ -1,8 +1,20 @@
+import type { CodeProjectStatus } from '@merv/contracts/code';
 import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
-import { Ago, KV, Short, StatusPill, Summary, kindStyle, words } from '../components';
+import {
+  Ago,
+  Area,
+  Failure,
+  KV,
+  Short,
+  StatusPill,
+  Summary,
+  kindStyle,
+  words,
+} from '../components';
 import { ExternalIcon } from '../icons';
+import { useCommand } from '../mutations';
 
 /**
  * A sealed proposal, published: one row per pull request, in the grammar GitHub
@@ -64,12 +76,73 @@ export function usePublications() {
   return { rows, error, reload: load };
 }
 
+type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
+
+/**
+ * The release canary as the signed-in operator who ran it attests it: whether GitHub let
+ * a deliberately stale merge through. Publication waits on a passing one; a failed one
+ * stops it until a later pass and an explicit clear, which is offered only then.
+ */
+function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
+  const [reason, setReason] = useState<string>();
+  const command = useCommand<unknown>({
+    tool: 'code.publication.control',
+    validate: (value) => !!value && typeof value === 'object',
+    onSuccess: () => {
+      setReason(undefined);
+      onDone();
+    },
+  });
+  const { canary } = controls;
+  const act = (label: string, input: Record<string, unknown>) => (
+    <button
+      className="btn"
+      disabled={command.busy || !reason?.trim()}
+      onClick={() => void command.submit({ ...input, reason })}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <>
+      <p className="cluster">
+        Canary <StatusPill value={!canary ? 'missing' : canary.staleMerged ? 'failed' : 'passed'} />
+        {controls.disabled && <StatusPill value="disabled" />}
+        {reason === undefined && (
+          <button className="btn" onClick={() => setReason('')}>
+            Record canary
+          </button>
+        )}
+      </p>
+      {reason !== undefined && (
+        <div className="stack" role="group" aria-label="Record canary">
+          <Area label="Evidence" value={reason} onChange={setReason} rows={3} />
+          <Failure message={command.error} />
+          <div className="cluster">
+            {act('Stale merge refused', { action: 'record_canary', staleMerged: false })}
+            {act('Stale merge went through', { action: 'record_canary', staleMerged: true })}
+            {controls.disabled &&
+              canary &&
+              !canary.staleMerged &&
+              act('Clear disablement', { action: 'clear' })}
+            <button className="btn" disabled={command.busy} onClick={() => setReason(undefined)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function GitHubPublications({
   rows,
   error,
   reload,
   operator,
   named,
+  controls,
+  onControlled,
 }: {
   rows: CodePublication[];
   error: string;
@@ -78,6 +151,9 @@ export function GitHubPublications({
   operator: boolean;
   /** Who reviewed and who merged, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;
+  /** Where the project publishes at all: what its merges wait on besides a review. */
+  controls?: Controls;
+  onControlled(): void;
 }) {
   const epoch = useScopeVersion();
   const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
@@ -321,6 +397,7 @@ export function GitHubPublications({
           </button>
         )}
       </div>
+      {operator && controls && <Canary controls={controls} onDone={onControlled} />}
       {(error || failed) && <p role="alert">{error || failed}</p>}
       {rows.length > 0 && <div className="rows">{rows.map(row)}</div>}
     </section>

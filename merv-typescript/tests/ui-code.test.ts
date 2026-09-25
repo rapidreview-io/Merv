@@ -1388,6 +1388,71 @@ test('publishing that is off says why, and a fold with no machinery does not ope
   assert.equal(document.querySelector('.code-ops'), null, text().slice(0, 400));
 });
 
+test('the release canary is recorded by the signed-in operator where publication is, and by nobody else', async (t) => {
+  t.after(unmount);
+  const controls = { blockers: ['code_publication_canary_required'] };
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/code.publication.control', (_call, body) => {
+    sent.push(body);
+    return { body: { result: { canary: { staleMerged: false } } } };
+  });
+  // A reader who is not a signed-in operator is shown neither the state nor a control.
+  servedProject({ publication: { records: [], controls } });
+  await mount(page([row], { manages: true, signedIn: false }));
+  assert.ok(!text().includes('Canary'), text().slice(0, 600));
+  await unmount();
+
+  servedProject({ publication: { records: [], controls } });
+  serve('/tools/code.publication.control', (_call, body) => {
+    sent.push(body);
+    return { body: { result: { canary: { staleMerged: false } } } };
+  });
+  await mount(page());
+  const section = () => document.querySelector('[aria-label="Pull requests"]')!.textContent!;
+  assert.ok(/Canary\s*missing/i.test(section()), section());
+  await click('Record canary');
+  // Nothing can be recorded without the evidence it rests on.
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="Record canary"] button',
+  ))
+    if (button.textContent !== 'Cancel') assert.ok(button.disabled, button.textContent!);
+  await write('Evidence', 'PR #3 refused: strict checks required, App has no bypass');
+  await click('Stale merge refused');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(
+    { ...sent[0], requestId: typeof sent[0]!.requestId },
+    {
+      action: 'record_canary',
+      staleMerged: false,
+      reason: 'PR #3 refused: strict checks required, App has no bypass',
+      requestId: 'string',
+    },
+  );
+  assert.equal(document.querySelector('[aria-label="Record canary"]'), null, 'the form closes');
+});
+
+test('a failed canary is cleared only once a passing one stands, and never before', async (t) => {
+  t.after(unmount);
+  const failed = { actorId: 'a', reason: 'r', at: '', bindingHash: 'h', staleMerged: true };
+  servedProject({
+    publication: { records: [], controls: { disabled: true, canary: failed, blockers: [] } },
+  });
+  await mount(page());
+  assert.ok(/Canary\s*failed/i.test(text()), text().slice(0, 600));
+  await click('Record canary');
+  assert.ok(!text().includes('Clear'), 'a clear the server refuses is not offered');
+  await unmount();
+  servedProject({
+    publication: {
+      records: [],
+      controls: { disabled: true, canary: { ...failed, staleMerged: false }, blockers: [] },
+    },
+  });
+  await mount(page());
+  await click('Record canary');
+  assert.ok(text().includes('Clear disablement'), text().slice(0, 600));
+});
+
 test('a superseded publication names the wave that replaced it, and never its id', async (t) => {
   t.after(unmount);
   const later = published({ proposalId: 'p2', instanceId: 'u7', title: 'Wave two' });
