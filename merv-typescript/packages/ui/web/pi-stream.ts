@@ -21,7 +21,6 @@ export interface PiMachine {
   vcpu: number;
   memoryGiB: number;
   diskGB: number;
-  maxHourlyUsd: number;
 }
 export interface PiMachineOption extends PiMachine {
   available: boolean;
@@ -44,7 +43,6 @@ export interface PiHostView {
   state: 'none' | 'starting' | 'ready';
   idleEndsAt: string | null;
   idleSeconds: number;
-  shared: { conversations: number; projects: number };
   moving: { to: string; by: PiMoveBy; since: string } | null;
   lastMove: PiMove | null;
 }

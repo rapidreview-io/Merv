@@ -78,10 +78,6 @@ test('one machine per person per project: their conversations share it, another 
       [f.hostCaller.projectId, 'pi-host'],
     ],
   );
-  assert.deepEqual((await f.pi.snapshot(inOne, first.id)).host.shared, {
-    conversations: 2,
-    projects: 1,
-  });
 });
 
 test('keyed per person, two projects’ turns run at once on one machine, and losing one project fails only its turn', async (t) => {
@@ -98,10 +94,6 @@ test('keyed per person, two projects’ turns run at once on one machine, and lo
   const a = await f.send(chatOne, 'a', inOne);
   const b = await f.send(await f.create(inTwo), 'b', inTwo);
   assert.deepEqual([b.hostId, b.runtimeId], [a.hostId, a.runtimeId]);
-  assert.deepEqual((await f.pi.snapshot(inOne, chatOne.id)).host.shared, {
-    conversations: 2,
-    projects: 2,
-  });
   const token = await f.token(a.runtimeId);
   await f.fleet.tick();
   await f.fleet.tick();

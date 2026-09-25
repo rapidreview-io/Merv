@@ -209,13 +209,6 @@ function Machine({
   const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
   if (!on) return null;
   const chosen = moving?.to ?? on.key;
-  const { conversations, projects } = host.shared;
-  const minutes = Math.max(1, Math.round(host.idleSeconds / 60));
-  const facts = [
-    `Shared by your ${conversations > 1 ? `${conversations} ` : ''}conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
-    `Stops ${minutes} minute${minutes > 1 ? 's' : ''} after the last answer in any of them.`,
-    `Up to $${on.maxHourlyUsd.toFixed(2)}/h.`,
-  ];
   const close = (then = () => {}) => {
     setMenu(false);
     box.current?.querySelector('button')?.focus();
@@ -261,11 +254,13 @@ function Machine({
           className="pi-menu"
           role="menu"
           aria-label="Machine"
-          aria-describedby="pi-machine-facts"
+          aria-describedby={menu === 'stop' ? 'pi-machine-stop' : undefined}
         >
-          <p className="pi-menu-note" id="pi-machine-facts" role="none">
-            {menu === 'stop' ? 'Answers still running here stop too.' : facts.join(' ')}
-          </p>
+          {menu === 'stop' && (
+            <p className="pi-menu-note" id="pi-machine-stop" role="none">
+              Answers still running here stop too.
+            </p>
+          )}
           {menu === 'pick' &&
             host.catalog.map((machine) => (
               <button
@@ -850,10 +845,27 @@ function PiConversationPage() {
             disabled={blocked}
             onFocus={warmUp}
             onChange={(event) => setDraft(event.target.value)}
+            enterKeyHint="send"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void send();
+              // Enter sends; ⌘/Ctrl+Enter starts a new line, as do Shift+ and Option+Enter natively.
+              // Enter that picks an input-method candidate (229 in Safari) is the method's own.
+              const { key, keyCode, metaKey, ctrlKey, shiftKey, altKey, nativeEvent } = event;
+              if (
+                key !== 'Enter' ||
+                shiftKey ||
+                altKey ||
+                nativeEvent.isComposing ||
+                keyCode === 229
+              )
+                return;
+              event.preventDefault();
+              const area = event.currentTarget;
+              if (!(metaKey || ctrlKey)) void send();
+              // Typed as input, so it can be undone and React sees the box change; where the
+              // deprecated command is gone, put in by hand and announced as input.
+              else if (!area.readOnly && !document.execCommand?.('insertText', false, '\n')) {
+                area.setRangeText('\n', area.selectionStart, area.selectionEnd, 'end');
+                area.dispatchEvent(new Event('input', { bubbles: true }));
               }
             }}
           />

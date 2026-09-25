@@ -605,7 +605,6 @@ export class PiService implements Pi, FleetOwner {
     const catalog = await this.catalog(source, tx);
     const live = host && !this.idleOver(host) ? host : null;
     const shown = live?.current && catalog.find(({ key }) => key === live.current!.machine);
-    const shared = await this.sharing(tx, userId, this.key(userId, projectId));
     return {
       machine: shown ? (({ available: _a, reason: _r, ...machine }) => machine)(shown) : null,
       preferred: await this.starting(person, source, tx),
@@ -615,10 +614,6 @@ export class PiService implements Pi, FleetOwner {
         ? new Date(Date.parse(live.idleSince) + this.config.idleTimeoutSeconds * 1000).toISOString()
         : null,
       idleSeconds: this.config.idleTimeoutSeconds,
-      shared: {
-        conversations: shared.length,
-        projects: new Set(shared.map(({ project_id }) => project_id)).size,
-      },
       moving: live?.next
         ? { to: live.next.machine, by: live.next.by, since: this.movingSince(live.next) }
         : null,

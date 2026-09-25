@@ -86,7 +86,6 @@ const host = (state: 'none' | 'starting' | 'ready' = 'ready', extra: object = {}
   state,
   idleEndsAt: null,
   idleSeconds: 600,
-  shared: { conversations: 1, projects: 1 },
   moving: null,
   lastMove: null,
   ...extra,
@@ -287,6 +286,62 @@ test('a question typed right after New conversation is kept and sent into it', a
   assert.equal(sent.length, 2);
   assert.equal(sent[1].id, 'conversation_2');
   assert.equal(sent[1].text, 'Asked at once?');
+});
+
+test('Enter sends, and ⌘/Ctrl+Enter starts a new line where the cursor is', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.warm', { body: { result: snapshot(conversation()) } });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await settle(10);
+  const area = document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
+  // Whether the page kept the key from the browser; a key it lets through does its native thing.
+  const press = async (init: KeyboardEventInit) => {
+    let kept = false;
+    await act(async () => {
+      kept = !area.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+    });
+    await settle(10);
+    return kept;
+  };
+  assert.equal(area.getAttribute('enterkeyhint'), 'send');
+  // A new line the person deletes again is gone from what is sent.
+  await write('ab');
+  area.setSelectionRange(1, 1);
+  assert.equal(await press({ metaKey: true }), true);
+  assert.equal(area.value, 'a\nb');
+  await write('ab');
+  assert.equal(await press({}), true);
+  assert.equal(sent.at(-1)?.text, 'ab');
+  await write('ab');
+  area.setSelectionRange(1, 1);
+  for (const init of [{ metaKey: true }, { ctrlKey: true }]) assert.equal(await press(init), true);
+  assert.equal(area.value, 'a\n\nb');
+  assert.equal(area.selectionStart, 3);
+  for (const init of [
+    { shiftKey: true },
+    { altKey: true },
+    { isComposing: true },
+    { keyCode: 229 },
+  ])
+    assert.equal(await press(init), false);
+  assert.equal(sent.length, 1);
+  assert.equal(await press({}), true);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].text, 'a\n\nb');
 });
 
 test('a question sent while the first warm-up is under way goes to the conversation it opens', async (t) => {
@@ -1200,28 +1255,24 @@ test('the bar names the machine every conversation here shares, and its picker s
   t.after(cleanup);
   setProject('p1');
   const shared = host('ready', {
-    shared: { conversations: 3, projects: 1 },
-    idleSeconds: 900,
     catalog: [
       { ...standard, available: true },
       { ...large, available: false, reason: 'needs write access in this project' },
     ],
   });
-  const stream = boot(
+  boot(
     () => snapshot(conversation(), [], 0, [], true, shared),
     () => [conversation()],
   );
-  const facts = () =>
-    document.getElementById(
-      document.querySelector('.pi-machine [role="menu"]')!.getAttribute('aria-describedby')!,
-    )?.textContent;
   await open();
   assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
   assert.equal(note().getAttribute('aria-haspopup'), 'menu');
   await act(async () => note().click());
+  // The picker is its machines alone: no note explains the machine.
+  assert.equal(document.querySelector('.pi-machine .pi-menu-note'), null);
   assert.equal(
-    facts(),
-    'Shared by your 3 conversations here. Stops 15 minutes after the last answer in any of them. Up to $0.07/h.',
+    document.querySelector('.pi-machine [role="menu"]')!.hasAttribute('aria-describedby'),
+    false,
   );
   assert.deepEqual(
     picker().map((item) => [item.textContent, item.getAttribute('aria-checked')]),
@@ -1245,13 +1296,6 @@ test('the bar names the machine every conversation here shares, and its picker s
   await act(async () => picker()[0].click());
   assert.equal(picker().length, 0);
   assert.ok(!requests.some((request) => request.includes('pi.machine')));
-  // A machine keyed to the person alone is shared across their projects, and says so.
-  const everywhere = { ...shared, shared: { conversations: 4, projects: 2 } };
-  await act(async () =>
-    stream.push('snapshot', snapshot(conversation(), [], 1, [], true, everywhere)),
-  );
-  await act(async () => note().click());
-  assert.match(facts()!, /^Shared by your 4 conversations in 2 projects\. /);
 });
 
 test('picking Large counts the move while the machine still serves, and a failure says where it stays', async (t) => {
@@ -1348,10 +1392,6 @@ test('releasing the machine asks first, then releases it for every conversation 
   );
   await open();
   await act(async () => note().click());
-  assert.match(
-    text(),
-    /Shared by your conversations here\. Stops 10 minutes after the last answer in any of them\./,
-  );
   await act(async () => picker()[2].click());
   assert.equal(stopped, 0);
   assert.match(text(), /Answers still running here stop too./);
