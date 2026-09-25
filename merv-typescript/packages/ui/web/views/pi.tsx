@@ -561,6 +561,7 @@ function PiConversationPage() {
     (item) => item.id === snapshot.conversation.activeCommandId,
   );
   const latest = snapshot?.commands.at(-1);
+  const proposing = snapshot?.commands.filter((item) => item.proposals?.length).at(-1);
   const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
   const active = inFlight(status);
   const blocked = refused || snapshot?.available === false;
@@ -842,6 +843,18 @@ function PiConversationPage() {
                 {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
               </p>
             ),
+            // The latest calls the agent proposed stay under their turn until it proposes again.
+            ...(item === proposing
+              ? item.proposals!.map((proposal) => (
+                  <Proposal
+                    key={proposal.id}
+                    proposal={proposal}
+                    secret={secrets[proposal.id]}
+                    disabled={active || busy || !!running}
+                    run={() => void run(item.id, proposal)}
+                  />
+                ))
+              : []),
           ])}
           {visible && (visible.text || visible.progress) && (
             <article className="pi-message pi-message--assistant pi-message--transient">
@@ -850,15 +863,6 @@ function PiConversationPage() {
               {visible.progress && <p className="muted">{visible.progress}</p>}
             </article>
           )}
-          {latest?.proposals?.map((proposal) => (
-            <Proposal
-              key={proposal.id}
-              proposal={proposal}
-              secret={secrets[proposal.id]}
-              disabled={active || busy || !!running}
-              run={() => void run(latest.id, proposal)}
-            />
-          ))}
           {active && !unavailable && (
             // Where the eye waits; the bar above already says it aloud.
             <p className="pi-state" aria-hidden="true">

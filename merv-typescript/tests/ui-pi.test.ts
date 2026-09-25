@@ -1522,10 +1522,19 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
     ['Ran artifact.read; its result is shown only to me.'],
   );
   assert.ok(!JSON.stringify(sent).includes('sig=abc'));
-  state = snapshot(conversation(), [turn('completed', { pip_download: { at: 'now', ok: true } })]);
+  // The turn that answered proposes nothing: the other call stays under its own turn, to run.
+  state = snapshot(conversation(), [
+    turn('completed', { pip_download: { at: 'now', ok: true } }),
+    command('c2', 'completed', [
+      { role: 'user', text: 'Ran artifact.read; its result is shown only to me.' },
+      { role: 'assistant', text: 'Downloaded.' },
+    ]),
+  ]);
   await act(async () => stream.push('snapshot', state));
+  assert.equal(cards().length, 2);
   assert.equal(buttons()[1].disabled, true);
   assert.equal(buttons()[1].textContent, 'Ran');
+  assert.equal(buttons()[0].disabled, false);
   await act(async () => buttons()[0].click());
   await settle(10);
   assert.equal(sent[1].text, 'fleet.halt was refused: Actor lacks admin permission');
