@@ -68,11 +68,27 @@ const codexRequest = z
   })
   .strict();
 
+/** Whether anything in the request would have the provider fetch or look up content of its own:
+ *  a file by id or URL, a remote image, a stored item, or a schema reference outside the tool. */
+const fetches = (value: unknown, depth = 0): boolean => {
+  if (depth > 32) return true;
+  if (Array.isArray(value)) return value.some((entry) => fetches(entry, depth + 1));
+  if (value === null || typeof value !== 'object') return false;
+  return Object.entries(value).some(
+    ([key, entry]) =>
+      ['file_id', 'file_url'].includes(key) ||
+      (key === 'image_url' && !(typeof entry === 'string' && entry.startsWith('data:'))) ||
+      (key === 'type' && ['input_file', 'item_reference'].includes(entry as string)) ||
+      (['$ref', '$dynamicRef'].includes(key) && !String(entry).startsWith('#')) ||
+      fetches(entry, depth + 1),
+  );
+};
+
 /** The upstream body for a hosted Codex call, or null: the binding's model, its effort whatever
  *  the worker asked, and the relay's own output cap. */
 export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   const parsed = codexRequest.safeParse(raw);
-  if (!parsed.success || parsed.data.model !== grant.model) return null;
+  if (!parsed.success || parsed.data.model !== grant.model || fetches(raw)) return null;
   const { reasoning, ...rest } = parsed.data;
   return {
     ...rest,
@@ -86,8 +102,10 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
 
 /**
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
- * provider key. Each session has one call in flight, and a person's tokens for the day, kept in
- * the database across restarts, stop further calls once they reach the ceiling.
+ * provider key. Each session has one call in flight. A call is charged to its person's day before
+ * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
+ * when it finishes; one that never finishes keeps its charge. The day's total, kept in the
+ * database across restarts, refuses any call that would pass the ceiling.
  */
 export async function codexModelRelay(
   sessions: Sessions,
@@ -95,6 +113,8 @@ export async function codexModelRelay(
   options: { providerKey: () => string; dailyTokensPerPerson: number },
 ): Promise<ModelRelayConfig<ManagedModelGrant, 'codex'>> {
   await state.migrate('fleet_workflow', [usageMigration]);
+  // The day each session's one call in flight was charged to.
+  const days = new Map<string, string>();
   return {
     name: 'codex',
     route: '/codex-model/responses',
@@ -103,22 +123,26 @@ export async function codexModelRelay(
     providerKey: options.providerKey,
     authority: {
       authorize: (token) => sessions.managedModelGrant(token),
-      validate: async (grant) => {
-        await sessions.managedModelGrant(grant.id);
-        const spent = await state.read((sql) =>
-          sql.get<{ tokens: number | string }>(
-            'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
+      validate: async (grant) => void (await sessions.managedModelGrant(grant.id)),
+    },
+    reserve: async (grant, body) => {
+      const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
+      const today = day();
+      const charged =
+        most <= options.dailyTokensPerPerson &&
+        (await state.transaction((tx) =>
+          tx.get(
+            'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens WHERE fleet_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
             grant.person,
-            day(),
+            today,
+            most,
+            options.dailyTokensPerPerson,
           ),
-        );
-        check(
-          Number(spent?.tokens ?? 0) < options.dailyTokensPerPerson,
-          'fleet_model_ceiling',
-          'The daily model token ceiling is reached',
-          403,
-        );
-      },
+        ));
+      if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
+      check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);
+      days.set(grant.id, today);
+      return most;
     },
     grant: (raw) => raw as ManagedModelGrant,
     payload: codexPayload,
@@ -128,14 +152,15 @@ export async function codexModelRelay(
     // A second, in-memory bound: a step's calls, far beyond what one takes.
     maxRequestsPerGrant: 1000,
     onFailure: log,
-    onUsage: async (record, grant) => {
+    // Settles the day the call was charged to, even past midnight.
+    onUsage: async (record, grant, reserved) => {
       log(record);
       await state.transaction((tx) =>
         tx.run(
-          'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens',
+          'UPDATE fleet_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
+          record.inputTokens + record.outputTokens - reserved,
           grant.person,
-          day(),
-          record.inputTokens + record.outputTokens,
+          days.get(grant.id) ?? day(),
         ),
       );
     },

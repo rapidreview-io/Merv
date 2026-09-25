@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { MervError } from '@merv/contracts';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
-import { codexModelRelay } from '../packages/fleet/src/codex-relay.js';
+import { codexModelRelay, codexPayload } from '../packages/fleet/src/codex-relay.js';
 import { openState } from './fixtures/state.js';
 
 const key = 'private-provider-key';
@@ -95,8 +95,9 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
     return `http://127.0.0.1:${(server.address() as AddressInfo).port}/codex-model/responses`;
   };
   const url = await start();
-  const call = (body: unknown = codex, to = url) =>
+  const call = (body: unknown = codex, to = url, signal?: AbortSignal) =>
     fetch(to, {
+      signal,
       method: 'POST',
       headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -157,6 +158,26 @@ test('only Codex-shaped calls pass: no stored, background or chained response, a
     },
     { ...codex, tool_choice: { type: 'web_search' } },
     { ...codex, include: ['file_search_call.results'] },
+    // Nothing the provider would fetch or look up for the worker.
+    ...[
+      { type: 'input_file', file_url: 'https://attacker.test/big.pdf' },
+      { type: 'input_file', file_id: 'file-abc' },
+      { type: 'input_image', image_url: 'https://attacker.test/a.png' },
+    ].map((part) => ({
+      ...codex,
+      input: [{ type: 'message', role: 'user', content: [part] }],
+    })),
+    { ...codex, input: [{ type: 'item_reference', id: 'msg_abc' }] },
+    {
+      ...codex,
+      tools: [
+        {
+          type: 'function',
+          name: 'f',
+          parameters: { type: 'object', $ref: 'https://attacker.test/schema.json' },
+        },
+      ],
+    },
   ]) {
     const response = await f.call(body);
     assert.equal(response.status, 400, JSON.stringify(body).slice(0, 200));
@@ -182,17 +203,43 @@ test('one call in flight per session, and a session that ends stops its stream',
   assert.equal((await f.call()).status, 401);
 });
 
-test('a person’s daily tokens, kept in the database, stop further calls at the ceiling', async (t) => {
-  const f = await fixture(t, 100);
+test('a call is charged at its most before it goes out and settled when it finishes; the day refuses what would pass the ceiling', async (t) => {
+  // What one call may cost at most: its request's tokens and the output cap.
+  const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
+  const f = await fixture(t, most + 50);
   assert.equal((await f.call()).status, 200);
   const deadline = Date.now() + 5000;
-  while ((await f.spent()) < 110 && Date.now() < deadline)
+  while ((await f.spent()) !== 110 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(await f.spent(), 110);
-  assert.equal((await f.call()).status, 403);
+  // Another call could cost more than the 50 tokens left under the ceiling.
+  const refused = await f.call();
+  assert.equal(refused.status, 403);
+  assert.deepEqual(await refused.json(), { error: 'fleet_model_ceiling' });
+  assert.match(f.logs.join(''), /"event":"codex_relay_ceiling"/);
   // A restart keeps the day's total: a fresh relay on the same database refuses too.
   assert.equal((await f.call(codex, await f.start())).status, 403);
   assert.equal(f.upstream.length, 1);
+});
+
+test('a call cut off before it finishes keeps its charge, and calls in flight count against the day', async (t) => {
+  const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
+  const f = await fixture(t, 2 * most - 1);
+  let release!: () => void;
+  f.hold(new Promise<void>((resolve) => (release = resolve)));
+  const cut = new AbortController();
+  const response = await f.call(codex, undefined, cut.signal);
+  assert.equal(response.status, 200);
+  await response.body!.getReader().read();
+  // While the first call is out, a second (from a fresh relay, so no lane is shared) cannot
+  // also take the day: both at their most would pass the ceiling.
+  assert.equal((await f.call(codex, await f.start())).status, 403);
+  // Cut off before any usage arrives, the call keeps what it was charged.
+  cut.abort();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await f.spent(), most);
 });
 
 test('the provider key never reaches a response or a log', async (t) => {

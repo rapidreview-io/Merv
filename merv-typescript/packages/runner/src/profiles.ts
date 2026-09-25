@@ -2,7 +2,13 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
+import {
+  check,
+  codexHandoffGraceMs,
+  effectiveWorkspace,
+  MervError,
+  sessionSecretPattern,
+} from '@merv/contracts';
 import type { Session, SessionUsageReport } from '@merv/sessions/types';
 
 const text = z
@@ -494,7 +500,7 @@ const sealed = (session: LaunchRequest['session']): boolean => {
  * it gets a minute; a harness that prints nothing Merv reads is stopped at once.
  */
 export const handoffGraceMs = (profile: RunnerProfile) =>
-  profile.harness === 'codex' ? 60_000 : 0;
+  profile.harness === 'codex' ? codexHandoffGraceMs : 0;
 
 /**
  * What a launch spent, read from its own output when the harness prints it there. `codex exec

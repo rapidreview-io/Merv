@@ -166,7 +166,15 @@ export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = 
   maxRequestsPerGrant?: number;
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
-  onUsage?: (record: ModelRelayUsage<`${N}_relay_usage`>, grant: G) => void | Promise<void>;
+  /** Charges a call before it goes upstream and returns what it charged; throwing refuses it,
+   *  with the error's `code` when it has one. The charge stands for a call that never finishes. */
+  reserve?: (grant: G, body: Record<string, unknown>) => Promise<number>;
+  /** A finished call's usage, with what `reserve` charged for it. */
+  onUsage?: (
+    record: ModelRelayUsage<`${N}_relay_usage`>,
+    grant: G,
+    reserved: number,
+  ) => void | Promise<void>;
 }
 export interface Api {
   readonly url?: string;

@@ -5,6 +5,7 @@ import {
   check,
   digest,
   RUNNER_HARNESSES,
+  codexHandoffGraceMs,
   sessionSecretPattern,
   type Actor,
   type Caller,
@@ -23,9 +24,6 @@ import type {
   ManagedRunnerInspection,
   ManagedBindingRow,
 } from './managed-types.js';
-
-/** The runner lets Codex finish its closing turn this long after its own handoff (handoffGraceMs). */
-const handoffGraceMs = 60_000;
 
 const profile = z
   .object({
@@ -311,7 +309,7 @@ export class ManagedRunnerBindings {
             (session.status === 'offered' || session.status === 'active'
               ? Date.parse(session.expiresAt) > now
               : session.closeReason === 'handoff' &&
-                now - Date.parse(session.closedAt!) < handoffGraceMs),
+                now - Date.parse(session.closedAt!) < codexHandoffGraceMs),
           'unauthorized',
           'No live managed session holds this credential',
           401,

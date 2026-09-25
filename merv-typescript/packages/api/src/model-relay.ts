@@ -232,6 +232,18 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
       );
       const body = this.config.payload(raw, grant) ?? reject(400, 'invalid_payload');
       const effort = (body.reasoning as { effort?: unknown } | undefined)?.effort;
+      let reserved = 0;
+      if (this.config.reserve)
+        try {
+          reserved = await interruptible(this.config.reserve(grant, body), signal);
+        } catch (error) {
+          if (signal.aborted) throw signal.reason;
+          const code = (error as { code?: unknown }).code;
+          reject(
+            403,
+            typeof code === 'string' && /^[a-z_]{1,64}$/.test(code) ? code : 'grant_forbidden',
+          );
+        }
       phase = 'upstream';
       const key = await interruptible(
         Promise.resolve().then(() => this.config.providerKey()),
@@ -301,6 +313,24 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
       let heldBytes = 0;
       let tail = '';
       let usage: Usage | null | undefined;
+      // Usage is kept the moment its frame arrives: a client may hang up right after it.
+      const keep = (data: string) => {
+        if (usage !== undefined) return;
+        try {
+          usage = JSON.parse(data).response?.usage ?? null;
+        } catch {
+          usage = null;
+        }
+        if (usage && typeof usage === 'object')
+          report((record) => this.config.onUsage?.(record, grant, reserved), {
+            event: `${this.config.name}_relay_usage` as const,
+            model: grant.model,
+            inputTokens: tokens(usage.input_tokens),
+            cachedTokens: tokens(usage.input_tokens_details?.cached_tokens),
+            outputTokens: tokens(usage.output_tokens),
+            reasoningTokens: tokens(usage.output_tokens_details?.reasoning_tokens),
+          });
+      };
       while (true) {
         const next = await interruptible(reader.read(), signal);
         if (next.done) break;
@@ -321,20 +351,15 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
             .map((line) => line.slice(5).trimStart())
             .join('\n');
           if (
+            /^event:\s*response\.(?:completed|incomplete|failed)\s*$/im.test(content) ||
+            /^\{\s*"type"\s*:\s*"response\.(?:completed|incomplete|failed)"/.test(data)
+          )
+            keep(data);
+          if (
             /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
             /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
           )
             reject(502, 'upstream_failed');
-          if (
-            usage === undefined &&
-            (/^event:\s*response\.(?:completed|incomplete)\s*$/im.test(content) ||
-              /^\{\s*"type"\s*:\s*"response\.(?:completed|incomplete)"/.test(data))
-          )
-            try {
-              usage = JSON.parse(data).response?.usage ?? null;
-            } catch {
-              usage = null;
-            }
           await validate(true);
           startStream();
           await writeChunk(res, frame, signal);
@@ -351,15 +376,6 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         startStream();
         res.end();
       }
-      if (usage && typeof usage === 'object')
-        report((record) => this.config.onUsage?.(record, grant), {
-          event: `${this.config.name}_relay_usage` as const,
-          model: grant.model,
-          inputTokens: tokens(usage.input_tokens),
-          cachedTokens: tokens(usage.input_tokens_details?.cached_tokens),
-          outputTokens: tokens(usage.output_tokens),
-          reasoningTokens: tokens(usage.output_tokens_details?.reasoning_tokens),
-        });
     } catch (error) {
       const failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
