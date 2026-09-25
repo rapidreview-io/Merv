@@ -81,10 +81,13 @@ type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
 /**
  * The release canary as the signed-in operator who ran it attests it: whether GitHub let
  * a deliberately stale merge through. Publication waits on a passing one; a failed one
- * stops it until a later pass and an explicit clear, which is offered only then.
+ * stops it until a later pass and an explicit clear, which is offered only then. A press
+ * whose answer never came is the only one left, and only as its retry: another would
+ * resend it unchanged under a different label.
  */
 function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
   const [reason, setReason] = useState<string>();
+  const [sent, setSent] = useState('');
   const command = useCommand<unknown>({
     tool: 'code.publication.control',
     validate: (value) => !!value && typeof value === 'object',
@@ -94,15 +97,19 @@ function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
     },
   });
   const { canary } = controls;
-  const act = (label: string, input: Record<string, unknown>) => (
-    <button
-      className="btn"
-      disabled={command.busy || !reason?.trim()}
-      onClick={() => void command.submit({ ...input, reason })}
-    >
-      {label}
-    </button>
-  );
+  const act = (label: string, input: Record<string, unknown>) =>
+    (!command.retry || sent === label) && (
+      <button
+        className="btn"
+        disabled={command.busy || !reason?.trim()}
+        onClick={() => {
+          setSent(label);
+          void command.submit({ ...input, reason });
+        }}
+      >
+        {command.retry ? 'Retry same request' : label}
+      </button>
+    );
   return (
     <>
       <p className="cluster">
@@ -116,16 +123,20 @@ function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
       </p>
       {reason !== undefined && (
         <div className="stack" role="group" aria-label="Record canary">
-          <Area label="Evidence" value={reason} onChange={setReason} rows={3} />
+          <Area
+            label="Evidence"
+            value={reason}
+            onChange={setReason}
+            rows={3}
+            disabled={command.locked}
+          />
           <Failure message={command.error} />
           <div className="cluster">
             {act('Stale merge refused', { action: 'record_canary', staleMerged: false })}
             {act('Stale merge went through', { action: 'record_canary', staleMerged: true })}
-            {controls.disabled &&
-              canary &&
-              !canary.staleMerged &&
+            {(command.retry || (controls.disabled && canary && !canary.staleMerged)) &&
               act('Clear disablement', { action: 'clear' })}
-            <button className="btn" disabled={command.busy} onClick={() => setReason(undefined)}>
+            <button className="btn" disabled={command.locked} onClick={() => setReason(undefined)}>
               Cancel
             </button>
           </div>

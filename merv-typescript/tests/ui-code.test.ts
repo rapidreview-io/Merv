@@ -1453,6 +1453,41 @@ test('a failed canary is cleared only once a passing one stands, and never befor
   assert.ok(text().includes('Clear disablement'), text().slice(0, 600));
 });
 
+test('a canary whose answer never came is retried as it was sent, and no other report can take its place', async (t) => {
+  t.after(unmount);
+  const passed = { actorId: 'a', reason: 'r', at: '', bindingHash: 'h', staleMerged: false };
+  servedProject({
+    publication: { records: [], controls: { disabled: true, canary: passed, blockers: [] } },
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/code.publication.control', (_call, body) => {
+    sent.push(body);
+    return sent.length === 1
+      ? { network: true }
+      : { body: { result: { canary: { staleMerged: false } } } };
+  });
+  await mount(page());
+  await click('Record canary');
+  await write('Evidence', 'PR #3 was refused');
+  await click('Stale merge refused');
+  assert.equal(sent.length, 1);
+  // The one press left is the one that was sent; its evidence stays as it was sent, and the
+  // form does not close on a report whose fate is unknown.
+  const form = () => document.querySelector('[aria-label="Record canary"]');
+  const live = [...form()!.querySelectorAll('button')].filter((button) => !button.disabled);
+  assert.deepEqual(
+    live.map((button) => button.textContent),
+    ['Retry same request'],
+    form()!.textContent!,
+  );
+  assert.ok(form()!.querySelector('textarea')!.disabled, 'the evidence is kept as sent');
+  await click('Retry same request');
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[1], sent[0]);
+  assert.equal(sent[1]!.staleMerged, false);
+  assert.equal(form(), null, 'the confirmed report closes the form');
+});
+
 test('a superseded publication names the wave that replaced it, and never its id', async (t) => {
   t.after(unmount);
   const later = published({ proposalId: 'p2', instanceId: 'u7', title: 'Wave two' });
