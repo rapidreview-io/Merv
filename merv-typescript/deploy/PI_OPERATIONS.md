@@ -142,16 +142,15 @@ keeps the canary grant.
 
 Do this once, before the first release that reads `MERV_PI_HOST_PROJECT_ID`.
 That release refuses to render Pi without a host, so its health wait fails and
-it rolls back. Use one quiet window, and take a `pg_dump` of Main's database
-first. Every step below is either a script phase or an existing tool, and each
-phase refuses to run out of order.
+it rolls back. Use one quiet window. Every step below is either a script phase
+or an existing tool, and each phase refuses to run out of order. Until step 7,
+Main keeps launching its v1 release on the old image, so Pi keeps working.
 
-1. **Standard image.** Build and push the hosted image that speaks bootstrap v2.
-   Deploy it drained to the Standard Cloudflare app with
-   `deploy/cloudflare-sandbox/rollout.py`, and add its release to the Sandboxes
-   catalog as before. Keep its `rt1_` ID. The app's `max_instances` caps how many
-   Standard machines can run at once; the production app (version 14) is at 50,
-   the host limit, so keep it there.
+1. **Standard release.** Build and push the hosted image that speaks bootstrap
+   v2, and add its release to the Sandboxes catalog as before. Keep its `rt1_`
+   ID. The release is additive: nothing launches it until step 7. Do not deploy
+   the image to the Standard app yet. The v2 image refuses a v1 bootstrap, so
+   that would stop Pi until Main is released.
 2. **Large app** (the founder, holding the Wrangler login). Deploy
    `wrangler deploy --env large` from a deployment copy of
    `fleet-sandboxes/deploy/cloudflare-sandbox/worker/wrangler.jsonc`, with
@@ -199,12 +198,20 @@ phase refuses to run out of order.
    new release's renderer mounted over it. If either fails, it restores the env;
    move its `*-machines-env.private` files aside before you rerun it.
 
-7. **Release.** Deploy with `release.mjs`, which runs the pi@2 migration. Until
-   that migration, `release.mjs` can roll the image back on the same env. After
-   it, the older image refuses the database, so rolling back means restoring
-   the `pg_dump` taken first. Either way the Standard app keeps the v2 image,
-   which refuses the older Main's v1 bootstrap: roll that back too, with
-   `rollout.py` and the previous image.
+7. **Release.** Take a `pg_dump` of Main's database now, after step 3 has
+   created the host project. Deploy the v2 image drained to the Standard
+   Cloudflare app with `deploy/cloudflare-sandbox/rollout.py`, then deploy Main
+   at once with `release.mjs`, which runs the pi@2 migration. Pi turns fail
+   between the two, so keep that gap to the rollout itself. The app's
+   `max_instances` caps how many Standard machines can run at once; the
+   production app (version 14) is at 50, the host limit, so keep it there.
+   Until the migration, `release.mjs` can roll the image back on the same env.
+   After it, the older image refuses the database, so rolling back means
+   restoring that `pg_dump`. Either way, roll the Standard app back to the
+   previous image with `rollout.py`, since the v2 image refuses the older Main's
+   v1 bootstrap. A dump from before step 3 has no host project, and the host key
+   then stops authenticating. Restoring one means removing the `MERV_PI_HOST_*`
+   lines, moving `_host` aside and running the phases again from step 3.
 8. **Canary.** Check each of these:
    - Two conversations in one project share one machine.
    - Two projects get two machines.
