@@ -335,7 +335,13 @@ test('a worker that lost the reply to its claim is given the same turn again: as
   const again = await next();
   assert.deepEqual(
     [again.work?.command.id, again.work?.notes],
-    [b.id, ['Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).']],
+    [
+      b.id,
+      [
+        'Model: you are GPT-6 Luna (gpt-6-luna); the person picks the model for each conversation.',
+        'Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).',
+      ],
+    ],
   );
   await f.pi.begin(a.token, { ...a.input, conversationId: b.conversationId, commandId: b.id });
   assert.deepEqual(await next(), { work: null, retire: true });

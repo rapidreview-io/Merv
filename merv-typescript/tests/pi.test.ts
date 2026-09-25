@@ -28,6 +28,7 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
     'checkpoint',
     'createdAt',
     'id',
+    'model',
     'previousCheckpoint',
     'projectId',
     'revision',
@@ -983,6 +984,158 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
   await f.pi.stopMachine(f.operator);
   await f.pi.tick();
   assert.equal(f.pi['live'].has(id), false);
+});
+
+test('each conversation keeps its model; a pick is the person’s default for new ones here', async (t) => {
+  const f = await fixture(t);
+  // One from before models were chosen, with history and no model stored.
+  const old = await f.create();
+  await f.finish(await f.claimed(await f.send(old)));
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE pi_conversations SET data_json=(data_json::jsonb - 'model')::text WHERE id=?",
+      old.id,
+    ),
+  );
+  f.advance(1000);
+  const first = await f.create();
+  assert.equal(first.model, 'gpt-6-luna');
+  const listed = async () => (await f.pi.list(f.operator)).map(({ id }) => id);
+  const order = await listed();
+  const picked = await f.pi.setModel(f.operator, { id: old.id, model: 'gpt-6-sol' });
+  assert.equal(picked.conversation.model, 'gpt-6-sol');
+  // The picker's catalog carries no effort.
+  assert.deepEqual(
+    picked.models.map((model) => Object.keys(model).sort()),
+    Array(3).fill(['id', 'inputUsdPerM', 'label', 'outputUsdPerM']),
+  );
+  // A pick moves nothing in the list and leaves the other conversations as they were.
+  assert.deepEqual(await listed(), order);
+  assert.equal((await f.pi.snapshot(f.operator, first.id)).conversation.model, 'gpt-6-luna');
+  // A new conversation opens on the latest pick; its own record, not the machine's.
+  assert.equal((await f.create()).model, 'gpt-6-sol');
+  await f.pi.setModel(f.operator, { id: first.id, model: 'gpt-6-astra' });
+  assert.equal((await f.create()).model, 'gpt-6-astra');
+  assert.equal(await f.person(`${first.userId}:${first.projectId}`), null);
+  assert.deepEqual(await f.person(`model:${first.userId}:${first.projectId}`), {
+    model: 'gpt-6-astra',
+  });
+});
+
+test('a page showing another model sends nothing; a retry is the same message', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-astra' });
+  const send = (commandId: string, model?: string) =>
+    f.pi.send(f.operator, chat.id, { commandId, text: 'hello', ...(model && { model }) });
+  await assert.rejects(
+    send('stale', 'gpt-6-luna'),
+    (error: MervError) =>
+      error.code === 'pi_model_changed' &&
+      error.status === 409 &&
+      error.message === 'This conversation now answers on GPT-6 Astra. Send again to use it.',
+  );
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).commands.length, 0);
+  const sent = await send('shown', 'gpt-6-astra');
+  assert.deepEqual(await send('shown', 'gpt-6-luna'), sent);
+  assert.deepEqual(await send('shown'), sent);
+  // A caller that names no model (MCP, the canary) sends on the conversation's.
+  await f.finish(await f.claimed(sent));
+  assert.equal((await send('plain')).status, 'starting');
+});
+
+test('a turn answers on the model its conversation has when a worker claims it', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  const waiting = await f.send(chat);
+  assert.equal(waiting.model, undefined);
+  // Picked while the turn waits: the claim takes it.
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-sol' });
+  const bound = await f.claimed(waiting);
+  assert.deepEqual([bound.work.model, bound.work.command.model], ['gpt-6-sol', 'gpt-6-sol']);
+  // The agent is told what it runs on, and has no model tool.
+  assert.equal(
+    bound.work.notes[0],
+    'Model: you are GPT-6 Sol (gpt-6-sol); the person picks the model for each conversation.',
+  );
+  assert.ok(bound.work.tools.every(({ name }) => !name.startsWith('pi.')));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  assert.equal(grant.model, 'gpt-6-sol');
+  await f.pi.progress(bound.token, {
+    ...bound.input,
+    events: [{ type: 'text', text: 'Partial answer' }],
+  });
+  // Picked after the claim: the answer under way keeps its model, and streams on.
+  const mid = await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-astra' });
+  assert.ok(mid.tail.some((event) => event.type === 'text' && event.text === 'Partial answer'));
+  assert.deepEqual([mid.conversation.model, mid.commands[0].model], ['gpt-6-astra', 'gpt-6-sol']);
+  await f.pi.validateModel(grant);
+  await f.pi.complete(bound.token, f.completion(bound.input));
+  const next = await f.send(chat);
+  const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
+  assert.deepEqual([work?.command.id, work?.model], [next.id, 'gpt-6-astra']);
+});
+
+test('only the person picks a conversation’s model', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  const bound = await f.claimed(await f.send(chat));
+  for (const caller of [
+    {
+      ...f.operator,
+      conversation: {
+        id: chat.id,
+        epoch: bound.work.command.epoch,
+        commandId: bound.work.command.id,
+        runtimeId: bound.work.command.runtimeId,
+      },
+    },
+    { ...f.operator, session: { id: 'session_1' } },
+    {
+      ...f.operator,
+      managed: { allocationId: 'flt_1', epoch: 1, credentialHash: 'x'.repeat(64) },
+    },
+  ])
+    await assert.rejects(
+      f.pi.setModel(caller, { id: chat.id, model: 'gpt-6-sol' }),
+      code('pi_forbidden'),
+    );
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  await assert.rejects(
+    f.pi.setModel(
+      {
+        projectId: other.project.id,
+        actorId: other.actor.id,
+        credentialId: other.credential.id,
+      },
+      { id: chat.id, model: 'gpt-6-sol' },
+    ),
+    code('pi_not_found'),
+  );
+  await assert.rejects(
+    f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-4' }),
+    code('pi_model_unavailable'),
+  );
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).conversation.model, 'gpt-6-luna');
+});
+
+test('a model withdrawn at a restart leaves its conversations on the default', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-sol' });
+  // A restart ends every turn, so none was claimed on the model withdrawn.
+  await f.restart({ models: [models[0], models[2]] });
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).conversation.model, 'gpt-6-luna');
+  await assert.rejects(
+    f.pi.send(f.operator, chat.id, { commandId: 'stale', text: 'hello', model: 'gpt-6-sol' }),
+    code('pi_model_changed'),
+  );
+  const bound = await f.claimed(await f.send(chat));
+  await f.pi.begin(bound.token, bound.input);
+  assert.equal(bound.work.model, 'gpt-6-luna');
+  assert.equal((await f.pi.authorizeModel(bound.work.modelToken)).model, 'gpt-6-luna');
+  assert.equal((await f.create()).model, 'gpt-6-luna');
 });
 
 test('warming and stopping a machine leave a conversation where it was in the list', async (t) => {

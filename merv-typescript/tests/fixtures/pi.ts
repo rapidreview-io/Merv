@@ -374,8 +374,10 @@ export async function fixture(
     advance: (milliseconds: number) => {
       now += milliseconds;
     },
-    restart: async () => {
+    /** A new service on the same state, with `changes` to its configuration. */
+    restart: async (changes: PiConfig = {}) => {
       await pi.close();
+      Object.assign(config, changes);
       pi = await start();
     },
   };

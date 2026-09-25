@@ -25,6 +25,7 @@ import {
   hostMigration,
   machineInput,
   migration,
+  modelInput,
   nextInput,
   piConfig,
   sendInput,
@@ -304,9 +305,14 @@ export class PiService implements Pi, FleetOwner {
     check(row, 'pi_command_not_found', 'Conversation command not found', 404);
     return decode(row);
   }
-  private async saveConversation(tx: Transaction, conversation: PiConversationRecord) {
+  /** Only a question, an answer or a name moves a conversation up the list (`touch`). */
+  private async saveConversation(
+    tx: Transaction,
+    conversation: PiConversationRecord,
+    touch = true,
+  ) {
     conversation.revision++;
-    conversation.updatedAt = this.time();
+    if (touch) conversation.updatedAt = this.time();
     await tx.run(
       'UPDATE pi_conversations SET data_json=? WHERE id=?',
       JSON.stringify(conversation),
@@ -378,6 +384,18 @@ export class PiService implements Pi, FleetOwner {
     return row
       ? decode(row)
       : { key, preferred: this.config.machines[0].key, sticky: null, choseAt: null, moves: [] };
+  }
+  /** The person's last model pick here, a pi_people row of its own: never the machine record, and
+   * per project whatever runtimeKey says. */
+  private pickKey(userId: string, projectId: string): string {
+    return `model:${userId}:${projectId}`;
+  }
+  private async picked(sql: Sql, userId: string, projectId: string): Promise<string | undefined> {
+    const row = await sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_people WHERE key=?',
+      this.pickKey(userId, projectId),
+    );
+    return row ? decode<{ model: string }>(row).model : undefined;
   }
   private async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
     const since = new Date(this.clock() - 86_400_000).toISOString();
@@ -465,6 +483,7 @@ export class PiService implements Pi, FleetOwner {
         activeCommandId: null,
         checkpoint: null,
         previousCheckpoint: null,
+        model: this.model(await this.picked(tx, userId, caller.projectId)).id,
         source: await this.scope.delegationSource(caller, tx),
         createdAt: this.time(),
         updatedAt: this.time(),
@@ -522,9 +541,13 @@ export class PiService implements Pi, FleetOwner {
       stage: this.stage(conversation, turn ?? null, host, allocation),
       now: this.time(),
       available: this.fleet.connected(this.hostProject),
-      conversation: publicConversation(conversation),
+      conversation: {
+        ...publicConversation(conversation),
+        model: this.model(conversation.model).id,
+      },
       commands: commands.map(publicCommand),
       host: view,
+      models: this.config.models.map(({ effort: _effort, ...model }) => model),
       ...transient,
       tail: whole
         ? [
@@ -704,7 +727,8 @@ export class PiService implements Pi, FleetOwner {
 
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.ready();
-    const value = parse(sendInput, input);
+    // The model only guards the send: a retry is the same message whatever the page showed.
+    const { model, ...value } = parse(sendInput, input);
     const renter = await this.hostCaller();
     const { command, hostId } = await this.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
@@ -737,6 +761,14 @@ export class PiService implements Pi, FleetOwner {
         (count?.count ?? 0) < 100,
         'pi_conversation_full',
         'Open a new conversation to continue',
+        409,
+      );
+      // A page showing another model than the conversation's sends nothing on it.
+      const current = this.model(conversation.model);
+      check(
+        !model || model === current.id,
+        'pi_model_changed',
+        `This conversation now answers on ${current.label}. Send again to use it.`,
         409,
       );
       // Every read of the turn runs as the person, with their authority as of this message.
@@ -1149,14 +1181,18 @@ export class PiService implements Pi, FleetOwner {
         return { name: tool.name, description, inputSchema };
       });
       this.streams.changed(conversation.id, command.id);
+      const model = this.model(command.model);
       return {
         command: publicCommand(command),
         checkpoint,
-        model: this.config.models[0].id,
+        model: model.id,
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
         tools: offered ? [...tools, offered] : tools,
-        notes,
+        notes: [
+          `Model: you are ${model.label} (${model.id}); the person picks the model for each conversation.`,
+          ...notes,
+        ],
       };
     } catch {
       // A turn already ended (stopped) stays as it ended; a machine that no longer admits work is
@@ -1241,6 +1277,8 @@ export class PiService implements Pi, FleetOwner {
     if (changed) await this.saveHost(tx, host);
     if (!command) return {};
     const claim = await this.claim(tx, host, command, serving.machine);
+    // The model is the conversation's as the turn is claimed: a pick while it waited applies.
+    command.model = this.model(claim.conversation.model).id;
     command.status = 'starting';
     command.workerId = value.workerId;
     // Queueing and cold start spent the send-time budget; from here only a stall ends the turn
@@ -1785,6 +1823,32 @@ export class PiService implements Pi, FleetOwner {
     return view;
   }
 
+  /** pi.model.set: the conversation's model from its next unclaimed turn, and the person's default
+   * for new conversations here. Only the person: conversation, session and managed callers are
+   * refused (user), and no agent tool reaches it. An answer under way keeps its model. */
+  async setModel(caller: Caller, input: unknown): Promise<PiSnapshot> {
+    this.ready();
+    const { id, model } = parse(modelInput, input);
+    await this.state.transaction(async (tx) => {
+      const conversation = await this.owned(caller, id, tx);
+      check(
+        this.config.models.some((offered) => offered.id === model),
+        'pi_model_unavailable',
+        'That model is not offered',
+        403,
+      );
+      conversation.model = model;
+      await this.saveConversation(tx, conversation, false);
+      await tx.run(
+        'INSERT INTO pi_people(key,data_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data_json=excluded.data_json',
+        this.pickKey(conversation.userId, conversation.projectId),
+        JSON.stringify({ model }),
+      );
+    });
+    this.streams.nudge(id);
+    return this.snapshot(caller, id);
+  }
+
   async authorizeModel(token: string) {
     this.ready();
     check(
@@ -1818,7 +1882,7 @@ export class PiService implements Pi, FleetOwner {
         runtimeId: command.runtimeId,
         epoch: command.epoch,
         expiresAt: command.expiresAt,
-        model: this.config.models[0].id,
+        model: this.model(command.model).id,
         // Only the tools this turn was offered.
         toolNames: [...piReadTools, ...(command.canMove ? ['machine.switch'] : [])].map(
           piModelToolName,
@@ -1838,7 +1902,7 @@ export class PiService implements Pi, FleetOwner {
           grant.runtimeId === command.runtimeId &&
           grant.epoch === command.epoch &&
           grant.expiresAt === command.expiresAt &&
-          grant.model === this.config.models[0].id &&
+          grant.model === this.model(command.model).id &&
           command.status === 'working',
         'pi_authority_stale',
         'Model authority is no longer active',

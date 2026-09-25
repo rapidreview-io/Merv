@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
-import { createInput, id, machineInput, sendInput, warmInput } from './schema.js';
+import { createInput, id, machineInput, modelInput, sendInput, warmInput } from './schema.js';
 
 export const piToolsPlugin = {
   name: 'merv-pi-tools',
@@ -38,10 +38,8 @@ export const piToolsPlugin = {
         description:
           'Send one message and request agent capacity. Reuse commandId only to retry the exact same message.',
         inputSchema: sendInput.extend({ id }).strict(),
-        handler: (
-          caller: Parameters<typeof ctx.pi.send>[0],
-          input: { id: string; commandId: string; text: string },
-        ) => ctx.pi.send(caller, input.id, { commandId: input.commandId, text: input.text }),
+        handler: (caller: Parameters<typeof ctx.pi.send>[0], { id, ...message }: { id: string }) =>
+          ctx.pi.send(caller, id, message),
       },
       {
         name: 'pi.warm',
@@ -66,6 +64,14 @@ export const piToolsPlugin = {
         inputSchema: machineInput,
         handler: (caller: Parameters<typeof ctx.pi.setMachine>[0], input: unknown) =>
           ctx.pi.setMachine(caller, input),
+      },
+      {
+        name: 'pi.model.set',
+        description:
+          'Choose the model that answers your next message in this conversation; your new conversations here start on it too. An answer under way keeps its model.',
+        inputSchema: modelInput,
+        handler: (caller: Parameters<typeof ctx.pi.setModel>[0], input: unknown) =>
+          ctx.pi.setModel(caller, input),
       },
       {
         name: 'pi.machine.stop',

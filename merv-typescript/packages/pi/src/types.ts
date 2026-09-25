@@ -37,6 +37,9 @@ export interface PiConversation {
   activeCommandId: string | null;
   checkpoint: PiCheckpoint | null;
   previousCheckpoint: PiCheckpoint | null;
+  /** Set at create from the person's last pick here; changed only by pi.model.set. Absent before
+   * 2026-09-25, meaning config.models[0]. */
+  model?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,6 +58,8 @@ export interface PiCommand {
    * unclaimed turn, so both can change until a worker claims it. Absent on turns before pi@2. */
   hostId?: string;
   machine?: string;
+  /** The model it answers on, fixed when a worker claims it. */
+  model?: string;
   status: PiStatus;
   messages: PiMessage[];
   outcomes: PiToolOutcome[];
@@ -100,6 +105,8 @@ export interface PiStage {
   /** A short human phrase, e.g. the tool being used. */
   detail?: string;
 }
+/** A model a person may pick for a conversation (MERV_PI_MODELS), without the relay's effort. */
+export type PiModel = Omit<PiModelConfig, 'effort'>;
 export interface PiSnapshot {
   stage: PiStage;
   /** The server's clock when this was read, which a stage's `since` is counted against. */
@@ -111,6 +118,8 @@ export interface PiSnapshot {
   commands: PiCommand[];
   /** The machine this person's turns run on in this project, shared by all their conversations. */
   host: PiHostView;
+  /** What the person may pick; `conversation.model` is always one of them. */
+  models: PiModel[];
   streamId: string;
   sequence: number;
   tail: PiEvent[];
@@ -330,6 +339,8 @@ export interface Pi {
   setMachine(caller: Caller, input: unknown): Promise<PiHostView>;
   /** pi.machine.stop {}: interrupt every turn of the host, release every slot, clear sticky (T9). */
   stopMachine(caller: Caller): Promise<PiHostView>;
+  /** pi.model.set {id, model}: the person picks the conversation's model, and their default here. */
+  setModel(caller: Caller, input: unknown): Promise<PiSnapshot>;
 }
 /** Server-facing contract: transport and UI do not need the service implementation. */
 export interface PiRuntime extends Pi {

@@ -14,9 +14,12 @@ export const createInput = z
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
 export const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 const usdPerM = z.number().finite().min(0).max(1000);
+/** pi.send; `model` is the one the page shows, which must still be the conversation's. */
 export const sendInput = z
-  .object({ commandId: id, text: z.string().trim().min(1).max(32_000) })
+  .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
   .strict();
+/** pi.model.set */
+export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
 /** A PiMachine key, e.g. 'standard' or 'large'. */
 export const machineKey = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
