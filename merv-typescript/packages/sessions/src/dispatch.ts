@@ -748,8 +748,9 @@ export class SessionDispatch {
     input = parsed.data;
     return await this.state.transaction(async (tx) => {
       if (caller.managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
-      // A runner is a durable presence that will take work: registering one is a write.
-      await this.scope.require(caller, 'write', tx);
+      // A runner is a durable presence that will take work: registering one is a write, or a
+      // review for Fleet's review director, which takes only reviews.
+      await this.scope.require(caller, caller.service ? 'review' : 'write', tx);
       const owner = await ownerOf(this.scope, caller, tx);
       const old = await tx.get<RunnerRow>(
         'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',

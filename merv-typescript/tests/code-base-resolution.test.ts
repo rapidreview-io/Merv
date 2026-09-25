@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
   createService,
+  sourceCaller,
   type Caller,
   type WorkflowSnapshot,
   type Transaction,
@@ -1064,6 +1065,41 @@ test('the owner, whom every consolidation excludes, decides it as owner without 
     [f.admin.actorId, reviewId, false],
   );
   assert.equal((await f.reviews.get(f.admin, reviewId)).override, true);
+});
+
+test('Fleet’s review director, vouched for by the owner every consolidation excludes, leases its review', async (t) => {
+  const f = await fixture(t, true);
+  await f.producingSession(f.left.id, f.inputAuthor.actorId, f.admin.actorId);
+  const taskId = await consolidation(f, [f.left.id, f.extra.id]);
+  await f.bases.work(f.admin.projectId);
+  const { runner, session, submitted } = await deliver(f, taskId);
+  await f.sessions.release(runner, { sessionId: session.id, runnerId: 'runner' });
+  const review = await f.reviews.get(f.admin, submitted.reviewId!);
+  assert.ok(review.provenance?.excludedActorIds.includes(f.admin.actorId));
+  const director = sourceCaller({
+    ...(await f.scope.serviceActor('fleet-review', f.admin.projectId, undefined, 'reviewer')),
+    kind: 'service',
+    vouchedBy: await f.scope.delegationSource(f.admin),
+  });
+  await f.sessions.heartbeatRunner(director, {
+    runnerId: 'fleet',
+    machine: { hostname: 'fleet', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const leased = await f.sessions.offer(director, {
+    instanceId: taskId,
+    expectedRevision: submitted.workflow.revision,
+    runnerId: 'fleet',
+    requestId: 'review',
+    secret: `ms_${randomBytes(32).toString('base64url')}`,
+  });
+  const claimed = await f.reviews.get(f.admin, review.id);
+  assert.deepEqual(
+    [leased.role, claimed.status, claimed.reviewerId],
+    ['reviewer', 'started', leased.actorId],
+  );
 });
 
 test('a consolidation whose merge with main clashes is resolved, reviewed and delivered', async (t) => {

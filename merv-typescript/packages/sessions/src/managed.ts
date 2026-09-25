@@ -43,7 +43,7 @@ const enrollment = z
       .object({
         actorId: z.string().min(1),
         projectId: z.string().min(1),
-        kind: z.enum(['actor', 'human', 'key']),
+        kind: z.enum(['actor', 'human', 'key', 'service']),
       })
       .passthrough(),
     runtimeProfileId: z.string().min(1).max(200),

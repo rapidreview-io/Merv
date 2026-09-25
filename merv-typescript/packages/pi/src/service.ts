@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
+  delegationEnd,
   digest,
   newId,
   plain,
@@ -944,11 +945,7 @@ export class PiService implements Pi, FleetOwner {
   /** The earliest of the slot's deadline, the source's expiry and `span` from now: none while
    * queued, turnTimeoutSeconds to reach the machine, and the ceiling once claimed. */
   private turnEnd(slot: PiSlot, source: DelegationSource, span: number): number {
-    return Math.min(
-      this.clock() + span,
-      Date.parse(slot.expiresAt),
-      source.kind === 'human' || !source.expiresAt ? Infinity : Date.parse(source.expiresAt),
-    );
+    return Math.min(this.clock() + span, Date.parse(slot.expiresAt), delegationEnd(source));
   }
   /** A turn's time to reach its machine; a queued one waits for capacity without a limit. */
   private startMs(queued: boolean): number {

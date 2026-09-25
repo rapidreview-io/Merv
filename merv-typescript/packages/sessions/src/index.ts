@@ -9,6 +9,7 @@ import type {} from '@merv/api/types';
 import {
   canonical,
   check,
+  delegationEnd,
   digest,
   effectiveWorkspace,
   MervError,
@@ -923,12 +924,7 @@ export class LeasedSessions implements Sessions {
         'Each frozen assignment, policy, reference set and receipt must fit 512 KiB',
       );
     const time = this.clock();
-    const hard = Math.min(
-      time + duration * 1000,
-      owner.source.kind !== 'human' && owner.source.expiresAt
-        ? Date.parse(owner.source.expiresAt)
-        : Infinity,
-    );
+    const hard = Math.min(time + duration * 1000, delegationEnd(owner.source));
     const session: Session = {
       id,
       agentId: agent.id,

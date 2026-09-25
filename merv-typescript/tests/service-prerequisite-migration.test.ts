@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Sql } from '@merv/contracts';
+import { delegationEnd, type Caller, type Sql } from '@merv/contracts';
 import { resolutionFixture } from './fixtures/resolution.js';
 
 const indexes = (sql: Sql, table: string) =>
@@ -240,4 +240,67 @@ test('service actor guards upgrade populated scope v7 and retain ordinary creden
   await assert.rejects(f.scope.issueActorCredential(f.admin, { actorId: service.actorId }), {
     code: 'member_actor',
   });
+});
+
+test('scope@9 makes only Fleet’s review director a reviewing service, acting only as vouched for by someone who may write', async (t) => {
+  const f = await resolutionFixture(t, { scope: 8 });
+  const serve = (provider: string, role?: 'producer' | 'reviewer') =>
+    f.scope.serviceActor(provider, f.admin.projectId, undefined, role);
+  const code = await serve('code');
+  await f.scope.initialize();
+  assert.deepEqual(await serve('code'), code);
+  for (const [provider, role] of [
+    ['code', 'reviewer'],
+    ['tasks', 'reviewer'],
+    ['fleet-review', 'producer'],
+  ] as const)
+    await assert.rejects(serve(provider, role), { code: 'state_constraint' });
+  const reviewer = await serve('fleet-review', 'reviewer');
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      tx.run("UPDATE actors SET role='producer' WHERE id=?", reviewer.actorId),
+    ),
+    { code: 'state_constraint' },
+  );
+  const member = async (role: 'producer' | 'reader', expiresAt?: string) => {
+    const issued = await f.scope.issueActor(f.admin, { name: role, role, expiresAt });
+    return { ...reviewer, actorId: issued.actor.id, credentialId: issued.credential.id };
+  };
+  const elsewhere = await f.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Owner' });
+  const vouched = async (by: Caller, actorId = reviewer.actorId) => ({
+    ...reviewer,
+    actorId,
+    service: { vouchedBy: await f.scope.delegationSource(by) },
+  });
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  const writer = await member('producer', expiresAt);
+  const source = await f.scope.delegationSource(await vouched(writer));
+  assert.deepEqual(source, {
+    ...reviewer,
+    kind: 'service',
+    vouchedBy: await f.scope.delegationSource(writer),
+  });
+  assert.equal((await f.scope.requireDelegation(source, 'review')).id, reviewer.actorId);
+  assert.equal(delegationEnd(source), Date.parse(expiresAt), 'it lapses when its voucher does');
+  await assert.rejects(f.scope.requireDelegation(source, 'write'), { code: 'forbidden' });
+  // Bare, vouched for by a reader, from another project or through another service, or for an
+  // actor that is no service, it acts for no one.
+  for (const caller of [
+    reviewer,
+    await vouched(await member('reader')),
+    await vouched({
+      projectId: elsewhere.project.id,
+      actorId: elsewhere.actor.id,
+      credentialId: elsewhere.credential.id,
+    }),
+    {
+      ...reviewer,
+      service: { vouchedBy: await f.scope.delegationSource(await vouched(writer, code.actorId)) },
+    },
+    await vouched(writer, writer.actorId),
+  ])
+    await assert.rejects(f.scope.require(caller, 'read'), { code: 'forbidden' });
+  // It lapses with its voucher's authority.
+  await f.scope.revokeCredential(f.admin, writer.credentialId);
+  await assert.rejects(f.scope.requireDelegation(source, 'read'), { code: 'forbidden' });
 });

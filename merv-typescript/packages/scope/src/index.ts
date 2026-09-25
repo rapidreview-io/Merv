@@ -136,6 +136,10 @@ export class ProjectScope implements Scope {
           version: 8,
           sql: postgresMigrations[8],
         },
+        {
+          version: 9,
+          sql: postgresMigrations[9],
+        },
       ]);
       this.members = new Memberships(
         state,
@@ -150,14 +154,22 @@ export class ProjectScope implements Scope {
       );
     };
   }
-  async serviceActor(provider: string, projectId: string, tx: Transaction): Promise<Caller> {
+  async serviceActor(
+    provider: string,
+    projectId: string,
+    tx?: Transaction,
+    role: 'producer' | 'reviewer' = 'producer',
+  ): Promise<Caller> {
+    if (!tx)
+      return this.state.transaction((tx) => this.serviceActor(provider, projectId, tx, role));
     this.state.assertTransaction(tx);
     check(provider.trim().length > 0, 'invalid_provider', 'A service provider is required');
     await tx.run(
-      "INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,'producer',1,?) ON CONFLICT DO NOTHING",
+      'INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,?,1,?) ON CONFLICT DO NOTHING',
       newId('actor'),
       projectId,
       `${provider} service`,
+      role,
       provider,
     );
     const row = await tx.get<{ id: string }>(
@@ -305,6 +317,7 @@ export class ProjectScope implements Scope {
     if (caller.conversation) return (await this.authorize(caller, 'read', tx)).source!;
     await this.require(caller, 'read', tx);
     const base = { actorId: caller.actorId, projectId: caller.projectId };
+    if (caller.service) return { ...base, kind: 'service', vouchedBy: caller.service.vouchedBy };
     if (caller.human) {
       const { issuer, subject, membershipId } = caller.human;
       return { ...base, kind: 'human', issuer, subject, membershipId };
@@ -370,6 +383,8 @@ export class ProjectScope implements Scope {
       return tx ? await lookup(tx) : await this.state.read(lookup);
     } else if (source.kind === 'key') {
       caller = { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
+    } else if (source.kind === 'service') {
+      caller = { ...base, service: { vouchedBy: source.vouchedBy } };
     } else {
       check(
         source.kind === 'actor' && typeof source.credentialId === 'string',
@@ -381,6 +396,8 @@ export class ProjectScope implements Scope {
     }
     const value = await this.require(caller, permission, tx);
     check(!value.sessionId, 'nested_session', 'A session cannot be a delegation source', 403);
+    // A service lapses with its voucher, whose lifetime its authorization already checked.
+    if (source.kind === 'service') return value;
     {
       const lookup = async (sql: Sql) =>
         await sql.get<{ expires_at: string | null }>(
@@ -702,6 +719,7 @@ export class ProjectScope implements Scope {
           caller.session,
           caller.managed,
           caller.conversation,
+          caller.service,
         ].filter((value) => value !== undefined).length <= 1,
         'forbidden',
         'A caller cannot combine human, actor-credential and user-key authority',
@@ -762,6 +780,23 @@ export class ProjectScope implements Scope {
           'Managed runner source does not match this caller',
           403,
         );
+      } else if (caller.service) {
+        const { vouchedBy } = caller.service;
+        check(
+          row.service_owner &&
+            row.active &&
+            vouchedBy?.projectId === caller.projectId &&
+            vouchedBy.kind !== 'service',
+          'forbidden',
+          'Only a service of this project acts for one of its people',
+          403,
+        );
+        if (!('transactionId' in sql))
+          return await this.state.snapshot(() =>
+            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
+          );
+        // It acts only while the person who vouched for it may still write here.
+        await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
         const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
         // A session halted while this call was in flight has already retired its actor. Tell
@@ -810,7 +845,13 @@ export class ProjectScope implements Scope {
           'User authority cannot select an independent machine actor',
           403,
         );
-        check(row.active, 'forbidden', 'Actor cannot access this project', 403);
+        // A reviewing service acts only as vouched for, above.
+        check(
+          row.active && !(row.service_owner && row.role === 'reviewer'),
+          'forbidden',
+          'Actor cannot access this project',
+          403,
+        );
       }
       if (caller.credentialId !== undefined) {
         check(

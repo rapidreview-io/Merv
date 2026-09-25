@@ -627,12 +627,16 @@ export interface Caller {
     credentialHash: string;
     boundSessionId?: string;
   };
+  /** A project's credential-free service acting for a person, never set by a transport. */
+  service?: { vouchedBy: DelegationSource };
 }
 /** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
 export type DelegationSource = { actorId: string; projectId: string } & (
   | { kind: 'actor'; credentialId: string; expiresAt: string | null }
   | { kind: 'human'; issuer: string; subject: string; membershipId: string }
   | { kind: 'key'; keyId: string; membershipId: string; expiresAt: string | null }
+  /** Valid only while the person who vouched for it may still write in its project. */
+  | { kind: 'service'; vouchedBy: DelegationSource }
 );
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
@@ -885,8 +889,14 @@ export interface ProjectMembership {
   revokedAt: string | null;
 }
 export interface Scope {
-  /** A credential-free producer owned by a server provider, scoped to one project. */
-  serviceActor(provider: string, projectId: string, tx: Transaction): Promise<Caller>;
+  /** A credential-free producer owned by a server provider, scoped to one project; only
+   * Fleet's review director, 'fleet-review', is a reviewer instead. */
+  serviceActor(
+    provider: string,
+    projectId: string,
+    tx?: Transaction,
+    role?: 'producer' | 'reviewer',
+  ): Promise<Caller>;
   readonly toolPolicy: ToolPolicy;
   delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource>;
   requireDelegation(
@@ -1852,6 +1862,7 @@ export function sourceCaller(source: DelegationSource): Caller {
   if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };
   if (source.kind === 'key')
     return { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
+  if (source.kind === 'service') return { ...base, service: { vouchedBy: source.vouchedBy } };
   // Delegation follows the captured membership epoch, not the original short-lived login JWT.
   return {
     ...base,
@@ -1863,3 +1874,10 @@ export function sourceCaller(source: DelegationSource): Caller {
     },
   };
 }
+/** When a delegation lapses by itself: a person's never, a service's with its voucher's. */
+export const delegationEnd = (source: DelegationSource): number =>
+  source.kind === 'service'
+    ? delegationEnd(source.vouchedBy)
+    : source.kind !== 'human' && source.expiresAt
+      ? Date.parse(source.expiresAt)
+      : Infinity;

@@ -407,6 +407,12 @@
       "published": true
     },
     {
+      "component": "scope",
+      "version": 9,
+      "hash": "2eafad8c61701dc96178a14a89ef573425104522f2fc584722b12bb59b7c17f6",
+      "published": false
+    },
+    {
       "component": "session_dispatch",
       "version": 1,
       "hash": "9a8881c18c9c4f190f946896c39332353d9d9bcf2911941687363d945ee33644",
