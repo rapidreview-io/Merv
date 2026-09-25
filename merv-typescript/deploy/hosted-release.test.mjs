@@ -862,3 +862,19 @@ print(json.dumps(res))`,
   // Or Cloudflare runs another image than the release pins.
   assert.equal(out.image[0], 'image_not_live');
 });
+
+test('the Pi runbook rolls Main back with release.mjs and its hosted run, never an image by hand', () => {
+  const runbook = readFileSync(new URL('PI_OPERATIONS.md', import.meta.url), 'utf8');
+  const rollback = runbook.slice(
+    runbook.indexOf('To roll Main back'),
+    runbook.indexOf('**Canary.**'),
+  );
+  assert.match(
+    rollback,
+    /run\s+`node deploy\/release\.mjs` at the previous commit, without `--skip-hosted`/,
+  );
+  assert.doesNotMatch(
+    rollback,
+    /release\.mjs --skip-hosted|use `deploy\/cloudflare-sandbox\/rollout\.py`/,
+  );
+});

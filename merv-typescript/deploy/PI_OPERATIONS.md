@@ -233,11 +233,18 @@ from step 1 have to be done again.
    v2 cannot use, so Pi stays down until a hosted run passes: fix the cause and
    run `node deploy/hosted-release.mjs`. To roll Main back instead: until the
    migration, `release.mjs` rolls itself back on a failed health wait; after it,
-   the older image refuses the database, so rolling back means restoring that
-   `pg_dump` and releasing the previous commit with `release.mjs --skip-hosted`.
-   After a passing hosted run the apps run the v2 image, which refuses the older
-   Main's v1 bootstrap, so they need the previous image back too
-   (`deploy/cloudflare-sandbox/rollout.py`). A dump from before step 2 has no host
+   the older image refuses the database, so restore that `pg_dump` and run
+   `node deploy/release.mjs` at the previous commit, without `--skip-hosted`.
+   Its hosted run, the previous pipeline, finds Standard and the legacy key on
+   the release the host recorded. After a passing hosted run that is the v2
+   release, so it rebuilds the v1 image, deploys it to Standard, points the
+   legacy key back at it and canaries a Pi turn; Pi is down from Main's release
+   until that switch. Never put an image back by hand
+   (`deploy/cloudflare-sandbox/rollout.py`): the apps, Main's env and the host's
+   record would then disagree, and every later release refuses. The Large app,
+   its catalog copy and `MERV_FLEET_RUNTIMES` stay on the v2 release, which the
+   older Main never reads; `release.mjs` refuses a later cutover until they name
+   the live release again. A dump from before step 2 has no host
    project, and the host key then stops authenticating. Restoring one means
    removing the `MERV_PI_HOST_*` lines, moving `_host` aside and running the
    phases again from step 2. The production Standard app (version 15) is at

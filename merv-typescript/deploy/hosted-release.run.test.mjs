@@ -667,6 +667,9 @@ test('after the cutover a release deploys both apps, switches every machine, and
   assert.equal(r.sim.others[LARGE].image, NEXT);
   assert.deepEqual(r.sim.catalog.slice(2), [held(CF, NEXT, NEXT_ID), held(LARGE, NEXT, NEXT_L)]);
   assert.deepEqual(r.sim.state.current.releases, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
+  // The legacy key and the record agree on Standard, as the previous pipeline reads them when the
+  // runbook rolls Main back with release.mjs.
+  assert.equal(r.sim.main, r.sim.state.current.releaseId);
   assert.match(r.ledger, /\| v15 v3 \| 2 pass \| completed in 42s \| pass \|/);
 });
 
