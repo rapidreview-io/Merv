@@ -14,6 +14,8 @@ export interface ManagedRunnerBindingIdentity {
 export type ManagedRunnerValidator = {
   current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
   admits(allocationId: string, epoch: number, tx: Transaction): Promise<boolean>;
+  /** Whether its last look rented machines for this project's automatic work. */
+  serves?(projectId: string): boolean;
 };
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];

@@ -1255,6 +1255,10 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await this.dispatcher.lease(caller, input);
   }
+  async servedSources() {
+    this.ensureOpen();
+    return await this.dispatcher.servedSources();
+  }
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
     this.ordinary(caller);
     this.ensureOpen();

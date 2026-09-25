@@ -735,6 +735,24 @@ test('no read marks or closes an idle session, yet the stuck report already name
   });
 });
 
+test('the stuck report leaves out no_live_runner while Fleet rents for the project', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  let served = true;
+  t.after(
+    f.sessions.registerManagedValidator({
+      current: async () => false,
+      admits: async () => false,
+      serves: (projectId) => served && projectId === f.owner.projectId,
+    }),
+  );
+  const kinds = async () => (await f.sessions.stuck(f.owner)).items.map((item) => item.kind);
+  assert.deepEqual(await kinds(), []);
+  served = false;
+  assert.deepEqual(await kinds(), ['no_live_runner']);
+});
+
 test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {
   for (const config of [
     { idleNoticeSeconds: 59 },

@@ -15,6 +15,7 @@ import {
   RUNNER_HARNESSES,
   sessionSecretPattern,
   type Caller,
+  type DelegationSource,
   type Scope,
   type State,
   type Transaction,
@@ -953,6 +954,15 @@ export class SessionDispatch {
                 : 'no_candidates',
     };
   }
+  /** Every project whose admin chose Fleet, with the source of the admin who chose last. */
+  async servedSources(): Promise<{ projectId: string; source: DelegationSource }[]> {
+    const rows = await this.state.read((sql) =>
+      sql.all<{ project_id: string; source_json: string }>(
+        'SELECT project_id,source_json FROM project_session_dispatch WHERE enabled=1 AND own_machines=0 AND source_json IS NOT NULL ORDER BY updated_at,project_id',
+      ),
+    );
+    return rows.map((row) => ({ projectId: row.project_id, source: JSON.parse(row.source_json) }));
+  }
   /** A read-only hint for a configured source and a prospective runner profile. */
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
     caller = structuredClone(caller);
@@ -1161,7 +1171,13 @@ export class SessionDispatch {
         why: `${queue.length} queued step${queue.length === 1 ? ' waits' : 's wait'} while automatic dispatch is off.`,
         next: 'An admin turns it on with PUT /sessions/dispatch {"enabled":true}. Work can still be offered by hand.',
       });
-    if (queue.length && dispatch.enabled && !runners.some((runner) => runner.live))
+    // Where Fleet rents for this project, its machines are the runners that take the work.
+    if (
+      queue.length &&
+      dispatch.enabled &&
+      !runners.some((runner) => runner.live) &&
+      !this.hooks.managed.serves(projectId)
+    )
       add({
         kind: 'no_live_runner',
         since: runners[0]?.lastSeenAt ?? observedAt,

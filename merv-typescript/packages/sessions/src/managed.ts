@@ -67,6 +67,9 @@ export class ManagedRunnerBindings {
   get validating(): boolean {
     return !!this.validator;
   }
+  serves(projectId: string): boolean {
+    return !!this.validator?.serves?.(projectId);
+  }
   registerValidator(validator: ManagedRunnerValidator): () => void {
     check(
       !this.validator,

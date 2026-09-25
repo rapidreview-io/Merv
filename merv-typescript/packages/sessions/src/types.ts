@@ -268,6 +268,8 @@ export interface Sessions {
     caller: Caller,
     input: AutomaticLease,
   ): Promise<{ session: Session | null; reason: string }>;
+  /** Server-only: every project whose admin chose Fleet, as the source of the admin who chose. */
+  servedSources(): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** Advisory, source-scoped automatic work for a prospective profile; no runner is required. */
   dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand>;
   heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence>;

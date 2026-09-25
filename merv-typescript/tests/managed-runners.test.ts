@@ -128,10 +128,7 @@ async function fixture(
   let current = true,
     admits = true;
   const validator: Parameters<LeasedSessions['registerManagedValidator']>[0] = {
-    current: async (binding) =>
-      current &&
-      binding.source.projectId === boot.project.id &&
-      binding.runtimeProfileId === 'codex-profile',
+    current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
   };
   sessions.registerManagedValidator(validator);
@@ -451,6 +448,34 @@ test('own machines give a managed runner no new work, and the session it holds r
   assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'active');
   await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
   assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'released');
+});
+
+test('a person’s source enrolls a managed runner that leases as that person', async (t) => {
+  const f = await fixture(t);
+  const person = await f.scope.acceptVerifiedIdentity({
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'founder',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const project = await f.scope.createProject(person, { name: 'Person', requestId: 'person' });
+  const owner = await f.scope.caller(person, project.id);
+  const source = await f.scope.delegationSource(owner);
+  const allocationId = randomUUID();
+  const runnerId = `managed-${allocationId}`;
+  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+    ...f.input,
+    allocationId,
+    source,
+  });
+  const enrolled = await f.sessions.enrollManaged(enrollmentToken, { workerNonce: f.workerNonce });
+  const managed = await f.sessions.authenticateManaged(enrolled.controlToken);
+  assert.equal(managed.projectId, project.id);
+  await f.sessions.heartbeatRunner(managed, { ...f.heartbeat(1), runnerId });
+  await f.sessions.setDispatch(owner, { enabled: true });
+  const target = await f.handle.start(owner, { workflow: 'managed-test', requestId: randomUUID() });
+  const leased = await f.sessions.lease(managed, { ...f.lease(), runnerId });
+  assert.ok(leased.session, leased.reason);
+  assert.deepEqual([leased.session.instanceId, leased.session.source], [target.id, source]);
 });
 
 test('the sweep ends a bound session once its machine is no longer current', async (t) => {

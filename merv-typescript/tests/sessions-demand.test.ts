@@ -274,6 +274,32 @@ test('a project on its own machines shows Fleet no demand, and its own runner st
   assert.equal(leased.session?.instanceId, target.id, leased.reason);
 });
 
+test('Fleet serves each project an admin turned on for it, as the admin who chose last', async (t) => {
+  const f = await fixture(t);
+  const project = async (name: string): Promise<Caller> => {
+    const boot = await f.scope.bootstrap({ projectName: name, actorName: 'Owner' });
+    return { actorId: boot.actor.id, projectId: boot.project.id, credentialId: boot.credential.id };
+  };
+  const own = await project('Own machines');
+  const halted = await project('Halted');
+  await project('Never chosen');
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.setDispatch(own, { enabled: true, ownMachines: true });
+  await f.sessions.setDispatch(halted, { enabled: true });
+  await f.sessions.halt(halted);
+  const issued = await f.scope.issueActor(f.owner, { name: 'Second admin', role: 'operator' });
+  const second = {
+    actorId: issued.actor.id,
+    projectId: f.owner.projectId,
+    credentialId: issued.credential.id,
+  };
+  await f.sessions.setDispatch(second, { ownMachines: true });
+  await f.sessions.setDispatch(second, { ownMachines: false });
+  assert.deepEqual(await f.sessions.servedSources(), [
+    { projectId: f.owner.projectId, source: await f.scope.delegationSource(second) },
+  ]);
+});
+
 test('a project whose dispatch was on before the upgrade keeps its own machines', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
