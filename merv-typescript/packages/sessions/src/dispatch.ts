@@ -774,7 +774,7 @@ export class SessionDispatch {
       else {
         check(
           (await tx.get<{ n: number }>(
-            'SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id)',
+            'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=? AND rented=0',
             caller.projectId,
           ))!.n < 1000,
           'runner_limit',
@@ -782,7 +782,7 @@ export class SessionDispatch {
           409,
         );
         await tx.run(
-          'INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,?,?,?,?,?,?)',
+          'INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at,rented) VALUES(?,?,?,?,?,?,?,?,?)',
           id,
           caller.projectId,
           owner.hash,
@@ -791,6 +791,7 @@ export class SessionDispatch {
           JSON.stringify(input),
           JSON.stringify({ platforms: [] }),
           time,
+          caller.managed ? 1 : 0,
         );
         await recorded(this.state, tx, caller, 'session.runner_registered', id, { runnerRef: id });
       }
