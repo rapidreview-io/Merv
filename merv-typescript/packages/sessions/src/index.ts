@@ -1148,7 +1148,10 @@ export class LeasedSessions implements Sessions {
     );
     return await this.observations.read(caller, agentId);
   }
-  async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
+  async setDispatch(
+    caller: Caller,
+    input: Parameters<SessionDispatch['setDispatch']>[1],
+  ): Promise<DispatchState> {
     this.ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);

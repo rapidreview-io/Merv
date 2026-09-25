@@ -99,6 +99,9 @@ long session is quiet at once. A target that already has a `dispatch_held` or
 
 Automatic dispatch starts **off** for every project. Enabling it allows a
 registered machine to request work; it does not start a local process by itself.
+With `ownMachines` a project's automatic work goes only to its own runners: Fleet sees
+no demand there and its machines lease nothing new, while a session one holds runs to
+release. Projects that were already on when this setting arrived keep their own machines.
 
 | Control          | New automatic assignments                               | Existing sessions                              |
 | ---------------- | ------------------------------------------------------- | ---------------------------------------------- |
@@ -120,7 +123,7 @@ MCP-only session secret. Operator controls require project administration.
 | Method and route                     | Purpose                                                                      |
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `GET /sessions/status`               | Sanitized project session history, runner presence and caller-eligible queue |
-| `PUT /sessions/dispatch`             | Set `{ enabled }`                                                            |
+| `PUT /sessions/dispatch`             | Set `{ enabled?, ownMachines? }`; the admin who set it last directs Fleet    |
 | `POST /sessions/halt`                | Disable dispatch and halt project sessions                                   |
 | `POST /sessions/:id/halt`            | Halt one project session                                                     |
 | `POST /sessions/runners/heartbeat`   | Register or refresh this source's machine inventory and capacity             |

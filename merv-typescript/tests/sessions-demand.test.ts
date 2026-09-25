@@ -12,6 +12,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import { postgresMigrations } from '../packages/sessions/src/dispatch.postgres.js';
 import { countWrites, openState } from './fixtures/state.js';
 
 const platform = { name: 'codex', harness: 'codex' as const, enabled: true, parallelism: 1 };
@@ -237,6 +238,10 @@ test('prospective demand applies budgets, live leases, and durable holds', async
     outcome: 'host_failed',
   });
   assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  // Choosing the hardware is not the go-ahead that clears a hold; only the switch is.
+  await f.sessions.setDispatch(f.owner, { ownMachines: true });
+  await f.sessions.setDispatch(f.owner, { ownMachines: false });
+  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
   await f.sessions.releaseHold(f.owner, {
     instanceId: first.id,
     expectedRevision: 0,
@@ -252,4 +257,73 @@ test('prospective demand applies budgets, live leases, and durable holds', async
     { candidates: [] },
     'unreported usage withholds a project budget',
   );
+});
+
+test('a project on its own machines shows Fleet no demand, and its own runner still leases', async (t) => {
+  const f = await fixture(t);
+  const target = await (await f.register('own')).start();
+  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: true });
+  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  await f.sessions.setDispatch(f.owner, { ownMachines: false });
+  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+    candidates: [{ instanceId: target.id, expectedRevision: 0 }],
+  });
+  await f.sessions.setDispatch(f.owner, { ownMachines: true });
+  await f.runner();
+  const leased = await f.lease();
+  assert.equal(leased.session?.instanceId, target.id, leased.reason);
+});
+
+test('a project whose dispatch was on before the upgrade keeps its own machines', async (t) => {
+  const state = await openState();
+  const scope = await createService(new ProjectScope(state));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const events = await createService(new DurableEvents(state));
+  // The release before: session_dispatch stops at version 4.
+  const migrate = state.migrate.bind(state);
+  state.migrate = (component, migrations) =>
+    migrate(
+      component,
+      migrations.filter((m) => component !== 'session_dispatch' || m.version < 5),
+    );
+  const sessions = await createService(
+    new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
+  );
+  state.migrate = migrate;
+  t.after(async () => {
+    await sessions.close();
+    await events.close();
+    await workflows.close();
+    await state.close();
+  });
+  const projects = [];
+  for (const enabled of [1, 0]) {
+    const boot = await scope.bootstrap({ projectName: `Before ${enabled}`, actorName: 'Owner' });
+    await state.transaction((tx) =>
+      tx.run(
+        'INSERT INTO project_session_dispatch(project_id,enabled,updated_at,updated_by) VALUES(?,?,?,?)',
+        boot.project.id,
+        enabled,
+        new Date().toISOString(),
+        boot.actor.id,
+      ),
+    );
+    projects.push({
+      actorId: boot.actor.id,
+      projectId: boot.project.id,
+      credentialId: boot.credential.id,
+    });
+  }
+  await state.migrate(
+    'session_dispatch',
+    Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+  );
+  const read = async (caller: Caller) => {
+    const { enabled, ownMachines } = (await sessions.projectStatus(caller)).dispatch;
+    return [enabled, ownMachines];
+  };
+  assert.deepEqual(await Promise.all(projects.map(read)), [
+    [true, true],
+    [false, false],
+  ]);
 });

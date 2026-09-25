@@ -75,4 +75,9 @@ ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
         PRIMARY KEY(project_id,actor_id,request_id)
       );
 `,
+  5: `
+ALTER TABLE project_session_dispatch ADD COLUMN own_machines BIGINT NOT NULL DEFAULT 0 CHECK(own_machines IN (0,1)),
+        ADD COLUMN source_json TEXT;
+      UPDATE project_session_dispatch SET own_machines=1 WHERE enabled=1;
+`,
 };

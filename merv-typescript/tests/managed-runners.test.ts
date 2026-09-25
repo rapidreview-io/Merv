@@ -431,6 +431,28 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
 });
 
+test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: true });
+  assert.equal((await f.sessions.projectStatus(f.owner)).dispatch.fleet, true);
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  assert.deepEqual(await f.sessions.lease(f.caller, f.lease()), {
+    session: null,
+    reason: 'dispatch_disabled',
+  });
+  await f.sessions.setDispatch(f.owner, { ownMachines: false });
+  const request = f.lease();
+  const bound = (await f.sessions.lease(f.caller, request)).session!;
+  assert.ok(bound);
+  await f.sessions.authenticate(request.secret);
+  await f.sessions.setDispatch(f.owner, { ownMachines: true });
+  await f.sessions.sweep();
+  assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'active');
+  await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
+  assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'released');
+});
+
 test('the sweep ends a bound session once its machine is no longer current', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));

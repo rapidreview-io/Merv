@@ -75,7 +75,7 @@ export async function resolutionFixture(
       return await scope.caller(principal, project.id);
     }
     const boot = await scope.bootstrap({ projectName: 'Resolution', actorName: 'Owner' });
-    return { projectId: boot.project.id, actorId: boot.actor.id };
+    return { projectId: boot.project.id, actorId: boot.actor.id, credentialId: boot.credential.id };
   })();
   return {
     directory,

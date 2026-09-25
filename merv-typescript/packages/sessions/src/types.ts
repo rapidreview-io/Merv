@@ -256,7 +256,10 @@ export interface Sessions {
    */
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
-  setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState>;
+  setDispatch(
+    caller: Caller,
+    input: Partial<Pick<DispatchState, 'enabled' | 'ownMachines'>>,
+  ): Promise<DispatchState>;
   halt(
     caller: Caller,
     input?: { sessionId?: string; reason?: string },

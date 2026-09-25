@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
-import { budgetSchema, haltSchema, releaseHoldSchema } from './dispatch.js';
+import { budgetSchema, dispatchSchema, haltSchema, releaseHoldSchema } from './dispatch.js';
 import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -63,10 +63,10 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.dispatch',
         description:
-          'Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.',
+          "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act with the authority of the admin who changed either last.",
         conversation: 'propose',
-        inputSchema: z.object({ enabled: z.boolean() }).strict(),
-        handler: async (caller: Caller, input: { enabled: boolean }) =>
+        inputSchema: dispatchSchema,
+        handler: async (caller: Caller, input: Parameters<Sessions['setDispatch']>[1]) =>
           await sessions.setDispatch(caller, input),
       }),
     );

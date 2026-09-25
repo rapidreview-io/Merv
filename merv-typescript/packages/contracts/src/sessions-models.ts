@@ -60,6 +60,10 @@ export interface SessionDeferral {
 
 export interface DispatchState {
   enabled: boolean;
+  /** Automatic work goes only to the project's own runners, never to a machine Fleet rents. */
+  ownMachines: boolean;
+  /** Whether Fleet rents machines for automatic work on this server, so the choice means anything. */
+  fleet: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
 }

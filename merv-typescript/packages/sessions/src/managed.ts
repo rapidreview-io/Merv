@@ -63,6 +63,10 @@ export class ManagedRunnerBindings {
     private secretEnv?: string,
   ) {}
 
+  /** Whether Fleet rents machines for this server's automatic work at all. */
+  get validating(): boolean {
+    return !!this.validator;
+  }
   registerValidator(validator: ManagedRunnerValidator): () => void {
     check(
       !this.validator,

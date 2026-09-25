@@ -237,6 +237,55 @@ test('automatic dispatch is off by default; operator UI sees machine-key session
   );
 });
 
+test('an admin chooses own machines or Fleet apart from the switch, and whoever chose last is the source', async (t) => {
+  const f = await fixture(t);
+  const put = (body: unknown, bearer = f.operator) =>
+    f.http('/sessions/dispatch', bearer, body, f.project.id, 'PUT');
+  const stored = async () =>
+    (await f.app.ctx.state.read((sql) =>
+      sql.get<{ own_machines: number; source_json: string }>(
+        'SELECT own_machines,source_json FROM project_session_dispatch WHERE project_id=?',
+        f.project.id,
+      ),
+    ))!;
+  const initial = (await f.http('/sessions/status', f.operator, undefined, f.project.id)).body;
+  assert.deepEqual(
+    [initial.dispatch.ownMachines, initial.dispatch.fleet],
+    [false, false],
+    'no Fleet owner is registered here',
+  );
+  for (const body of [{}, { ownMachines: 'yes' }, { ownMachines: true, fleet: true }])
+    assert.equal((await put(body)).status, 400, JSON.stringify(body));
+  assert.equal((await put({ ownMachines: true }, f.reader)).status, 403);
+  const chosen = await put({ ownMachines: true });
+  assert.equal(chosen.status, 200, JSON.stringify(chosen));
+  assert.deepEqual([chosen.body.dispatch.enabled, chosen.body.dispatch.ownMachines], [false, true]);
+  const source = JSON.parse((await stored()).source_json);
+  assert.deepEqual(
+    [source.kind, source.subject, source.actorId],
+    ['human', 'operator', chosen.body.dispatch.updatedBy],
+  );
+  const both = await put({ enabled: true, ownMachines: false }, f.key.token);
+  assert.deepEqual([both.body.dispatch.enabled, both.body.dispatch.ownMachines], [true, false]);
+  assert.equal(JSON.parse((await stored()).source_json).kind, 'key', 'whoever chose last');
+  const changes = (await f.app.ctx.state.events(f.project.id))
+    .filter((event) => event.type === 'session.dispatch_changed')
+    .map(({ data }) => [data.enabled, data.ownMachines]);
+  assert.deepEqual(changes, [
+    [false, true],
+    [true, false],
+  ]);
+  // A person's agent chooses with exactly that person's authority and is recorded as them.
+  t.after(f.app.ctx.scope.registerConversationAuthority({ require: async () => source }));
+  const conversation = { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'pi' };
+  await f.app.ctx.sessions.setDispatch(
+    { actorId: source.actorId, projectId: f.project.id, conversation },
+    { ownMachines: true },
+  );
+  assert.deepEqual(JSON.parse((await stored()).source_json), source);
+  assert.equal((await stored()).own_machines, 1);
+});
+
 test('project reads are sanitized; reader, worker, foreign project, and executable settings are rejected at HTTP boundaries', async (t) => {
   const f = await fixture(t);
   const presence = await f.http(

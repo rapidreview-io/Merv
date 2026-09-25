@@ -182,6 +182,12 @@ const uncountedOfferCodes = new Set([
   'code_recovery_required',
   'code_capture_quarantined',
 ]);
+/** session.dispatch: whether automatic work runs, and whether only on the project's own machines. */
+export const dispatchSchema = z
+  .object({ enabled: z.boolean().optional(), ownMachines: z.boolean().optional() })
+  .strict()
+  .refine((input) => input.enabled !== undefined || input.ownMachines !== undefined);
+type DispatchChange = z.infer<typeof dispatchSchema>;
 /** session.halt: one session, or every one in the project with automatic dispatch off. */
 export const haltSchema = z
   .object({ sessionId: label.optional(), reason: label.optional() })
@@ -246,6 +252,7 @@ interface SessionRow {
 }
 interface DispatchRow {
   enabled: number;
+  own_machines: number;
   updated_at: string;
   updated_by: string;
 }
@@ -318,6 +325,12 @@ export class SessionDispatch {
           version: 4,
           sql: postgresMigrations[4],
         },
+        {
+          // Where automatic work may run, and whose authority chose it. A project already on
+          // runs on its own machines, so none moves to Fleet until an admin picks it.
+          version: 5,
+          sql: postgresMigrations[5],
+        },
       ]);
     };
   }
@@ -354,43 +367,49 @@ export class SessionDispatch {
       'SELECT * FROM project_session_dispatch WHERE project_id=?',
       projectId,
     );
-    return row
-      ? { enabled: !!row.enabled, updatedAt: row.updated_at, updatedBy: row.updated_by }
-      : { enabled: false, updatedAt: null, updatedBy: null };
+    return {
+      enabled: !!row?.enabled,
+      ownMachines: !!row?.own_machines,
+      fleet: this.hooks.managed.validating,
+      updatedAt: row?.updated_at ?? null,
+      updatedBy: row?.updated_by ?? null,
+    };
   }
-  private async set(caller: Caller, enabled: boolean, tx: Transaction): Promise<DispatchState> {
+  private async set(caller: Caller, to: DispatchChange, tx: Transaction): Promise<DispatchState> {
     const old = await this.dispatch(caller.projectId, tx);
-    if (old.enabled === enabled) return old;
+    const next = {
+      enabled: to.enabled ?? old.enabled,
+      ownMachines: to.ownMachines ?? old.ownMachines,
+    };
+    if (next.enabled === old.enabled && next.ownMachines === old.ownMachines) return old;
     const time = isoNow(this.clock);
+    // The admin who chose last directs what Fleet runs here: their source, taken as they act.
     await tx.run(
-      'INSERT INTO project_session_dispatch(project_id,enabled,updated_at,updated_by) VALUES(?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
+      'INSERT INTO project_session_dispatch(project_id,enabled,own_machines,source_json,updated_at,updated_by) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,own_machines=excluded.own_machines,source_json=excluded.source_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
       caller.projectId,
-      enabled ? 1 : 0,
+      next.enabled ? 1 : 0,
+      next.ownMachines ? 1 : 0,
+      JSON.stringify(await this.scope.delegationSource(caller, tx)),
       time,
       caller.actorId,
     );
     // Switching dispatch off and on is the human go-ahead for the whole project: every
     // count starts afresh, where session.release_hold restarts one target.
-    await tx.run(
-      'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
-      caller.projectId,
-    );
-    await recorded(this.state, tx, caller, 'session.dispatch_changed', caller.projectId, {
-      enabled,
-    });
-    return { enabled, updatedAt: time, updatedBy: caller.actorId };
+    if (next.enabled !== old.enabled)
+      await tx.run(
+        'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
+        caller.projectId,
+      );
+    await recorded(this.state, tx, caller, 'session.dispatch_changed', caller.projectId, next);
+    return { ...next, fleet: old.fleet, updatedAt: time, updatedBy: caller.actorId };
   }
-  async setDispatch(caller: Caller, input: { enabled: boolean }): Promise<DispatchState> {
+  async setDispatch(caller: Caller, input: DispatchChange): Promise<DispatchState> {
     caller = structuredClone(caller);
-    check(
-      input && typeof input.enabled === 'boolean' && Object.keys(input).length === 1,
-      'invalid_dispatch',
-      'Dispatch accepts only enabled',
-    );
-    input = { ...input };
+    const parsed = dispatchSchema.safeParse(input);
+    check(parsed.success, 'invalid_dispatch', 'Dispatch accepts enabled, ownMachines or both');
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
-      return await this.set(caller, input.enabled, tx);
+      return await this.set(caller, parsed.data, tx);
     });
   }
   private async budgets(caller: Caller, tx: Transaction, only?: string[]) {
@@ -482,7 +501,7 @@ export class SessionDispatch {
     input = parsed.data;
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
-      if (!input.sessionId) await this.set(caller, false, tx);
+      if (!input.sessionId) await this.set(caller, { enabled: false }, tx);
       const rows = input.sessionId
         ? await tx.all<SessionRow>(
             'SELECT id,session_json FROM worker_sessions WHERE project_id=? AND id=?',
@@ -943,7 +962,9 @@ export class SessionDispatch {
     return await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
         await this.ordinary(caller, 'read', tx);
-        if (!input.platform.enabled) return { candidates: [] };
+        // Only Fleet asks: a project on its own machines has no work for a machine it rents.
+        if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
+          return { candidates: [] };
         const selected = await this.eligibleCandidates(
           caller,
           tx,
@@ -1470,8 +1491,12 @@ export class SessionDispatch {
       );
       if (managed?.row.bound_session_id)
         return { session: null, reason: await decided('capacity_full') };
-      if (!(await this.dispatch(caller.projectId, tx)).enabled)
-        return { session: null, reason: await decided('dispatch_disabled') };
+      // A project on its own machines gives a rented one no new work; one it holds runs out.
+      const open = async () => {
+        const dispatch = await this.dispatch(caller.projectId, tx);
+        return dispatch.enabled && !(managed && dispatch.ownMachines);
+      };
+      if (!(await open())) return { session: null, reason: await decided('dispatch_disabled') };
       if (managed) await this.hooks.managed.admits(managed.row, tx);
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
@@ -1511,7 +1536,7 @@ export class SessionDispatch {
       // then still create an automatic lease within this transaction.
       await this.scope.requireDelegation(owner.source, 'read', tx);
       check(
-        (await this.dispatch(caller.projectId, tx)).enabled,
+        await open(),
         'dispatch_disabled',
         'Automatic dispatch was disabled before the offer',
         409,
@@ -1545,7 +1570,7 @@ export class SessionDispatch {
           );
         });
       check(
-        (await this.dispatch(caller.projectId, tx)).enabled,
+        await open(),
         'dispatch_disabled',
         'Automatic dispatch was disabled while building the offer',
         409,
