@@ -161,12 +161,17 @@ test(
     );
     const secretEnv = `MERV_PI_LATENCY_${randomUUID().replaceAll('-', '')}`;
     process.env[secretEnv] = randomBytes(32).toString('base64url');
+    // Machines are rented in the Pi host project, by its key.
+    const host = await scope.bootstrap({ projectName: 'Pi host', actorName: 'Pi host' });
+    const credentialEnv = `${secretEnv}_HOST`;
+    process.env[credentialEnv] = host.token;
     const pi = await createService(
       new PiService(state, scope, fleet, app.ctx.tools, app.ctx.blobs, {
         enabled: true,
         baseUrl: app.ctx.api.url!,
         secretEnv,
         pollIntervalMs: 30_000,
+        host: { projectId: host.project.id, credentialEnv },
       }),
     );
     const piHttp = new PiHttp(pi);
@@ -189,6 +194,7 @@ test(
       await fleet.close();
       await app.stop();
       delete process.env[secretEnv];
+      delete process.env[credentialEnv];
       rmSync(directory, { recursive: true, force: true });
     });
 
@@ -265,15 +271,26 @@ test(
     assert.ok(baselineVerdict.writes > 0, 'the baseline review must write durable State');
 
     const conversation = await pi.create(operator, { requestId: 'latency-chat', title: 'Latency' });
-    await pi.send(operator, conversation.id, { commandId: 'latency-turn', text: 'Stream locally' });
-    const current = (await pi.snapshot(operator, conversation.id)).conversation;
-    const allocation = await fleet.inspect(operator, current.runtimeId!);
+    const sent = await pi.send(operator, conversation.id, {
+      commandId: 'latency-turn',
+      text: 'Stream locally',
+    });
+    const hostCaller = {
+      projectId: host.project.id,
+      actorId: host.actor.id,
+      credentialId: host.credential.id,
+    };
+    const allocation = await fleet.inspect(hostCaller, sent.runtimeId);
     const token = (JSON.parse(await pi.bootstrap(allocation)) as PiBootstrap).workerToken;
     await fleet.tick();
     await fleet.tick();
     const { work } = await pi.next(token, { workerId: 'latency-worker' });
     assert.ok(work);
-    const bound = { commandId: work.command.id, workerId: 'latency-worker' };
+    const bound = {
+      conversationId: conversation.id,
+      commandId: work.command.id,
+      workerId: 'latency-worker',
+    };
     assert.deepEqual(await pi.begin(token, bound), { apply: true });
 
     const response = await fetch(`${app.ctx.api.url}/pi/${conversation.id}/events`, {

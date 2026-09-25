@@ -32,10 +32,8 @@ export const nextInput = workerInput
       .optional(),
   })
   .strict();
-/** Per-turn routes. conversationId is optional until G2 requires it with bootstrap v2. */
-export const commandInput = workerInput
-  .extend({ commandId: id, conversationId: id.optional() })
-  .strict();
+/** Per-turn routes name the conversation too: one worker serves many. */
+export const commandInput = workerInput.extend({ commandId: id, conversationId: id }).strict();
 export const message = z
   .object({ role: z.enum(['user', 'assistant']), text: z.string().max(128_000) })
   .strict();
@@ -158,7 +156,8 @@ export const hostMigration = {
     'status', 'interrupted', 'error', 'service_unavailable',
     'completedAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))::text
     WHERE status IN ('waiting','starting','working','saving');
-  UPDATE pi_conversations SET runtime_id = NULL, data_json = (data_json::jsonb ||
-    '{"runtimeId":null,"runtimeEpoch":null,"runtimeExpiresAt":null,"activeCommandId":null,"idleSince":null}'::jsonb)::text;
-  DROP INDEX pi_one_runtime_per_user;`,
+  UPDATE pi_conversations SET data_json = ((data_json::jsonb - 'epoch' - 'runtimeId' - 'runtimeEpoch'
+    - 'runtimeExpiresAt' - 'idleSince') || '{"activeCommandId":null}'::jsonb)::text;
+  DROP INDEX pi_one_runtime_per_user;
+  ALTER TABLE pi_conversations DROP COLUMN runtime_id;`,
 };

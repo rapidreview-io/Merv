@@ -1,335 +1,15 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
-import { DiskBlobs } from '@merv/blobs';
-import { check, createService, type Blobs, type Caller, type MervError } from '@merv/contracts';
-import { ProjectScope } from '@merv/scope';
-import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
-import { ToolRegistry } from '../packages/api/src/registry.js';
-import { FleetService } from '../packages/fleet/src/index.js';
-import { PiService } from '../packages/pi/src/index.js';
+import { check, type Caller } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
-import type {
-  PiBootstrap,
-  PiBootstrapV1,
-  PiCompletion,
-  PiConversation,
-  PiStage,
-} from '../packages/pi/src/types.js';
-import { countWrites, openState } from './fixtures/state.js';
-
-process.env.MERV_PI_SECRET ??= 'pi-service-integration-tests-only-32-characters';
-const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-const code = (name: string) => (error: unknown) => (error as MervError)?.code === name;
-
-function checkpointTree(text = 'Earlier', branch = 'active'): string {
-  return JSON.stringify({
-    version: 1,
-    header: {
-      type: 'session',
-      version: 3,
-      id: 'session_test',
-      cwd: '/pi-worker',
-      timestamp: '2026-09-23T00:00:00Z',
-    },
-    entries: [
-      {
-        type: 'message',
-        id: 'root',
-        parentId: null,
-        timestamp: '2026-09-23T00:00:00Z',
-        message: { role: 'user', content: text, timestamp: 1790121600000 },
-      },
-      {
-        type: 'message',
-        id: 'sibling',
-        parentId: 'root',
-        timestamp: '2026-09-23T00:00:01Z',
-        message: { role: 'user', content: 'Other branch', timestamp: 1790121601000 },
-      },
-      {
-        type: 'message',
-        id: 'active',
-        parentId: 'root',
-        timestamp: '2026-09-23T00:00:02Z',
-        message: { role: 'user', content: 'Active branch', timestamp: 1790121602000 },
-      },
-    ],
-    leafId: branch,
-  });
-}
-
-class FakeRuntimes implements SandboxRuntimes {
-  profileId = 'pi-test-profile';
-  leaseSeconds = 600;
-  get profiles() {
-    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
-  }
-  describe = async () => null;
-  connected = () => true;
-  readonly handles = new Map<string, SandboxRuntimeHandle>();
-  readonly launched: string[] = [];
-  readonly stopped: string[] = [];
-
-  async provision(_projectId: string, key: string): Promise<SandboxRuntimeHandle> {
-    let handle = this.handles.get(key);
-    if (!handle) {
-      handle = {
-        sandboxId: `sbx_${this.handles.size + 1}`,
-        state: 'ready',
-        ready: true,
-        deleted: false,
-        leaseExpiresAt: '2099-01-01T00:00:00Z',
-        revision: 1,
-        launch: null,
-      };
-      this.handles.set(key, handle);
-    }
-    return structuredClone(handle);
-  }
-  async inspect(_projectId: string, current: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle> {
-    const handle = [...this.handles.values()].find((item) => item.sandboxId === current.sandboxId);
-    assert.ok(handle);
-    return structuredClone(handle);
-  }
-  async launch(
-    _projectId: string,
-    current: SandboxRuntimeHandle,
-    key: string,
-  ): Promise<SandboxRuntimeHandle> {
-    const handle = [...this.handles.values()].find((item) => item.sandboxId === current.sandboxId);
-    assert.ok(handle);
-    this.launched.push(key);
-    handle.launch ??= {
-      sandboxId: handle.sandboxId,
-      launchId: `rln_${handle.sandboxId}`,
-      operationKey: key,
-      releaseId: 'pi-test-release',
-      jobId: `job_${handle.sandboxId}`,
-      state: 'pending',
-      deliveryState: 'launched',
-      expiresAt: '2099-01-01T00:00:00Z',
-    };
-    return structuredClone(handle);
-  }
-  async acknowledge(
-    _projectId: string,
-    current: SandboxRuntimeHandle,
-  ): Promise<SandboxRuntimeHandle> {
-    const handle = [...this.handles.values()].find((item) => item.sandboxId === current.sandboxId);
-    assert.ok(handle?.launch);
-    handle.launch.state = 'consumed';
-    return structuredClone(handle);
-  }
-  async stop(_projectId: string, current: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle> {
-    const handle = [...this.handles.values()].find((item) => item.sandboxId === current.sandboxId);
-    assert.ok(handle);
-    this.stopped.push(handle.sandboxId);
-    handle.state = 'deleting';
-    handle.ready = false;
-    handle.revision++;
-    return structuredClone(handle);
-  }
-  async renew(_projectId: string, current: SandboxRuntimeHandle) {
-    return this.inspect(_projectId, current);
-  }
-  release(sandboxId: string) {
-    const handle = [...this.handles.values()].find((item) => item.sandboxId === sandboxId);
-    assert.ok(handle);
-    handle.state = 'stopped';
-    handle.deleted = true;
-    handle.ready = false;
-    handle.revision++;
-  }
-}
-
-async function fixture(
-  t: TestContext,
-  baseUrl = 'http://127.0.0.1:31415/',
-  startTime = Date.parse('2026-09-23T00:00:00Z'),
-) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-pi-service-'));
-  const state = await openState(directory);
-  const scope = await createService(new ProjectScope(state));
-  const admin = await scope.bootstrap({ projectName: 'Pi integration', actorName: 'Operator' });
-  const operator: Caller = {
-    projectId: admin.project.id,
-    actorId: admin.actor.id,
-    credentialId: admin.credential.id,
-  };
-  const runtimes = new FakeRuntimes();
-  let now = startTime;
-  const clock = () => now;
-  const tools = new ToolRegistry(scope);
-  let reads = 0;
-  let mutations = 0;
-  tools.register({
-    name: 'project.get',
-    description: 'Get current project',
-    readOnly: true,
-    inputSchema: z.object({}).strict(),
-    handler: async (caller) => {
-      const project = await scope.project(caller);
-      reads++;
-      return project;
-    },
-  });
-  tools.register({
-    name: 'task.create',
-    description: 'Create task',
-    inputSchema: z.object({}).strict(),
-    handler: () => {
-      mutations++;
-      return { id: 'should-not-exist' };
-    },
-  });
-  tools.register({
-    name: 'shell.run',
-    description: 'Run shell',
-    readOnly: true,
-    inputSchema: z.object({}).strict(),
-    handler: () => {
-      mutations++;
-      return 'should-not-run';
-    },
-  });
-  await tools.createCatalog('remote').replace([
-    {
-      kind: 'mcp',
-      name: 'read',
-      description: 'Mounted read',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true },
-      handler: async () => {
-        mutations++;
-        return { content: [{ type: 'text', text: 'should-not-run' }] };
-      },
-    },
-  ]);
-  const fleet = await createService(
-    new FleetService(
-      state,
-      scope,
-      runtimes,
-      { enabled: true, globalLimit: 4, projectLimit: 4, allocationTimeoutSeconds: 3600 },
-      clock,
-    ),
-  );
-  // Tests tick Fleet themselves; a kick is only counted.
-  let kicks = 0;
-  fleet.kick = () => void kicks++;
-  const disk = new DiskBlobs(join(directory, 'blobs'));
-  let failPut = false;
-  const blobs: Blobs = {
-    put: (namespace, bytes) =>
-      failPut ? Promise.reject(new Error('disk unavailable')) : disk.put(namespace, bytes),
-    get: (namespace, digest) => disk.get(namespace, digest),
-  };
-  let pi = await createService(
-    new PiService(
-      state,
-      scope,
-      fleet,
-      tools,
-      blobs,
-      {
-        enabled: true,
-        baseUrl,
-        pollIntervalMs: 30_000,
-        idleTimeoutSeconds: 5,
-      },
-      clock,
-    ),
-  );
-  let sequence = 0;
-  t.after(async () => {
-    await pi.close();
-    await fleet.close();
-    await tools.close();
-    await state.close();
-    rmSync(directory, { recursive: true, force: true });
-  });
-  const create = (caller = operator) =>
-    pi.create(caller, { requestId: `open_${++sequence}`, title: 'Chat' });
-  const send = (conversation: PiConversation, text = 'hello', caller = operator) =>
-    pi.send(caller, conversation.id, { commandId: `turn_${++sequence}`, text });
-  async function claimed(conversation: PiConversation, workerId = 'worker_1', caller = operator) {
-    const allocation = await fleet.inspect(caller, conversation.runtimeId!);
-    const token = (JSON.parse(await pi.bootstrap(allocation)) as PiBootstrap).workerToken;
-    await fleet.tick();
-    await fleet.tick();
-    assert.equal((await fleet.inspect(caller, conversation.runtimeId!)).phase, 'starting');
-    const { work } = await pi.next(token, { workerId });
-    assert.ok(work);
-    return { token, work, input: { commandId: work.command.id, workerId } };
-  }
-  const completion = (commandId: string, workerId: string, checkpoint: string): PiCompletion => ({
-    commandId,
-    workerId,
-    messages: [{ role: 'assistant', text: `answer ${commandId}` }],
-    outcomes: [],
-    checkpoint,
-    checkpointHash: sha(checkpoint),
-  });
-  return {
-    state,
-    scope,
-    operator,
-    runtimes,
-    fleet,
-    tools,
-    blobs,
-    disk,
-    create,
-    send,
-    claimed,
-    completion,
-    get pi() {
-      return pi;
-    },
-    get reads() {
-      return reads;
-    },
-    get mutations() {
-      return mutations;
-    },
-    get kicks() {
-      return kicks;
-    },
-    failStorage: (value: boolean) => {
-      failPut = value;
-    },
-    advance: (milliseconds: number) => {
-      now += milliseconds;
-    },
-    restart: async () => {
-      await pi.close();
-      pi = await createService(
-        new PiService(
-          state,
-          scope,
-          fleet,
-          tools,
-          blobs,
-          {
-            enabled: true,
-            baseUrl,
-            pollIntervalMs: 30_000,
-            idleTimeoutSeconds: 5,
-          },
-          clock,
-        ),
-      );
-    },
-  };
-}
+import { readBootstrap } from '../packages/pi/src/worker-main.js';
+import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
+import { countWrites } from './fixtures/state.js';
+import { checkpointTree, code, fixture, sha } from './fixtures/pi.js';
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
   const f = await fixture(t);
@@ -342,9 +22,20 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
     f.pi.create(f.operator, { requestId: 'same', title: 'Changed' }),
     code('pi_request_conflict'),
   );
-  assert.equal(conversation.runtimeId, null);
-  assert.equal(conversation.epoch, 0);
-  assert.deepEqual(await f.fleet.list(f.operator), []);
+  assert.deepEqual(Object.keys(conversation).sort(), [
+    'activeCommandId',
+    'checkpoint',
+    'createdAt',
+    'id',
+    'previousCheckpoint',
+    'projectId',
+    'revision',
+    'title',
+    'updatedAt',
+    'userId',
+  ]);
+  assert.deepEqual(await f.fleet.list(f.hostCaller), []);
+  assert.deepEqual(await f.hosts(), []);
   assert.equal((await f.pi.list(f.operator)).length, 1);
   assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands.length, 0);
   assert.equal(
@@ -357,7 +48,7 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
   );
 });
 
-test('send commits a command and Fleet request atomically, deduplicates, and serializes turns and users', async (t) => {
+test('send commits a command, its host and the Fleet request atomically, deduplicates, and serializes turns', async (t) => {
   const f = await fixture(t);
   const first = await f.create();
   const second = await f.create();
@@ -375,7 +66,8 @@ test('send commits a command and Fleet request atomically, deduplicates, and ser
     f.fleet.request = original;
   }
   assert.equal((await f.pi.snapshot(f.operator, first.id)).commands.length, 0);
-  assert.deepEqual(await f.fleet.list(f.operator), []);
+  assert.deepEqual(await f.fleet.list(f.hostCaller), []);
+  assert.deepEqual(await f.hosts(), []);
   const [one, two] = await Promise.allSettled([
     f.pi.send(f.operator, first.id, { commandId: 'a', text: 'first' }),
     f.pi.send(f.operator, first.id, { commandId: 'b', text: 'second' }),
@@ -402,60 +94,30 @@ test('send commits a command and Fleet request atomically, deduplicates, and ser
     f.pi.send(f.operator, first.id, { commandId: accepted.id, text: 'changed' }),
     code('pi_command_conflict'),
   );
-  assert.equal((await f.fleet.list(f.operator)).length, 1);
-  await assert.rejects(f.send(second), code('pi_runtime_busy'));
-  assert.equal((await f.pi.snapshot(f.operator, second.id)).commands.length, 0);
+  // The person's other conversation here shares the machine: no second request, no retry.
+  const other = await f.send(second);
+  assert.deepEqual(
+    [other.hostId, other.runtimeId, other.machine],
+    [accepted.hostId, accepted.runtimeId, 'standard'],
+  );
+  assert.equal((await f.fleet.list(f.hostCaller)).length, 1);
 });
 
-test('one runtime per person: a working one is named, an idle one is released for the retry', async (t) => {
-  const f = await fixture(t);
-  const first = await f.create();
-  const second = await f.create();
-  await f.send(first);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, first.id)).conversation);
-  const retry = { commandId: 'second_turn', text: 'hello' };
-  await assert.rejects(
-    f.pi.send(f.operator, second.id, retry),
-    (error: MervError) =>
-      error.code === 'pi_runtime_busy' &&
-      error.message ===
-        'Your conversation “Chat” in this project is still working; wait for it or stop it',
-  );
-  await f.pi.begin(bound.token, bound.input);
-  await f.pi.complete(
-    bound.token,
-    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
-  );
-  await assert.rejects(
-    f.pi.send(f.operator, second.id, retry),
-    (error: MervError) =>
-      error.code === 'pi_runtime_releasing' &&
-      error.message === 'Your agent in “Chat” in this project is being released; retry shortly',
-  );
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
-  await f.fleet.tick();
-  f.runtimes.release('sbx_1');
-  await f.fleet.tick();
-  await f.pi.tick();
-  assert.equal((await f.pi.send(f.operator, second.id, retry)).status, 'waiting');
-});
-
-test('a send after the idle timeout releases the runtime instead of racing its release', async (t) => {
+test('a send after the idle timeout ends that host and starts a fresh one at once', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
-  await f.pi.begin(bound.token, bound.input);
-  await f.pi.complete(
-    bound.token,
-    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
-  );
+  const bound = await f.claimed(await f.send(conversation));
+  await f.finish(bound);
   f.advance(5_000);
-  await assert.rejects(f.send(conversation), code('pi_runtime_releasing'));
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+  const next = await f.send(conversation);
+  assert.notEqual(next.hostId, bound.work.command.hostId);
+  assert.notEqual(next.runtimeId, bound.work.command.runtimeId);
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'stop');
+  assert.equal((await f.host(bound.work.command)).ended?.reason, 'idle');
+  assert.equal(next.status, 'waiting');
 });
 
-test('a role change rebinds the conversation on a fresh runtime; a removed member is refused', async (t) => {
+test('each send carries the person’s current role; a removed member is refused', async (t) => {
   const f = await fixture(t);
   const login = (subject: string) =>
     f.scope.acceptVerifiedIdentity({
@@ -466,31 +128,23 @@ test('a role change rebinds the conversation on a fresh runtime; a removed membe
   const alice = await login('alice');
   const bob = await login('bob');
   const project = await f.scope.createProject(alice, { name: 'Humans', requestId: 'humans' });
-  const owner = await f.scope.caller(alice, project.id);
   await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
   const producer = await f.scope.caller(bob, project.id);
   const conversation = await f.create(producer);
-  await f.send(conversation, 'hello', producer);
-  const snapshot = await f.pi.snapshot(producer, conversation.id);
-  const bound = await f.claimed(snapshot.conversation, 'worker_1', owner);
-  await f.pi.begin(bound.token, bound.input);
-  await f.pi.complete(
-    bound.token,
-    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
-  );
+  const bound = await f.claimed(await f.send(conversation, 'hello', producer));
+  await f.finish(bound);
   await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
   const reader = await f.scope.caller(bob, project.id);
-  const retry = { commandId: 'after_role_change', text: 'still here' };
-  await assert.rejects(f.pi.send(reader, conversation.id, retry), code('pi_runtime_releasing'));
-  await f.fleet.tick();
-  f.runtimes.release('sbx_1');
-  await f.fleet.tick();
-  await f.pi.tick();
-  const command = await f.pi.send(reader, conversation.id, retry);
-  assert.deepEqual(
-    (await f.fleet.inspect(owner, command.runtimeId)).source,
-    await f.scope.delegationSource(reader),
+  const command = await f.pi.send(reader, conversation.id, { commandId: 'after', text: 'here' });
+  // The machine is the host's, so it stays; the turn reads as the reader now.
+  assert.equal(command.runtimeId, bound.work.command.runtimeId);
+  const record = await f.state.read((sql) =>
+    sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_conversations WHERE id=?',
+      conversation.id,
+    ),
   );
+  assert.deepEqual(JSON.parse(record!.data_json).source, await f.scope.delegationSource(reader));
   await f.scope.removeMember(alice, project.id, 'bob');
   await assert.rejects(
     f.pi.send(reader, conversation.id, { commandId: 'removed', text: 'hello' }),
@@ -554,12 +208,12 @@ test('Pi names a new conversation from its first exchange, once, without holding
   });
   const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
   assert.equal(conversation.title, 'New conversation');
-  await f.send(conversation, `How do proteins fold? ${'x'.repeat(3000)}`);
-  const first = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const first = await f.claimed(
+    await f.send(conversation, `How do proteins fold? ${'x'.repeat(3000)}`),
+  );
   await f.pi.begin(first.token, first.input);
-  const saved = f.completion(first.input.commandId, first.input.workerId, checkpointTree());
   // The turn is saved while the naming call is still out.
-  assert.deepEqual(await f.pi.complete(first.token, saved), { saved: true });
+  assert.deepEqual(await f.pi.complete(first.token, f.completion(first.input)), { saved: true });
   const title = async () => (await f.pi.snapshot(f.operator, conversation.id)).conversation.title;
   assert.equal(await title(), 'New conversation');
   answer();
@@ -573,9 +227,13 @@ test('Pi names a new conversation from its first exchange, once, without holding
   assert.ok(String(asked[0].input).length < 2100);
   await f.send(conversation, 'And misfolding?');
   const next = (await f.pi.next(first.token, { workerId: 'worker_2' })).work;
-  const input = { commandId: next!.command.id, workerId: 'worker_2' };
+  const input = {
+    conversationId: conversation.id,
+    commandId: next!.command.id,
+    workerId: 'worker_2',
+  };
   await f.pi.begin(first.token, input);
-  const again = f.completion(input.commandId, input.workerId, checkpointTree('second'));
+  const again = f.completion(input, checkpointTree('second'));
   assert.deepEqual(await f.pi.complete(first.token, again), { saved: true });
   await pause(20);
   assert.equal(asked.length, 1);
@@ -591,11 +249,8 @@ test('a naming call that fails keeps the default title, and the turn is saved re
     ),
   );
   const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
-  await f.pi.begin(bound.token, bound.input);
-  const saved = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
-  assert.deepEqual(await f.pi.complete(bound.token, saved), { saved: true });
+  const bound = await f.claimed(await f.send(conversation));
+  assert.deepEqual(await f.finish(bound), { saved: true });
   await pause(20);
   const snapshot = await f.pi.snapshot(f.operator, conversation.id);
   assert.equal(asked.length, 1);
@@ -603,19 +258,15 @@ test('a naming call that fails keeps the default title, and the turn is saved re
   assert.equal(snapshot.commands[0].status, 'completed');
 });
 
-test('concurrent sends to separate conversations bind at most one runtime per user', async (t) => {
+test('concurrent sends to separate conversations share one host and one machine', async (t) => {
   const f = await fixture(t);
   const left = await f.create();
   const right = await f.create();
-  const attempts = await Promise.allSettled([f.send(left), f.send(right)]);
-  assert.equal(attempts.filter((result) => result.status === 'fulfilled').length, 1);
-  assert.equal(
-    attempts.filter(
-      (result) => result.status === 'rejected' && code('pi_runtime_busy')(result.reason),
-    ).length,
-    1,
-  );
-  assert.equal((await f.fleet.list(f.operator)).length, 1);
+  const [one, two] = await Promise.all([f.send(left), f.send(right)]);
+  assert.equal(one.hostId, two.hostId);
+  assert.equal(one.runtimeId, two.runtimeId);
+  assert.equal((await f.fleet.list(f.hostCaller)).length, 1);
+  assert.equal((await f.hosts()).length, 1);
 });
 
 test('a reader can chat but cannot request workflow capacity; worker claims and audits a native read only', async (t) => {
@@ -645,8 +296,7 @@ test('a reader can chat but cannot request workflow capacity; worker claims and 
   }
   const command = await f.send(conversation, 'What project is this?', reader);
   assert.equal(command.status, 'waiting');
-  const bound = (await f.pi.snapshot(reader, conversation.id)).conversation;
-  const { token, work, input } = await f.claimed(bound);
+  const { token, work, input } = await f.claimed(command);
   assert.equal(work.command.status, 'starting');
   assert.deepEqual(
     work.tools.map((tool) => tool.name),
@@ -680,8 +330,7 @@ test('a reader can chat but cannot request workflow capacity; worker claims and 
   );
   assert.equal(f.mutations, 0);
   assert.equal((await f.pi.snapshot(reader, conversation.id)).commands[0].status, 'working');
-  const checkpoint = checkpointTree('What project is this?');
-  const result = f.completion(input.commandId, input.workerId, checkpoint);
+  const result = f.completion(input, checkpointTree('What project is this?'));
   result.outcomes = [
     {
       callId: 'read_1',
@@ -728,10 +377,7 @@ test('recoverable tool failures and oversized results come back to the model as 
     }),
   );
   const conversation = await f.create();
-  await f.send(conversation);
-  const { token, input } = await f.claimed(
-    (await f.pi.snapshot(f.operator, conversation.id)).conversation,
-  );
+  const { token, input } = await f.claimed(await f.send(conversation));
   await f.pi.begin(token, input);
   const read = (artifactId: string) =>
     f.pi.tool(token, { ...input, name: 'artifact.read', input: { artifactId } });
@@ -762,10 +408,9 @@ test('recoverable tool failures and oversized results come back to the model as 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
-  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  const result = f.completion(bound.input);
   result.outcomes = [1, 2, 3].map((index) => ({
     callId: `read_${index}`,
     name: 'project.get',
@@ -785,11 +430,9 @@ test('a finished turn whose tool outputs exceed the result limit keeps its answe
 test('duplicate begin interrupts ambiguous prompts and fences worker/model tools', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const { token, work, input } = await f.claimed(
-    (await f.pi.snapshot(f.operator, conversation.id)).conversation,
-  );
-  await assert.rejects(f.pi.next(token, { workerId: 'other_worker' }), code('pi_worker_conflict'));
+  const { token, work, input } = await f.claimed(await f.send(conversation));
+  // A claimed turn is never handed to another worker.
+  assert.equal((await f.pi.next(token, { workerId: 'other_worker' })).work, null);
   assert.deepEqual(await f.pi.begin(token, input), { apply: true });
   assert.deepEqual(await f.pi.begin(token, input), { apply: false });
   assert.equal(
@@ -806,11 +449,10 @@ test('duplicate begin interrupts ambiguous prompts and fences worker/model tools
 test('checkpoint save failure keeps canonical result and previous pointer; exact retry restores full bytes', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const first = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const first = await f.claimed(await f.send(conversation));
   await f.pi.begin(first.token, first.input);
   const tree = checkpointTree('first', 'sibling');
-  const completed = f.completion(first.input.commandId, first.input.workerId, tree);
+  const completed = f.completion(first.input, tree);
   assert.deepEqual(await f.pi.complete(first.token, completed), { saved: true });
   const pointer = (await f.pi.snapshot(f.operator, conversation.id)).conversation.checkpoint;
   assert.deepEqual(pointer, {
@@ -830,10 +472,14 @@ test('checkpoint save failure keeps canonical result and previous pointer; exact
   const next = (await f.pi.next(first.token, { workerId: 'worker_2' })).work;
   assert.equal(next?.checkpoint?.content, tree);
   assert.equal(next?.checkpoint?.hash, sha(tree));
-  const input = { commandId: next!.command.id, workerId: 'worker_2' };
+  const input = {
+    conversationId: conversation.id,
+    commandId: next!.command.id,
+    workerId: 'worker_2',
+  };
   await f.pi.begin(first.token, input);
   const newer = checkpointTree('second');
-  const result = f.completion(input.commandId, input.workerId, newer);
+  const result = f.completion(input, newer);
   f.failStorage(true);
   assert.deepEqual(await f.pi.complete(first.token, result), { saved: false });
   let snapshot = await f.pi.snapshot(f.operator, conversation.id);
@@ -863,10 +509,9 @@ test('checkpoint save failure keeps canonical result and previous pointer; exact
 test('rejects invalid checkpoint digest and corrupted stored bytes before delivery', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
-  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  const result = f.completion(bound.input);
   await assert.rejects(
     f.pi.complete(bound.token, { ...result, checkpointHash: '0'.repeat(64) }),
     code('pi_checkpoint_invalid'),
@@ -882,22 +527,21 @@ test('rejects invalid checkpoint digest and corrupted stored bytes before delive
   const original = f.blobs.get;
   f.blobs.get = async () => Buffer.from('corrupt');
   try {
-    await assert.rejects(
-      f.pi.next(bound.token, { workerId: 'worker_restore' }),
-      code('pi_checkpoint_invalid'),
-    );
+    // Never delivered: that turn ends, and the machine serves on.
+    assert.deepEqual(await f.pi.next(bound.token, { workerId: 'worker_restore' }), { work: null });
   } finally {
     f.blobs.get = original;
   }
+  const ended = (await f.pi.snapshot(f.operator, conversation.id)).commands.at(-1)!;
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'worker_interrupted']);
 });
 
 test('concurrent identical completion saves once and preserves the previous checkpoint', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
-  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  const result = f.completion(bound.input);
   const original = f.blobs.put;
   let arrived = 0;
   let release!: () => void;
@@ -928,17 +572,16 @@ test('concurrent identical completion saves once and preserves the previous chec
 test('cancel during checkpoint storage keeps canonical results but fences pointer publication', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
-  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  const result = f.completion(bound.input);
   const original = f.blobs.put;
   f.blobs.put = async (namespace, bytes) => {
     await f.pi.stop(f.operator, conversation.id);
     return original(namespace, bytes);
   };
   try {
-    await assert.rejects(f.pi.complete(bound.token, result), code('pi_runtime_stale'));
+    await assert.rejects(f.pi.complete(bound.token, result), code('pi_command_stale'));
   } finally {
     f.blobs.put = original;
   }
@@ -949,11 +592,10 @@ test('cancel during checkpoint storage keeps canonical results but fences pointe
   assert.equal(snapshot.conversation.checkpoint, null);
 });
 
-test('progress bursts do not add durable writes; stop and revocation fence work', async (t) => {
+test('progress bursts do not add durable writes; stop ends only the turn and fences its work', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
   const writes = countWrites(f.state);
   const before = writes();
@@ -975,15 +617,17 @@ test('progress bursts do not add durable writes; stop and revocation fence work'
   const stopped = await f.pi.stop(f.operator, conversation.id);
   assert.ok(f.kicks > kicks);
   assert.equal(stopped.commands[0].error, 'cancelled');
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+  // The machine is the person's, not the conversation's: it serves on, now idle.
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'run');
+  assert.ok(stopped.host.idleEndsAt);
   await assert.rejects(
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
-    code('pi_runtime_stale'),
+    code('pi_command_stale'),
   );
   assert.equal(f.reads, 0);
 });
 
-test('revoking the source credential fences a claimed worker and stops Fleet admission', async (t) => {
+test('revoking the person’s credential fails their turn, not the machine', async (t) => {
   const f = await fixture(t);
   const issued = await f.scope.issueActor(f.operator, { name: 'Revocable reader', role: 'reader' });
   const reader: Caller = {
@@ -992,50 +636,44 @@ test('revoking the source credential fences a claimed worker and stops Fleet adm
     credentialId: issued.credential.id,
   };
   const conversation = await f.create(reader);
-  await f.send(conversation, 'Read this', reader);
-  const bound = await f.claimed((await f.pi.snapshot(reader, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation, 'Read this', reader));
   await f.pi.begin(bound.token, bound.input);
   await f.scope.revokeCredential(f.operator, issued.credential.id);
   await assert.rejects(
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
-    code('pi_runtime_stale'),
+    code('pi_authority_stale'),
   );
-  await assert.rejects(f.pi.authenticateWorker(bound.token), code('pi_runtime_stale'));
   assert.equal(f.reads, 0);
+  // The worker still ends the turn; its machine, rented by the host, keeps its admission.
+  await f.pi.fail(bound.token, bound.input);
+  const row = await f.state.read((sql) =>
+    sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_commands WHERE id=?',
+      bound.input.commandId,
+    ),
+  );
+  assert.equal(JSON.parse(row!.data_json).error, 'worker_interrupted');
+  await f.pi.authenticateWorker(bound.token);
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'run');
 });
 
-test('idle release waits for retained checkpoint; restarted service restores full tree on a new runtime', async (t) => {
+test('a restart releases every machine; the next send restores the full tree on a new one', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const first = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
-  await f.pi.begin(first.token, first.input);
+  const first = await f.claimed(await f.send(conversation));
   const fullTree = checkpointTree('restored', 'sibling');
-  await f.pi.complete(
-    first.token,
-    f.completion(first.input.commandId, first.input.workerId, fullTree),
-  );
+  await f.finish(first, fullTree);
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, first.work.command.runtimeId)).intent, 'run');
+  assert.equal((await f.allocation(first.work.command.runtimeId)).intent, 'run');
   assert.deepEqual(f.runtimes.stopped, []);
   await f.restart();
-  assert.equal((await f.fleet.inspect(f.operator, first.work.command.runtimeId)).intent, 'stop');
+  assert.equal((await f.allocation(first.work.command.runtimeId)).intent, 'stop');
+  assert.equal((await f.host(first.work.command)).ended?.reason, 'restart');
   await f.fleet.tick();
   assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
-  f.runtimes.release('sbx_1');
-  await f.fleet.tick();
-  await f.pi.tick();
-  const released = (await f.pi.snapshot(f.operator, conversation.id)).conversation;
-  assert.equal(released.runtimeId, null);
-  assert.equal(released.checkpoint?.hash, sha(fullTree));
   await assert.rejects(f.pi.authenticateWorker(first.token), code('pi_unauthorized'));
-  await f.send(conversation, 'Continue');
-  const second = await f.claimed(
-    (await f.pi.snapshot(f.operator, conversation.id)).conversation,
-    'restored_worker',
-  );
+  const second = await f.claimed(await f.send(conversation, 'Continue'), 'restored_worker');
   assert.notEqual(second.work.command.runtimeId, first.work.command.runtimeId);
   assert.equal(second.work.checkpoint?.content, fullTree);
   assert.equal(second.work.checkpoint?.hash, sha(fullTree));
@@ -1047,77 +685,38 @@ test('Fleet outcomes end a turn at once with their own reason; a missing row cou
   const conversation = await f.create();
   const latest = async () => {
     const snapshot = await f.pi.snapshot(f.operator, conversation.id);
-    return { error: snapshot.commands.at(-1)!.error, runtimeId: snapshot.conversation.runtimeId };
+    return { error: snapshot.commands.at(-1)!.error, state: snapshot.host.state };
   };
-  const refused = await f.fleet.inspect(f.operator, (await f.send(conversation)).runtimeId);
-  await f.state.transaction((tx) =>
-    tx.run(
-      "UPDATE fleet_allocations SET phase='released',data_json=? WHERE id=?",
-      JSON.stringify({ ...refused, phase: 'released', intent: 'stop', error: 'runtime_refused' }),
-      refused.id,
-    ),
-  );
+  const rewrite = async (id: string, change: object) => {
+    const allocation = await f.allocation(id);
+    await f.state.transaction((tx) =>
+      tx.run(
+        "UPDATE fleet_allocations SET phase='released',data_json=? WHERE id=?",
+        JSON.stringify({ ...allocation, phase: 'released', intent: 'stop', ...change }),
+        id,
+      ),
+    );
+  };
+  await rewrite((await f.send(conversation)).runtimeId, { error: 'runtime_refused' });
   await f.pi.tick();
-  assert.deepEqual(await latest(), { error: 'runtime_refused', runtimeId: null });
+  // With its only machine gone the host ends; the next send starts another.
+  assert.deepEqual(await latest(), { error: 'runtime_refused', state: 'none' });
   const deleted = (await f.send(conversation)).runtimeId;
   await f.state.transaction((tx) => tx.run('DELETE FROM fleet_allocations WHERE id=?', deleted));
   await f.pi.tick();
-  assert.deepEqual(await latest(), { error: 'runtime_lost', runtimeId: null });
+  assert.deepEqual(await latest(), { error: 'runtime_lost', state: 'none' });
   // Fleet stops a failed machine itself; that is a lost runtime, not an operator's stop.
-  const failed = await f.fleet.inspect(f.operator, (await f.send(conversation)).runtimeId);
   const machine = { sandboxId: 'sbx_failed', state: 'failed', ready: false, launch: null };
-  await f.state.transaction((tx) =>
-    tx.run(
-      "UPDATE fleet_allocations SET phase='released',data_json=? WHERE id=?",
-      JSON.stringify({ ...failed, phase: 'released', intent: 'stop', runtime: machine }),
-      failed.id,
-    ),
-  );
+  await rewrite((await f.send(conversation)).runtimeId, { runtime: machine });
   await f.pi.tick();
-  assert.deepEqual(await latest(), { error: 'runtime_lost', runtimeId: null });
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  assert.deepEqual(await latest(), { error: 'runtime_lost', state: 'none' });
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
-  await f.fleet.drain(f.operator, bound.work.command.runtimeId);
+  await f.fleet.drain(f.hostCaller, bound.work.command.runtimeId);
   await f.pi.tick();
   assert.equal((await latest()).error, 'runtime_stopped');
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
-});
-
-test('a turn that expires before its machine launches releases the allocation unrented', async (t) => {
-  const f = await fixture(t);
-  const conversation = await f.create();
-  const command = await f.send(conversation);
-  f.advance(3_600_001);
-  await f.pi.tick();
-  const snapshot = await f.pi.snapshot(f.operator, conversation.id);
-  assert.equal(snapshot.commands[0].error, 'turn_expired');
-  assert.equal(snapshot.conversation.runtimeId, null);
-  assert.equal((await f.fleet.inspect(f.operator, command.runtimeId)).phase, 'released');
-  await f.fleet.tick();
-  assert.deepEqual(f.runtimes.launched, []);
-  // A turn that ended unlaunched before this fix is refused by valid() instead of provisioned.
-  const stale = await f.send(conversation);
-  await f.state.transaction(async (tx) => {
-    const row = await tx.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_conversations WHERE id=?',
-      conversation.id,
-    );
-    const record = {
-      ...JSON.parse(row!.data_json),
-      activeCommandId: null,
-      idleSince: '2026-09-23T00:00:00.000Z',
-    };
-    await tx.run(
-      'UPDATE pi_conversations SET data_json=? WHERE id=?',
-      JSON.stringify(record),
-      conversation.id,
-    );
-  });
-  await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, stale.runtimeId)).phase, 'released');
-  assert.equal(f.runtimes.handles.size, 0);
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'stop');
 });
 
 test('a queued turn waits for capacity; its clock restarts out of the queue and at the claim', async (t) => {
@@ -1130,7 +729,7 @@ test('a queued turn waits for capacity; its clock restarts out of the queue and 
   assert.deepEqual([queued.status, queued.error], ['waiting', null]);
   await f.fleet.tick();
   // Fleet may restart the machine's deadline as it leaves the queue.
-  const allocation = await f.fleet.inspect(f.operator, runtimeId);
+  const allocation = await f.allocation(runtimeId);
   await f.state.transaction((tx) =>
     tx.run(
       'UPDATE fleet_allocations SET data_json=? WHERE id=?',
@@ -1143,56 +742,44 @@ test('a queued turn waits for capacity; its clock restarts out of the queue and 
   assert.equal(snapshot.commands[0].status, 'starting');
   assert.equal(snapshot.commands[0].expiresAt, '2026-09-23T01:03:20.000Z');
   f.advance(100_000);
-  const bound = await f.claimed(snapshot.conversation);
+  const bound = await f.claimed(snapshot.commands[0]);
   assert.equal(bound.work.command.expiresAt, '2026-09-23T01:05:00.000Z');
-  await f.pi.begin(bound.token, bound.input);
-  await f.pi.complete(
-    bound.token,
-    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
-  );
+  await f.finish(bound);
   // A warm machine needs no queue.
   assert.equal((await f.send(conversation)).status, 'starting');
 });
 
-test('warming rents a machine for the latest empty conversation, once, and yields to a turn', async (t) => {
+test('warming rents the person’s machine once, for the latest empty conversation, and a turn shares it', async (t) => {
   const f = await fixture(t);
   f.runtimes.connected = () => false;
   const unavailable = await f.pi.warm(f.operator, { requestId: 'warm_1' });
   assert.deepEqual([unavailable.available, unavailable.stage.name], [false, 'idle']);
-  assert.deepEqual(await f.fleet.list(f.operator), []);
+  assert.deepEqual(await f.fleet.list(f.hostCaller), []);
   f.runtimes.connected = () => true;
   const warmed = await f.pi.warm(f.operator, { requestId: 'warm_2' });
   assert.equal(warmed.conversation.id, unavailable.conversation.id);
   assert.deepEqual([warmed.commands, warmed.stage.name, f.kicks], [[], 'machine', 1]);
-  const [allocation] = await f.fleet.list(f.operator);
-  assert.equal(allocation.id, warmed.conversation.runtimeId);
-  assert.equal(allocation.owner.id, `${warmed.conversation.id}:1`);
+  assert.deepEqual([warmed.host.state, warmed.host.machine?.key], ['starting', 'standard']);
+  const [allocation] = await f.fleet.list(f.hostCaller);
+  const [host] = await f.hosts();
+  assert.deepEqual(allocation.owner, { kind: 'pi-host', id: `${host.id}:1` });
   for (const input of [
     { requestId: 'warm_3' },
     { requestId: 'warm_4', conversationId: warmed.conversation.id },
   ])
     assert.deepEqual((await f.pi.warm(f.operator, input)).conversation, warmed.conversation);
-  assert.equal((await f.fleet.list(f.operator)).length, 1);
+  assert.equal((await f.fleet.list(f.hostCaller)).length, 1);
   assert.equal(f.kicks, 1);
   const command = await f.send(warmed.conversation);
   assert.equal(command.runtimeId, allocation.id);
-  // The one conversation now has a turn: a new one opens, and the person's busy runtime stays.
+  // The one conversation now has a turn: a new one opens on the same machine.
   const other = await f.pi.warm(f.operator, { requestId: 'warm_5' });
   assert.notEqual(other.conversation.id, warmed.conversation.id);
-  assert.deepEqual([other.conversation.runtimeId, other.stage.name], [null, 'idle']);
-  const bound = await f.claimed(
-    (await f.pi.snapshot(f.operator, warmed.conversation.id)).conversation,
-  );
-  await f.pi.begin(bound.token, bound.input);
-  await f.pi.complete(
-    bound.token,
-    f.completion(bound.input.commandId, bound.input.workerId, checkpointTree()),
-  );
-  await assert.rejects(
-    f.pi.warm(f.operator, { requestId: 'warm_6', conversationId: other.conversation.id }),
-    code('pi_runtime_releasing'),
-  );
-  assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
+  assert.deepEqual([other.host.state, other.stage.name], ['starting', 'machine']);
+  await f.finish(await f.claimed(command));
+  await f.pi.warm(f.operator, { requestId: 'warm_6', conversationId: other.conversation.id });
+  assert.equal((await f.fleet.list(f.hostCaller)).length, 1);
+  assert.equal((await f.allocation(allocation.id)).intent, 'run');
 });
 
 test('a warm machine shows its stages and, unused, is released after the idle timeout', async (t) => {
@@ -1203,17 +790,17 @@ test('a warm machine shows its stages and, unused, is released after the idle ti
   assert.equal(await stage(), 'machine');
   await f.fleet.tick();
   assert.equal(await stage(), 'agent');
-  const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
-  const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
+  const [host] = await f.hosts();
+  const token = await f.token(host.current!.allocationId);
   assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work, null);
   assert.equal(await stage(), 'ready');
   f.advance(5_000);
   assert.equal(await stage(), 'idle');
-  await assert.rejects(
-    f.pi.warm(f.operator, { requestId: 'again', conversationId: conversation.id }),
-    code('pi_runtime_releasing'),
-  );
-  assert.equal((await f.fleet.inspect(f.operator, allocation.id)).intent, 'stop');
+  assert.equal((await f.pi.snapshot(f.operator, conversation.id)).host.state, 'none');
+  // Warming again ends the idle host and rents afresh; nothing to retry.
+  await f.pi.warm(f.operator, { requestId: 'again', conversationId: conversation.id });
+  assert.equal((await f.allocation(host.current!.allocationId)).intent, 'stop');
+  assert.notEqual((await f.hosts())[0].id, host.id);
 });
 
 test('Pi’s own pass tells open pages each move of a warm-up, and a turn each tool it uses', async (t) => {
@@ -1235,14 +822,15 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
   assert.equal(await pass(), null);
   await f.fleet.tick();
   assert.equal(await pass(), 'agent');
-  const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
-  const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
+  const [host] = await f.hosts();
+  const token = await f.token(host.current!.allocationId);
   assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work, null);
   assert.equal(await pass(), 'ready');
   assert.equal(await pass(), null);
   const commandId = (await f.send(conversation)).id;
   await f.pi.next(token, { workerId: 'worker_1' });
-  await f.pi.begin(token, { commandId, workerId: 'worker_1' });
+  const input = { conversationId: id, commandId, workerId: 'worker_1' };
+  await f.pi.begin(token, input);
   // Each tool's phrase is published as it starts, and the return to thinking as it ends.
   const call = f.tools.call.bind(f.tools);
   const shown: (string | undefined)[] = [];
@@ -1252,16 +840,17 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
   );
   for (const name of ['project.get', 'task.list']) {
     const before = sequence();
-    await f.pi.tool(token, { commandId, workerId: 'worker_1', name, input: {} });
+    await f.pi.tool(token, { ...input, name, input: {} });
     assert.equal(sequence(), before + 2);
   }
   assert.deepEqual(shown, ['Reading the project', 'Listing tasks']);
-  // Released, the conversation's stage is forgotten.
-  await f.pi.stop(f.operator, id);
+  // Once the machine stops, the conversation's stage is forgotten.
+  await f.pi.stopMachine(f.operator);
+  await f.pi.tick();
   assert.equal(f.pi['live'].has(id), false);
 });
 
-test('warming and releasing a runtime leave a conversation where it was in the list', async (t) => {
+test('warming and stopping a machine leave a conversation where it was in the list', async (t) => {
   const f = await fixture(t);
   const older = await f.create();
   f.advance(1000);
@@ -1272,10 +861,8 @@ test('warming and releasing a runtime leave a conversation where it was in the l
   assert.equal(before[0].id, newer.id);
   f.advance(1000);
   const warmed = await f.pi.warm(f.operator, { requestId: 'warm', conversationId: older.id });
-  assert.ok(warmed.conversation.runtimeId);
-  await f.pi.stop(f.operator, older.id);
-  await f.pi.tick();
-  assert.equal((await f.pi.snapshot(f.operator, older.id)).conversation.runtimeId, null);
+  assert.equal(warmed.host.state, 'starting');
+  assert.equal((await f.pi.stopMachine(f.operator)).state, 'none');
   assert.deepEqual(await listed(), before);
   // A question is the conversation's own move.
   await f.send(older);
@@ -1285,7 +872,7 @@ test('warming and releasing a runtime leave a conversation where it was in the l
 test('a cold turn shows what it waits on, from the queue to the answer; a held worker gets the next at once', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
+  const command = await f.send(conversation);
   assert.equal(f.kicks, 1);
   const snapshot = () => f.pi.snapshot(f.operator, conversation.id);
   const stage = async () => (await snapshot()).stage;
@@ -1300,7 +887,7 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   assert.equal((await stage()).name, 'machine');
   await f.fleet.tick();
   assert.equal((await stage()).name, 'agent');
-  const { token, input } = await f.claimed((await snapshot()).conversation);
+  const { token, input } = await f.claimed(command);
   // A live worker has picked the turn up: the person sees it thinking from here, not loading.
   const claimed = await stage();
   assert.equal(claimed.name, 'thinking');
@@ -1322,14 +909,13 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   assert.deepEqual(await stage(), { name: 'writing', since: firstTextAt });
   // Seconds are counted against the server's own clock, not the reader's.
   assert.equal((await snapshot()).now, firstTextAt);
-  const result = f.completion(input.commandId, input.workerId, checkpointTree());
+  const result = f.completion(input);
   f.failStorage(true);
   assert.deepEqual(await f.pi.complete(token, result), { saved: false });
   assert.equal((await stage()).name, 'saving');
   f.failStorage(false);
   await f.pi.complete(token, result);
   assert.equal((await stage()).name, 'ready');
-  assert.equal(f.kicks, 2);
   assert.equal((await f.pi.next(token, { workerId: 'worker_2' }, 50)).work, null);
   const held = f.pi.next(token, { workerId: 'worker_2' }, 5_000);
   await pause(50);
@@ -1337,38 +923,58 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   const sent = await f.send(conversation, 'More');
   assert.equal((await held).work?.command.id, sent.id);
   assert.ok(Date.now() - sentAt < 1000);
-  // Warming during a turn leaves its runtime alone, even past the machine's deadline.
-  f.advance(3_600_000);
+  // Warming during a turn leaves the machine serving it.
   await f.pi.warm(f.operator, { requestId: 'warm', conversationId: conversation.id });
-  assert.equal((await f.fleet.inspect(f.operator, sent.runtimeId)).intent, 'run');
+  assert.equal((await f.allocation(sent.runtimeId)).intent, 'run');
 });
 
 test('idle timeout releases only after successful retention, never while a checkpoint is saving', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
-  await f.send(conversation);
-  const bound = await f.claimed((await f.pi.snapshot(f.operator, conversation.id)).conversation);
+  const bound = await f.claimed(await f.send(conversation));
   await f.pi.begin(bound.token, bound.input);
   f.failStorage(true);
-  const result = f.completion(bound.input.commandId, bound.input.workerId, checkpointTree());
+  const result = f.completion(bound.input);
   assert.deepEqual(await f.pi.complete(bound.token, result), { saved: false });
   f.advance(5_100);
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'run');
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'run');
   assert.deepEqual(f.runtimes.stopped, []);
   f.failStorage(false);
   assert.deepEqual(await f.pi.complete(bound.token, result), { saved: true });
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'run');
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'run');
   f.advance(5_100);
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.operator, bound.work.command.runtimeId)).intent, 'stop');
+  assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'stop');
   assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
 });
 
+/** The worker that runs version 2 bootstraps (one per host slot); until it lands, only the
+ * server side of the protocol is tested here. */
+const hostWorker = await readBootstrap(
+  (async function* () {
+    yield JSON.stringify({
+      kind: 'pi',
+      version: 2,
+      baseUrl: 'http://127.0.0.1:1/',
+      hostId: 'pih_probe',
+      runtimeId: 'flt_probe',
+      epoch: 1,
+      machine: 'standard',
+      slots: 3,
+      workerToken: `piw_flt_probe.${'a'.repeat(43)}`,
+      expiresAt: '2099-01-01T00:00:00Z',
+    });
+  })(),
+).then(
+  () => true,
+  () => false,
+);
+
 test(
   'real SDK worker reads through HTTP relay, checkpoints, then restores on a replacement Fleet runtime',
-  { timeout: 20_000 },
+  { timeout: 20_000, skip: !hostWorker && 'Needs the version 2 host worker' },
   async (t) => {
     const { runPiWorker } = await import('../packages/pi/src/worker.js');
     const server = createServer();
@@ -1377,7 +983,7 @@ test(
     const address = server.address();
     assert.ok(address && typeof address === 'object');
     const origin = `http://127.0.0.1:${address.port}`;
-    const f = await fixture(t, origin, Date.now());
+    const f = await fixture(t, { baseUrl: origin, startTime: Date.now() });
     let http = new PiHttp(f.pi);
     let modelRequests = 0;
     const requests: Record<string, unknown>[] = [];
@@ -1455,12 +1061,15 @@ test(
     const conversation = await f.create();
     async function runTurn(text: string) {
       const command = await f.send(conversation, text);
-      const allocation = await f.fleet.inspect(f.operator, command.runtimeId);
-      const bootstrap = JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrapV1;
+      const allocation = await f.allocation(command.runtimeId);
+      const bootstrap = JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap;
       await f.fleet.tick();
       await f.fleet.tick();
       const controller = new AbortController();
-      const worker = runPiWorker(bootstrap, { signal: controller.signal, pollIntervalMs: 250 });
+      const worker = runPiWorker(bootstrap as never, {
+        signal: controller.signal,
+        pollIntervalMs: 250,
+      });
       const completed = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           clearInterval(poll);
@@ -1510,7 +1119,6 @@ test(
     await f.fleet.tick();
     f.runtimes.release('sbx_1');
     await f.fleet.tick();
-    await f.pi.tick();
     const second = await runTurn('Continue from the saved conversation');
     assert.notEqual(second.runtimeId, first.runtimeId);
     snapshot = await f.pi.snapshot(f.operator, conversation.id);

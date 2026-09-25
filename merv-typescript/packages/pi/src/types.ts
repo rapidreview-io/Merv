@@ -33,10 +33,6 @@ export interface PiConversation {
   userId: string;
   title: string;
   revision: number;
-  /** @deprecated Per-conversation runtime binding; hosts replace it (G2 deletes). */
-  epoch: number;
-  /** @deprecated Per-conversation runtime binding; hosts replace it (G2 deletes). */
-  runtimeId: string | null;
   activeCommandId: string | null;
   checkpoint: PiCheckpoint | null;
   previousCheckpoint: PiCheckpoint | null;
@@ -46,12 +42,6 @@ export interface PiConversation {
 export interface PiConversationRecord extends PiConversation {
   /** The person's own authority, refreshed on every send: every data read of a turn runs as it. */
   source: DelegationSource;
-  /** @deprecated Per-conversation runtime binding; hosts replace it (G2 deletes). */
-  runtimeEpoch: number | null;
-  /** @deprecated Per-conversation runtime binding; hosts replace it (G2 deletes). */
-  runtimeExpiresAt: string | null;
-  /** @deprecated The idle clock is the host's (PiHostRecord.idleSince). */
-  idleSince: string | null;
 }
 export interface PiCommand {
   id: string;
@@ -79,6 +69,8 @@ export interface PiCommandRecord extends PiCommand {
   inputHash: string;
   workerId: string | null;
   resultHash: string | null;
+  /** switch_machine was offered with this turn's work: its grant and result may use it. */
+  canMove?: true;
 }
 export interface PiEvent {
   sequence: number;
