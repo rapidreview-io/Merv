@@ -936,6 +936,17 @@ test('a ready gate is the one move, and it sends nothing it was not asked for', 
   assert.deepEqual(Object.keys(sent[0]!).sort(), ['expectedRevision', 'requestId', 'researchId']);
 });
 
+test('a cycle that has ended offers no move at all', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: { workflows: { workflows: [] } } } });
+  for (const state of ['complete', 'abandoned']) {
+    await mount(page(state));
+    await settle(10);
+    assert.deepEqual(buttons(), [], state);
+    await unmount();
+  }
+});
+
 test('a cycle whose wave was abandoned names the wave and its state, and offers the end the server offers', async (t) => {
   t.after(unmount);
   const refusal = {
