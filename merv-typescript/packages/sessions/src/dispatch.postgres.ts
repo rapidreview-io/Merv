@@ -78,6 +78,9 @@ ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
   5: `
 ALTER TABLE project_session_dispatch ADD COLUMN own_machines BIGINT NOT NULL DEFAULT 0 CHECK(own_machines IN (0,1)),
         ADD COLUMN source_json TEXT;
-      UPDATE project_session_dispatch SET enabled=1;
+      UPDATE project_session_dispatch SET own_machines=1 WHERE enabled=1;
+`,
+  6: `
+UPDATE project_session_dispatch SET enabled=1, own_machines=0;
 `,
 };

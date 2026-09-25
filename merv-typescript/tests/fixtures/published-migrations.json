@@ -457,7 +457,13 @@
     {
       "component": "session_dispatch",
       "version": 5,
-      "hash": "e00a7d962aa11de57d8ac17d4c3c4ebca12b22061afb49d297acf04e9dfd2efa",
+      "hash": "51a40e9fe356a75d298a5df382f045b20e2b7b6359fed50aa07f7c0905cc0be4",
+      "published": false
+    },
+    {
+      "component": "session_dispatch",
+      "version": 6,
+      "hash": "9304ab85f8eee3752b13e9c1575b840045d82b79ed12272d0b6183dca11d9696",
       "published": false
     },
     {

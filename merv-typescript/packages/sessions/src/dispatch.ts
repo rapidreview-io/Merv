@@ -329,10 +329,15 @@ export class SessionDispatch {
           sql: postgresMigrations[4],
         },
         {
-          // Where automatic work may run, and whose authority chose it. The founder's ruling
-          // (2026-09-25): every project runs its work, on Fleet's machines, until someone says not.
+          // Where automatic work may run, and whose authority chose it.
           version: 5,
           sql: postgresMigrations[5],
+        },
+        {
+          // The founder's ruling (2026-09-25): every project runs its work, on Fleet's machines,
+          // until someone says not.
+          version: 6,
+          sql: postgresMigrations[6],
         },
       ]);
     };
