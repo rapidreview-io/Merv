@@ -214,6 +214,7 @@ def leased(directory, driver):
 
     def beat():
         atomic(path, json.dumps({'driver': driver, 'seen': time.time()}).encode())
+
     def beating():
         while not stop.wait(30):
             beat()

@@ -35,6 +35,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   appendFileSync,
+  existsSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -336,13 +337,20 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
 mkdir -p -m 700 ${RUNS} && mkdir -m 700 ${dir}
 mv ~azureuser/${inbox}/source.tar.gz ~azureuser/${inbox}/sandboxes.tar.gz ${dir}/ && rmdir ~azureuser/${inbox}
 cd ${dir} && printf '%s  source.tar.gz\\n%s  sandboxes.tar.gz\\n' ${src.archiveSha256} ${sha256(readFileSync(sbx))} | sha256sum -c - >/dev/null
-mkdir source sandboxes && tar -xzf source.tar.gz -C source --no-same-owner && tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner
+umask 022 # git archive's files are group-writable; the gates mount them into the image
+mkdir source sandboxes
+tar -xzf source.tar.gz -C source --no-same-owner --no-same-permissions
+tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
 `,
       stdio: ['pipe', 'inherit', 'inherit'],
     });
     return src;
   };
-  const sandboxesHead = () => git(['rev-parse', 'HEAD'], sandboxes);
+  const sandboxesHead = () => {
+    if (!existsSync(join(sandboxes, '.git')))
+      throw new Error(`No Sandboxes checkout at ${sandboxes}; pass --sandboxes <path>`);
+    return git(['rev-parse', 'HEAD'], sandboxes);
+  };
   const clean = () => {
     const dirty = git(['status', '--porcelain', '--', ...PIPELINE]);
     if (dirty)
@@ -612,7 +620,7 @@ mkdir source sandboxes && tar -xzf source.tar.gz -C source --no-same-owner && ta
       } catch (error) {
         record('ROLLBACK FAILED', failure, error.message);
         console.error(
-          `ROLLBACK INCOMPLETE: ${error.message}. The run stays open: the next hosted-release.mjs or release.mjs finishes it, and meanwhile the host points Main at whatever Cloudflare runs.`,
+          `ROLLBACK INCOMPLETE: ${error.message}. The run stays open; the next hosted-release.mjs or release.mjs finishes it.`,
         );
         return 3;
       }

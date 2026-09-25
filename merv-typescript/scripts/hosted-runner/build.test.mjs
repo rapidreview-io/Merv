@@ -56,8 +56,13 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     // Every emitted file reaches the image; hosted-release.mjs builds exactly this Dockerfile.
     const dockerfile = readFileSync(join(here, 'Dockerfile'), 'utf8');
     const copied = [...dockerfile.matchAll(/^COPY (?!--from)(.+) \S+$/gm)].flatMap((m) =>
-      m[1].split(' '),
+      m[1].split(' ').filter((word) => !word.startsWith('--chmod=')),
     );
+    // The image's copies set their modes: git archive and tar leave the context group-writable,
+    // and the runtime refuses a group-writable trusted file.
+    const image = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
+    for (const [, flags] of image.matchAll(/^COPY (?!--from)(\S+)/gm))
+      assert.match(flags, /^--chmod=0(644|755)$/);
     const emitted = spawnSync('find', ['.', '-type', 'f'], { cwd: bundle, encoding: 'utf8' })
       .stdout.split('\n')
       .filter(Boolean)
@@ -78,7 +83,7 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     assert.match(dockerfile, /^ENTRYPOINT \["\/opt\/merv\/runtime\/boot"\]$/m);
     // A worker-only change must reuse every layer before it (hosted-release's worker lane).
     const lines = dockerfile.split('\n');
-    const workerCopy = lines.findIndex((l) => l.startsWith('COPY pi/worker-main.mjs'));
+    const workerCopy = lines.findIndex((l) => /^COPY .* pi\/worker-main\.mjs /.test(l));
     const later = lines
       .slice(workerCopy + 1)
       .filter((l) => !l.startsWith('ENTRYPOINT'))
