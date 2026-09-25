@@ -12,7 +12,9 @@ COPY pi/package.json pi/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --engine-strict --no-audit --no-fund \
  && find node_modules -type d -name .bin -prune -exec rm -rf {} +
 FROM ${SANDBOX_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends socat git && rm -rf /var/lib/apt/lists/*
+# The Sandboxes base only warns when its agent is missing; this image refuses to build without it.
+RUN test -x /usr/local/bin/sandboxes-agent \
+ && apt-get update && apt-get install -y --no-install-recommends socat git && rm -rf /var/lib/apt/lists/*
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=pi-deps /opt/merv/pi/node_modules /opt/merv/pi/node_modules

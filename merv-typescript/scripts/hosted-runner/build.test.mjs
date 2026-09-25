@@ -81,6 +81,10 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     );
     assert.match(dockerfile, /chown -R 0:0 \/opt\/merv\/pi\/compile-cache/);
     assert.match(dockerfile, /^ENTRYPOINT \["\/opt\/merv\/runtime\/boot"\]$/m);
+    assert.match(
+      dockerfile,
+      /^FROM \$\{SANDBOX_IMAGE\}\n(#.*\n)*RUN test -x \/usr\/local\/bin\/sandboxes-agent /m,
+    );
     // A worker-only change must reuse every layer before it (hosted-release's worker lane).
     const lines = dockerfile.split('\n');
     const workerCopy = lines.findIndex((l) => /^COPY .* pi\/worker-main\.mjs /.test(l));
