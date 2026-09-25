@@ -50,8 +50,11 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
   );
 });
 
-test('a model catalog Pi cannot use is refused at start, naming the field', async (t) => {
+test('a model catalog Pi cannot use is refused at start, naming the field, and by the render first', async (t) => {
   const f = await fixture(t);
+  // The render's dry run makes the same checks, so it catches a catalog that would stop Main.
+  const { piModels } = await import(new URL('../deploy/schema.mjs', import.meta.url).href);
+  assert.deepEqual(piModels(models, 'MERV_PI_MODELS'), models);
   const [luna] = models;
   for (const [catalog, at] of [
     [[{ ...luna, id: '-luna' }], 'models.0.id'],
@@ -61,7 +64,7 @@ test('a model catalog Pi cannot use is refused at start, naming the field', asyn
     [[{ ...luna, effort: 'high' }], 'models.0.effort'],
     [[{ ...luna, provider: 'openai' }], 'models.0'],
     [[{ ...luna, label: 'GPT-6 Luna, the everyday one' }], 'models.0.label'],
-  ] as const)
+  ] as const) {
     assert.throws(
       () =>
         new PiService(f.state, f.scope, f.fleet, f.tools, f.blobs, {
@@ -72,6 +75,8 @@ test('a model catalog Pi cannot use is refused at start, naming the field', asyn
         error.status === 503 &&
         error.message === `Invalid Pi configuration at ${at}`,
     );
+    assert.throws(() => piModels(catalog, 'MERV_PI_MODELS'), /MERV_PI_MODELS/);
+  }
 });
 
 test('send commits a command, its host and the Fleet request atomically, deduplicates, and serializes turns', async (t) => {

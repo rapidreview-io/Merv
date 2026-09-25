@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { deploymentSchema, fleetRuntimes, sandboxConnections } from './schema.mjs';
+import { deploymentSchema, fleetRuntimes, piModels, sandboxConnections } from './schema.mjs';
 
 const required = (name) => {
   const value = process.env[name];
@@ -269,8 +269,11 @@ if (piEnabled) {
         enabled: true,
         secretEnv,
         modelApiKeyEnv,
-        // Main checks the catalog as it starts (piConfig); the older MERV_PI_MODEL is ignored.
-        ...(process.env.MERV_PI_MODELS !== undefined && { models: json('MERV_PI_MODELS') }),
+        // Checked as Main checks it, so a dry run catches what would stop Main; the older
+        // MERV_PI_MODEL is ignored.
+        ...(process.env.MERV_PI_MODELS !== undefined && {
+          models: piModels(json('MERV_PI_MODELS'), 'MERV_PI_MODELS'),
+        }),
         baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
         idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),

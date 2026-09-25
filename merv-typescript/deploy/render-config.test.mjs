@@ -170,7 +170,8 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(JSON.stringify(piConfig).includes(pi.PI_PROVIDER_KEY), false);
   assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-api'));
   assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-ui'));
-  // The catalog passes through for Main to check; the older single model is ignored.
+  // The catalog is checked as Main checks it, so a dry run refuses what would stop Main; the
+  // older single model is ignored.
   const models = [
     {
       id: 'gpt-6-luna',
@@ -186,6 +187,21 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const rendered = JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config;
   assert.deepEqual(rendered.models, models);
   assert.notEqual(run({ ...pi, MERV_PI_MODELS: 'gpt-6-sol' }).status, 0);
+  const [luna] = models;
+  for (const catalog of [
+    [],
+    [{ ...luna, effort: 'medium' }],
+    [{ ...luna, label: 'GPT-6 Luna, the quick one' }],
+    [{ ...luna, id: '-luna' }],
+    [{ ...luna, inputUsdPerM: '0.1' }],
+    [{ ...luna, provider: 'openai' }],
+    [luna, luna],
+    Array.from({ length: 9 }, (_, index) => ({ ...luna, id: `model-${index}` })),
+  ]) {
+    const refused = run({ ...pi, MERV_PI_MODELS: JSON.stringify(catalog) });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /MERV_PI_MODELS/);
+  }
   assert.equal(run({ ...pi, MERV_PI_MODEL: 'https://untrusted.example' }).status, 0);
   assert.equal(
     'models' in JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config,

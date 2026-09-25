@@ -299,9 +299,15 @@ from step 1 have to be done again.
   is all the picker shows; the prices (USD per million tokens) are for
   accounting only; `effort` (`none` or `low`) is the reasoning effort the relay
   sets on every call, whatever the worker asks. Unset, the catalog is GPT-6 Luna
-  alone and no picker shows. `MERV_PI_MODEL` is ignored. Main refuses a bad
-  catalog as it starts (`Invalid Pi configuration at models.…`), so dry-run the
-  render first. Production:
+  alone and no picker shows. `MERV_PI_MODEL` is ignored. The render makes the
+  checks Main makes as it starts, so dry-run it on the edited env before you
+  recreate Main; it refuses a bad catalog with `Invalid MERV_PI_MODELS entry`
+  (or `must hold 1-8 models`, `repeats a model id`):
+  ```
+  cd "$(sudo docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)"
+  sudo MERV_TS_IMAGE="$(sudo docker inspect -f '{{.Config.Image}}' merv-typescript-control-1)" docker compose -f compose.yml run --rm --no-deps -T --entrypoint node control /app/deploy/render-config.mjs /tmp/render.json
+  ```
+  Production:
   ```
   MERV_PI_MODELS=[{"id":"gpt-6-luna","label":"GPT-6 Luna","inputUsdPerM":0.1,"outputUsdPerM":0.5,"effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","inputUsdPerM":10,"outputUsdPerM":50,"effort":"low"}]
   ```
