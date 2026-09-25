@@ -41,6 +41,8 @@ class FakeRuntimes implements SandboxRuntimes {
   /** `${call} ${operation key or sandbox} ${profile}` for each call that names a profile. */
   readonly profiled: string[] = [];
   readonly disconnected = new Set<string>();
+  /** The projects whose connections provider calls went through. */
+  readonly places = new Set<string>();
   connected(projectId: string) {
     return !this.disconnected.has(projectId);
   }
@@ -65,7 +67,8 @@ class FakeRuntimes implements SandboxRuntimes {
   private copy(handle: SandboxRuntimeHandle) {
     return structuredClone(handle);
   }
-  async provision(_projectId: string, operationKey: string, profileId?: string) {
+  async provision(projectId: string, operationKey: string, profileId?: string) {
+    this.places.add(projectId);
     this.createKeys.push(operationKey);
     this.profiled.push(`provision ${operationKey} ${profileId}`);
     if (this.createError) throw this.createError;
@@ -89,7 +92,8 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(handle);
   }
-  async inspect(_projectId: string, current: SandboxRuntimeHandle) {
+  async inspect(projectId: string, current: SandboxRuntimeHandle) {
+    this.places.add(projectId);
     this.inspected.push(current.sandboxId);
     if (this.inspectError) throw this.inspectError;
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
@@ -99,12 +103,13 @@ class FakeRuntimes implements SandboxRuntimes {
     return { ...this.copy(live), launch: current.launch ? this.copy(live).launch : null };
   }
   async launch(
-    _projectId: string,
+    projectId: string,
     current: SandboxRuntimeHandle,
     operationKey: string,
     _bootstrap: string,
     profileId?: string,
   ) {
+    this.places.add(projectId);
     this.launchKeys.push(operationKey);
     this.profiled.push(`launch ${operationKey} ${profileId}`);
     const refusal = this.refuseLaunch;
@@ -128,7 +133,8 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async stop(_projectId: string, current: SandboxRuntimeHandle) {
+  async stop(projectId: string, current: SandboxRuntimeHandle) {
+    this.places.add(projectId);
     this.stopped.push(current.sandboxId);
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
@@ -139,7 +145,8 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async acknowledge(_projectId: string, current: SandboxRuntimeHandle) {
+  async acknowledge(projectId: string, current: SandboxRuntimeHandle) {
+    this.places.add(projectId);
     assert.equal(current.launch?.deliveryState, 'launched');
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live?.launch);
@@ -151,10 +158,10 @@ class FakeRuntimes implements SandboxRuntimes {
     }
     return this.copy(live);
   }
-  async renew(_projectId: string, current: SandboxRuntimeHandle, profileId?: string) {
+  async renew(projectId: string, current: SandboxRuntimeHandle, profileId?: string) {
     this.renewed.push(current.sandboxId);
     this.profiled.push(`renew ${current.sandboxId} ${profileId}`);
-    return this.inspect(_projectId, current);
+    return this.inspect(projectId, current);
   }
   confirmStopped(sandboxId: string) {
     const live = [...this.byKey.values()].find((item) => item.sandboxId === sandboxId);
@@ -329,6 +336,51 @@ test('a project without a sandbox connection never holds the only slot', async (
   await f.fleet.tick();
   assert.notEqual((await f.fleet.inspect(otherCaller, next.id)).phase, 'queued');
   assert.equal(f.runtimes.createKeys.length, 1);
+});
+
+test('an owner that rents in the host rents there for work in a project without a connection', async (t) => {
+  const f = await fixture(t, { globalLimit: 3, projectLimit: 1, hostProjectId: 'host_project' });
+  f.runtimes.disconnected.add(f.caller.projectId);
+  f.fleet.registerOwner('hosted', { ...f.owner, rentsInHost: true });
+  const hosted = (requestId: string) => ({ requestId, owner: { kind: 'hosted', id: 'work_1' } });
+  await assert.rejects(f.fleet.request(f.caller, input('own')), { code: 'sandbox_not_connected' });
+  const first = await f.fleet.request(f.caller, hosted('first'));
+  f.advance(1000);
+  const second = await f.fleet.request(f.caller, hosted('second'));
+  assert.deepEqual([first.projectId, first.rentedIn], [f.caller.projectId, 'host_project']);
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  // The work project's cap holds the second back, and its machines take none of the host's room.
+  assert.deepEqual(
+    (await f.fleet.list(f.caller)).map((a) => [a.requestId, a.phase]),
+    [
+      ['first', 'running'],
+      ['second', 'queued'],
+    ],
+  );
+  assert.equal(await f.fleet.free('host_project'), 1);
+  // Pi's machine rules still read the project's own connection.
+  assert.equal(f.fleet.connected(f.caller.projectId), false);
+  assert.equal(await f.fleet.free(f.caller.projectId), 0);
+  await f.fleet.cancel(f.caller, second.id);
+  f.runtimes.leaseSoon('sbx_1');
+  await f.fleet.tick();
+  f.setObservation('finished');
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  assert.deepEqual(
+    [f.runtimes.acknowledgements, f.runtimes.renewed, f.runtimes.stopped],
+    [['rtj_sbx_1'], ['sbx_1'], ['sbx_1']],
+  );
+  assert.equal((await f.fleet.inspect(f.caller, first.id)).phase, 'released');
+  assert.deepEqual([...f.runtimes.places], ['host_project']);
+  // An allocation without rentedIn, as every earlier one, rents through its own project.
+  f.runtimes.disconnected.clear();
+  f.runtimes.places.clear();
+  const own = await f.fleet.request(f.caller, input('own'));
+  assert.equal('rentedIn' in own, false);
+  await f.fleet.tick();
+  assert.deepEqual([...f.runtimes.places], [f.caller.projectId]);
 });
 
 test('a refused first create frees the only slot; an ambiguous one is retried', async (t) => {

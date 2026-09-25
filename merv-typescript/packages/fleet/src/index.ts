@@ -50,6 +50,7 @@ export const fleetConfig = z
     projectLimits: z.record(token, z.number().int().min(1).max(64)).default({}),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
     allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
+    hostProjectId: token.optional(),
   })
   .strict();
 type Row = { data_json: string };
@@ -262,9 +263,10 @@ export class FleetService implements Fleet {
     check(!caller.session, 'fleet_forbidden', 'Assignment agents cannot allocate machines', 403);
     const owner = this.owners.get(input.owner.kind);
     check(owner, 'fleet_owner_unavailable', 'Fleet owner is unavailable', 503);
+    const place = (owner.rentsInHost && this.config.hostProjectId) || caller.projectId;
     // Without a connection no create can ever succeed, and an admitted request would hold a slot.
     check(
-      this.connected(caller.projectId),
+      this.connected(place),
       'sandbox_not_connected',
       'Hosted agents are not set up for this project yet',
       403,
@@ -299,6 +301,7 @@ export class FleetService implements Fleet {
         source,
         owner: input.owner,
         requestId: input.requestId,
+        ...(place !== caller.projectId && { rentedIn: place }),
         profileId: profile.id,
         epoch: 1,
         phase: 'queued',
@@ -624,6 +627,7 @@ export class FleetService implements Fleet {
   }
   private async advance(a: FleetAllocation): Promise<void> {
     const runtime = this.runtimes!;
+    const place = a.rentedIn ?? a.projectId;
     const owner = this.owners.get(a.owner.kind);
     if (
       a.intent !== 'stop' &&
@@ -647,7 +651,7 @@ export class FleetService implements Fleet {
       let create = false;
       a = await this.update(a.id, (current) => {
         if (current.runtime || current.phase === 'released') return;
-        const connected = runtime.connected(current.projectId);
+        const connected = runtime.connected(place);
         const configured = !this.stale(current);
         if (current.intent === 'run' && connected && configured && owner) {
           first = current.createAttempted === false;
@@ -663,7 +667,7 @@ export class FleetService implements Fleet {
       });
       if (!create) return;
       const handle = await runtime
-        .provision(a.projectId, `${a.id}:create`, a.profileId)
+        .provision(place, `${a.id}:create`, a.profileId)
         .catch((error) => {
           // Refusing the first attempt proves no machine exists: free the slot, do not retry.
           if (!first || !refused(error)) throw error;
@@ -679,7 +683,7 @@ export class FleetService implements Fleet {
         });
       return;
     }
-    const handle = await runtime.inspect(a.projectId, a.runtime);
+    const handle = await runtime.inspect(place, a.runtime);
     a = await this.observed(a, handle, a.phase);
     if (a.phase === 'released') return;
     if (
@@ -691,7 +695,7 @@ export class FleetService implements Fleet {
         current.intent = 'stop';
       });
     if (a.intent === 'stop') {
-      await this.observed(a, await runtime.stop(a.projectId, a.runtime!), 'releasing');
+      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
       return;
     }
     if (!owner || !handle.ready) return;
@@ -706,7 +710,7 @@ export class FleetService implements Fleet {
       const bootstrap = await owner.bootstrap(structuredClone(a));
       if (!(await this.launchAllowed(a, owner, handle))) return;
       const launched = await runtime.launch(
-        a.projectId,
+        place,
         handle,
         `${a.id}:launch`,
         bootstrap,
@@ -722,15 +726,14 @@ export class FleetService implements Fleet {
     const status = await owner.observe(structuredClone(a));
     let exchanged = handle;
     if (status === 'running') {
-      if (handle.launch?.state === 'pending')
-        exchanged = await runtime.acknowledge(a.projectId, handle);
+      if (handle.launch?.state === 'pending') exchanged = await runtime.acknowledge(place, handle);
       a = await this.observed(a, exchanged, status);
     }
     if (status === 'finished') {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
-      await this.observed(a, await runtime.stop(a.projectId, a.runtime!), 'releasing');
+      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
     } else {
       if (status === 'starting') await this.observed(a, handle, status);
       if (
@@ -738,7 +741,7 @@ export class FleetService implements Fleet {
         Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
         (await this.renewalAllowed(a, owner, handle))
       )
-        await this.observed(a, await runtime.renew(a.projectId, exchanged, a.profileId), status);
+        await this.observed(a, await runtime.renew(place, exchanged, a.profileId), status);
     }
   }
   /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any

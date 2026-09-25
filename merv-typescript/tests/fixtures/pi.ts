@@ -244,6 +244,8 @@ export async function fixture(
         globalLimit: options.machines ?? 8,
         projectLimit: options.machines ?? 8,
         allocationTimeoutSeconds: 3600,
+        // As deployed: Fleet's host is Pi's, and Pi's own rules must not notice.
+        hostProjectId: hostBoot.project.id,
       },
       clock,
     ),

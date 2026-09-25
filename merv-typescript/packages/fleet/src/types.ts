@@ -17,6 +17,8 @@ export interface FleetAllocation {
   source: DelegationSource;
   owner: { kind: string; id: string };
   requestId: string;
+  /** The host project whose connection rents the machine, when not `projectId`'s own. */
+  rentedIn?: string;
   profileId: string;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
@@ -61,12 +63,18 @@ export interface FleetConfig {
   /** How often running machines are checked; one starting or stopping is checked each second. */
   pollIntervalMs?: number;
   allocationTimeoutSeconds?: number;
+  /** MERV_FLEET_HOST_PROJECT_ID: the connected project an owner that rents in the host rents
+   * through. Limits, events and listing stay with the project the work is for. */
+  hostProjectId?: string;
 }
 /** Trusted server adapter, never an agent-supplied command or harness implementation.
  * Workflow and chat own authority, enrollment and completion. Fleet owns machines only.
  */
 export interface FleetOwner {
   sourcePermission?: 'read' | 'write';
+  /** Rent through the host project, so work in a project without its own connection can rent.
+   * connected(), free() and describe() still answer for the project's own connection. */
+  rentsInHost?: true;
   /** Read-only transactional check; false fences new authority and starts cleanup. */
   valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** Stable bytes for this allocation/epoch across retries, never persisted by Fleet. */
