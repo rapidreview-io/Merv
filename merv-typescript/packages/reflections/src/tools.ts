@@ -77,6 +77,7 @@ export const reflectionToolsPlugin = {
       },
       {
         name: 'reflection.end',
+        conversation: 'propose' as const,
         description:
           'Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.',
         inputSchema: z
