@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
 import { lstatSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -35,6 +35,8 @@ import { GitWorkspaceManager } from './workspaces.js';
 import {
   buildLaunch,
   collectRepositorySkillPaths,
+  handoffGraceMs,
+  harnessUsage,
   validateProfile,
   type RunnerProfile,
 } from './profiles.js';
@@ -533,6 +535,18 @@ export class MachineRunner implements Runner {
       ...(session.hostRef === record.id ? { attached: true } : {}),
     });
     if (!liveSession(session)) {
+      // Its own handoff closed it: the profile's grace, within its deadline, lets it finish
+      // the turn and exit. The final capture is still taken only once it has ended.
+      const since = Number(record.metadata.handedOffAt ?? this.clock()),
+        grace = handoffGraceMs(record.metadata.profile as RunnerProfile);
+      if (
+        session.closeReason === 'handoff' &&
+        record.status === 'running' &&
+        this.clock() < Math.min(record.deadline, since + grace)
+      ) {
+        this.save(record.id, { handedOffAt: since });
+        return;
+      }
       record = await this.host.stop(record.id);
       this.save(record.id, {
         remoteClosed: true,
@@ -733,16 +747,26 @@ export class MachineRunner implements Runner {
     });
   }
   /**
-   * A regular file of at most 4 KB in the one closed shape, or nothing: a launched process
-   * can write anything here, so a link, a device or a malformed report is simply not sent.
+   * A regular file of at most 4 KB in the one closed shape: a launched process can write
+   * anything here, so a link, a device or a malformed report is simply not sent. Without one,
+   * what the profile's harness printed of its spending in the launch's redacted log, if any.
    */
   private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
+    const read = (path: string, limit: number) => {
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > limit) throw new Error('Not a readable report');
+      return readFileSync(path, 'utf8');
+    };
     try {
-      const path = usageFile(record),
-        stat = lstatSync(path);
-      if (!stat.isFile() || stat.size > 4096) return;
-      const parsed = sessionUsageReportSchema.safeParse(JSON.parse(readFileSync(path, 'utf8')));
-      return parsed.success ? parsed.data : undefined;
+      return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));
+    } catch {
+      // No report of its own; the harness may have printed one.
+    }
+    try {
+      const log = read(join(record.runDirectory, 'stdout.log'), 64 << 20);
+      return sessionUsageReportSchema.parse(
+        harnessUsage(record.metadata.profile as RunnerProfile, log),
+      );
     } catch {
       return;
     }

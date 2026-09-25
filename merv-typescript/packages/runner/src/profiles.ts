@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
-import type { Session } from '@merv/sessions/types';
+import type { Session, SessionUsageReport } from '@merv/sessions/types';
 
 const text = z
   .string()
@@ -469,6 +469,43 @@ const sealed = (session: LaunchRequest['session']): boolean => {
   const workspace = effectiveWorkspace(session.execution.policy);
   return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
 };
+
+/**
+ * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
+ * a closing message after the handoff tool returns and prints its `turn.completed` only then, so
+ * it gets a minute; a harness that prints nothing Merv reads is stopped at once.
+ */
+export const handoffGraceMs = (profile: RunnerProfile) =>
+  profile.harness === 'codex' ? 60_000 : 0;
+
+/**
+ * What a launch spent, read from its own output when the harness prints it there. `codex exec
+ * --json` runs one thread and ends each turn with `turn.completed`, whose usage is the thread's
+ * running total (`input_tokens` includes cached input), so the last one counts. A stream cut off
+ * before any turn completed reports nothing, because Codex prints no usage before a turn ends.
+ * The runner checks the result against the report's closed shape, as it does a usage file.
+ */
+export function harnessUsage(
+  profile: RunnerProfile,
+  output: string,
+): SessionUsageReport | undefined {
+  if (profile.harness !== 'codex') return;
+  let usage: SessionUsageReport | undefined;
+  for (const line of output.split('\n').filter((line) => line.includes('"turn.completed"'))) {
+    try {
+      const event = JSON.parse(line);
+      const { input_tokens: inputTokens, output_tokens: outputTokens } = event.usage;
+      if (
+        event.type === 'turn.completed' &&
+        [inputTokens, outputTokens].every((count) => Number.isSafeInteger(count) && count >= 0)
+      )
+        usage = { inputTokens, outputTokens, ...(profile.model && { model: profile.model }) };
+    } catch {
+      // Not an event this reads.
+    }
+  }
+  return usage;
+}
 
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
 export function buildLaunch(

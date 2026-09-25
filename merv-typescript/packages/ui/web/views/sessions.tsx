@@ -41,6 +41,7 @@ import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
 import { AgentDetail, activity, workName } from './agent-sessions-panel';
+import { personName } from './people';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** How much of a list this read holds: all of it, or the newest part of a larger total. */
@@ -219,8 +220,17 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   const opener = useRef<HTMLButtonElement | null>(null);
   const status = state.data;
   const liveCount = status?.liveSessionCount ?? 0;
+  // The server names a runner's agent by the runner's id; here it is named as the Runners table
+  // names that runner, and an id that table does not name is shortened.
+  const hosts = new Map(status?.runners.map((runner) => [runner.runnerId, runner.machine]));
+  const agents = (status?.agents ?? []).map((agent) => {
+    const id = agent.runnerId;
+    if (agent.name !== `Agent ${id}`) return agent;
+    const name = hosts.get(id)?.hostname ?? personName(id) ?? `${id.slice(0, 8)}…${id.slice(-6)}`;
+    return { ...agent, name };
+  });
   // An agent is named where it worked; a lease with no name says so with a dash.
-  const agentName = new Map((status?.agents ?? []).map((agent) => [agent.id, agent.name]));
+  const agentName = new Map(agents.map((agent) => [agent.id, agent.name]));
   // The page's one clock ticks only while a lease or a runner is actually live,
   // and the read slows to match, so an idle Agents page costs nothing.
   const anyLive = liveCount > 0 || (status?.runners ?? []).some((runner) => runner.live);
@@ -262,7 +272,6 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       : experiments.data?.some((experiment) => experiment.id === instanceId)
         ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
         : undefined;
-  const agents = status?.agents ?? [];
   const retired = agents.filter((agent) => agent.status === 'retired').length;
   const filter = useListFilter(agents, {
     stateOf: activity,

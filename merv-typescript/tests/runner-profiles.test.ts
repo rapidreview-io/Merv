@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { MachineRunner } from '@merv/runner';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
@@ -18,6 +19,8 @@ import type { Session } from '@merv/sessions/types';
 import {
   buildLaunch,
   collectRepositorySkillPaths,
+  handoffGraceMs,
+  harnessUsage,
   validateProfile,
   mcpUrlVariable,
   sessionTokenVariable,
@@ -631,4 +634,103 @@ test('launch rejects closed or inconsistent lease metadata, source credentials a
     });
   for (const mcpUrl of ['https://merv.example/mcp', 'http://[::1]:8080/mcp'])
     assert.equal(buildLaunch(codex, { ...request(), mcpUrl }, safeEnv).env[mcpUrlVariable], mcpUrl);
+});
+
+// Cut from a real `codex exec --json` worker stream (QA J8L lens-evidence, 2026-09-25).
+const started = '{"type":"thread.started","thread_id":"01a0d846-c9b1-7eb3-81d0-78470c983365"}';
+const turn = (input: unknown, output: unknown) =>
+  JSON.stringify({
+    type: 'turn.completed',
+    usage: {
+      input_tokens: input,
+      cached_input_tokens: 746112,
+      cache_write_input_tokens: 0,
+      output_tokens: output,
+      reasoning_output_tokens: 460,
+    },
+  });
+// An event of another type that merely mentions one is parsed and ignored.
+const tool = '{"type":"item.completed","item":{"type":"agent_message","text":"turn.completed"}}';
+const stream = (...lines: string[]) => lines.join('\n') + '\n';
+
+test('Codex usage is the last turn.completed, whatever else the stream holds', () => {
+  const real = stream(started, '{"type":"turn.started"}', tool, 'not JSON', turn(833294, 5454));
+  assert.deepEqual(harnessUsage(codex, real), { inputTokens: 833294, outputTokens: 5454 });
+  assert.deepEqual(harnessUsage({ ...codex, model: 'gpt-6-sol' }, real), {
+    inputTokens: 833294,
+    outputTokens: 5454,
+    model: 'gpt-6-sol',
+  });
+  // The thread's usage is its running total, so a later turn replaces it.
+  assert.deepEqual(harnessUsage(codex, stream(started, turn(10, 1), turn(30, 4))), {
+    inputTokens: 30,
+    outputTokens: 4,
+  });
+  // A crash mid-run keeps what was seen: a torn last line adds nothing.
+  const torn = turn(99, 9).slice(0, 40);
+  assert.deepEqual(harnessUsage(codex, stream(started, turn(30, 4)) + '\n' + torn), {
+    inputTokens: 30,
+    outputTokens: 4,
+  });
+  // A stream stopped mid-turn (the QA review launch) or empty says nothing, not zero.
+  for (const partial of ['', stream(started, '{"type":"turn.started"}', tool), torn])
+    assert.equal(harnessUsage(codex, partial), undefined);
+  for (const bad of [
+    turn(-1, 4),
+    turn(1.5, 4),
+    turn('30', 4),
+    turn(30, null),
+    '{"type":"turn.completed"}',
+    '{"type":"turn.completed","usage":null}',
+    'null',
+  ])
+    assert.equal(harnessUsage(codex, stream(started, bad)), undefined, bad);
+  assert.equal(harnessUsage(claude, real), undefined);
+  assert.equal(harnessUsage(command, real), undefined);
+  // Only a harness whose usage prints after its closing message waits for it past a handoff.
+  assert.deepEqual([codex, claude, command].map(handoffGraceMs), [60_000, 0, 0]);
+});
+
+test('a usage file the launch wrote wins; without one, only a regular log is read', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-runner-usage-'));
+  const credentialEnv = `MERV_RUNNER_USAGE_${process.pid}`;
+  process.env[credentialEnv] = 'mk_' + 'u'.repeat(40);
+  const runner = new MachineRunner(
+    {
+      directory: join(directory, 'machine'),
+      baseUrl: 'http://127.0.0.1:9',
+      projectId: 'project_fixture',
+      credentialEnv,
+      profiles: [codex],
+    },
+    { autoPoll: false },
+  );
+  try {
+    const read = (profile: RunnerProfile) =>
+      (runner as unknown as { readUsage(record: unknown): unknown }).readUsage({
+        runDirectory: directory,
+        metadata: { profile },
+      });
+    const log = join(directory, 'stdout.log'),
+      file = join(directory, 'usage.json');
+    assert.equal(read(codex), undefined);
+    writeFileSync(join(directory, 'real.log'), stream(started, turn(30, 4)));
+    symlinkSync(join(directory, 'real.log'), log);
+    assert.equal(read(codex), undefined, 'A link is never followed');
+    rmSync(log);
+    writeFileSync(log, stream(started, turn(30, 4)));
+    assert.deepEqual(read(codex), { inputTokens: 30, outputTokens: 4 });
+    assert.equal(read(command), undefined);
+    writeFileSync(file, '{"inputTokens":1,"outputTokens":2,"costUsd":0.5}');
+    assert.deepEqual(read(codex), { inputTokens: 1, outputTokens: 2, costUsd: 0.5 });
+    writeFileSync(file, '{"inputTokens":1,"outputTokens":2,"note":"extra"}');
+    assert.deepEqual(read(codex), { inputTokens: 30, outputTokens: 4 });
+    rmSync(file);
+    writeFileSync(log, stream(started, turn(1e12, 1e12 + 1)));
+    assert.equal(read(codex), undefined, 'What a profile reads meets the report’s own bounds');
+  } finally {
+    await runner.stop();
+    delete process.env[credentialEnv];
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -889,6 +889,13 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
     requestId: `assign-${lens!.id}`,
   });
   const lensCaller = await f.app.ctx.sessions.authenticate(secret);
+  // A step is named as the record it works on is named: the wave by its title, a lens by its
+  // wave and its perspective. The step's own state is the gate's, and never part of the name.
+  const offered = async (id: string) =>
+    (await f.app.ctx.workflows.dispatchCandidates(f.owner)).find((item) => item.instanceId === id)
+      ?.label;
+  assert.equal(lensExecution.assignment.label, `${wave.title}: ${lens!.perspective}`);
+  assert.equal(await offered(others[0]!.id), `${wave.title}: ${others[0]!.perspective}`);
   const previous = f.app.ctx.reflections;
   await f.app.setEnabled('reflections', false);
   await assert.rejects(async () => await previous.get(f.owner, wave.id), {
@@ -927,6 +934,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   }
   wave = await f.app.ctx.reflections.get(f.owner, wave.id);
   assert.equal(wave.workflow.state, 'synthesizing');
+  assert.equal(await offered(wave.id), wave.title);
   const synthesisToken = token();
   await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Synthesis',
@@ -940,6 +948,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
     requestId: 'synthesis-work',
   });
   const caller = await f.app.ctx.sessions.authenticate(synthesisToken);
+  assert.equal(execution.assignment.label, wave.title);
   // Writing the next wave's plan grants no power to create it.
   await assert.rejects(
     async () =>
@@ -996,6 +1005,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   await f.app.ctx.domainEvents.drain();
   // Lens authors, and the owner who directed the synthesis worker, are excluded from its review.
   assert.deepEqual(new Set(wave.review!.excludedActorIds), new Set([...actors, f.owner.actorId]));
+  assert.equal(await offered(wave.id), wave.title);
   const reviewToken = token();
   await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Independent review',
@@ -1009,6 +1019,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
     requestId: 'review-work',
   });
   const reviewer = await f.app.ctx.sessions.authenticate(reviewToken);
+  assert.equal(reviewing.assignment.label, wave.title);
   const review = await f.app.ctx.reviews.get(f.owner, wave.review!.id);
   const repaired = (await f.app.ctx.tools.call('review.submit', reviewer, {
     reviewId: review.id,

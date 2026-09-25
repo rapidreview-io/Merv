@@ -98,6 +98,9 @@ interface LeaseRow {
   claim_id: string | null;
   released_at: string | null;
 }
+/** Every step is named as its record is: a wave by its title, a lens by its wave and perspective. */
+const named = ({ wave, lens }: { wave: WaveRow; lens: LensRow | null }) =>
+  lens ? `${wave.title}: ${lens.perspective}` : wave.title;
 
 /**
  * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting
@@ -646,7 +649,7 @@ export class ReflectionService implements Reflections {
       );
     return {
       role: stage === 'review' ? ('reviewer' as const) : ('producer' as const),
-      label: `${wave.title}: ${lens?.perspective ?? stage}`,
+      label: named({ wave, lens }),
       brief: recipe.recipe.instructions,
       references: [
         { kind: 'reflection', id: wave.id, label: wave.title },
@@ -716,10 +719,7 @@ export class ReflectionService implements Reflections {
   }
   private hooks(): NonNullable<NonNullable<WorkflowPolicy['assignments']>[number]['lease']> {
     return {
-      label: async (context) => {
-        const { wave, lens } = await this.current(context);
-        return `${wave.title}: ${lens?.perspective ?? context.snapshot.state}`;
-      },
+      label: async (context) => named(await this.current(context)),
       excludes: async (context, actorId) => {
         const { wave, lens } = await this.current(context);
         return (
@@ -859,7 +859,7 @@ export class ReflectionService implements Reflections {
           context.tx,
         );
         return {
-          label: row ? `${wave.title}: ${row.perspective}` : wave.title,
+          label: named({ wave, lens: row }),
           gate: context.snapshot.state,
           waiting:
             context.snapshot.state === 'reflecting' && !lens

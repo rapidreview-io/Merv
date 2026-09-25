@@ -8,14 +8,17 @@
     <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)" />
     <script>
-      (function () {
-        try {
-          var t = localStorage.getItem('merv:theme');
-          if (t !== 'light' && t !== 'dark')
-            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          document.documentElement.dataset.theme = t;
-        } catch (e) {}
-      })();
+      // A theme chosen on the page is kept; until one is, the page wears the system's, as it changes.
+      (function (system) {
+        system.onchange = function () {
+          try {
+            var t = localStorage.getItem('merv:theme');
+            if (t !== 'light' && t !== 'dark') t = system.matches ? 'dark' : 'light';
+            document.documentElement.dataset.theme = t;
+          } catch (e) {}
+        };
+        system.onchange();
+      })(window.matchMedia('(prefers-color-scheme: dark)'));
     </script>
   </head>
   <body>

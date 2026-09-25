@@ -228,6 +228,29 @@ test('failed refresh preserves the original 401, while role denial never refresh
   assert.equal(currentToken(), 'token');
 });
 
+test('a refused form says each check sentence, naming a field only beside a generic check', async (t) => {
+  setup(t);
+  setToken('token');
+  const details = [
+    {
+      path: ['summary'],
+      message: 'Project Introduction must fit within 16,000 UTF-8 bytes',
+      code: 'custom',
+    },
+    { path: ['title'], message: 'Required', code: 'invalid_type' },
+  ];
+  t.mock.method(globalThis, 'fetch', async () =>
+    Response.json(
+      { error: { code: 'invalid_input', message: 'Tool input failed validation', details } },
+      { status: 400 },
+    ),
+  );
+  await assert.rejects(call('project.context.update'), {
+    code: 'invalid_input',
+    message: 'Project Introduction must fit within 16,000 UTF-8 bytes; title Required',
+  });
+});
+
 test('async StrictMode subscribers share one SDK client and dispose only their own refresher', async (t) => {
   setup(t);
   setAuthMode('shared');

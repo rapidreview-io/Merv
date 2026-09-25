@@ -47,10 +47,6 @@ const failure = (error: unknown): ApiError =>
   error instanceof ApiError
     ? error
     : new ApiError('request_failed', error instanceof Error ? error.message : 'Request failed.', 0);
-const mutationMessage = (error: unknown): string =>
-  error instanceof ApiError && error.code === 'last_operator'
-    ? 'Keep at least one operator with a verified account. Another operator must sign in before the last verified operator can be removed or demoted.'
-    : failure(error).message;
 
 /**
  * Members and keys belong to a person's account. A session opened with a bearer
@@ -101,6 +97,9 @@ export function PeopleView() {
   );
   const isOperator = (human ? currentMember?.role : actor.role) === 'operator';
   const canManage = human && isOperator;
+  // The project always keeps an operator, so the only one can be neither demoted nor removed.
+  const operators = members?.filter((member) => member.role === 'operator').length;
+  const lastOperator = (member: Membership) => member.role === 'operator' && operators === 1;
   const path = `/projects/${encodeURIComponent(project.id)}/members`;
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
@@ -173,7 +172,7 @@ export function PeopleView() {
       setDraftRoles({});
       setLoadError(undefined);
     } catch (error) {
-      if (current()) setMutationError(mutationMessage(error));
+      if (current()) setMutationError(failure(error).message);
     } finally {
       if (current()) setBusy(false);
     }
@@ -255,7 +254,7 @@ export function PeopleView() {
                 className="input"
                 aria-label={`Role for ${label(member)}`}
                 value={draftRoles[member.id] ?? member.role}
-                disabled={busy}
+                disabled={busy || lastOperator(member)}
                 onChange={(event) =>
                   setDraftRoles((previous) => ({
                     ...previous,
@@ -280,7 +279,7 @@ export function PeopleView() {
               </button>
               <button
                 className="btn"
-                disabled={busy}
+                disabled={busy || lastOperator(member)}
                 onClick={() => void mutate('DELETE', member.subject)}
               >
                 Remove
