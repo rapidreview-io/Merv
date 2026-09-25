@@ -431,6 +431,10 @@ test('owner waits for closed-session capture and retires a runner that never cla
   assert.equal(await f.owner().observe(allocation), 'running');
   f.inspections.get(allocation.id)!.session!.capturePending = false;
   assert.equal(await f.owner().observe(allocation), 'running');
+  // An acknowledgement lost for two minutes after the close no longer keeps the machine.
+  f.inspections.get(allocation.id)!.session!.closedAt = '2026-09-21T00:00:00Z';
+  assert.equal(await f.owner().observe(allocation), 'finished');
+  f.inspections.get(allocation.id)!.session!.closedAt = new Date().toISOString();
   f.inspections.get(allocation.id)!.session!.releaseAcknowledged = true;
   assert.equal(await f.owner().observe(allocation), 'finished');
   f.inspections.set(allocation.id, {
