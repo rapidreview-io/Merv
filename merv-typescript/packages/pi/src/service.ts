@@ -997,7 +997,9 @@ export class PiService implements Pi, FleetOwner {
   }
   /** A host's machines are for its person, whose day's compute they count toward. */
   async payer(_source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null> {
-    return this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null;
+    return (
+      this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null
+    );
   }
   /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {
