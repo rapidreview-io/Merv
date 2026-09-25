@@ -1311,7 +1311,7 @@ test('an assignment for another slot or with oversized notes is failed and never
     assignment('a', { hostId: 'pih_2' }),
     assignment('a', { runtimeId: 'flt_other' }),
     assignment('a', { epoch: 2 }),
-    { ...assignment('a'), notes: ['1', '2', '3', '4', '5', '6', '7', '8', '9'] },
+    { ...assignment('a'), notes: Array.from({ length: 11 }, (_, index) => `${index}`) },
     { ...assignment('a'), instructions: 'x'.repeat(32_001) },
     { ...assignment('a'), notes: ['x'.repeat(301)] },
   ]) {

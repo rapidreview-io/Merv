@@ -11,9 +11,15 @@ export const defaultTitle = 'New conversation';
 export const createInput = z
   .object({ requestId: id, title: z.string().trim().min(1).max(200).default(defaultTitle) })
   .strict();
+/** A model id as the provider names it, e.g. 'gpt-6-luna'. */
+export const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
+const usdPerM = z.number().finite().min(0).max(1000);
+/** pi.send; `model` is the one the page shows, which must still be the conversation's. */
 export const sendInput = z
-  .object({ commandId: id, text: z.string().trim().min(1).max(32_000) })
+  .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
   .strict();
+/** pi.model.set */
+export const modelInput = z.object({ id, model: modelId }).strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
 /** pi.run: the conversation, the turn and the proposal whose call the person runs. */
 export const runInput = z.object({ id, commandId: id, proposalId: id }).strict();
@@ -60,10 +66,33 @@ export const piConfig = z
   .object({
     enabled: z.boolean().default(false),
     baseUrl: z.string().url().optional(),
-    model: z
-      .string()
-      .regex(/^[A-Za-z0-9_.-]{1,100}$/)
-      .default('gpt-6-luna'),
+    /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
+     * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
+     * for reasoning on any model. Prices are for accounting; the picker shows labels only. */
+    models: z
+      .array(
+        z
+          .object({
+            id: modelId,
+            label: z.string().trim().min(1).max(24),
+            inputUsdPerM: usdPerM,
+            outputUsdPerM: usdPerM,
+            effort: z.enum(['none', 'low']),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8)
+      .refine((all) => new Set(all.map((m) => m.id)).size === all.length, 'Model ids repeat')
+      .default([
+        {
+          id: 'gpt-6-luna',
+          label: 'GPT-6 Luna',
+          inputUsdPerM: 0.1,
+          outputUsdPerM: 0.5,
+          effort: 'none',
+        },
+      ]),
     secretEnv: z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
@@ -119,6 +148,7 @@ export const piConfig = z
   });
 export type PiConfig = z.input<typeof piConfig>;
 export type PiMachineConfig = z.output<typeof piConfig>['machines'][number];
+export type PiModelConfig = z.output<typeof piConfig>['models'][number];
 
 export const migration = {
   version: 1,

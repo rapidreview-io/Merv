@@ -373,7 +373,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         role: 'producer',
         actorId: 'actor_1',
         projectId: 'project_1',
-        model: 'gpt-6-luna',
+        model: { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
         today: '2026-09-25',
       }),
     ].join('\n');

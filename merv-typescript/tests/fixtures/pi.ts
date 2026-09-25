@@ -62,6 +62,13 @@ export function checkpointTree(text = 'Earlier', branch = 'active'): string {
   });
 }
 
+/** The production catalog (MERV_PI_MODELS): Luna the default, Astra the one that reasons. */
+export const models = [
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5, effort: 'none' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10, effort: 'none' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50, effort: 'low' },
+] as const;
+
 /** Offers as Sandboxes describes Cloudflare standard-1 and standard-3. */
 export const offers: Record<string, Awaited<ReturnType<SandboxRuntimes['describe']>>> = {
   standard: { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074 },
@@ -262,6 +269,7 @@ export async function fixture(
       { key: 'large', label: 'Large', slots: 4, agent: true },
     ],
     agentMoves: true,
+    models: [...models],
     ...options.pi,
   };
   const start = () =>
@@ -390,8 +398,10 @@ export async function fixture(
     advance: (milliseconds: number) => {
       now += milliseconds;
     },
-    restart: async () => {
+    /** A new service on the same state, with `changes` to its configuration. */
+    restart: async (changes: PiConfig = {}) => {
       await pi.close();
+      Object.assign(config, changes);
       pi = await start();
     },
   };

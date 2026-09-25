@@ -229,17 +229,17 @@ export const piApiPlugin = {
   inject: ['pi', 'api'],
   apply(ctx: Context) {
     const http = new PiHttp(ctx.pi);
+    const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
     const relay = new PiModelRelay({
       enabled: ctx.pi.config.enabled,
-      model: ctx.pi.config.model,
+      models: ctx.pi.config.models,
       providerKey: () => process.env[ctx.pi.config.modelApiKeyEnv] ?? '',
       authority: {
         authorize: (token) => ctx.pi.authorizeModel(token),
         validate: (grant) => ctx.pi.validateModel(grant),
       },
-      onFailure: (record) => {
-        process.stderr.write(`${JSON.stringify(record)}\n`);
-      },
+      onFailure: log,
+      onUsage: log,
     });
     ctx.effect(() => () => {
       http.close();

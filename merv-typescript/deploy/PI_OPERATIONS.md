@@ -2,8 +2,9 @@
 
 Pi is an optional Fleet client. The Agent sidebar opens conversations, not tasks.
 The production configuration keeps workflow dispatch disabled and uses the
-authenticated, model-restricted relay with `gpt-6-luna`. Provider credentials stay
-on the main server; workers receive only bounded per-command relay authority.
+authenticated, model-restricted relay with the models in `MERV_PI_MODELS`.
+Provider credentials stay on the main server; workers receive only bounded
+per-command relay authority.
 
 Since 2026-09-24 18:17 UTC Pi is enabled for all existing human-accessible
 projects and the service pilot. Owner-authorized enablement does not certify
@@ -289,6 +290,72 @@ from step 1 have to be done again.
 - Fleet caps the host at its `MERV_FLEET_PROJECT_LIMITS` entry and at
   `MERV_FLEET_GLOBAL_LIMIT`. Pi holds one machine per person per project, or
   two while it moves, and starts a move only while at least 3 slots are free.
+
+## Models
+
+- `MERV_PI_MODELS` is the catalog: a JSON array of 1 to 8 entries, the first
+  the default, each with `id`, `label`, `inputUsdPerM`, `outputUsdPerM` and
+  `effort`. `id` is the provider's model id; `label` (at most 24 characters)
+  is all the picker shows; the prices (USD per million tokens) are for
+  accounting only; `effort` (`none` or `low`) is the reasoning effort the relay
+  sets on every call, whatever the worker asks. Unset, the catalog is GPT-6 Luna
+  alone and no picker shows. `MERV_PI_MODEL` is ignored. The render makes the
+  checks Main makes as it starts, so dry-run it on the edited env before you
+  recreate Main; it refuses a bad catalog with `Invalid MERV_PI_MODELS entry`
+  (or `must hold 1-8 models`, `repeats a model id`):
+  ```
+  cd "$(sudo docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)"
+  sudo MERV_TS_IMAGE="$(sudo docker inspect -f '{{.Config.Image}}' merv-typescript-control-1)" docker compose -f compose.yml run --rm --no-deps -T --entrypoint node control /app/deploy/render-config.mjs /tmp/render.json
+  ```
+  Production:
+  ```
+  MERV_PI_MODELS=[{"id":"gpt-6-luna","label":"GPT-6 Luna","inputUsdPerM":0.1,"outputUsdPerM":0.5,"effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","inputUsdPerM":10,"outputUsdPerM":50,"effort":"low"}]
+  ```
+- **Reasoning models only** (every GPT-5 and GPT-6 model): the worker asks for
+  reasoning on any model, so a model without it fails every call. Astra runs at
+  `low`: pi-ai lists no `none` effort for it. No reasoning summary is ever requested;
+  encrypted reasoning is requested only where effort is not `none`, and only
+  that model gets it back.
+- **Per conversation.** Each conversation stores its model from creation: the
+  person's last pick in that project (a `pi_people` row keyed
+  `model:<userId>:<projectId>`, never the machine record), else the first entry.
+  A turn's model is fixed when a worker claims it. The turn's notes tell the
+  agent that model, and that earlier answers may be other models'. Told only
+  its name, Luna named the model of the answer before a switch in 17 of 27
+  tries; with this note, in 1 of 42, and in 0 of 40 once the note came first
+  after the full instructions and 90 tools. A conversation whose model leaves the
+  catalog answers on the first entry. Only the person switches: the agent has
+  no model tool, and conversation, worker and managed callers are refused.
+  Callers holding the person's own key (MCP, `mk_`) may switch, as they may
+  send and pick the machine; a send that names a model the conversation no
+  longer has creates nothing (409 `pi_model_changed`).
+- **Idle limits.** A call at effort `none` ends after 20 s without upstream
+  bytes; any other after 120 s (`reasoningIdleTimeoutMs`), under Main's 300 s
+  turn stall limit. Measured 2026-09-25 through the relay on 141k-token
+  histories, the longest silence was 1.9 s on Luna, 2.8 s on Sol and 4.5 s on
+  Astra (with a tool call and its reasoning replayed).
+- **Cost.** A turn can make 32 calls, each up to 272k tokens in and 128k out: at
+  most about $3 on Luna, $58 on Sol and $290 on Astra. Nothing caps it. Each
+  finished call writes one `pi_relay_usage` record to Main's stderr with the
+  model and its input, cached, output and reasoning tokens, and nothing about
+  the person. Spend by model for the last day:
+  ```
+  sudo docker logs --since 24h merv-typescript-control-1 2>&1 | grep '"pi_relay_usage"' |
+    jq -rs 'group_by(.model)[] | [.[0].model, length, (map(.inputTokens)|add), (map(.outputTokens)|add)] | @tsv'
+  ```
+  Look again when Astra passes about $50 a day.
+- **Adding a model.** Probe it first on the control host with the provider key
+  (never printed): a streamed Responses call with `store:false` at the effort
+  you mean to set returns 200; at `low`, including
+  `reasoning.encrypted_content`, it returns an encrypted reasoning item; on a
+  ~140k-token input with one required function tool, the longest gap between
+  SSE frames stays under 60 s (else raise `reasoningIdleTimeoutMs`, under
+  300 s), and replaying that input with the reasoning item, the call and its
+  output returns 200. Then add the entry and recreate Main. A model pi-ai does
+  not know gets the worker's 32k-token fallback window until the hosted image
+  upgrades pi-ai.
+- **Rollback.** An older Main ignores `MERV_PI_MODELS` and runs every
+  conversation on `gpt-6-luna`; the stored models are kept for a roll forward.
 
 ## Restarts and limits
 

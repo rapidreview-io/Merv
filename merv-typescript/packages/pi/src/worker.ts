@@ -120,7 +120,7 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     (work.instructions !== undefined &&
       (typeof work.instructions !== 'string' || work.instructions.length > 32_000)) ||
     !Array.isArray(work.notes) ||
-    work.notes.length > 8 ||
+    work.notes.length > 10 ||
     work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
     !Array.isArray(work.tools) ||
     work.tools.length > 128 ||

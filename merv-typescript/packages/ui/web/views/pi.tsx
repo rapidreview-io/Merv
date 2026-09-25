@@ -16,9 +16,11 @@ import {
   readPiEvents,
   type PiConversation,
   type PiDelta,
+  type PiCommand,
   type PiEvent,
   type PiHostView,
   type PiMachine,
+  type PiModel,
   type PiProposal,
   type PiSnapshot,
 } from '../pi-stream';
@@ -342,6 +344,87 @@ function Machine({
   );
 }
 
+/** The model this conversation's next answer uses, and its picker: labels alone. Only the person
+ * changes it; an answer under way keeps its own. */
+function Model({
+  models,
+  model,
+  busy,
+  pick,
+}: {
+  models: PiModel[];
+  model?: string;
+  busy: boolean;
+  pick(id: string): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useMenu(box, open, () => setOpen(false));
+  return (
+    <div className="pi-switch pi-model" ref={box}>
+      <button
+        type="button"
+        className="pi-switch-button pi-model-button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-live="polite">
+          <span className="sr-only">Model: </span>
+          {models.find(({ id }) => id === model)?.label ?? model}
+        </span>
+        <ChevronsIcon />
+      </button>
+      {open && (
+        <div className="pi-menu" role="menu" aria-label="Model">
+          {models.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              role="menuitemradio"
+              tabIndex={-1}
+              className="pi-menu-item"
+              aria-checked={id === model}
+              onClick={() => {
+                setOpen(false);
+                box.current?.querySelector('button')?.focus();
+                if (id !== model) pick(id);
+              }}
+            >
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Where turn `at` moved machine or switched model, against the last earlier turn that recorded
+ * each: a turn stopped before a worker claimed it recorded no model. */
+function changed(all: PiCommand[], at: number, host?: PiHostView, models?: PiModel[]) {
+  const since = (key: 'machine' | 'model') => {
+    const before = all
+      .slice(0, at)
+      .reverse()
+      .find((turn) => turn[key])?.[key];
+    return before && all[at][key] !== before ? all[at][key] : undefined;
+  };
+  const [machine, model] = [since('machine'), since('model')];
+  const words = [
+    machine && `Moved to ${label(host, machine)}`,
+    model && `Switched to ${models?.find(({ id }) => id === model)?.label ?? model}`,
+  ].filter(Boolean);
+  return (
+    words.length > 0 && (
+      <p className="pi-divider" key={`${all[at].id}-changed`}>
+        {words.join(' · ')}
+      </p>
+    )
+  );
+}
+
 function PiConversationPage() {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -362,6 +445,8 @@ function PiConversationPage() {
   const [reload, setReload] = useState(0);
   const [snapshotRetry, setSnapshotRetry] = useState(0);
   const pending = useRef<{ id: string; text: string } | null>(null);
+  // The latest model pick on its way, which a send in that conversation waits for.
+  const picking = useRef<{ id: string; done: Promise<boolean> } | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const switcher = useRef<HTMLDivElement>(null);
@@ -643,15 +728,20 @@ function PiConversationPage() {
   };
   const send = async (text = draft.trim()) => {
     if (busy || blocked || unavailable || active || !text) return;
-    if (pending.current?.text !== text) pending.current = { id: identifier(), text };
-    const commandId = pending.current.id;
     let id = selection.current;
     setBusy(true);
-    setError('');
     try {
+      // A pick on its way goes first; one that failed keeps the question, and says why.
+      if (id && picking.current?.id === id && !(await picking.current.done)) return;
+      if (pending.current?.text !== text) pending.current = { id: identifier(), text };
+      const commandId = pending.current.id;
+      setError('');
       id ??= await open();
       if (!id) return;
-      await call('pi.send', { id, commandId, text });
+      // Sent on the model the bar shows, or not at all.
+      const shown =
+        canonical.current?.conversation.id === id && canonical.current.conversation.model;
+      await call('pi.send', { id, commandId, text, ...(shown && { model: shown }) });
       if (!valid() || selection.current !== id) return;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
@@ -662,6 +752,9 @@ function PiConversationPage() {
       if (!valid() || selection.current !== id) return;
       if (cause instanceof ApiError && cause.code === 'sandbox_not_connected') setRefused(true);
       else setError(said(cause, 'Could not send the message.'));
+      // Another page picked a model: the bar shows it before the question is sent again.
+      if (cause instanceof ApiError && cause.code === 'pi_model_changed')
+        void call<PiSnapshot>('pi.snapshot', { id }).then(replace, () => {});
     } finally {
       if (valid()) {
         setBusy(false);
@@ -708,6 +801,28 @@ function PiConversationPage() {
     } catch (cause) {
       if (valid()) setError(said(cause, 'Could not change the machine.'));
     }
+  };
+  /** Picks run one after another, each answered with the conversation as it now stands. */
+  const pickModel = (model: string) => {
+    const id = selection.current;
+    if (!id) return;
+    setError('');
+    const done: Promise<boolean> = (
+      picking.current?.id === id ? picking.current.done : Promise.resolve(true)
+    )
+      .then(() => call<PiSnapshot>('pi.model.set', { id, model }))
+      .then(
+        (next) => (replace(next), true),
+        (cause) => {
+          if (valid() && selection.current === id)
+            setError(said(cause, 'Could not change the model.'));
+          return false;
+        },
+      )
+      .finally(() => {
+        if (picking.current?.done === done) picking.current = null;
+      });
+    picking.current = { id, done };
   };
   const stop = async () => {
     if (!selected || busy || unavailable || !active) return;
@@ -792,6 +907,14 @@ function PiConversationPage() {
               </div>
             )}
           </div>
+          {!blocked && !unavailable && snapshot && (snapshot.models?.length ?? 0) > 1 && (
+            <Model
+              models={snapshot.models!}
+              model={snapshot.conversation.model}
+              busy={busy}
+              pick={pickModel}
+            />
+          )}
           {!blocked && snapshot && (
             <div className="pi-state" role="status">
               {state}
@@ -819,12 +942,7 @@ function PiConversationPage() {
           }}
         >
           {snapshot?.commands.flatMap((item, at, all) => [
-            // Where the machine changed between two turns.
-            item.machine && all[at - 1]?.machine && item.machine !== all[at - 1].machine && (
-              <p className="pi-divider" key={`${item.id}-machine`}>
-                Moved to {label(host, item.machine)}
-              </p>
-            ),
+            changed(all, at, host, snapshot.models),
             ...item.messages.map((message, index) => (
               <article
                 className={`pi-message pi-message--${message.role}`}

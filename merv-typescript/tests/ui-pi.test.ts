@@ -33,6 +33,7 @@ interface Conversation {
   previousCheckpoint: null;
   createdAt: string;
   updatedAt: string;
+  model?: string;
 }
 const conversation = (id = 'conversation_1'): Conversation => ({
   id,
@@ -1559,6 +1560,265 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
   );
   assert.equal(cards()[0].querySelector('a')!.href, 'https://files.example/art_1?sig=abc');
   assert.equal(buttons()[0].textContent, 'Ran');
+});
+
+const models = [
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5 },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10 },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50 },
+];
+/** A snapshot of a conversation answering on `model`, with the catalog. */
+const modelled = (
+  model: string,
+  item: Conversation = conversation(),
+  commands: ReturnType<typeof command>[] = [],
+  tail: PiEvent[] = [],
+) => ({ ...snapshot({ ...item, model }, commands, 0, tail), models });
+const model = () => document.querySelector<HTMLButtonElement>('.pi-model-button')!;
+const choices = () => [
+  ...document.querySelectorAll<HTMLButtonElement>('.pi-model [role="menuitemradio"]'),
+];
+/** Opens the model menu and picks the `index`th model. */
+const pick = async (index: number) => {
+  await act(async () => model().click());
+  await act(async () => choices()[index].click());
+};
+/** Holds each pi.model.set until the returned function is called. */
+function holdPicks() {
+  let release = () => {};
+  let held = new Promise<void>((resolve) => (release = resolve));
+  const through = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.model.set')) await held;
+    return through(input, init);
+  }) as typeof fetch;
+  return async () => {
+    release();
+    held = Promise.resolve();
+    await settle(10);
+  };
+}
+
+test('the bar names the conversation’s model, and its picker lists the models by name alone', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  let state = modelled('gpt-6-luna');
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  const picks: Record<string, unknown>[] = [];
+  serve('/tools/pi.model.set', (_count, input) => {
+    picks.push(input);
+    state = modelled(input.model as string);
+    return { body: { result: state } };
+  });
+  await open();
+  assert.equal(model().textContent, 'Model: GPT-6 Luna');
+  assert.equal(model().getAttribute('aria-haspopup'), 'menu');
+  await act(async () => model().click());
+  assert.deepEqual(
+    choices().map((item) => [item.textContent, item.getAttribute('aria-checked')]),
+    [
+      ['GPT-6 Luna', 'true'],
+      ['GPT-6 Sol', 'false'],
+      ['GPT-6 Astra', 'false'],
+    ],
+  );
+  assert.equal(document.activeElement, choices()[0]);
+  await press('ArrowDown');
+  assert.equal(document.activeElement, choices()[1]);
+  await press('Escape');
+  assert.equal(choices().length, 0);
+  assert.equal(document.activeElement, model());
+  // Picking the model it has only shuts the menu.
+  await pick(0);
+  assert.equal(choices().length, 0);
+  assert.deepEqual(picks, []);
+  // A pick asks the server, and the bar follows its answer.
+  await pick(1);
+  await settle(10);
+  assert.deepEqual(picks, [{ id: 'conversation_1', model: 'gpt-6-sol' }]);
+  assert.equal(model().textContent, 'Model: GPT-6 Sol');
+  assert.equal(document.activeElement, model());
+  // A refusal says so, and the bar stays where the server has it.
+  serve('/tools/pi.model.set', {
+    status: 403,
+    body: { error: { code: 'pi_model_unavailable', message: 'That model is not offered' } },
+  });
+  await pick(2);
+  await settle(10);
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'That model is not offered');
+  assert.equal(model().textContent, 'Model: GPT-6 Sol');
+});
+
+test('a question sent right after a pick waits for it and goes on that model; after a failed pick, nothing is sent', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  let state = modelled('gpt-6-luna');
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  let refuse = false;
+  serve('/tools/pi.model.set', (_count, input) => {
+    if (refuse)
+      return {
+        status: 403,
+        body: { error: { code: 'pi_model_unavailable', message: 'That model is not offered' } },
+      };
+    state = modelled(input.model as string);
+    return { body: { result: state } };
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'starting') } };
+  });
+  await open();
+  const release = holdPicks();
+  // Two quick picks go in order; the question waits for both, and names the last.
+  await pick(1);
+  await pick(2);
+  await write('Which model are you?');
+  await click('Send');
+  await settle(10);
+  assert.deepEqual(sent, []);
+  await release();
+  const asked = requests.filter((request) => /pi\.(model\.set|send)$/.test(request));
+  assert.deepEqual(asked, [
+    'POST /tools/pi.model.set',
+    'POST /tools/pi.model.set',
+    'POST /tools/pi.send',
+  ]);
+  assert.equal(sent[0].model, 'gpt-6-astra');
+  assert.equal(model().textContent, 'Model: GPT-6 Astra');
+  // A pick that fails keeps the question here, unsent, and says why.
+  refuse = true;
+  state = modelled('gpt-6-astra');
+  const again = holdPicks();
+  await pick(0);
+  await write('And now?');
+  await click('Send');
+  await again();
+  assert.equal(sent.length, 1);
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.value, 'And now?');
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'That model is not offered');
+  assert.equal(model().textContent, 'Model: GPT-6 Astra');
+});
+
+test('a question sent on a model another page changed keeps its words, and the bar catches up', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  let state = modelled('gpt-6-luna');
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  serve('/tools/pi.send', {
+    status: 409,
+    body: {
+      error: {
+        code: 'pi_model_changed',
+        message: 'This conversation now answers on GPT-6 Astra. Send again to use it.',
+      },
+    },
+  });
+  await open();
+  state = modelled('gpt-6-astra');
+  await write('Hello');
+  await click('Send');
+  await settle(10);
+  assert.equal(
+    document.querySelector('[role="alert"]')?.textContent,
+    'This conversation now answers on GPT-6 Astra. Send again to use it.',
+  );
+  assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.value, 'Hello');
+  assert.equal(model().textContent, 'Model: GPT-6 Astra');
+});
+
+test('a pick while an answer streams leaves the answer on screen, finishing on its model', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = { ...conversation(), activeCommandId: 'command_1' };
+  const turn = [command('command_1', 'working', [{ role: 'user', text: 'Explain' }])];
+  const partial: PiEvent = { sequence: 1, commandId: 'command_1', type: 'text', text: 'Partial' };
+  let state = modelled('gpt-6-luna', active, turn, [partial]);
+  boot(
+    () => state,
+    () => [active],
+  );
+  serve('/tools/pi.model.set', (_count, input) => {
+    state = modelled(input.model as string, active, turn, [partial]);
+    return { body: { result: state } };
+  });
+  await open();
+  assert.match(text(), /Partial/);
+  assert.equal(model().disabled, false);
+  await pick(1);
+  await settle(10);
+  assert.match(text(), /Partial/);
+  assert.equal(model().textContent, 'Model: GPT-6 Sol');
+});
+
+test('with one model, or a server that offers none, there is no model picker', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  let state: ReturnType<typeof snapshot> & { models?: typeof models } = {
+    ...modelled('gpt-6-luna'),
+    models: models.slice(0, 1),
+  };
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  await open();
+  assert.match(text(), /Agent ready|Ready/);
+  assert.equal(document.querySelector('.pi-model'), null);
+  state = snapshot(conversation(), [], 1);
+  await act(async () => stream.push('snapshot', state));
+  assert.equal(document.querySelector('.pi-model'), null);
+});
+
+test('the transcript marks a switch of model, with a move of machine, from the turns that recorded them', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const turn = (id: string, machine?: string, answered?: string) => ({
+    ...command(id, answered ? 'completed' : 'interrupted', [{ role: 'user', text: id }]),
+    ...(machine ? { machine } : {}),
+    ...(answered ? { model: answered } : {}),
+  });
+  const halt = { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: 'later' };
+  boot(
+    () =>
+      modelled('gpt-6-luna', conversation(), [
+        turn('before'),
+        turn('first', 'standard', 'gpt-6-luna'),
+        // Stopped before a worker claimed it: no model, and no mark.
+        turn('unclaimed', 'standard'),
+        turn('second', 'standard', 'gpt-6-sol'),
+        turn('third', 'large', 'gpt-6-astra'),
+        { ...turn('fourth', 'large', 'gpt-5-retired'), proposals: [halt] },
+      ]),
+    () => [conversation()],
+  );
+  await open();
+  // The bar holds both pickers, and the proposed call sits under its turn, after the marks.
+  assert.ok(model() && document.querySelector('.pi-machine-button'));
+  assert.equal(
+    document.querySelector('.pi-messages > :last-child code')?.textContent,
+    'fleet.halt',
+  );
+  const dividers = [...document.querySelectorAll('.pi-divider')];
+  assert.deepEqual(
+    dividers.map((line) => line.textContent),
+    [
+      'Switched to GPT-6 Sol',
+      'Moved to Large · Switched to GPT-6 Astra',
+      'Switched to gpt-5-retired',
+    ],
+  );
+  assert.equal(dividers[0].nextElementSibling?.textContent, 'Yousecond');
 });
 
 test('unavailable Agent is inert, including SSE and list', async (t) => {

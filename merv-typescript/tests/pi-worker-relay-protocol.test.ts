@@ -139,7 +139,7 @@ for (const upstreamStatus of [
     let toolInvocations = 0;
     const relay = new PiModelRelay({
       enabled: true,
-      model: 'gpt-6-luna',
+      models: [{ id: 'gpt-6-luna', effort: 'none' }],
       providerKey: () => 'synthetic-provider-key',
       authority: {
         authorize: async (token) => {
@@ -408,3 +408,157 @@ for (const upstreamStatus of [
       );
     }
   });
+
+test('a conversation moved from Astra to Luna replays Astra’s reasoning to Astra only', async (context) => {
+  const controller = new AbortController();
+  const forwarded: Array<Record<string, unknown>> = [];
+  const completions: PiCompletion[] = [];
+  const grantEnds = expiresAt();
+  let turn = { commandId: 'cmd_astra', model: 'gpt-6-astra' };
+  const relay = new PiModelRelay({
+    enabled: true,
+    models: [
+      { id: 'gpt-6-luna', effort: 'none' },
+      { id: 'gpt-6-astra', effort: 'low' },
+    ],
+    providerKey: () => 'synthetic-provider-key',
+    authority: {
+      authorize: async () => ({
+        id: `grant_${turn.commandId}`,
+        userId: 'fixture-user',
+        projectId: 'fixture-project',
+        conversationId: 'pic_fixture',
+        commandId: turn.commandId,
+        runtimeId: 'flt_fixture',
+        epoch: 1,
+        expiresAt: grantEnds,
+        model: turn.model,
+        toolNames: ['project_get'],
+      }),
+      validate: async () => {},
+    },
+    fetchImpl: async (_input, init) => {
+      forwarded.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return forwarded.length === 1
+        ? mockReasoningToolResponse()
+        : mockResponse(forwarded.length === 2 ? 'Astra done' : 'Luna done');
+    },
+  });
+  const server = createServer((request, response) => void relay.handle(request, response));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}/`;
+  context.after(() => {
+    controller.abort();
+    relay.close();
+    server.closeAllConnections();
+    server.close();
+  });
+  const command = (id: string, text: string): PiWork['command'] => ({
+    id,
+    conversationId: 'pic_fixture',
+    hostId: 'pih_fixture',
+    machine: 'standard',
+    runtimeId: 'flt_fixture',
+    epoch: 1,
+    status: 'starting',
+    messages: [{ role: 'user', text }],
+    outcomes: [],
+    error: null,
+    createdAt: expiresAt(),
+    expiresAt: expiresAt(),
+    completedAt: null,
+  });
+  const work = (model: string, id: string, text: string): PiWork => ({
+    command: command(id, text),
+    checkpoint: completions[0]
+      ? { content: completions[0].checkpoint, hash: completions[0].checkpointHash }
+      : null,
+    model,
+    modelBaseUrl: `${baseUrl.slice(0, -1)}/pi-model`,
+    modelToken,
+    tools: [
+      {
+        name: 'project.get',
+        description: 'Read project',
+        inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      },
+    ],
+    notes: [],
+  });
+  let served = 0;
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/pi-model/responses') return fetch(input, init);
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    const json = (value: object) =>
+      new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+    if (url.pathname === '/pi-worker/next') {
+      // The person picks Luna between the two turns.
+      const next =
+        served === 0
+          ? work('gpt-6-astra', 'cmd_astra', 'Check the project.')
+          : served === 1 && completions.length === 1
+            ? work('gpt-6-luna', 'cmd_luna', 'And now?')
+            : null;
+      if (next) served++;
+      if (next?.model === 'gpt-6-luna') turn = { commandId: 'cmd_luna', model: 'gpt-6-luna' };
+      return json({ work: next });
+    }
+    if (url.pathname === '/pi-worker/begin') return json({ apply: true });
+    if (url.pathname === '/pi-worker/progress') return json({ accepted: true });
+    if (url.pathname === '/pi-worker/tool') return json({ result: { id: 'fixture-project' } });
+    if (url.pathname === '/pi-worker/complete') {
+      completions.push(body as unknown as PiCompletion);
+      if (completions.length === 2) controller.abort();
+      return json({ saved: true });
+    }
+    controller.abort();
+    return json({ interrupted: true });
+  };
+  await runPiWorker(
+    {
+      kind: 'pi',
+      version: 2,
+      baseUrl,
+      hostId: 'pih_fixture',
+      runtimeId: 'flt_fixture',
+      epoch: 1,
+      machine: 'standard',
+      slots: 1,
+      workerToken,
+      expiresAt: expiresAt(),
+    },
+    { signal: controller.signal, fetchImpl, pollIntervalMs: 50 },
+  );
+  assert.deepEqual(
+    completions.map((completion) => completion.messages.at(-1)?.text),
+    ['Astra done', 'Luna done'],
+  );
+  const [first, second, third] = forwarded.map((body) => piResponsesSchema.parse(body));
+  // The worker asks for no reasoning; the relay gives Astra its catalog effort.
+  for (const astra of [first, second]) {
+    assert.equal(astra.model, 'gpt-6-astra');
+    assert.deepEqual(astra.reasoning, { effort: 'low' });
+    assert.deepEqual(astra.include, ['reasoning.encrypted_content']);
+  }
+  // Within Astra's turn its encrypted reasoning goes back with the tool's result.
+  assert.ok(
+    second.input.some(
+      (item) =>
+        'type' in item &&
+        item.type === 'reasoning' &&
+        item.encrypted_content === 'synthetic-reasoning-signature',
+    ),
+  );
+  // Luna reads the history without Astra's reasoning or its response item ids.
+  assert.equal(third.model, 'gpt-6-luna');
+  assert.deepEqual(third.reasoning, { effort: 'none' });
+  assert.equal(third.include, undefined);
+  assert.ok(!third.input.some((item) => 'type' in item && item.type === 'reasoning'));
+  assert.doesNotMatch(JSON.stringify(third.input), /"fc_|rs_fixture/);
+  assert.match(JSON.stringify(third.input), /Astra done/);
+  assert.ok(validPiPayload(third, ['project_get']));
+});
