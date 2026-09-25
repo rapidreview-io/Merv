@@ -24,6 +24,7 @@ import {
   defaultTitle,
   hostMigration,
   machineInput,
+  messageChars,
   migration,
   nextInput,
   piConfig,
@@ -154,11 +155,16 @@ export class PiService implements Pi, FleetOwner {
   readonly config: z.output<typeof piConfig>;
   private readonly secret: string;
   private readonly disposers: (() => void)[] = [];
-  /** Memory only, never State: the stage each open conversation last showed, and what its worker
-   * last reported within a turn. */
+  /** Memory only, never State: the stage each open conversation last showed, what its worker
+   * last reported within a turn, and the answer it has streamed so far, which a turn ended early
+   * keeps (interrupt). */
   private readonly live = new Map<
     string,
-    { stage?: PiStage; turn?: PiStage & { commandId: string } }
+    {
+      stage?: PiStage;
+      turn?: PiStage & { commandId: string };
+      streamed?: { commandId: string; text: string };
+    }
   >();
   /** Owner ids Fleet is admitting now: valid() accepts a slot before its host records it. */
   private readonly renting = new Set<string>();
@@ -1416,7 +1422,17 @@ export class PiService implements Pi, FleetOwner {
       });
     for (const event of value.events)
       this.streams.publish(conversation.id, { ...event, commandId: command.id });
-    if (text) this.report(conversation.id, command.id, 'writing');
+    if (text) {
+      // The answer so far, as the page shows it: a turn that ends early keeps it (interrupt).
+      const live = this.live.get(conversation.id);
+      const kept = live?.streamed?.commandId === command.id ? live.streamed.text : '';
+      const added = value.events.map((event) => (event.type === 'text' ? event.text : '')).join('');
+      this.live.set(conversation.id, {
+        ...live,
+        streamed: { commandId: command.id, text: (kept + added).slice(0, messageChars) },
+      });
+      this.report(conversation.id, command.id, 'writing');
+    }
     return { accepted: true };
   }
 
@@ -1587,6 +1603,10 @@ export class PiService implements Pi, FleetOwner {
   ): Promise<void> {
     if (!active.has(command.status)) return;
     const conversation = await this.conversation(tx, command.conversationId);
+    // Words the person saw stream stay as the answer, unless the turn's own result is in.
+    const streamed = this.live.get(conversation.id)?.streamed;
+    if (streamed?.commandId === command.id && streamed.text && !command.resultHash)
+      command.messages.push({ role: 'assistant', text: streamed.text });
     command.status = 'interrupted';
     command.error = reason;
     command.completedAt = this.time();

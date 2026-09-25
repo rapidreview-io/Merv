@@ -34,8 +34,10 @@ export const nextInput = workerInput
   .strict();
 /** Per-turn routes name the conversation too: one worker serves many. */
 export const commandInput = workerInput.extend({ commandId: id, conversationId: id }).strict();
+/** A message's bound, which also holds an answer cut short. */
+export const messageChars = 128_000;
 export const message = z
-  .object({ role: z.enum(['user', 'assistant']), text: z.string().max(128_000) })
+  .object({ role: z.enum(['user', 'assistant']), text: z.string().max(messageChars) })
   .strict();
 export const outcome = z
   .object({

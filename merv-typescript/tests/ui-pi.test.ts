@@ -382,6 +382,49 @@ test('sending explicitly uses one command ID, stopping replaces canonical status
   assert.equal(requests.filter((request) => request.includes('/tools/pi.stop')).length, 1);
 });
 
+test('a stopped answer keeps the words it had streamed, marked Stopped, and so does a reload', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const asked = { role: 'user', text: 'What is known?' };
+  const words = 'Two findings so far';
+  let state = snapshot(
+    { ...conversation(), activeCommandId: 'command_1' },
+    [command('command_1', 'working', [asked])],
+    2,
+    [{ sequence: 2, commandId: 'command_1', type: 'text', text: words }],
+  );
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  serve('/tools/pi.stop', () => {
+    state = snapshot(
+      conversation(),
+      [
+        {
+          ...command('command_1', 'interrupted', [asked, { role: 'assistant', text: words }]),
+          error: 'cancelled',
+        },
+      ],
+      3,
+    );
+    return { body: { result: state } };
+  });
+  const answer = () =>
+    [...document.querySelectorAll('.pi-messages > *')].slice(1).map((node) => node.textContent);
+  await open();
+  assert.deepEqual(answer(), [`Agent · live${words}`, 'Answering']);
+  await click('Stop');
+  assert.deepEqual(answer(), [`Agent${words}`, 'Stopped']);
+  await unmount();
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  await open();
+  assert.deepEqual(answer(), [`Agent${words}`, 'Stopped']);
+});
+
 test('an ambiguous send retry retains its command ID', async (t) => {
   t.after(cleanup);
   setProject('p1');
@@ -621,29 +664,39 @@ test('one bar names the conversation and switches between them, newest first, by
   );
 });
 
-test('a turn that ended early says why in a sentence, and stopping it yourself says nothing', async (t) => {
+test('a turn that ended early says why under its question, quietly, however many turns follow', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const ended = (error: string) => ({
     ...command('command_1', 'interrupted', [{ role: 'user', text: 'Hello' }]),
     error,
   });
-  let state = snapshot(conversation(), [ended('turn_expired')]);
+  const noted = () =>
+    [...document.querySelectorAll('.pi-message--user + .pi-ended')].map((node) => node.textContent);
+  let state = snapshot(conversation(), [
+    ended('turn_expired'),
+    command('command_2', 'completed', [
+      { role: 'user', text: 'Again' },
+      { role: 'assistant', text: 'Answer' },
+    ]),
+  ]);
   boot(
     () => state,
     () => [conversation()],
   );
   await open();
-  assert.match(text(), /The answer took too long. Ask again./);
+  assert.deepEqual(noted(), ['The answer took too long. Ask again.']);
   assert.doesNotMatch(text(), /turn_expired/);
+  assert.equal(document.querySelector('[role="alert"]'), null);
   await unmount();
+  // Stopping it yourself needs only the word.
   state = snapshot(conversation(), [ended('cancelled')]);
   boot(
     () => state,
     () => [conversation()],
   );
   await open();
-  assert.match(text(), /Stopped/);
+  assert.deepEqual(noted(), ['Stopped']);
   assert.equal(document.querySelector('[role="alert"]'), null);
   assert.doesNotMatch(text(), /cancelled/);
 });

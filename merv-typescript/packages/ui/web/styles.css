@@ -4565,6 +4565,12 @@ del.cut {
   flex: 1;
   border-top: 1px solid var(--line);
 }
+/* Under a turn that ended early, after whatever it had written. */
+.pi-ended {
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
 /* Who said what is where it stands: your words on a faint ground to the right, the agent's
    on the page itself. */
 .pi-message--user {
