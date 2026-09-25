@@ -48,8 +48,8 @@ def gate(prestart):
     filename = Path('/run/merv-runtime/bootstrap-pi-gate')
     token = 'piw_flt_gate.' + 'a' * 43
     filename.write_text(json.dumps({
-        'kind': 'pi', 'baseUrl': 'https://127.0.0.1:9', 'projectId': 'project_gate',
-        'conversationId': 'pic_gate', 'runtimeId': 'flt_gate', 'epoch': 1,
+        'kind': 'pi', 'version': 2, 'baseUrl': 'https://127.0.0.1:9', 'hostId': 'pih_gate',
+        'runtimeId': 'flt_gate', 'epoch': 1, 'machine': 'standard', 'slots': 3,
         'workerToken': token,
         'expiresAt': (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=30)).isoformat(),
     }))

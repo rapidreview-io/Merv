@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
-import type { PiBootstrapV1, PiCompletion, PiWork } from '../packages/pi/src/types.js';
+import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
 const modelToken = `pir_${'b'.repeat(43)}`;
@@ -191,13 +191,15 @@ for (const upstreamStatus of [
       server.closeAllConnections();
       server.close();
     });
-    const bootstrap: PiBootstrapV1 = {
+    const bootstrap: PiBootstrap = {
       kind: 'pi',
+      version: 2,
       baseUrl,
-      projectId: 'fixture-project',
-      conversationId: 'pic_fixture',
+      hostId: 'pih_fixture',
       runtimeId: 'flt_fixture',
       epoch: 1,
+      machine: 'standard',
+      slots: 3,
       workerToken,
       expiresAt: expiresAt(),
     };
@@ -205,6 +207,8 @@ for (const upstreamStatus of [
       command: {
         id: 'cmd_fixture',
         conversationId: 'pic_fixture',
+        hostId: 'pih_fixture',
+        machine: 'standard',
         runtimeId: 'flt_fixture',
         epoch: 1,
         status: 'starting',

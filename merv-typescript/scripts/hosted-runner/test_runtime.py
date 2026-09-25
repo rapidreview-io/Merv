@@ -24,8 +24,8 @@ spec.loader.exec_module(runtime)
 
 def bootstrap():
     return {
-        'kind': 'pi', 'baseUrl': 'https://api.example.test/', 'projectId': 'project_1',
-        'conversationId': 'conversation_1', 'runtimeId': 'runtime_1', 'epoch': 1,
+        'kind': 'pi', 'version': 2, 'baseUrl': 'https://api.example.test/', 'hostId': 'pih_1',
+        'runtimeId': 'runtime_1', 'epoch': 1, 'machine': 'standard', 'slots': 3,
         'workerToken': 'piw_flt_test.' + 'a' * 43,
         'expiresAt': (datetime.datetime.now(datetime.timezone.utc) +
                       datetime.timedelta(hours=1)).isoformat(),
@@ -49,7 +49,9 @@ class DispatchTests(unittest.TestCase):
         self.assertGreater(runtime.validate_pi(valid, len(json.dumps(valid))), 0)
         changes = [
             {'kind': 'shell'}, {'epoch': True}, {'epoch': 9007199254740992},
-            {'projectId': '../secrets'}, {'workerToken': 'fake'},
+            {'version': 1}, {'version': True}, {'version': 2.0},
+            {'slots': 0}, {'slots': 9}, {'slots': True}, {'machine': 'Large'},
+            {'machine': 'large\n'}, {'hostId': '../secrets'}, {'workerToken': 'fake'},
             {'baseUrl': 'http://api.example.test/'},
             {'baseUrl': 'https://api.example.test@evil.test/'},
             {'baseUrl': 'https://api.example.test/secrets'},
@@ -64,6 +66,11 @@ class DispatchTests(unittest.TestCase):
                 runtime.validate_pi({**valid, **change}, 200)
         with self.assertRaises(ValueError):
             runtime.validate_pi(valid, 4097)
+        # A per-conversation (v1) bootstrap is refused, not run as a host slot.
+        v1 = {key: value for key, value in valid.items()
+              if key not in ('version', 'hostId', 'machine', 'slots')}
+        with self.assertRaises(ValueError):
+            runtime.validate_pi({**v1, 'projectId': 'project_1', 'conversationId': 'c_1'}, 200)
 
     def test_bootstrap_file_rejects_malicious_path_and_type(self):
         with patch.object(runtime, '_verified_bootstrap') as verify:

@@ -18,7 +18,14 @@ import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
 import { piModelToolName } from './tool-names.js';
-import type { PiBootstrapV1, PiCompletion, PiToolOutcome, PiWork } from './types.js';
+import type {
+  PiBootstrap,
+  PiCompletion,
+  PiNextReply,
+  PiToolOutcome,
+  PiTurnInput,
+  PiWork,
+} from './types.js';
 
 const allowedTools = new Set([
   'project.get',
@@ -26,6 +33,7 @@ const allowedTools = new Set([
   'artifact.list',
   'artifact.get',
   'artifact.read',
+  'machine.switch',
 ]);
 const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 const MAX_RESPONSE_BYTES = 2_100_000;
@@ -73,7 +81,8 @@ export interface WorkerOptions {
   pollIntervalMs?: number;
 }
 
-const resources: ResourceLoader = {
+/** A turn's notes (its machine, a failed move) follow the fixed prompt for that turn only. */
+const resources = (notes: string[]): ResourceLoader => ({
   getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
   getSkills: () => ({ skills: [], diagnostics: [] }),
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
@@ -82,17 +91,17 @@ const resources: ResourceLoader = {
   getSystemPrompt: () =>
     'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.',
   getSystemPromptSource: () => undefined,
-  getAppendSystemPrompt: () => [],
+  getAppendSystemPrompt: () => notes,
   getAppendSystemPromptSources: () => [],
   extendResources: () => {
     throw new Error('Resource discovery disabled');
   },
   reload: async () => {},
-};
+});
 
-function validateWork(work: PiWork, bootstrap: PiBootstrapV1): void {
+function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
   if (
-    work.command.conversationId !== bootstrap.conversationId ||
+    work.command.hostId !== bootstrap.hostId ||
     work.command.epoch !== bootstrap.epoch ||
     work.command.runtimeId !== bootstrap.runtimeId ||
     !['waiting', 'starting'].includes(work.command.status) ||
@@ -103,7 +112,9 @@ function validateWork(work: PiWork, bootstrap: PiBootstrapV1): void {
     !/^[A-Za-z0-9_.-]{1,128}$/.test(work.model) ||
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
-    work.tools.length > 5 ||
+    !Array.isArray(work.notes) ||
+    work.notes.length > 4 ||
+    work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
     new Set(work.tools.map((tool) => tool.name)).size !== work.tools.length ||
     work.tools.some(
       (tool) =>
@@ -119,6 +130,12 @@ function validateWork(work: PiWork, bootstrap: PiBootstrapV1): void {
 }
 
 function allowedInput(name: string, input: Record<string, unknown>): boolean {
+  if (name === 'machine.switch')
+    return (
+      Object.keys(input).sort().join(',') === 'machine,reason' &&
+      typeof input.machine === 'string' &&
+      typeof input.reason === 'string'
+    );
   if (name === 'artifact.get' || name === 'artifact.read')
     return (
       Object.keys(input).length === 1 &&
@@ -129,8 +146,10 @@ function allowedInput(name: string, input: Record<string, unknown>): boolean {
   return Object.keys(input).length === 0;
 }
 
+/** Runs up to `bootstrap.slots` turns at once, of any of the host's conversations, until the slot
+ * expires, the server retires it, or `options.signal` stops it; running turns always finish. */
 export async function runPiWorker(
-  bootstrap: PiBootstrapV1,
+  bootstrap: PiBootstrap,
   options: WorkerOptions = {},
 ): Promise<void> {
   const workerId = options.workerId ?? randomUUID();
@@ -206,69 +225,26 @@ export async function runPiWorker(
   const until = (time: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, time)));
   const startupDeadline = Math.min(Date.now() + STARTUP_WAIT_MS, Date.parse(bootstrap.expiresAt));
-  let enrolled = false;
-  while (!options.signal?.aborted && Date.now() < Date.parse(bootstrap.expiresAt)) {
-    let work: PiWork | null;
-    const asked = Date.now();
-    try {
-      const startupSignal = !enrolled
-        ? AbortSignal.timeout(Math.max(1, startupDeadline - Date.now()))
-        : undefined;
-      work = (
-        await request<{ work: PiWork | null }>(
-          'next',
-          { workerId },
-          startupSignal
-            ? AbortSignal.any([startupSignal, ...(options.signal ? [options.signal] : [])])
-            : options.signal,
-        )
-      ).work;
-      if (!enrolled) mark('enrolled');
-      enrolled = true;
-    } catch (error) {
-      if (options.signal?.aborted) return;
-      // Before enrollment the grant may not be visible yet; after it, only an outage is waited out.
-      if (
-        enrolled
-          ? !transient(error)
-          : Date.now() >= startupDeadline ||
-            !(
-              transient(error) ||
-              (error instanceof WorkerHttpError && [401, 403].includes(error.status))
-            )
-      )
-        throw error;
-      await until(enrolled ? 1_000 : Math.min(DELAY, startupDeadline - Date.now()));
-      continue;
-    }
-    if (!work) {
-      // A held (long-polled) request asks again at once; a short-polling server keeps the interval.
-      await until(asked + Math.min(options.pollIntervalMs ?? 500, 1_000) - Date.now());
-      continue;
-    }
-    const commandId = work.command.id;
+  const turn = async (work: PiWork, ids: PiTurnInput, begun: () => void) => {
     const deadline = Math.min(Date.parse(bootstrap.expiresAt), Date.parse(work.command.expiresAt));
     const controller = new AbortController();
     const expire = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
     const onStop = () => controller.abort();
     options.signal?.addEventListener('abort', onStop, { once: true });
-    let begun = false;
+    let applied = false;
     let savedResult = false;
     try {
       validateWork(work, bootstrap);
-      if (seen.has(commandId)) throw new Error('Duplicate worker assignment');
-      seen.add(commandId);
+      if (seen.has(ids.commandId)) throw new Error('Duplicate worker assignment');
+      seen.add(ids.commandId);
       if (controller.signal.aborted) throw new Error('Turn expired');
-      const reply = await request<{ apply: boolean }>(
-        'begin',
-        { workerId, commandId },
-        controller.signal,
-      );
-      if (reply.apply !== true) continue;
-      begun = true;
+      const reply = await request<{ apply: boolean }>('begin', ids, controller.signal);
+      if (reply.apply !== true) return;
+      applied = true;
+      begun();
       const completion = await executeTurn(
         work,
-        workerId,
+        ids,
         request,
         fetchImpl,
         controller.signal,
@@ -296,27 +272,91 @@ export async function runPiWorker(
     } catch (error) {
       controller.abort();
       process.stderr.write(`Pi worker turn failed: ${cause(error)}\n`);
-      if (!savedResult && (begun || !options.signal?.aborted)) {
+      if (!savedResult && (applied || !options.signal?.aborted)) {
         try {
-          await request('fail', { workerId, commandId }, undefined, 3);
+          await request('fail', ids, undefined, 3);
         } catch {}
       }
     } finally {
+      begun();
       clearTimeout(expire);
       options.signal?.removeEventListener('abort', onStop);
     }
+  };
+  // One /next is open while a slot is free; a turn is begun before the next is asked for, so a
+  // prompt is never delivered twice to this worker.
+  const running = new Set<Promise<void>>();
+  let enrolled = false;
+  let probe: string | undefined;
+  let retire = false;
+  try {
+    while (!retire && !options.signal?.aborted && Date.now() < Date.parse(bootstrap.expiresAt)) {
+      if (running.size >= bootstrap.slots) {
+        await Promise.race(running);
+        continue;
+      }
+      let reply: PiNextReply;
+      const asked = Date.now();
+      try {
+        const startupSignal = !enrolled
+          ? AbortSignal.timeout(Math.max(1, startupDeadline - Date.now()))
+          : undefined;
+        reply = await request<PiNextReply>(
+          'next',
+          probe ? { workerId, probe } : { workerId },
+          startupSignal
+            ? AbortSignal.any([startupSignal, ...(options.signal ? [options.signal] : [])])
+            : options.signal,
+        );
+        if (!enrolled) mark('enrolled');
+        enrolled = true;
+      } catch (error) {
+        if (options.signal?.aborted) break;
+        // Before enrollment the grant may not be visible yet; after it, only an outage is waited out.
+        if (
+          enrolled
+            ? !transient(error)
+            : Date.now() >= startupDeadline ||
+              !(
+                transient(error) ||
+                (error instanceof WorkerHttpError && [401, 403].includes(error.status))
+              )
+        )
+          throw error;
+        await until(enrolled ? 1_000 : Math.min(DELAY, startupDeadline - Date.now()));
+        continue;
+      }
+      // The probe proves this worker ready for a move (echoed once, at once); retire drains it.
+      ({ probe } = reply);
+      retire = reply.retire === true;
+      const { work } = reply;
+      if (work) {
+        // An assignment without a command stops the worker, as any malformed reply does.
+        const { conversationId, id: commandId } = work.command;
+        await new Promise<void>((begun) => {
+          const task = turn(work, { workerId, conversationId, commandId }, begun).finally(() =>
+            running.delete(task),
+          );
+          running.add(task);
+        });
+      }
+      // A held (long-polled) request asks again at once; a short-polling server keeps the interval.
+      else if (!probe && !retire)
+        await until(asked + Math.min(options.pollIntervalMs ?? 500, 1_000) - Date.now());
+    }
+  } finally {
+    await Promise.all(running);
   }
 }
 
 async function executeTurn(
   work: PiWork,
-  workerId: string,
+  ids: PiTurnInput,
   request: Post,
   fetchImpl: typeof fetch,
   signal: AbortSignal,
   pollIntervalMs: number,
-): Promise<PiCompletion> {
-  const commandId = work.command.id;
+): Promise<PiCompletion & PiTurnInput> {
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
   const contextWindow = Object.hasOwn(OPENAI_MODELS, work.model)
     ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS].contextWindow
@@ -375,7 +415,7 @@ async function executeTurn(
         if (signal.aborted) return;
         const receipt = await request<{ accepted: boolean }>(
           'progress',
-          { workerId, commandId, events: batch },
+          { ...ids, events: batch },
           signal,
           3,
         );
@@ -437,7 +477,7 @@ async function executeTurn(
       try {
         output = await request<{ result: unknown }>(
           'tool',
-          { workerId, commandId, name: tool.name, input },
+          { ...ids, name: tool.name, input },
           toolSignal ? AbortSignal.any([signal, toolSignal]) : signal,
           3,
         );
@@ -487,7 +527,7 @@ async function executeTurn(
     noTools: 'all',
     tools: tools.map((tool) => tool.name),
     customTools: tools,
-    resourceLoader: resources,
+    resourceLoader: resources(work.notes),
     sessionManager: manager,
     settingsManager: settings,
   });
@@ -578,8 +618,7 @@ async function executeTurn(
       throw new Error('Invalid model result');
     const saved = encodeCheckpoint(manager);
     return {
-      workerId,
-      commandId,
+      ...ids,
       messages,
       outcomes,
       checkpoint: saved.content,
