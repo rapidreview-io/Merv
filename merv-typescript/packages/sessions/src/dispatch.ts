@@ -182,6 +182,10 @@ const uncountedOfferCodes = new Set([
   'code_recovery_required',
   'code_capture_quarantined',
 ]);
+/** session.halt: one session, or every one in the project with automatic dispatch off. */
+export const haltSchema = z
+  .object({ sessionId: label.optional(), reason: label.optional() })
+  .strict();
 export const releaseHoldSchema = z
   .object({
     instanceId: z.string().min(1).max(200),
@@ -473,10 +477,7 @@ export class SessionDispatch {
     input: { sessionId?: string; reason?: string } = {},
   ): Promise<{ halted: number }> {
     caller = structuredClone(caller);
-    const parsed = z
-      .object({ sessionId: label.optional(), reason: label.optional() })
-      .strict()
-      .safeParse(input);
+    const parsed = haltSchema.safeParse(input);
     check(parsed.success, 'invalid_halt', 'Halt accepts an optional session and bounded reason');
     input = parsed.data;
     return await this.state.transaction(async (tx) => {

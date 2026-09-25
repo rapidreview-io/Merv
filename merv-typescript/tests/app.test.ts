@@ -44,7 +44,12 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 87);
+    assert.equal(catalog.length, 90);
+    for (const name of ['session.dispatch', 'session.halt', 'session.observe'])
+      assert.ok(
+        catalog.some((tool) => tool.name === name),
+        `${name} must be discoverable`,
+      );
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     for (const name of [
@@ -326,6 +331,11 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
     const mcp = await client(app.ctx.api.url!, credentials.token);
     assert.ok(mcp.getInstructions()?.startsWith(mainAgentGuide));
+    // The Sessions page's controls, as tools.
+    assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
+    assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });
+    const observed = await mcp.callTool({ name: 'session.observe', arguments: { agentId: 'x' } });
+    assert.match(JSON.stringify(observed.content), /agent_not_found/);
     await mcp.close();
   } finally {
     await app.stop();

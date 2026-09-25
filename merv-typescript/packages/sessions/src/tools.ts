@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
-import { budgetSchema, releaseHoldSchema } from './dispatch.js';
+import { budgetSchema, haltSchema, releaseHoldSchema } from './dispatch.js';
 import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -56,6 +56,40 @@ export const sessionsToolsPlugin = {
         inputSchema: releaseHoldSchema,
         handler: async (caller: Caller, input: Parameters<Sessions['releaseHold']>[1]) =>
           await sessions.releaseHold(caller, input),
+      }),
+    );
+    // The project controls a person uses from the Sessions page, as tools.
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.dispatch',
+        description:
+          'Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.',
+        conversation: 'propose',
+        inputSchema: z.object({ enabled: z.boolean() }).strict(),
+        handler: async (caller: Caller, input: { enabled: boolean }) =>
+          await sessions.setDispatch(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.halt',
+        description:
+          'Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.',
+        conversation: 'propose',
+        inputSchema: haltSchema,
+        handler: async (caller: Caller, input: { sessionId?: string; reason?: string }) =>
+          await sessions.halt(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.observe',
+        description:
+          'Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.',
+        readOnly: true,
+        inputSchema: z.object({ agentId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { agentId: string }) =>
+          await sessions.agentObservation(caller, input.agentId),
       }),
     );
   },
