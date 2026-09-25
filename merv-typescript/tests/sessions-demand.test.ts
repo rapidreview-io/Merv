@@ -201,6 +201,24 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   });
 });
 
+test('Fleet rents no machine for a checkout only a runner with its own repository can make', async (t) => {
+  const f = await fixture(t);
+  const local = await f.register('local-checkout', {
+    mode: 'ephemeral',
+    namespace: 'demand',
+    base: 'central',
+    retain: false,
+  });
+  await local.start();
+  const plain = await (await f.register('plain')).start();
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.events.drain();
+  assert.deepEqual(
+    await f.sessions.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
+    { candidates: [{ instanceId: plain.id, expectedRevision: 0 }] },
+  );
+});
+
 test('prospective demand respects offer failure backoff without a runner-specific history', async (t) => {
   const f = await fixture(t);
   const work = await f.register('failing-offer');
@@ -248,6 +266,9 @@ test('prospective demand applies budgets, live leases, and durable holds', async
     reason: 'Fixed',
     requestId: 'release-hold',
   });
+  // Its host failed moments ago: Fleet waits out the backoff before renting for it again.
+  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  f.advance(30_001);
   assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: first.id, expectedRevision: 0 }],
   });

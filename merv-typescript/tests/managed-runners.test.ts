@@ -428,6 +428,36 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
 });
 
+test('a failure on one rented machine holds its target back on the next, and a released machine leaves the Runners list', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  assert.ok(bound);
+  await f.sessions.release(f.caller, {
+    sessionId: bound.id,
+    runnerId: f.runnerId,
+    outcome: 'host_failed',
+  });
+  // Fleet's next machine for the same source is a new runner with no history of its own.
+  const allocationId = randomUUID();
+  const enrollment = await f.sessions.ensureManagedEnrollment({ ...f.input, allocationId });
+  const enrolled = await f.sessions.enrollManaged(enrollment.enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  const caller = await f.sessions.authenticateManaged(enrolled.controlToken);
+  const runnerId = `managed-${allocationId}`;
+  await f.sessions.heartbeatRunner(caller, { ...f.heartbeat(1), runnerId });
+  assert.deepEqual(await f.sessions.lease(caller, { ...f.lease(), runnerId }), {
+    session: null,
+    reason: 'retry_backoff',
+  });
+  const listed = (await f.sessions.projectStatus(f.owner)).runners.map((r) => r.runnerId);
+  assert.ok(listed.includes(runnerId));
+  assert.ok(!listed.includes(f.runnerId), 'a machine whose release was acknowledged is gone');
+});
+
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));

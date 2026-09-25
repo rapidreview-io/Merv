@@ -774,7 +774,7 @@ export class SessionDispatch {
       else {
         check(
           (await tx.get<{ n: number }>(
-            'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
+            'SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id)',
             caller.projectId,
           ))!.n < 1000,
           'runner_limit',
@@ -904,6 +904,7 @@ export class SessionDispatch {
     capabilities: ReadonlySet<string>,
     failures: readonly Session[] = [],
     skipped: ReadonlySet<string> = new Set(),
+    localRepository = true,
   ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
     if (!(await this.dispatch(caller.projectId, tx)).enabled)
       return { candidates: [], reason: 'dispatch_disabled' };
@@ -919,11 +920,14 @@ export class SessionDispatch {
         reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
       };
     const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+    // A checkout with no driver is cloned from the runner's own repository, which a machine
+    // Fleet rents does not have.
     const compatible = open.filter(
       (item) =>
         item.workspace.mode === 'none' ||
-        item.workspace.driver === undefined ||
-        capabilities.has(item.workspace.driver),
+        (item.workspace.driver === undefined
+          ? localRepository
+          : capabilities.has(item.workspace.driver)),
     );
     const candidates = compatible.filter(
       (item) =>
@@ -980,6 +984,13 @@ export class SessionDispatch {
           caller,
           tx,
           new Set(input.capabilities ?? []),
+          await this.recentFailures(
+            tx,
+            (await ownerOf(this.scope, caller, tx)).hash,
+            input.platform.name,
+          ),
+          new Set(),
+          false,
         );
         return {
           candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
@@ -990,11 +1001,33 @@ export class SessionDispatch {
       }),
     );
   }
+  /**
+   * Closes inside the backoff window, asked of the database since history is kept for ever. A
+   * machine Fleet rents is a new runner each time, so its failures are read across the source's
+   * machines on that platform rather than by runner.
+   */
+  private async recentFailures(
+    tx: Transaction,
+    ownerHash: string,
+    platform: string,
+    runnerId?: string,
+  ): Promise<Session[]> {
+    return (
+      await tx.all<SessionRow>(
+        "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR s.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?",
+        ownerHash,
+        runnerId ?? null,
+        runnerId ?? null,
+        platform,
+        new Date(this.clock() - backoffMs).toISOString(),
+      )
+    ).map((row) => JSON.parse(row.session_json) as Session);
+  }
   /** The most recently seen runners, which is where every live one is. */
   private async runners(projectId: string, tx: Transaction): Promise<RunnerPresence[]> {
     return await mapAsync(
       await tx.all<RunnerRow>(
-        'SELECT * FROM session_runners WHERE project_id=? ORDER BY last_seen_at DESC,id LIMIT 100',
+        'SELECT * FROM session_runners r WHERE project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id AND m.runner_released_at IS NOT NULL) ORDER BY last_seen_at DESC,id LIMIT 100',
         projectId,
       ),
       (row) => this.presence(row, tx),
@@ -1518,19 +1551,12 @@ export class SessionDispatch {
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
-      // Only a close inside the backoff window can hold a target back, and session history is
-      // retained forever, so the window is asked of the database. Reading the whole of a
-      // runner's history on every poll would make an old runner's next lease cost more than
-      // the lease itself, inside the write transaction that grants it.
-      const failures = (
-        await tx.all<SessionRow>(
-          "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND s.runner_id=? AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?",
-          owner.hash,
-          input.runnerId,
-          platform.name,
-          new Date(this.clock() - backoffMs).toISOString(),
-        )
-      ).map((row) => JSON.parse(row.session_json) as Session);
+      const failures = await this.recentFailures(
+        tx,
+        owner.hash,
+        platform.name,
+        managed ? undefined : input.runnerId,
+      );
       // A checkout some driver must prepare goes only to a machine that says it has that
       // driver; everything else in the queue is still this runner's to take.
       const capabilities = new Set(
@@ -1542,6 +1568,7 @@ export class SessionDispatch {
         capabilities,
         failures,
         skipped,
+        !managed,
       );
       const candidate = selected.candidates[0];
       if (!candidate)
