@@ -319,16 +319,20 @@ from step 1 have to be done again.
 - **Per conversation.** Each conversation stores its model from creation: the
   person's last pick in that project (a `pi_people` row keyed
   `model:<userId>:<projectId>`, never the machine record), else the first entry.
-  A turn's model is fixed when a worker claims it, and the agent is told it in
-  the turn's notes. A conversation whose model leaves the catalog answers on the
-  first entry. Only the person switches: the agent has no model tool, and
-  conversation, worker and managed callers are refused. Callers holding the
-  person's own key (MCP, `mk_`) may switch, as they may send and pick the
-  machine; a send that names a model the conversation no longer has creates
-  nothing (409 `pi_model_changed`).
+  A turn's model is fixed when a worker claims it. The turn's notes tell the
+  agent that model, and that earlier answers may be other models'. Told only
+  its name, Luna named the model of the answer before a switch in 17 of 27
+  tries; with this note, in 1 of 42. A conversation whose model leaves the
+  catalog answers on the first entry. Only the person switches: the agent has
+  no model tool, and conversation, worker and managed callers are refused.
+  Callers holding the person's own key (MCP, `mk_`) may switch, as they may
+  send and pick the machine; a send that names a model the conversation no
+  longer has creates nothing (409 `pi_model_changed`).
 - **Idle limits.** A call at effort `none` ends after 20 s without upstream
   bytes; any other after 120 s (`reasoningIdleTimeoutMs`), under Main's 300 s
-  turn stall limit.
+  turn stall limit. Measured 2026-09-25 through the relay on 141k-token
+  histories, the longest silence was 1.9 s on Luna, 2.8 s on Sol and 4.5 s on
+  Astra (with a tool call and its reasoning replayed).
 - **Cost.** A turn can make 32 calls, each up to 272k tokens in and 128k out: at
   most about $3 on Luna, $58 on Sol and $290 on Astra. Nothing caps it. Each
   finished call writes one `pi_relay_usage` record to Main's stderr with the

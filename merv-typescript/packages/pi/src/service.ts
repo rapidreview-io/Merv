@@ -1189,8 +1189,10 @@ export class PiService implements Pi, FleetOwner {
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
         tools: offered ? [...tools, offered] : tools,
+        // Against a history whose answers may name other models, which the smallest model repeats
+        // unless told: at most 286 characters, under the worker's 300.
         notes: [
-          `Model: you are ${model.label} (${model.id}); the person picks the model for each conversation.`,
+          `Model: you are ${model.label} (${model.id}). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say ${model.label}.`,
           ...notes,
         ],
       };

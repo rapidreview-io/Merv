@@ -338,7 +338,7 @@ test('a worker that lost the reply to its claim is given the same turn again: as
     [
       b.id,
       [
-        'Model: you are GPT-6 Luna (gpt-6-luna); the person picks the model for each conversation.',
+        'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
         'Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).',
       ],
     ],

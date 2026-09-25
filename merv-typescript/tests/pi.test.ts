@@ -1061,7 +1061,7 @@ test('a turn answers on the model its conversation has when a worker claims it',
   // The agent is told what it runs on, and has no model tool.
   assert.equal(
     bound.work.notes[0],
-    'Model: you are GPT-6 Sol (gpt-6-sol); the person picks the model for each conversation.',
+    'Model: you are GPT-6 Sol (gpt-6-sol). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Sol.',
   );
   assert.ok(bound.work.tools.every(({ name }) => !name.startsWith('pi.')));
   await f.pi.begin(bound.token, bound.input);
@@ -1080,6 +1080,16 @@ test('a turn answers on the model its conversation has when a worker claims it',
   const next = await f.send(chat);
   const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
   assert.deepEqual([work?.command.id, work?.model], [next.id, 'gpt-6-astra']);
+});
+
+test('the note naming the model stays within the worker’s limit, however long the names', async (t) => {
+  const [id, label] = [`m${'-'.repeat(99)}`, 'L'.repeat(24)];
+  const f = await fixture(t, {
+    pi: { models: [{ id, label, inputUsdPerM: 1, outputUsdPerM: 1, effort: 'none' }] },
+  });
+  const { work } = await f.claimed(await f.send(await f.create()));
+  assert.ok(work.notes[0].startsWith(`Model: you are ${label} (${id}).`));
+  assert.ok(work.notes.every((note) => note.length <= 300));
 });
 
 test('only the person picks a conversation’s model', async (t) => {
@@ -1406,8 +1416,8 @@ test(
         ['gpt-6-astra', { effort: 'low' }, ['reasoning.encrypted_content']],
       ],
     );
-    assert.match(JSON.stringify(requests[0].input), /Model: you are GPT-6 Luna \(gpt-6-luna\)/);
-    assert.match(JSON.stringify(requests[2].input), /Model: you are GPT-6 Astra \(gpt-6-astra\)/);
+    assert.match(JSON.stringify(requests[0].input), /Model: you are GPT-6 Luna \(gpt-6-luna\)\./);
+    assert.match(JSON.stringify(requests[2].input), /Model: you are GPT-6 Astra \(gpt-6-astra\)\./);
     assert.equal(f.mutations, 0);
   },
 );
