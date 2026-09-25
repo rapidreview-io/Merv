@@ -390,7 +390,7 @@ export class ExperimentService implements Experiments {
         check(
           input.baseTaskId === undefined || input.workspace === 'git',
           'invalid_workspace',
-          'baseTaskId names the base of a Git workspace; create the experiment with workspace "git"',
+          'baseTaskId is only for workspace "git": omit it for workspace "none"',
         );
         // A prerequisite succeeds before work starts, so the base commit is final by then.
         check(

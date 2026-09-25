@@ -1347,7 +1347,10 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
         baseTaskId: task.id,
         dependsOn: [task.id],
       }),
-    { code: 'invalid_workspace' },
+    {
+      code: 'invalid_workspace',
+      message: 'baseTaskId is only for workspace "git": omit it for workspace "none"',
+    },
   );
   await assert.rejects(
     async () => await f.experiments.create(f.source, { ...input, baseTaskId: task.id }),
