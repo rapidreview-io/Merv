@@ -17,6 +17,8 @@ import { SandboxClient } from '../packages/sandboxes/src/client.js';
 import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
 import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { parseManifest } from '../packages/sandboxes/src/manifest.js';
+import { fleetConfig } from '../packages/fleet/src/index.js';
+import { piConfig } from '../packages/pi/src/schema.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const caller = { actorId: 'actor_demo', projectId: 'project_demo' };
@@ -599,12 +601,9 @@ test('a deployment composes the sandboxes plugins only when the service is named
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins: ['state', 'scope', 'blobs', 'identity', 'api', 'ui', 'code', 'code-research'].map(
-        (id) => ({
-          id,
-          name: id,
-        }),
-      ),
+      plugins: 'state scope blobs identity api ui code code-research sessions'
+        .split(' ')
+        .map((id) => ({ id, name: id })),
     }),
   );
   const output = join(directory, 'rendered.json');
@@ -628,7 +627,7 @@ test('a deployment composes the sandboxes plugins only when the service is named
     (JSON.parse(readFileSync(output, 'utf8')) as { plugins: { name: string; config?: Json }[] })
       .plugins;
   assert.equal(run({}), 0);
-  assert.equal(rendered().length, 8, 'a deployment that has named no service composes none of it');
+  assert.equal(rendered().length, 9, 'a deployment that has named no service composes none of it');
   const connections = [
     { projectId: 'project_one', namespace: 'research', tokenEnv: 'MERV_SANDBOXES_TOKEN' },
   ];
@@ -640,7 +639,7 @@ test('a deployment composes the sandboxes plugins only when the service is named
   assert.equal(run(named), 0);
   assert.deepEqual(
     rendered()
-      .slice(8)
+      .slice(9)
       .map((entry) => entry.name),
     ['@merv/sandboxes/tools', '@merv/sandboxes/ui', '@merv/sandboxes'],
   );
@@ -656,4 +655,59 @@ test('a deployment composes the sandboxes plugins only when the service is named
     { MERV_SANDBOXES_CONNECTIONS: '[{"projectId":"p","namespace":"N","tokenEnv":"T"}]' },
   ])
     assert.notEqual(run({ ...named, ...broken }), 0, JSON.stringify(broken));
+
+  // One machine catalog feeds Sandboxes, Fleet and Pi, and every Pi machine is rented by the
+  // connected host project: what the deployment renders, each plugin's own schema accepts.
+  const machine = (key: string, offerId: string, releaseDigit: string) => ({
+    key,
+    label: key[0].toUpperCase() + key.slice(1),
+    provider: key === 'standard' ? 'cloudflare-fleet' : 'cloudflare-fleet-large',
+    offerId,
+    releaseId: `rt1_${releaseDigit.repeat(64)}`,
+    leaseSeconds: 900,
+  });
+  const hosted = {
+    ...named,
+    MERV_SANDBOXES_CONNECTIONS: JSON.stringify([
+      ...connections,
+      { projectId: 'project_host', namespace: 'merv-pi-host', tokenEnv: 'MERV_PI_HOST_GRANT' },
+    ]),
+    MERV_PI_HOST_GRANT: 'sbxt_host_fixture',
+    MERV_FLEET_ENABLED: 'true',
+    MERV_FLEET_MANAGED_SECRET_ENV: 'MERV_MANAGED',
+    MERV_MANAGED: 'm'.repeat(32),
+    MERV_FLEET_RUNTIMES: JSON.stringify([
+      { ...machine('standard', 'standard-1:cloudflare', 'a'), slots: 3 },
+      { ...machine('large', 'standard-3:cloudflare', 'b'), slots: 4, agent: true },
+    ]),
+    MERV_FLEET_PROJECT_LIMITS: '{"project_host":50}',
+    MERV_PI_ENABLED: 'true',
+    MERV_PI_SECRET_ENV: 'MERV_PI_SECRET_FIXTURE',
+    MERV_PI_SECRET_FIXTURE: 'p'.repeat(32),
+    MERV_PI_MODEL_API_KEY_ENV: 'MERV_PI_MODEL_FIXTURE',
+    MERV_PI_MODEL_FIXTURE: 'model-key',
+    MERV_PI_HOST_PROJECT_ID: 'project_host',
+    MERV_PI_HOST_KEY_ENV: 'MERV_PI_HOST_KEY',
+    MERV_PI_HOST_KEY: 'k'.repeat(43),
+    MERV_PI_AGENT_MOVES: 'true',
+  };
+  assert.equal(run(hosted), 0);
+  const config = (name: string) => rendered().find((entry) => entry.name === name)?.config;
+  assert.deepEqual(
+    (config('@merv/sandboxes') as { runtimes: { key: string }[] }).runtimes.map((p) => p.key),
+    ['standard', 'large'],
+  );
+  assert.deepEqual(fleetConfig.parse(config('@merv/fleet')).projectLimits, { project_host: 50 });
+  const pi = piConfig.parse(config('@merv/pi'));
+  assert.equal(pi.runtimeKey, 'project');
+  assert.deepEqual(pi.host, { projectId: 'project_host', credentialEnv: 'MERV_PI_HOST_KEY' });
+  assert.deepEqual(
+    pi.machines.map((machine) => [machine.key, machine.slots, machine.agent]),
+    [
+      ['standard', 3, false],
+      ['large', 4, true],
+    ],
+  );
+  assert.equal(pi.agentMoves, true);
+  assert.notEqual(run({ ...hosted, MERV_PI_HOST_PROJECT_ID: 'project_one_other' }), 0);
 });

@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { deploymentSchema, sandboxConnections } from './schema.mjs';
+import { deploymentSchema, fleetRuntimes, sandboxConnections } from './schema.mjs';
 
 const required = (name) => {
   const value = process.env[name];
@@ -37,6 +37,13 @@ const optIn = (name) => {
   if (value === undefined || value === 'false') return false;
   if (value === 'true') return true;
   throw new Error(`Invalid ${name}`);
+};
+const json = (name) => {
+  try {
+    return JSON.parse(required(name));
+  } catch {
+    throw new Error(`Invalid ${name}`);
+  }
 };
 const fleetEnabled = optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = optIn('MERV_FLEET_WORKFLOW_ENABLED');
@@ -110,30 +117,31 @@ set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
 set('code-research', {});
 // Rows and acts published by merv-sandboxes. Absent until the operator names the service, so
 // a deployment that has not connected one composes exactly the plugins it composed before.
+let connections = [];
+// The machines Fleet rents, the default first. MERV_FLEET_RUNTIMES replaces the single-profile
+// MERV_FLEET_RUNTIME_* variables, which then only let an image older than the catalog render.
+let runtimes = [];
 if (process.env.MERV_SANDBOXES_URL !== undefined) {
   httpsOrigin('MERV_SANDBOXES_URL');
-  const connections = sandboxConnections();
-  let runtime;
+  connections = sandboxConnections();
   if (fleetEnabled) {
-    const provider = required('MERV_FLEET_RUNTIME_PROVIDER');
-    const offerId = required('MERV_FLEET_RUNTIME_OFFER_ID');
-    const releaseId = required('MERV_FLEET_RUNTIME_RELEASE_ID');
-    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(provider)) {
-      throw new Error('Invalid MERV_FLEET_RUNTIME_PROVIDER');
-    }
-    if (offerId.length > 256) throw new Error('Invalid MERV_FLEET_RUNTIME_OFFER_ID');
-    if (!/^rt1_[0-9a-f]{64}$/.test(releaseId)) {
-      throw new Error('Invalid MERV_FLEET_RUNTIME_RELEASE_ID');
-    }
-    runtime = {
-      provider,
-      offerId,
-      releaseId,
-      leaseSeconds: integer('MERV_FLEET_RUNTIME_LEASE_SECONDS', undefined, 60, 86_400),
-    };
-    if (runtime.leaseSeconds === undefined) {
-      throw new Error('Missing MERV_FLEET_RUNTIME_LEASE_SECONDS');
-    }
+    runtimes =
+      process.env.MERV_FLEET_RUNTIMES === undefined
+        ? fleetRuntimes(
+            [
+              {
+                key: 'standard',
+                label: 'Standard',
+                slots: 3,
+                provider: process.env.MERV_FLEET_RUNTIME_PROVIDER,
+                offerId: process.env.MERV_FLEET_RUNTIME_OFFER_ID,
+                releaseId: process.env.MERV_FLEET_RUNTIME_RELEASE_ID,
+                leaseSeconds: integer('MERV_FLEET_RUNTIME_LEASE_SECONDS', undefined, 60, 86_400),
+              },
+            ],
+            'MERV_FLEET_RUNTIME_*',
+          )
+        : fleetRuntimes(json('MERV_FLEET_RUNTIMES'), 'MERV_FLEET_RUNTIMES');
   }
   config.plugins.push(
     { id: 'sandboxes-tools', name: '@merv/sandboxes/tools' },
@@ -142,7 +150,13 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
       id: 'sandboxes',
       name: '@merv/sandboxes',
       // Only names: the origin and each project's consumer grant stay in the environment.
-      config: { urlEnv: 'MERV_SANDBOXES_URL', connections, ...(runtime ? { runtime } : {}) },
+      config: {
+        urlEnv: 'MERV_SANDBOXES_URL',
+        connections,
+        ...(runtimes.length
+          ? { runtimes: runtimes.map(({ label, slots, agent, ...profile }) => profile) }
+          : {}),
+      },
     },
   );
 }
@@ -155,6 +169,24 @@ if (fleetEnabled) {
     throw new Error('Fleet managed secret is unavailable');
   }
   set('sessions', { managedSecretEnv });
+  // Caps that replace the project limit for the named projects, such as the Pi host's.
+  const projectLimits =
+    process.env.MERV_FLEET_PROJECT_LIMITS === undefined ? {} : json('MERV_FLEET_PROJECT_LIMITS');
+  if (
+    typeof projectLimits !== 'object' ||
+    !projectLimits ||
+    Array.isArray(projectLimits) ||
+    Object.keys(projectLimits).length > 256 ||
+    Object.entries(projectLimits).some(
+      ([projectId, limit]) =>
+        !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(projectId) ||
+        !Number.isSafeInteger(limit) ||
+        limit < 1 ||
+        limit > 64,
+    )
+  ) {
+    throw new Error('Invalid MERV_FLEET_PROJECT_LIMITS');
+  }
   config.plugins.push(
     { id: 'fleet-tools', name: '@merv/fleet/tools' },
     { id: 'fleet-ui', name: '@merv/fleet/ui', required: false },
@@ -165,6 +197,7 @@ if (fleetEnabled) {
         enabled: true,
         globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 50, 1, 64),
         projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 5, 1, 64),
+        projectLimits,
         allocationTimeoutSeconds: integer(
           'MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS',
           86_400,
@@ -179,7 +212,6 @@ if (fleetEnabled) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(projectId)) {
       throw new Error('Invalid MERV_FLEET_WORKFLOW_PROJECT_ID');
     }
-    const connections = config.plugins.find((entry) => entry.id === 'sandboxes').config.connections;
     if (!connections.some((entry) => entry.projectId === projectId)) {
       throw new Error('Fleet workflow project has no sandbox connection');
     }
@@ -213,6 +245,21 @@ if (piEnabled) {
   }
   const model = process.env.MERV_PI_MODEL ?? 'gpt-6-luna';
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(model)) throw new Error('Invalid MERV_PI_MODEL');
+  // One operator-owned project rents every Pi machine with its own service key and Sandboxes
+  // connection; each turn's reads still run as the person who sent it.
+  const hostProjectId = required('MERV_PI_HOST_PROJECT_ID');
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(hostProjectId)) {
+    throw new Error('Invalid MERV_PI_HOST_PROJECT_ID');
+  }
+  if (!connections.some((entry) => entry.projectId === hostProjectId)) {
+    throw new Error('Pi host project has no sandbox connection');
+  }
+  const hostKeyEnv = envName('MERV_PI_HOST_KEY_ENV');
+  if (!/^[A-Za-z0-9_-]{32,200}$/.test(process.env[hostKeyEnv] ?? '')) {
+    throw new Error(`Missing or invalid ${hostKeyEnv}`);
+  }
+  const runtimeKey = process.env.MERV_PI_RUNTIME_KEY ?? 'project';
+  if (!['project', 'person'].includes(runtimeKey)) throw new Error('Invalid MERV_PI_RUNTIME_KEY');
   config.plugins.push(
     { id: 'pi-tools', name: '@merv/pi/tools' },
     { id: 'pi-api', name: '@merv/pi/api' },
@@ -228,6 +275,10 @@ if (piEnabled) {
         baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
         idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),
+        runtimeKey,
+        host: { projectId: hostProjectId, credentialEnv: hostKeyEnv },
+        machines: runtimes.map(({ key, label, slots, agent }) => ({ key, label, slots, agent })),
+        agentMoves: optIn('MERV_PI_AGENT_MOVES'),
       },
     },
   );
