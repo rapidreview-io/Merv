@@ -405,6 +405,38 @@ test('remote launch errors cannot echo the bootstrap into Fleet', async (t) => {
   await service.close();
 });
 
+test('a launch refused while the new container boots reaches Fleet as sandbox_provider_unavailable 503', async (t) => {
+  const { service } = fixture(t, (call) => {
+    if (call.method === 'GET') return Response.json(record('ready'));
+    // Sandboxes' own answer until Cloudflare's inventory shows the container running.
+    return Response.json(
+      {
+        error: {
+          code: 'provider_unavailable',
+          message: 'Cloudflare runtime version is not running',
+          retryable: true,
+          details: {},
+        },
+      },
+      { status: 503 },
+    );
+  });
+  const current: SandboxRuntimeHandle = {
+    sandboxId: 'sbx_1',
+    state: 'ready',
+    ready: true,
+    deleted: false,
+    leaseExpiresAt: null,
+    revision: 1,
+    launch: null,
+  };
+  await assert.rejects(service.runtimes!.launch(connection.projectId, current, 'run_1', 'boot'), {
+    code: 'sandbox_provider_unavailable',
+    status: 503,
+  });
+  await service.close();
+});
+
 test('an old protected sandbox remains inspectable and stoppable after profile change', async (t) => {
   let state = 'ready';
   const { service } = fixture(

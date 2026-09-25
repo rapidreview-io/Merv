@@ -591,18 +591,25 @@ export class FleetService implements Fleet {
             report('fleet.retry', a, error);
             await this.update(a.id, (current) => {
               if (current.phase === 'released') return;
-              if (current.intent === 'stop') this.waitOutLease(current);
-              // A launched machine keeps its phase, and its worker admission, within its lease.
-              else if (
-                !['starting', 'running'].includes(current.phase) ||
-                (current.runtime?.leaseExpiresAt ?? '') <= this.time()
-              )
-                current.phase = 'uncertain';
               // Cloudflare lists a new machine a second or two after making it, so its first
               // launch is often refused: retry that each second for a minute before counting.
               const launching =
                 current.runtime?.launch === null &&
                 Date.parse(current.updatedAt) > this.clock() - 60_000;
+              // Sandboxes answers that launch 503 provider_unavailable before delivering anything:
+              // the machine is still starting, not uncertain.
+              const booting =
+                launching &&
+                error instanceof MervError &&
+                error.code === 'sandbox_provider_unavailable';
+              if (current.intent === 'stop') this.waitOutLease(current);
+              // A launched machine keeps its phase, and its worker admission, within its lease.
+              else if (
+                !booting &&
+                (!['starting', 'running'].includes(current.phase) ||
+                  (current.runtime?.leaseExpiresAt ?? '') <= this.time())
+              )
+                current.phase = 'uncertain';
               if (!launching) current.failures++;
               current.error = 'runtime_unavailable';
               current.retryAt = new Date(

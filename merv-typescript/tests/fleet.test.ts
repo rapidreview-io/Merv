@@ -55,6 +55,8 @@ class FakeRuntimes implements SandboxRuntimes {
   createError?: Error;
   inspectError?: Error;
   failLaunchOnce = false;
+  /** Thrown by the next launch before it delivers anything. */
+  refuseLaunch?: Error;
   failAcknowledgeOnce = false;
   heartbeatOnInspect = false;
   holdCreate?: ReturnType<typeof deferred<SandboxRuntimeHandle>>;
@@ -105,6 +107,9 @@ class FakeRuntimes implements SandboxRuntimes {
   ) {
     this.launchKeys.push(operationKey);
     this.profiled.push(`launch ${operationKey} ${profileId}`);
+    const refusal = this.refuseLaunch;
+    this.refuseLaunch = undefined;
+    if (refusal) throw refusal;
     const live = [...this.byKey.values()].find((item) => item.sandboxId === current.sandboxId);
     assert.ok(live);
     live.launch ??= {
@@ -855,6 +860,35 @@ for (const how of ['cancel', 'cancelOwned'] as const)
     await (how === 'cancel' ? f.fleet.cancel(f.caller, id) : f.fleet.cancelOwned(f.owner, id));
     await within(300, () => f.runtimes.stopped.includes('sbx_1'));
   });
+
+test('a new machine whose container still boots stays starting while its launch is retried each second', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const { id } = await f.fleet.request(f.caller, input('booting'));
+  await f.fleet.tick();
+  // Sandboxes answers 503 {"error":{"code":"provider_unavailable",…}} until Cloudflare lists the
+  // new container as running; the client names that code sandbox_provider_unavailable.
+  f.runtimes.refuseLaunch = new MervError(
+    'sandbox_provider_unavailable',
+    'Protected runtime launch was refused',
+    503,
+  );
+  await f.fleet.tick();
+  const booting = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([booting.phase, booting.failures], ['provisioning', 0]);
+  f.advance(1000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, id)).phase, 'starting');
+  const phases = await f.state.read((sql) =>
+    sql.all<{ phase: string }>(
+      "SELECT data_json::jsonb->>'phase' AS phase FROM events WHERE type='fleet.changed' AND subject_id=? ORDER BY id",
+      id,
+    ),
+  );
+  assert.deepEqual(
+    phases.map(({ phase }) => phase),
+    ['provisioning', 'starting'],
+  );
+});
 
 test('a new machine whose launch is refused is retried after a second; an older one backs off', async (t) => {
   const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
