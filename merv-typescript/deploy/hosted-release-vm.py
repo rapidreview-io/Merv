@@ -84,7 +84,7 @@ async def main():
                 print(json.dumps((await conn.execute(text(os.environ['MERV_Q']))).scalar_one()))
         elif os.environ.get('MERV_RELEASES'):
             from merv_sandboxes.runtimes.releases import RuntimeRelease
-            print(json.dumps([RuntimeRelease(**{**e,'arguments':tuple(e['arguments'])}).release_id
+            print(json.dumps([RuntimeRelease(**{**e,'arguments':tuple(e.get('arguments',()))}).release_id
                               for e in json.loads(os.environ['MERV_RELEASES'])]))
         else:
             # The host-configured app itself, whichever namespaces it serves.
