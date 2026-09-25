@@ -53,7 +53,7 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
 test('a model catalog Pi cannot use is refused at start, naming the field, and by the render first', async (t) => {
   const f = await fixture(t);
   // The render's dry run makes the same checks, so it catches a catalog that would stop Main.
-  const { piModels } = await import(new URL('../deploy/schema.mjs', import.meta.url).href);
+  const { piModels } = await import('../deploy/schema.mjs');
   assert.deepEqual(piModels(models, 'MERV_PI_MODELS'), models);
   const [luna] = models;
   for (const [catalog, at] of [
