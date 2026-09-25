@@ -48,7 +48,8 @@ async function cutOver(f: PiFixture, host: PiHostRecord, workerId = 'worker_next
   const token = await f.token(host.next!.allocationId);
   const enrolled = await f.pi.next(token, { workerId });
   assert.deepEqual(Object.keys(enrolled).sort(), ['probe', 'work']);
-  return { token, reply: await f.pi.next(token, { workerId, probe: enrolled.probe }) };
+  const { probe } = enrolled;
+  return { token, probe, reply: await f.pi.next(token, { workerId, probe }) };
 }
 
 test('one machine per person per project: their conversations share it, another project has its own, and Fleet rows live only in the host project', async (t) => {
@@ -156,18 +157,19 @@ test('a machine runs as many turns at once as its slots; the next one waits for 
   await f.fleet.tick();
   await f.fleet.tick();
   const claims = [];
+  // A worker begins each turn before it asks again.
   for (let index = 0; index < 3; index++) {
     const { work } = await f.pi.next(token, { workerId: 'worker_1' });
-    claims.push({ conversationId: work!.command.conversationId, commandId: work!.command.id });
+    const { conversationId, id: commandId } = work!.command;
+    claims.push({ conversationId, commandId, workerId: 'worker_1' });
+    await f.pi.begin(token, claims[index]);
   }
   assert.deepEqual(
     claims.map(({ commandId }) => commandId),
     sent.slice(0, 3).map(({ id }) => id),
   );
   assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work, null);
-  const input = { ...claims[0], workerId: 'worker_1' };
-  await f.pi.begin(token, input);
-  await f.pi.complete(token, f.completion(input));
+  await f.pi.complete(token, f.completion(claims[0]));
   assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work?.command.id, sent[3].id);
 });
 
@@ -185,6 +187,11 @@ test('a turn that cannot start ends alone: /next never fails the machine, and se
   await f.scope.revokeCredential(f.operator, issued.credential.id);
   const next = () => f.pi.next(running.token, { workerId: 'worker_1' });
   assert.equal((await next()).work?.command.id, served.id);
+  await f.pi.begin(running.token, {
+    ...running.input,
+    conversationId: served.conversationId,
+    commandId: served.id,
+  });
   const ended = await command(f, revoked);
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'worker_interrupted']);
   // Stopped between its claim and its work, or with its checkpoint unreadable: only it ends.
@@ -213,8 +220,8 @@ test('the idle clock starts when the last turn in any of the machine’s convers
   const f = await fixture(t);
   const a = await f.claimed(await f.send(await f.create()));
   const sent = await f.send(await f.create());
-  await f.pi.next(a.token, { workerId: 'worker_1' });
-  const b = { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_1' };
+  await f.pi.next(a.token, { workerId: 'worker_2' });
+  const b = { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_2' };
   await f.finish(a);
   assert.equal((await f.host(sent)).idleSince, null);
   f.advance(10_000);
@@ -298,9 +305,10 @@ test('a move starts the new machine first: its worker proves ready, new turns cu
 test('turns finishing on the old machine take none of the new machine’s slots', async (t) => {
   const f = await fixture(t);
   const a = await f.claimed(await f.send(await f.create()));
-  for (let index = 0; index < 2; index++) {
+  // Each claim goes to a worker of its own: none begins its turn here.
+  for (let index = 2; index < 4; index++) {
     await f.send(await f.create());
-    assert.ok((await f.pi.next(a.token, { workerId: 'worker_1' })).work);
+    assert.ok((await f.pi.next(a.token, { workerId: `worker_${index}` })).work);
   }
   await f.pi.setMachine(f.operator, { machine: 'large' });
   const waiting = [];
@@ -308,10 +316,37 @@ test('turns finishing on the old machine take none of the new machine’s slots'
   const { token, reply } = await cutOver(f, await f.host(a.work.command));
   const claimed = [reply.work?.command.id];
   for (let index = 0; index < 3; index++)
-    claimed.push((await f.pi.next(token, { workerId: 'worker_next' })).work?.command.id);
+    claimed.push((await f.pi.next(token, { workerId: `worker_next_${index}` })).work?.command.id);
   // Turns sent in the same instant are taken in id order.
   assert.deepEqual(claimed.sort(), waiting.sort());
   assert.equal((await f.host(a.work.command)).draining?.allocationId, a.work.command.runtimeId);
+});
+
+test('a worker that lost the reply to its claim is given the same turn again: as claimed, at cut-over, and before its machine retires', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const a = await f.claimed(await f.send(await f.create()));
+  const next = (workerId = 'worker_1', token = a.token, probe?: string) =>
+    f.pi.next(token, probe ? { workerId, probe } : { workerId });
+  assert.deepEqual(await next(), { work: a.work });
+  assert.deepEqual(await next('worker_2'), { work: null });
+  await f.pi.begin(a.token, a.input);
+  assert.deepEqual(await next(), { work: null });
+  // A claim whose reply is lost while the machine moves, and the cut-over's own reply lost too.
+  const b = await f.send(await f.create());
+  assert.equal((await next()).work?.command.id, b.id);
+  await f.pi.setMachine(f.operator, { machine: 'large' });
+  const c = await f.send(await f.create());
+  const { token, probe, reply } = await cutOver(f, await f.host(c));
+  assert.equal(reply.work?.command.id, c.id);
+  assert.deepEqual(await next('worker_next', token, probe), reply);
+  // On the draining machine, the turn is told the machine it runs on.
+  const again = await next();
+  assert.deepEqual(
+    [again.work?.command.id, again.work?.notes],
+    [b.id, ['Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).']],
+  );
+  await f.pi.begin(a.token, { ...a.input, conversationId: b.conversationId, commandId: b.id });
+  assert.deepEqual(await next(), { work: null, retire: true });
 });
 
 test('a new machine that never proves ready fails the move, and the current one serves on', async (t) => {
@@ -529,15 +564,53 @@ test('switch_machine is never offered, granted or accepted where its person coul
   assert.equal((await f.host(bound.work.command)).next, null);
 });
 
+test('a person who loses write is off Large from their next turn: it waits for, and runs on, Standard', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const alice = await login(f, 'alice');
+  const project = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
+  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
+  const bob = async () => f.scope.caller(await login(f, 'bob'), project.id);
+  const producer = await bob();
+  await f.pi.setMachine(producer, { machine: 'large' });
+  const large = await f.claimed(await f.send(await f.create(producer), 'hello', producer));
+  assert.equal(large.work.command.machine, 'large');
+  await f.finish(large);
+  await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
+  const reader = await bob();
+  const held = await f.send(await f.create(reader), 'hello', reader);
+  // Large takes none of their turns; the host moves to Standard first, unannounced.
+  assert.deepEqual(await f.pi.next(large.token, { workerId: 'worker_1' }), { work: null });
+  await f.pi.tick();
+  const host = await f.host(held);
+  assert.deepEqual([host.next?.machine, host.next?.by], ['standard', 'deadline']);
+  const { reply } = await cutOver(f, host);
+  assert.deepEqual([reply.work?.command.id, reply.work?.command.machine], [held.id, 'standard']);
+  assert.equal((await f.allocation(large.work.command.runtimeId)).intent, 'stop');
+});
+
+test('a Pi host key that is not accepted is a server fault, never a 401 that signs the person out', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  process.env[f.pi.config.host!.credentialEnv] = 'x'.repeat(40);
+  await f.restart();
+  const fault = (error: MervError) => error.code === 'pi_configuration' && error.status === 503;
+  await assert.rejects(f.send(chat), fault);
+  await assert.rejects(
+    f.pi.warm(f.operator, { requestId: 'warm', conversationId: chat.id }),
+    fault,
+  );
+  await assert.rejects(f.pi.setMachine(f.operator, { machine: 'large' }), fault);
+});
+
 test('the agent moves up without asking where its person may, within capacity, and the move sticks', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const refused = await f.claimed(await f.send(await f.create()));
   const sent = await f.send(await f.create());
-  const { work } = await f.pi.next(refused.token, { workerId: 'worker_1' });
+  const { work } = await f.pi.next(refused.token, { workerId: 'worker_2' });
   const bound = {
     token: refused.token,
     work: work!,
-    input: { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_1' },
+    input: { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_2' },
   };
   for (const turn of [refused, bound]) {
     assert.ok(turn.work.tools.some(({ name }) => name === 'machine.switch'));

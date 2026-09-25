@@ -20,7 +20,7 @@ export interface PiMoveContext {
   host: PiHostRecord;
   person: PiPersonRecord;
   conversationId: string;
-  /** The machine serving the host now (C). */
+  /** The turn's machine: C, or D for a claim served again there. */
   current: PiMachine;
   /** Machines the agent could move to: config agent: true, described by Sandboxes, and allowed
    * for this person here (PiService.machineChoice). Empty means switch_machine is never offered. */

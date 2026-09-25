@@ -509,8 +509,10 @@ export class PiService implements Pi, FleetOwner {
    * is always allowed; any other only where the person could rent sandboxes themselves: their
    * project (source.projectId, never the host project) has its own Sandboxes connection and
    * `source` holds at least write there now. Otherwise the picker shows the reason, a new host
-   * starts on the default, and switch_machine is not offered. With runtimeKey 'person' one host
-   * serves several projects, and a machine allowed in one is then shared with the others. */
+   * starts on the default, and switch_machine is not offered. Checked again at each claim: a
+   * machine its person may no longer choose takes none of their turns and is left for the
+   * default (take, settle). With runtimeKey 'person' one host serves several projects, and a turn
+   * from one where the machine is not allowed waits for that move. */
   async machineChoice(
     source: DelegationSource,
     machine: string,
@@ -820,12 +822,17 @@ export class PiService implements Pi, FleetOwner {
   }
   /** The Pi host identity (config.host.credentialEnv) rents every slot in the host project, so a
    * person's project needs no Sandboxes of its own. It only rents: turns read as the person. With
-   * the host project unconnected, Fleet refuses a rental as sandbox_not_connected. */
+   * the host project unconnected, Fleet refuses a rental as sandbox_not_connected. A key it does
+   * not accept is the server's fault, never the person's 401, which would sign them out. */
   private async hostCaller(): Promise<Caller> {
     if (this.renter) return this.renter;
     const token = process.env[this.config.host!.credentialEnv];
     check(token, 'pi_configuration', 'The Pi host credential is unavailable', 503);
-    const actor = await this.scope.authenticate(token);
+    const actor = await this.scope.authenticate(token).catch((error: unknown) => {
+      if (error instanceof MervError && error.status === 401) return null;
+      throw error;
+    });
+    check(actor, 'pi_configuration', 'The Pi host credential is not accepted', 503);
     check(
       actor.projectId === this.hostProject,
       'pi_configuration',
@@ -1107,10 +1114,12 @@ export class PiService implements Pi, FleetOwner {
       return null;
     }
   }
-  /** What /next gives this worker now: a draining slot retires (T5); a next slot enrolls its first
-   * worker with a probe (T3) and cuts over when that worker echoes it (T4); a current slot enrolls
-   * and claims its oldest waiting turn while it runs fewer than its machine's slots. With `dry`,
-   * in a read, it answers 'due' instead of writing. */
+  /** What /next gives this worker now: first a turn it claimed and has not begun, whose reply it
+   * lost (a worker begins each turn before it asks again); else a draining slot retires (T5); a
+   * next slot enrolls its first worker with a probe (T3) and cuts over when that worker echoes it
+   * (T4); a current slot enrolls and claims its oldest waiting turn whose person may choose its
+   * machine now, while it runs fewer than its machine's slots. With `dry`, in a read, it answers
+   * 'due' instead of writing. */
   private async take(
     token: string,
     value: z.output<typeof nextInput>,
@@ -1118,8 +1127,17 @@ export class PiService implements Pi, FleetOwner {
     dry = false,
   ): Promise<Taken | 'due'> {
     const { host, slot, role } = await this.worker(token, tx);
-    if (role === 'draining') return { retire: true };
     const now = this.time();
+    const turns = await this.turns(tx, host.id);
+    const lost = turns.find(
+      (turn) =>
+        turn.runtimeId === slot.allocationId &&
+        turn.workerId === value.workerId &&
+        turn.status === 'starting' &&
+        turn.expiresAt > now,
+    );
+    if (lost) return { claim: await this.claim(tx, host, lost, slot.machine) };
+    if (role === 'draining') return { retire: true };
     let changed = false;
     if (role === 'next') {
       const probe = this.probe(host.id, slot, value.workerId);
@@ -1146,37 +1164,55 @@ export class PiService implements Pi, FleetOwner {
       changed = true;
     }
     const serving = host.current!;
-    const mine = (await this.turns(tx, host.id)).filter(
+    // A next slot gets here only by the cut-over, which moved C's waiting turns to it.
+    const mine = (role === 'next' ? await this.turns(tx, host.id) : turns).filter(
       (turn) => turn.runtimeId === serving.allocationId,
     );
-    const command =
-      mine.filter((turn) => turn.workerId).length < this.slots(serving.machine)
-        ? mine.find((turn) => !turn.workerId && turn.expiresAt > now)
-        : undefined;
+    // A turn its person may no longer run here waits for settle's move to the default.
+    let command: PiCommandRecord | undefined;
+    if (mine.filter((turn) => turn.workerId).length < this.slots(serving.machine))
+      for (const turn of mine) {
+        if (turn.workerId || turn.expiresAt <= now) continue;
+        const { source } = await this.conversation(tx, turn.conversationId);
+        if (!(await this.machineChoice(source, serving.machine, tx)).allowed) continue;
+        command = turn;
+        break;
+      }
     if (command && dry) return 'due';
     if (changed) await this.saveHost(tx, host);
     if (!command) return {};
-    const conversation = await this.conversation(tx, command.conversationId);
-    const context = await this.moveContext(tx, host, conversation);
-    const offered = context?.targets.length ? moveTool(context) : null;
+    const claim = await this.claim(tx, host, command, serving.machine);
     command.status = 'starting';
     command.workerId = value.workerId;
     // Queueing and cold start spent the send-time budget; the model gets a full turn.
-    command.expiresAt = new Date(this.turnEnd(serving, conversation.source)).toISOString();
-    if (offered) command.canMove = true;
+    command.expiresAt = new Date(this.turnEnd(serving, claim.conversation.source)).toISOString();
+    if (claim.offered) command.canMove = true;
     await this.saveCommand(tx, command);
-    return {
-      claim: { conversation, command, offered, notes: context ? moveNotes(context) : [] },
-    };
+    return { claim };
   }
-  /** What the agent-move rules read for this turn; targets are only machines its person may pick
-   * here, so without write access or a Sandboxes connection switch_machine is never offered. */
+  /** What a turn is told on `machine`: switch_machine while the move rules allow it (a claim
+   * served again keeps what it was first given), and the notes. */
+  private async claim(
+    tx: Transaction,
+    host: PiHostRecord,
+    command: PiCommandRecord,
+    machine: string,
+  ) {
+    const conversation = await this.conversation(tx, command.conversationId);
+    const context = await this.moveContext(tx, host, conversation, machine);
+    const offered = context && (!command.workerId || command.canMove) ? moveTool(context) : null;
+    return { conversation, command, offered, notes: context ? moveNotes(context) : [] };
+  }
+  /** What the agent-move rules read for this turn on `machine`; targets are only machines its
+   * person may pick here, so without write access or a Sandboxes connection switch_machine is
+   * never offered. */
   private async moveContext(
     tx: Transaction,
     host: PiHostRecord,
     conversation: PiConversationRecord,
+    machine: string,
   ): Promise<PiMoveContext | null> {
-    const current = host.current && (await this.machine(host.current.machine));
+    const current = await this.machine(machine);
     if (!current) return null;
     const targets: PiMachine[] = [];
     for (const { key, agent } of this.config.machines) {
@@ -1336,7 +1372,7 @@ export class PiService implements Pi, FleetOwner {
       const host = await this.host(tx, command.hostId!);
       check(host?.status === 'live' && host.current, 'pi_command_stale', 'The machine ended', 409);
       if (host.current.machine === machine) return { status: 'already' };
-      const context = await this.moveContext(tx, host, conversation);
+      const context = await this.moveContext(tx, host, conversation, host.current.machine);
       const refusal = context?.targets.some(({ key }) => key === machine)
         ? moveRefusal(context, machine)
         : { code: 'machine_unavailable' as const };
@@ -1849,24 +1885,21 @@ export class PiService implements Pi, FleetOwner {
     }
     const { current } = host;
     const newest = turns.at(-1);
-    if (
-      current?.workerId &&
-      newest &&
-      !host.next &&
-      !host.draining &&
-      renter &&
-      Date.parse(current.expiresAt) - this.clock() < rolloverMs &&
-      (await this.fleet.free(this.hostProject, tx)) >= moveRoom
-    ) {
-      if (dry) return true;
-      // Only a machine in use is renewed: of its kind while the newest turn's person may still
-      // choose it, else the default.
+    if (current?.workerId && newest && !host.next && !host.draining && renter) {
+      // Only a machine in use is renewed near its deadline: of its kind while the newest turn's
+      // person may still choose it, else the default. One they may no longer choose (take holds
+      // their turns) is left for the default at once, unannounced like a rollover.
       const { source } = await this.conversation(tx, newest.conversationId);
-      const to = (await this.machineChoice(source, current.machine, tx)).allowed
-        ? current.machine
-        : this.config.machines[0].key;
-      const rolled = await this.move(tx, renter, host, to, 'deadline');
-      changed ||= rolled;
+      const allowed = (await this.machineChoice(source, current.machine, tx)).allowed;
+      if (
+        (!allowed || Date.parse(current.expiresAt) - this.clock() < rolloverMs) &&
+        (await this.fleet.free(this.hostProject, tx)) >= moveRoom
+      ) {
+        if (dry) return true;
+        const to = allowed ? current.machine : this.config.machines[0].key;
+        const moved = await this.move(tx, renter, host, to, 'deadline');
+        changed ||= moved;
+      }
     }
     if (!host.current && !host.next && !host.draining) {
       if (dry) return true;
