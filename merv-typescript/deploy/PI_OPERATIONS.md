@@ -64,7 +64,8 @@ The container names are fixed; the script reads the images, the Sandboxes
 catalog path and Main's release directory from the live containers. Never run it
 with `python3 -O`, which strips its guards. It refuses to run unless Main (Fleet
 allocations, active Pi commands) and Sandboxes (sandboxes, jobs, workflows,
-outbox, snapshots) are drained and the project exists. It backs up the env and
+outbox, snapshots) are drained and the project exists, and while a hosted-image
+run is open; it holds that pipeline's host lock throughout. It backs up the env and
 catalog to `/var/lib/merv-fleet-pilot/pi-connect/<projectId>/` before every
 write, and writes atomically.
 

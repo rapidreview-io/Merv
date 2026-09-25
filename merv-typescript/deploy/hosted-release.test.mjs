@@ -393,3 +393,27 @@ print(json.dumps(res))`,
   assert.deepEqual(out.switched, [`rt1_${'b'.repeat(64)}`]);
   assert.equal(out.progress.guard.releaseId, `rt1_${'b'.repeat(64)}`);
 });
+
+test('pi-connect-project.py holds the hosted host lock and refuses while a hosted run is open', () => {
+  const connect = new URL('pi-connect-project.py', import.meta.url).pathname;
+  const out = py(
+    `import fcntl,pathlib,tempfile
+sys.argv=['pi-connect-project.py','main','project_1']
+spec=importlib.util.spec_from_file_location('connect',${JSON.stringify(connect)})
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.HOSTED=pathlib.Path(tempfile.mkdtemp())/'hosted';res={}
+with m.exclusive():
+    with (m.HOSTED/'lock').open('a') as step:
+        try: fcntl.flock(step,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: res['held']=True
+    try: m.exclusive()
+    except SystemExit as e: res['busy']=str(e)
+(m.HOSTED/'active').write_text('run1')
+try: m.exclusive()
+except AssertionError as e: res['open']=str(e)
+print(json.dumps(res))`,
+  );
+  assert.equal(out.held, true);
+  assert.match(out.busy, /a hosted-release step holds the host lock/);
+  assert.match(out.open, /^hosted_run_open/);
+});

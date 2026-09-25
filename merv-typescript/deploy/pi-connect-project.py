@@ -7,10 +7,12 @@ Run on the production host as root, in a quiet window, one phase after the other
 30-day consumer grant, scopes cloudflare-fleet to every merv-pi-* namespace, allowlists the grant and
 recreates Sandboxes control and pipelines-worker. The second adds the connection and the grant variable to
 Main's env and recreates Main. Each recreate stops live work, so both phases refuse unless Main and
-Sandboxes are drained. --rehome moves a project off the shared fleet-cloudflare-canary namespace.
+Sandboxes are drained, and while a hosted-image run is open; each holds that pipeline's host lock.
+--rehome moves a project off the shared fleet-cloudflare-canary namespace.
 Never prints a secret. Every mutation follows a root-private backup and is undone on failure; the backups
 hold secrets, so shred ROOT once the connection is verified and recorded. See deploy/PI_OPERATIONS.md.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -30,6 +32,7 @@ assert PHASE in ('sandboxes', 'main') and FLAGS in ([], ['--rehome']), __doc__
 assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PROJECT), 'invalid_project_id'
 ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect') / PROJECT
 ENV = Path('/etc/merv/typescript.env')
+HOSTED = Path('/var/lib/merv-fleet-pilot/hosted-release')  # deploy/hosted-release-vm.py's lock and open-run marker
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 SUFFIX = hashlib.sha256(PROJECT.encode()).hexdigest()[:20]
 NAMESPACE = 'merv-pi-' + SUFFIX
@@ -115,6 +118,18 @@ console.log(JSON.stringify({me:me.status,role:identity.role,namespace:identity.n
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def exclusive():
+    """The hosted-image pipeline's host lock, for the whole phase: both edit the env and the catalog."""
+    HOSTED.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock = (HOSTED / 'lock').open('a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('a hosted-release step holds the host lock; rerun when it ends')
+    assert not (HOSTED / 'active').exists(), 'hosted_run_open: `node deploy/hosted-release.mjs` finishes it first'
+    return lock
 
 
 def now():
@@ -304,4 +319,5 @@ def main_phase():
 if __name__ == '__main__':
     assert os.geteuid() == 0
     os.umask(0o077)
-    {'sandboxes': sandboxes, 'main': main_phase}[PHASE]()
+    with exclusive():
+        {'sandboxes': sandboxes, 'main': main_phase}[PHASE]()
