@@ -38,7 +38,8 @@ renewed by October 17. The founder must replace the Cloudflare native verificati
 credential before it expires on September 30. See
 [Pi operations](../deploy/PI_OPERATIONS.md). The USD 100 all-time cap, accrued
 accounting, concurrency 1/1/1 and native maximum 3 are unchanged. Workflow
-dispatch remains off, and hosted Pi uses `gpt-6-luna`.
+dispatch remains off, and hosted Pi uses the models in `MERV_PI_MODELS` (GPT-6 Luna,
+the default, Sol and Astra), picked per conversation by the person.
 
 Hosted 1d823/application 13 and Sandboxes 32025 remain deployed. Full fresh
 acceptance, cleanup of temporary diagnostic access and the previously disclosed
@@ -272,7 +273,7 @@ The corrected Linux broad run completed 1,679 tests: 1,677 passed, one skipped, 
 
 ## Answer length and streaming (2026-09-25)
 
-The founder ruled out any word limit per answer. Nothing sends an output cap: the model's own maximum (gpt-6-luna: 128,000 tokens, about 500,000 characters of prose or code) is the only thing that ends an answer early, and the worker says so in the answer when it does. Every other bound is a safety bound far beyond that:
+The founder ruled out any word limit per answer. Nothing sends an output cap: the model's own maximum (each shipped model: 128,000 tokens, about 500,000 characters of prose or code) is the only thing that ends an answer early, and the worker says so in the answer when it does. Every other bound is a safety bound far beyond that:
 
 | Bound                                                                              | Value                                  | Where                                      |
 | ---------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------ |
@@ -280,13 +281,14 @@ The founder ruled out any word limit per answer. Nothing sends an output cap: th
 | A claimed turn's ceiling                                                           | 3 hours; a stall ends it sooner        | `limits.ts` `turnCeilingMs`                |
 | A turn without progress (claim, streamed word, tool call; heartbeats do not count) | `turnTimeoutSeconds`, 300 s            | `schema.ts`, enforced by `settle`          |
 | A model call without upstream bytes                                                | 20 s                                   | `relay.ts` `idleTimeoutMs`                 |
+| A reasoning model's call without upstream bytes                                    | 120 s                                  | `relay.ts` `reasoningIdleTimeoutMs`        |
 | A model call's request; any one text in it                                         | 8 MiB                                  | `relay-schema.ts` `relayRequestBytes`      |
 | A model call's event stream; any one frame                                         | 256 MiB; 16 MiB                        | `relay.ts`                                 |
 | A worker request body (a completion)                                               | 16 MB                                  | `api.ts` `bodyBytes`                       |
 | Unsent words the worker holds                                                      | one whole answer                       | `worker.ts` `enqueue`                      |
 | A snapshot frame the page reads                                                    | 32 M characters (a whole conversation) | `pi-stream.ts`                             |
 
-History fills the model's window but for its longest answer, at 3 bytes a token (gpt-6-luna: 432 KB, about 144,000 tokens; never over 1 MB), and drops whole exchanges oldest first, never the newest. One too long alone keeps its prompt, a note of the steps left out and its newest steps; a last step too long alone keeps each long text's start and end. The checkpoint holds exactly what the next turn sends, ending at the answer's last entry, and the worker checks it as Main will before sending it. A page opened mid-answer reads the whole answer so far from the snapshot, not only the stream's 64 KB tail.
+History fills the model's window but for its longest answer, at 3 bytes a token (each shipped model: 432 KB, about 144,000 tokens; never over 1 MB), and drops whole exchanges oldest first, never the newest. One too long alone keeps its prompt, a note of the steps left out and its newest steps; a last step too long alone keeps each long text's start and end. The checkpoint holds exactly what the next turn sends, ending at the answer's last entry, and the worker checks it as Main will before sending it. A page opened mid-answer reads the whole answer so far from the snapshot, not only the stream's 64 KB tail.
 
 Streaming: the worker sends words within 100 ms of the first unsent one, one request at a time (about nine a second while text flows, a heartbeat a second when silent). Main reads a streaming turn's authority, and a page's, at most once a second and writes nothing per word, so progress costs no database work beyond that: the latency test's 49 progress requests with their SSE delivery take 9 read transactions (203 before). The page spreads each burst over the next 250 ms with `requestAnimationFrame`, so a steady stream reads at its own pace and never lags 250 ms behind, shows each burst at once under `prefers-reduced-motion`, and swaps in the saved answer whole when the turn ends; Markdown is read in pieces, each once, so only the growing last piece is parsed per frame.
 
