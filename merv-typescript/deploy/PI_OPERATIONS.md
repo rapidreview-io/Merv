@@ -292,12 +292,12 @@ Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
   what it recorded.
 - An open hosted run blocks every Main release, emergencies included. When it
   can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
-  closes it once production agrees on one of its releases: Cloudflare runs that
-  image with no rollout, Main and the env file name its release id, and both
-  Sandboxes services' catalog holds it. Otherwise it refuses and names what
-  disagrees; the run stays open. On the run's own release it first runs a
-  canary; if that fails, it exits 4 and marks the live pins unverified, and
-  every later run canaries them again until one passes.
+  closes it once production agrees on one of its releases: every live Cloudflare
+  app runs that image with no rollout, Main and the env file name its release
+  ids, and both Sandboxes services' catalog holds them. Otherwise it refuses and
+  names what disagrees; the run stays open. On the run's own release it first
+  runs a canary; if that fails, it exits 4 and marks the live pins unverified,
+  and every later run canaries them again until one passes.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Also confirm that each Cloudflare app's `max_instances` allows
