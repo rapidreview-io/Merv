@@ -84,12 +84,8 @@ export interface SandboxRuntimeHandle {
 
 /** Server-owned capability, deliberately absent from agent tools and the UI manifest. */
 export interface SandboxRuntimes {
-  /** The default profile's id. */
-  readonly profileId: string;
-  /** The default profile's lease. Every create and renewal asks for its profile's lease; the
-   * service reaps a machine when it ends. */
-  readonly leaseSeconds: number;
-  /** Every configured profile, the default first. */
+  /** Every configured profile, the default first. Every create and renewal asks for its
+   * profile's lease; the service reaps a machine when it ends. */
   readonly profiles: readonly SandboxRuntimeProfileRef[];
   /** False (no connection, or no grant for it) proves no call for this project can reach the service. */
   connected(projectId: string): boolean;

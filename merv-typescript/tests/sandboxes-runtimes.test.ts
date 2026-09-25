@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { SandboxService, type SandboxRuntimeHandle } from '@merv/sandboxes';
 
 const urlEnv = 'MERV_RUNTIME_TEST_URL';
@@ -139,7 +140,6 @@ test('each profile rents, launches and renews its own machine; the default keeps
   assert.deepEqual(standardRef, { key: 'standard', id: legacy, leaseSeconds: 1800 });
   assert.deepEqual([largeRef.key, largeRef.leaseSeconds], ['large', 3600]);
   assert.match(largeRef.id, /^srp_[0-9a-f]{64}$/);
-  assert.deepEqual([runtimes.profileId, runtimes.leaseSeconds], [legacy, 1800]);
   await runtimes.provision(connection.projectId, 'standard-create');
   const created = await runtimes.provision(connection.projectId, 'large-create', largeRef.id);
   const launched = await runtimes.launch(connection.projectId, created, 'run_1', 'x', largeRef.id);
@@ -201,26 +201,32 @@ test('a machine is described from the service options, read once a refresh perio
     null,
   ]);
   assert.equal(reads(), 1);
-  // The service stops listing Large: once the period passes, Large is hidden.
+  // The service stops listing Large: once the period passes, the last answer is served at once
+  // while a new read runs, and Large is hidden when it lands.
   offers = offers.slice(0, 1);
   t.mock.timers.tick(299_000);
   assert.notEqual(await describe('large'), null);
   t.mock.timers.tick(1000);
+  assert.notEqual(await describe('large'), null);
+  assert.equal(reads(), 2);
+  await setImmediate();
   assert.equal(await describe('large'), null);
   assert.equal((await describe('standard'))?.vcpu, 0.5);
   assert.equal(reads(), 2);
-  // An unreachable service keeps the last answer until the next period.
+  // An unreachable service keeps the last answer, and the next look reads again.
   offers = null;
   t.mock.timers.tick(300_000);
   assert.equal((await describe('standard'))?.memoryGiB, 4);
-  assert.equal(reads(), 3);
+  await setImmediate();
+  assert.equal((await describe('standard'))?.memoryGiB, 4);
+  assert.equal(reads(), 4);
   await service.close();
 });
 
 test('a project is connected only while its grant is configured', async (t) => {
   const { service } = fixture(t, () => Response.json({}));
   const runtimes = service.runtimes!;
-  assert.equal(runtimes.leaseSeconds, profile.leaseSeconds);
+  assert.equal(runtimes.profiles[0].leaseSeconds, profile.leaseSeconds);
   assert.equal(runtimes.connected(connection.projectId), true);
   assert.equal(runtimes.connected('project_other'), false);
   delete process.env[tokenEnv];
@@ -238,7 +244,7 @@ test('provision and launch use one fixed profile and return metadata without boo
     throw new Error(`unexpected route ${call.method} ${call.path}`);
   });
   const runtimes = service.runtimes!;
-  assert.match(runtimes.profileId, /^srp_[0-9a-f]{64}$/);
+  assert.match(runtimes.profiles[0].id, /^srp_[0-9a-f]{64}$/);
   const first = await runtimes.provision(connection.projectId, 'fleet-operation-1');
   const second = await runtimes.provision(connection.projectId, 'fleet-operation-1');
   assert.equal(first.state, 'provisioning');

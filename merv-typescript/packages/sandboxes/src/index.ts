@@ -152,7 +152,7 @@ export class SandboxService implements Sandboxes {
   #closed = false;
   #closing?: Promise<void>;
   readonly #running = new Set<Promise<unknown>>();
-  readonly #offers = new Map<string, { at: number; answer: Promise<Json> }>();
+  readonly #offers = new Map<string, { at: number; value?: Json; reading?: Promise<Json> }>();
   /**
    * Present only where the deployment named the bucket origins a check's source may be
    * uploaded to, so a project check is opt-in per deployment rather than per request.
@@ -195,9 +195,8 @@ export class SandboxService implements Sandboxes {
           profile,
         ),
       }));
-      const [first] = profiles;
       // Inspect, acknowledge and stop read the machine as it is; they need no profile.
-      const runner = first.runner;
+      const { runner } = profiles[0];
       /** Provision, launch and renew speak for one profile; none named means the default. */
       const profiled = (profileId = runner.profileId) => {
         const found = profiles.find((entry) => entry.runner.profileId === profileId);
@@ -210,8 +209,6 @@ export class SandboxService implements Sandboxes {
         return found.runner;
       };
       this.runtimes = {
-        profileId: runner.profileId,
-        leaseSeconds: first.profile.leaseSeconds,
         profiles: profiles.map((entry) => ({
           key: entry.profile.key,
           id: entry.runner.profileId,
@@ -257,16 +254,21 @@ export class SandboxService implements Sandboxes {
     }
   }
 
-  /** GET /v1/options at most once per refresh period for each project. A failed read keeps the
-   * last answer, or none (every machine hidden), until the next period. */
+  /** GET /v1/options at most once per refresh period for each project. Once a project has an
+   * answer it is served at once while an older one refreshes behind it, since Pi describes
+   * machines inside writer transactions. A failed read keeps the answer (none hides every machine)
+   * and the next call reads again. */
   #options(projectId: string): Promise<Json> {
-    const last = this.#offers.get(projectId);
-    if (last && Date.now() - last.at < this.#refreshMs) return last.answer;
-    const answer = this.#run(projectId, (projectId) =>
-      this.#client.read(this.#connectionFor(projectId), '/v1/options'),
-    ).catch(() => last?.answer ?? null);
-    this.#offers.set(projectId, { at: Date.now(), answer });
-    return answer;
+    const entry = this.#offers.get(projectId) ?? { at: 0 };
+    this.#offers.set(projectId, entry);
+    if (!entry.reading && Date.now() - entry.at >= this.#refreshMs)
+      entry.reading = this.#run(projectId, (projectId) =>
+        this.#client.read(this.#connectionFor(projectId), '/v1/options'),
+      )
+        .then((value) => Object.assign(entry, { at: Date.now(), value }).value)
+        .catch(() => entry.value ?? null)
+        .finally(() => (entry.reading = undefined));
+    return 'value' in entry ? Promise.resolve(entry.value!) : entry.reading!;
   }
 
   /** Reads the manifest on a bounded cadence; disposal retires and drains this instance. */
