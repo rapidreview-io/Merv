@@ -32,6 +32,9 @@ REPORT_DIR = Path("/run/merv-isolation")
 DENIED = (errno.EPERM, errno.EACCES)
 MAX_REPORT = 8192
 TIMEOUT = 5.0
+# The one TCP listener a networked assignment may reach: root's sshd on 127.0.0.1:22, as
+# /proc/net/tcp shows it on a little-endian machine.
+SSHD = "0100007F:0016 0"
 
 
 def _process(pid: int) -> dict[str, int]:
@@ -163,6 +166,28 @@ def _identity() -> dict[str, object]:
             "no_new_privs": 1}
 
 
+def _listeners() -> list[str]:
+    """Every TCP listener in this network namespace, as its local address and owner's uid."""
+    found = []
+    for table in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")):
+        for line in (table.read_text().splitlines()[1:] if table.exists() else []):
+            fields = line.split()
+            if fields[3] == "0A":
+                found.append(f"{fields[1]} {fields[7]}")
+    return sorted(found)
+
+
+def _sshd() -> None:
+    """With the network on, the assignment can reach sshd: it must take no password."""
+    result = subprocess.run(
+        ["/usr/sbin/sshd", "-T"], stdin=subprocess.DEVNULL, capture_output=True,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C"}, close_fds=True, timeout=5, check=False,
+    )
+    if (result.returncode != 0 or not {"passwordauthentication no", "kbdinteractiveauthentication no"}
+            <= set(result.stdout.decode().splitlines())):
+        raise IsolationUnavailable("isolation sshd accepts passwords")
+
+
 def _probe(roots: dict[str, dict[str, int]], endpoint: dict[str, object]) -> dict[str, object]:
     identity = _identity()
     outcomes = {}
@@ -200,7 +225,7 @@ def _probe(roots: dict[str, dict[str, int]], endpoint: dict[str, object]) -> dic
     if result.returncode != 1:
         raise IsolationUnavailable("isolation sudo was not denied")
     outcomes["sudo_returncode"] = result.returncode
-    return {"identity": identity, "outcomes": outcomes}
+    return {"identity": identity, "outcomes": outcomes, "listeners": _listeners()}
 
 
 def _child(write_fd: int, read_fd: int, roots: dict[str, dict[str, int]],
@@ -238,7 +263,8 @@ def _child(write_fd: int, read_fd: int, roots: dict[str, dict[str, int]],
 
 
 def _valid_result(result: object) -> bool:
-    if type(result) is not dict or set(result) != {"ok", "identity", "outcomes"}:
+    if (type(result) is not dict or set(result) != {"ok", "identity", "outcomes", "listeners"}
+            or result["listeners"] not in ([], [SSHD])):
         return False
     identity = result["identity"]
     outcomes = result["outcomes"]
@@ -364,6 +390,7 @@ def attest_workflow(workspace: Path) -> Path:
                 raise IsolationUnavailable("isolation probe command is unavailable")
             if executable == "/usr/bin/sudo" and not info.st_mode & stat.S_ISUID:
                 raise IsolationUnavailable("isolation sudo is not setuid")
+        _sshd()
         roots, launch_id = _roots()
         endpoint = _socket(roots["guardian"]["pid"], launch_id)
         context = _safe_context()

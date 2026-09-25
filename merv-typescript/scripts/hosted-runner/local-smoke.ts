@@ -159,11 +159,13 @@ try {
     '/bin/sh',
     'merv-hosted-codex:acceptance',
     '-c',
-    `socat TCP-LISTEN:18080,bind=127.0.0.1,reuseaddr,fork TCP:host.docker.internal:${port} & exec sleep 1800`,
+    // Main is loopback HTTP, as the runner requires, without a listener in the container for the
+    // isolation probe to refuse: localhost names the Docker host.
+    "getent ahostsv4 host.docker.internal | sed -n '1s/ .*/ localhost/p' >/etc/hosts && exec sleep 1800",
   ]);
   allocated = true;
   const bootstrap = JSON.stringify({
-    baseUrl: 'http://127.0.0.1:18080',
+    baseUrl: `http://localhost:${port}`,
     projectId: boot.project.id,
     enrollmentToken,
   });

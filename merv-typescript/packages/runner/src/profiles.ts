@@ -35,7 +35,7 @@ const profileSchema = z.discriminatedUnion('harness', [
         .refine((value) => isAbsolute(value) && !/[\0\r\n]/.test(value))
         .optional(),
       /** Isolated only: the model is called through Main's relay with the session bearer, so the
-       *  machine holds no provider key. */
+       *  machine holds no provider key, and its shell commands have the network. */
       hosted: z.literal(true).optional(),
     })
     .strict(),
@@ -369,7 +369,9 @@ function codexArgs(
   delete shellEnvironment.CLAUDE_CONFIG_DIR;
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
-  config('sandbox_workspace_write.network_access', 'false');
+  // A hosted machine holds no provider key and the server caps its step, so its shell commands
+  // may use the network. Web search stays disabled, and a sealed review stays read-only.
+  config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
   config('sandbox_workspace_write.exclude_slash_tmp', 'true');
   const toolApprovals = `{${tools.map((name) => `${quote(name)}={approval_mode="approve"}`).join(',')}}`;

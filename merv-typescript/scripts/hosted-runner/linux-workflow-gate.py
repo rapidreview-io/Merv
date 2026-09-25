@@ -16,9 +16,12 @@ enrolled = threading.Event()
 KEYS = {'model', 'instructions', 'input', 'tools', 'tool_choice', 'parallel_tool_calls', 'reasoning',
         'store', 'stream', 'include', 'prompt_cache_key', 'text', 'client_metadata'}
 TOOLS = {'function', 'custom', 'local_shell', 'namespace'}
-# Run by Codex as the assignment identity: may it read the environment that holds its bearer?
+# Run by Codex as the assignment identity: may it read the environment that holds its bearer, and
+# does the hosted profile give its shell the network (here only loopback: this Main's port)?
 PROBE = ("for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' <\"$f\" 2>/dev/null | "
-         "grep -q '^MERV_AGENT_SESSION_TOKEN=' && echo \"readable $f\"; done; echo \"uid $(id -u) probe-done\"")
+         "grep -q '^MERV_AGENT_SESSION_TOKEN=' && echo \"readable $f\"; done; python3 -c "
+         "\"import socket; socket.create_connection(('127.0.0.1', %d), 5)\" && echo network-on; "
+         "echo \"uid $(id -u) probe-done\"")
 calls, outputs, holders = [], [], set()
 
 
@@ -52,7 +55,7 @@ class Main(http.server.BaseHTTPRequestHandler):
         item = ({'type': 'message', 'role': 'assistant', 'id': 'msg_gate',
                  'content': [{'type': 'output_text', 'text': 'done'}]} if answered else
                 {'type': 'function_call', 'name': 'exec_command', 'call_id': 'probe',
-                 'arguments': json.dumps({'cmd': PROBE})})
+                 'arguments': json.dumps({'cmd': PROBE % self.server.server_port})})
         events = [{'type': 'response.created', 'response': {'id': 'resp_gate'}},
                   {'type': 'response.output_item.done', 'output_index': 0, 'item': item},
                   {'type': 'response.completed', 'response': {'id': 'resp_gate', 'usage': {
@@ -115,7 +118,7 @@ work.mkdir(mode=0o700)
 settings = ['approval_policy="never"', 'web_search="disabled"', 'features.shell_tool=true',
             'features.multi_agent=false', 'shell_environment_policy.inherit="none"',
             'shell_environment_policy.set={"PATH"="/usr/bin:/bin"}',
-            'sandbox_workspace_write.network_access=false', 'model_provider="merv"',
+            'sandbox_workspace_write.network_access=true', 'model_provider="merv"',
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
 launch = subprocess.run(
@@ -137,6 +140,7 @@ assert launch.returncode == 0 and len(calls) >= 2, 'hosted Codex did not finish 
 assert all(c[:2] == ('POST', '/codex-model/responses') and set(c[2]) <= KEYS and c[3] <= TOOLS
            for c in calls), calls
 assert 'uid 12001 probe-done' in probe and 'readable ' not in probe and holders, probe
+assert 'network-on' in probe, probe
 assert not any(p.name == 'auth.json' or session.encode() in p.read_bytes() for p in codex_home)
 for secret in [enrollment.encode(), model_key.encode(), session.encode()]:
     assert secret not in output + error + refused_output + launch.stdout + launch.stderr
@@ -144,5 +148,5 @@ print(json.dumps({
     'gate': 'linux-workflow-dispatch', 'fixedSupervisor': True, 'bootstrapWithModelKeyRefused': True,
     'managedEnrollmentReached': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
     'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted({k for c in calls for k in c[2]}),
-    'noCredentialFileInCodexHome': True, 'sessionBearerUnreadableFromShell': True,
+    'noCredentialFileInCodexHome': True, 'sessionBearerUnreadableFromShell': True, 'shellNetworkOn': True,
 }))
