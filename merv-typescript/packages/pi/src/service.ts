@@ -24,7 +24,6 @@ import {
   defaultTitle,
   hostMigration,
   machineInput,
-  messageChars,
   migration,
   nextInput,
   piConfig,
@@ -35,6 +34,7 @@ import {
 } from './schema.js';
 import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
+import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
 import { piModelToolName } from './tool-names.js';
@@ -46,6 +46,7 @@ import type {
   PiCompletion,
   PiConversation,
   PiConversationRecord,
+  PiEvent,
   PiHostRecord,
   PiHostView,
   PiInterruption,
@@ -64,7 +65,6 @@ import type {
   PiStage,
   PiStageName,
   PiSwitchMachineResult,
-  PiToolOutcome,
   PiTurnInput,
   PiWork,
 } from './types.js';
@@ -166,6 +166,12 @@ export class PiService implements Pi, FleetOwner {
       streamed?: { commandId: string; text: string };
     }
   >();
+  /** Memory only, like `live` (a restart ends every turn): when each claimed turn, keyed
+   * `conversationId:commandId`, last showed progress (its claim, a streamed word, a tool call),
+   * which turnTimeoutSeconds bounds; and authority reads trusted for a second, as the relay
+   * trusts a grant's: worker credentials, and turns /progress found their worker holding. */
+  private readonly progressAt = new Map<string, number>();
+  private readonly trusted = new Map<string, number>();
   /** Owner ids Fleet is admitting now: valid() accepts a slot before its host records it. */
   private readonly renting = new Set<string>();
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
@@ -481,7 +487,9 @@ export class PiService implements Pi, FleetOwner {
   async snapshot(caller: Caller, id: string): Promise<PiSnapshot> {
     this.ready();
     await this.authorizeStream(caller, id);
-    const transient = this.streams.snapshot(id);
+    // Read together, in one tick: the tail and the answer streamed up to its last event.
+    const { tail, ...transient } = this.streams.snapshot(id);
+    const streamed = this.live.get(id)?.streamed;
     const { conversation, commands, host, allocation, view } = await this.read(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const rows = await tx.all<{ data_json: string }>(
@@ -495,6 +503,9 @@ export class PiService implements Pi, FleetOwner {
     });
     await this.scope.require(caller, 'read');
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
+    // The tail keeps only recent events: the turn's answer so far comes whole, as one event.
+    const whole = streamed?.commandId === turn?.id ? streamed : undefined;
+    const text = (event: PiEvent) => event.type === 'text' && event.commandId === whole?.commandId;
     return {
       stage: this.stage(conversation, turn ?? null, host, allocation),
       now: this.time(),
@@ -503,6 +514,12 @@ export class PiService implements Pi, FleetOwner {
       commands: commands.map(publicCommand),
       host: view,
       ...transient,
+      tail: whole
+        ? [
+            ...tail.filter((event) => !text(event)),
+            { ...whole, type: 'text', sequence: tail.findLast(text)?.sequence ?? 0 },
+          ]
+        : tail,
     };
   }
   /** The conversation's live host and the allocation of the slot serving its new turns. */
@@ -719,7 +736,7 @@ export class PiService implements Pi, FleetOwner {
       conversation.source = await this.scope.delegationSource(caller, tx);
       const { host, queued } = await this.ensure(renter, conversation, conversation.source, tx);
       const slot = host.current!;
-      const expiry = this.turnEnd(slot, conversation.source, queued);
+      const expiry = this.turnEnd(slot, conversation.source, this.startMs(queued));
       check(expiry > this.clock(), 'pi_expired', 'Conversation source has expired', 403);
       const command: PiCommandRecord = {
         id: value.commandId,
@@ -881,13 +898,40 @@ export class PiService implements Pi, FleetOwner {
       this.renting.delete(id);
     }
   }
-  /** The earliest of the slot's deadline, the source's expiry and, unless queued, a full turn. */
-  private turnEnd(slot: PiSlot, source: DelegationSource, queued = false): number {
+  /** Reads `key`'s authority with `read`, unless that was done within the last second. */
+  private async trust(key: string, read: () => Promise<unknown>): Promise<void> {
+    const now = this.clock();
+    if ((this.trusted.get(key) ?? -Infinity) + 1000 > now) return;
+    await read();
+    for (const [other, at] of this.trusted) if (at + 1000 <= now) this.trusted.delete(other);
+    this.trusted.set(key, now);
+  }
+  /** A turn that ended: no progress is trusted or awaited any more. */
+  private forget({ conversationId, id }: PiCommandRecord): void {
+    const turn = `${conversationId}:${id}`;
+    this.progressAt.delete(turn);
+    for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
+  }
+  /** The earliest of the slot's deadline, the source's expiry and `span` from now: none while
+   * queued, turnTimeoutSeconds to reach the machine, and the ceiling once claimed. */
+  private turnEnd(slot: PiSlot, source: DelegationSource, span: number): number {
     return Math.min(
-      queued ? Infinity : this.clock() + this.config.turnTimeoutSeconds * 1000,
+      this.clock() + span,
       Date.parse(slot.expiresAt),
       source.kind === 'human' || !source.expiresAt ? Infinity : Date.parse(source.expiresAt),
     );
+  }
+  /** A turn's time to reach its machine; a queued one waits for capacity without a limit. */
+  private startMs(queued: boolean): number {
+    return queued ? Infinity : this.config.turnTimeoutSeconds * 1000;
+  }
+  /** A claimed turn that showed no progress for turnTimeoutSeconds. One claimed before this
+   * process started counts from its first check here. */
+  private stalled(turn: PiCommandRecord): boolean {
+    if (!turn.workerId) return false;
+    const key = `${turn.conversationId}:${turn.id}`;
+    if (!this.progressAt.has(key)) this.progressAt.set(key, this.clock());
+    return this.progressAt.get(key)! + this.config.turnTimeoutSeconds * 1000 <= this.clock();
   }
   private idleOver(host: PiHostRecord): boolean {
     return (
@@ -993,8 +1037,10 @@ export class PiService implements Pi, FleetOwner {
     );
     return owned;
   }
+  /** The check before a worker's request is read. Every route reads its authority again in its
+   * own transaction but /progress, which trusts a read for a second too. */
   async authenticateWorker(token: string): Promise<void> {
-    await this.read((tx) => this.worker(token, tx));
+    await this.trust(token, () => this.read((tx) => this.worker(token, tx)));
   }
 
   /** The worker's turn on its own slot. Unless ending it, the person must still read here: losing
@@ -1190,8 +1236,12 @@ export class PiService implements Pi, FleetOwner {
     const claim = await this.claim(tx, host, command, serving.machine);
     command.status = 'starting';
     command.workerId = value.workerId;
-    // Queueing and cold start spent the send-time budget; the model gets a full turn.
-    command.expiresAt = new Date(this.turnEnd(serving, claim.conversation.source)).toISOString();
+    // Queueing and cold start spent the send-time budget; from here only a stall ends the turn
+    // before its ceiling.
+    command.expiresAt = new Date(
+      this.turnEnd(serving, claim.conversation.source, turnCeilingMs),
+    ).toISOString();
+    this.progressAt.set(`${command.conversationId}:${command.id}`, this.clock());
     if (claim.offered) command.canMove = true;
     await this.saveCommand(tx, command);
     return { claim };
@@ -1251,6 +1301,7 @@ export class PiService implements Pi, FleetOwner {
       command.status = 'working';
       command.startedAt = this.time();
       await this.saveCommand(tx, command);
+      this.progressAt.set(`${command.conversationId}:${command.id}`, this.clock());
       return true;
     });
     if (!apply) this.announce();
@@ -1315,6 +1366,8 @@ export class PiService implements Pi, FleetOwner {
       'Conversation turn is not working',
       409,
     );
+    const key = `${conversation.id}:${command.id}`;
+    this.progressAt.set(key, this.clock());
     this.report(conversation.id, command.id, 'tool', phrases[value.name]);
     const result = await (
       value.name === 'machine.switch'
@@ -1327,7 +1380,10 @@ export class PiService implements Pi, FleetOwner {
           return { error: { code: error.code, message: error.message } };
         throw error;
       })
-      .finally(() => this.report(conversation.id, command.id, 'thinking'));
+      .finally(() => {
+        this.progressAt.set(key, this.clock());
+        this.report(conversation.id, command.id, 'thinking');
+      });
     const size = (part: unknown) => Buffer.byteLength(JSON.stringify(part ?? null));
     let bytes = size(result);
     if (bytes <= resultBytes) return result;
@@ -1405,27 +1461,33 @@ export class PiService implements Pi, FleetOwner {
         .strict(),
       input,
     );
-    const { conversation, command } = await this.read((tx) => this.bound(token, value, tx));
-    check(
-      command.status === 'working',
-      'pi_command_stale',
-      'Conversation turn is not working',
-      409,
-    );
+    const id = value.conversationId;
+    const turn = `${id}:${value.commandId}`;
+    // Words arrive several times a second: the turn's authority is read at most once a second.
+    await this.trust(`${turn} ${value.workerId} ${token}`, async () => {
+      const { command } = await this.read((tx) => this.bound(token, value, tx));
+      check(
+        command.status === 'working',
+        'pi_command_stale',
+        'Conversation turn is not working',
+        409,
+      );
+    });
+    if (value.events.length) this.progressAt.set(turn, this.clock());
     const text = value.events.some((event) => event.type === 'text');
     // When the answer began to show: one write per turn, never one per token.
-    if (text && !command.firstTextAt)
+    if (text && this.live.get(id)?.streamed?.commandId !== value.commandId)
       await this.state.transaction(async (tx) => {
         const current = (await this.bound(token, value, tx)).command;
         current.firstTextAt ??= this.time();
         await this.saveCommand(tx, current);
       });
     for (const event of value.events)
-      this.streams.publish(conversation.id, { ...event, commandId: command.id });
+      this.streams.publish(id, { ...event, commandId: value.commandId });
     if (text) {
       // The answer so far, as the page shows it: a turn that ends early keeps it (interrupt).
-      const live = this.live.get(conversation.id);
-      const kept = live?.streamed?.commandId === command.id ? live.streamed.text : '';
+      const live = this.live.get(id);
+      const kept = live?.streamed?.commandId === value.commandId ? live.streamed.text : '';
       const added = value.events.map((event) => (event.type === 'text' ? event.text : '')).join('');
       const joined = kept + added;
       // A cut inside a character would leave half of it, which Postgres refuses as JSON.
@@ -1433,8 +1495,8 @@ export class PiService implements Pi, FleetOwner {
         joined.length < messageChars
           ? joined
           : joined.slice(0, messageChars).replace(/[\uD800-\uDBFF]$/, '\uFFFD');
-      this.live.set(conversation.id, { ...live, streamed: { commandId: command.id, text } });
-      this.report(conversation.id, command.id, 'writing');
+      this.live.set(id, { ...live, streamed: { commandId: value.commandId, text } });
+      this.report(id, value.commandId, 'writing');
     }
     return { accepted: true };
   }
@@ -1460,18 +1522,12 @@ export class PiService implements Pi, FleetOwner {
       outcomes: value.outcomes,
       checkpointHash: value.checkpointHash,
     });
-    // Tool outputs are also in the checkpoint; keeping them must not fail a finished turn.
-    const fits = (outcomes: PiToolOutcome[]) =>
-      Buffer.byteLength(JSON.stringify({ messages: value.messages, outcomes })) <= 256_000;
-    const outcomes = fits(value.outcomes)
-      ? value.outcomes
-      : value.outcomes.map((outcome) => ({ ...outcome, output: { omitted: true } }));
-    check(
-      fits(outcomes),
-      'pi_result_too_large',
-      'Canonical conversation result exceeds its limit',
-      413,
-    );
+    // Tool outputs are also in the checkpoint; keeping them must not fail a finished turn. The
+    // answer is bounded only by messageChars.
+    const outcomes =
+      Buffer.byteLength(JSON.stringify(value.outcomes)) <= 256_000
+        ? value.outcomes
+        : value.outcomes.map((outcome) => ({ ...outcome, output: { omitted: true } }));
     // A replay after completion only has to match what was saved.
     const replayed = async (tx: Transaction) => {
       await this.worker(token, tx);
@@ -1576,6 +1632,7 @@ export class PiService implements Pi, FleetOwner {
       await this.quiet(tx, command.hostId);
       return first;
     });
+    this.forget(retained.command);
     this.announce(value.conversationId);
     if (first) void this.name(value.conversationId, retained.command.messages).catch(() => {});
     return { saved: true };
@@ -1605,6 +1662,7 @@ export class PiService implements Pi, FleetOwner {
     reason: PiInterruption,
   ): Promise<void> {
     if (!active.has(command.status)) return;
+    this.forget(command);
     const conversation = await this.conversation(tx, command.conversationId);
     // Words the person saw stream stay as the answer, unless the turn's own result is in.
     const streamed = this.live.get(conversation.id)?.streamed;
@@ -1895,7 +1953,7 @@ export class PiService implements Pi, FleetOwner {
     if (changed) turns = await this.turns(tx, host.id);
     for (const turn of turns) {
       const role = roleOf(host, turn.runtimeId);
-      if (turn.expiresAt <= now) {
+      if (turn.expiresAt <= now || this.stalled(turn)) {
         if (dry) return true;
         await this.interrupt(tx, turn, 'turn_expired');
         changed = true;
@@ -1998,7 +2056,7 @@ export class PiService implements Pi, FleetOwner {
     turn.epoch = slot.epoch;
     turn.machine = slot.machine;
     turn.status = queued ? 'waiting' : 'starting';
-    turn.expiresAt = new Date(this.turnEnd(slot, source, queued)).toISOString();
+    turn.expiresAt = new Date(this.turnEnd(slot, source, this.startMs(queued))).toISOString();
     await this.saveCommand(tx, turn);
     this.unsent.add(turn.conversationId);
   }

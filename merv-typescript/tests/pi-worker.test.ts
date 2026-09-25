@@ -85,12 +85,17 @@ async function fixture(
     toolFailures?: number[];
     toolResult?: unknown;
     progressFailures?: number[];
+    /** The answer's words, streamed 10 ms apart. */
+    paced?: string[];
   } = {},
 ) {
   const controller = new AbortController();
   const completions: PiCompletion[] = [];
   const modelRequests: Record<string, unknown>[] = [];
   const progress: unknown[] = [];
+  // When each progress request and the first paced word arrived.
+  const progressAt: number[] = [];
+  let firstWordAt = 0;
   const failures: string[] = [];
   let begun = 0;
   let issued = 0;
@@ -141,6 +146,48 @@ async function fixture(
         assert.ok(!JSON.stringify(body).includes('private-auth'));
         modelRequests.push(body);
         if (options.modelError) return json({ error: { message: 'private-auth' } }, 503);
+        if (options.paced) {
+          const words = options.paced;
+          const item = message(words.join(''));
+          const frame = (event: object) =>
+            new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(frame({ type: 'response.created', response: { id: 'resp_1' } }));
+              controller.enqueue(
+                frame({ type: 'response.output_item.added', output_index: 0, item }),
+              );
+              for (const delta of words) {
+                firstWordAt ||= Date.now();
+                controller.enqueue(
+                  frame({
+                    type: 'response.output_text.delta',
+                    output_index: 0,
+                    content_index: 0,
+                    delta,
+                  }),
+                );
+                await new Promise((resolve) => setTimeout(resolve, 10));
+              }
+              controller.enqueue(
+                frame({ type: 'response.output_item.done', output_index: 0, item }),
+              );
+              controller.enqueue(
+                frame({
+                  type: 'response.completed',
+                  response: {
+                    id: 'resp_1',
+                    status: 'completed',
+                    output: [item],
+                    usage: { input_tokens: 1, output_tokens: 1 },
+                  },
+                }),
+              );
+              controller.close();
+            },
+          });
+          return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        }
         if (options.cancel) {
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
@@ -223,6 +270,7 @@ async function fixture(
       }
       if (path === '/pi-worker/progress') {
         progress.push(body.events);
+        progressAt.push(Date.now());
         if (progressFailures.length) return unavailable(progressFailures.shift()!);
         if (options.slowProgress)
           return new Promise<Response>((_resolve, reject) => {
@@ -257,6 +305,10 @@ async function fixture(
     completions,
     modelRequests,
     progress,
+    progressAt,
+    get firstWordAt() {
+      return firstWordAt;
+    },
     failures,
     get begins() {
       return begun;
@@ -443,19 +495,17 @@ test('oversized tool output is cut to the turn budget before it reaches the rela
   }
 });
 
-test('an answer cut off at the output limit is delivered with a note', async () => {
+test('no output cap is sent; an answer the model itself stops for length says so', async () => {
+  const note =
+    'Finished\n\n[The model stopped here: this answer reached the longest it can write.]';
   const app = await fixture({ cutOff: true });
   await app.run();
   assert.deepEqual(app.failures, []);
-  assert.deepEqual(app.completions[0].messages, [
-    { role: 'assistant', text: 'Finished\n\n[Answer cut off at the response length limit.]' },
-  ]);
-  assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: note }]);
+  assert.equal(app.modelRequests[0].max_output_tokens, undefined);
   const toolCut = await fixture({ cutOff: true, toolCall: true });
   await toolCut.run();
-  assert.deepEqual(toolCut.completions[0].messages, [
-    { role: 'assistant', text: 'Finished\n\n[Answer cut off at the response length limit.]' },
-  ]);
+  assert.deepEqual(toolCut.completions[0].messages, [{ role: 'assistant', text: note }]);
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
@@ -507,15 +557,62 @@ test('a long conversation keeps full-size answers and forgets only its oldest ex
     await app.run();
     assert.deepEqual(app.failures, []);
     const sent = JSON.stringify(app.modelRequests[0].input);
-    assert.equal(app.modelRequests[0].max_output_tokens, 4096);
+    assert.equal(app.modelRequests[0].max_output_tokens, undefined);
     const oldest = turns - kept + 1;
     assert.ok(sent.includes(`Earlier ${oldest} `) && !sent.includes(`Earlier ${oldest - 1} `));
     const saved = decodeCheckpoint({
       content: app.completions[0].checkpoint,
       hash: app.completions[0].checkpointHash,
     });
-    assert.deepEqual(saved.entries[0], { ...entries[2 * (oldest - 1)], parentId: null });
+    // The checkpoint keeps what the next turn sends: with this turn added, as many exchanges
+    // as fit, the oldest of them first.
+    const from = Number(saved.entries[0].id.replace('user_', ''));
+    assert.ok(from >= oldest && from <= oldest + 2, `saved from ${from}`);
+    assert.deepEqual(saved.entries[0], { ...entries[2 * (from - 1)], parentId: null });
   }
+});
+
+test('a long earlier answer is history like any other, past the relay’s old 100,000 characters', async () => {
+  const at = new Date().toISOString();
+  const answer = `Start ${'y'.repeat(110_000)} end`;
+  const message = (id: string, parentId: string | null, value: object) => ({
+    type: 'message',
+    id,
+    parentId,
+    timestamp: at,
+    message: value,
+  });
+  const content = JSON.stringify({
+    version: 1,
+    header: { type: 'session', version: 3, id: 'session_long', cwd: '/pi-worker', timestamp: at },
+    entries: [
+      message('user_1', null, { role: 'user', content: 'Write at length', timestamp: 1 }),
+      message('answer_1', 'user_1', {
+        role: 'assistant',
+        content: [{ type: 'text', text: answer }],
+        api: 'openai-responses',
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        usage: {
+          input: 10,
+          output: 30_000,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 30_010,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: 'stop',
+        timestamp: 2,
+      }),
+    ],
+    leafId: 'answer_1',
+  });
+  // The fixture refuses any request the relay's schema would: the turn completing is the relay
+  // accepting it. One too long to send whole keeps its start and end (the relay protocol test).
+  const app = await fixture({ checkpoint: { content, hash: digest(content) } });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  assert.ok(JSON.stringify(app.modelRequests[0].input).includes(answer));
 });
 
 test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
@@ -606,13 +703,40 @@ test('slow progress delivery permits only one outstanding batch or heartbeat', a
   assert.equal(app.modelRequests.length, 1);
 });
 
+test('streamed words reach Main within about 100 ms, a few requests a second, all of them in order', async (t) => {
+  const words = Array.from({ length: 60 }, (_, index) => `w${index} `);
+  const app = await fixture({ paced: words });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const sent = (app.progress as { type: string; text: string }[][])
+    .map((events, index) => ({
+      at: app.progressAt[index],
+      text: events.map((e) => e.text).join(''),
+    }))
+    .filter(({ text }) => text);
+  assert.equal(sent.map(({ text }) => text).join(''), words.join(''));
+  // About 600 ms of words: coalesced, yet the first leaves promptly and none waits long.
+  assert.ok(sent.length >= 4 && sent.length <= 9, `${sent.length} requests`);
+  assert.ok(sent[0].at - app.firstWordAt < 200, `first after ${sent[0].at - app.firstWordAt} ms`);
+  for (let index = 1; index < sent.length - 1; index++)
+    assert.ok(sent[index].at - sent[index - 1].at >= 90, `request ${index} came too soon`);
+  t.diagnostic(
+    JSON.stringify({
+      words: words.length,
+      requests: sent.length,
+      firstMs: sent[0].at - app.firstWordAt,
+      gapsMs: sent.slice(1).map(({ at }, index) => at - sent[index].at),
+    }),
+  );
+});
+
 test('oversized worker responses cancel their streams', async () => {
   for (const declared of [false, true]) {
     const app = await fixture();
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array(declared ? 1 : 2_100_001));
+        controller.enqueue(new Uint8Array(declared ? 1 : 4_500_001));
       },
       cancel() {
         cancelled = true;
@@ -621,7 +745,7 @@ test('oversized worker responses cancel their streams', async () => {
     const fetchImpl: typeof fetch = async (_input, init) => {
       assert.equal(init?.redirect, 'error');
       return new Response(body, {
-        headers: declared ? { 'content-length': '2100001' } : {},
+        headers: declared ? { 'content-length': '4500001' } : {},
       });
     };
     await assert.rejects(runPiWorker(app.bootstrap, { fetchImpl }), /exceeds limit/);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { messageChars } from './limits.js';
 
 export const id = z
   .string()
@@ -34,8 +35,6 @@ export const nextInput = workerInput
   .strict();
 /** Per-turn routes name the conversation too: one worker serves many. */
 export const commandInput = workerInput.extend({ commandId: id, conversationId: id }).strict();
-/** A message's bound, which also holds an answer cut short. */
-export const messageChars = 128_000;
 export const message = z
   .object({ role: z.enum(['user', 'assistant']), text: z.string().max(messageChars) })
   .strict();
@@ -71,6 +70,8 @@ export const piConfig = z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .default('MERV_PI_MODEL_API_KEY'),
+    /** How long a turn may go without progress: to reach its machine, then between any two signs
+     * of work (its claim, a streamed word, a tool call). Its one ceiling is turnCeilingMs. */
     turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
     idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
     pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),

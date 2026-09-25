@@ -117,7 +117,7 @@ for (const upstreamStatus of [
   'burst',
   'revoked',
   'cancelled',
-  'oversize',
+  'long',
 ] as const)
   test(`pinned SDK worker and local Pi relay handle mock upstream ${upstreamStatus}`, async (context) => {
     const controller = new AbortController();
@@ -131,7 +131,9 @@ for (const upstreamStatus of [
       ...Array.from({ length: 160 }, (_, index) => `[${index}]`),
     ];
     const burstText = burstDeltas.join('');
-    const oversizeDeltas = Array.from({ length: 80 }, () => 'x'.repeat(8192));
+    // Far past the old 4096-token cap, 128,000-character message, 64-event buffer and 256 KiB
+    // relay frame; the next turn carries it as history.
+    const longDeltas = Array.from({ length: 80 }, (_, index) => `${index}`.padEnd(8192, 'x'));
     const grantExpiresAt = expiresAt();
     let toolInvocations = 0;
     const relay = new PiModelRelay({
@@ -172,8 +174,8 @@ for (const upstreamStatus of [
         return upstreamStatus !== 400
           ? upstreamStatus === 'burst'
             ? mockResponse(burstText, burstDeltas)
-            : upstreamStatus === 'oversize'
-              ? mockResponse(oversizeDeltas.join(''), oversizeDeltas)
+            : upstreamStatus === 'long' && forwarded.length === 1
+              ? mockResponse(longDeltas.join(''), longDeltas)
               : mockResponse('Offline fixture complete')
           : new Response(JSON.stringify({ error: { code: 'synthetic-rejection' } }), {
               status: upstreamStatus,
@@ -242,6 +244,7 @@ for (const upstreamStatus of [
       notes: [],
     };
     let nextCount = 0;
+    let followed = false;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = new URL(String(input));
       assert.equal(url.origin, baseUrl.slice(0, -1));
@@ -250,10 +253,32 @@ for (const upstreamStatus of [
       assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${workerToken}`);
       const json = (value: object) =>
         new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
-      if (url.pathname === '/pi-worker/next')
-        return json({ work: ++nextCount === 1 ? work : null });
+      if (url.pathname === '/pi-worker/next') {
+        // The long answer's conversation asks again, from the checkpoint its answer saved.
+        const again = upstreamStatus === 'long' && completions.length === 1 && !followed;
+        if (again) followed = true;
+        return json({
+          work:
+            ++nextCount === 1
+              ? work
+              : again
+                ? {
+                    ...work,
+                    command: {
+                      ...work.command,
+                      id: 'cmd_fixture_2',
+                      messages: [{ role: 'user', text: 'And briefly?' }],
+                    },
+                    checkpoint: {
+                      content: completions[0].checkpoint,
+                      hash: completions[0].checkpointHash,
+                    },
+                  }
+                : null,
+        });
+      }
       if (url.pathname === '/pi-worker/begin')
-        return json({ apply: body.commandId === 'cmd_fixture' });
+        return json({ apply: ['cmd_fixture', 'cmd_fixture_2'].includes(String(body.commandId)) });
       if (url.pathname === '/pi-worker/progress') {
         assert.ok((body.events as typeof progress).length <= 32);
         progress.push(...(body.events as typeof progress));
@@ -268,7 +293,7 @@ for (const upstreamStatus of [
       }
       if (url.pathname === '/pi-worker/complete') {
         completions.push(body as unknown as PiCompletion);
-        controller.abort();
+        if (upstreamStatus !== 'long' || completions.length === 2) controller.abort();
         return json({ saved: true });
       }
       if (url.pathname === '/pi-worker/fail') {
@@ -279,49 +304,45 @@ for (const upstreamStatus of [
       throw Error('Unexpected outbound request');
     };
     await runPiWorker(bootstrap, { signal: controller.signal, fetchImpl, pollIntervalMs: 250 });
-    assert.deepEqual(
-      failures,
-      upstreamStatus === 400 ||
-        upstreamStatus === 'revoked' ||
-        upstreamStatus === 'oversize' ||
-        upstreamStatus === 'cancelled'
-        ? ['cmd_fixture']
-        : [],
-    );
+    const failed =
+      upstreamStatus === 400 || upstreamStatus === 'revoked' || upstreamStatus === 'cancelled';
+    assert.deepEqual(failures, failed ? ['cmd_fixture'] : []);
     assert.equal(
       forwarded.length,
-      upstreamStatus === 'reasoning' ? 3 : upstreamStatus === 'tool' ? 2 : 1,
+      upstreamStatus === 'reasoning'
+        ? 3
+        : upstreamStatus === 'tool' || upstreamStatus === 'long'
+          ? 2
+          : 1,
     );
     assert.equal(forwarded[0]?.model, 'gpt-6-luna');
-    assert.equal(forwarded[0]?.max_output_tokens, 4096);
+    // No cap is sent: the model's own maximum ends an answer.
+    assert.equal(forwarded[0]?.max_output_tokens, undefined);
     assert.deepEqual(forwarded[0]?.reasoning, { effort: 'none' });
-    assert.equal(
-      completions.length,
-      upstreamStatus === 400 ||
-        upstreamStatus === 'revoked' ||
-        upstreamStatus === 'oversize' ||
-        upstreamStatus === 'cancelled'
-        ? 0
-        : 1,
-    );
-    if (
-      upstreamStatus !== 400 &&
-      upstreamStatus !== 'revoked' &&
-      upstreamStatus !== 'oversize' &&
-      upstreamStatus !== 'cancelled'
-    )
-      assert.equal(
-        completions[0]?.messages[0]?.text,
-        upstreamStatus === 'burst' ? burstText : 'Offline fixture complete',
-      );
-    if (upstreamStatus === 'burst')
+    assert.equal(completions.length, failed ? 0 : upstreamStatus === 'long' ? 2 : 1);
+    const expected =
+      upstreamStatus === 'burst'
+        ? burstText
+        : upstreamStatus === 'long'
+          ? longDeltas.join('')
+          : 'Offline fixture complete';
+    if (!failed) assert.equal(completions[0]?.messages[0]?.text, expected);
+    if (upstreamStatus === 'burst' || upstreamStatus === 'long')
       assert.equal(
         progress
           .filter((event) => event.type === 'text')
           .map((event) => event.text)
           .join(''),
-        burstText,
+        expected + (upstreamStatus === 'long' ? 'Offline fixture complete' : ''),
       );
+    if (upstreamStatus === 'long') {
+      // The next turn sends the long answer back, its start and end, and the relay accepts it.
+      const history = JSON.stringify(piResponsesSchema.parse(forwarded[1]).input);
+      assert.match(history, /"0x{8191}1x/);
+      assert.match(history, /characters left out/);
+      assert.match(history, /79x+"/);
+      assert.equal(completions[1]?.messages[0]?.text, 'Offline fixture complete');
+    }
     if (upstreamStatus === 'revoked' || upstreamStatus === 'cancelled')
       assert.ok(progress.length > 0);
     assert.ok(progress.every((event) => event.text.length <= 8192));

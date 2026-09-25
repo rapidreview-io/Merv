@@ -217,12 +217,19 @@ test('replayed history keeps undeclared tool calls and forwards known reasoning 
     { type: 'function_call', call_id: 'call_1', name: 'task.get', arguments: '{}' },
     { type: 'function_call_output', call_id: 'call_1', output: 'Tool task.get not found' },
   ];
-  assert.equal((await send(f, { ...request, input })).status, 200);
-  assert.deepEqual(JSON.parse(String(f.upstreamCalls[0]!.init.body)).input, [
+  const replayed = await send(f, { ...request, input });
+  assert.equal(replayed.status, 200);
+  await replayed.text();
+  const forwarded = JSON.parse(String(f.upstreamCalls[0]!.init.body));
+  assert.deepEqual(forwarded.input, [
     ...request.input,
     { ...reasoning, summary },
     ...input.slice(2),
   ]);
+  // No output cap is added, and a worker's own is passed on, whatever its size.
+  assert.equal(forwarded.max_output_tokens, undefined);
+  assert.equal((await send(f, { ...request, max_output_tokens: 128_000 })).status, 200);
+  assert.equal(JSON.parse(String(f.upstreamCalls[1]!.init.body)).max_output_tokens, 128_000);
 });
 
 test('denies alternate routes, origins, tokens, unsafe payload fields and tools', async (t) => {
@@ -274,7 +281,6 @@ test('denies alternate routes, origins, tokens, unsafe payload fields and tools'
     { previous_response_id: 'resp_1' },
     { background: true },
     { conversation: 'conv_1' },
-    { max_output_tokens: 4097 },
     {
       input: [
         { role: 'user', content: [{ type: 'input_image', image_url: 'https://evil.example' }] },

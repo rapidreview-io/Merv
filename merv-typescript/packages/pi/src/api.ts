@@ -17,6 +17,10 @@ function json(res: ServerResponse, status: number, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 
+/** A completion carries an answer of up to messageChars (at most six bytes each as JSON) and its
+ * checkpoint (2 MB). */
+const bodyBytes = 16_000_000;
+
 async function body(req: IncomingMessage): Promise<unknown> {
   check(
     !req.destroyed && req.headers['content-type']?.split(';')[0].trim() === 'application/json',
@@ -25,7 +29,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
     415,
   );
   check(
-    Number(req.headers['content-length'] ?? 0) <= 3_000_000,
+    Number(req.headers['content-length'] ?? 0) <= bodyBytes,
     'pi_body_too_large',
     'Request exceeds its limit',
     413,
@@ -37,7 +41,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
   try {
     for await (const chunk of req.iterator({ destroyOnReturn: false })) {
       size += chunk.length;
-      check(size <= 3_000_000, 'pi_body_too_large', 'Request exceeds its limit', 413);
+      check(size <= bodyBytes, 'pi_body_too_large', 'Request exceeds its limit', 413);
       chunks.push(chunk);
     }
     const bytes = Buffer.concat(chunks);
@@ -119,6 +123,8 @@ export class PiHttp implements PiApiProvider {
       finish = resolve;
     });
     let sequence = -1;
+    // A page's authority is read at most once a second, however often words arrive.
+    let authorized = Date.now();
     let running: Promise<void> | undefined;
     let dirty = false;
     let stopped = false;
@@ -152,7 +158,10 @@ export class PiHttp implements PiApiProvider {
       running = (async () => {
         while (dirty && !stopped) {
           dirty = false;
-          await this.pi.authorizeStream(caller, id);
+          if (Date.now() - authorized >= 1000) {
+            await this.pi.authorizeStream(caller, id);
+            authorized = Date.now();
+          }
           const tail = this.pi.streams.snapshot(id);
           const events = tail.tail.filter((event) => event.sequence > sequence);
           if (
@@ -228,7 +237,6 @@ export const piApiPlugin = {
         authorize: (token) => ctx.pi.authorizeModel(token),
         validate: (grant) => ctx.pi.validateModel(grant),
       },
-      totalTimeoutMs: ctx.pi.config.turnTimeoutSeconds * 1000,
       onFailure: (record) => {
         process.stderr.write(`${JSON.stringify(record)}\n`);
       },

@@ -2,7 +2,13 @@ import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { MountHandler } from '@merv/api/types';
 import type { PiRelayGrant } from './types.js';
-import { piRelayGrantSchema, piResponsesSchema, validPiPayload } from './relay-schema.js';
+import { turnCeilingMs } from './limits.js';
+import {
+  piRelayGrantSchema,
+  piResponsesSchema,
+  relayRequestBytes,
+  validPiPayload,
+} from './relay-schema.js';
 
 export type { PiRelayGrant } from './types.js';
 
@@ -41,7 +47,6 @@ export interface PiRelayConfig {
   fetchImpl?: typeof fetch;
   maxRequestBytes?: number;
   maxResponseBytes?: number;
-  maxOutputTokens?: number;
   totalTimeoutMs?: number;
   idleTimeoutMs?: number;
   maxConcurrent?: number;
@@ -142,7 +147,6 @@ export class PiModelRelay {
       PiRelayConfig,
       | 'maxRequestBytes'
       | 'maxResponseBytes'
-      | 'maxOutputTokens'
       | 'totalTimeoutMs'
       | 'idleTimeoutMs'
       | 'maxConcurrent'
@@ -159,11 +163,13 @@ export class PiModelRelay {
   constructor(private readonly config: PiRelayConfig) {
     if (!config.model || typeof config.providerKey !== 'function')
       throw new Error('Pi relay requires a model and provider key source');
+    // No output cap is added: the model's own maximum ends an answer. A maximal answer streams
+    // about 40 MB of events, and ends with frames that each repeat its whole text; a call that
+    // falls silent for idleTimeoutMs ends at once.
     this.options = {
-      maxRequestBytes: limit(config.maxRequestBytes, 512 * 1024),
-      maxResponseBytes: limit(config.maxResponseBytes, 8 * 1024 * 1024),
-      maxOutputTokens: limit(config.maxOutputTokens, 4096, 16),
-      totalTimeoutMs: limit(config.totalTimeoutMs, 120_000),
+      maxRequestBytes: limit(config.maxRequestBytes, relayRequestBytes),
+      maxResponseBytes: limit(config.maxResponseBytes, 256 * 1024 * 1024),
+      totalTimeoutMs: limit(config.totalTimeoutMs, turnCeilingMs),
       idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
       maxConcurrent: limit(config.maxConcurrent, 200),
       maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 32),
@@ -256,12 +262,7 @@ export class PiModelRelay {
       const parsed = piResponsesSchema.safeParse(raw);
       if (!parsed.success) throw new RelayFailure(400, 'invalid_payload');
       const request = parsed.data;
-      if (
-        request.model !== this.config.model ||
-        (request.max_output_tokens ?? this.options.maxOutputTokens) >
-          this.options.maxOutputTokens ||
-        !validPiPayload(request, grant.toolNames)
-      )
+      if (request.model !== this.config.model || !validPiPayload(request, grant.toolNames))
         reject(400, 'invalid_payload');
       phase = 'upstream';
       const key = await interruptible(
@@ -284,17 +285,13 @@ export class PiModelRelay {
         expiry: Date.parse(grant.expiresAt),
         binding,
       });
-      const payload = {
-        ...request,
-        max_output_tokens: request.max_output_tokens ?? this.options.maxOutputTokens,
-      };
       const upstream = await interruptible(
         (this.config.fetchImpl ?? fetch)(responsesUrl, {
           method: 'POST',
           redirect: 'error',
           signal,
           headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(request),
         }),
         signal,
       );
@@ -326,39 +323,47 @@ export class PiModelRelay {
         void validate().catch(() => abort(403, 'grant_forbidden'));
       }, 1000);
       let bytes = 0;
-      let pending = Buffer.alloc(0);
+      // A frame ends at a blank line. Each byte is searched once, as the last frames of a long
+      // answer each repeat its whole text: only a frame's own bytes are held, and at most 3 of
+      // them searched again.
+      let held: Buffer[] = [];
+      let heldBytes = 0;
+      let tail = '';
       while (true) {
         const next = await interruptible(reader.read(), signal);
         if (next.done) break;
         bytes += next.value.byteLength;
         if (bytes > this.options.maxResponseBytes) reject(502, 'response_too_large');
-        for (let offset = 0; offset < next.value.byteLength; offset += 64 * 1024) {
-          pending = Buffer.concat([pending, next.value.subarray(offset, offset + 64 * 1024)]);
-          while (true) {
-            const boundary = /\r?\n\r?\n/.exec(pending.toString('latin1'));
-            if (!boundary) break;
-            const end = boundary.index + boundary[0].length;
-            const frame = pending.subarray(0, end);
-            pending = pending.subarray(end);
-            const content = frame.toString('utf8');
-            const data = content
-              .split(/\r?\n/)
-              .filter((line) => line.startsWith('data:'))
-              .map((line) => line.slice(5).trimStart())
-              .join('\n');
-            if (
-              /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
-              /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
-            )
-              reject(502, 'upstream_failed');
-            await validate(true);
-            startStream();
-            await writeChunk(res, frame, signal);
-            resetIdle();
-          }
-          if (pending.byteLength > Math.min(this.options.maxResponseBytes, 256 * 1024))
-            reject(502, 'response_too_large');
+        const chunk = Buffer.from(next.value.buffer, next.value.byteOffset, next.value.byteLength);
+        const window = tail + chunk.toString('latin1');
+        const boundary = /\r?\n\r?\n/g;
+        let from = 0;
+        for (let found; (found = boundary.exec(window));) {
+          const end = found.index + found[0].length - tail.length;
+          const frame = Buffer.concat([...held, chunk.subarray(from, end)]);
+          [held, heldBytes, from] = [[], 0, end];
+          const content = frame.toString('utf8');
+          const data = content
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n');
+          if (
+            /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
+            /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
+          )
+            reject(502, 'upstream_failed');
+          await validate(true);
+          startStream();
+          await writeChunk(res, frame, signal);
+          resetIdle();
         }
+        held.push(chunk.subarray(from));
+        heldBytes += chunk.byteLength - from;
+        tail = window.slice(Math.max(from && tail.length + from, window.length - 3));
+        // A frame may repeat a whole answer (messageChars, escaped).
+        if (heldBytes > Math.min(this.options.maxResponseBytes, 16 * 1024 * 1024))
+          reject(502, 'response_too_large');
       }
       if (!signal.aborted) {
         startStream();
