@@ -653,7 +653,7 @@ const turn = (input: unknown, output: unknown) =>
 const tool = '{"type":"item.completed","item":{"type":"agent_message","text":"turn.completed"}}';
 const stream = (...lines: string[]) => lines.join('\n') + '\n';
 
-test('Codex usage is each thread’s last turn.completed, whatever else the stream holds', () => {
+test('Codex usage is the last turn.completed, whatever else the stream holds', () => {
   const real = stream(started, '{"type":"turn.started"}', tool, 'not JSON', turn(833294, 5454));
   assert.deepEqual(harnessUsage(codex, real), { inputTokens: 833294, outputTokens: 5454 });
   assert.deepEqual(harnessUsage({ ...codex, model: 'gpt-6-sol' }, real), {
@@ -661,19 +661,14 @@ test('Codex usage is each thread’s last turn.completed, whatever else the stre
     outputTokens: 5454,
     model: 'gpt-6-sol',
   });
-  // A thread's usage is its running total, so a later turn replaces it; threads add up.
+  // The thread's usage is its running total, so a later turn replaces it.
   assert.deepEqual(harnessUsage(codex, stream(started, turn(10, 1), turn(30, 4))), {
     inputTokens: 30,
     outputTokens: 4,
   });
-  const other = '{"type":"thread.started","thread_id":"second"}';
-  assert.deepEqual(harnessUsage(codex, stream(started, turn(30, 4), other, turn(5, 2))), {
-    inputTokens: 35,
-    outputTokens: 6,
-  });
   // A crash mid-run keeps what was seen: a torn last line adds nothing.
   const torn = turn(99, 9).slice(0, 40);
-  assert.deepEqual(harnessUsage(codex, stream(started, turn(30, 4), other) + torn), {
+  assert.deepEqual(harnessUsage(codex, stream(started, turn(30, 4)) + '\n' + torn), {
     inputTokens: 30,
     outputTokens: 4,
   });

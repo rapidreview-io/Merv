@@ -480,39 +480,31 @@ export const handoffGraceMs = (profile: RunnerProfile) =>
 
 /**
  * What a launch spent, read from its own output when the harness prints it there. `codex exec
- * --json` ends its one turn with `turn.completed`, whose usage is the thread's running total
- * (`input_tokens` includes cached input): a thread's last one counts and threads add up. A line
- * that is not JSON or an event of another shape adds nothing, and a stream cut off before any
- * turn completed reports nothing, because Codex prints no usage before a turn ends. The runner
- * checks the result against the report's closed shape, as it does a usage file.
+ * --json` runs one thread and ends each turn with `turn.completed`, whose usage is the thread's
+ * running total (`input_tokens` includes cached input), so the last one counts. A stream cut off
+ * before any turn completed reports nothing, because Codex prints no usage before a turn ends.
+ * The runner checks the result against the report's closed shape, as it does a usage file.
  */
 export function harnessUsage(
   profile: RunnerProfile,
   output: string,
 ): SessionUsageReport | undefined {
   if (profile.harness !== 'codex') return;
-  const threads = new Map<unknown, number[]>();
-  let thread: unknown;
-  for (const line of output.split('\n')) {
-    if (!/"(thread\.started|turn\.completed)"/.test(line)) continue;
+  let usage: SessionUsageReport | undefined;
+  for (const line of output.split('\n').filter((line) => line.includes('"turn.completed"'))) {
     try {
       const event = JSON.parse(line);
-      if (event.type === 'thread.started') thread = event.thread_id;
-      const { input_tokens, output_tokens } = event.type === 'turn.completed' ? event.usage : {};
-      const usage = [input_tokens, output_tokens];
-      if (usage.every((count) => Number.isSafeInteger(count) && count >= 0))
-        threads.set(thread, usage);
+      const { input_tokens: inputTokens, output_tokens: outputTokens } = event.usage;
+      if (
+        event.type === 'turn.completed' &&
+        [inputTokens, outputTokens].every((count) => Number.isSafeInteger(count) && count >= 0)
+      )
+        usage = { inputTokens, outputTokens, ...(profile.model && { model: profile.model }) };
     } catch {
       // Not an event this reads.
     }
   }
-  if (!threads.size) return;
-  const sum = (index: number) => [...threads.values()].reduce((total, u) => total + u[index], 0);
-  return {
-    inputTokens: sum(0),
-    outputTokens: sum(1),
-    ...(profile.model && { model: profile.model }),
-  };
+  return usage;
 }
 
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
