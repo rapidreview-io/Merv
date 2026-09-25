@@ -269,7 +269,7 @@ interface SubjectTask {
 }
 
 /** The record read straight down: what was asked, what was found, what was decided. */
-function ReviewDetail() {
+export function ReviewDetail() {
   const { id = '' } = useParams();
   const review = useTool<Review>('review.get', { reviewId: id }, { every: 8000 });
   const nameOf = useActorNames();
@@ -511,7 +511,7 @@ function Controls({
       <Desk
         review={review}
         action={submit}
-        state={guidance.data.state}
+        routes={ROUTES[guidance.data.workflow]?.[guidance.data.state] ?? []}
         values={values}
         onDone={onDone}
       />
@@ -538,15 +538,24 @@ function Controls({
 /**
  * Return routes are the one part of a verdict no schema enumerates: review.submit
  * accepts any identifier and the owning domain decides. These are the destinations
- * each gate documents in packages/experiments/src/program.ts; a task review takes
- * none at all, so its choice never appears.
+ * each gate documents in packages/experiments/src/program.ts and accepts in
+ * packages/reflections/src/index.ts; a task review takes none at all, so its choice
+ * never appears.
  */
-const ROUTES: Record<string, { value: string; label: string }[]> = {
-  design_review: [{ value: 'planned', label: 'Planning, for a new design' }],
-  experiment_review: [
-    { value: 'planned', label: 'Planning, for a new design and attempt' },
-    { value: 'running', label: 'Running, to repair under the approved plan' },
-  ],
+const ROUTES: Record<string, Record<string, { value: string; label: string }[]>> = {
+  experiment: {
+    design_review: [{ value: 'planned', label: 'Planning, for a new design' }],
+    experiment_review: [
+      { value: 'planned', label: 'Planning, for a new design and attempt' },
+      { value: 'running', label: 'Running, to repair under the approved plan' },
+    ],
+  },
+  reflection: {
+    in_review: [
+      { value: 'synthesizing', label: 'Synthesis, for a revised report' },
+      { value: 'reflecting', label: 'Lenses, for five new reports' },
+    ],
+  },
 };
 
 /** The longest synopsis review.submit takes. */
@@ -556,17 +565,16 @@ const SYNOPSIS_MAX = 420;
 function Desk({
   review,
   action,
-  state,
+  routes,
   values,
   onDone,
 }: {
   review: Review;
   action: WorkflowActionStatus;
-  state: string;
+  routes: { value: string; label: string }[];
   values: Record<number, Draft>;
   onDone(): void;
 }) {
-  const routes = ROUTES[state] ?? [];
   const [synopsis, setSynopsis] = useState('');
   const [verdict, setVerdict] = useState<Verdict>();
   const [returnTo, setReturnTo] = useState(routes.length === 1 ? routes[0].value : '');
