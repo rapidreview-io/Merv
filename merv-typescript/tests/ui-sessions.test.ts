@@ -342,6 +342,32 @@ test('a dispatch toggle that changed nothing says so instead of flipping its lab
   assert.ok(text().includes('Dispatch was already on.'), text().slice(0, 600));
 });
 
+test('Fleet or own machines is chosen only where Fleet serves, by an admin, and sends only itself', async (t) => {
+  t.after(unmount);
+  const dispatch = { ...status().dispatch, ownMachines: false, fleet: true };
+  const machines = () => document.querySelector('[aria-label="Machines"]');
+  for (const over of [
+    { dispatch: { ...dispatch, fleet: false } },
+    { canManage: false, dispatch },
+  ]) {
+    serve('/tools/ui.read', () => read(over));
+    await mount(page());
+    assert.equal(machines(), null, JSON.stringify(over));
+    await unmount();
+  }
+  let sent: unknown;
+  serve('/tools/ui.read', () => read({ dispatch }));
+  serve('/sessions/dispatch', (_call, body) => {
+    sent = body;
+    return { body: { dispatch: { ...dispatch, ownMachines: true, updatedBy: 'actor_other' } } };
+  });
+  await mount(page());
+  assert.equal(machines()?.querySelector('[aria-pressed="true"]')?.textContent, 'Fleet');
+  await click('Own machines');
+  assert.deepEqual(sent, { ownMachines: true });
+  assert.ok(!text().includes('already'), text().slice(0, 600));
+});
+
 test('halt-all names every live lease under the click, past this read’s window', async (t) => {
   t.after(unmount);
   serve('/tools/ui.read', () => read({ liveSessionCount: 240, sessionTotal: 400 }));

@@ -27,7 +27,7 @@ import {
   type KVRow,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
-import { ListPage, useListFilter } from '../list-filters';
+import { ListPage, Segments, useListFilter } from '../list-filters';
 import { ThreeStates } from '../states';
 import {
   clock,
@@ -254,7 +254,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     idempotent: true,
     onSuccess: (result) => {
       setAlready(
-        result.dispatch.updatedBy === me
+        result.dispatch.updatedBy === me || result.dispatch.enabled === status?.dispatch.enabled
           ? undefined
           : `Dispatch was already ${result.dispatch.enabled ? 'on' : 'off'}.`,
       );
@@ -367,6 +367,17 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                   {status.dispatch.updatedBy === me && 'you · '}
                   <Ago at={status.dispatch.updatedAt} />
                 </span>
+              )}
+              {status.canManage && status.dispatch.fleet && (
+                <Segments<'fleet' | 'own'>
+                  label="Machines"
+                  options={[
+                    { value: 'fleet', label: 'Fleet' },
+                    { value: 'own', label: 'Own machines' },
+                  ]}
+                  value={status.dispatch.ownMachines ? 'own' : 'fleet'}
+                  onChange={(value) => void dispatch.submit({ ownMachines: value === 'own' })}
+                />
               )}
               {/* One control, and it says the state it will set: starting is the page's
                   one primary, and pausing what runs is never dressed as an invitation. */}
