@@ -1,7 +1,7 @@
-/** Fixed one-assignment supervisor. Bootstrap carries expiring enrollment only. */
-import { createHash, randomBytes } from 'node:crypto';
+/** Fixed one-assignment supervisor. Bootstrap carries expiring enrollment only; Codex calls the
+ *  model through Main's relay with its session bearer, so no provider key reaches the machine. */
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { MachineRunner } from '@merv/runner';
@@ -12,7 +12,6 @@ const schema = z
     baseUrl: z.string().url(),
     projectId: z.string().min(1),
     enrollmentToken: z.string().regex(/^me_[0-9a-f]{64}$/),
-    modelApiKey: z.string().min(16),
   })
   .strict();
 const directory = '/var/lib/merv-runner';
@@ -39,18 +38,6 @@ async function main() {
   }
   delete process.env.MERV_BOOTSTRAP_FILE;
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const loginDirectory = `${assignmentRoot}/${createHash('sha256').update('model-login').digest('hex')}`;
-  mkdirSync(loginDirectory, { mode: 0o700 });
-  // The model key goes only to Codex login on stdin; the Merv credential does not.
-  const login = spawnSync(launcher, ['--', codex, 'login', '--with-api-key'], {
-    cwd: loginDirectory,
-    input: data.modelApiKey + '\n',
-    timeout: 30_000,
-    env: { PATH: '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8' },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  data.modelApiKey = '';
-  if (login.error || login.status !== 0) throw new Error('model login failed');
   // Enrollment can precede Fleet observing the protected launch receipt. Retry the
   // same token briefly; never fall back to an ordinary project credential.
   let controlToken = '';
@@ -95,6 +82,7 @@ async function main() {
           harness: 'codex',
           executable: codex,
           isolatedLauncher: launcher,
+          hosted: true,
           model: 'gpt-6-luna',
           enabled: true,
           parallelism: 1,

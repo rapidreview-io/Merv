@@ -90,11 +90,11 @@ Password login works through the same Supabase project. OAuth through this tunne
 For optional read-only Pi, see [Pi operations](PI_OPERATIONS.md) for scoped service
 credential rotation, verified human access, release gates and current safeguards.
 
-When enabling Pi behind a site-wide Caddy `encode` directive, exclude `/pi/*/events` and `/pi-model/responses` from compression. The live pilot reproduced gzip buffering until SSE connection close, despite immediate uncompressed upstream events. Replace only that site's encoding directive with the following [request-matched encoding configuration](https://caddyserver.com/docs/caddyfile/directives/encode), preserving its existing upstream, authentication and other hosts:
+When enabling Pi or the Fleet workflow behind a site-wide Caddy `encode` directive, exclude `/pi/*/events`, `/pi-model/responses` and `/codex-model/responses` from compression. The live pilot reproduced gzip buffering until SSE connection close, despite immediate uncompressed upstream events. Replace only that site's encoding directive with the following [request-matched encoding configuration](https://caddyserver.com/docs/caddyfile/directives/encode), preserving its existing upstream, authentication and other hosts:
 
 ```caddyfile
 @pi_compressible {
-    not path /pi/*/events /pi-model/responses
+    not path /pi/*/events /pi-model/responses /codex-model/responses
 }
 encode @pi_compressible zstd gzip
 ```

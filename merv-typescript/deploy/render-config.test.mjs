@@ -259,12 +259,14 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
     maxAgents: 1,
+    dailyTokensPerPerson: 5_000_000,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.WORKFLOW_SOURCE));
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
   assert.equal(run({ ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '2' }).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.equal(config.plugins.find((p) => p.id === 'fleet-workflow').config.maxAgents, 2);
+  assert.notEqual(run({ ...workflow, MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON: '0' }).status, 0);
   for (const broken of [
     { MERV_FLEET_ENABLED: 'true' },
     { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },

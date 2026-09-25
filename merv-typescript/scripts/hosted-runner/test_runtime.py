@@ -95,7 +95,7 @@ class DispatchTests(unittest.TestCase):
             filename = Path(directory) / 'bootstrap-workflow'
             filename.write_text(json.dumps({
                 'baseUrl': 'https://api.example.test/', 'projectId': 'test',
-                'enrollmentToken': 'private', 'modelApiKey': 'private',
+                'enrollmentToken': 'private',
             }))
             raw = bytearray(filename.read_bytes())
             with patch.object(runtime, '_root_linux'), patch.object(runtime, 'read_bootstrap', return_value=(filename, raw)):

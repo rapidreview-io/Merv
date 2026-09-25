@@ -22,8 +22,11 @@ COPY --chmod=0644 smoke-supervisor.mjs supervisor.mjs /opt/merv/runner/
 COPY --chmod=0644 isolation_probe.py /opt/merv/runtime/
 COPY --chmod=0755 start-runtime.py assignment-probed.py boot /opt/merv/runtime/
 COPY --chmod=0755 start /opt/merv/runtime/start-runner
-RUN mkdir -p /opt/merv/bin \
- && printf '#!/bin/sh\nexec /usr/local/bin/node /opt/codex/node_modules/@openai/codex/bin/codex.js "$@"\n' > /opt/merv/bin/codex \
+# Codex's own Node launcher would stay alive beside Codex with the session bearer in a readable
+# environment; this wrapper execs the one vendored native binary with the variables it sets.
+RUN native="$(find /opt/codex/node_modules -path '*/vendor/*/bin/codex' -type f)" && test -x "$native" \
+ && mkdir -p /opt/merv/bin \
+ && printf '#!/bin/sh\nexport CODEX_MANAGED_PACKAGE_ROOT=/opt/codex/node_modules/@openai/codex CODEX_MANAGED_BY_NPM=1\nexec %s "$@"\n' "$native" > /opt/merv/bin/codex \
  && chmod 0755 /opt/merv/bin/codex
 COPY --chmod=0644 pi/worker-main.mjs pi/package.json /opt/merv/pi/
 # Node keys its compile cache by UID, so the worker's identity fills it once and root then seals it.

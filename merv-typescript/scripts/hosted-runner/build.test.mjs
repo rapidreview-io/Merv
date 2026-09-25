@@ -81,6 +81,9 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     );
     assert.match(dockerfile, /chown -R 0:0 \/opt\/merv\/pi\/compile-cache/);
     assert.match(dockerfile, /^ENTRYPOINT \["\/opt\/merv\/runtime\/boot"\]$/m);
+    // Codex runs as its one native binary: no Node launcher holds the session bearer beside it.
+    assert.match(dockerfile, /-path '\*\/vendor\/\*\/bin\/codex'.*\n.*\n.*exec %s "\$@"/);
+    assert.doesNotMatch(dockerfile, /codex\.js/);
     assert.match(
       dockerfile,
       /^FROM \$\{SANDBOX_IMAGE\}\n(#.*\n)*RUN test -x \/usr\/local\/bin\/sandboxes-agent /m,

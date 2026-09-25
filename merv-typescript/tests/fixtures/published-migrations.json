@@ -8,6 +8,12 @@
       "published": true
     },
     {
+      "component": "fleet_workflow",
+      "version": 1,
+      "hash": "7f5b75f5e21b67ed85946c51632cf2a0b301f5509471470d80ec92f59d858679",
+      "published": false
+    },
+    {
       "component": "pi",
       "version": 1,
       "hash": "bb4a74f2353cce89e52d3b26fc0cdc9f05b4861f74838413fb99d025b8e6a62e",

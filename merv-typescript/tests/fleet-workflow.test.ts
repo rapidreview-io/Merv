@@ -269,9 +269,9 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     baseUrl: 'https://merv.example.test',
     projectId: f.caller.projectId,
     enrollmentToken: `me_${'a'.repeat(64)}`,
-    modelApiKey: f.modelApiKey,
   });
-  assert.equal(first.includes(f.sourceToken), false);
+  // The provider key stays on Main: hosted Codex reaches the model through its relay.
+  assert.equal(first.includes(f.sourceToken) || first.includes(f.modelApiKey), false);
   assert.deepEqual(f.ensureInputs[0], {
     allocationId: allocation.id,
     epoch: 1,
@@ -646,8 +646,7 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       const bytes = bootstraps.get(current.runtime!.sandboxId)!;
       const bootstrap = JSON.parse(bytes);
       assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
-      assert.equal(bootstrap.modelApiKey, 'test-model-key');
-      assert.equal(bytes.includes(boot.token), false);
+      assert.equal(bytes.includes('test-model-key') || bytes.includes(boot.token), false);
       const unclaimed = await sessions.inspectManaged(allocation.id, allocation.epoch);
       assert.equal(unclaimed?.runnerId, null);
       assert.equal(unclaimed?.session, null);

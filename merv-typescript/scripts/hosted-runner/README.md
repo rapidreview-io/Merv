@@ -3,7 +3,9 @@
 This explicit acceptance harness runs the isolated Runner and pinned Codex CLI
 inside a local Docker container. It creates a synthetic project in a disposable
 PostgreSQL schema, asks `gpt-6-luna` to submit evidence for one task, verifies one
-session and a review handoff, and removes its container in `finally`.
+session and a review handoff, and removes its container in `finally`. Codex in the
+container calls the model through the `/codex-model` relay this process serves, so
+the key never enters the container.
 
 Build the sandbox image from the isolated Sandboxes checkout, then build the
 payload and overlay from the `merv-typescript` directory:
@@ -69,8 +71,12 @@ probe must have zero effective, permitted, inheritable, bounding and ambient
 capabilities. The Pi probe checks identity, bootstrap removal, private parent
 files/descriptors, ptrace, signal permission, sudo and a synthetic root-only
 control socket, for a fresh worker and for one loaded at boot (and its holder).
-The workflow probe uses synthetic credentials and a loopback enrollment
-endpoint to verify the real Codex login and fixed supervisor path.
+The workflow probe uses synthetic credentials and a loopback Main. It verifies the
+fixed supervisor path and that a bootstrap still carrying a provider key is refused;
+then that Codex, launched with the hosted provider through the assignment launcher,
+calls only `POST /codex-model/responses` with the keys the relay admits, leaves no
+credential in its `CODEX_HOME`, and runs shell commands that cannot read its session
+bearer from any process environment.
 Neither probe calls a model or contacts Merv production. Neither replaces the
 actual Cloudflare security, task execution, retention or cleanup gates. Current
 candidate and deployment evidence is in `docs/PI_IMPLEMENTATION_STATUS.md`.

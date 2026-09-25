@@ -11,6 +11,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
+import { codexModelRelay } from './codex-relay.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
 const workflowConfig = z
@@ -27,6 +28,7 @@ const workflowConfig = z
       .optional(),
     baseUrl: z.string().url().max(2048).optional(),
     maxAgents: z.number().int().min(1).max(32).default(1),
+    dailyTokensPerPerson: z.number().int().min(1).default(5_000_000),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
   .strict();
@@ -54,9 +56,8 @@ const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'l
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
-  private readonly config: z.infer<typeof workflowConfig>;
+  readonly config: z.infer<typeof workflowConfig>;
   private caller?: Caller;
-  private modelApiKey?: string;
   /** Why the last reconcile could not serve hosted demand; null once one succeeds. */
   unavailable: string | null = null;
   private disposers: (() => void)[] = [];
@@ -119,9 +120,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
   private async connect(): Promise<Caller> {
     if (this.caller) return this.caller;
     const token = process.env[this.config.sourceCredentialEnv!];
-    const modelApiKey = process.env[this.config.modelApiKeyEnv!];
     check(
-      token && modelApiKey,
+      token && process.env[this.config.modelApiKeyEnv!],
       'fleet_workflow_secret',
       'Fleet workflow credentials are unavailable',
       503,
@@ -133,7 +133,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow source is outside its configured project',
       403,
     );
-    this.modelApiKey = modelApiKey;
     return (this.caller = {
       actorId: actor.id,
       projectId: actor.projectId,
@@ -178,7 +177,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async bootstrap(a: FleetAllocation): Promise<string> {
     check(
-      this.accepted(a) && this.modelApiKey && this.config.baseUrl,
+      this.accepted(a) && this.config.baseUrl,
       'fleet_workflow_source',
       'Fleet workflow allocation is unavailable',
       403,
@@ -196,7 +195,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
       baseUrl: this.config.baseUrl,
       projectId: a.projectId,
       enrollmentToken,
-      modelApiKey: this.modelApiKey,
     });
   }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
@@ -291,7 +289,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
     await this.pending?.catch(() => undefined);
     for (const dispose of this.disposers.reverse()) dispose();
     this.disposers = [];
-    this.modelApiKey = undefined;
   }
 }
 
@@ -303,11 +300,19 @@ declare module 'cordis' {
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
-  inject: ['fleet', 'sessions', 'scope'],
+  inject: ['fleet', 'sessions', 'scope', 'api', 'state'],
   async apply(ctx: Context, config: FleetWorkflowConfig = {}) {
     const adapter = new FleetWorkflowAdapter(ctx.fleet, ctx.sessions, ctx.scope, config);
     await adapter.start();
     ctx.effect(() => () => adapter.close());
+    // The provider key stays on Main: hosted Codex calls the model through this relay.
+    if (adapter.config.enabled) {
+      const relay = await codexModelRelay(ctx.sessions, ctx.state, {
+        providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
+        dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
+      });
+      ctx.effect(() => ctx.api.mountModelRelay('/codex-model', relay));
+    }
     ctx.provide('fleetWorkflow', adapter);
   },
 };

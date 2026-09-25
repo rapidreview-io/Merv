@@ -294,6 +294,34 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   );
 });
 
+test('a hosted Codex profile calls the model through Main with its session bearer and adds nothing else', () => {
+  const isolated = { ...codex, isolatedLauncher: '/opt/launcher', model: 'gpt-6-luna' };
+  assert.throws(() => validateProfile({ ...codex, hosted: true }), {
+    code: 'invalid_runner_profile',
+  });
+  assert.throws(() => validateProfile({ ...isolated, hosted: false }), {
+    code: 'invalid_runner_profile',
+  });
+  const hosted = validateProfile({ ...isolated, hosted: true });
+  const plain = buildLaunch(validateProfile(isolated), request(), safeEnv);
+  const spec = buildLaunch(hosted, request(), safeEnv);
+  const settings = config(spec.args);
+  assert.equal(settings.model_provider, '"merv"');
+  assert.equal(
+    settings['model_providers.merv'],
+    '{"name"="Merv","base_url"="http://127.0.0.1:8080/codex-model","env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}',
+  );
+  // Everything else is byte-identical, and the machine's environment gains no key.
+  assert.deepEqual(
+    spec.args.filter(
+      (arg, at) => !/^model_provider/.test(arg) && !/^model_provider/.test(spec.args[at + 1]),
+    ),
+    plain.args,
+  );
+  assert.deepEqual(spec.env, plain.env);
+  assert.equal(JSON.stringify(spec.args).includes(secret), false);
+});
+
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
   const outer = realpathSync(mkdtempSync(join(tmpdir(), 'merv-profile-skills-')));
   t.after(() => rmSync(outer, { recursive: true, force: true }));
