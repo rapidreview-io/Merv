@@ -384,9 +384,10 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         offered.some((tool) => tool.name === name),
         name,
       );
-    // Whatever fails work, claims or decides a review, or starts a reflection wave or the next
-    // wave is proposed, by every tool that reaches it.
+    // Whatever fails work, claims or decides a review, starts a reflection wave or the next wave,
+    // or runs a server-wide backup is proposed, by every tool that reaches it.
     for (const name of [
+      'code.backup.run',
       'task.mark_failed',
       'review.start',
       'review.submit',
