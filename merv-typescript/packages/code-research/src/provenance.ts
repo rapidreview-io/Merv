@@ -41,6 +41,7 @@ export async function resolutionProvenance(
   );
   const units = new Map<string, number | null>();
   const acceptances: { unitId: string; hash: string }[] = [];
+  const main: string[] = [];
   for (const commit of root.members) {
     const rows = await tx.all<{
       unit_id: string;
@@ -51,6 +52,18 @@ export async function resolutionProvenance(
       projectId,
       commit,
     );
+    // Main, merged in for work that publishes, is admitted code and brings no authors.
+    if (
+      !rows.length &&
+      (await tx.get(
+        'SELECT 1 FROM code_edges WHERE project_id=? AND target_ref=?',
+        projectId,
+        `main:${commit}`,
+      ))
+    ) {
+      main.push(commit);
+      continue;
+    }
     check(
       rows.length,
       'code_provenance_unverifiable',
@@ -75,6 +88,7 @@ export async function resolutionProvenance(
     taskId,
     plan: path.map(({ key, members, left, right }) => ({ key, members, left, right })),
     acceptances,
+    ...(main.length ? { main } : {}),
   });
 }
 

@@ -300,9 +300,10 @@ async function fixture(t: TestContext, human = false) {
       dependsOn: inputs.map((item) => item.id),
       requestId: `waiter-${sequence}`,
     });
-  const record = () => f.state.read((sql) => bases.find(sql, f.admin.projectId, [a, c]));
-  const resolveCommit = async () => {
-    const base = (await record())!;
+  const record = (members = [a, c]) =>
+    f.state.read((sql) => bases.find(sql, f.admin.projectId, members));
+  const resolveCommit = async (members?: string[]) => {
+    const base = (await record(members))!;
     const [plannedLeft, plannedRight] = await f.state.read((sql) =>
       bases.inputs(sql, f.admin.projectId, base),
     );
@@ -335,8 +336,8 @@ async function fixture(t: TestContext, human = false) {
       requestId: `resolution-${taskId}`,
     });
   };
-  const acceptResolution = async (commit: string) => {
-    const taskId = (await record())!.resolutionTaskId!;
+  const acceptResolution = async (commit: string, members?: string[]) => {
+    const taskId = (await record(members))!.resolutionTaskId!;
     // The owner-review protocol is tested in task-git-workspace; here its committed terminal
     // state is the boundary and acceptUnit still checks and records the capture itself.
     await f.state.transaction((tx) =>
@@ -871,10 +872,11 @@ test('a service task derives its base from prerequisites when it names no commit
     );
 });
 
-test('a research consolidation is delivered, and no contributor or directing authority reviews it', async (t) => {
-  const f = await fixture(t);
-  // Research's own capability, not a stand-in: the producer is the research service actor.
-  const { id: taskId } = await f.state.transaction(async (tx) => {
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+/** Research's own capability, not a stand-in: the producer is the research service actor. */
+const consolidation = (f: Fixture, dependsOn: string[]) =>
+  f.state.transaction(async (tx) => {
     const task = await f.tasks.serviceTasks('research').create(
       {
         projectId: f.admin.projectId,
@@ -882,14 +884,16 @@ test('a research consolidation is delivered, and no contributor or directing aut
         title: 'Cycle: consolidation',
         goal: 'Integrate the accepted work main lacks and publish it.',
         checks: ['Every experiment is kept, adapted or dropped.'],
-        dependsOn: [f.left.id, f.extra.id],
+        dependsOn,
       },
       tx,
     );
     await f.code.publishOnAcceptance(f.admin, { unitId: task.id }, tx);
-    return task;
+    return task.id;
   });
-  await f.bases.work(f.admin.projectId);
+
+/** A runner leases the task, and its worker delivers the base the task was given. */
+async function deliver(f: Fixture, taskId: string) {
   const identity = await f.scope.issueActor(f.admin, { name: 'Runner', role: 'operator' });
   const runner = {
     projectId: f.admin.projectId,
@@ -959,6 +963,14 @@ test('a research consolidation is delivered, and no contributor or directing aut
     await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
     (caller) => f.tasks.submitDelivery(caller, delivery),
   );
+  return { runner, session, worker, base, submitted };
+}
+
+test('a research consolidation is delivered, and no contributor or directing authority reviews it', async (t) => {
+  const f = await fixture(t);
+  const taskId = await consolidation(f, [f.left.id, f.extra.id]);
+  await f.bases.work(f.admin.projectId);
+  const { runner, session, worker, submitted } = await deliver(f, taskId);
   assert.equal(submitted.workflow.state, 'in_review');
   const review = await f.reviews.get(f.admin, submitted.reviewId!);
   for (const actorId of [f.inputAuthor.actorId, runner.actorId, worker.actorId])
@@ -993,6 +1005,41 @@ test('a research consolidation is delivered, and no contributor or directing aut
   const leased = await offerReview(independent, 'other');
   const claimed = await f.reviews.get(f.admin, review.id);
   assert.deepEqual([claimed.status, claimed.reviewerId], ['started', leased.actorId]);
+});
+
+test('a consolidation whose merge with main clashes is resolved, reviewed and delivered', async (t) => {
+  const f = await fixture(t);
+  // Main moved since A was built, onto the same line A changed; no unit accepted main.
+  const main = f.source.commit({ 'f.txt': 'M\n' });
+  f.source.git('push', f.repositories.paths(f.admin.projectId).repository, `${main}:refs/heads/m`);
+  const setMain = (oid: string) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE code_projects SET main_json=? WHERE project_id=?',
+        JSON.stringify({ oid, operationId: 'fixture', stored: true }),
+        f.admin.projectId,
+      ),
+    );
+  await setMain(main);
+  const taskId = await consolidation(f, [f.left.id]);
+  await f.bases.work(f.admin.projectId);
+  await f.code.reconcileAll();
+  const members = [f.a, main];
+  assert.equal((await f.record(members))?.state, 'awaiting_resolution');
+  const resolved = await f.resolveCommit(members);
+  await f.acceptResolution(resolved, members);
+  assert.equal((await f.record(members))?.result?.commit, resolved);
+  const { base, submitted } = await deliver(f, taskId);
+  assert.equal(base, resolved);
+  assert.equal(submitted.workflow.state, 'in_review');
+  // The resolution's certificate reads main from the lineage, not from where main is now.
+  const certificate = () =>
+    f.state.transaction(async (tx) =>
+      f.units.reviewProvenance(f.admin.projectId, (await f.record(members))!.resolutionTaskId!, tx),
+    );
+  const before = await certificate();
+  await setMain(f.d);
+  assert.deepEqual(await certificate(), before);
 });
 
 test('derivation ignores a system edge below a code-less success', async (t) => {

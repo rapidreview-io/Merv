@@ -1018,6 +1018,18 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     let prerequisites: string[] = [];
     if (derived.status !== 'waiting' && derived.merge && this.bases) {
       const base = await this.bases.ensure(tx, projectId, derived.merge);
+      // Main is no unit's acceptance, so the lineage names it: a resolution of a clash with
+      // main is then reviewed like any other, with main contributing no authors.
+      const main = row.publishes_at && (await this.project(tx, projectId))?.main.oid;
+      if (main && derived.merge.includes(main))
+        await tx.run(
+          'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
+          projectId,
+          `base:${base.key}`,
+          'merges',
+          `main:${main}`,
+          now(),
+        );
       let path = await this.bases.path(tx, projectId, base.key);
       if (
         path.some((record) => record.state === 'awaiting_resolution' && !record.resolutionTaskId)
