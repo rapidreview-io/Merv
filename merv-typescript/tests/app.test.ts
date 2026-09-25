@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
-import { describeTool, isRemoteTool } from '../packages/api/src/registry.js';
+import { conversationUse, describeTool, isRemoteTool } from '../packages/api/src/registry.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
@@ -327,6 +327,24 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         offered.some((tool) => tool.name === name),
         name,
       );
+    // Whatever fails work, claims or decides a review, or starts a reflection wave or the next
+    // wave is proposed, by every tool that reaches it.
+    for (const name of [
+      'task.mark_failed',
+      'review.start',
+      'review.submit',
+      'reflection.create',
+      'research.advance',
+    ])
+      for (const verdict of ['pass', 'needs_changes', 'fail'])
+        assert.equal(
+          conversationUse(
+            offered.find((tool) => tool.name === name)!,
+            { verdict },
+          ),
+          'propose',
+          `${name} ${verdict}`,
+        );
     // MCP clients working with a person get the same guide.
     const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
     const mcp = await client(app.ctx.api.url!, credentials.token);

@@ -87,6 +87,9 @@ export const researchToolsPlugin = {
       },
       {
         name: 'research.advance',
+        // Almost every advance creates work (a reflection wave, consolidation, the next wave), and
+        // its input cannot say which: the person runs it.
+        conversation: 'propose' as const,
         description:
           'Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.',
         inputSchema: advanceSchema,
