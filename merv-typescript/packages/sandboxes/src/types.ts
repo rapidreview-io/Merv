@@ -24,8 +24,6 @@ export interface SandboxesConfig {
    * Without it there are no checks at all: `Sandboxes.checks` is undefined.
    */
   storageOrigins?: string[];
-  /** @deprecated The single profile, which G1 replaces with `runtimes` (rendered as `standard`). */
-  runtime?: SandboxRuntimeProfile;
   /** Operator-selected protected runtime profiles by key, the default first (MERV_FLEET_RUNTIMES).
    * Absence disables the server-only capability. */
   runtimes?: (SandboxRuntimeProfile & { key: string })[];
@@ -88,7 +86,8 @@ export interface SandboxRuntimeHandle {
 export interface SandboxRuntimes {
   /** The default profile's id. */
   readonly profileId: string;
-  /** Every create and renewal asks for this lease; the service reaps a machine when it ends. */
+  /** The default profile's lease. Every create and renewal asks for its profile's lease; the
+   * service reaps a machine when it ends. */
   readonly leaseSeconds: number;
   /** Every configured profile, the default first. */
   readonly profiles: readonly SandboxRuntimeProfileRef[];
@@ -117,8 +116,8 @@ export interface SandboxRuntimes {
     handle: SandboxRuntimeHandle,
     profileId?: string,
   ): Promise<SandboxRuntimeHandle>;
-  /** The offer behind a profile key, from GET /v1/options cached with the manifest; null when
-   * the key is not configured or the service no longer lists its offer. */
+  /** The offer behind a profile key, from GET /v1/options read at most once per manifest refresh
+   * period; null when the key is not configured or the service no longer lists its offer. */
   describe(projectId: string, key: string): Promise<SandboxRuntimeOffer | null>;
 }
 

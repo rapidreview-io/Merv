@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import { check, MervError, type Json } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type {
   SandboxConnection,
   SandboxRuntimeHandle,
   SandboxRuntimeLaunch,
+  SandboxRuntimeOffer,
   SandboxRuntimeProfile,
   SandboxRuntimeState,
   SandboxRuntimes,
@@ -131,6 +133,41 @@ function handle(
     leaseExpiresAt,
     revision: row.revision as number,
     launch,
+  };
+}
+
+const offer = z.object({
+  description: z.string().default(''),
+  resources: z.object({
+    cpu: z.number().positive(),
+    memory_mb: z.number().positive(),
+    disk_gb: z.number().positive(),
+  }),
+  hourly_price: z.object({ currency: z.literal('USD'), amount: z.coerce.number().nonnegative() }),
+});
+
+/** A profile's offer in a GET /v1/options answer, which lists only what can be rented now; null
+ * when it is not listed, or listed without a size or a USD price. `cpu` is the whole-core ceiling
+ * of a fractional share, so the exact share the description leads with ("0.5 vCPU, …") wins. */
+export function runtimeOffer(
+  options: Json,
+  key: string,
+  profile: SandboxRuntimeProfile,
+): SandboxRuntimeOffer | null {
+  const offers = (options as { offers?: unknown } | null)?.offers;
+  const parsed = offer.safeParse(
+    (Array.isArray(offers) ? offers : []).find(
+      (row) => row?.provider === profile.provider && row?.offer_id === profile.offerId,
+    ),
+  );
+  if (!parsed.success) return null;
+  const { description, resources, hourly_price } = parsed.data;
+  return {
+    key,
+    vcpu: Number(/^(\d+(?:\.\d+)?) vCPU\b/.exec(description)?.[1] ?? resources.cpu),
+    memoryGiB: resources.memory_mb / 1024,
+    diskGB: resources.disk_gb,
+    maxHourlyUsd: hourly_price.amount,
   };
 }
 

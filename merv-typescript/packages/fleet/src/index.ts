@@ -119,13 +119,26 @@ export class FleetService implements Fleet {
   connected(projectId: string): boolean {
     return this.config.enabled && !!this.runtimes?.connected(projectId);
   }
-  /** C0 stub: G1 counts queued and occupied allocations against both limits. */
-  async free(_projectId: string, _tx?: Transaction): Promise<number> {
-    return this.config.globalLimit;
+  /** Each room less what already waits for it: queued work is reserved before a new request. */
+  async free(projectId: string, tx?: Transaction): Promise<number> {
+    if (tx) this.state.assertTransaction(tx);
+    if (!this.connected(projectId)) return 0;
+    const open = await (tx ? this.all(tx) : this.state.read((sql) => this.all(sql)));
+    const mine = open.filter((a) => a.projectId === projectId).length;
+    return Math.max(
+      0,
+      Math.min(this.config.globalLimit - open.length, this.limit(projectId) - mine),
+    );
   }
-  /** C0 stub: G1 checks the key against the configured profiles. */
   async describe(projectId: string, key: string) {
     return this.connected(projectId) ? this.runtimes!.describe(projectId, key) : null;
+  }
+  private limit(projectId: string): number {
+    return this.config.projectLimits[projectId] ?? this.config.projectLimit;
+  }
+  /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
+  private stale(a: FleetAllocation): boolean {
+    return !this.runtimes?.profiles.some((profile) => profile.id === a.profileId);
   }
   /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {
@@ -264,13 +277,17 @@ export class FleetService implements Fleet {
         );
         return decode(previous);
       }
+      const profile = this.runtimes!.profiles.find(
+        (p) => !input.profile || p.key === input.profile,
+      );
+      check(profile, 'fleet_profile_unavailable', 'That machine is not offered', 409);
       const a: FleetAllocation = {
         id: newId('flt'),
         projectId: caller.projectId,
         source,
         owner: input.owner,
         requestId: input.requestId,
-        profileId: this.runtimes!.profileId,
+        profileId: profile.id,
         epoch: 1,
         phase: 'queued',
         intent: 'run',
@@ -371,7 +388,7 @@ export class FleetService implements Fleet {
       !a.runtime?.ready ||
       a.runtime.launch?.deliveryState !== 'launched' ||
       a.deadlineAt <= this.time() ||
-      a.profileId !== this.runtimes?.profileId
+      this.stale(a)
     )
       return false;
     const owner = this.owners.get(a.owner.kind);
@@ -405,17 +422,15 @@ export class FleetService implements Fleet {
     const active = waiting.filter(occupied);
     const projectCount = new Map<string, number>();
     for (const a of active) projectCount.set(a.projectId, (projectCount.get(a.projectId) ?? 0) + 1);
-    const needsCleanup = queued.some(
-      (a) =>
-        a.intent !== 'run' ||
-        a.deadlineAt <= this.time() ||
-        a.profileId !== this.runtimes!.profileId ||
-        !this.owners.has(a.owner.kind),
-    );
+    const dropped = (a: FleetAllocation) =>
+      a.intent !== 'run' ||
+      a.deadlineAt <= this.time() ||
+      this.stale(a) ||
+      !this.owners.has(a.owner.kind);
     const hasRoom =
       active.length < this.config.globalLimit &&
-      queued.some((a) => (projectCount.get(a.projectId) ?? 0) < this.config.projectLimit);
-    if (!needsCleanup && !hasRoom) return;
+      queued.some((a) => (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId));
+    if (!queued.some(dropped) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
       let count = allocations.filter(occupied).length;
@@ -424,17 +439,12 @@ export class FleetService implements Fleet {
         byProject.set(active.projectId, (byProject.get(active.projectId) ?? 0) + 1);
       for (const a of allocations.filter((a) => a.phase === 'queued')) {
         const before = structuredClone(a);
-        if (
-          a.intent !== 'run' ||
-          a.deadlineAt <= this.time() ||
-          a.profileId !== this.runtimes!.profileId ||
-          !this.owners.has(a.owner.kind)
-        ) {
+        if (dropped(a)) {
           a.intent = 'stop';
           a.phase = 'released';
         } else if (
           count < this.config.globalLimit &&
-          (byProject.get(a.projectId) ?? 0) < this.config.projectLimit
+          (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
         ) {
           a.phase = 'provisioning';
           // The machine's time starts here; waiting in the queue does not spend it.
@@ -519,7 +529,7 @@ export class FleetService implements Fleet {
           current.phase === 'released' ||
           current.phase === 'releasing' ||
           current.deadlineAt <= this.time() ||
-          current.profileId !== this.runtimes?.profileId ||
+          this.stale(current) ||
           current.runtime?.sandboxId !== handle.sandboxId ||
           current.runtime.launch?.deliveryState === 'launched'
         )
@@ -543,7 +553,7 @@ export class FleetService implements Fleet {
           !['run', 'drain'].includes(current.intent) ||
           !['starting', 'running'].includes(current.phase) ||
           current.deadlineAt <= this.time() ||
-          current.profileId !== this.runtimes?.profileId ||
+          this.stale(current) ||
           current.runtime?.sandboxId !== handle.sandboxId ||
           current.runtime.launch?.deliveryState !== 'launched'
         )
@@ -598,10 +608,7 @@ export class FleetService implements Fleet {
     const owner = this.owners.get(a.owner.kind);
     if (
       a.intent !== 'stop' &&
-      (a.deadlineAt <= this.time() ||
-        a.profileId !== runtime.profileId ||
-        !this.config.enabled ||
-        !owner)
+      (a.deadlineAt <= this.time() || this.stale(a) || !this.config.enabled || !owner)
     )
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
@@ -622,26 +629,27 @@ export class FleetService implements Fleet {
       a = await this.update(a.id, (current) => {
         if (current.runtime || current.phase === 'released') return;
         const connected = runtime.connected(current.projectId);
-        const sameProfile = current.profileId === runtime.profileId;
-        if (current.intent === 'run' && connected && sameProfile && owner) {
+        const configured = !this.stale(current);
+        if (current.intent === 'run' && connected && configured && owner) {
           first = current.createAttempted === false;
           create = current.createAttempted = true;
           return;
         }
         // One last same-key create recovers a machine made before a lost reply, to delete it
         // (never under a changed profile). Then Fleet waits out the lease of any such machine.
-        create =
-          current.createAttempted !== false && !current.releaseBy && connected && sameProfile;
+        create = current.createAttempted !== false && !current.releaseBy && connected && configured;
         if (!connected && current.createAttempted === false) current.error = 'runtime_refused';
         current.intent = 'stop';
         this.waitOutLease(current);
       });
       if (!create) return;
-      const handle = await runtime.provision(a.projectId, `${a.id}:create`).catch((error) => {
-        // Refusing the first attempt proves no machine exists: free the slot, do not retry.
-        if (!first || !refused(error)) throw error;
-        report('fleet.refused', a, error);
-      });
+      const handle = await runtime
+        .provision(a.projectId, `${a.id}:create`, a.profileId)
+        .catch((error) => {
+          // Refusing the first attempt proves no machine exists: free the slot, do not retry.
+          if (!first || !refused(error)) throw error;
+          report('fleet.refused', a, error);
+        });
       if (handle) await this.observed(a, handle, 'provisioning');
       else
         await this.update(a.id, (current) => {
@@ -678,7 +686,13 @@ export class FleetService implements Fleet {
       if (!(await this.launchAllowed(a, owner, handle))) return;
       const bootstrap = await owner.bootstrap(structuredClone(a));
       if (!(await this.launchAllowed(a, owner, handle))) return;
-      const launched = await runtime.launch(a.projectId, handle, `${a.id}:launch`, bootstrap);
+      const launched = await runtime.launch(
+        a.projectId,
+        handle,
+        `${a.id}:launch`,
+        bootstrap,
+        a.profileId,
+      );
       await this.observed(
         a,
         launched,
@@ -705,16 +719,15 @@ export class FleetService implements Fleet {
         Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
         (await this.renewalAllowed(a, owner, handle))
       )
-        await this.observed(a, await runtime.renew(a.projectId, exchanged), status);
+        await this.observed(a, await runtime.renew(a.projectId, exchanged, a.profileId), status);
     }
   }
   /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any
-   * machine this allocation could hold (a minute covers a reply still in flight). Without a
-   * create attempt there is none to wait for. */
+   * machine this allocation could hold (a minute covers a reply still in flight; the longest
+   * configured lease covers every profile). Without a create attempt there is none to wait for. */
   private waitOutLease(a: FleetAllocation): void {
-    a.releaseBy ??= new Date(
-      this.clock() + (this.runtimes!.leaseSeconds + 60) * 1000,
-    ).toISOString();
+    const lease = Math.max(...this.runtimes!.profiles.map((profile) => profile.leaseSeconds));
+    a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
     a.phase =
       (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
         ? 'released'

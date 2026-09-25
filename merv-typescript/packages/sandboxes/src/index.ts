@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';
 import { parseManifest } from './manifest.js';
 import { SandboxCheckRunner } from './checks.js';
-import { SandboxRuntimeRunner } from './runtimes.js';
+import { runtimeOffer, SandboxRuntimeRunner } from './runtimes.js';
 import type {
   Sandboxes,
   SandboxCheckHandle,
@@ -78,15 +78,22 @@ const configuration = z
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
     storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
-    runtime: z
-      .object({
-        provider: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
-        offerId: z.string().min(1).max(256),
-        releaseId: z.string().regex(/^rt1_[0-9a-f]{64}$/),
-        leaseSeconds: z.number().int().min(60).max(86_400),
-        ttlSeconds: z.number().int().min(1).max(3600).default(300),
-      })
-      .strict()
+    runtimes: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+            provider: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+            offerId: z.string().min(1).max(256),
+            releaseId: z.string().regex(/^rt1_[0-9a-f]{64}$/),
+            leaseSeconds: z.number().int().min(60).max(86_400),
+            ttlSeconds: z.number().int().min(1).max(3600).default(300),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8)
+      .refine((all) => new Set(all.map((p) => p.key)).size === all.length, 'Profile keys repeat')
       .optional(),
   })
   .strict();
@@ -145,6 +152,7 @@ export class SandboxService implements Sandboxes {
   #closed = false;
   #closing?: Promise<void>;
   readonly #running = new Set<Promise<unknown>>();
+  readonly #offers = new Map<string, { at: number; answer: Promise<Json> }>();
   /**
    * Present only where the deployment named the bucket origins a check's source may be
    * uploaded to, so a project check is opt-in per deployment rather than per request.
@@ -178,36 +186,60 @@ export class SandboxService implements Sandboxes {
           this.#run(handle, (handle) => runner.release(projectId, handle)),
       };
     }
-    if (parsed.data.runtime) {
-      const runner = new SandboxRuntimeRunner(
-        this.#client,
-        (projectId) => this.#connectionFor(projectId),
-        parsed.data.runtime,
-      );
-      const { leaseSeconds } = parsed.data.runtime;
+    if (parsed.data.runtimes) {
+      const profiles = parsed.data.runtimes.map((profile) => ({
+        profile,
+        runner: new SandboxRuntimeRunner(
+          this.#client,
+          (projectId) => this.#connectionFor(projectId),
+          profile,
+        ),
+      }));
+      const [first] = profiles;
+      // Inspect, acknowledge and stop read the machine as it is; they need no profile.
+      const runner = first.runner;
+      /** Provision, launch and renew speak for one profile; none named means the default. */
+      const profiled = (profileId = runner.profileId) => {
+        const found = profiles.find((entry) => entry.runner.profileId === profileId);
+        check(
+          found,
+          'sandbox_runtime_profile_unknown',
+          'The runtime profile is not configured',
+          404,
+        );
+        return found.runner;
+      };
       this.runtimes = {
         profileId: runner.profileId,
-        leaseSeconds,
-        // C0 stub: G1 builds one runner per configured profile and describes their offers.
-        profiles: [{ key: 'standard', id: runner.profileId, leaseSeconds }],
-        describe: async () => null,
+        leaseSeconds: first.profile.leaseSeconds,
+        profiles: profiles.map((entry) => ({
+          key: entry.profile.key,
+          id: entry.runner.profileId,
+          leaseSeconds: entry.profile.leaseSeconds,
+        })),
+        describe: async (projectId, key) => {
+          const found = profiles.find((entry) => entry.profile.key === key);
+          return found ? runtimeOffer(await this.#options(projectId), key, found.profile) : null;
+        },
         connected: (projectId) =>
           this.#connections.some(
             (entry) => entry.projectId === projectId && this.#client.configured(entry),
           ),
-        provision: (projectId, operationKey) =>
-          this.#run({ projectId, operationKey }, ({ projectId, operationKey }) =>
-            runner.provision(projectId, operationKey),
+        provision: (projectId, operationKey, profileId) =>
+          this.#run(
+            { projectId, operationKey, profileId },
+            ({ projectId, operationKey, profileId }) =>
+              profiled(profileId).provision(projectId, operationKey),
           ),
         inspect: (projectId, handle) =>
           this.#run({ projectId, handle }, ({ projectId, handle }) =>
             runner.inspect(projectId, handle),
           ),
-        launch: (projectId, handle, operationKey, bootstrap) =>
+        launch: (projectId, handle, operationKey, bootstrap, profileId) =>
           this.#run(
-            { projectId, handle, operationKey, bootstrap },
-            ({ projectId, handle, operationKey, bootstrap }) =>
-              runner.launch(projectId, handle, operationKey, bootstrap),
+            { projectId, handle, operationKey, bootstrap, profileId },
+            ({ projectId, handle, operationKey, bootstrap, profileId }) =>
+              profiled(profileId).launch(projectId, handle, operationKey, bootstrap),
           ),
         acknowledge: (projectId, handle) =>
           this.#run({ projectId, handle }, ({ projectId, handle }) =>
@@ -217,12 +249,24 @@ export class SandboxService implements Sandboxes {
           this.#run({ projectId, handle }, ({ projectId, handle }) =>
             runner.stop(projectId, handle),
           ),
-        renew: (projectId, handle) =>
-          this.#run({ projectId, handle }, ({ projectId, handle }) =>
-            runner.renew(projectId, handle),
+        renew: (projectId, handle, profileId) =>
+          this.#run({ projectId, handle, profileId }, ({ projectId, handle, profileId }) =>
+            profiled(profileId).renew(projectId, handle),
           ),
       };
     }
+  }
+
+  /** GET /v1/options at most once per refresh period for each project. A failed read keeps the
+   * last answer, or none (every machine hidden), until the next period. */
+  #options(projectId: string): Promise<Json> {
+    const last = this.#offers.get(projectId);
+    if (last && Date.now() - last.at < this.#refreshMs) return last.answer;
+    const answer = this.#run(projectId, (projectId) =>
+      this.#client.read(this.#connectionFor(projectId), '/v1/options'),
+    ).catch(() => last?.answer ?? null);
+    this.#offers.set(projectId, { at: Date.now(), answer });
+    return answer;
   }
 
   /** Reads the manifest on a bounded cadence; disposal retires and drains this instance. */

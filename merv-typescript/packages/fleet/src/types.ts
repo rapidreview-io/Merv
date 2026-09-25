@@ -82,7 +82,8 @@ export interface Fleet {
   /** Whether this project can rent machines at all; false means every request is refused. */
   connected(projectId: string): boolean;
   /** Slots a new request in this project could take now: the smaller of the global and this
-   * project's room, less what is already queued. A move holds two, so Pi starts one only at ≥ 3. */
+   * project's room, each less what is already open in it (queued work anywhere is served first);
+   * 0 when the project cannot rent. A move holds two, so Pi starts one only at ≥ 3. */
   free(projectId: string, tx?: Transaction): Promise<number>;
   /** The machine behind a profile key for this project, from Sandboxes' cached options (cheap
    * enough for every snapshot); null when the key is not configured or its offer is missing,

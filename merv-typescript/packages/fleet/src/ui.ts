@@ -10,7 +10,8 @@ const words: Partial<Record<FleetPhase, string>> = {
   uncertain: 'retrying',
 };
 const live = ['waiting', 'starting', 'running', 'retrying', 'finishing', 'stopping'];
-const titles: Record<string, string> = { pi: 'Agent conversation', workflow: 'Workflow agent' };
+/** A Pi host is one person's agent machine in one project, shared by their conversations. */
+const titles: Record<string, string> = { 'pi-host': 'Agent machine', workflow: 'Workflow agent' };
 const collection: UiCollectionSpec = {
   noun: { singular: 'agent', plural: 'agents' },
   read: '/v1/fleet',
