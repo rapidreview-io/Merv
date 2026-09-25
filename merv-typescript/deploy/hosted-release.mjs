@@ -43,8 +43,9 @@
 // from the terminal and keeps the Mac awake; a later run, or release.mjs, finishes an open run
 // first, rolling it back if the pipeline changed meanwhile. A host out of reach is waited out for
 // 10 minutes, and while this Mac is silent mid-deploy a host timer, which a reboot keeps, points
-// Main at whatever Cloudflare runs. Exit: 0 released, abandoned or nothing to do; 1 failed with production unchanged or rolled
-// back; 2 refused; 3 a run is left open; 4 closed, but the release left live failed its canary.
+// Main at whatever Cloudflare runs. Exit: 0 released, abandoned or nothing to do; 1 failed with
+// production unchanged or rolled back; 2 refused; 3 a run is left open; 4 closed, but the release
+// left live failed its canary.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
