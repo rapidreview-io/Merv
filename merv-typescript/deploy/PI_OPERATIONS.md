@@ -334,8 +334,9 @@ from step 1 have to be done again.
   turn stall limit. Measured 2026-09-25 through the relay on 141k-token
   histories, the longest silence was 1.9 s on Luna, 2.8 s on Sol and 4.5 s on
   Astra (with a tool call and its reasoning replayed).
-- **Cost.** A turn can make 32 calls, each up to 272k tokens in and 128k out: at
-  most about $3 on Luna, $58 on Sol and $290 on Astra. Nothing caps it. Each
+- **Cost.** A turn can make 72 calls (the relay's `maxRequestsPerGrant`), each
+  up to 272k tokens in and 128k out: at most about $7 on Luna, $131 on Sol and
+  $657 on Astra. Nothing caps it. Each
   finished call writes one `pi_relay_usage` record to Main's stderr with the
   model and its input, cached, output and reasoning tokens, and nothing about
   the person. Spend by model for the last day:
