@@ -407,6 +407,7 @@ test('retiring the versions that can no longer start deletes their records and n
             .sort();
   }
   expected.session_managed_runners = [];
+  expected.experiment_compute_runs = [];
   const after = await snapshot(client);
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
@@ -568,7 +569,7 @@ test('retiring the versions that can no longer start deletes their records and n
     intent: 'Still testing.',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 5);
+  assert.equal(experiment.workflow.version, 9);
   await research.create(live, { name: 'After the release', requestId: 'research' });
   // The retired open wave held the project's only open-wave slot.
   await reflections.create(live, { requestId: 'wave' });

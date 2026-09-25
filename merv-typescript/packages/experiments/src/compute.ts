@@ -11,18 +11,8 @@ import {
 } from '@merv/contracts';
 import type { SandboxCompute, SandboxComputeRun } from '@merv/sandboxes/types';
 import type { Code } from '@merv/code-research/types';
+import type { ComputeInput } from './types.js';
 
-export interface ComputeInput {
-  experimentId: string;
-  attemptIndex: number;
-  key: string;
-  provider: string;
-  offerId: string;
-  command: string;
-  minutes: number;
-  maxUsd: number;
-  commandId?: string;
-}
 export interface ComputeRow {
   project_id: string;
   experiment_id: string;

@@ -201,7 +201,7 @@ test('a design cannot be submitted without a feasibility statement that admits i
     intent: 'Compare two methods.',
     requestId: f.id(),
   });
-  assert.equal(e.workflow.version, 5);
+  assert.equal(e.workflow.version, 9);
   await f.attach(e, 'plan', plan);
   const blockers = async () =>
     (await f.app.ctx.workflows.evaluate(f.owner, e.id)).actions

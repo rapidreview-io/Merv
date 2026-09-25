@@ -1,9 +1,13 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
-import type { ComputeInput } from './compute.js';
 import type {} from '@merv/api/types';
-import type { ExperimentAttach, ExperimentCreate, ExperimentTransition } from './types.js';
+import type {
+  ComputeInput,
+  ExperimentAttach,
+  ExperimentCreate,
+  ExperimentTransition,
+} from './types.js';
 import {
   experimentAttachSchema,
   experimentCreateSchema,
@@ -18,8 +22,8 @@ export const experimentsToolsPlugin = {
   inject: ['experiments', 'tools'],
   apply(ctx: Context) {
     const experiments = ctx.experiments;
-    ctx.inject(['sandboxes'], (ctx) => {
-      if (!ctx.sandboxes.compute) return;
+    ctx.inject(['sandboxes'], (optional) => {
+      if (!optional.sandboxes.compute) return;
       const run = z
         .object({
           experimentId: z.string().min(1),

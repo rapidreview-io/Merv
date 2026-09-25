@@ -7,7 +7,6 @@ import type {
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SandboxCompute } from '@merv/sandboxes/types';
-import type { ComputeInput } from './compute.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -18,6 +17,18 @@ import type {
   ExperimentTransition,
 } from './models.js';
 export type * from './models.js';
+
+export interface ComputeInput {
+  experimentId: string;
+  attemptIndex: number;
+  key: string;
+  provider: string;
+  offerId: string;
+  command: string;
+  minutes: number;
+  maxUsd: number;
+  commandId?: string;
+}
 
 export interface Experiments {
   bindCompute(adapter: SandboxCompute): () => void;

@@ -401,6 +401,10 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
     await client.query('DROP TABLE session_managed_runners');
+    await client.query('DROP TABLE experiment_compute_runs');
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='experiments' AND version=5",
+    );
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version IN (7,8)",
     );

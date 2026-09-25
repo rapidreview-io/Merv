@@ -27,7 +27,7 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
-import { ExperimentCompute, type ComputeInput } from './compute.js';
+import { ExperimentCompute } from './compute.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -38,6 +38,7 @@ import type {
   Experiments,
   ExperimentSubmission,
   ExperimentTransition,
+  ComputeInput,
 } from './types.js';
 import {
   experimentAttachSchema,

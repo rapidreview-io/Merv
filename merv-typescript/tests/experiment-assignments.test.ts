@@ -978,12 +978,12 @@ test('Git experiments retain the central-base protocol and wait for their exact 
     instanceId: old.id,
     expectedRevision: 0,
   });
-  assert.equal(old.workflow.version, 5);
+  assert.equal(old.workflow.version, 9);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 6);
+  assert.equal(experiment.workflow.version, 10);
   assert.equal(experiment.workspace, 'git');
   assert.equal(await f.experiments.codeUnit(f.source, experiment.id), null);
   const pendingDesign = (await f.design(experiment)).experiment;
@@ -1367,7 +1367,7 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
   );
   const based = { ...input, baseTaskId: task.id, dependsOn: [task.id] };
   const experiment = await f.experiments.create(f.source, based);
-  assert.equal(experiment.workflow.version, 7);
+  assert.equal(experiment.workflow.version, 11);
   assert.equal(experiment.baseTaskId, task.id);
   assert.deepEqual(await f.experiments.create(f.source, based), experiment);
   // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
@@ -1547,7 +1547,7 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'runner-kept',
     requestId: f.request(),
   });
-  assert.equal(before.workflow.version, 6);
+  assert.equal(before.workflow.version, 10);
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
@@ -1561,7 +1561,7 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'code-kept',
     requestId: f.request(),
   });
-  assert.equal(experiment.workflow.version, 8);
+  assert.equal(experiment.workflow.version, 12);
   const policies = await f.state.read(
     async (sql) =>
       await sql.all<{ state: string; manifest_json: string }>(

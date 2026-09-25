@@ -106,7 +106,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],
-  experiments: ['codeResearch'],
+  experiments: ['codeResearch', 'sandboxes'],
   research: [
     'domainEvents',
     'paper',
