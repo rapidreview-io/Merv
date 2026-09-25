@@ -85,6 +85,7 @@ const host = (state: 'none' | 'starting' | 'ready' = 'ready', extra: object = {}
   ],
   state,
   idleEndsAt: null,
+  idleSeconds: 600,
   shared: { conversations: 1, projects: 1 },
   moving: null,
   lastMove: null,
@@ -992,9 +993,10 @@ test('the bar names the machine every conversation here shares, and its picker s
   setProject('p1');
   const shared = host('ready', {
     shared: { conversations: 3, projects: 1 },
+    idleSeconds: 900,
     catalog: [
       { ...standard, available: true },
-      { ...large, available: false, reason: 'Needs write access and Sandboxes here' },
+      { ...large, available: false, reason: 'needs write access in this project' },
     ],
   });
   const stream = boot(
@@ -1011,14 +1013,14 @@ test('the bar names the machine every conversation here shares, and its picker s
   await act(async () => note().click());
   assert.equal(
     facts(),
-    'Shared by your 3 conversations here. Stops 10 minutes after the last answer in any of them. Up to $0.07/h.',
+    'Shared by your 3 conversations here. Stops 15 minutes after the last answer in any of them. Up to $0.07/h.',
   );
   assert.deepEqual(
     picker().map((item) => [item.textContent, item.getAttribute('aria-checked')]),
     [
       ['Standard½ vCPU · 4 GiB · 8 GB', 'true'],
-      ['LargeNeeds write access and Sandboxes here', 'false'],
-      ['Stop machine', null],
+      ['Largeneeds write access in this project', 'false'],
+      ['Release machine', null],
     ],
   );
   assert.equal(picker()[1].getAttribute('aria-disabled'), 'true');
@@ -1095,7 +1097,7 @@ test('picking Large counts the move while the machine still serves, and a failur
     /^Starting a machine · \d+ s$/,
   );
   await act(async () => note().click());
-  assert.equal(picker().at(-1)?.textContent, 'Stop machine');
+  assert.equal(picker().at(-1)?.textContent, 'Release machine');
   await press('Escape');
   const failure = (ago: number, extra: object = {}) => ({
     at: new Date(Date.now() - ago).toISOString(),
@@ -1123,7 +1125,7 @@ test('picking Large counts the move while the machine still serves, and a failur
   assert.equal(note().textContent, runs);
 });
 
-test('stopping the machine asks first, then stops it for every conversation here', async (t) => {
+test('releasing the machine asks first, then releases it for every conversation here', async (t) => {
   t.after(cleanup);
   setProject('p1');
   boot(
@@ -1147,7 +1149,7 @@ test('stopping the machine asks first, then stops it for every conversation here
   assert.match(text(), /Answers still running here stop too./);
   assert.deepEqual(
     picker().map((item) => item.textContent),
-    ['Stop machine', 'Cancel'],
+    ['Release machine', 'Cancel'],
   );
   assert.equal(document.activeElement, picker()[0]);
   await act(async () => picker()[1].click());

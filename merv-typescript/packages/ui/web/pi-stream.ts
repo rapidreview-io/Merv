@@ -43,6 +43,7 @@ export interface PiHostView {
   catalog: PiMachineOption[];
   state: 'none' | 'starting' | 'ready';
   idleEndsAt: string | null;
+  idleSeconds: number;
   shared: { conversations: number; projects: number };
   moving: { to: string; by: PiMoveBy; since: string } | null;
   lastMove: PiMove | null;

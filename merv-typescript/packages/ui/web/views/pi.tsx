@@ -144,7 +144,7 @@ function useMenu(box: RefObject<HTMLElement>, open: unknown, shut: () => void) {
 }
 
 /** The person's machine in this project, which all their conversations here share: what it is, a
- * move under way or one that failed, and the picker. Stopping it asks first. */
+ * move under way or one that failed, and the picker. Releasing it asks first. */
 function Machine({
   host,
   skew,
@@ -166,15 +166,16 @@ function Machine({
   const failed =
     !!host.machine &&
     move?.outcome === 'failed' &&
-    Date.now() + skew - Date.parse(move.at) < 600_000;
+    Date.now() + skew - Date.parse(move.at) < host.idleSeconds * 1000;
   useNow(failed ? 1000 : 0);
   const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
   if (!on) return null;
   const chosen = moving?.to ?? on.key;
   const { conversations, projects } = host.shared;
+  const minutes = Math.max(1, Math.round(host.idleSeconds / 60));
   const facts = [
     `Shared by your ${conversations > 1 ? `${conversations} ` : ''}conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
-    'Stops 10 minutes after the last answer in any of them.',
+    `Stops ${minutes} minute${minutes > 1 ? 's' : ''} after the last answer in any of them.`,
     `Up to $${on.maxHourlyUsd.toFixed(2)}/h.`,
   ];
   const close = (then = () => {}) => {
@@ -185,12 +186,12 @@ function Machine({
   const actions: [string, () => void, string?][] =
     menu === 'stop'
       ? [
-          ['Stop machine', () => close(stop), ' pi-menu-item--danger'],
+          ['Release machine', () => close(stop), ' pi-menu-item--danger'],
           ['Cancel', () => setMenu('pick')],
         ]
       : host.state === 'none' && !host.moving
         ? []
-        : [['Stop machine', () => setMenu('stop')]];
+        : [['Release machine', () => setMenu('stop')]];
   return (
     <div className="pi-switch pi-machine" ref={box}>
       <button
