@@ -446,6 +446,32 @@ test('a turn whose machine a rollout takes before it shows anything waits for a 
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
 });
 
+test('a claim still loading when its turn moves to a fresh machine, or is kept at a restart, leaves that turn waiting', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const conversation = await f.create();
+  await f.finish(await f.claimed(await f.send(conversation)));
+  for (const move of [
+    (sent: PiCommand) => released(f, sent.runtimeId, { intent: 'run' }).then(() => f.pi.tick()),
+    () => f.restart(),
+  ]) {
+    const sent = await f.send(conversation);
+    // The claim is taken, and its work holds on reading the checkpoint while the turn moves.
+    const get = f.blobs.get.bind(f.blobs);
+    let entered!: () => void, go!: () => void;
+    const reading = new Promise<void>((resolve) => (entered = resolve));
+    const held = new Promise<void>((resolve) => (go = resolve));
+    f.blobs.get = async (...args) => (entered(), await held, get(...args));
+    const next = f.pi.next(await f.token(sent.runtimeId), { workerId: 'worker_1' });
+    await reading;
+    await move(sent);
+    f.blobs.get = get;
+    go();
+    await next.catch(() => undefined);
+    assert.equal((await command(f, sent)).status, 'waiting');
+    await f.finish(await f.claimed(await command(f, sent)));
+  }
+});
+
 test('a lost machine’s turn that began starts again elsewhere; one that wrote or called a tool ends', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const sent = [];

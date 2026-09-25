@@ -871,8 +871,18 @@ test('a call already refused in the turn is not run again: the model is told to 
         runs++;
         check(!input.baseTaskId, 'invalid_workspace', 'baseTaskId is only for workspace "git"');
         check(!input.busy, 'experiment_conflict', 'Changed; reread it', 409);
+        check(!input.missing, 'not_found', 'No such base', 404);
         return { id: 'exp_1' };
       },
+    }),
+  );
+  t.after(
+    f.tools.register({
+      name: 'research.end',
+      description: 'End a cycle',
+      conversation: 'propose',
+      inputSchema: z.object({ id: z.string() }).strict(),
+      handler: () => ({}),
     }),
   );
   const { token, input } = await f.claimed(await f.send(await f.create()));
@@ -889,11 +899,17 @@ test('a call already refused in the turn is not run again: the model is told to 
     },
   });
   assert.equal(runs, 1);
-  // Another input runs; a conflict may pass once reread, so it is never held back.
+  // Another input runs; a conflict may pass once reread, and what is missing may be made in the
+  // same turn, so neither is held back.
   assert.deepEqual(await call({ title: 'A' }), { id: 'exp_1' });
-  await call({ busy: true });
-  await call({ busy: true });
-  assert.equal(runs, 4);
+  for (const value of [{ busy: true }, { busy: true }, { missing: true }, { missing: true }])
+    await call(value);
+  assert.equal(runs, 6);
+  // A proposal's invalid input is held back the same way.
+  const propose = () =>
+    f.pi.tool(token, { ...input, name: 'research.end', input: { id: 'r', extra: 1 } });
+  assert.equal(((await propose()) as { error: { code: string } }).error.code, 'invalid_input');
+  assert.equal(((await propose()) as { error: { code: string } }).error.code, 'already_refused');
 });
 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {

@@ -1199,14 +1199,13 @@ export class PiService implements Pi, FleetOwner {
         notes: [...(await this.told(conversation, command, actor!.role, caller)), ...notes],
       };
     } catch {
-      // A turn already ended (stopped) stays as it ended; a machine that no longer admits work is
-      // what the next take reports.
+      // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept
+      // at a restart (again) is no longer this claim's to end; a machine that no longer admits
+      // work is what the next take reports.
       await this.state.transaction(async (tx) => {
-        await this.interrupt(
-          tx,
-          await this.command(tx, conversation.id, command.id),
-          'worker_interrupted',
-        );
+        const current = await this.command(tx, conversation.id, command.id);
+        if (current.workerId === workerId && current.runtimeId === command.runtimeId)
+          await this.interrupt(tx, current, 'worker_interrupted');
         await this.quiet(tx, command.hostId);
       });
       this.announce();
@@ -1479,6 +1478,8 @@ export class PiService implements Pi, FleetOwner {
     const key = `${conversation.id}:${command.id}`;
     const call = digest([value.name, value.input]);
     const refused = this.refusals.get(key)?.get(call);
+    const refuse = (code: string) =>
+      this.refusals.set(key, (this.refusals.get(key) ?? new Map()).set(call, code));
     if (refused)
       return {
         error: {
@@ -1498,7 +1499,7 @@ export class PiService implements Pi, FleetOwner {
     let use: 'propose' | 'secret' | undefined;
     if (definition && !('kind' in definition) && definition.conversation) {
       const parsed = await definition.inputSchema.safeParseAsync(value.input);
-      if (!parsed.success)
+      if (!parsed.success && refuse('invalid_input'))
         return {
           error: {
             code: 'invalid_input',
@@ -1533,15 +1534,11 @@ export class PiService implements Pi, FleetOwner {
       .catch(async (error: unknown) => {
         // A turn that ended, or whose person lost access here, ends with its call; any other
         // refusal, the person's role included, is the model's to explain. A refusal the same
-        // call would meet again (a 4xx other than timeout, conflict or rate limit) is kept: the
-        // call is not run again in this turn.
+        // input always meets again (invalid, forbidden, unprocessable) is kept: the call is not
+        // run again in this turn. What is missing may be made, and a conflict reread, meanwhile.
         await this.read((tx) => this.bound(token, value, tx));
-        if (
-          error instanceof MervError &&
-          error.status < 500 &&
-          ![408, 409, 429].includes(error.status)
-        )
-          this.refusals.set(key, (this.refusals.get(key) ?? new Map()).set(call, error.code));
+        if (error instanceof MervError && [400, 403, 422].includes(error.status))
+          refuse(error.code);
         return error instanceof MervError
           ? {
               error: {

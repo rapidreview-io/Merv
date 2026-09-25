@@ -418,7 +418,8 @@ def quiet(limit, release=False):
         elif time.monotonic() - calm >= 10:
             return {'drained': True}
         need(time.monotonic() < deadline, f'not_drained_after_{limit}s {json.dumps({k: v[:5] for k, v in now.items()})}'
-             ': nothing was changed by this step; rerun when Pi is quieter, or raise --drain-minutes')
+             f"{': idle Agent machines were released, nothing else changed' if release else ': nothing was changed by this step'}"
+             '; rerun when Pi is quieter, or raise --drain-minutes')
         time.sleep(5)
 
 
