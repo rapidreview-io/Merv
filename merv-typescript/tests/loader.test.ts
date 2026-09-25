@@ -144,12 +144,12 @@ test('disabling only optional feed in configuration leaves the API and task prog
     });
     const { tools } = (await response.json()) as { tools: { name: string }[] };
     assert.equal(response.status, 200);
-    assert.equal(tools.length, 83);
+    assert.equal(tools.length, 86);
     assert.ok(tools.some((tool) => tool.name === 'task.create'));
     assert.ok(!tools.some((tool) => tool.name.startsWith('feed.')));
     assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'pending');
     await app.setEnabled('feed', true);
-    assert.equal((await app.ctx.tools.list()).length, 87);
+    assert.equal((await app.ctx.tools.list()).length, 90);
     assert.equal(app.status().find((entry) => entry.id === 'feed-tools')?.state, 'active');
   } finally {
     await app.stop();

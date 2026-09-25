@@ -134,7 +134,7 @@ export async function runMountUnloadScenario(
     };
     const mountedName = '_sandbox.inspect';
     const before = (await producer.listTools()).tools.map(({ name }) => name);
-    assert.equal(before.length, 91);
+    assert.equal(before.length, 94);
     assert.ok(before.includes(mountedName));
     assert.equal(running.ctx.mounts.status()[0].state, 'ready');
     const denied = await reviewer.callTool({ name: mountedName, arguments: {} });
