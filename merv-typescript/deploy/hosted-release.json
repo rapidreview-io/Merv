@@ -1,0 +1,47 @@
+{
+  "canary": {
+    "projectId": "project_3b538d73b68d4306937c226e742f61c1",
+    "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
+  },
+  "current": {
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3ca9ef18a5fe95d65b0277963098cc938b0908bbb61e80cf6185bfc1d10720a6",
+    "releaseId": "rt1_4166a6347f29f54b8109107638c9d39175ed38117051c7c2cc7a1a767ab31d3b",
+    "localId": "sha256:90490832b09a114e43f44394ccb1a998fcec966c228819692b769153435063be",
+    "sourceCommit": "16164daf9c0dfb59f85e4b259ee17ffa1e40dfd2",
+    "sandboxesCommit": "9b80856d9fe03439a4f958d6cf8eb4c95d844ea7"
+  },
+  "inputs": [
+    "packages/code/src/driver/git.ts",
+    "packages/code/src/driver/index.ts",
+    "packages/code/src/files.ts",
+    "packages/code/src/merge-settings.ts",
+    "packages/contracts/src/async.ts",
+    "packages/contracts/src/code-github.ts",
+    "packages/contracts/src/code-publications.ts",
+    "packages/contracts/src/code-store.ts",
+    "packages/contracts/src/code-transport.ts",
+    "packages/contracts/src/code.ts",
+    "packages/contracts/src/index.ts",
+    "packages/contracts/src/order.ts",
+    "packages/contracts/src/paper-edit.ts",
+    "packages/contracts/src/review-history.ts",
+    "packages/contracts/src/schemas.ts",
+    "packages/contracts/src/session-inputs.ts",
+    "packages/contracts/src/text.ts",
+    "packages/contracts/src/ui-manifest.ts",
+    "packages/contracts/src/usage-report.ts",
+    "packages/contracts/src/workspace-driver.ts",
+    "packages/contracts/src/workspace.ts",
+    "packages/pi/src/checkpoint.ts",
+    "packages/pi/src/tool-names.ts",
+    "packages/pi/src/worker-main.ts",
+    "packages/pi/src/worker.ts",
+    "packages/runner/src/client.ts",
+    "packages/runner/src/index.ts",
+    "packages/runner/src/ledger.ts",
+    "packages/runner/src/process-host.ts",
+    "packages/runner/src/profiles.ts",
+    "packages/runner/src/workspaces.ts",
+    "scripts/hosted-runner/smoke-supervisor.ts"
+  ]
+}

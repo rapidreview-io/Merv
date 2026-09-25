@@ -34,44 +34,14 @@ Git is implemented and locally tested. Cloudflare isolation, cleanup, and
 provider acceptance remain pending. This script is not a production Fleet owner
 or a substitute for those gates.
 
-## Build and pin a Cloudflare candidate
+## Releasing to production
 
-From `merv-typescript`, one command creates a fresh minimal sandbox Docker
-context from the isolated sandbox checkout, bundles the existing supervisor,
-builds both `linux/amd64` images, and records source hashes, image IDs, and the
-installed `/opt/merv/runtime/start-runner` SHA-256:
-
-```sh
-node scripts/hosted-runner/package.mjs build \
-  ../output/fleet-sandboxes ../output/hosted-candidate-1 merv-hosted-codex:candidate-1
-```
-
-The output is `../output/hosted-candidate-1/build.json`. Use a new output
-directory and tag for each candidate. The staged Docker context contains only
-the Cloudflare Dockerfile's explicit COPY inputs and the amd64 agent binary;
-unrelated changes in either checkout are not copied. The bundle hash records
-the compiled Runner payload, while source revisions and file hashes record the
-inputs selected for this build. The image ID identifies the actual result even
-when upstream base tags or package downloads change.
-
-After separately pushing and independently checking the immutable registry
-reference, pin that externally obtained digest:
-
-```sh
-node scripts/hosted-runner/package.mjs finalize \
-  ../output/hosted-candidate-1/build.json \
-  registry.cloudflare.com/ACCOUNT/IMAGE@sha256:64_LOWERCASE_HEX_DIGITS cloudflare
-```
-
-This writes `releases.json` in the strict `RuntimeReleases` catalog format and
-`release.json` with its `rt1_…` release ID and registry reference. The service's
-operator catalog enables the same release; the trusted sandbox bootstrap writes
-`/opt/merv/runtime/releases.json` as a root-owned mode-0600 file before protected
-launch. The catalog is finalized after the image digest is known, so it is not
-baked into the image it identifies. This helper never pushes, deploys, accesses
-Cloudflare credentials, or asserts that the registry digest matches the locally
-built image. The operator must verify that link and the live provider image and
-runtime gates before enabling Fleet.
+`node deploy/hosted-release.mjs` releases changes to these files, to `packages/pi/worker-runtime`
+and to the Sandboxes base (its Cloudflare Dockerfile, agent and bridge Worker). On the production
+host it builds this Dockerfile from committed sources, over a Sandboxes base built from the
+committed Sandboxes checkout, runs the Linux probes below against that exact image, and moves the
+Cloudflare app, the Sandboxes catalog and Main together, with a live canary turn and automatic
+rollback. `deploy/release.mjs` runs it after every production release.
 
 ## Combined Pi and workflow Linux probes
 
@@ -90,18 +60,8 @@ that worker the supervisor starts one itself. The worker's module compile cache
 is filled at image build under its UID and sealed root-owned; V8 ignores it
 where the CPU features differ from the build host's.
 
-Run these probes on a Linux Docker host against the built combined image:
-
-```sh
-docker run --rm --network none --cap-add SYS_PTRACE \
-  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
-  -v "$PWD/scripts/hosted-runner/linux-pi-gate.py:/opt/merv/runtime/probe.py:ro" \
-  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
-docker run --rm --network none \
-  --tmpfs /run/merv-runtime:mode=0700 --entrypoint /usr/bin/python3.11 \
-  -v "$PWD/scripts/hosted-runner/linux-workflow-gate.py:/opt/merv/runtime/probe.py:ro" \
-  merv-hosted-pi:candidate-20260923 /opt/merv/runtime/probe.py
-```
+`GATES` in `deploy/hosted-release-vm.py` holds the exact `docker run` flags for each probe
+against a built combined image; the release runs them with the probe scripts from its archive.
 
 `SYS_PTRACE` is for the root test inspector only; the Pi worker and assignment
 probe must have zero effective, permitted, inheritable, bounding and ambient

@@ -91,7 +91,8 @@ The container names are fixed; the script reads the images, the Sandboxes
 catalog path and Main's release directory from the live containers. Never run it
 with `python3 -O`, which strips its guards. It refuses to run unless Main (Fleet
 allocations, active Pi commands) and Sandboxes (sandboxes, jobs, workflows,
-outbox, snapshots) are drained and the project exists. It backs up the env and
+outbox, snapshots) are drained and the project exists, and while a hosted-image
+run is open; it holds that pipeline's host lock throughout. It backs up the env and
 catalog to `/var/lib/merv-fleet-pilot/pi-connect/<projectId>/` before every
 write, and writes atomically.
 
@@ -143,8 +144,9 @@ keeps the canary grant.
 Do this once, before the first release that reads `MERV_PI_HOST_PROJECT_ID`.
 That release refuses to render Pi without a host, so its health wait fails and
 it rolls back. Use one quiet window. Every step below is either a script phase
-or an existing tool, and each phase refuses to run out of order. Until step 7,
-Main keeps launching its v1 release on the old image, so Pi keeps working.
+or an existing tool, and each phase refuses to run out of order or while a
+hosted-image run is open. Until step 7, Main keeps launching its v1 release on
+the old image, so Pi keeps working.
 
 1. **Standard release.** Build and push the hosted image that speaks bootstrap
    v2, and add its release to the Sandboxes catalog as before. Keep its `rt1_`
@@ -201,10 +203,10 @@ Main keeps launching its v1 release on the old image, so Pi keeps working.
 7. **Release.** Take a `pg_dump` of Main's database now, after step 3 has
    created the host project. Deploy the v2 image drained to the Standard
    Cloudflare app with `deploy/cloudflare-sandbox/rollout.py`, then deploy Main
-   at once with `release.mjs`, which runs the pi@2 migration. Pi turns fail
-   between the two, so keep that gap to the rollout itself. The app's
+   at once with `release.mjs --skip-hosted`, which runs the pi@2 migration. Pi
+   turns fail between the two, so keep that gap to the rollout itself. The app's
    `max_instances` caps how many Standard machines can run at once; the
-   production app (version 14) is at 50, the host limit, so keep it there.
+   production app (version 15) is at 50, the host limit, so keep it there.
    Until the migration, `release.mjs` can roll the image back on the same env.
    After it, the older image refuses the database, so rolling back means
    restoring that `pg_dump`. Either way, roll the Standard app back to the
@@ -262,9 +264,22 @@ Main keeps launching its v1 release on the old image, so Pi keeps working.
   and dry-run the render before any recreate.
 - A changed release in a `MERV_FLEET_RUNTIMES` entry changes that machine's
   profile, and every allocation on it is then asked to stop. Roll it out
-  drained. The hosted runtime is digest-pinned; rebuilding it requires its
-  coordinated release/catalog and isolation gates, not just a main-server
-  rollout.
+  drained. The hosted runtime is digest-pinned; `hosted-release.mjs` (run by
+  `release.mjs`) builds it from committed sources and moves its image, catalog
+  and release id together, drained, gated and canaried, with automatic rollback.
+  It moves only the Standard app and `MERV_FLEET_RUNTIME_RELEASE_ID`, which
+  `MERV_FLEET_RUNTIMES` overrides, and its canary expects a machine per
+  conversation. Once the Pi host setup has deployed the v2 image outside it, it
+  refuses on the drifted pins; until it learns the machine catalog and the Large
+  app, release Main with `release.mjs --skip-hosted`.
+- An open hosted run blocks every Main release, emergencies included. When it
+  can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
+  closes it once production agrees on one of its releases: Cloudflare runs that
+  image with no rollout, Main and the env file name its release id, and both
+  Sandboxes services' catalog holds it. Otherwise it refuses and names what
+  disagrees; the run stays open. On the run's own release it first runs a
+  canary; if that fails, it exits 4 and marks the live pins unverified, and
+  every later run canaries them again until one passes.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Also confirm that each Cloudflare app's `max_instances` allows

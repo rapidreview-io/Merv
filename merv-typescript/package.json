@@ -24,6 +24,7 @@
     "test:live:dispatch": "node --import tsx scripts/live-sessions.ts --automatic",
     "test:sessions": "node --import tsx --test tests/sessions.test.ts tests/sessions-api.test.ts tests/sessions-integration.test.ts tests/workflow-leases.test.ts tests/workflow-dispatch.test.ts tests/session-dispatch-api.test.ts",
     "test:runner": "node --import tsx --test tests/runner-*.test.ts",
+    "test:deploy": "node --test deploy/*.test.mjs scripts/hosted-runner/*.test.mjs",
     "test:feed-unload": "node --import tsx scripts/feed-unload.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

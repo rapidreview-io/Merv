@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--host ResearchSuite_Control] [--public https://origin]
-//                           [--dry-run] [--resume <release-id>]
+//                           [--dry-run] [--resume <release-id>] [--skip-hosted]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -9,23 +9,20 @@
 // public HTTPS checks against --public and appends one row to the release log. Never prints
 // private env files. --public also selects that log: the production origin writes
 // deploy/RELEASES.md, and any other origin (a staging VM) writes deploy/STAGING_RELEASES.md,
-// so a staging deploy can never be mistaken for a production one.
-import { createHash } from 'node:crypto';
+// so a staging deploy can never be mistaken for a production one. A production release first lets
+// deploy/hosted-release.mjs finish any open hosted-image run, and after passing runs it again, which
+// does nothing unless the hosted Pi/Codex image's sources changed; --skip-hosted leaves the hosted
+// image for an emergency Main-only release.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { NODE_IMAGE, packageSource, root } from './source-archive.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const repo = resolve(root, '..'); // git commands run at the repository root; the release tree is HEAD:merv-typescript
 const args = process.argv.slice(2);
 const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const host = opt('--host', 'ResearchSuite_Control');
 const dryRun = args.includes('--dry-run');
 const resume = opt('--resume');
-const NODE_IMAGE =
-  'node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5';
 const PRODUCTION = 'https://experiments.rapidreview.io';
 const PUBLIC = opt('--public', PRODUCTION);
 // The origin is interpolated into the remote job's approved-origin check, so it is an origin
@@ -34,27 +31,6 @@ if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(PUBLIC))
   throw new Error(`--public must be an https origin without a path, got ${PUBLIC}`);
 // A staging deploy never appends to the production release log.
 const RELEASES = PUBLIC === PRODUCTION ? 'deploy/RELEASES.md' : 'deploy/STAGING_RELEASES.md';
-const ROOTS = [
-  'package.json',
-  'package-lock.json',
-  'tsconfig.json',
-  'packages',
-  'src',
-  'scripts',
-  'tests',
-  'config/default.json',
-  'config/no-code.example.json',
-  'config/runner-no-code.example.json',
-  'config/production.example.json',
-  'deploy',
-  'docs/architecture',
-];
-const EXCLUDE =
-  /(^|\/)(node_modules|dist)\/|(^|\/)\.env|\.env$|credentials[^/]*\.json$|\.sqlite|^deploy\/[^/]*-private\.json$/;
-
-const sh = (cmd, a, cwd = root) =>
-  execFileSync(cmd, a, { cwd, encoding: 'utf8', maxBuffer: 64 << 20 });
-const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const ssh = (script, opts = {}) =>
   spawnSync('ssh', ['-o', 'BatchMode=yes', host, 'sudo', 'bash', '-s'], {
     input: script,
@@ -63,47 +39,12 @@ const ssh = (script, opts = {}) =>
     ...opts,
   });
 
-function packageSource() {
-  // Releases are commits: the archive comes from HEAD, never from the working tree, so a peer's
-  // uncommitted work cannot ride along. Uncommitted differences under the allowlist are listed.
-  // A concurrent coding session may advance HEAD while this archive is being assembled.
-  const gitRevision = sh('git', ['rev-parse', 'HEAD']).trim();
-  const tree = `${gitRevision}:merv-typescript`;
-  const files = sh('git', ['ls-tree', '-r', '-z', '--name-only', tree, '--', ...ROOTS], repo)
-    .split('\0')
-    .filter((p) => p && !EXCLUDE.test(p))
-    .sort();
-  const entries = files.map((path) => {
-    const buf = execFileSync('git', ['show', `${tree}/${path}`], {
-      cwd: root,
-      maxBuffer: 64 << 20,
-    });
-    return { path, sha256: sha256(buf), bytes: buf.length };
-  });
-  const contentSha256 = sha256(entries.map((e) => `${e.sha256}  ${e.path}\n`).join(''));
-  const stamp = new Date().toISOString().replace(/[-:]|\.\d+/g, '');
-  const release = `${stamp}-${gitRevision.slice(0, 8)}-${contentSha256.slice(0, 12)}`;
-  const dir = mkdtempSync(join(tmpdir(), 'merv-release-'));
-  execFileSync(
-    'git',
-    ['archive', '--format=tar.gz', '-o', join(dir, 'source.tar.gz'), tree, '--', ...files],
-    { cwd: repo },
-  );
-  const archiveSha256 = sha256(readFileSync(join(dir, 'source.tar.gz')));
-  const manifest = { release, gitRevision, contentSha256, archiveSha256, files: entries };
-  writeFileSync(join(dir, 'source-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-  const uncommitted = sh(
-    'git',
-    ['status', '--porcelain', '--', ...ROOTS.map((r) => `merv-typescript/${r}`)],
-    repo,
-  ).trim();
-  if (uncommitted) console.error(`not in this release (uncommitted):\n${uncommitted}`);
-  return { dir, release, gitRevision, contentSha256, archiveSha256, count: files.length };
-}
-
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
 const remoteJob = ({ release, archiveSha256 }) => `
 set -euo pipefail
+# An open hosted-image run owns Main's recreates; it checks for this job after claiming the marker.
+HOSTED=$(cat /var/lib/merv-fleet-pilot/hosted-release/active 2>/dev/null || true)
+if [ -n "$HOSTED" ]; then echo "hosted run $HOSTED is open; node deploy/hosted-release.mjs finishes it, or --abandon closes it" >&2; exit 1; fi
 REL=/opt/merv-typescript/releases/${release}
 IMG=merv-typescript:${release}
 BK=/var/backups/merv/typescript-staging-refresh/${release}
@@ -229,6 +170,17 @@ if (local)
     }),
   );
 if (dryRun) process.exit(0);
+const hosted = (...extra) =>
+  spawnSync(process.execPath, [join(root, 'deploy/hosted-release.mjs'), '--host', host, ...extra], {
+    stdio: 'inherit',
+  }).status;
+// A hosted run left open would make the VM job refuse; finish it (forward or back) first.
+if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
+  console.error(
+    'A hosted image run is still open; Main was not released. Once production agrees on one of its releases, `node deploy/hosted-release.mjs --abandon` closes it.',
+  );
+  process.exit(1);
+}
 const release = resume ?? local.release;
 if (local) upload(local);
 const vm = waitForVm(release);
@@ -262,3 +214,7 @@ appendFileSync(
 );
 execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
 if (!ok) process.exit(1);
+if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted() !== 0) {
+  console.error('Main is released; the hosted image release did not complete (see above).');
+  process.exit(1);
+}

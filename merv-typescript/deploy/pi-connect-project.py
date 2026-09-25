@@ -21,9 +21,11 @@ cloudflare_api_token come as JSON on stdin), its copy of the Standard release, a
 limits, then recreates Sandboxes. `machines` writes the host, the machine catalog and the host's Fleet
 limit into Main's env and dry-runs both the running image's render and this directory's, without
 recreating Main: the release that reads them does. Run it from that release's deploy directory.
+Every phase refuses while a hosted-image run is open, and holds that pipeline's host lock.
 Never prints a secret. Every mutation follows a root-private backup and is undone on failure; the backups
 hold secrets, so shred ROOT once the connection is verified and recorded. See deploy/PI_OPERATIONS.md.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -51,6 +53,7 @@ assert PHASE == 'host' or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PRO
 HOST_ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect/_host')
 ROOT = HOST_ROOT if PHASE == 'host' else HOST_ROOT.parent / PROJECT
 ENV = Path('/etc/merv/typescript.env')
+HOSTED = Path('/var/lib/merv-fleet-pilot/hosted-release')  # deploy/hosted-release-vm.py's lock and open-run marker
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 SUFFIX = hashlib.sha256(PROJECT.encode()).hexdigest()[:20]
 NAMESPACE = 'merv-pi-' + SUFFIX
@@ -189,6 +192,18 @@ console.log(JSON.stringify({projectId:actor.projectId,actorId:actor.id,role:acto
 
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
+
+
+def exclusive():
+    """The hosted-image pipeline's host lock, for the whole phase: both edit the env or the catalog, or work in Main."""
+    HOSTED.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock = (HOSTED / 'lock').open('a')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('a hosted-release step holds the host lock; rerun when it ends')
+    assert not (HOSTED / 'active').exists(), 'hosted_run_open: `node deploy/hosted-release.mjs` finishes it first'
+    return lock
 
 
 def now():
@@ -541,4 +556,5 @@ def machines():
 if __name__ == '__main__':
     assert os.geteuid() == 0
     os.umask(0o077)
-    {'host': host, 'sandboxes': sandboxes, 'main': main_phase, 'large': large, 'machines': machines}[PHASE]()
+    with exclusive():
+        {'host': host, 'sandboxes': sandboxes, 'main': main_phase, 'large': large, 'machines': machines}[PHASE]()
