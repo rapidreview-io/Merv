@@ -1,9 +1,10 @@
-// The allowlisted archive of committed HEAD that release.mjs and hosted-release.mjs build from.
+// The allowlisted archive of committed HEAD that release.mjs and hosted-release.mjs build from,
+// and the commit of the production ledgers they write.
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const NODE_IMAGE =
@@ -68,4 +69,27 @@ export function packageSource() {
   ).trim();
   if (uncommitted) console.error(`not in this release (uncommitted):\n${uncommitted}`);
   return { dir, release, gitRevision, contentSha256, archiveSha256, count: files.length };
+}
+
+/** Commits exactly these ledger files, if a production release changed them, with a [skip ci]
+ * message and pushes them to origin main, but only from origin/main's tip; otherwise it leaves
+ * them in the working tree and says so. */
+export function publishLedgers(files, subject) {
+  const git = (...a) => spawnSync('git', ['-C', dirname(files[0]), ...a], { encoding: 'utf8' });
+  const names = files.map((file) => basename(file)).join(' and ');
+  if (!git('status', '--porcelain', '--', ...files).stdout?.trim()) return; // or no checkout
+  const head = git('rev-parse', 'HEAD').stdout.trim();
+  const tip = git('ls-remote', 'origin', 'refs/heads/main').stdout?.split('\t')[0];
+  if (head !== tip) {
+    console.error(`${names} left uncommitted: HEAD is not origin/main's tip; commit them by path.`);
+    return;
+  }
+  for (const step of [
+    ['commit', '-q', '-m', `${subject} [skip ci]`, '--', ...files],
+    ['push', '-q', 'origin', 'HEAD:main'],
+  ]) {
+    const r = git(...step);
+    if (r.status !== 0) return console.error(`${names}: git ${step[0]} failed: ${r.stderr.trim()}`);
+  }
+  console.log(`${names} committed and pushed to origin main`);
 }

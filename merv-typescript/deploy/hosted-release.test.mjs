@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  APPS,
   GATES,
   LEASE,
   WATCH,
@@ -18,10 +19,12 @@ import {
   unsettled,
   wranglerConfig,
 } from './hosted-release.mjs';
+import { publishLedgers } from './source-archive.mjs';
 
 const read = (name) => JSON.parse(readFileSync(new URL(name, import.meta.url), 'utf8'));
 const seed = read('hosted-release.json');
-const template = read('hosted-wrangler.json');
+const templates = Object.fromEntries(Object.entries(APPS).map(([p, f]) => [p, read(f.slice(7))]));
+const template = templates['cloudflare-fleet'];
 const LIVE_EXECUTABLE = 'b3f871dcee261fd66d6ccdbbe4d8e589a8ef1014646c920087da4bbc866da49d';
 const image = (hex) => `registry.cloudflare.com/acct/merv-hosted-codex@sha256:${hex.repeat(64)}`;
 const settled = {
@@ -131,16 +134,45 @@ test('a gate passes only when every report line passes', () => {
 });
 
 test('release ids match the live Sandboxes catalog and require a digest', () => {
-  const entry = releaseEntry(seed.current.image, LIVE_EXECUTABLE);
+  // The release of 2026-09-25T02:00Z as Sandboxes derived it; the seed moves on with each release.
+  const live = `registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3ca9ef18a5fe95d65b0277963098cc938b0908bbb61e80cf6185bfc1d10720a6`;
   assert.equal(
-    releaseId(entry),
-    'rt1_ae4b27ada35598ec5f4fa688373de3a45fe6c0c9eaf53db13597872ef1d5b608',
+    releaseId(releaseEntry(live, LIVE_EXECUTABLE)),
+    'rt1_4166a6347f29f54b8109107638c9d39175ed38117051c7c2cc7a1a767ab31d3b',
   );
-  assert.equal(releaseId(entry), seed.current.releaseId);
   assert.throws(() =>
     releaseEntry('registry.cloudflare.com/acct/merv-hosted-codex:latest', LIVE_EXECUTABLE),
   );
   assert.throws(() => releaseEntry(image('a'), 'not-a-hash'));
+});
+
+test('each app template is the app wrangler created: Standard at 50 machines, Large its standard-3 at 10', () => {
+  const large = templates['cloudflare-fleet-large'];
+  const [standard, big] = [template, large].map((t) => t.containers[0]);
+  assert.equal(standard.max_instances, 50); // never lower: the host limit
+  assert.deepEqual(
+    [large.name, big.name, large.vars.SHAPE, big.instance_type, big.max_instances],
+    [
+      'merv-sandboxes-bridge-large',
+      'merv-sandboxes-bridge-large-sandboxcontainer-large',
+      'standard-3',
+      'standard-3',
+      10,
+    ],
+  );
+  // One bridge Worker, account and Durable Object class; only the app and its shape differ.
+  for (const key of ['account_id', 'main', 'compatibility_date', 'durable_objects', 'migrations'])
+    assert.deepEqual(large[key], template[key], key);
+  assert.deepEqual(
+    { ...big, name: '', instance_type: '', max_instances: 0 },
+    {
+      ...standard,
+      name: '',
+      instance_type: '',
+      max_instances: 0,
+    },
+  );
+  assert.ok(wranglerConfig(large, image('c'), '/w'));
 });
 
 test('the wrangler config changes only the image and the Worker path', () => {
@@ -174,34 +206,76 @@ test('native verification waits for the pinned image to settle and flags drift',
   };
   assert.deepEqual(unsettled(moving, expect), ['rollout in progress', 'scheduling 3']);
   assert.ok(unsettled({ ...settled, ssh: true }, expect).length);
+  const digest = seed.current.image.split('@')[1];
+  const standard = { 'cloudflare-fleet': seed.current.releaseId };
   const live = {
-    native: settled,
+    apps: { 'cloudflare-fleet': settled },
     mainReleaseId: seed.current.releaseId,
     fileReleaseId: seed.current.releaseId,
-    catalog: [seed.current.image.split('@')[1]],
+    releases: standard,
+    fileReleases: standard,
+    catalog: [{ provider: 'cloudflare-fleet', digest, id: seed.current.releaseId }],
   };
-  assert.deepEqual(pinProblems(seed.current, template, live), []);
+  assert.deepEqual(pinProblems(seed.current, templates, live), []);
   assert.deepEqual(
-    pinProblems(seed.current, template, { ...live, mainReleaseId: 'rt1_x', catalog: [] }),
-    ['Main runs rt1_x', 'the Sandboxes catalog lacks the live digest'],
+    pinProblems(seed.current, templates, {
+      ...live,
+      mainReleaseId: 'rt1_x',
+      releases: { 'cloudflare-fleet': 'rt1_x' },
+      catalog: [],
+    }),
+    [
+      'Main runs rt1_x',
+      'the env file names other machine releases than Main runs',
+      "the Sandboxes catalog lacks cloudflare-fleet's live release",
+    ],
   );
   // Pre-warmed or transient launches do not block the drift check; only the settle wait.
   const busy = {
     ...live,
-    native: { ...settled, health: { errors: [], instances: { starting: 1 } } },
+    apps: {
+      'cloudflare-fleet': { ...settled, health: { errors: [], instances: { starting: 1 } } },
+    },
   };
-  assert.deepEqual(pinProblems(seed.current, template, busy), []);
+  assert.deepEqual(pinProblems(seed.current, templates, busy), []);
+  // After the Pi host cutover: Large runs the live image too, and Main names its copy.
+  const big = { ...settled, name: 'merv-sandboxes-bridge-large-sandboxcontainer-large' };
+  const both = { ...standard, 'cloudflare-fleet-large': 'rt1_large' };
+  const cutover = {
+    ...live,
+    apps: { ...live.apps, 'cloudflare-fleet-large': { ...big, maxInstances: 10 } },
+    releases: both,
+    fileReleases: both,
+    catalog: [...live.catalog, { provider: 'cloudflare-fleet-large', digest, id: 'rt1_large' }],
+  };
+  assert.deepEqual(pinProblems(seed.current, templates, cutover), []);
+  const drifted = {
+    ...cutover,
+    apps: { ...cutover.apps, 'cloudflare-fleet-large': { ...big, image: 'x', maxInstances: 10 } },
+    fileReleases: standard,
+    catalog: live.catalog,
+  };
+  assert.deepEqual(pinProblems(seed.current, templates, drifted), [
+    'cloudflare-fleet-large image x',
+    'the env file names other machine releases than Main runs',
+    "the Sandboxes catalog lacks cloudflare-fleet-large's live release",
+  ]);
+  const unknown = { ...cutover, apps: { ...cutover.apps, 'other-app': big } };
+  assert.deepEqual(pinProblems(seed.current, templates, unknown), [
+    'no template deploys other-app',
+  ]);
 });
 
 test('rollback undoes what was attempted in the forward order, then verifies with a canary', () => {
-  const previous = { image: image('a'), releaseId: 'rt1_old', sandboxesCommit: 'c1' };
+  const releases = { 'cloudflare-fleet': 'rt1_old', 'cloudflare-fleet-large': 'rt1_oldL' };
+  const previous = { image: image('a'), releaseId: 'rt1_old', releases, sandboxesCommit: 'c1' };
   assert.deepEqual(rollbackSteps({}, previous), []);
   assert.deepEqual(rollbackSteps({ catalogBroken: true }, previous), [['catalog']]);
   // The switch is always undone after a deploy: the host guard may have switched Main meanwhile.
   // Main follows the image at once; the settle comes after, as on the way forward.
   assert.deepEqual(rollbackSteps({ deployAttempted: true }, previous), [
     ['deploy', previous],
-    ['switch', 'rt1_old'],
+    ['switch', { releaseId: 'rt1_old', releases }],
     ['settle', image('a')],
     ['canary', 'rt1_old'],
   ]);
@@ -225,6 +299,10 @@ test('ledger rows and the plan carry pins, never secrets', () => {
   assert.equal(
     row,
     '| 2026-09-25T10:11Z | `20260925T101112Z-abcdef12` | `abcdef12` `0123456789ab` | boundary | `dddddddddddd` | `eeeeeeeeeeee` | v15 | 3 pass | completed in 52s | FAILED | switch: health_timeout   detail second line |\n',
+  );
+  assert.match(
+    ledgerRow({ at: '2026-09-25T10:11Z', sourceCommit: 'a', lane: 'worker', version: [16, 2] }),
+    /\| v16 v2 \|/,
   );
   const plan = {
     run: 'r',
@@ -311,7 +389,7 @@ test('the catalog edit appends to both services, keeps earlier releases and is i
   assert.match(python('vm.with_release(i,{})', split).stderr, /catalog_services_differ/);
 });
 
-test('the env edit replaces exactly one release id line', () => {
+test('the env edit replaces exactly one release id line, and each machine release', () => {
   const raw = 'A=1\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_old\nB=\'{"x":1}\'\n';
   const out = py(
     'print(json.dumps(vm.with_env(i.encode(),"MERV_FLEET_RUNTIME_RELEASE_ID","rt1_new").decode()))',
@@ -319,7 +397,38 @@ test('the env edit replaces exactly one release id line', () => {
   );
   assert.equal(out, 'A=1\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_new\nB=\'{"x":1}\'\n');
   assert.match(python("vm.with_env(b'K=1\\nK=2\\n','K','3')").stderr, /env_key_not_unique/);
+  const edit = (env, releases) =>
+    py('print(json.dumps(vm.with_releases(i[0].encode(),i[1]).decode()))', [env, releases]);
+  // Before the cutover the legacy key is Standard's only machine.
+  assert.equal(edit(raw, { 'cloudflare-fleet': 'rt1_new' }), out);
+  const machine = (key, provider, releaseId) => ({ key, provider, offerId: 'o', releaseId });
+  const runtimes = (s, l) => [
+    machine('standard', 'cloudflare-fleet', s),
+    machine('large', 'cloudflare-fleet-large', l),
+  ];
+  const quoted = (list) => `MERV_FLEET_RUNTIMES='${JSON.stringify(list)}'`;
+  const env = `${raw}${quoted(runtimes('rt1_old', 'rt1_oldL'))}\nC=2\n`;
+  const releases = { 'cloudflare-fleet': 'rt1_new', 'cloudflare-fleet-large': 'rt1_newL' };
+  assert.equal(edit(env, releases), `${out}${quoted(runtimes('rt1_new', 'rt1_newL'))}\nC=2\n`);
+  const machines = py('print(json.dumps(vm.machines(vm.file_env(i.encode()))))', env);
+  assert.deepEqual(machines, {
+    'cloudflare-fleet': 'rt1_old',
+    'cloudflare-fleet-large': 'rt1_oldL',
+  });
+  const partial = python('vm.with_releases(i.encode(),{"cloudflare-fleet":"rt1_new"})', env);
+  assert.match(partial.stderr, /no release for every machine/);
 });
+
+// A run on both apps: Main's machines at preflight, and the run's own releases once catalogued.
+const [OLD, NEW] = ['a', 'b'].map((c) => `rt1_${c.repeat(64)}`);
+const [OLD_L, NEW_L] = ['c', 'd'].map((c) => `rt1_${c.repeat(64)}`);
+const twoApps = `(r/'preflight.json').write_text(json.dumps({'releases':{'cloudflare-fleet':'${OLD}','cloudflare-fleet-large':'${OLD_L}'}}))
+(r/'catalog.json').write_text(json.dumps({'releaseId':'${NEW}','releases':{'cloudflare-fleet':'${NEW}','cloudflare-fleet-large':'${NEW_L}'}}))
+(r/'push.json').write_text(json.dumps({'image':'reg@sha256:new'}))
+step=vm.Step(r,{'current':{'image':'reg@sha256:old','releaseId':'${OLD}'},'canary':{'credential':'/c'}})
+apps={'cloudflare-fleet':{'image':'reg@sha256:new','rollout':None},'cloudflare-fleet-large':{'image':'reg@sha256:new','rollout':None}}
+vm.native=lambda p='cloudflare-fleet':apps[p]
+`;
 
 // A scratch HOME and run directory, with the module's docker/pgrep calls replaced.
 const scratch = `import pathlib,tempfile,time
@@ -383,20 +492,49 @@ print(json.dumps(res))`,
   assert.match(out.busy, /a Main release job is running/);
 });
 
-test('the guard points Main at the release Cloudflare runs once the driver falls silent', () => {
+test('the switch names every machine its release, and restores the env when Main does not take it', () => {
   const out = py(
-    `${scratch}import os
-vm.claim('run1');old,new='rt1_${'a'.repeat(64)}','rt1_${'b'.repeat(64)}'
-(r/'catalog.json').write_text(json.dumps({'releaseId':new}))
-(r/'push.json').write_text(json.dumps({'image':'reg@sha256:new'}))
-switched=[];vm.Step.switch=lambda self,a:switched.append(a['releaseId']) or {'changed':True}
-vm.native=lambda:{'image':'reg@sha256:new','rollout':None}
-step=vm.Step(r,{'current':{'image':'reg@sha256:old','releaseId':old}})
+    `${scratch}env=t/'typescript.env';vm.ENV=env
+machine=lambda k,p,i:{'key':k,'provider':p,'releaseId':i}
+line=lambda s,l:vm.RUNTIMES+"='"+json.dumps([machine('standard','cloudflare-fleet',s),machine('large','cloudflare-fleet-large',l)],separators=(',',':'))+"'"
+env.write_text(f"{vm.KEY}=${OLD}\\n{line('${OLD}','${OLD_L}')}\\n")
+vm.inspect=lambda n:{'Image':'sha256:img','Config':{'Labels':{'com.docker.compose.project.working_dir':str(t)}}}
+vm.healthy=lambda *a:None;vm.main_release_running=lambda:False
+main={};take=[True]
+def recreate():
+    f=vm.file_env(env.read_bytes());main.clear()
+    if take[0]: main.update({vm.KEY:f[vm.KEY],vm.RUNTIMES:f[vm.RUNTIMES].strip("'")})
+recreate();vm.env_of=lambda n:dict(main)
+vm.run=lambda c,**k:(recreate() if 'up' in c else None) or b''
+step=vm.Step(r,{})
+both={'cloudflare-fleet':'${NEW}','cloudflare-fleet-large':'${NEW_L}'}
+res={'result':step.switch({'releaseId':'${NEW}','releases':both})['changed'],'env':env.read_text()}
+res['again']=step.switch({'releaseId':'${NEW}','releases':both})
+take[0]=False
+try: step.switch({'releases':{'cloudflare-fleet':'${OLD}','cloudflare-fleet-large':'${OLD_L}'}})
+except RuntimeError as e: res['refused']=str(e)
+res['restored']=env.read_text()
+print(json.dumps(res))`,
+  );
+  const line = (s, l) =>
+    `MERV_FLEET_RUNTIMES='[{"key":"standard","provider":"cloudflare-fleet","releaseId":"${s}"},{"key":"large","provider":"cloudflare-fleet-large","releaseId":"${l}"}]'`;
+  assert.equal(out.result, true);
+  assert.equal(out.env, `MERV_FLEET_RUNTIME_RELEASE_ID=${NEW}\n${line(NEW, NEW_L)}\n`);
+  assert.deepEqual(out.again, { changed: false });
+  assert.match(out.refused, /Main did not take the release/);
+  assert.equal(out.restored, out.env);
+});
+
+test('the guard points each machine at the release its app runs once the driver falls silent', () => {
+  const out = py(
+    `${scratch}vm.claim('run1')
+${twoApps}switched=[];vm.Step.switch=lambda self,a:switched.append(a['releases']) or {'changed':True}
 (r/'lease.json').write_text(json.dumps({'driver':'a','seen':time.time()}))
 res={'alive':step.guard({})}
 (r/'lease.json').write_text(json.dumps({'driver':'a','seen':time.time()-vm.LEASE-1}))
+apps['cloudflare-fleet-large']['image']='reg@sha256:old'  # Large not deployed yet
 res['silent']=step.guard({})
-vm.native=lambda:{'image':'reg@sha256:other','rollout':None}
+apps['cloudflare-fleet']['image']='reg@sha256:other'
 res['unknown']=step.guard({})
 res['switched']=switched;res['progress']=json.loads((r/'progress.json').read_text())
 print(json.dumps(res))`,
@@ -404,8 +542,9 @@ print(json.dumps(res))`,
   assert.deepEqual(out.alive, { guard: 'driver alive' });
   assert.equal(out.silent.guard, 'switched');
   assert.equal(out.unknown.guard, 'waiting for Cloudflare to settle');
-  assert.deepEqual(out.switched, [`rt1_${'b'.repeat(64)}`]);
-  assert.equal(out.progress.guard.releaseId, `rt1_${'b'.repeat(64)}`);
+  const each = { 'cloudflare-fleet': NEW, 'cloudflare-fleet-large': OLD_L };
+  assert.deepEqual(out.switched, [each]);
+  assert.deepEqual(out.progress.guard.releases, each);
 });
 
 test('from the first deploy attempt every step keeps the open run an enabled guard timer', () => {
@@ -456,14 +595,14 @@ test('abandon names the release production agrees on, or says what disagrees', (
   const [old, next] = [`rt1_${'a'.repeat(64)}`, `rt1_${'b'.repeat(64)}`];
   const out = py(
     `${scratch}old,new='${old}','${next}'
-(r/'catalog.json').write_text(json.dumps({'releaseId':new}))
+(r/'catalog.json').write_text(json.dumps({'releaseId':new,'releases':{'cloudflare-fleet':new}}))
 (r/'push.json').write_text(json.dumps({'image':'reg@sha256:new'}))
 vm.ENV=t/'typescript.env'
 live={'native':{'image':'reg@sha256:new','rollout':None},'main':new,
       'catalog':[{'provider':'cloudflare-fleet','image_digest':'sha256:new'}]}
-vm.native=lambda:live['native']
+vm.native=lambda p='cloudflare-fleet':live['native']
 vm.env_of=lambda n:{vm.KEY:live['main']} if n==vm.MAIN else {vm.CATALOG:json.dumps(live['catalog'])}
-vm.sbx=lambda **e:{'sha256:new':new,'sha256:old':old}[json.loads(e['MERV_RELEASE'])['image_digest']]
+vm.release_ids=lambda entries:[{'sha256:new':new,'sha256:old':old}[e['image_digest']] for e in entries]
 step=vm.Step(r,{'current':{'image':'reg@sha256:old','releaseId':old}})
 def attempt():
     vm.ENV.write_text(f'A=1\\n{vm.KEY}={new}\\n')
@@ -475,10 +614,107 @@ live['main'],live['catalog']=new,[];res['catalog']=attempt()
 live['native']={'image':'reg@sha256:other','rollout':'r1'};res['other']=attempt()
 print(json.dumps(res))`,
   );
-  assert.deepEqual(out.agreed, { releaseId: next, image: 'reg@sha256:new' });
+  assert.deepEqual(out.agreed, {
+    releaseId: next,
+    releases: { 'cloudflare-fleet': next },
+    image: 'reg@sha256:new',
+  });
   assert.equal(out.main, `production disagrees, so the run stays open: Main runs ${old}`);
   assert.match(out.catalog, /: the Sandboxes catalog lacks that release$/);
   assert.match(out.other, /neither release of this run; a Cloudflare rollout is in progress; Main/);
+});
+
+test('abandon on two apps needs both on one image and every machine naming its release', () => {
+  const out = py(
+    `${scratch}${twoApps}vm.ENV=t/'typescript.env'
+ids={('cloudflare-fleet','sha256:new'):'${NEW}',('cloudflare-fleet-large','sha256:new'):'${NEW_L}'}
+catalog=[{'provider':p,'image_digest':d} for p,d in ids]
+vm.release_ids=lambda entries:[ids[e['provider'],e['image_digest']] for e in entries]
+runtimes="'"+json.dumps([{'key':'standard','provider':'cloudflare-fleet','releaseId':'${NEW}'},
+                         {'key':'large','provider':'cloudflare-fleet-large','releaseId':'${NEW_L}'}])+"'"
+vm.ENV.write_text(f"{vm.KEY}=${NEW}\\n{vm.RUNTIMES}={runtimes}\\n")
+vm.env_of=lambda n:{vm.KEY:'${NEW}',vm.RUNTIMES:runtimes.strip("'")} if n==vm.MAIN else {vm.CATALOG:json.dumps(catalog)}
+res={'agreed':step.abandon({})}
+apps['cloudflare-fleet-large']['image']='reg@sha256:old'
+try: step.abandon({})
+except RuntimeError as e: res['split']=str(e)
+print(json.dumps(res))`,
+  );
+  const releases = { 'cloudflare-fleet': NEW, 'cloudflare-fleet-large': NEW_L };
+  assert.deepEqual(out.agreed, { releaseId: NEW, releases, image: 'reg@sha256:new' });
+  assert.match(out.split, /stays open: the Cloudflare apps run different images$/);
+});
+
+test('the canary releases a Pi v2 machine as its person would, then checks it served the release', () => {
+  const out = py(
+    `${scratch}${twoApps}vm.credential=lambda path:{'projectId':'p'};vm.whoami=lambda c:None
+vm.secrets.token_hex=lambda n:'beef';vm.time.sleep=lambda s:None
+for app in apps.values(): app['health']={'errors':[],'instances':{'failed':0}}
+def canary(v2=True,releases=True):
+    calls,phase=[],['active']
+    def tool(c,name,body,tries=12):
+        calls.append(name)
+        if name=='pi.machine.stop' and not v2: raise RuntimeError('pi.machine.stop_http_404_None')
+        if name==('pi.machine.stop' if v2 else 'pi.stop') and releases: phase[0]='released'
+        command={'id':'cmd1','status':'completed','runtimeId':'fa_1','messages':[{'role':'assistant','text':'canary-beef'}]}
+        return {'pi.create':{'id':'conv1'},'pi.send':{'id':'cmd1'},'pi.snapshot':{'commands':[command]}}.get(name,{})
+    def main_read(query,*p):
+        if 'launch' in query: return {'n':int(p==('fa_1','${OLD}'))}
+        return {'n':int(p==('fa_1',) and phase[0]!='released')}
+    vm.tool,vm.main_read=tool,main_read
+    try: return [step.canary({'releaseId':'${OLD}'}),calls]
+    except RuntimeError as e: return [str(e),calls]
+res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False)}
+apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
+print(json.dumps(res))`,
+  );
+  const [v2, calls] = out.v2;
+  assert.deepEqual(calls, ['pi.create', 'pi.send', 'pi.snapshot', 'pi.stop', 'pi.machine.stop']);
+  assert.equal(v2.servedByRelease && v2.released && v2.reply, true);
+  assert.deepEqual(v2.apps, { 'cloudflare-fleet-large': true });
+  // Pi v1 has no machine to release: its pi.stop releases the conversation's.
+  assert.equal(out.v1[0].released, true);
+  assert.match(out.held[0], /^canary_failed .*"released": false/);
+  assert.match(out.large[0], /^canary_failed .*"apps": \{"cloudflare-fleet-large": false\}/);
+});
+
+test("a production ledger is committed by path and pushed only from origin/main's tip", () => {
+  const t = mkdtempSync(join(tmpdir(), 'merv-ledger-'));
+  const git = (cwd, ...a) =>
+    execFileSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], {
+      encoding: 'utf8',
+    }).trim();
+  try {
+    const [origin, work] = [join(t, 'origin.git'), join(t, 'work')];
+    git(t, 'init', '-q', '--bare', '-b', 'main', origin);
+    git(t, 'clone', '-q', origin, work);
+    for (const [key, value] of [
+      ['user.email', 't@t'],
+      ['user.name', 't'],
+    ])
+      git(work, 'config', key, value);
+    const ledgers = ['RELEASES.md', 'hosted-release.json'].map((f) => join(work, f));
+    for (const file of [...ledgers, join(work, 'peer.txt')]) writeFileSync(file, 'v1\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-qm', 'base');
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    for (const file of [...ledgers, join(work, 'peer.txt')]) writeFileSync(file, 'v2\n');
+    publishLedgers(ledgers, 'Record run R1');
+    assert.equal(git(origin, 'log', '-1', '--format=%s', 'main'), 'Record run R1 [skip ci]');
+    assert.equal(
+      git(origin, 'show', '--name-only', '--format=', 'main'),
+      ledgers.map((f) => f.slice(work.length + 1)).join('\n'),
+    );
+    assert.equal(git(work, 'status', '--porcelain'), 'M peer.txt'); // a peer's edit stays
+    // Behind or ahead of origin/main, the ledgers stay in the working tree.
+    git(work, 'commit', '-qm', 'local', '--', 'peer.txt');
+    writeFileSync(ledgers[0], 'v3\n');
+    publishLedgers(ledgers, 'Record run R2');
+    assert.equal(git(origin, 'log', '-1', '--format=%s', 'main'), 'Record run R1 [skip ci]');
+    assert.equal(git(work, 'status', '--porcelain'), 'M RELEASES.md');
+  } finally {
+    rmSync(t, { recursive: true, force: true });
+  }
 });
 
 test('the push refuses an unreadable tag probe and pins a manifest despite a trailing newline', () => {

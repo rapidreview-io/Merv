@@ -145,46 +145,48 @@ Do this once, before the first release that reads `MERV_PI_HOST_PROJECT_ID`.
 That release refuses to render Pi without a host, so its health wait fails and
 it rolls back. Use one quiet window. Every step below is either a script phase
 or an existing tool, and each phase refuses to run out of order or while a
-hosted-image run is open. Until step 7, Main keeps launching its v1 release on
-the old image, so Pi keeps working.
+hosted-image run is open. Until step 6, Main keeps launching its v1 release on
+the old image, so Pi keeps working. The live Standard release is `current` in
+`deploy/hosted-release.json` at origin/main (its `image` and `releaseId`, which
+Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
 
-1. **Standard release.** Build and push the hosted image that speaks bootstrap
-   v2, and add its release to the Sandboxes catalog as before. Keep its `rt1_`
-   ID. The release is additive: nothing launches it until step 7. Do not deploy
-   the image to the Standard app yet. The v2 image refuses a v1 bootstrap, so
-   that would stop Pi until Main is released.
-2. **Large app** (the founder, holding the Wrangler login). Deploy
-   `wrangler deploy --env large` from a deployment copy of
+1. **Large app** (the founder, holding the Wrangler login). With the pipeline's
+   wrangler (`output/fleet-cloudflare-tools`), run `wrangler deploy --env large`
+   from a deployment copy of
    `fleet-sandboxes/deploy/cloudflare-sandbox/worker/wrangler.jsonc`, with
-   `env.large.containers[0].image` set to the same `registry/...@sha256:`
-   reference as Standard. This creates Worker `merv-sandboxes-bridge-large` and
-   a `standard-3` application with `max_instances` 10. Give it its own token
-   (`openssl rand -hex 32`, then `wrangler secret put BRIDGE_TOKEN --env large`)
-   and note its application ID. Put its `bridge_url`, `bridge_token` and
-   `cloudflare_api_token` in one JSON object in a root-only file. The API token
-   is the native verification credential, and it must cover both apps.
-3. **Host project.** Run `python3 pi-connect-project.py host`. In Main's
+   `env.large.containers[0].image` set to the live Standard `image`. This creates
+   Worker `merv-sandboxes-bridge-large` and the `standard-3` application
+   `merv-sandboxes-bridge-large-sandboxcontainer-large` with `max_instances` 10,
+   as `deploy/hosted-wrangler-large.json` names it. The hosted pipeline deploys
+   every later image to it, and refuses while its name or `max_instances` differs
+   from that template. Give it its own token (`openssl rand -hex 32`, then
+   `wrangler secret put BRIDGE_TOKEN --env large`; deploys keep it) and note its
+   application ID. Put its `bridge_url` and `bridge_token` in one JSON object in
+   a root-only file. Leave out `cloudflare_api_token`: step 4 then gives Large
+   the native verification credential Standard uses, server-side, and that
+   credential must cover both apps.
+2. **Host project.** Run `python3 pi-connect-project.py host`. In Main's
    database this creates the project `Pi host`, with no member, and a reader key.
    The setup operator is retired as it finishes. The key stays in
    `/var/lib/merv-fleet-pilot/pi-connect/_host/host.private.json`, and the
    printed receipt names the host project ID.
-4. **Host connection.** Run `sandboxes <hostId>`, then `main <hostId>`. These
+3. **Host connection.** Run `sandboxes <hostId>`, then `main <hostId>`. These
    are the two ordinary phases above.
-5. **Large machine.** Run
-   `python3 pi-connect-project.py large <hostId> --release <Standard rt1_> --application <uuid> < large-bridge.json`.
+4. **Large machine.** Run
+   `python3 pi-connect-project.py large <hostId> --release <live Standard rt1_> --application <uuid> < large-bridge.json`.
    It refuses unless Main and Sandboxes are drained and the bridge's `/health`
    reports `standard-3`. It also refuses while a price cap on the account, the
    member or the host namespace is below Large's $0.2201/h (see Machines). It
    adds the `cloudflare-fleet-large` provider, which reaches only the host
-   namespace, and a copy of the Standard release with only the provider changed.
-   It recreates Sandboxes control and pipelines-worker and checks that the host
-   resolves Large, is offered `standard-3` and loaded both releases. Last, it
-   sets the host namespace's limit: 50 at once, 86400 s each, and $0.23/h.
-   Its receipt names the Large release ID. `hostConcurrency` is the lowest
-   concurrency cap on the host, so a cap below 50 shows there. A failed run
-   restores the catalog and leaves the limits alone. Move its `large-*` backups
-   aside before you rerun it.
-6. **Main's env.** Copy the new release's `deploy/` directory to the host, and
+   namespace, and a copy of the live Standard release with only the provider
+   changed. It recreates Sandboxes control and pipelines-worker and checks that
+   the host resolves Large, is offered `standard-3` and loaded both releases.
+   Last, it sets the host namespace's limit: 50 at once, 86400 s each, and
+   $0.23/h. Its receipt names the Large release ID. `hostConcurrency` is the
+   lowest concurrency cap on the host, so a cap below 50 shows there. A failed
+   run restores the catalog and leaves the limits alone. Move its `large-*`
+   backups aside before you rerun it.
+5. **Main's env.** Copy the new release's `deploy/` directory to the host, and
    from it run `python3 pi-connect-project.py machines <hostId>`. The phase
    writes these variables and recreates nothing:
    - `MERV_FLEET_RUNTIMES`, with Standard (3 slots) and Large (4 slots, agent).
@@ -200,21 +202,35 @@ the old image, so Pi keeps working.
    new release's renderer mounted over it. If either fails, it restores the env;
    move its `*-machines-env.private` files aside before you rerun it.
 
-7. **Release.** Take a `pg_dump` of Main's database now, after step 3 has
-   created the host project. Deploy the v2 image drained to the Standard
-   Cloudflare app with `deploy/cloudflare-sandbox/rollout.py`, then deploy Main
-   at once with `release.mjs --skip-hosted`, which runs the pi@2 migration. Pi
-   turns fail between the two, so keep that gap to the rollout itself. The app's
-   `max_instances` caps how many Standard machines can run at once; the
-   production app (version 15) is at 50, the host limit, so keep it there.
-   Until the migration, `release.mjs` can roll the image back on the same env.
-   After it, the older image refuses the database, so rolling back means
-   restoring that `pg_dump`. Either way, roll the Standard app back to the
-   previous image with `rollout.py`, since the v2 image refuses the older Main's
-   v1 bootstrap. A dump from before step 3 has no host project, and the host key
-   then stops authenticating. Restoring one means removing the `MERV_PI_HOST_*`
-   lines, moving `_host` aside and running the phases again from step 3.
-8. **Canary.** Check each of these:
+6. **Release.** Take a `pg_dump` of Main's database now, after step 2 has
+   created the host project. Then run `node deploy/release.mjs` from origin/main's
+   tip. It releases Main, which runs the pi@2 migration, and its hosted run then
+   builds and gates the v2 image, deploys it to both apps, points both machines
+   (and the legacy key) at its releases and canaries a Pi turn, whose machine it
+   releases. Both ledgers commit themselves.
+
+   **The Pi gap.** From Main's release until the hosted run's switch, every Pi
+   turn fails: Main v2 sends a v2 bootstrap to the v1 image, which refuses it.
+   That gap is the hosted run's build, gates, push, catalog, drain and two
+   deploys, about 15 minutes (the first automated run took about that end to
+   end), and the switch then recreates Main once more. Keep the window quiet, or
+   the drain waits for turns and launches in flight.
+
+   If the hosted run fails, it rolls both apps back to the v1 image, which Main
+   v2 cannot use, so Pi stays down until a hosted run passes: fix the cause and
+   run `node deploy/hosted-release.mjs`. To roll Main back instead: until the
+   migration, `release.mjs` rolls itself back on a failed health wait; after it,
+   the older image refuses the database, so rolling back means restoring that
+   `pg_dump` and releasing the previous commit with `release.mjs --skip-hosted`.
+   After a passing hosted run the apps run the v2 image, which refuses the older
+   Main's v1 bootstrap, so they need the previous image back too
+   (`deploy/cloudflare-sandbox/rollout.py`). A dump from before step 2 has no host
+   project, and the host key then stops authenticating. Restoring one means
+   removing the `MERV_PI_HOST_*` lines, moving `_host` aside and running the
+   phases again from step 2. The production Standard app (version 15) is at
+   `max_instances` 50, the host limit; keep it there.
+
+7. **Canary.** Check each of these:
    - Two conversations in one project share one machine.
    - Two projects get two machines.
    - Revoking a membership fails only that project's turn.
@@ -246,7 +262,9 @@ the old image, so Pi keeps working.
 - **Turning Large off:** remove the `large` entry from `MERV_FLEET_RUNTIMES`
   and recreate Main. To leave Main running instead, set `"enabled": false` on
   the `cloudflare-fleet-large` provider and recreate Sandboxes. Its offer then
-  disappears, and moves to Large fail while people stay on Standard.
+  disappears, and moves to Large fail while people stay on Standard. Hosted
+  releases then refuse until it is enabled again, since they cannot read the
+  Large app that Main still names.
 - Fleet caps the host at its `MERV_FLEET_PROJECT_LIMITS` entry and at
   `MERV_FLEET_GLOBAL_LIMIT`. Pi holds one machine per person per project, or
   two while it moves, and starts a move only while at least 3 slots are free.
@@ -265,13 +283,13 @@ the old image, so Pi keeps working.
 - A changed release in a `MERV_FLEET_RUNTIMES` entry changes that machine's
   profile, and every allocation on it is then asked to stop. Roll it out
   drained. The hosted runtime is digest-pinned; `hosted-release.mjs` (run by
-  `release.mjs`) builds it from committed sources and moves its image, catalog
-  and release id together, drained, gated and canaried, with automatic rollback.
-  It moves only the Standard app and `MERV_FLEET_RUNTIME_RELEASE_ID`, which
-  `MERV_FLEET_RUNTIMES` overrides, and its canary expects a machine per
-  conversation. Once the Pi host setup has deployed the v2 image outside it, it
-  refuses on the drifted pins; until it learns the machine catalog and the Large
-  app, release Main with `release.mjs --skip-hosted`.
+  `release.mjs`) builds it from committed sources and moves it together,
+  drained, gated and canaried, with automatic rollback: the image on every
+  Cloudflare app that serves one of Main's machines (Standard, and Large once
+  `MERV_FLEET_RUNTIMES` names it), the release and its Large copy in the
+  catalog, and each machine's release id (Standard's also in
+  `MERV_FLEET_RUNTIME_RELEASE_ID`). It refuses while any of them differs from
+  what it recorded.
 - An open hosted run blocks every Main release, emergencies included. When it
   can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
   closes it once production agrees on one of its releases: Cloudflare runs that

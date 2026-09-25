@@ -31,6 +31,13 @@ const LIVE = { image: `${REGISTRY}@sha256:${'a'.repeat(64)}`, localId: `sha256:$
 LIVE.releaseId = releaseId(releaseEntry(LIVE.image, 'b'.repeat(64)));
 const NEXT = `${REGISTRY}@sha256:${'d'.repeat(64)}`;
 const NEXT_ID = releaseId(releaseEntry(NEXT, 'e'.repeat(64)));
+// After the Pi host cutover: the Large app serves Main's second machine, with Standard's release
+// copied to its provider.
+const [CF, LARGE] = ['cloudflare-fleet', 'cloudflare-fleet-large'];
+const large = (image, hex) =>
+  releaseId({ ...releaseEntry(image, hex.repeat(64)), provider: LARGE });
+const [LIVE_L, NEXT_L] = [large(LIVE.image, 'b'), large(NEXT, 'e')];
+const held = (provider, image, id) => ({ provider, digest: image.split('@')[1], id });
 const NATIVE = {
   name: 'merv-fleet-codex-20260923-sandboxcontainer',
   image: LIVE.image,
@@ -45,8 +52,21 @@ const NATIVE = {
 const ON_NEXT = {
   main: NEXT_ID,
   releases: { [LIVE.releaseId]: LIVE.image, [NEXT_ID]: NEXT },
-  catalog: [LIVE.image.split('@')[1], NEXT.split('@')[1]],
+  catalog: [held(CF, LIVE.image, LIVE.releaseId), held(CF, NEXT, NEXT_ID)],
   native: { ...NATIVE, image: NEXT, version: 15 },
+};
+const TWO = {
+  others: {
+    [LARGE]: {
+      ...NATIVE,
+      name: 'merv-sandboxes-bridge-large-sandboxcontainer-large',
+      maxInstances: 10,
+      version: 2,
+    },
+  },
+  machines: { [CF]: LIVE.releaseId, [LARGE]: LIVE_L },
+  releases: { [LIVE.releaseId]: LIVE.image, [LIVE_L]: LIVE.image },
+  catalog: [held(CF, LIVE.image, LIVE.releaseId), held(LARGE, LIVE.image, LIVE_L)],
 };
 const DEPLOYED = {
   build: {
@@ -91,10 +111,14 @@ if (R.lease && R.lease.driver !== driver && !stale) err('driven by another proce
 R.lease = { driver, seen: Date.now() }; R.staleAfter = null;
 if (!['preflight', 'finish'].includes(step) && sim.active !== run) err('run does not hold the marker');
 const fail = sim.fail[step], previous = R.rec.plan?.current;
+// others: the apps besides Standard; machines: Main's MERV_FLEET_RUNTIMES, absent before the cutover.
+const CF = 'cloudflare-fleet', apps = () => ({ [CF]: sim.native, ...sim.others });
+const machines = () => sim.machines ?? { [CF]: sim.main };
 if (step === 'preflight') {
   if (sim.active && sim.active !== run) err('another run is open');
   sim.active = run; R.rec.plan = arg;
-  out({ native: sim.native, mainReleaseId: sim.main, fileReleaseId: sim.main, catalog: sim.catalog }, true);
+  out({ apps: apps(), mainReleaseId: sim.main, fileReleaseId: sim.main, releases: machines(),
+    fileReleases: machines(), catalog: sim.catalog }, true);
 }
 if (step === 'build') {
   if (fail) err(fail);
@@ -108,27 +132,36 @@ if (step === 'push') {
 }
 if (step === 'catalog') {
   if (arg.restore) { R.progress.catalogBroken = false; out({ restored: true }); }
-  sim.releases[arg.releaseId] = previous.image.split('@')[0] + '@' + arg.entry.image_digest;
-  sim.catalog = [...new Set([...sim.catalog, arg.entry.image_digest])];
-  out({ releaseId: arg.releaseId, changed: true }, true);
+  for (const e of arg.entries) {
+    const id = arg.releases[e.provider];
+    sim.releases[id] = previous.image.split('@')[0] + '@' + e.image_digest;
+    sim.catalog.push({ provider: e.provider, digest: e.image_digest, id });
+  }
+  out({ releaseId: arg.releaseId, releases: arg.releases, changed: true }, true);
 }
 if (step === 'drain') out({ drained: true });
 if (step === 'note') { R.progress = { ...R.progress, ...arg }; out(R.progress); }
-if (step === 'native') out(sim.native);
+if (step === 'native') out(apps()[arg.provider ?? CF]);
 if (step === 'switch') {
   if (fail && arg.releaseId !== previous.releaseId) err(fail);
-  const changed = sim.main !== arg.releaseId; sim.main = arg.releaseId; out({ changed });
+  const changed = sim.main !== arg.releaseId; sim.main = arg.releaseId;
+  if (sim.machines) sim.machines = { ...arg.releases };
+  out({ changed });
 }
 if (step === 'canary') {
-  if (sim.releases[arg.releaseId] !== sim.native.image || sim.main !== arg.releaseId) err('canary_failed pins disagree');
+  const each = Object.entries(machines()).every(([p, id]) => sim.releases[id] === apps()[p].image);
+  if (!each || sim.main !== arg.releaseId) err('canary_failed pins disagree');
   if (fail === 'all' || (fail && arg.releaseId !== previous.releaseId)) err('canary_failed {"status":"interrupted"}');
   out({ status: 'completed', seconds: 42 });
 }
 if (step === 'abandon') {
-  const target = Object.keys(sim.releases).find((id) => sim.releases[id] === sim.native.image);
-  if (sim.main !== target || !sim.catalog.includes(sim.native.image.split('@')[1]))
-    err('production disagrees, so the run stays open: Main runs ' + sim.main);
-  out({ releaseId: target, image: sim.native.image });
+  const known = { [previous.image]: R.rec.preflight.releases, [R.rec.push?.image]: R.rec.catalog?.releases };
+  const target = known[sim.native.image];
+  const agree = target && Object.values(apps()).every((a) => a.image === sim.native.image) &&
+    JSON.stringify(machines()) === JSON.stringify(target) && sim.main === target[CF] &&
+    Object.entries(target).every(([p, id]) => sim.catalog.some((c) => c.provider === p && c.id === id));
+  if (!agree) err('production disagrees, so the run stays open: Main runs ' + sim.main);
+  out({ releaseId: target[CF], releases: target, image: sim.native.image });
 }
 if (step === 'finish') {
   if (arg.state) sim.state = arg.state;
@@ -146,13 +179,17 @@ if (argv[0] === 'containers') {
   process.exit(0);
 }
 const config = JSON.parse(fs.readFileSync(argv[argv.indexOf('-c') + 1], 'utf8'));
-const image = config.containers[0].image;
+const [{ image, name }] = config.containers;
 const worker = fs.readFileSync(config.main, 'utf8').trim();
-fs.appendFileSync(process.env.SIM_LOG, 'wrangler ' + image.slice(-4) + ' ' + worker + '\\n');
+const large = name.includes('large') && 'cloudflare-fleet-large';
+fs.appendFileSync(process.env.SIM_LOG, 'wrangler ' + image.slice(-4) + ' ' + worker + (large ? ' large' : '') + '\\n');
 const which = image === sim.liveImage ? 'previous' : 'next';
 if (sim.fail.deploy === 'all' || sim.fail.deploy === which) process.exit(1);
 const instances = { failed: sim.fail.settle === which ? 1 : 0, scheduling: 0, starting: 0 };
-sim.native = { ...sim.native, image, version: sim.native.version + 1, health: { errors: [], instances } };
+const app = large ? sim.others[large] : sim.native;
+const now = { ...app, image, version: app.version + 1, health: { errors: [], instances } };
+if (large) sim.others[large] = now;
+else sim.native = now;
 if (which === 'next' && sim.reboot) sim.down = sim.reboot; // the host reboots as the image lands
 fs.writeFileSync(process.env.SIM, JSON.stringify(sim));
 `;
@@ -210,7 +247,7 @@ function simulate(name, patch = {}, { detached = false, args = [], dir } = {}) {
         active: null,
         main: LIVE.releaseId,
         releases: { [LIVE.releaseId]: LIVE.image },
-        catalog: [LIVE.image.split('@')[1]],
+        catalog: [held(CF, LIVE.image, LIVE.releaseId)],
         liveImage: LIVE.image,
         native: NATIVE,
         runs: {},
@@ -300,11 +337,14 @@ test('a release drains, deploys the new digest with the HEAD Worker, switches Ma
   assert.deepEqual(r.sim.state.current, {
     image: NEXT,
     releaseId: NEXT_ID,
+    releases: { [CF]: NEXT_ID },
     localId: `sha256:${'c'.repeat(64)}`,
     sourceCommit: head,
     sandboxesCommit: git(sandboxes, 'rev-parse', 'HEAD'),
   });
   assert.equal(r.sim.active, null);
+  // Before the Pi host cutover Main has one machine, so only Standard and its legacy key move.
+  assert.equal(r.sim.machines, undefined);
   assert.match(
     r.ledger,
     /\| boundary \| `dddddddddddd` \|.*\| v15 \| 2 pass \| completed in 42s \| pass \|/,
@@ -497,7 +537,7 @@ test('a release that does not settle after the switch rolls back in the same ord
   const r = simulate('unsettled', { fail: { settle: 'next' } });
   assert.equal(r.status, 1, r.out);
   const switched = r.steps.indexOf('switch');
-  assert.equal(r.events[switched], `switch {"releaseId":"${NEXT_ID}"}`);
+  assert.ok(r.events[switched].startsWith(`switch {"releaseId":"${NEXT_ID}"`));
   const back = r.steps.slice(switched + 1);
   assert.ok(back.indexOf('native') < back.indexOf('note'), back.join());
   order(back, 'note', 'wrangler', 'switch', 'canary', 'finish');
@@ -511,7 +551,7 @@ test('a release that does not settle after the switch rolls back in the same ord
   assert.equal(r.sim.active, null);
   assert.match(
     r.ledger,
-    /\| FAILED \| Cloudflare did not settle on \S+: failed 1; rolled back and verified by a canary \|/,
+    /\| FAILED \| cloudflare-fleet did not settle on \S+: failed 1; rolled back and verified by a canary \|/,
   );
 });
 
@@ -537,6 +577,7 @@ test('--abandon closes a stuck run once production agrees on one of its releases
   assert.deepEqual(closed.sim.state.current, {
     image: NEXT,
     releaseId: NEXT_ID,
+    releases: { [CF]: NEXT_ID },
     localId: `sha256:${'c'.repeat(64)}`,
     sourceCommit: head,
     sandboxesCommit: git(sandboxes, 'rev-parse', 'HEAD'),
@@ -596,4 +637,62 @@ test('a host that reboots as the image lands is waited out, and the release fini
   const gone = simulate('gone', { reboot: 1e6 });
   assert.equal(gone.status, 3, gone.out);
   assert.match(gone.out, /ROLLBACK INCOMPLETE: status: no result \(ssh exit 255\)/);
+});
+
+test('after the cutover a release deploys both apps, switches every machine, and settles both', () => {
+  const r = simulate('two', TWO);
+  assert.equal(r.status, 0, r.out);
+  order(r.steps, 'catalog', 'drain', 'note', 'wrangler', 'switch', 'canary', 'finish');
+  assert.deepEqual(
+    r.events.filter((e) => e.startsWith('wrangler')),
+    ['wrangler dddd worker v2', 'wrangler dddd worker v2 large'],
+  );
+  // Main names both releases once both apps run the image, then waits for both to settle.
+  const [deployed, switched] = [r.steps.lastIndexOf('wrangler'), r.steps.indexOf('switch')];
+  assert.deepEqual(r.steps.slice(deployed + 1, switched), ['native', 'native']);
+  assert.deepEqual(r.sim.machines, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
+  assert.equal(r.sim.others[LARGE].image, NEXT);
+  assert.deepEqual(r.sim.catalog.slice(2), [held(CF, NEXT, NEXT_ID), held(LARGE, NEXT, NEXT_L)]);
+  assert.deepEqual(r.sim.state.current.releases, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
+  assert.match(r.ledger, /\| v15 v3 \| 2 pass \| completed in 42s \| pass \|/);
+});
+
+test('after the cutover a failed canary rolls both apps and every machine back, in order', () => {
+  const r = simulate('two-back', { ...TWO, fail: { canary: 'new' } });
+  assert.equal(r.status, 1, r.out);
+  const back = r.events.slice(r.steps.indexOf('canary') + 1);
+  assert.deepEqual(
+    back.filter((e) => /^(wrangler|switch|canary)/.test(e)).map((e) => e.slice(0, 40)),
+    [
+      'wrangler aaaa worker v1',
+      'wrangler aaaa worker v1 large',
+      `switch {"releaseId":"${LIVE.releaseId}`.slice(0, 40),
+      `canary {"releaseId":"${LIVE.releaseId}`.slice(0, 40),
+    ],
+  );
+  assert.deepEqual(r.sim.machines, TWO.machines);
+  assert.deepEqual([r.sim.native.image, r.sim.others[LARGE].image], [LIVE.image, LIVE.image]);
+  assert.equal(r.sim.active, null);
+  assert.match(r.ledger, /\| FAILED \| canary: .*rolled back and verified by a canary \|/);
+});
+
+test('after the cutover --abandon needs both apps on one release and closes on both', () => {
+  const stuck = simulate('two-abandon', { ...TWO, fail: { canary: 'new', deploy: 'previous' } });
+  assert.equal(stuck.status, 3, stuck.out);
+  assert.deepEqual(stuck.sim.machines, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
+  const abandon = (patch) => {
+    const sim = JSON.parse(readFileSync(join(stuck.dir, 'sim.json'), 'utf8'));
+    sim.runs[sim.active ?? stuck.sim.active].lease.seen -= 400_000;
+    writeFileSync(join(stuck.dir, 'sim.json'), JSON.stringify({ ...sim, fail: {}, ...patch(sim) }));
+    return simulate('two-abandon', {}, { dir: stuck.dir, args: ['--abandon'] });
+  };
+  const split = abandon((sim) => ({
+    others: { [LARGE]: { ...sim.others[LARGE], image: LIVE.image } },
+  }));
+  assert.equal(split.status, 2, split.out);
+  assert.match(split.out, /stays open: abandon: production disagrees/);
+  const closed = abandon((sim) => ({ others: { [LARGE]: { ...sim.others[LARGE], image: NEXT } } }));
+  assert.equal(closed.status, 0, closed.out);
+  assert.equal(closed.sim.active, null);
+  assert.deepEqual(closed.sim.state.current.releases, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
 });

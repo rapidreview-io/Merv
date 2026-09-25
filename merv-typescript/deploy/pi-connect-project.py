@@ -16,9 +16,9 @@ The Pi host is set up once, by these phases around the two above run for <hostId
   python3 pi-connect-project.py large <hostId> --release <standard rt1_> --application <uuid> < bridge.json
   python3 pi-connect-project.py machines <hostId>
 `host` creates the host project in Main's database with its reader key, and no member. `large` adds the
-cloudflare-fleet-large provider (the Large Cloudflare app, whose bridge_url, bridge_token and
-cloudflare_api_token come as JSON on stdin), its copy of the Standard release, and the host namespace's
-limits, then recreates Sandboxes. `machines` writes the host, the machine catalog and the host's Fleet
+cloudflare-fleet-large provider (the Large Cloudflare app, whose bridge_url and bridge_token come as JSON
+on stdin, with a cloudflare_api_token that defaults to Standard's), its copy of the Standard release, and
+the host namespace's limits, then recreates Sandboxes. `machines` writes the host, the machine catalog and the host's Fleet
 limit into Main's env and dry-runs both the running image's render and this directory's, without
 recreating Main: the release that reads them does. Run it from that release's deploy directory.
 Every phase refuses while a hosted-image run is open, and holds that pipeline's host lock.
@@ -435,11 +435,12 @@ def large():
     release, application = OPTIONS['--release'], OPTIONS['--application']
     assert re.fullmatch(r'rt1_[0-9a-f]{64}', release), 'invalid_release'
     assert re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', application), 'invalid_application'
-    # The Large bridge's URL and token, and a native verification token that covers the Large app.
+    # The Large bridge's URL and token, and a native verification token that covers the Large app:
+    # unless given, Standard's, which must then cover both apps.
     raw = sys.stdin.read(16385)
     assert len(raw) <= 16384, 'credential_too_large'
     credential = json.loads(raw)
-    assert set(credential) == {'bridge_url', 'bridge_token', 'cloudflare_api_token'} and all(
+    assert set(credential) - {'cloudflare_api_token'} == {'bridge_url', 'bridge_token'} and all(
         isinstance(v, str) and v and v.strip() == v for v in credential.values()), 'credential_unexpected'
     assert re.fullmatch(r'https://[a-z0-9.-]+', credential['bridge_url']), 'bridge_url_unexpected'
     health = urllib.request.Request(credential['bridge_url'] + '/health',
@@ -461,6 +462,10 @@ def large():
     catalog = json.loads(catalog_raw)
     services = [catalog['services'][s]['environment'] for s in ('control', 'pipelines-worker')]
     releases = json.loads(services[0]['SANDBOXES_RUNTIME_RELEASES'])
+    [fleet] = [p for p in json.loads(services[0]['SANDBOXES_PROVIDERS']) if p['name'] == PROVIDER]
+    # Server-side and never printed: the token Standard's provider verifies its app with.
+    credential.setdefault('cloudflare_api_token', json.loads(
+        services[0][fleet['credential'].removeprefix('env:')])['cloudflare_api_token'])
     ids = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_RELEASES], json.dumps(releases).encode()))
     standard = [r for r, i in zip(releases, ids) if i == release and r['provider'] == PROVIDER]
     assert len(standard) == 1, 'standard_release_not_in_catalog'

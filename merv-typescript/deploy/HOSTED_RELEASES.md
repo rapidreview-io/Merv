@@ -5,13 +5,16 @@ the hosted worker image. `release.mjs` runs it after every passing production re
 the commit and the content hash of its allowlisted archive; both are also image labels
 (`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`), beside
 `org.merv.hosted.sandboxes-commit`. Image is the amd64 manifest digest that Cloudflare and the
-Sandboxes catalog pin, and Release is the `rt1_` id Main uses. The host keeps the live pins;
+Sandboxes catalog pin, and Release is Standard's `rt1_` id; App is each live app's version,
+Standard's first. The host keeps the live pins;
 [`hosted-release.json`](hosted-release.json) seeds them and records the latest release. A stuck
 run closed with `--abandon` is `abandoned`: production agreed on the release in its row, which the
 host keeps as the live pins (see [`PI_OPERATIONS.md`](PI_OPERATIONS.md)). The run's own release is
 canaried first; if that fails, the row is `ABANDONED, CANARY FAILED` and the pins are marked
 unverified, so each later run rebuilds and canaries them (`rechecked`) until a canary passes or a new
-release replaces them.
+release replaces them. Each run commits this file and `hosted-release.json` by path, with a
+`[skip ci]` message, and pushes them when its checkout is at origin/main's tip; otherwise it
+leaves them for you to commit.
 
 | UTC               | Run                         | Source                    | Lane     | Image          | Release        | App | Gates             | Canary                 | Result | Notes                                                                                                                                                       |
 | ----------------- | --------------------------- | ------------------------- | -------- | -------------- | -------------- | --- | ----------------- | ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |

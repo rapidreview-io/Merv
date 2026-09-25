@@ -12,11 +12,12 @@
 // so a staging deploy can never be mistaken for a production one. A production release first lets
 // deploy/hosted-release.mjs finish any open hosted-image run, and after passing runs it again, which
 // does nothing unless the hosted Pi/Codex image's sources changed; --skip-hosted leaves the hosted
-// image for an emergency Main-only release.
+// image for an emergency Main-only release. A production row is committed by path and pushed when
+// this checkout is at origin/main's tip.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { NODE_IMAGE, packageSource, root } from './source-archive.mjs';
+import { NODE_IMAGE, packageSource, publishLedgers, root } from './source-archive.mjs';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
@@ -182,19 +183,20 @@ if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
   process.exit(1);
 }
 const release = resume ?? local.release;
+const log = (row) => {
+  appendFileSync(join(root, RELEASES), `| ${new Date().toISOString().slice(0, 16)}Z | ${row} |\n`);
+  execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
+  if (PUBLIC === PRODUCTION)
+    publishLedgers([join(root, RELEASES)], `Record release ${release} in production`);
+};
 if (local) upload(local);
 const vm = waitForVm(release);
 console.log('\n' + JSON.stringify(vm));
 if (vm.rolledBack) {
   // The VM already restored the previous image; record the failure and stop.
-  appendFileSync(
-    join(root, RELEASES),
-    `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | — | FAILED | container ${vm.containerHealth} after ${vm.restarts} restarts, rolled back automatically (previous image ${vm.previousHealth}); log: ${vm.log.slice(0, 300)} | rollback \`${vm.previousImage}\` applied |\n`,
+  log(
+    `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | — | FAILED | container ${vm.containerHealth} after ${vm.restarts} restarts, rolled back automatically (previous image ${vm.previousHealth}); log: ${vm.log.slice(0, 300)} | rollback \`${vm.previousImage}\` applied`,
   );
-  execFileSync('npx', ['prettier', '--write', RELEASES], {
-    cwd: root,
-    stdio: 'ignore',
-  });
   console.error(`release ${release} failed and was rolled back to ${vm.previousImage}`);
   process.exit(1);
 }
@@ -208,11 +210,9 @@ const ok =
   vm.containerHealth === 'healthy' &&
   pub.health === 200 &&
   pub.ui === 200;
-appendFileSync(
-  join(root, RELEASES),
-  `| ${new Date().toISOString().slice(0, 16)}Z | \`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\` |\n`,
+log(
+  `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\``,
 );
-execFileSync('npx', ['prettier', '--write', RELEASES], { cwd: root, stdio: 'ignore' });
 if (!ok) process.exit(1);
 if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted() !== 0) {
   console.error('Main is released; the hosted image release did not complete (see above).');

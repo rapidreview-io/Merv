@@ -8,10 +8,13 @@
 //        of its releases: Cloudflare runs its image, Main names it, the Sandboxes catalog holds it;
 //        its own release is canaried first, and one that fails stays the live pins as unverified)
 // release.mjs finishes any open run before a production release and starts one after it. The
-// image is pinned in three places that move together: the Cloudflare container app, the Sandboxes
-// release catalog (control and pipelines-worker) and Main's MERV_FLEET_RUNTIME_RELEASE_ID. The host
-// keeps the live pins and the open run; deploy/hosted-release.json seeds and records the pins and
-// deploy/HOSTED_RELEASES.md logs each run.
+// image is pinned in three places that move together: every Cloudflare container app serving one
+// of Main's machines (APPS: Standard, and Large once MERV_FLEET_RUNTIMES names it), the Sandboxes
+// release catalog (control and pipelines-worker; Standard's entry and its copy for each other app,
+// only the provider changed) and Main's release ids (each machine's in MERV_FLEET_RUNTIMES, and
+// Standard's in the legacy MERV_FLEET_RUNTIME_RELEASE_ID). The host keeps the live pins and the
+// open run; deploy/hosted-release.json seeds and records the pins and deploy/HOSTED_RELEASES.md
+// logs each run, both committed by path and pushed when this checkout is at origin/main's tip.
 //  1 plan: hosted inputs changed since the deployed commits, in Merv and in the Sandboxes checkout
 //    (the sandbox base, its agent, the bridge Worker), pick a lane: worker-only or the
 //    supervisor/bootstrap boundary. No change ends the run, unless the live release is unverified,
@@ -25,21 +28,20 @@
 //  4 push with a 30-minute registry credential minted by the local wrangler and piped over ssh
 //    stdin into docker login (tmpfs config, logged out after); pin the amd64 manifest digest.
 //  5 catalog: add the release to both Sandboxes services, keeping earlier releases.
-//  6 drain until no Pi turn or launch is in flight, deploy the Cloudflare app from
-//    deploy/hosted-wrangler.json at HEAD with the new digest and the Sandboxes commit's bridge
-//    Worker, and switch Main's release id as soon as Cloudflare runs the new image: until then
-//    Sandboxes refuses every Pi launch.
-//  7 verify it natively (settled health, SSH off), then a canary: one real Pi turn as a root-only
-//    reader key.
+//  6 drain until no Pi turn or launch is in flight, deploy each live app from its template at HEAD
+//    with the new digest and the Sandboxes commit's bridge Worker, and switch Main's release ids as
+//    soon as Cloudflare runs the new image everywhere: until then Sandboxes refuses Pi launches.
+//  7 verify each app natively (settled health, SSH off), then a canary: one real Pi turn on
+//    Standard as a root-only reader key, whose machine it then releases.
 // No run starts, and no open run is driven forward, unless a rollback could run from here: the
 // deployed Sandboxes commit's bridge Worker is in the checkout and wrangler is signed in. A failure
-// after 5 rolls back automatically, in the same order (previous digest and Worker, previous release
-// id), and checks that with a canary. A real run detaches from the terminal and keeps the Mac awake;
-// a later run, or release.mjs, finishes an open run first, rolling it back if the pipeline changed
-// meanwhile. A host out of reach is waited out for 10 minutes, and while this Mac is silent
-// mid-deploy a host timer, which a reboot keeps, points Main at whatever Cloudflare runs. Exit: 0
-// released, abandoned or nothing to do; 1 failed with production unchanged or rolled back; 2
-// refused; 3 a run is left open; 4 closed, but the release left live failed its canary.
+// after 5 rolls back automatically, in the same order (previous digest and Worker on every app,
+// previous release ids), and checks that with a canary. A real run detaches from the terminal and
+// keeps the Mac awake; a later run, or release.mjs, finishes an open run first, rolling it back if
+// the pipeline changed meanwhile. A host out of reach is waited out for 10 minutes, and while this
+// Mac is silent mid-deploy a host timer, which a reboot keeps, points Main at whatever Cloudflare
+// runs. Exit: 0 released, abandoned or nothing to do; 1 failed with production unchanged or rolled
+// back; 2 refused; 3 a run is left open; 4 closed, but the release left live failed its canary.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
@@ -54,7 +56,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { NODE_IMAGE, packageSource, root, sh, sha256 } from './source-archive.mjs';
+import { NODE_IMAGE, packageSource, publishLedgers, root, sh, sha256 } from './source-archive.mjs';
 
 // Merv paths, relative to merv-typescript, watched besides the last build's bundle inputs: the
 // payload and the build recipe (the host's Dockerfiles, Go image and worker tests; NODE_IMAGE and
@@ -86,12 +88,20 @@ export const SANDBOXES = [
   'control/src/merv_sandboxes/errors.py',
   'control/src/merv_sandboxes/runtimes',
 ];
+// Each Cloudflare app that may serve one of Main's machines, by its Sandboxes provider, and the
+// template it is deployed from; the host reads which are live from Main. A template names its app
+// as wrangler did when it was created (Large: `wrangler deploy --env large` appends `-large`).
+export const APPS = {
+  'cloudflare-fleet': 'deploy/hosted-wrangler.json',
+  'cloudflare-fleet-large': 'deploy/hosted-wrangler-large.json',
+};
+const STANDARD = 'cloudflare-fleet';
 // What this Mac runs or reads besides the archive; it must equal HEAD.
 const PIPELINE = [
   'deploy/hosted-release.mjs',
   'deploy/hosted-release-vm.py',
   'deploy/source-archive.mjs',
-  'deploy/hosted-wrangler.json',
+  ...Object.values(APPS),
 ];
 // For the plan text; the host runs its own LANE_GATES, which a test keeps equal to these.
 export const GATES = {
@@ -104,7 +114,7 @@ const LANE_TEXT = {
   worker: 'worker-only',
   boundary: 'supervisor/bootstrap boundary',
 };
-const STEPS = 'build, gates, push, catalog, drain, deploy, switch, verify, canary';
+const STEPS = 'build, gates, push, catalog, drain, deploy each live app, switch, verify, canary';
 const RUNS = '/opt/merv-typescript/hosted';
 const HOME = '/var/lib/merv-fleet-pilot/hosted-release';
 const SSH = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=30'];
@@ -115,6 +125,8 @@ const within = (path, list) =>
   list.some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
 const digestOf = (image) => image.split('@')[1];
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+// What the host's switch takes: Standard's release id, and each live app's.
+const pins = ({ releaseId, releases }) => ({ releaseId, releases });
 
 /** null means the deployed commit is unknown here, which counts as a boundary change. */
 export function classify(changed, sandboxChanged) {
@@ -187,18 +199,31 @@ export function unsettled(native, expect) {
   ].filter(Boolean);
 }
 
-export function pinProblems(current, template, pre) {
-  const [app] = template.containers;
+/** Each live app runs the live image, Main and the env file name its releases, the catalog has them. */
+export function pinProblems(current, templates, pre) {
+  const held = ([provider, id]) =>
+    pre.catalog.some(
+      (r) => r.provider === provider && r.id === id && r.digest === digestOf(current.image),
+    );
   return [
-    ...drift(pre.native, {
-      image: current.image,
-      minVersion: 1,
-      name: app.name,
-      maxInstances: app.max_instances,
+    ...Object.entries(pre.apps).flatMap(([provider, native]) => {
+      const [app] = templates[provider]?.containers ?? [];
+      if (!app) return [`no template deploys ${provider}`];
+      const expect = { image: current.image, minVersion: 1, name: app.name };
+      const problems = drift(native, { ...expect, maxInstances: app.max_instances });
+      return problems.map((problem) => `${provider} ${problem}`);
     }),
-    pre.mainReleaseId !== current.releaseId && `Main runs ${pre.mainReleaseId}`,
+    ...new Set(
+      [pre.mainReleaseId, pre.releases[STANDARD]]
+        .filter((id) => id !== current.releaseId)
+        .map((id) => `Main runs ${id}`),
+    ),
     pre.fileReleaseId !== current.releaseId && `the env file names ${pre.fileReleaseId}`,
-    !pre.catalog.includes(digestOf(current.image)) && 'the Sandboxes catalog lacks the live digest',
+    JSON.stringify(pre.fileReleases) !== JSON.stringify(pre.releases) &&
+      'the env file names other machine releases than Main runs',
+    ...Object.entries(pre.releases)
+      .filter((release) => !held(release))
+      .map(([provider]) => `the Sandboxes catalog lacks ${provider}'s live release`),
   ].filter(Boolean);
 }
 
@@ -209,7 +234,7 @@ export function rollbackSteps(progress, previous) {
     ...(progress.deployAttempted
       ? [
           ['deploy', previous],
-          ['switch', previous.releaseId],
+          ['switch', pins(previous)],
           ['settle', previous.image],
           ['canary', previous.releaseId],
         ]
@@ -220,7 +245,8 @@ export function rollbackSteps(progress, previous) {
 export function ledgerRow(r) {
   const code = (v) => (v ? `\`${v}\`` : '—');
   const source = `${code(r.sourceCommit.slice(0, 8))} ${code(r.contentSha256?.slice(0, 12))}`;
-  return `| ${r.at.slice(0, 16)}Z | ${code(r.run)} | ${source} | ${r.lane} | ${code(r.image && digestOf(r.image).slice(7, 19))} | ${code(r.releaseId?.slice(4, 16))} | ${r.version ? `v${r.version}` : '—'} | ${r.gates ?? '—'} | ${r.canary ?? '—'} | ${r.result} | ${(r.note ?? '').replace(/[|\n]/g, ' ')} |\n`;
+  const versions = [r.version ?? []].flat().map((v) => `v${v}`); // each live app's, Standard's first
+  return `| ${r.at.slice(0, 16)}Z | ${code(r.run)} | ${source} | ${r.lane} | ${code(r.image && digestOf(r.image).slice(7, 19))} | ${code(r.releaseId?.slice(4, 16))} | ${versions.join(' ') || '—'} | ${r.gates ?? '—'} | ${r.canary ?? '—'} | ${r.result} | ${(r.note ?? '').replace(/[|\n]/g, ' ')} |\n`;
 }
 
 export function describePlan(p) {
@@ -296,8 +322,8 @@ async function main(args) {
   const head = git(['rev-parse', 'HEAD']);
   const atHead = (path) => JSON.parse(git(['show', `${head}:./${path}`]));
   const seed = atHead('deploy/hosted-release.json');
-  const template = atHead('deploy/hosted-wrangler.json');
-  const [app] = template.containers;
+  const templates = Object.fromEntries(Object.entries(APPS).map(([p, file]) => [p, atHead(file)]));
+  const template = templates[STANDARD]; // every app runs the same bridge Worker
   const bridge = dirname(dirname(template.main)); // the bridge Worker's directory in Sandboxes
   const canary = { ...seed.canary, credential: opt('--canary-credential', seed.canary.credential) };
   const driver = randomUUID();
@@ -482,7 +508,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
   }
   plan.contentSha256 = src.contentSha256;
   try {
-    const problems = pinProblems(current, template, onHost(run, 'preflight', plan));
+    const problems = pinProblems(current, templates, onHost(run, 'preflight', plan));
     if (problems.length)
       throw new Error(`Live pins differ from the host's record: ${problems.join('; ')}`);
   } catch (error) {
@@ -498,6 +524,9 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     } catch (error) {
       console.error(`hosted run ${run} stopped: ${error.message}. The next run finishes it.`);
       return 3;
+    } finally {
+      const ledgers = ['HOSTED_RELEASES.md', 'hosted-release.json'].map((f) => join(RECORDS, f));
+      publishLedgers(ledgers, `Record hosted image run ${run} in production`);
     }
   }
 
@@ -523,7 +552,11 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`hosted run ${run} never passed preflight; closed, nothing changed`);
       return 1;
     }
-    const previous = plan.current;
+    // The live apps and Main's machine releases as preflight read them; a run from before Large
+    // knew only Standard.
+    const apps = pre.apps ?? { [STANDARD]: pre.native };
+    const providers = Object.keys(apps);
+    const previous = { ...plan.current, releases: pre.releases };
     const commits = { sourceCommit: plan.sourceCommit, sandboxesCommit: plan.sandboxesCommit };
     const row = {
       at: new Date().toISOString(),
@@ -549,45 +582,56 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       writeFileSync(file, JSON.stringify({ canary: seed.canary, ...state }, null, 2));
       prettier(file);
     };
-    const config = (image, workerMain = template.main) => {
+    const config = (provider, image, workerMain = template.main) => {
       const path = join(mkdtempSync(join(tmpdir(), 'merv-hosted-')), 'wrangler.json');
-      writeFileSync(path, JSON.stringify(wranglerConfig(template, image, workerMain)));
+      writeFileSync(path, JSON.stringify(wranglerConfig(templates[provider], image, workerMain)));
       return path;
     };
-    // The bridge Worker is the one in the target's Sandboxes commit, never a working tree. The note
+    // The bridge Worker is the one in the target's Sandboxes commit, never a working tree. Each note
     // first proves this driver still holds the run, so a takeover never meets a stale deploy.
-    const deploy = (target, note = {}) => {
+    const deploy = (target, which, note = {}) => {
       const worker = mkdtempSync(join(tmpdir(), 'merv-hosted-worker-'));
       const tar = join(worker, 'worker.tar');
       execFileSync('git', ['-C', sandboxes, 'archive', '-o', tar, target.sandboxesCommit, bridge]);
       execFileSync('tar', ['-xf', tar, '-C', worker]);
-      const path = config(target.image, join(worker, template.main));
-      onHost(run, 'note', note);
-      const r = wranglerRun(
-        ['deploy', '--keep-vars', '--containers-rollout=immediate', '-c', path],
-        dirname(path),
-      );
-      writeFileSync(`${path}.log`, `${r.stdout}${r.stderr}`);
-      if (r.status !== 0) throw new Error(`wrangler deploy exited ${r.status}; log ${path}.log`);
-    };
-    // Cloudflare's own view, polled at most 60 times: `landed` once the app runs the image (Main
-    // may name its release at once), otherwise settled, twice in a row at one version.
-    const poll = async (image, minVersion, landed) => {
-      const expect = { image, minVersion, name: app.name, maxInstances: app.max_instances };
-      const pending = landed ? drift : unsettled;
-      let last, stable;
-      for (const until = Date.now() + 60 * POLL; Date.now() < until; await sleep(POLL)) {
-        last = onHost(run, 'native');
-        if (!pending(last, expect).length && (landed || stable?.version === last.version))
-          return last;
-        stable = pending(last, expect).length ? undefined : last;
+      for (const provider of which) {
+        const path = config(provider, target.image, join(worker, template.main));
+        onHost(run, 'note', note);
+        const r = wranglerRun(
+          ['deploy', '--keep-vars', '--containers-rollout=immediate', '-c', path],
+          dirname(path),
+        );
+        writeFileSync(`${path}.log`, `${r.stdout}${r.stderr}`);
+        if (r.status !== 0)
+          throw new Error(`wrangler deploy of ${provider} exited ${r.status}; log ${path}.log`);
       }
-      throw new Error(
-        `Cloudflare did not ${landed ? 'take' : 'settle on'} ${image}: ${pending(last, expect).join('; ')}`,
-      );
     };
-    const landed = (image, minVersion) => poll(image, minVersion, true);
-    const settle = (image, minVersion) => poll(image, minVersion, false);
+    // Cloudflare's own view of each live app in turn, polled at most 60 times: `landed` once it
+    // runs the image (Main may name its release at once), otherwise settled, twice in a row at one
+    // version; `raise` over the app's version at preflight. Resolves to the apps' versions.
+    const poll = async (landed, image, raise) => {
+      const versions = [];
+      for (const provider of providers) {
+        const [app] = templates[provider].containers;
+        const minVersion = apps[provider].version + raise;
+        const expect = { image, minVersion, name: app.name, maxInstances: app.max_instances };
+        const pending = landed ? drift : unsettled;
+        let last, stable;
+        for (const until = Date.now() + 60 * POLL; ; await sleep(POLL)) {
+          last = onHost(run, 'native', { provider });
+          if (!pending(last, expect).length && (landed || stable?.version === last.version)) break;
+          stable = pending(last, expect).length ? undefined : last;
+          if (Date.now() > until)
+            throw new Error(
+              `${provider} did not ${landed ? 'take' : 'settle on'} ${image}: ${pending(last, expect).join('; ')}`,
+            );
+        }
+        versions.push(last.version);
+      }
+      return versions;
+    };
+    const landed = (image, raise = 0) => poll(true, image, raise);
+    const settle = (image, raise = 0) => poll(false, image, raise);
     // Closes the run on a live release no canary has passed: it becomes the live pins either way,
     // but one whose canary fails is marked unverified, and the next run canaries it again.
     const closeCanaried = ({ verified, ...current }, result, note) => {
@@ -669,7 +713,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         const mint = 'containers registries credentials registry.cloudflare.com --push --pull';
         const r = wranglerRun([
           ...`${mint} --expiration-minutes 30 --json -c`.split(' '),
-          config(previous.image),
+          config(STANDARD, previous.image),
         ]);
         if (r.status !== 0)
           throw new Error(`wrangler minted no registry credential (exit ${r.status})`);
@@ -683,27 +727,28 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       return 1;
     }
     const entry = releaseEntry(pushed.image, build.executableSha256);
+    const entries = providers.map((provider) => ({ ...entry, provider })); // only the provider differs
     const next = {
       image: pushed.image,
       releaseId: releaseId(entry),
+      releases: Object.fromEntries(entries.map((e) => [e.provider, releaseId(e)])),
       localId: build.candidate,
       ...commits,
     };
     Object.assign(row, { image: next.image, releaseId: next.releaseId });
     if (!failure) {
       try {
-        onHost(run, 'catalog', {
-          entry,
-          releaseId: next.releaseId,
-          protect: [digestOf(previous.image)],
-        });
-        if (onHost(run, 'native').image !== next.image) {
+        onHost(run, 'catalog', { ...pins(next), entries, protect: [digestOf(previous.image)] });
+        const stale = providers.filter(
+          (p) => onHost(run, 'native', { provider: p }).image !== next.image,
+        );
+        if (stale.length) {
           onHost(run, 'drain');
-          deploy(next, { deployAttempted: true }); // the note also arms the host's guard timer
+          deploy(next, stale, { deployAttempted: true }); // the note also arms the host's guard timer
         }
-        await landed(next.image, pre.native.version + 1);
-        onHost(run, 'switch', { releaseId: next.releaseId });
-        row.version = (await settle(next.image, pre.native.version + 1)).version;
+        await landed(next.image, 1);
+        onHost(run, 'switch', pins(next));
+        row.version = await settle(next.image, 1);
         const turn = onHost(run, 'canary', { releaseId: next.releaseId });
         row.canary = `${turn.status} in ${turn.seconds}s`;
       } catch (error) {
@@ -720,10 +765,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         for (const [step, value] of steps) {
           if (step === 'catalog') onHost(run, 'catalog', { restore: true });
           else if (step === 'deploy') {
-            deploy(value);
-            await landed(value.image, pre.native.version);
-          } else if (step === 'switch') onHost(run, 'switch', { releaseId: value });
-          else if (step === 'settle') await settle(value, pre.native.version);
+            deploy(value, providers);
+            await landed(value.image);
+          } else if (step === 'switch') onHost(run, 'switch', value);
+          else if (step === 'settle') await settle(value);
           else {
             try {
               onHost(run, 'canary', { releaseId: value });

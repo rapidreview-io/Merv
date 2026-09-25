@@ -39,9 +39,10 @@ or a substitute for those gates.
 `node deploy/hosted-release.mjs` releases changes to these files, to `packages/pi/worker-runtime`
 and to the Sandboxes base (its Cloudflare Dockerfile, agent and bridge Worker). On the production
 host it builds this Dockerfile from committed sources, over a Sandboxes base built from the
-committed Sandboxes checkout, runs the Linux probes below against that exact image, and moves the
-Cloudflare app, the Sandboxes catalog and Main together, with a live canary turn and automatic
-rollback. `deploy/release.mjs` runs it after every production release.
+committed Sandboxes checkout, runs the Linux probes below against that exact image, and moves
+every Cloudflare app that serves one of Main's machines, the Sandboxes catalog and Main together,
+with a live canary turn and automatic rollback. `deploy/release.mjs` runs it after every production
+release.
 
 ## Combined Pi and workflow Linux probes
 

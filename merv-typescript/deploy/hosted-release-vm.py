@@ -8,8 +8,11 @@ start while it exists. One driver at a time holds the run's lease: a running ste
 and a lease unseen for LEASE seconds may be taken over. SIGHUP is ignored, so a dropped SSH
 session does not stop a step. From the first deploy attempt until finish every step arms an
 enabled systemd timer, unless it runs, so a reboot keeps it; it runs `guard`: when the driver has
-gone silent it points Main at whichever release Cloudflare runs, so a lost laptop never leaves Pi
-refusing every launch. `abandon` lets the driver close a run that can neither finish nor roll back.
+gone silent it points each of Main's machines at the release its Cloudflare app runs, so a lost
+laptop never leaves Pi refusing every launch. `abandon` lets the driver close a run that can neither
+finish nor roll back. The live apps are those serving Main's machines (MERV_FLEET_RUNTIMES, else the
+one Standard machine), as preflight read them; a run's release is Standard's entry and its copy for
+each other app, only the provider changed, and its releaseId is always Standard's.
 Never prints a secret: the registry credential and the canary token stay inside this process,
 and every backup of the env file or the Sandboxes catalog is root-private inside the run.
 """
@@ -37,8 +40,8 @@ MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 's
 ENV = Path('/etc/merv/typescript.env')
 HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
 GUARD = Path('/etc/systemd/system/merv-hosted-guard')  # .service and .timer, for the open run
-KEY, CATALOG, PROVIDER = 'MERV_FLEET_RUNTIME_RELEASE_ID', 'SANDBOXES_RUNTIME_RELEASES', 'cloudflare-fleet'
-NAMESPACE = 'fleet-cloudflare-canary'  # resolves the provider for native reads
+KEY, RUNTIMES = 'MERV_FLEET_RUNTIME_RELEASE_ID', 'MERV_FLEET_RUNTIMES'  # Standard's legacy key; every machine
+CATALOG, PROVIDER = 'SANDBOXES_RUNTIME_RELEASES', 'cloudflare-fleet'  # PROVIDER: the Standard app
 ACTIVE = ('waiting', 'starting', 'working', 'saving')
 KEEP = 16  # releases per provider; every protected launch copies them into a 32-entry VM file
 LEASE = 300
@@ -79,12 +82,16 @@ async def main():
         if os.environ.get('MERV_Q'):
             async with c.db.connect() as conn:
                 print(json.dumps((await conn.execute(text(os.environ['MERV_Q']))).scalar_one()))
-        elif os.environ.get('MERV_RELEASE'):
+        elif os.environ.get('MERV_RELEASES'):
             from merv_sandboxes.runtimes.releases import RuntimeRelease
-            e=json.loads(os.environ['MERV_RELEASE'])
-            print(json.dumps(RuntimeRelease(**{**e,'arguments':tuple(e['arguments'])}).release_id))
+            print(json.dumps([RuntimeRelease(**{**e,'arguments':tuple(e['arguments'])}).release_id
+                              for e in json.loads(os.environ['MERV_RELEASES'])]))
         else:
-            d=(await c.providers.resolve(os.environ['MERV_NAMESPACE'],'cloudflare-fleet')).driver
+            # The host-configured app itself, whichever namespaces it serves.
+            b=c.providers._host.get(os.environ['MERV_PROVIDER'])
+            if not b:
+                raise SystemExit(os.environ['MERV_PROVIDER']+' is not an enabled Sandboxes provider')
+            d=b.driver
             a,_=await d._native_result(f'/accounts/{d._account_id}/containers/applications/{d._application_id}')
             g=a.get('configuration') or {}
             print(json.dumps({'id':a.get('id'),'name':a.get('name'),'version':a.get('version'),'image':g.get('image'),
@@ -172,8 +179,12 @@ def sbx(**env):
     return json.loads(run(['docker', 'exec', *flags, CONTROL, 'python', '-c', SBX], timeout=60))
 
 
-def native():
-    return sbx(MERV_NAMESPACE=NAMESPACE)
+def native(provider=PROVIDER):
+    return sbx(MERV_PROVIDER=provider)
+
+
+def release_ids(entries):
+    return sbx(MERV_RELEASES=json.dumps(entries))
 
 
 def owner():
@@ -267,6 +278,38 @@ def with_env(raw, key, value):
                     for line in raw.splitlines(keepends=True))
 
 
+def file_env(raw):
+    return dict(line.split('=', 1) for line in raw.decode().splitlines() if '=' in line and not line.startswith('#'))
+
+
+def machines(env):
+    """{provider: releaseId} of Main's machines: MERV_FLEET_RUNTIMES, else the one legacy Standard machine."""
+    if RUNTIMES not in env:
+        return {PROVIDER: env.get(KEY)}
+    out = {}
+    for machine in json.loads(env[RUNTIMES].strip("'")):
+        need(out.setdefault(machine['provider'], machine['releaseId']) == machine['releaseId'],
+             'two machines on one app name different releases')
+    return out
+
+
+def pins(env):
+    """What an env names: Standard's release in the legacy key, and each machine's."""
+    return [env.get(KEY), machines(env)]
+
+
+def with_releases(raw, releases):
+    """The env file naming releases[provider] for each machine and Standard's in the legacy key."""
+    raw = with_env(raw, KEY, releases[PROVIDER])
+    if RUNTIMES not in file_env(raw):
+        return raw
+    profiles = json.loads(env_value(raw, RUNTIMES).strip("'"))
+    need(all(m['provider'] in releases for m in profiles), 'no release for every machine in ' + RUNTIMES)
+    for machine in profiles:
+        machine['releaseId'] = releases[machine['provider']]
+    return with_env(raw, RUNTIMES, "'" + json.dumps(profiles, separators=(',', ':')) + "'")
+
+
 def with_release(doc, entry, keep=KEEP, protect=()):
     """Add entry to both services' catalogs, keeping earlier releases; returns (doc, changed).
 
@@ -346,7 +389,7 @@ def busy():
                      agg.format('id', '{s}.fleet_allocations',
                                 "phase IN ('queued','provisioning','launching','starting')") + ' AS launches')
     lists = {**main,
-             'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider='cloudflare-fleet' AND "
+             'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider LIKE 'cloudflare-fleet%' AND "
                                                                              "state IN ('provisioning','deleting')")),
              'bootstraps': sbx(MERV_Q='SELECT ' + agg.format('launch_id', 'runtime_bootstraps',
                                                             "state='pending' AND expires_at > now()"))}
@@ -427,9 +470,13 @@ class Step:
             whoami(cred)
             catalog = json.loads(env_of(CONTROL)[CATALOG])
             need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
-            return {'native': native(), 'mainReleaseId': env_of(MAIN).get(KEY),
-                    'fileReleaseId': env_value(ENV.read_bytes(), KEY), 'canaryActor': cred['actorId'],
-                    'catalog': [r['image_digest'] for r in catalog if r['provider'] == PROVIDER]}
+            main, raw = env_of(MAIN), ENV.read_bytes()
+            releases = machines(main)
+            return {'apps': {provider: native(provider) for provider in releases}, 'mainReleaseId': main.get(KEY),
+                    'fileReleaseId': env_value(raw, KEY), 'releases': releases,
+                    'fileReleases': machines(file_env(raw)), 'canaryActor': cred['actorId'],
+                    'catalog': [{'provider': r['provider'], 'digest': r['image_digest'], 'id': i}
+                                for r, i in zip(catalog, release_ids(catalog))]}
         except BaseException:
             if owner() == self.run.name:
                 (HOME / 'active').unlink()
@@ -526,8 +573,8 @@ class Step:
             shutil.rmtree(config, ignore_errors=True)
 
     def catalog(self, arg):
-        """Adds the release to both Sandboxes services, keeping earlier releases, and recreates them.
-        {"restore": true} puts back the file this run replaced, for a restore that failed."""
+        """Adds the release, an entry per live app, to both Sandboxes services, keeping earlier releases,
+        and recreates them. {"restore": true} puts back the file this run replaced, for a restore that failed."""
         labels = inspect(CONTROL)['Config']['Labels']
         path, project = Path(labels['com.docker.compose.project.config_files']), labels['com.docker.compose.project']
         need(path.is_file(), 'catalog file is not a single file')
@@ -548,12 +595,16 @@ class Step:
                 apply(backup.read_bytes())
             self.note({'catalogBroken': False})
             return {'restored': backup.exists()}
-        entry = arg['entry']
-        need(sbx(MERV_RELEASE=json.dumps(entry)) == arg['releaseId'], 'Sandboxes derives a different release id')
+        entries, releases = arg['entries'], arg['releases']
+        need(release_ids(entries) == [releases[e['provider']] for e in entries] and
+             releases[PROVIDER] == arg['releaseId'], 'Sandboxes derives a different release id')
         raw = path.read_bytes()
-        doc, changed = with_release(json.loads(raw), entry, protect=arg['protect'])
-        result = {'releaseId': arg['releaseId'], 'digest': entry['image_digest'],
-                  'releases': len(json.loads(doc['services']['control']['environment'][CATALOG]))}
+        doc, changed = json.loads(raw), False
+        for entry in entries:
+            doc, added = with_release(doc, entry, protect=arg['protect'])
+            changed = changed or added
+        result = {'releaseId': arg['releaseId'], 'releases': releases, 'digest': entries[0]['image_digest'],
+                  'size': len(json.loads(doc['services']['control']['environment'][CATALOG]))}
         if not changed and all(json.loads(env_of(c)[CATALOG]) == json.loads(doc['services']['control']['environment']
                                                                               [CATALOG]) for c in (CONTROL, PIPELINE)):
             return {**result, 'changed': False}
@@ -574,16 +625,18 @@ class Step:
     def drain(self, _):
         return quiet(self.plan['drainSeconds'])
 
-    def native(self, _):
-        return native()
+    def native(self, arg):
+        return native(arg.get('provider', PROVIDER))
 
     def switch(self, arg):
-        """Points Main at a release id and recreates it on its own image; restores the env on failure.
-        It never waits for a drain: by now Cloudflare runs one release and Main must name it."""
-        target = arg['releaseId']
-        need(re.fullmatch(r'rt1_[0-9a-f]{64}', target), 'invalid release id')
+        """Points each of Main's machines at its app's release ({provider: releaseId}; a releaseId alone
+        is Standard's) and recreates Main on its own image; restores the env on failure. It never
+        waits for a drain: by now Cloudflare runs the release and Main must name it."""
+        releases = arg.get('releases') or {PROVIDER: arg['releaseId']}
+        need(all(re.fullmatch(r'rt1_[0-9a-f]{64}', r or '') for r in releases.values()), 'invalid release id')
         raw = ENV.read_bytes()
-        if env_value(raw, KEY) == target and env_of(MAIN).get(KEY) == target:
+        want = with_releases(raw, releases)
+        if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
             return {'changed': False}
         need(not main_release_running(), 'a Main release job is running')
         state = inspect(MAIN)
@@ -592,7 +645,7 @@ class Step:
             atomic(self.run / 'env.before', raw)
         env = dict(os.environ, MERV_TS_IMAGE=image)
         up = ['docker', 'compose', '-f', 'compose.yml', 'up', '-d', '--force-recreate']
-        atomic(ENV, with_env(raw, KEY, target))
+        atomic(ENV, want)
         try:
             # The image's own render refuses a bad env before Main is recreated on it.
             run(['docker', 'compose', '-f', 'compose.yml', 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node',
@@ -600,7 +653,8 @@ class Step:
                 cwd=directory, timeout=120)
             run(up, env=env, cwd=directory, timeout=240)
             healthy(MAIN, 60, 4)
-            need(inspect(MAIN)['Image'] == image and env_of(MAIN).get(KEY) == target, 'Main did not take the release')
+            need(inspect(MAIN)['Image'] == image and pins(env_of(MAIN)) == pins(file_env(want)),
+                 'Main did not take the release')
         except BaseException:
             atomic(ENV, raw)
             run(up, env=env, cwd=directory, timeout=240)
@@ -608,13 +662,13 @@ class Step:
         return {'changed': True, 'image': image, 'envSha256Before': sha(raw), 'envSha256After': sha(ENV.read_bytes())}
 
     def canary(self, arg):
-        """One real Pi turn as the canary reader; proves the release served it and its machine was released."""
+        """One real Pi turn as the canary reader on Standard; proves the release served it and its
+        machine was released, and that every other live app runs the same image, healthy."""
         cred, target = credential(Path(self.plan['canary']['credential'])), arg['releaseId']
         whoami(cred)
         nonce = secrets.token_hex(4)
         word, started = 'canary-' + nonce, time.monotonic()
         conversation = tool(cred, 'pi.create', {'requestId': 'hosted-' + nonce, 'title': CANARY_NAME})['id']
-        owner_id = conversation + ':%'
         command = {}
         try:
             sent = tool(cred, 'pi.send', {'id': conversation, 'commandId': word,
@@ -626,23 +680,31 @@ class Step:
                     break
                 time.sleep(3)
         finally:
-            with contextlib.suppress(RuntimeError):
-                tool(cred, 'pi.stop', {'id': conversation}, tries=3)
-        served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE data_json::jsonb->'owner'->>'id' "
-                           "LIKE $1 AND data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", owner_id, target)['n']
+            # Pi v2 shares the person's machine and keeps it 10 idle minutes, so the canary releases it
+            # as a person would (Release machine); v1 has no such tool, and its pi.stop releases it.
+            for name, body in (('pi.stop', {'id': conversation}), ('pi.machine.stop', {})):
+                with contextlib.suppress(RuntimeError):
+                    tool(cred, name, body, tries=3)
+        allocation = command.get('runtimeId')  # the machine that served the turn
+        served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
+                           "data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", allocation, target)['n']
         for _ in range(60):
-            live = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE "
-                             "data_json::jsonb->'owner'->>'id' LIKE $1 AND phase <> 'released'", owner_id)['n']
+            live = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
+                             "phase <> 'released'", allocation)['n']
             if not live:
                 break
             time.sleep(3)
+        image = native()['image']
+        apps = {p: native(p) for p in self.apps() if p != PROVIDER}
         result = {'conversation': conversation, 'status': command.get('status'), 'error': command.get('error'),
                   'reply': any(word in m.get('text', '') for m in command.get('messages', [])
                                if m.get('role') == 'assistant'),
                   'servedByRelease': served > 0, 'released': not live,
+                  'apps': {p: n['image'] == image and not n.get('rollout') and (n.get('health') or {}).get(
+                      'errors') == [] and not n['health'].get('instances', {}).get('failed') for p, n in apps.items()},
                   'seconds': round(time.monotonic() - started)}
-        need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released'],
-             'canary_failed ' + json.dumps(result))
+        need(result['status'] == 'completed' and result['reply'] and result['servedByRelease'] and result['released']
+             and all(result['apps'].values()), 'canary_failed ' + json.dumps(result))
         return result
 
     def note(self, arg):
@@ -676,48 +738,59 @@ class Step:
 
     def guard(self, _):
         """Systemd timer from the Cloudflare deploy until finish. When the driver has been silent for
-        LEASE seconds, points Main at whichever release Cloudflare settled on; the run stays open
-        for the next hosted-release.mjs to canary or roll back."""
+        LEASE seconds, points each of Main's machines at the release its app settled on; the run
+        stays open for the next hosted-release.mjs to canary or roll back."""
         if (self.run / 'finish.json').exists() or owner() != self.run.name:
             subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             return {'guard': 'closed'}
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:
             return {'guard': 'driver alive'}
-        live = native()
-        target = self.releases().get(live['image'])
-        if not target or live.get('rollout'):
+        live, known = {p: native(p) for p in self.apps()}, self.releases()
+        if any(n.get('rollout') or n['image'] not in known for n in live.values()):
             return {'guard': 'waiting for Cloudflare to settle'}
-        result = self.switch({'releaseId': target})
-        self.note({'guard': {'at': time.time(), 'releaseId': target}})
-        return {'guard': 'switched' if result['changed'] else 'consistent', 'releaseId': target}
+        target = {p: known[n['image']][p] for p, n in live.items()}
+        result = self.switch({'releases': target})
+        self.note({'guard': {'at': time.time(), 'releases': target}})
+        return {'guard': 'switched' if result['changed'] else 'consistent', 'releases': target}
+
+    def apps(self):
+        """The providers whose apps serve Main's machines, as preflight read them."""
+        return list((read(self.run / 'preflight.json') or {}).get('releases') or [PROVIDER])
 
     def releases(self):
-        """This run's releases by image: the previous one and, once catalogued, its own."""
+        """This run's releases by image, each {provider: releaseId}: the previous one (Main's machines
+        at preflight) and, once catalogued, its own."""
         current, catalog = self.plan['current'], read(self.run / 'catalog.json')
-        targets = {current['image']: current['releaseId']}
+        before = (read(self.run / 'preflight.json') or {}).get('releases') or {PROVIDER: current['releaseId']}
+        targets = {current['image']: before}
         if catalog:
-            targets[read(self.run / 'push.json')['image']] = catalog['releaseId']
+            targets[read(self.run / 'push.json')['image']] = catalog['releases']
         return targets
 
     def abandon(self, _):
         """Changes nothing: names the release production agrees on, so the driver may close the run
-        without finishing or rolling it back. Cloudflare runs one of this run's images with no rollout,
-        Main and the env file name its release, and both Sandboxes services' catalog holds it."""
-        live, main, file = native(), env_of(MAIN).get(KEY), env_value(ENV.read_bytes(), KEY)
-        target, catalog = self.releases().get(live['image']), json.loads(env_of(CONTROL)[CATALOG])
-        held = {sbx(MERV_RELEASE=json.dumps(r)) for r in catalog
-                if r['provider'] == PROVIDER and r['image_digest'] == live['image'].split('@')[-1]}
+        without finishing or rolling it back. Every live app runs one of this run's images with no
+        rollout, Main and the env file name its releases, and both Sandboxes services' catalog holds them."""
+        live = {p: native(p) for p in self.apps()}
+        image = live[PROVIDER]['image']
+        target, catalog = self.releases().get(image), json.loads(env_of(CONTROL)[CATALOG])
+        held = {(r['provider'], i) for r, i in zip(catalog, release_ids(catalog))
+                if r['image_digest'] == image.split('@')[-1]}
+        want = [target[PROVIDER], target] if target else None
+        main, file = pins(env_of(MAIN)), pins(file_env(ENV.read_bytes()))
+        names = lambda p: ', '.join(dict.fromkeys([p[0], *p[1].values()]))
         problems = [p for p in (
-            not target and f'Cloudflare runs {live["image"]}, neither release of this run',
-            live.get('rollout') and 'a Cloudflare rollout is in progress',
-            main != target and f'Main runs {main}',
-            file != target and f'the env file names {file}',
-            target not in held and 'the Sandboxes catalog lacks that release',
+            not target and f'Cloudflare runs {image}, neither release of this run',
+            any(n['image'] != image for n in live.values()) and 'the Cloudflare apps run different images',
+            any(n.get('rollout') for n in live.values()) and 'a Cloudflare rollout is in progress',
+            main != want and f'Main runs {names(main)}',
+            file != want and f'the env file names {names(file)}',
+            not set((target or {PROVIDER: None}).items()) <= held and 'the Sandboxes catalog lacks that release',
             catalog != json.loads(env_of(PIPELINE)[CATALOG]) and 'the two Sandboxes services hold different catalogs',
         ) if p]
         need(not problems, 'production disagrees, so the run stays open: ' + '; '.join(problems))
-        return {'releaseId': target, 'image': live['image']}
+        return {'releaseId': target[PROVIDER], 'releases': target, 'image': image}
 
     def mint_canary(self, _):
         """Once: a non-expiring reader key for the service pilot, minted inside Main and stored root-only."""

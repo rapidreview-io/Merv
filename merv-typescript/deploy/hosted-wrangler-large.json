@@ -1,0 +1,22 @@
+{
+  "name": "merv-sandboxes-bridge-large",
+  "account_id": "ac27350cd4a42855004ab960c906b6d5",
+  "main": "deploy/cloudflare-sandbox/worker/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "vars": { "SHAPE": "standard-3" },
+  "containers": [
+    {
+      "name": "merv-sandboxes-bridge-large-sandboxcontainer-large",
+      "class_name": "SandboxContainer",
+      "image": "",
+      "instance_type": "standard-3",
+      "max_instances": 10,
+      "authorized_keys": [],
+      "trusted_user_ca_keys": [],
+      "ssh": { "enabled": false, "port": 2223 }
+    }
+  ],
+  "durable_objects": { "bindings": [{ "name": "SANDBOX", "class_name": "SandboxContainer" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SandboxContainer"] }]
+}
