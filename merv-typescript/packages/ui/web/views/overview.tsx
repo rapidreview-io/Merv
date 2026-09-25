@@ -183,34 +183,12 @@ const said = ({ instruction, blockers }: WorkflowDecision) =>
 
 /** What every open record carries before its gate is read. */
 type Open = { id: string; name: string; owner: string; workflow: Flow };
+const opened = ({ id, workflow }: Pick<Open, 'id' | 'workflow'>, name: string, owner: string) =>
+  ({ id, name, owner, workflow }) satisfies Open;
 const openWork = (home: HomeData | undefined): [string, Open[]][] => [
-  [
-    'tasks',
-    (home?.tasks ?? []).map((item) => ({
-      id: item.id,
-      name: item.title,
-      owner: item.producerId,
-      workflow: item.workflow,
-    })),
-  ],
-  [
-    'experiments',
-    (home?.experiments ?? []).map((item) => ({
-      id: item.id,
-      name: item.name,
-      owner: item.ownerId,
-      workflow: item.workflow,
-    })),
-  ],
-  [
-    'research',
-    (home?.cycles ?? []).map((item) => ({
-      id: item.id,
-      name: item.name,
-      owner: item.ownerId,
-      workflow: item.workflow,
-    })),
-  ],
+  ['tasks', (home?.tasks ?? []).map((item) => opened(item, item.title, item.producerId))],
+  ['experiments', (home?.experiments ?? []).map((item) => opened(item, item.name, item.ownerId))],
+  ['research', (home?.cycles ?? []).map((item) => opened(item, item.name, item.ownerId))],
 ];
 
 /**
@@ -234,7 +212,10 @@ export function standingOf(
     work.flatMap(([, items]) => items.map((item) => [item.id, { name: item.name }] as const)),
   );
   const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [] };
-  const subjects = new Map<string, Open>();
+  // A wave is no card of its own here, but its review is named by it as any other subject's is.
+  const subjects = new Map<string, Open>(
+    (home?.reflections ?? []).map((item) => [item.id, opened(item, item.title, item.ownerId)]),
+  );
   const reviewsRow = rowOf(rows, 'reviews');
   const reviews = reviewsRow ? (home?.reviews ?? []) : [];
   const openReviews = reviews.filter((item) => ['requested', 'started'].includes(item.status));

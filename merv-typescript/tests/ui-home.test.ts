@@ -831,3 +831,33 @@ test('a cycle its consolidation task stopped names the task; work it reflects on
   assert.deepEqual(sentences(lines.unknown), [['wf_cycle', 'Stopped: Consolidate Wave 1 failed']]);
   assert.deepEqual(sentences(lines.yours), [['wf_next', 'Needs your input']]);
 });
+
+test('the review of a reflection wave is named by the wave it reviews', () => {
+  const data = home({
+    reflections: [
+      {
+        id: 'wf_wave',
+        title: 'QA6 Ledgerline cycle: reflection',
+        ownerId: 'actor_ada',
+        workflow: flow('in_review'),
+      },
+    ],
+    reviews: [
+      {
+        id: 'review_wave',
+        subjectId: 'wf_wave',
+        status: 'requested',
+        reviewerId: null,
+        claimable: false,
+        verdict: null,
+        createdAt: '2026-09-20T11:00:00.000Z',
+      },
+    ],
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines = standingOf(rows as any, data as any, me, named);
+  assert.deepEqual(
+    lines.agent.map((line: { name?: unknown; sentence: string }) => [line.name, line.sentence]),
+    [['QA6 Ledgerline cycle: reflection', 'Waiting for a reviewer']],
+  );
+});
