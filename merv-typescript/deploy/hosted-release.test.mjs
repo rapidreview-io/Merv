@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   GATES,
   LEASE,
+  WATCH,
   classify,
   describePlan,
   ledgerRow,
@@ -67,6 +68,14 @@ test('changed paths pick the source lane, and both sides agree on gates and the 
   assert.equal(classify(null, []), 'boundary'); // the deployed commit is unknown here
   assert.equal(classify([], null), 'boundary');
   assert.deepEqual(py('print(json.dumps([vm.LANE_GATES, vm.LEASE]))'), [GATES, LEASE]);
+  // The build recipe builds too: the host's Dockerfiles, Go image and worker tests, NODE_IMAGE and
+  // the TypeScript settings. The host's image diff decides the lane.
+  for (const recipe of [
+    'deploy/hosted-release-vm.py',
+    'deploy/source-archive.mjs',
+    'tsconfig.json',
+  ])
+    assert.ok(WATCH.includes(recipe), recipe);
 });
 
 test('the host decides the lane from the whole image; the source lane is only a floor', () => {
@@ -184,14 +193,16 @@ test('native verification waits for the pinned image to settle and flags drift',
   assert.deepEqual(pinProblems(seed.current, template, busy), []);
 });
 
-test('rollback undoes what was attempted, then verifies with a canary', () => {
+test('rollback undoes what was attempted in the forward order, then verifies with a canary', () => {
   const previous = { image: image('a'), releaseId: 'rt1_old', sandboxesCommit: 'c1' };
   assert.deepEqual(rollbackSteps({}, previous), []);
   assert.deepEqual(rollbackSteps({ catalogBroken: true }, previous), [['catalog']]);
   // The switch is always undone after a deploy: the host guard may have switched Main meanwhile.
+  // Main follows the image at once; the settle comes after, as on the way forward.
   assert.deepEqual(rollbackSteps({ deployAttempted: true }, previous), [
     ['deploy', previous],
     ['switch', 'rt1_old'],
+    ['settle', image('a')],
     ['canary', 'rt1_old'],
   ]);
 });

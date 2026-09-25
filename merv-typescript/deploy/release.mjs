@@ -44,7 +44,7 @@ const remoteJob = ({ release, archiveSha256 }) => `
 set -euo pipefail
 # An open hosted-image run owns Main's recreates; it checks for this job after claiming the marker.
 HOSTED=$(cat /var/lib/merv-fleet-pilot/hosted-release/active 2>/dev/null || true)
-if [ -n "$HOSTED" ]; then echo "hosted run $HOSTED is open; node deploy/hosted-release.mjs finishes it" >&2; exit 1; fi
+if [ -n "$HOSTED" ]; then echo "hosted run $HOSTED is open; node deploy/hosted-release.mjs finishes it, or --abandon closes it" >&2; exit 1; fi
 REL=/opt/merv-typescript/releases/${release}
 IMG=merv-typescript:${release}
 BK=/var/backups/merv/typescript-staging-refresh/${release}
@@ -176,7 +176,9 @@ const hosted = (...extra) =>
   }).status;
 // A hosted run left open would make the VM job refuse; finish it (forward or back) first.
 if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
-  console.error('A hosted image run is still open; Main was not released.');
+  console.error(
+    'A hosted image run is still open; Main was not released. Once production agrees on one of its releases, `node deploy/hosted-release.mjs --abandon` closes it.',
+  );
   process.exit(1);
 }
 const release = resume ?? local.release;

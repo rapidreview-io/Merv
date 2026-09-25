@@ -128,6 +128,12 @@ keeps the canary grant.
   runtime is digest-pinned; `hosted-release.mjs` (run by `release.mjs`) builds
   it from committed sources and moves its image, catalog and release id
   together, drained, gated and canaried, with automatic rollback.
+- An open hosted run blocks every Main release, emergencies included. When it
+  can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
+  closes it once production agrees on one of its releases: Cloudflare runs that
+  image with no rollout, Main and the env file name its release id, and both
+  Sandboxes services' catalog holds it. Otherwise it refuses and names what
+  disagrees; the run stays open.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Otherwise Sandboxes refuses the extra creates, and those turns

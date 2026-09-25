@@ -6,7 +6,9 @@ the commit and the content hash of its allowlisted archive; both are also image 
 (`org.merv.hosted.source-commit`, `org.merv.hosted.source-sha256`), beside
 `org.merv.hosted.sandboxes-commit`. Image is the amd64 manifest digest that Cloudflare and the
 Sandboxes catalog pin, and Release is the `rt1_` id Main uses. The host keeps the live pins;
-[`hosted-release.json`](hosted-release.json) seeds them and records the latest release.
+[`hosted-release.json`](hosted-release.json) seeds them and records the latest release. A stuck
+run closed with `--abandon` is `abandoned`: production agreed on the release in its row, which the
+host keeps as the live pins (see [`PI_OPERATIONS.md`](PI_OPERATIONS.md)).
 
 | UTC               | Run            | Source       | Lane   | Image          | Release        | App | Gates             | Canary                 | Result | Notes                                                                                                                                                       |
 | ----------------- | -------------- | ------------ | ------ | -------------- | -------------- | --- | ----------------- | ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
