@@ -12,6 +12,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
+import { codexModelRelay } from './codex-relay.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
 const workflowConfig = z
@@ -29,6 +30,9 @@ const workflowConfig = z
     baseUrl: z.string().url().max(2048).optional(),
     maxAgents: z.number().int().min(1).max(64).default(10),
     maxAgentsPerPerson: z.number().int().min(1).max(64).default(5),
+    /** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
+    stepMinutes: z.number().int().min(10).max(1430).default(120),
+    dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
   .strict();
@@ -68,8 +72,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   readonly sourcePermission = 'read';
   /** A step in progress survives a Main release: the restarted adapter takes its machine back. */
   readonly keepsRunning = true;
-  private readonly config: z.infer<typeof workflowConfig>;
-  private modelApiKey?: string;
+  readonly config: z.infer<typeof workflowConfig>;
   /** The projects the last reconcile rented for. */
   private served = new Set<string>();
   /** Each project's review director actor, retained once made. */
@@ -187,7 +190,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async bootstrap(a: FleetAllocation): Promise<string> {
     check(
-      this.accepted(a) && this.modelApiKey && this.config.baseUrl,
+      this.accepted(a) && this.config.baseUrl,
       'fleet_workflow_source',
       'Fleet workflow allocation is unavailable',
       403,
@@ -205,7 +208,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
       baseUrl: this.config.baseUrl,
       projectId: a.projectId,
       enrollmentToken,
-      modelApiKey: this.modelApiKey,
     });
   }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
@@ -243,8 +245,13 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * one of its people, and its reviews that admin may not direct through its review director;
    * a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
-    this.modelApiKey ??= process.env[this.config.modelApiKeyEnv!];
-    check(this.modelApiKey, 'fleet_workflow_secret', 'Fleet model key is unavailable', 503);
+    // The key stays on Main for the relay; without it no machine is rented to call the model.
+    check(
+      process.env[this.config.modelApiKeyEnv!],
+      'fleet_workflow_secret',
+      'Fleet model key is unavailable',
+      503,
+    );
     // One person across projects: their sign-in identity, else the machine actor itself, which
     // only '*' lists, since an identity is two words. A review director counts as its voucher.
     const person = async (source: DelegationSource) => {
@@ -317,6 +324,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         await this.fleet.request(sourceCaller(source), {
           requestId: `wf:${digest({ id, generation })}`,
           owner: { kind: ownerKind, id },
+          seconds: this.config.stepMinutes * 60 + 600,
         });
       } catch (error) {
         // Fleet refuses this project (no connection, say): it is not served.
@@ -336,7 +344,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
     await this.pending?.catch(() => undefined);
     for (const dispose of this.disposers.reverse()) dispose();
     this.disposers = [];
-    this.modelApiKey = undefined;
   }
 }
 
@@ -348,11 +355,19 @@ declare module 'cordis' {
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
-  inject: ['fleet', 'sessions', 'scope'],
+  inject: ['fleet', 'sessions', 'scope', 'api', 'state'],
   async apply(ctx: Context, config: FleetWorkflowConfig = {}) {
     const adapter = new FleetWorkflowAdapter(ctx.fleet, ctx.sessions, ctx.scope, config);
     await adapter.start();
     ctx.effect(() => () => adapter.close());
+    // The provider key stays on Main: hosted Codex calls the model through this relay.
+    if (adapter.config.enabled) {
+      const relay = await codexModelRelay(ctx.sessions, ctx.state, {
+        providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
+        dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
+      });
+      ctx.effect(() => ctx.api.mountModelRelay('/codex-model', relay));
+    }
     ctx.provide('fleetWorkflow', adapter);
   },
 };

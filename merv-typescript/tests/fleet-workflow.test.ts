@@ -85,7 +85,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     },
     async request(
       caller: Caller,
-      input: { requestId: string; owner: { kind: string; id: string } },
+      input: { requestId: string; owner: { kind: string; id: string }; seconds?: number },
     ) {
       requests.push(caller.projectId);
       if (refused.has(caller.projectId))
@@ -104,6 +104,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
         source,
         owner: input.owner,
         requestId: input.requestId,
+        seconds: input.seconds,
         profileId: 'image-profile',
         epoch: 1,
         phase: 'queued',
@@ -238,6 +239,8 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'task_a:2' });
+  // A two-hour step, and ten minutes more for its machine to start and stop.
+  assert.equal(f.allocations[0]?.seconds, 130 * 60);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   f.allocations[0]!.phase = 'released';
@@ -319,8 +322,9 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     baseUrl: 'https://merv.example.test',
     projectId: f.caller.projectId,
     enrollmentToken: `me_${'a'.repeat(64)}`,
-    modelApiKey: f.modelApiKey,
   });
+  // The provider key stays on Main: hosted Codex reaches the model through its relay.
+  assert.equal(first.includes(f.modelApiKey), false);
   assert.deepEqual(f.ensureInputs[0], {
     allocationId: allocation.id,
     epoch: 1,
@@ -882,10 +886,8 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       const current = await fleet.inspectOwned(adapter, allocation.id);
       const bootstrap = JSON.parse(h.bootstraps.get(current.runtime!.sandboxId)!);
       assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
-      assert.deepEqual(
-        [bootstrap.projectId, bootstrap.modelApiKey],
-        [allocation.projectId, 'test-model-key'],
-      );
+      assert.equal(bootstrap.projectId, allocation.projectId);
+      assert.equal(JSON.stringify(bootstrap).includes('test-model-key'), false);
       const unclaimed = await sessions.inspectManaged(allocation.id, allocation.epoch);
       assert.equal(unclaimed?.runnerId, null);
       assert.equal(unclaimed?.session, null);

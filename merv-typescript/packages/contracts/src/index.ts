@@ -97,7 +97,7 @@ export type {
 } from './ui-manifest.js';
 export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
-export { RUNNER_HARNESSES, sessionSecretPattern } from './session-inputs.js';
+export { codexHandoffGraceMs, RUNNER_HARNESSES, sessionSecretPattern } from './session-inputs.js';
 export { WorkspaceDeferred } from './workspace-driver.js';
 export type {
   WorkspaceDriver,

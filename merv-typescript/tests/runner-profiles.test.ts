@@ -294,6 +294,48 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   );
 });
 
+test('a hosted Codex profile calls the model through Main with its session bearer, and its shell alone gains the network', () => {
+  const isolated = { ...codex, isolatedLauncher: '/opt/launcher', model: 'gpt-6-luna' };
+  assert.throws(() => validateProfile({ ...codex, hosted: true }), {
+    code: 'invalid_runner_profile',
+  });
+  assert.throws(() => validateProfile({ ...isolated, hosted: false }), {
+    code: 'invalid_runner_profile',
+  });
+  const hosted = validateProfile({ ...isolated, hosted: true });
+  const plain = buildLaunch(validateProfile(isolated), request(), safeEnv);
+  const spec = buildLaunch(hosted, request(), safeEnv);
+  const settings = config(spec.args);
+  assert.equal(settings.model_provider, '"merv"');
+  assert.equal(
+    settings['model_providers.merv'],
+    '{"name"="Merv","base_url"="http://127.0.0.1:8080/codex-model","env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}',
+  );
+  // Its shell commands may use the network; hosted web search stays off.
+  assert.equal(settings['sandbox_workspace_write.network_access'], 'true');
+  assert.equal(config(plain.args)['sandbox_workspace_write.network_access'], 'false');
+  assert.equal(settings.web_search, '"disabled"');
+  // Everything else is byte-identical, and the machine's environment gains no key.
+  const varies = /^(model_provider|sandbox_workspace_write\.network_access)/;
+  const rest = (args: string[]) =>
+    args.filter((arg, at) => !varies.test(arg) && !varies.test(args[at + 1] ?? ''));
+  assert.deepEqual(rest(spec.args), rest(plain.args));
+  assert.equal(rest(plain.args).length, plain.args.length - 2);
+  assert.deepEqual(spec.env, plain.env);
+  assert.equal(JSON.stringify(spec.args).includes(secret), false);
+  // A sealed review stays on the offline read-only sandbox.
+  const sealed = request(true, {
+    mode: 'persistent',
+    namespace: 'consolidations',
+    base: 'central',
+    perBase: true,
+    retain: true,
+    advancesCentral: false,
+  });
+  const review = buildLaunch(hosted, sealed, safeEnv).args;
+  assert.equal(review[review.indexOf('--sandbox') + 1], 'read-only');
+});
+
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
   const outer = realpathSync(mkdtempSync(join(tmpdir(), 'merv-profile-skills-')));
   t.after(() => rmSync(outer, { recursive: true, force: true }));

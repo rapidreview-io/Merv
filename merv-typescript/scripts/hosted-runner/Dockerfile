@@ -13,8 +13,10 @@ RUN npm ci --omit=dev --ignore-scripts --engine-strict --no-audit --no-fund \
  && find node_modules -type d -name .bin -prune -exec rm -rf {} +
 FROM ${SANDBOX_IMAGE}
 # The Sandboxes base only warns when its agent is missing; this image refuses to build without it.
+# A hosted assignment's shell has the network, so it can reach sshd on loopback: no passwords.
 RUN test -x /usr/local/bin/sandboxes-agent \
- && apt-get update && apt-get install -y --no-install-recommends socat git && rm -rf /var/lib/apt/lists/*
+ && apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+ && printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' >/etc/ssh/sshd_config.d/00-merv.conf
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=pi-deps /opt/merv/pi/node_modules /opt/merv/pi/node_modules
@@ -22,8 +24,11 @@ COPY --chmod=0644 smoke-supervisor.mjs supervisor.mjs /opt/merv/runner/
 COPY --chmod=0644 isolation_probe.py /opt/merv/runtime/
 COPY --chmod=0755 start-runtime.py assignment-probed.py boot /opt/merv/runtime/
 COPY --chmod=0755 start /opt/merv/runtime/start-runner
-RUN mkdir -p /opt/merv/bin \
- && printf '#!/bin/sh\nexec /usr/local/bin/node /opt/codex/node_modules/@openai/codex/bin/codex.js "$@"\n' > /opt/merv/bin/codex \
+# Codex's own Node launcher would stay alive beside Codex with the session bearer in a readable
+# environment; this wrapper execs the one vendored native binary with the variables it sets.
+RUN native="$(find /opt/codex/node_modules -path '*/vendor/*/bin/codex' -type f)" && test -x "$native" \
+ && mkdir -p /opt/merv/bin \
+ && printf '#!/bin/sh\nexport CODEX_MANAGED_PACKAGE_ROOT=/opt/codex/node_modules/@openai/codex CODEX_MANAGED_BY_NPM=1\nexec %s "$@"\n' "$native" > /opt/merv/bin/codex \
  && chmod 0755 /opt/merv/bin/codex
 COPY --chmod=0644 pi/worker-main.mjs pi/package.json /opt/merv/pi/
 # Node keys its compile cache by UID, so the worker's identity fills it once and root then seals it.

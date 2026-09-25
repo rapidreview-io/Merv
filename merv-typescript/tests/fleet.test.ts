@@ -469,6 +469,41 @@ test('the machine deadline starts when the allocation leaves the queue', async (
   assert.equal(reserved.deadlineAt, '2026-09-22T01:50:00.000Z');
 });
 
+test('a request sets its own machine time, restarted when it leaves the queue', async (t) => {
+  const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
+  const first = await f.fleet.request(f.caller, input('first'));
+  f.advance(1000);
+  const second = await f.fleet.request(f.caller, { ...input('second'), seconds: 900 });
+  assert.equal(second.deadlineAt, '2026-09-22T00:15:01.000Z');
+  // The time is part of the request: a replay must repeat it.
+  assert.equal(
+    (await f.fleet.request(f.caller, { ...input('second'), seconds: 900 })).id,
+    second.id,
+  );
+  await assert.rejects(f.fleet.request(f.caller, { ...input('second'), seconds: 960 }), {
+    code: 'request_conflict',
+  });
+  for (const seconds of [59, 86_401])
+    await assert.rejects(f.fleet.request(f.caller, { ...input('other'), seconds }), {
+      code: 'invalid_fleet_request',
+    });
+  // Fleet's own limit, an hour here, still bounds a longer one.
+  const long = await f.fleet.request(f.caller, { ...input('long'), seconds: 7200 });
+  assert.equal(long.deadlineAt, '2026-09-22T01:00:01.000Z');
+  await f.fleet.cancel(f.caller, long.id);
+  await f.fleet.tick();
+  f.advance(600_000);
+  await f.fleet.cancel(f.caller, first.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const reserved = await f.fleet.inspect(f.caller, second.id);
+  assert.equal(reserved.phase, 'provisioning');
+  assert.equal(reserved.deadlineAt, '2026-09-22T00:25:01.000Z');
+  assert.equal((await f.fleet.inspect(f.caller, first.id)).deadlineAt, '2026-09-22T01:00:01.000Z');
+});
+
 test('the Fleet page lists open work and bounded history in plain words', async (t) => {
   const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
   const ctx = new Context();

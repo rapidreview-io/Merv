@@ -109,11 +109,83 @@ export interface CodeApiProvider {
 }
 /** An unauthenticated handler for one plugin-owned path prefix, such as a browser bundle. */
 export type MountHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+/** What a worker's model calls may do, read again about once a second while one streams. */
+export interface ModelRelayGrant {
+  id: string;
+  model: string;
+  expiresAt: string;
+}
+export interface ModelRelayFailure<E extends string = string> {
+  event: E;
+  phase: 'request' | 'upstream' | 'stream';
+  /** The code the worker was answered with, such as relay_timeout or upstream_failed. */
+  code: string;
+  model: string;
+  elapsedMs: number;
+  upstreamHttpStatus?: number;
+}
+/** One finished model call's tokens, for spend per model; it names no person or conversation. */
+export interface ModelRelayUsage<E extends string = string> {
+  event: E;
+  model: string;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+/**
+ * A relay that holds the provider key for workers that hold none (model-relay.ts). A feature
+ * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
+ * what the relay sets in them, and the lane that allows one call in flight.
+ */
+export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = string> {
+  /** Names the records, `${name}_relay_usage` and `${name}_relay_failure`. */
+  name: N;
+  route: string;
+  token: RegExp;
+  enabled?: boolean;
+  providerKey: () => string | Promise<string>;
+  authority?: {
+    authorize(token: string): Promise<unknown>;
+    validate(grant: G): Promise<void>;
+  };
+  /** Throws for a grant the relay must not honour. */
+  grant(raw: unknown): G;
+  /** The body sent upstream, with the relay's own settings, or null to refuse the request. */
+  payload(raw: unknown, grant: G): Record<string, unknown> | null;
+  lane(grant: G): string;
+  fetchImpl?: typeof fetch;
+  maxRequestBytes: number;
+  maxResponseBytes?: number;
+  totalTimeoutMs: number;
+  idleTimeoutMs?: number;
+  /** For calls whose effort is not `none`, which may reason in silence. */
+  reasoningIdleTimeoutMs?: number;
+  maxConcurrent?: number;
+  maxRequestsPerGrant?: number;
+  maxGrantEntries?: number;
+  onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
+  /** Charges a call before it goes upstream and returns what it charged; throwing refuses it,
+   *  with the error's `code` when it has one. The charge stands for a call that never finishes. */
+  reserve?: (grant: G, body: Record<string, unknown>) => Promise<number>;
+  /** A finished call's usage, with what `reserve` charged for it. */
+  onUsage?: (
+    record: ModelRelayUsage<`${N}_relay_usage`>,
+    grant: G,
+    reserved: number,
+  ) => void | Promise<void>;
+}
 export interface Api {
   readonly url?: string;
   start(): Promise<string>;
   stop(): Promise<void>;
   mount(prefix: string, handler: MountHandler): () => void;
+  /** Mounts a model relay; the disposer withdraws it and ends the calls it is streaming. */
+  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+    prefix: string,
+    config: ModelRelayConfig<G, N>,
+  ): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;
   registerPi(provider: import('./pi.js').PiApiProvider): () => void;

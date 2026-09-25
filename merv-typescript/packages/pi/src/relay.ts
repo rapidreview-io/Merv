@@ -1,6 +1,4 @@
-import { isUtf8 } from 'node:buffer';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { MountHandler } from '@merv/api/types';
+import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/api/types';
 import type { PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
 import {
@@ -11,468 +9,63 @@ import {
 } from './relay-schema.js';
 
 export type { PiRelayGrant } from './types.js';
+export type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
+export type PiRelayUsageRecord = ModelRelayUsage<'pi_relay_usage'>;
+export type PiRelayConfig = Omit<
+  ModelRelayConfig<PiRelayGrant, 'pi'>,
+  'name' | 'route' | 'token' | 'grant' | 'payload' | 'lane' | 'maxRequestBytes' | 'totalTimeoutMs'
+> &
+  Partial<Pick<ModelRelayConfig<PiRelayGrant, 'pi'>, 'maxRequestBytes' | 'totalTimeoutMs'>> & {
+    /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
+    models: readonly { id: string; effort: 'none' | 'low' }[];
+  };
 
 const responsesUrl = 'https://api.openai.com/v1/responses';
-const failureCodes = [
-  'disconnected',
-  'grant_forbidden',
-  'invalid_json',
-  'invalid_payload',
-  'relay_busy',
-  'relay_timeout',
-  'relay_unavailable',
-  'request_aborted',
-  'request_too_large',
-  'response_too_large',
-  'unsupported_media_type',
-  'upstream_failed',
-] as const;
 
-export interface PiRelayFailureRecord {
-  event: 'pi_relay_failure';
-  phase: 'request' | 'upstream' | 'stream';
-  code: (typeof failureCodes)[number];
-  model: string;
-  elapsedMs: number;
-  upstreamHttpStatus?: number;
-}
-/** One finished model call's tokens, for spend per model; it names no person or conversation. */
-export interface PiRelayUsageRecord {
-  event: 'pi_relay_usage';
-  model: string;
-  inputTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-}
-
-export interface PiRelayConfig {
-  enabled?: boolean;
-  /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
-  models: readonly { id: string; effort: 'none' | 'low' }[];
-  providerKey: () => string | Promise<string>;
-  authority?: {
-    authorize(token: string): Promise<PiRelayGrant>;
-    validate(grant: PiRelayGrant): Promise<void>;
-  };
-  fetchImpl?: typeof fetch;
-  maxRequestBytes?: number;
-  maxResponseBytes?: number;
-  totalTimeoutMs?: number;
-  idleTimeoutMs?: number;
-  /** For models whose effort is not `none`, which may reason in silence. */
-  reasoningIdleTimeoutMs?: number;
-  maxConcurrent?: number;
-  maxRequestsPerGrant?: number;
-  maxGrantEntries?: number;
-  onFailure?: (record: PiRelayFailureRecord) => void | Promise<void>;
-  onUsage?: (record: PiRelayUsageRecord) => void | Promise<void>;
-}
-
-class RelayFailure extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-  ) {
-    super(code);
-  }
-}
-
-const reject = (status: number, code: string): never => {
-  throw new RelayFailure(status, code);
-};
-/** Hands a record to its callback, which never changes the call. */
-const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) => {
-  try {
-    void Promise.resolve(callback?.(record)).catch(() => {});
-  } catch {}
-};
-/** The Responses API's `usage`, as a finished call's last frame carries it. */
-type Usage = {
-  input_tokens?: unknown;
-  input_tokens_details?: { cached_tokens?: unknown } | null;
-  output_tokens?: unknown;
-  output_tokens_details?: { reasoning_tokens?: unknown } | null;
-};
-const tokens = (value: unknown) =>
-  Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
-
-function limit(value: number | undefined, fallback: number, minimum = 1): number {
-  const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved < minimum)
-    throw new Error('Invalid Pi relay limit');
-  return resolved;
-}
-
-async function interruptible<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw signal.reason;
-  return new Promise<T>((resolve, rejectPromise) => {
-    const abort = () => rejectPromise(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    operation
-      .then(resolve, rejectPromise)
-      .finally(() => signal.removeEventListener('abort', abort))
-      .catch(() => {});
-  });
-}
-
-async function readRequest(
-  req: IncomingMessage,
-  maxBytes: number,
-  signal: AbortSignal,
-): Promise<unknown> {
-  if (req.destroyed || req.aborted) reject(400, 'request_aborted');
-  if (req.headers['content-type']?.toLowerCase() !== 'application/json')
-    reject(415, 'unsupported_media_type');
-  const declared = req.headers['content-length'];
-  if (declared && Number(declared) > maxBytes) reject(413, 'request_too_large');
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-    if (signal.aborted) throw signal.reason;
-    bytes += chunk.length;
-    if (bytes > maxBytes) reject(413, 'request_too_large');
-    chunks.push(chunk);
-  }
-  if (signal.aborted) throw signal.reason;
-  const body = Buffer.concat(chunks);
-  if (!isUtf8(body)) reject(400, 'invalid_json');
-  try {
-    return JSON.parse(body.toString('utf8'));
-  } catch {
-    return reject(400, 'invalid_json');
-  }
-}
-
-async function writeChunk(
-  res: ServerResponse,
-  chunk: Uint8Array,
-  signal: AbortSignal,
-): Promise<void> {
-  if (signal.aborted) throw signal.reason;
-  if (res.write(chunk)) return;
-  await new Promise<void>((resolve, rejectPromise) => {
-    const clean = () => {
-      res.off('drain', drained);
-      signal.removeEventListener('abort', aborted);
-    };
-    const drained = () => {
-      clean();
-      resolve();
-    };
-    const aborted = () => {
-      clean();
-      rejectPromise(signal.reason);
-    };
-    res.once('drain', drained);
-    signal.addEventListener('abort', aborted, { once: true });
-    if (signal.aborted) aborted();
-  });
-}
-
-export class PiModelRelay {
-  private readonly options: Required<
-    Pick<
-      PiRelayConfig,
-      | 'maxRequestBytes'
-      | 'maxResponseBytes'
-      | 'totalTimeoutMs'
-      | 'idleTimeoutMs'
-      | 'reasoningIdleTimeoutMs'
-      | 'maxConcurrent'
-      | 'maxRequestsPerGrant'
-      | 'maxGrantEntries'
-    >
-  >;
-  private readonly active = new Set<AbortController>();
-  /** One model call at a time per conversation: a person's conversations share one machine. */
-  private readonly conversations = new Set<string>();
-  private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
-  private readonly efforts: Map<string, 'none' | 'low'>;
-  private stopped = false;
-
-  constructor(private readonly config: PiRelayConfig) {
-    this.efforts = new Map(config.models?.map(({ id, effort }) => [id, effort]));
-    if (!this.efforts.size || typeof config.providerKey !== 'function')
-      throw new Error('Pi relay requires a model and provider key source');
-    // No output cap is added: the model's own maximum ends an answer. A maximal answer streams
-    // about 40 MB of events, and ends with frames that each repeat its whole text; a call that
-    // falls silent for idleTimeoutMs ends at once.
-    this.options = {
-      maxRequestBytes: limit(config.maxRequestBytes, relayRequestBytes),
-      maxResponseBytes: limit(config.maxResponseBytes, 256 * 1024 * 1024),
-      totalTimeoutMs: limit(config.totalTimeoutMs, turnCeilingMs),
-      idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
-      reasoningIdleTimeoutMs: limit(config.reasoningIdleTimeoutMs, 120_000),
-      maxConcurrent: limit(config.maxConcurrent, 200),
-      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 72),
-      maxGrantEntries: limit(config.maxGrantEntries, 4096),
-    };
-  }
-
-  readonly handle: MountHandler = async (req, res) => {
-    if (req.url !== '/pi-model/responses') {
-      this.error(res, 404, 'not_found');
-      return;
-    }
-    if (req.method !== 'POST') {
-      this.error(res, 405, 'method_not_allowed');
-      return;
-    }
-    if (req.headers.origin !== undefined) {
-      this.error(res, 403, 'browser_forbidden');
-      return;
-    }
-    if (!this.config.enabled || !this.config.authority || this.stopped) {
-      this.error(res, 503, 'relay_unavailable');
-      return;
-    }
-    const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
-    if (!token || !/^pir_[A-Za-z0-9_-]{43}$/.test(token)) {
-      this.error(res, 401, 'unauthorized');
-      return;
-    }
-    if (this.active.size >= this.options.maxConcurrent) {
-      this.error(res, 429, 'relay_busy');
-      return;
-    }
-
-    const controller = new AbortController();
-    const { signal } = controller;
-    const abort = (status: number, code: string) => {
-      if (!signal.aborted) {
-        controller.abort(new RelayFailure(status, code));
-        if (!req.complete) req.destroy();
-      }
-    };
-    const disconnected = () => abort(499, 'disconnected');
-    req.once('aborted', disconnected);
-    res.once('close', disconnected);
-    this.active.add(controller);
-    const total = setTimeout(() => abort(504, 'relay_timeout'), this.options.totalTimeoutMs);
-    let idle: NodeJS.Timeout | undefined;
-    let fence: NodeJS.Timeout | undefined;
-    let admitted: PiRelayGrant | undefined;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    let admittedAt = 0;
-    let phase: PiRelayFailureRecord['phase'] = 'request';
-    let upstreamHttpStatus: number | undefined;
-    try {
-      const authority = this.config.authority;
-      let grant: PiRelayGrant;
-      try {
-        grant = piRelayGrantSchema.parse(await interruptible(authority.authorize(token), signal));
-      } catch (error) {
-        if (signal.aborted) throw signal.reason;
-        return this.error(res, 401, 'unauthorized');
-      }
-      let validatedAt = 0;
-      // Streamed frames reuse an authority read up to a second old; the fence refreshes it.
-      const validate = async (recent = false) => {
-        if (signal.aborted) throw signal.reason;
-        if (Date.parse(grant.expiresAt) <= Date.now() || !this.efforts.has(grant.model))
-          reject(403, 'grant_forbidden');
-        if (recent && Date.now() - validatedAt < 1000) return;
-        const started = Date.now();
-        try {
-          await interruptible(authority.validate(grant), signal);
-        } catch (error) {
-          if (signal.aborted) throw signal.reason;
-          return reject(403, 'grant_forbidden');
-        }
-        if (Date.parse(grant.expiresAt) <= Date.now()) reject(403, 'grant_forbidden');
-        validatedAt = started;
-      };
-      await validate();
-      if (this.conversations.has(grant.conversationId)) reject(429, 'relay_busy');
-      this.conversations.add(grant.conversationId);
-      admitted = grant;
-      admittedAt = Date.now();
-      const raw = await interruptible(
-        readRequest(req, this.options.maxRequestBytes, signal),
-        signal,
-      );
+/** Pi's relay: one model call at a time per conversation, as a person's conversations share one
+ *  machine, in the Pi-shaped request its worker sends. */
+export function piModelRelay({
+  models,
+  authority,
+  ...config
+}: PiRelayConfig): ModelRelayConfig<PiRelayGrant, 'pi'> {
+  const efforts = new Map(models?.map(({ id, effort }) => [id, effort]));
+  if (!efforts.size) throw new Error('Pi relay requires a model');
+  return {
+    maxRequestBytes: relayRequestBytes,
+    totalTimeoutMs: turnCeilingMs,
+    ...config,
+    name: 'pi',
+    route: '/pi-model/responses',
+    token: /^pir_[A-Za-z0-9_-]{43}$/,
+    authority: authority && {
+      authorize: (token) => authority.authorize(token),
+      validate: async (grant) => {
+        if (!efforts.has(grant.model)) throw new Error('Pi relay grant names no catalog model');
+        await authority.validate(grant);
+      },
+    },
+    grant: (raw) => piRelayGrantSchema.parse(raw),
+    payload: (raw, grant) => {
       const parsed = piResponsesSchema.safeParse(raw);
-      if (!parsed.success) throw new RelayFailure(400, 'invalid_payload');
-      const request = parsed.data;
-      if (request.model !== grant.model || !validPiPayload(request, grant.toolNames))
-        reject(400, 'invalid_payload');
+      if (
+        !parsed.success ||
+        parsed.data.model !== grant.model ||
+        !validPiPayload(parsed.data, grant.toolNames)
+      )
+        return null;
       // The catalog's effort, whatever the worker asked: no summary, and encrypted reasoning to
       // replay only where the model reasons.
-      const effort = this.efforts.get(grant.model)!;
-      const { reasoning: _reasoning, include: _include, ...rest } = request;
-      phase = 'upstream';
-      const key = await interruptible(
-        Promise.resolve().then(() => this.config.providerKey()),
-        signal,
-      );
-      await validate();
-      if (typeof key !== 'string' || !key.trim()) reject(503, 'relay_unavailable');
-      for (const [id, entry] of this.grants) if (entry.expiry <= Date.now()) this.grants.delete(id);
-      const previous = this.grants.get(grant.id);
-      const binding = JSON.stringify(grant);
-      if (previous && previous.binding !== binding) reject(403, 'grant_forbidden');
-      if (
-        (previous?.count ?? 0) >= this.options.maxRequestsPerGrant ||
-        (!previous && this.grants.size >= this.options.maxGrantEntries)
-      )
-        reject(429, 'relay_busy');
-      this.grants.set(grant.id, {
-        count: (previous?.count ?? 0) + 1,
-        expiry: Date.parse(grant.expiresAt),
-        binding,
-      });
-      const upstream = await interruptible(
-        (this.config.fetchImpl ?? fetch)(responsesUrl, {
-          method: 'POST',
-          redirect: 'error',
-          signal,
-          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            ...rest,
-            reasoning: { effort },
-            ...(effort !== 'none' && { include: ['reasoning.encrypted_content'] }),
-          }),
-        }),
-        signal,
-      );
-      if (Number.isInteger(upstream.status) && upstream.status >= 100 && upstream.status <= 599)
-        upstreamHttpStatus = upstream.status;
-      if (
-        !upstream.ok ||
-        !upstream.body ||
-        !upstream.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')
-      )
-        reject(502, 'upstream_failed');
-      await validate();
-      phase = 'stream';
-      reader = upstream.body!.getReader();
-      const startStream = () => {
-        if (!res.headersSent)
-          res.writeHead(200, {
-            'content-type': 'text/event-stream; charset=utf-8',
-            'cache-control': 'no-store',
-            'x-content-type-options': 'nosniff',
-          });
+      const effort = efforts.get(grant.model)!;
+      const { reasoning: _reasoning, include: _include, ...rest } = parsed.data;
+      return {
+        ...rest,
+        reasoning: { effort },
+        ...(effort !== 'none' && { include: ['reasoning.encrypted_content'] }),
       };
-      const resetIdle = () => {
-        if (idle) clearTimeout(idle);
-        idle = setTimeout(
-          () => abort(504, 'relay_timeout'),
-          effort === 'none' ? this.options.idleTimeoutMs : this.options.reasoningIdleTimeoutMs,
-        );
-      };
-      resetIdle();
-      fence = setInterval(() => {
-        void validate().catch(() => abort(403, 'grant_forbidden'));
-      }, 1000);
-      let bytes = 0;
-      // A frame ends at a blank line. Each byte is searched once, as the last frames of a long
-      // answer each repeat its whole text: only a frame's own bytes are held, and at most 3 of
-      // them searched again.
-      let held: Buffer[] = [];
-      let heldBytes = 0;
-      let tail = '';
-      let usage: Usage | null | undefined;
-      while (true) {
-        const next = await interruptible(reader.read(), signal);
-        if (next.done) break;
-        bytes += next.value.byteLength;
-        if (bytes > this.options.maxResponseBytes) reject(502, 'response_too_large');
-        const chunk = Buffer.from(next.value.buffer, next.value.byteOffset, next.value.byteLength);
-        const window = tail + chunk.toString('latin1');
-        const boundary = /\r?\n\r?\n/g;
-        let from = 0;
-        for (let found; (found = boundary.exec(window));) {
-          const end = found.index + found[0].length - tail.length;
-          const frame = Buffer.concat([...held, chunk.subarray(from, end)]);
-          [held, heldBytes, from] = [[], 0, end];
-          const content = frame.toString('utf8');
-          const data = content
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart())
-            .join('\n');
-          if (
-            /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
-            /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
-          )
-            reject(502, 'upstream_failed');
-          if (
-            usage === undefined &&
-            (/^event:\s*response\.(?:completed|incomplete)\s*$/im.test(content) ||
-              /^\{\s*"type"\s*:\s*"response\.(?:completed|incomplete)"/.test(data))
-          )
-            try {
-              usage = JSON.parse(data).response?.usage ?? null;
-            } catch {
-              usage = null;
-            }
-          await validate(true);
-          startStream();
-          await writeChunk(res, frame, signal);
-          resetIdle();
-        }
-        held.push(chunk.subarray(from));
-        heldBytes += chunk.byteLength - from;
-        tail = window.slice(Math.max(from && tail.length + from, window.length - 3));
-        // A frame may repeat a whole answer (messageChars, escaped).
-        if (heldBytes > Math.min(this.options.maxResponseBytes, 16 * 1024 * 1024))
-          reject(502, 'response_too_large');
-      }
-      if (!signal.aborted) {
-        startStream();
-        res.end();
-      }
-      if (usage && typeof usage === 'object')
-        report(this.config.onUsage, {
-          event: 'pi_relay_usage',
-          model: grant.model,
-          inputTokens: tokens(usage.input_tokens),
-          cachedTokens: tokens(usage.input_tokens_details?.cached_tokens),
-          outputTokens: tokens(usage.output_tokens),
-          reasoningTokens: tokens(usage.output_tokens_details?.reasoning_tokens),
-        });
-    } catch (error) {
-      const failure =
-        error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
-      if (admitted)
-        report(this.config.onFailure, {
-          event: 'pi_relay_failure',
-          phase,
-          code: failureCodes.find((candidate) => candidate === failure.code) ?? 'upstream_failed',
-          model: admitted.model,
-          elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
-          ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
-        });
-      if (failure.status !== 499 && !res.destroyed) {
-        if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');
-        else this.error(res, failure.status, failure.code);
-      }
-    } finally {
-      if (reader) void reader.cancel().catch(() => {});
-      clearTimeout(total);
-      if (idle) clearTimeout(idle);
-      if (fence) clearInterval(fence);
-      req.off('aborted', disconnected);
-      res.off('close', disconnected);
-      this.active.delete(controller);
-      if (admitted) this.conversations.delete(admitted.conversationId);
-    }
+    },
+    lane: (grant) => grant.conversationId,
   };
-
-  close(): void {
-    this.stopped = true;
-    for (const controller of this.active)
-      controller.abort(new RelayFailure(503, 'relay_unavailable'));
-    this.grants.clear();
-  }
-
-  private error(res: ServerResponse, status: number, code: string): void {
-    if (res.destroyed || res.headersSent) return;
-    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-    res.end(JSON.stringify({ error: code }));
-  }
 }
 
 /**

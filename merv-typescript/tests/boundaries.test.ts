@@ -96,7 +96,7 @@ const capabilities: Record<string, readonly string[]> = {
   sandboxes: [],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
   fleet: ['state', 'scope', 'sandboxes'],
-  fleetWorkflow: ['fleet', 'sessions', 'scope'],
+  fleetWorkflow: ['fleet', 'sessions', 'scope', 'api', 'state'],
   tools: ['scope'],
   api: ['scope', 'tools', 'identity'],
   mounts: ['tools', 'scope'],
@@ -428,7 +428,7 @@ function assertComponentReferences(
             (owner === 'pi' &&
               specifier === 'node:http' &&
               typeOnly &&
-              ['api.ts', 'relay.ts'].includes(path.split(sep).at(-1)!))),
+              path.split(sep).at(-1) === 'api.ts')),
         `${path} embeds an API transport`,
       );
     }
@@ -691,7 +691,7 @@ test('Cordis service requirements match the architecture and every accessed capa
       });
       if (name.text === 'merv-fleet-workflow') {
         assert.equal(relative(packagesRoot, path), join('fleet', 'src', 'workflow.ts'));
-        assert.deepEqual(sorted(declared), ['fleet', 'scope', 'sessions']);
+        assert.deepEqual(sorted(declared), ['api', 'fleet', 'scope', 'sessions', 'state']);
         assert.deepEqual(sorted([...optional]), []);
         assert.deepEqual(actualProvided, ['fleetWorkflow']);
         assert.ok(!orchestrationAdapters.has(name.text), 'Duplicate workflow orchestration');

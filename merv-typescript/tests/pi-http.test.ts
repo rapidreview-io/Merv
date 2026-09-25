@@ -4,9 +4,13 @@ import { MervError, type Caller, type Principal, type Scope } from '@merv/contra
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { PiModelRelay, type PiRelayGrant } from '../packages/pi/src/relay.js';
+import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 import { PiStreams } from '../packages/pi/src/stream.js';
 import type { PiService } from '../packages/pi/src/service.js';
+
+/** Pi's relay hooks over the shared core, as the API mounts them. */
+const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
 const workerToken = 'piw_http-fixture';
 const modelToken = `pir_${'h'.repeat(43)}`;
@@ -378,7 +382,7 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
     model: 'test-model',
     toolNames: [],
   };
-  const relay = new PiModelRelay({
+  const relay = piRelay({
     enabled: true,
     models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',
@@ -488,7 +492,7 @@ test('relay disconnect aborts the injected upstream and releases the conversatio
   const entered = deferred<void>();
   let aborted = false;
   let cancelled = false;
-  const relay = new PiModelRelay({
+  const relay = piRelay({
     enabled: true,
     models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',

@@ -40,6 +40,7 @@ const requestSchema = z
       .string()
       .regex(/^[a-z][a-z0-9-]{0,31}$/)
       .optional(),
+    seconds: z.number().int().min(60).max(86_400).optional(),
   })
   .strict();
 export const fleetConfig = z
@@ -184,8 +185,10 @@ export class FleetService implements Fleet {
   private time() {
     return new Date(this.clock()).toISOString();
   }
-  private deadline() {
-    return new Date(this.clock() + this.config.allocationTimeoutSeconds * 1000).toISOString();
+  /** A request's own time, never past Fleet's limit. */
+  private deadline(seconds = Infinity) {
+    const limit = Math.min(seconds, this.config.allocationTimeoutSeconds);
+    return new Date(this.clock() + limit * 1000).toISOString();
   }
   private async get(sql: Sql, id: string): Promise<FleetAllocation> {
     const row = await sql.get<Row>('SELECT data_json FROM fleet_allocations WHERE id=?', id);
@@ -324,6 +327,7 @@ export class FleetService implements Fleet {
         owner: input.owner,
         requestId: input.requestId,
         ...(place !== caller.projectId && { rentedIn: place }),
+        ...(input.seconds && { seconds: input.seconds }),
         profileId: profile.id,
         epoch: 1,
         phase: 'queued',
@@ -332,7 +336,7 @@ export class FleetService implements Fleet {
         createAttempted: false,
         createdAt: this.time(),
         updatedAt: this.time(),
-        deadlineAt: this.deadline(),
+        deadlineAt: this.deadline(input.seconds),
         retryAt: null,
         failures: 0,
         error: null,
@@ -485,7 +489,7 @@ export class FleetService implements Fleet {
         ) {
           a.phase = 'provisioning';
           // The machine's time starts here; waiting in the queue does not spend it.
-          a.deadlineAt = this.deadline();
+          a.deadlineAt = this.deadline(a.seconds);
           count++;
           byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
         }

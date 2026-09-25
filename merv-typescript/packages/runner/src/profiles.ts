@@ -2,7 +2,13 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
+import {
+  check,
+  codexHandoffGraceMs,
+  effectiveWorkspace,
+  MervError,
+  sessionSecretPattern,
+} from '@merv/contracts';
 import type { Session, SessionUsageReport } from '@merv/sessions/types';
 
 const text = z
@@ -34,6 +40,9 @@ const profileSchema = z.discriminatedUnion('harness', [
         .max(4096)
         .refine((value) => isAbsolute(value) && !/[\0\r\n]/.test(value))
         .optional(),
+      /** Isolated only: the model is called through Main's relay with the session bearer, so the
+       *  machine holds no provider key, and its shell commands have the network. */
+      hosted: z.literal(true).optional(),
     })
     .strict(),
   z
@@ -227,8 +236,9 @@ export function validateProfile(input: unknown): RunnerProfile {
   if (
     !parsed.success ||
     (parsed.data.harness === 'codex' &&
-      parsed.data.isolatedLauncher !== undefined &&
-      !isAbsolute(parsed.data.executable))
+      (parsed.data.isolatedLauncher !== undefined
+        ? !isAbsolute(parsed.data.executable)
+        : parsed.data.hosted))
   ) {
     // Do not echo local configuration values: a mistaken argument may contain a secret.
     throw new MervError('invalid_runner_profile', 'Invalid or unsupported runner profile');
@@ -365,7 +375,9 @@ function codexArgs(
   delete shellEnvironment.CLAUDE_CONFIG_DIR;
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
-  config('sandbox_workspace_write.network_access', 'false');
+  // A hosted machine holds no provider key and the server caps its step, so its shell commands
+  // may use the network. Web search stays disabled, and a sealed review stays read-only.
+  config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
   config('sandbox_workspace_write.exclude_slash_tmp', 'true');
   const toolApprovals = `{${tools.map((name) => `${quote(name)}={approval_mode="approve"}`).join(',')}}`;
@@ -378,6 +390,18 @@ function codexArgs(
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
+  if (profile.hosted) {
+    config('model_provider', quote('merv'));
+    config(
+      'model_providers.merv',
+      table({
+        name: 'Merv',
+        base_url: `${new URL(url).origin}/codex-model`,
+        env_key: sessionTokenVariable,
+        wire_api: 'responses',
+      }),
+    );
+  }
   args.push('-');
   return args;
 }
@@ -476,7 +500,7 @@ const sealed = (session: LaunchRequest['session']): boolean => {
  * it gets a minute; a harness that prints nothing Merv reads is stopped at once.
  */
 export const handoffGraceMs = (profile: RunnerProfile) =>
-  profile.harness === 'codex' ? 60_000 : 0;
+  profile.harness === 'codex' ? codexHandoffGraceMs : 0;
 
 /**
  * What a launch spent, read from its own output when the harness prints it there. `codex exec

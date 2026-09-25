@@ -146,12 +146,13 @@ class IsolationProbeTests(unittest.TestCase):
         with patch.object(probe, "_identity", return_value=identity):
             with patch.object(probe, "_denial", return_value=errno.EACCES) as denial:
                 with patch.object(probe, "_ptrace", return_value=errno.EPERM) as ptrace:
-                    with patch.object(probe.socket, "socket"):
+                    with patch.object(probe.socket, "socket"), patch.object(probe, "_listeners", return_value=[]):
                         with patch.object(probe.subprocess, "run", return_value=SimpleNamespace(returncode=1)) as run:
                             result = probe._probe(ROOTS, ENDPOINT)
         self.assertEqual(ptrace.call_count, 3)
         self.assertEqual(denial.call_count, 3 * 3 + 1 + 5 + 1)
         self.assertEqual(len(result["outcomes"]), 3 * 4 + 1 + 5 + 1 + 1)
+        self.assertEqual(result["listeners"], [])
         self.assertTrue(all(outcome in (errno.EPERM, errno.EACCES, 1)
                             for outcome in result["outcomes"].values()))
         self.assertEqual(run.call_args.args[0],
@@ -186,8 +187,14 @@ class IsolationProbeTests(unittest.TestCase):
                          ("guardian_socket_fd", "ledger_directory", "runtime_directory",
                           "state_directory", "ledger_catalog", "release_catalog", "guardian_connect")})
         outcomes["sudo_returncode"] = 1
-        valid = {"ok": True, "identity": identity, "outcomes": outcomes}
+        valid = {"ok": True, "identity": identity, "outcomes": outcomes, "listeners": []}
         self.assertTrue(probe._valid_result(valid))
+        self.assertTrue(probe._valid_result({**valid, "listeners": [probe.SSHD]}))
+        # With the network on, any other listener could be reached from the assignment's shell.
+        for listeners in (["0100007F:1F90 0"], [probe.SSHD, "00000000:0016 0"],
+                          ["0100007F:0016 12001"], None):
+            self.assertFalse(probe._valid_result({**valid, "listeners": listeners}))
+        self.assertFalse(probe._valid_result({key: valid[key] for key in ("ok", "identity", "outcomes")}))
         self.assertFalse(probe._valid_result({**valid, "outcomes": {**outcomes, "group_signal": errno.ESRCH}}))
         self.assertFalse(probe._valid_result({**valid, "identity": {**identity, "groups": [1000]}}))
         self.assertFalse(probe._valid_result({**valid, "outcomes": {**outcomes, "sudo_returncode": 0}}))
@@ -208,7 +215,8 @@ class IsolationProbeTests(unittest.TestCase):
     def test_fixed_exec_rechecks_targets_then_creates_one_report(self):
         argv = [probe.ASSIGNMENT, "--", "/opt/merv/bin/codex", "exec", "-C", str(WORKSPACE)]
         output = Path("/run/merv-isolation") / f"{WORKSPACE.name}.json"
-        with patch.object(probe, "_root_linux"), patch.object(probe.Path, "cwd", return_value=WORKSPACE):
+        with patch.object(probe, "_root_linux"), patch.object(probe.Path, "cwd", return_value=WORKSPACE), \
+                patch.object(probe, "_sshd") as sshd:
             with patch.object(probe.sys, "argv", argv), patch.object(probe, "_private"):
                 with patch.object(probe.Path, "stat", return_value=SimpleNamespace(
                         st_uid=0, st_mode=stat.S_IFREG | stat.S_ISUID | 0o755)):
@@ -221,11 +229,13 @@ class IsolationProbeTests(unittest.TestCase):
                                         self.assertEqual(roots.call_count, 2)
                                         self.assertEqual(endpoint.call_count, 2)
                                         self.assertEqual(report.call_count, 1)
+                                        sshd.assert_called_once_with()
 
     def test_post_probe_pid_reuse_or_socket_change_refuses_report(self):
         argv = [probe.ASSIGNMENT, "--", "/opt/merv/bin/codex", "exec", "-C", str(WORKSPACE)]
         changed = {**ROOTS, "guardian": {**ROOTS["guardian"], "starttime": 15}}
-        with patch.object(probe, "_root_linux"), patch.object(probe.Path, "cwd", return_value=WORKSPACE):
+        with patch.object(probe, "_root_linux"), patch.object(probe.Path, "cwd", return_value=WORKSPACE), \
+                patch.object(probe, "_sshd"):
             with patch.object(probe.sys, "argv", argv), patch.object(probe, "_private"):
                 with patch.object(probe.Path, "stat", return_value=SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | stat.S_ISUID | 0o755)):
                     with patch.object(probe, "_roots", side_effect=[(ROOTS, "launch_1"), (changed, "launch_1")]):
@@ -244,6 +254,39 @@ class IsolationProbeTests(unittest.TestCase):
                                         with self.assertRaises(probe.IsolationUnavailable):
                                             probe.attest_workflow(WORKSPACE)
                                         report.assert_not_called()
+
+    def test_listeners_are_every_tcp_listen_socket_with_its_owner(self):
+        tables = {
+            "/proc/net/tcp": "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+                             "   0: 0100007F:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 11\n"
+                             "   1: 0100007F:9C40 0100007F:0016 01 00000000:00000000 00:00000000 00000000 12001        0 12\n",
+            "/proc/net/tcp6": "  sl  local_address remote_address st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+                              "   0: 00000000000000000000000001000000:1F90 00000000000000000000000000000000:0000 0A "
+                              "00000000:00000000 00:00000000 00000000  1000        0 13\n",
+        }
+        with patch.object(probe.Path, "exists", return_value=True):
+            with patch.object(probe.Path, "read_text", autospec=True, side_effect=lambda path: tables[str(path)]):
+                self.assertEqual(probe._listeners(), [
+                    "00000000000000000000000001000000:1F90 1000", probe.SSHD])
+        with patch.object(probe.Path, "exists", side_effect=[True, False]):
+            with patch.object(probe.Path, "read_text", return_value=tables["/proc/net/tcp"]):
+                self.assertEqual(probe._listeners(), [probe.SSHD])
+
+    def test_sshd_must_refuse_passwords_and_keyboard_interactive(self):
+        settings = "port 22\npasswordauthentication no\nkbdinteractiveauthentication no\n"
+        for stdout, code, allowed in ((settings, 0, True), (settings, 255, False),
+                                      (settings.replace("password", "x", 1), 0, False),
+                                      (settings.replace("passwordauthentication no", "passwordauthentication yes"), 0, False),
+                                      (settings.replace("kbdinteractiveauthentication no", "kbdinteractiveauthentication yes"), 0, False)):
+            with self.subTest(stdout=stdout, code=code):
+                answer = SimpleNamespace(returncode=code, stdout=stdout.encode())
+                with patch.object(probe.subprocess, "run", return_value=answer) as run:
+                    if allowed:
+                        probe._sshd()
+                    else:
+                        with self.assertRaises(probe.IsolationUnavailable):
+                            probe._sshd()
+                self.assertEqual(run.call_args.args[0], ["/usr/sbin/sshd", "-T"])
 
     def test_report_is_exclusive_read_only_and_closes_fd_on_errors(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -299,7 +342,7 @@ class IsolationProbeTests(unittest.TestCase):
                                  ("guardian_socket_fd", "ledger_directory", "runtime_directory",
                                   "state_directory", "ledger_catalog", "release_catalog", "guardian_connect")})
                 outcomes["sudo_returncode"] = 1
-                return {"identity": identity, "outcomes": outcomes}
+                return {"identity": identity, "outcomes": outcomes, "listeners": []}
 
             try:
                 with patch.object(probe, "prepare_assignment_identity", side_effect=drop):

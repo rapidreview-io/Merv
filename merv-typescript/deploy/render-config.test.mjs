@@ -270,6 +270,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     baseUrl: 'https://merv.example',
     maxAgents: 10,
     maxAgentsPerPerson: 5,
+    dailyTokensPerPerson: 20_000_000,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
   // The retired single-project source is ignored if an old environment still names it.
@@ -290,6 +291,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     (p) => p.id === 'fleet-workflow',
   ).config;
   assert.deepEqual([people, maxAgents, maxAgentsPerPerson], [['*'], 64, 2]);
+  assert.notEqual(run({ ...workflow, MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON: '0' }).status, 0);
   for (const broken of [
     { MERV_FLEET_ENABLED: 'true' },
     { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },

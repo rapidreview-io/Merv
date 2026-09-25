@@ -19,6 +19,8 @@ export interface FleetAllocation {
   requestId: string;
   /** The host project whose connection rents the machine, when not `projectId`'s own. */
   rentedIn?: string;
+  /** The request's own machine time, when it set one. */
+  seconds?: number;
   profileId: string;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
@@ -49,6 +51,9 @@ export interface FleetRequest {
   /** The Sandboxes runtime profile key to rent ('standard', 'large'); absent means the default
    * (first) profile. Part of the request's fingerprint; the allocation keeps that profile's id. */
   profile?: string;
+  /** Seconds the machine may run once it leaves the queue (a queued request gives up after as
+   * long), within allocationTimeoutSeconds, the default. Part of the fingerprint. */
+  seconds?: number;
 }
 /** A machine Fleet can rent, as the service's options describe the profile's offer. */
 export type FleetMachine = SandboxRuntimeOffer;

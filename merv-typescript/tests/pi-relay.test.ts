@@ -3,14 +3,18 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { ModelRelay } from '../packages/api/src/model-relay.js';
 import {
-  PiModelRelay,
+  piModelRelay,
   type PiRelayConfig,
   type PiRelayFailureRecord,
   type PiRelayGrant,
   type PiRelayUsageRecord,
 } from '../packages/pi/src/relay.js';
 import { moveTool, type PiMoveContext } from '../packages/pi/src/moves.js';
+
+/** Pi's relay hooks over the shared core, as the API mounts them. */
+const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
 const token = `pir_${'a'.repeat(43)}`;
 const request = {
@@ -38,7 +42,7 @@ async function fixture(overrides: Partial<PiRelayConfig> = {}) {
   let currentGrant = grant();
   let revoked = false;
   const upstreamCalls: { url: string; init: RequestInit }[] = [];
-  const relay = new PiModelRelay({
+  const relay = piRelay({
     enabled: true,
     models: [
       { id: 'test-model', effort: 'none' },
@@ -77,7 +81,7 @@ async function fixture(overrides: Partial<PiRelayConfig> = {}) {
 }
 
 function send(
-  f: { relay: PiModelRelay },
+  f: { relay: ModelRelay<PiRelayGrant, 'pi'> },
   body: unknown = request,
   options: RequestInit & { path?: string; backpressure?: boolean } = {},
 ): Promise<Response> {

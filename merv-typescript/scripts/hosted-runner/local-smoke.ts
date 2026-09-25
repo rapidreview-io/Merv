@@ -1,7 +1,8 @@
 /** Explicit real-model local acceptance; creates only an isolated synthetic Merv project.
  * Run with MERV_DB_URL set to a disposable local PostgreSQL service. The saved
  * runner API key is supplied privately through MERV_RUNNER_API_KEY or read from
- * its exact macOS Keychain account. Neither path prints the credential.
+ * its exact macOS Keychain account. Neither path prints the credential, and it stays
+ * in this process: the container's Codex calls the model through Main's relay.
  */
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
@@ -12,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createApp } from '../../src/app.js';
 import { loadConfiguration } from '../../src/config.js';
 import { useRunSchema } from '../database.js';
+import { codexModelRelay } from '../../packages/fleet/src/codex-relay.js';
 
 async function command(executable: string, args: string[], input?: string): Promise<string> {
   return new Promise((done, fail) => {
@@ -137,6 +139,11 @@ try {
     requestId: run,
   });
   await app.ctx.sessions.setDispatch(caller, { enabled: true });
+  const relay = await codexModelRelay(app.ctx.sessions, app.ctx.state, {
+    providerKey: () => modelApiKey,
+    dailyTokensPerPerson: 5_000_000,
+  });
+  app.ctx.api.mountModelRelay('/codex-model', relay);
   const port = new URL(app.ctx.api.url!).port;
   const image = (
     await docker(['image', 'inspect', '--format', '{{.Id}}', 'merv-hosted-codex:acceptance'])
@@ -152,14 +159,17 @@ try {
     '/bin/sh',
     'merv-hosted-codex:acceptance',
     '-c',
-    `socat TCP-LISTEN:18080,bind=127.0.0.1,reuseaddr,fork TCP:host.docker.internal:${port} & exec sleep 1800`,
+    // Main is loopback HTTP, as the runner requires, without a listener in the container for the
+    // isolation probe to refuse: localhost names the Docker host. The probe also checks that the
+    // release catalog, which Sandboxes' bootstrap writes, is private.
+    "getent ahostsv4 host.docker.internal | sed -n '1s/ .*/ localhost/p' >/etc/hosts && " +
+      'install -m 0600 /dev/null /opt/merv/runtime/releases.json && exec sleep 1800',
   ]);
   allocated = true;
   const bootstrap = JSON.stringify({
-    baseUrl: 'http://127.0.0.1:18080',
+    baseUrl: `http://localhost:${port}`,
     projectId: boot.project.id,
     enrollmentToken,
-    modelApiKey,
   });
   const receiver = `import sys,json,io,hashlib\nfrom pathlib import Path\nsys.path.insert(0,'/opt/merv/python')\nfrom merv_sandboxes.runtimes.releases import RuntimeRelease,RuntimeReleases\nfrom merv_sandboxes.runtimes.receiver import dispatch_bootstrap\ndata=json.load(sys.stdin)\np=Path('/opt/merv/runtime/start-runner')\nr=RuntimeRelease(provider='local-acceptance',image_digest=data['image'],executable=str(p),executable_sha256=hashlib.sha256(p.read_bytes()).hexdigest())\nprint(dispatch_bootstrap(io.BytesIO(data['bootstrap'].encode()),'launch_smoke','job_smoke',r.release_id,releases=RuntimeReleases([r])).decode().strip())`;
   const receipt = await docker(
