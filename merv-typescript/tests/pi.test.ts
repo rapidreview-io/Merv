@@ -693,7 +693,7 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
   assert.equal(halted.at(-1)?.data.intent, 'stop');
 });
 
-test('each turn says whom the agent serves, where, on what, what the project lacks, and what a stopped answer made', async (t) => {
+test('each turn says whom the agent serves, where, on what, what the project lacks, and what a stopped answer made; its person can read it back', async (t) => {
   const f = await fixture(t);
   probes(f, t);
   t.after(
@@ -718,27 +718,37 @@ test('each turn says whom the agent serves, where, on what, what the project lac
   const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
   const reviewer = all.find(({ kind, role }) => kind === 'human' && role === 'reviewer')!.caller;
   const first = await f.begun(producer);
-  assert.deepEqual(first.work.notes.slice(0, 5), [
+  assert.deepEqual(first.work.notes.slice(0, 4), [
     'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
     `You serve ${producer.actorId}, a producer in project ${project.id}: they, and so you, can read everything and create and change work, but not review it or administer the project. actor.whoami and project.get name them.`,
     'Today is 2026-09-23 (UTC).',
     'Empty Problem sections: scope.',
-    'The Introduction is empty.',
   ]);
-  assert.match(first.work.notes[5], /^Machine: Standard/);
+  assert.match(first.work.notes[4], /^Machine: Standard/);
   assert.match(first.work.instructions!, /^You are this person's own agent in Merv/);
   assert.match(first.work.instructions!, /never call yourself ChatGPT/);
+  // What the turn was given is what its person reads back.
+  const id = first.input.conversationId;
+  const given = await f.pi.prompt(producer, id);
+  assert.equal(given.instructions, first.work.instructions);
+  assert.equal(given.turn?.commandId, first.input.commandId);
+  assert.deepEqual(given.turn?.notes, first.work.notes);
+  // The stored list leads with switch_machine; the worker's ends with it.
+  assert.deepEqual([...given.turn!.tools].sort(), first.work.tools.map(({ name }) => name).sort());
   // The agent writes, then its answer is stopped: the next turn says what it had made.
   await f.pi.tool(first.token, { ...first.input, name: 'probe.write', input: {} });
   await f.pi.stop(producer, first.input.conversationId);
   await f.pi.send(producer, first.input.conversationId, { commandId: 'again', text: 'Go on' });
   const { work } = await f.pi.next(first.token, { workerId: 'worker_1' });
   assert.equal(
-    work!.notes[5],
+    work!.notes[4],
     'Your previous answer here stopped before it finished, after it had made: probe.write probe',
   );
   assert.equal(work!.instructions, first.work.instructions);
-  // A reviewer writes no paper: no Problem or Introduction line.
+  // The latest turn is the one read back; nobody else can read this conversation's.
+  assert.deepEqual((await f.pi.prompt(producer, id)).turn?.notes, work!.notes);
+  await assert.rejects(f.pi.prompt(reviewer, id), { code: 'pi_not_found' });
+  // A reviewer writes no paper: no Problem line.
   const other = await f.begun(reviewer);
   assert.deepEqual(
     other.work.notes.filter((note) => /Problem|Introduction/.test(note)),
@@ -1135,8 +1145,8 @@ test('progress bursts do not add durable writes; stop ends only the turn and fen
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
     code('pi_command_stale'),
   );
-  // Only the claim's own read, for its notes.
-  assert.equal(f.reads, 1);
+  // No project read: a claim's notes read only the paper.
+  assert.equal(f.reads, 0);
 });
 
 test('a turn still streaming runs past the old five-minute deadline; one silent that long ends', async (t) => {
@@ -1262,8 +1272,8 @@ test('revoking the person’s credential fails their turn, not the machine', asy
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
     code('pi_authority_stale'),
   );
-  // Only the claim's own read, for its notes.
-  assert.equal(f.reads, 1);
+  // No project read: a claim's notes read only the paper.
+  assert.equal(f.reads, 0);
   // The worker still ends the turn; its machine, rented by the host, keeps its admission.
   await f.pi.fail(bound.token, bound.input);
   const row = await f.state.read((sql) =>
@@ -1872,8 +1882,8 @@ test(
     }
     const first = await runTurn('Read this project');
     let snapshot = await f.pi.snapshot(f.operator, conversation.id);
-    // The claim's read for its notes, and the agent's.
-    assert.equal(f.reads, 2);
+    // Only the agent's: a claim's notes read only the paper.
+    assert.equal(f.reads, 1);
     assert.equal(snapshot.commands[0].outcomes[0].name, 'project.get');
     assert.equal(snapshot.commands[0].messages.at(-1)?.text, 'Project verified');
     const checkpoint = snapshot.conversation.checkpoint;

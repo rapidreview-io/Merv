@@ -46,6 +46,7 @@ import {
   recordBlocker,
   type AutomaticRow,
 } from './automatic.js';
+import { introductionFrom } from './introduction.js';
 import { postgresMigrations } from './index.postgres.js';
 import {
   advanceSchema,
@@ -1389,13 +1390,29 @@ export class ResearchService implements Research {
         if (injecting)
           childIds.push(await this.inject(caller, record, since!, input.requestId, tx, checks));
         switch (record.workflow.state as Stage) {
-          case 'defining':
+          case 'defining': {
+            const problem = await this.definition(caller, tx, checks);
             await tx.run(
               'UPDATE research_cycles SET problem=? WHERE id=?',
-              JSON.stringify(await this.definition(caller, tx, checks)),
+              JSON.stringify(problem),
               record.id,
             );
+            // The accepted Problem is what the project is; the Introduction carries it into
+            // every worker's assignment, so it is rewritten from the Problem here.
+            const current = (await this.scope.project(caller, tx)).summary ?? '';
+            const introduction = introductionFrom(problem);
+            if (introduction !== current)
+              await this.scope.updateProjectContext(
+                caller,
+                {
+                  summary: introduction,
+                  expectedSummary: current,
+                  requestId: childRequest(caller, 'research', 'introduction', input.requestId),
+                },
+                tx,
+              );
             break;
+          }
           case 'researching': {
             // A predecessor a plan opened this cycle from may have no digest yet; without the
             // capabilities to compose one the wave simply starts without it.

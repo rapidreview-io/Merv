@@ -21,6 +21,7 @@ import {
   type PiHostView,
   type PiMachine,
   type PiModel,
+  type PiPrompt,
   type PiProposal,
   type PiSnapshot,
 } from '../pi-stream';
@@ -408,6 +409,55 @@ function Model({
 
 /** Where turn `at` moved machine or switched model, against the last earlier turn that recorded
  * each: a turn stopped before a worker claimed it recorded no model. */
+/** What the agent is given: the instructions every turn shares, then the latest turn's notes and
+ * the tools it was offered, exactly as that turn was served. Read again when a turn begins. */
+function Context({ id, turns }: { id: string; turns: number }) {
+  const [prompt, setPrompt] = useState<PiPrompt | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    call<PiPrompt>('pi.prompt', { id }).then(
+      (value) => live && (setPrompt(value), setFailed(false)),
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, turns]);
+  return (
+    <section className="pi-context" aria-label="What the agent is given">
+      <p className="muted">
+        The agent's system prompt is these instructions with the turn's notes after them; the tools
+        are offered beside it.
+      </p>
+      {failed && <p role="alert">Couldn't read what the agent is given.</p>}
+      {!prompt && !failed && <p role="status">Reading…</p>}
+      {prompt && (
+        <>
+          <h3>Instructions</h3>
+          <pre className="pi-context-text">{prompt.instructions}</pre>
+          <h3>Latest turn's notes</h3>
+          {prompt.turn ? (
+            <ul>
+              {prompt.turn.notes.map((note, index) => (
+                <li key={index}>{note}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">No turn has been given to the agent yet.</p>
+          )}
+          {prompt.turn && (
+            <>
+              <h3>Tools offered ({prompt.turn.tools.length})</h3>
+              <p className="pi-context-tools">{prompt.turn.tools.join(', ')}</p>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function changed(all: PiCommand[], at: number, host?: PiHostView, models?: PiModel[]) {
   const since = (key: 'machine' | 'model') => {
     const before = all
@@ -438,6 +488,7 @@ function PiConversationPage() {
   const [draft, setDraft] = useState('');
   // The conversations as the menu opened: an answer streaming meanwhile moves none of them.
   const [menu, setMenu] = useState<PiConversation[] | null>(null);
+  const [context, setContext] = useState(false);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
   // The proposal running now, and the secret results this page alone holds.
@@ -931,6 +982,16 @@ function PiConversationPage() {
               {state}
             </div>
           )}
+          {snapshot && (
+            <button
+              type="button"
+              className="pi-switch-button pi-context-button"
+              aria-expanded={context}
+              onClick={() => setContext((open) => !open)}
+            >
+              Context
+            </button>
+          )}
           {!blocked && !unavailable && host && (
             <Machine
               host={host}
@@ -940,6 +1001,9 @@ function PiConversationPage() {
             />
           )}
         </div>
+      )}
+      {listed && context && snapshot && (
+        <Context id={snapshot.conversation.id} turns={snapshot.commands.length} />
       )}
       {listed && (
         <div

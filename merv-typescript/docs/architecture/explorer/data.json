@@ -1208,6 +1208,11 @@
           "readOnly": false
         },
         {
+          "name": "pi.prompt",
+          "description": "Read what your conversation's agent is given: the instructions every turn shares, and the latest turn's appended notes and offered tools as that turn was served.",
+          "readOnly": true
+        },
+        {
           "name": "pi.run",
           "description": "Run a call your agent proposed in this conversation, once, as you. Its result comes back only to you.",
           "readOnly": false
@@ -1295,6 +1300,11 @@
           "name": "pi.model.set",
           "description": "Choose the model that answers your next message in this conversation; your new conversations here start on it too. An answer under way keeps its model.",
           "readOnly": false
+        },
+        {
+          "name": "pi.prompt",
+          "description": "Read what your conversation's agent is given: the instructions every turn shares, and the latest turn's appended notes and offered tools as that turn was served.",
+          "readOnly": true
         },
         {
           "name": "pi.run",

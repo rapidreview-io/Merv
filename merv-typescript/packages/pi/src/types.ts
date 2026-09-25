@@ -96,6 +96,9 @@ export interface PiCommandRecord extends PiCommand {
   /** The native names this turn offers, fixed at its first serve: its relay grant names exactly
    * these, and its tool calls and outcomes only these. Absent until then. */
   tools?: string[];
+  /** The lines this turn appended to the agent's instructions (turnNotes, then its machine's),
+   * fixed at its first serve like tools. Absent for a turn served before they were kept. */
+  notes?: string[];
   /** Its first tool call, recorded before the call runs: from then it never starts again. */
   calledAt?: string;
   /** It started again once, on a fresh machine, after its own was lost. */
@@ -354,10 +357,18 @@ export interface PiCompletion {
   checkpoint: string;
   checkpointHash: string;
 }
+/** What the agent is given, as its person may see it: the instructions every turn shares, and
+ * the latest turn's appended notes and offered tools exactly as that turn was served. */
+export interface PiPrompt {
+  instructions: string;
+  turn: { commandId: string; notes: string[]; tools: string[] } | null;
+}
 export interface Pi {
   create(caller: Caller, input: unknown): Promise<PiConversation>;
   list(caller: Caller): Promise<PiConversation[]>;
   snapshot(caller: Caller, id: string): Promise<PiSnapshot>;
+  /** See pi.prompt. */
+  prompt(caller: Caller, id: string): Promise<PiPrompt>;
   send(caller: Caller, id: string, input: unknown): Promise<PiCommand>;
   /** Make sure the person's host exists before their first message; see pi.warm. */
   warm(caller: Caller, input: unknown): Promise<PiSnapshot>;

@@ -93,6 +93,11 @@ export interface PiSnapshot {
   sequence: number;
   tail: PiEvent[];
 }
+/** pi.prompt: what the agent is given. The latest turn's notes and tools are as it was served. */
+export interface PiPrompt {
+  instructions: string;
+  turn: { commandId: string; notes: string[]; tools: string[] } | null;
+}
 export type PiDelta = PiEvent & { streamId: string };
 type Frame = { event: string; data: string };
 

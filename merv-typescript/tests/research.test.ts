@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ResearchService } from '../packages/research/src/index.js';
+import { introductionFrom } from '../packages/research/src/introduction.js';
 import type { ResearchDigest, ResearchRecord } from '../packages/research/src/types.js';
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -379,6 +380,49 @@ const retired = async (f: Awaited<ReturnType<typeof fixture>>) => {
   );
   return id;
 };
+
+test('accepting the definition writes the Introduction from the Problem, replacing what was there', async (t) => {
+  const f = await fixture(t);
+  const before = await f.app.ctx.scope.project(f.owner);
+  await f.app.ctx.scope.updateProjectContext(f.owner, {
+    summary: 'A note written by hand.',
+    expectedSummary: before.summary ?? '',
+    requestId: f.id(),
+  });
+  const record = await f.create();
+  await f.definition();
+  await f.advance(record);
+  const project = await f.app.ctx.scope.project(f.owner);
+  assert.equal(
+    project.summary,
+    [
+      '## Problem\n\nCan this comparison be evaluated reliably?',
+      '## Scope\n\nA bounded local comparison.',
+      '## Goals\n\nRetain independently verified evidence.',
+      '## Constraints\n\nUse only the frozen available corpus.',
+    ].join('\n\n'),
+  );
+  assert.equal(project.contextRevision, before.contextRevision! + 2);
+  // Every worker's assignment carries it, so a later definition that says the same thing
+  // leaves it and its revision alone.
+  const next = await f.create();
+  await f.advance(next);
+  assert.equal((await f.app.ctx.scope.project(f.owner)).contextRevision, project.contextRevision);
+});
+
+test('the Introduction written from a long Problem is cut to fit and says so', () => {
+  const long = { id: 'problem', title: 'Problem', content: 'é'.repeat(20_000) };
+  const text = introductionFrom({
+    sections: [
+      long,
+      { id: 'literature', title: 'Literature', content: 'Not part of the Problem.' },
+    ],
+  });
+  assert.ok(Buffer.byteLength(text, 'utf8') <= 16_000);
+  assert.ok(text.startsWith('## Problem\n\né'));
+  assert.match(text, /paper\.read returns the whole Problem\.\]$/);
+  assert.ok(!text.includes('Literature'));
+});
 
 test('accepted code of a retired instance is history no cycle integrates', async (t) => {
   // A task cannot depend on an instance that no longer exists, so the consolidation task
