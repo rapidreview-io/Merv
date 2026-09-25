@@ -66,7 +66,7 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
-import { RESERVED_CONTEXT_INPUTS, TASK_TYPES, TYPE_REQUIRED_CHECKS } from './definitions.js';
+import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
   renderAssessment,
@@ -1182,7 +1182,6 @@ export class TaskService implements Tasks {
           'An active work task type/version is required',
           409,
         );
-        const required = TYPE_REQUIRED_CHECKS[typeName] ?? [];
         check(
           input.workspace === undefined || input.workspace === 'none' || input.workspace === 'git',
           'invalid_workspace',
@@ -1256,12 +1255,7 @@ export class TaskService implements Tasks {
           'invalid_checks',
           'Done-when checks must be distinct',
         );
-        // The type's required checks are the server's, so a caller cannot leave them out; one the
-        // caller already wrote is kept where they put it.
-        const checks = [
-          ...input.checks,
-          ...required.filter((item) => !input.checks.some((own) => folded(own) === folded(item))),
-        ];
+        const checks = [...input.checks];
         const brief =
           input.briefId === undefined
             ? await this.artifacts.create(
@@ -2321,11 +2315,6 @@ export class TaskService implements Tasks {
           },
           tx,
         );
-        // The checks a task type requires are the ones its review may not waive. They are found
-        // by their text, because the caller may have written one of them anywhere in the list.
-        const requiredCriteria = (TYPE_REQUIRED_CHECKS[row.type_name] ?? [])
-          .map((item) => checks.findIndex((own) => folded(own) === folded(item)) + 1)
-          .filter((number) => number > 0);
         const review = await this.reviews.request(
           caller,
           {
@@ -2352,7 +2341,6 @@ export class TaskService implements Tasks {
             artifactIds: [row.brief_id, ...deliveryIds],
             criteria: checks,
             formatVersion: 2,
-            ...(requiredCriteria.length ? { requiredCriteria } : {}),
             requestId: childRequest(caller, 'task', 'delivery', input.requestId),
           },
           tx,

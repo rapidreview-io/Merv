@@ -1,4 +1,12 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTaskIds,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
+
+/** The retired plan ids query, quoted for the EXECUTE strings version 9 needs for optional tables. */
+const quotedPlanTaskIds = retiredPlanTaskIds.replaceAll("'", "''");
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
@@ -212,5 +220,46 @@ END;
 $merv$;
 CREATE TRIGGER session_managed_runners_no_delete BEFORE DELETE ON session_managed_runners
 FOR EACH ROW EXECUTE FUNCTION session_managed_runners_no_delete_guard();
-`,
+`, // Deletes the sessions of retired experiment.plan tasks, as version 6 did for the earlier
+  // retirement.
+  9: `${retiredPlanTasksSql}
+CREATE TEMP TABLE retired_plan_sessions ON COMMIT DROP AS
+  SELECT id FROM worker_sessions WHERE instance_id IN (${retiredPlanTaskIds});
+DO $retire$
+BEGIN
+  IF to_regclass('session_tool_calls') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_tool_calls WHERE execution_id IN (SELECT id FROM retired_plan_sessions)';
+  END IF;
+  IF to_regclass('session_dispatch_receipts') IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE session_dispatch_receipts DISABLE TRIGGER session_dispatch_receipts_no_delete';
+    EXECUTE 'DELETE FROM session_dispatch_receipts WHERE session_id IN (SELECT id FROM retired_plan_sessions)';
+    EXECUTE 'ALTER TABLE session_dispatch_receipts ENABLE TRIGGER session_dispatch_receipts_no_delete';
+  END IF;
+  IF to_regclass('session_dispatch_holds') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_dispatch_holds WHERE instance_id IN (${quotedPlanTaskIds})
+      OR last_session_id IN (SELECT id FROM retired_plan_sessions)';
+  END IF;
+  IF to_regclass('session_hold_requests') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_hold_requests
+      WHERE result::jsonb->>''instanceId'' IN (${quotedPlanTaskIds})';
+  END IF;
+  IF to_regclass('session_budgets') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM session_budgets WHERE scope_id IN (${quotedPlanTaskIds})';
+  END IF;
+END $retire$;
+${withoutTriggers(
+  'session_workspaces',
+  ['session_workspaces_no_delete'],
+  `DELETE FROM session_workspaces WHERE session_id IN (SELECT id FROM retired_plan_sessions);`,
+)}
+${withoutTriggers(
+  'session_usage',
+  ['session_usage_no_delete'],
+  `DELETE FROM session_usage WHERE session_id IN (SELECT id FROM retired_plan_sessions);`,
+)}
+${withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_no_delete'],
+  `DELETE FROM worker_sessions WHERE id IN (SELECT id FROM retired_plan_sessions);`,
+)}`,
 };

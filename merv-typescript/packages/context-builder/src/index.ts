@@ -94,6 +94,10 @@ export class RecipeContextBuilder implements ContextBuilder {
           version: 2,
           sql: postgresMigrations[2],
         },
+        {
+          version: 3,
+          sql: postgresMigrations[3],
+        },
       ]);
     };
   }

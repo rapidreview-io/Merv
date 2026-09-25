@@ -1,4 +1,9 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTaskIds,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
@@ -183,4 +188,13 @@ $merv$;
 DROP TRIGGER reviews_contributors_claim ON reviews;
 CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id, owner_override ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();`,
+  // Deletes the reviews of retired experiment.plan tasks.
+  12: `${retiredPlanTasksSql}
+DELETE FROM review_commands WHERE result::jsonb->>'id' IN
+  (SELECT id FROM reviews WHERE subject_id IN (${retiredPlanTaskIds}));
+${withoutTriggers(
+  'reviews',
+  ['reviews_no_delete'],
+  `DELETE FROM reviews WHERE subject_id IN (${retiredPlanTaskIds});`,
+)}`,
 };

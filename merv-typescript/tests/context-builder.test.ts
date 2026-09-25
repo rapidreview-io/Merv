@@ -11,7 +11,6 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from './fixtures/app.js';
-import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 import type { TaskTypeDefinition } from '@merv/contracts';
 import { openState, storedContext } from './fixtures/state.js';
 
@@ -168,13 +167,11 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       replacement = await actor('reviewer');
     const doc = async (title: string, content: string) =>
       await app.ctx.artifacts.create(producer, { title, content });
-    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']![0]!;
-    const bare = await doc('Bare brief', 'Design a test. Define the controls.'),
-      brief = await doc('Brief', `Design a test. Define the controls. ${feasible}`),
+    const brief = await doc('Brief', 'Design a test. Define the controls.'),
       research = await doc('Research', 'Prior controlled comparisons.'),
       constraints = await doc('Constraints', 'Use the approved small dataset.');
     const create = {
-      type: 'experiment.plan',
+      type: 'project.reflection',
       title: 'Plan',
       goal: 'Design a test.',
       checks: ['Define the controls.'],
@@ -183,18 +180,11 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
     };
     await assert.rejects(
       async () => await app.ctx.tasks.create(producer, create),
-      /Missing required context: research/,
+      /Missing required context: experiments/,
     );
-    const contextInputs = { research: [research.id], constraints: [constraints.id] };
-    // The server's own feasibility check is part of the task, so the caller's brief must carry it.
-    await assert.rejects(
-      async () =>
-        await app.ctx.tasks.create(producer, { ...create, briefId: bare.id, contextInputs }),
-      { code: 'invalid_brief' },
-    );
+    const contextInputs = { experiments: [research.id], projectKnowledge: [constraints.id] };
     const task = await app.ctx.tasks.create(producer, { ...create, contextInputs });
-    assert.equal(task.typeVersion, 2);
-    assert.deepEqual(task.checks, ['Define the controls.', feasible]);
+    assert.deepEqual(task.checks, ['Define the controls.']);
     const checkpoint = await app.ctx.tasks.checkpoint(producer, {
       taskId: task.id,
       purpose: 'work',
@@ -208,10 +198,10 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       expectedRevision: 0,
       requestId: 'start',
     });
-    assert.equal(context.type, 'experiment.plan');
+    assert.equal(context.type, 'project.reflection');
     assert.match(context.prompt, /Prior controlled comparisons/);
     assert.match(context.prompt, /controls still need work/);
-    assert.match(context.prompt, /does not authorize experiment execution/);
+    assert.match(context.prompt, /Do not silently expand the selected corpus/);
     assert.match(context.prompt, new RegExp(checkpoint.id));
     const delivery = await doc(
       'Plan',
@@ -226,7 +216,7 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
           expectedRevision: 0,
           requestId: 'submit',
         },
-        2,
+        1,
       ),
     );
     const old = await app.ctx.reviews.start(reviewer, submitted.reviewId!);
@@ -280,22 +270,21 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
         }),
       /access this project/,
     );
-    const reflection = await app.ctx.tasks.create(producer, {
+    const work = await app.ctx.tasks.create(producer, {
       ...create,
-      type: 'project.reflection',
-      requestId: 'reflection',
-      contextInputs: { experiments: [delivery.id], projectKnowledge: [research.id] },
+      type: 'task.work',
+      requestId: 'work',
     });
     assert.match(
       (
         await app.ctx.tasks.context(producer, {
-          taskId: reflection.id,
+          taskId: work.id,
           purpose: 'work',
           expectedRevision: 0,
-          requestId: 'reflect-context',
+          requestId: 'work-context',
         })
       ).prompt,
-      /explicitly selected experiment corpus/,
+      /Complete the assigned task/,
     );
     await app.setEnabled('tasks', false);
     assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);

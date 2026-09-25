@@ -149,6 +149,12 @@
       "published": true
     },
     {
+      "component": "context_builder",
+      "version": 3,
+      "hash": "df5d4b843fa8a153f5b4dcfdf0a3d5c45e784bdfa1c8018492093b677a035370",
+      "published": false
+    },
+    {
       "component": "domain_events",
       "version": 1,
       "hash": "7f511bc838bda2d9390eba767fa499e505dc18d0f09a741c1f32819ccd121a14",
@@ -359,6 +365,12 @@
       "published": false
     },
     {
+      "component": "reviews",
+      "version": 12,
+      "hash": "531997c6b0092a64419bf55c7b6fdea0c58c0a01ed679265ffca4f905fab7d15",
+      "published": false
+    },
+    {
       "component": "scope",
       "version": 1,
       "hash": "65a9502fab93561cae7f780875db3561be701b2f5f0d21cf08f1acd7e0d2c95b",
@@ -491,6 +503,12 @@
       "published": true
     },
     {
+      "component": "sessions",
+      "version": 9,
+      "hash": "22a9d2206d7bc39a9ee78fae968ae1e003ea4d30621061dd42e8b2f407b25d77",
+      "published": false
+    },
+    {
       "component": "tasks",
       "version": 1,
       "hash": "96ebbc88283b7983f739012caeda49eb6182f7afe38c174eaaff80a76d55c7cc",
@@ -539,6 +557,12 @@
       "published": true
     },
     {
+      "component": "tasks",
+      "version": 9,
+      "hash": "80c74ad88c823ae8e15302ae3f39123d04444be66a9f694055be5b40521ac6e0",
+      "published": false
+    },
+    {
       "component": "workflows",
       "version": 1,
       "hash": "311f69399d6b45e0d5b94117ce0d26f7d788d0c319390a7d0911dfd1d75fe97d",
@@ -579,6 +603,12 @@
       "version": 7,
       "hash": "8e783a7cb50674333b98cb786fe80207d92582600e1da92ca5e16714b90c4da0",
       "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 8,
+      "hash": "f2376b94a2878d7a83d0598f1eccc8ea0371025ac20eb8d7cc162ec3d6c21d14",
+      "published": false
     },
     {
       "component": "reflections",

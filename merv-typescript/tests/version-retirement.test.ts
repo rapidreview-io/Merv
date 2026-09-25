@@ -1,9 +1,10 @@
 /**
- * The 2026-09-22 retirement on PostgreSQL: a database seeded with an instance of every workflow
- * version that can no longer start (tests/fixtures/retired-instances.ts) is booted by the current
+ * The 2026-09-22 retirement on PostgreSQL, and the 2026-09-25 retirement of experiment.plan tasks:
+ * a database seeded with an instance of every workflow version that can no longer start, and an
+ * experiment.plan task (tests/fixtures/retired-instances.ts), is booted by the current
  * build. Every record of those instances goes, and nothing else changes: not the survivors of the
  * same shape, not the records kept on purpose, not the events log, not the pinned definitions,
- * and no no-delete guard stays off. The ten migrations also reach the same end state in any
+ * and no no-delete guard stays off. The fifteen migrations also reach the same end state in any
  * order, because each computes the same ledger before it deletes; and a database the release
  * would leave inconsistent is refused by whichever runs first, before anything commits.
  */
@@ -14,7 +15,12 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import pg from 'pg';
 import type { Caller, Migration } from '@merv/contracts';
-import { retirementLedgerSql, retirementPreconditionsSql } from '@merv/contracts/retired-instances';
+import {
+  planRetirementLedgerSql,
+  planRetirementPreconditionsSql,
+  retirementLedgerSql,
+  retirementPreconditionsSql,
+} from '@merv/contracts/retired-instances';
 import { StateStore } from '@merv/state/base';
 import { createApp } from './fixtures/app.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
@@ -236,7 +242,9 @@ async function prepare(
 test('the census embeds the ledger text the migrations run, and reports their refusals as rows', async () => {
   const text = await census();
   assert.ok(text.includes(retirementLedgerSql));
+  assert.ok(text.includes(planRetirementLedgerSql));
   assert.ok(!text.includes(retirementPreconditionsSql));
+  assert.ok(!text.includes(planRetirementPreconditionsSql));
 });
 
 /** Captures the migration texts the app runs, by `component@version`, until restored. */
@@ -524,14 +532,15 @@ test('retiring the versions that can no longer start deletes their records and n
       1,
       `${type}@${version} stays pinned`,
     );
-  // Sessions measures the history project's budget as the census predicted (C12).
+  // Sessions measures the history project's budget as the census predicted (C12): 1 ms of each
+  // survivor's session, and 5 of the service work kept.
   assert.deepEqual(
     (await app.ctx.sessions.usage(seed.history)).budgets.map((budget) => [
       budget.scopeId,
       budget.exceeded,
       budget.used.wallMs,
     ]),
-    [[seed.history.projectId, [], 19]],
+    [[seed.history.projectId, [], 18]],
   );
 
   // Every flow that can start still does, and nothing left is on an unregistered version.
@@ -586,14 +595,22 @@ test('the retirement migrations reach the same end state in whichever order comp
   }
   prepared.push(await prepare(t), await prepare(t));
   const listed = retirementMigrations.map(([component, version]) => ({ component, version }));
+  // Components migrate in any order, but each runs its own versions in ascending order.
+  const components = [...new Set(listed.map(({ component }) => component))];
+  const inOrder = (order: string[]) =>
+    order.flatMap((component) =>
+      listed
+        .filter((migration) => migration.component === component)
+        .sort((a, b) => a.version - b.version),
+    );
   const orders = [
     // Reviews and Context Builder do not inject Workflows, so they may migrate before it.
-    [
-      ...listed.filter(({ component }) => ['reviews', 'context_builder'].includes(component)),
-      ...listed.filter(({ component }) => !['reviews', 'context_builder'].includes(component)),
-    ],
-    listed,
-    [...listed].reverse(),
+    inOrder([
+      ...components.filter((component) => ['reviews', 'context_builder'].includes(component)),
+      ...components.filter((component) => !['reviews', 'context_builder'].includes(component)),
+    ]),
+    inOrder(components),
+    inOrder([...components].reverse()),
   ];
   const states: Record<string, unknown>[] = [];
   for (const [index, order] of orders.entries()) {

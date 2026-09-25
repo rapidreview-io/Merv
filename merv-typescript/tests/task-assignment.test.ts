@@ -8,7 +8,6 @@ import { createApp } from './fixtures/app.js';
 import { countWrites } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
-import { TYPE_REQUIRED_CHECKS } from '../packages/tasks/src/definitions.js';
 
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-assignment-'));
@@ -90,14 +89,14 @@ test('task assignments return full recipe context; begin records one activation 
       content: 'Use the existing CPU budget.',
     });
     const task = await f.create({
-      type: 'experiment.plan',
-      contextInputs: { research: [research.id], constraints: [constraints.id] },
+      type: 'project.reflection',
+      contextInputs: { experiments: [research.id], projectKnowledge: [constraints.id] },
     });
     assert.equal(task.guidance.nextAction?.tool, 'workflow.begin');
     const before = await f.writes();
     const preview = await f.app.ctx.workflows.assignment(f.producer.caller, task.id);
     assert.equal(await f.writes(), before, 'Assignment lookup must be read-only');
-    assert.equal(preview.context?.type, 'experiment.plan');
+    assert.equal(preview.context?.type, 'project.reflection');
     assert.match(preview.context!.prompt, /Control the input distribution/);
     assert.match(preview.context!.prompt, /existing CPU budget/);
     assert.match(preview.brief, /Verify addition/);
@@ -351,90 +350,19 @@ test('unavailable task recipes block begin while task reads and explicit closure
   }
 });
 
-test('an experiment plan task carries a feasibility check its delivery review cannot waive', async () => {
+test('experiment.plan is retired: no version of it can be created', async () => {
   const f = await fixture();
   try {
-    const feasible = TYPE_REQUIRED_CHECKS['experiment.plan']![0]!;
-    const source = async (title: string) =>
-      (await f.app.ctx.artifacts.create(f.producer.caller, { title, content: `${title}.` })).id;
-    const contextInputs = {
-      research: [await source('Prior work')],
-      constraints: [await source('Constraints')],
-    };
-    const task = await f.create({ type: 'experiment.plan', contextInputs });
-    assert.equal(task.typeVersion, 2);
-    assert.deepEqual(task.checks, ['Two plus three equals five.', feasible]);
-    const brief = await f.app.ctx.artifacts.read(f.producer.caller, task.briefId);
-    assert.ok(brief.content.includes(feasible), 'The rendered brief states the appended check');
-    // A caller who already wrote the check keeps it where they put it, once.
-    const supplied = await f.create({
-      type: 'experiment.plan',
-      contextInputs,
-      checks: [feasible.toUpperCase(), 'Two plus three equals five.'],
-    });
-    assert.deepEqual(supplied.checks, [feasible.toUpperCase(), 'Two plus three equals five.']);
-    // Version 1 is retired: it is no longer registered, so it is no way around the check.
-    await assert.rejects(
-      async () => await f.create({ type: 'experiment.plan', typeVersion: 1, contextInputs }),
-      { code: 'task_type_unavailable' },
-    );
-
-    const deliver = async (taskId: string, checkCount: number) => {
-      const plan = await f.app.ctx.artifacts.create(f.producer.caller, {
-        title: 'Plan',
-        content: 'The plan and what it needs against what exists.',
-      });
-      const delivered = await f.app.ctx.tasks.submitDelivery(
-        f.producer.caller,
-        confirmedDelivery(
-          { taskId, expectedRevision: 0, artifactIds: [plan.id], requestId: `deliver-${taskId}` },
-          checkCount,
-        ),
+    for (const typeVersion of [undefined, 1, 2])
+      await assert.rejects(
+        async () =>
+          await f.create({
+            type: 'experiment.plan',
+            ...(typeVersion ? { typeVersion } : {}),
+            contextInputs: {},
+          }),
+        { code: 'task_type_unavailable' },
       );
-      return await f.app.ctx.reviews.start(f.reviewer.caller, delivered.reviewId!);
-    };
-    const first = await deliver(task.id, 2);
-    assert.deepEqual(first.requiredCriteria, [2]);
-    assert.deepEqual((await deliver(supplied.id, 2)).requiredCriteria, [1]);
-    assert.equal('requiredCriteria' in (await deliver((await f.create()).id, 1)), false);
-
-    const verdict = (findings: unknown) => ({
-      ...reviewedFindings(first),
-      ...(findings ? { findings } : {}),
-      reviewId: first.id,
-      claimId: first.claimId!,
-      expectedRevision: 1,
-      verdict: 'pass' as const,
-      notes: 'Read the plan against the project records.',
-    });
-    const met = reviewedFindings(first).findings as { criterionNumber: number }[];
-    const waived = met.map((finding) =>
-      finding.criterionNumber === 2
-        ? {
-            criterionNumber: 2,
-            status: 'waived',
-            evidenceIds: [],
-            notes: 'Feasibility is taken on trust.',
-          }
-        : finding,
-    );
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-          ...verdict(waived),
-          requestId: 'waived',
-        } as never),
-      { code: 'criterion_not_waivable' },
-    );
-    assert.equal(
-      (await f.app.ctx.tasks.get(f.producer.caller, task.id)).workflow.state,
-      'in_review',
-    );
-    const done = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...verdict(null),
-      requestId: 'met',
-    } as never);
-    assert.equal(done.workflow.state, 'done');
   } finally {
     await f.close();
   }

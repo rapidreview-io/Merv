@@ -1,6 +1,8 @@
 -- Census of the workflow instances whose version can no longer start, and of every record the
 -- retirement migrations delete (workflows@7, sessions@6, tasks@8, reviews@10, context_builder@2,
--- experiments@4, experiment_program@3, reflections@2, research@7, knowledge@2).
+-- experiments@4, experiment_program@3, reflections@2, research@7, knowledge@2), and of the
+-- 2026-09-25 experiment.plan retirement (workflows@8, sessions@9, tasks@9, reviews@12,
+-- context_builder@3), whose ledger rows carry the reason recipe_experiment.plan_2.
 --
 -- Run it before a release, and again after it, against a restored pg_dump or the live database:
 --
@@ -40,6 +42,8 @@
 --   C13 Event consumers behind the log. Must be empty for every consumer the new build
 --       registers: stop writes and let them drain before deploying. A consumer no plugin
 --       registers any more stays behind harmlessly.
+--   C14 Managed runners bound to a session of an experiment.plan task in R. Must be 0: the plan
+--       migrations refuse the release otherwise (planRetirementPreconditionsSql).
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
@@ -87,6 +91,17 @@ BEGIN
   WHERE i.workflow='reflection.lens'
   ON CONFLICT (id) DO NOTHING;
 END $retire$;
+
+-- The experiment.plan retirement's ledger rows (planRetirementLedgerSql, byte for byte).
+DO $retire_plan$
+BEGIN
+  IF to_regclass('tasks') IS NULL THEN RETURN; END IF;
+  INSERT INTO wf_retired_instances(id,project_id,workflow,version,reason)
+  SELECT t.id,t.project_id,'task',COALESCE(i.version,0),'recipe_experiment.plan_2'
+  FROM tasks t LEFT JOIN wf_instances i ON i.id=t.id
+  WHERE t.type_name='experiment.plan'
+  ON CONFLICT (id) DO NOTHING;
+END $retire_plan$;
 
 CREATE TEMP TABLE census_r AS SELECT id FROM wf_retired_instances;
 CREATE TEMP TABLE census_s AS
@@ -414,5 +429,10 @@ SELECT 'C13' AS census, c.id AS consumer, c.cursor, h.head, c.attempts, c.error
 FROM event_consumers c CROSS JOIN (SELECT COALESCE(max(id), 0) AS head FROM events) h
 WHERE c.cursor < h.head
 ORDER BY c.id;
+
+-- C14 (NULL before sessions@7 created the table)
+SELECT 'C14' AS census, 'managed runners bound to a session of a retired experiment.plan task' AS selector,
+  pg_temp.census_count('SELECT count(*) FROM session_managed_runners r JOIN worker_sessions s ON s.id = r.bound_session_id
+    WHERE s.instance_id IN (SELECT id FROM wf_retired_instances WHERE reason = ''recipe_experiment.plan_2'')') AS must_be_0;
 
 ROLLBACK;

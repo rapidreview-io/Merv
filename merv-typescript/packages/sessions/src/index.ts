@@ -362,6 +362,7 @@ export class LeasedSessions implements Sessions {
         },
         { version: 7, sql: postgresMigrations[7] },
         { version: 8, sql: managedNoncePostgresMigration },
+        { version: 9, sql: postgresMigrations[9] },
       ]);
       this.managed = new ManagedRunnerBindings(state, scope, this.clock, config.managedSecretEnv);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));

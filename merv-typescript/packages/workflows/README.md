@@ -79,8 +79,9 @@ A version that no current flow can start is retired: its program stops registeri
 migration deletes its instances with every row keyed by them. The 2026-09-22 retirement
 (task@1, experiment@1–4, reflection@1–2 and lens@1, research@2–5, consolidation, evidence
 version 1, review format 1 and the `experiment.plan@1` recipe) also removed the engine's
-`upgrade` primitive, which only task@1 used. The definition, success and execution-policy rows
-of a retired version stay as history.
+`upgrade` primitive, which only task@1 used. On 2026-09-25 the `experiment.plan` task type went
+the same way (workflows migration 8 deletes its task instances). The definition, success and
+execution-policy rows of a retired version stay as history.
 
 Workflows owns the ledger of that retirement, `wf_retired_instances` (id, project, workflow,
 version, reason). Every component migration that deletes retired records first runs the shared

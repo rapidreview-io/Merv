@@ -1166,7 +1166,8 @@
       "type": "experiment.plan",
       "version": 2,
       "hash": "bbfc2f17f64a43de9298c7045da6b533e005030b5dc0fed7a9813281df4aff85",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",

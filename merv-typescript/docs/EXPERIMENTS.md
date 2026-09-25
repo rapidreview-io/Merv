@@ -246,8 +246,8 @@ metadata-only; building a context packet reads its pinned inputs deliberately.
 
 The program owns four recipes: `experiment.design`,
 `experiment.design_review`, `experiment.execute`, and
-`experiment.attempt_review`. These are independent of Tasks' existing
-`experiment.plan@2` recipe. Packets include experiment metadata, the current paper,
+`experiment.attempt_review`. Tasks' `experiment.plan` type, the earlier way to plan an
+experiment as a task, was retired on 2026-09-25. Packets include experiment metadata, the current paper,
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 

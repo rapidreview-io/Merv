@@ -70,8 +70,7 @@ The field is set only at request (`review.request` is not a tool), is immutable,
 is part of the snapshot hash when supplied, is carried onto a reissued review
 and is returned by `review.get`, so the reviewer sees it beside the numbered
 criteria. Reviews does not know what a required criterion means: Experiments
-requires the feasibility criterion of a design review, and Tasks the
-feasibility check of an `experiment.plan` task. The rule runs where a verdict is
+requires the feasibility criterion of a design review. The rule runs where a verdict is
 submitted, inside the committing transaction, not in verdict-free guidance.
 
 Evidence IDs must be distinct within each finding and belong to the immutable
