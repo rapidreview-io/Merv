@@ -187,6 +187,11 @@ if (fleetEnabled) {
   ) {
     throw new Error('Invalid MERV_FLEET_PROJECT_LIMITS');
   }
+  // Owners that rent in the host rent through its connection: by default the Pi host's.
+  const host = process.env.MERV_FLEET_HOST_PROJECT_ID ?? process.env.MERV_PI_HOST_PROJECT_ID;
+  if (host !== undefined && !connections.some((entry) => entry.projectId === host)) {
+    throw new Error('Fleet host project has no sandbox connection');
+  }
   config.plugins.push(
     { id: 'fleet-tools', name: '@merv/fleet/tools' },
     { id: 'fleet-ui', name: '@merv/fleet/ui', required: false },
@@ -204,6 +209,7 @@ if (fleetEnabled) {
           60,
           86_400,
         ),
+        ...(host !== undefined && { hostProjectId: host }),
       },
     },
   );

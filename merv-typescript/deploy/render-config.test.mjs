@@ -311,6 +311,10 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     agentMoves: false,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(pi.PI_HOST_KEY));
+  // Fleet rents through Pi's host unless another connected project is named.
+  assert.equal(plugin('fleet').config.hostProjectId, 'project_host');
+  assert.equal(run({ ...fleet, MERV_FLEET_HOST_PROJECT_ID: 'project_1' }).status, 0);
+  assert.equal(plugin('fleet').config.hostProjectId, 'project_1');
 
   // The catalog replaces the single-profile variables, which stay only for an older image.
   const large = {
@@ -381,6 +385,7 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     { MERV_PI_HOST_PROJECT_ID: 'project.host' },
     // The host must be connected to Sandboxes: its grant rents every machine.
     { MERV_PI_HOST_PROJECT_ID: 'project_other' },
+    { MERV_FLEET_HOST_PROJECT_ID: 'project_other' },
     { MERV_SANDBOXES_CONNECTIONS: connected.MERV_SANDBOXES_CONNECTIONS },
     { MERV_PI_HOST_KEY_ENV: undefined },
     { MERV_PI_HOST_KEY_ENV: 'bad-name' },
