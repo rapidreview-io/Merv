@@ -860,4 +860,12 @@ test('the review of a reflection wave is named by the wave it reviews', () => {
     lines.agent.map((line: { name?: unknown; sentence: string }) => [line.name, line.sentence]),
     [['QA6 Ledgerline cycle: reflection', 'Waiting for a reviewer']],
   );
+  // One the viewer may claim is asked for as work: a wave is no delivery.
+  data.reviews[0]!.claimable = true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const yours = standingOf(rows as any, data as any, me, named).yours;
+  assert.deepEqual(
+    yours.map((line: { name?: unknown; sentence: string }) => [line.name, line.sentence]),
+    [['QA6 Ledgerline cycle: reflection', 'Review this work']],
+  );
 });

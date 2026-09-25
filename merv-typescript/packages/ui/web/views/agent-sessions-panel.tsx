@@ -223,7 +223,6 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
         <h3>Details</h3>
         <KV
           rows={[
-            ['Runner', observation.agent.runnerId],
             ['Joined', <Stamp at={observation.agent.createdAt} />],
             ['Context epoch', observation.agent.contextEpoch],
           ]}

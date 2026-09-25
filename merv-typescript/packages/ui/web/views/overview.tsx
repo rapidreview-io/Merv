@@ -212,9 +212,9 @@ export function standingOf(
     work.flatMap(([, items]) => items.map((item) => [item.id, { name: item.name }] as const)),
   );
   const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [] };
-  // A wave is no card of its own here, but its review is named by it as any other subject's is.
-  const subjects = new Map<string, Open>(
-    (home?.reflections ?? []).map((item) => [item.id, opened(item, item.title, item.ownerId)]),
+  // A wave's review is named by the wave, and asked for as work: a wave is no delivery.
+  const subjects = new Map<string, Omit<Open, 'workflow'> & { workflow?: Flow }>(
+    (home?.reflections ?? []).map((r) => [r.id, { id: r.id, name: r.title, owner: r.ownerId }]),
   );
   const reviewsRow = rowOf(rows, 'reviews');
   const reviews = reviewsRow ? (home?.reviews ?? []) : [];
@@ -325,7 +325,7 @@ export function standingOf(
         to: `${reviewsRow.path}/${review.id}`,
         at: review.createdAt,
         mine,
-        sentence: reviewSentence(standing, subject?.workflow.state, named(held)),
+        sentence: reviewSentence(standing, subject?.workflow?.state, named(held)),
         who: mine ? named(subject?.owner) : undefined,
         says: [],
         claim: standing === 'open' && start?.status === 'ready' ? review.id : undefined,
