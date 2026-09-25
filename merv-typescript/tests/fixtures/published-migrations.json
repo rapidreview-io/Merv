@@ -17,7 +17,7 @@
       "component": "pi",
       "version": 2,
       "hash": "53b7cc64b757944f0068476ec54db78510cb161e94fd41aa06354e95a96804a8",
-      "published": false
+      "published": true
     },
     {
       "component": "agents",
@@ -578,7 +578,7 @@
       "component": "reflections",
       "version": 3,
       "hash": "3fc259906de70a1482a1deb9adfacf9c64d20a95679422483c9eadb68a9d9800",
-      "published": false
+      "published": true
     }
   ]
 }
