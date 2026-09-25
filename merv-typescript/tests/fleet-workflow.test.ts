@@ -1,10 +1,14 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   createService,
   digest,
   MervError,
+  sourceCaller,
   type Caller,
   type DelegationSource,
   type Transaction,
@@ -15,6 +19,11 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { FleetService } from '@merv/fleet';
+import { ArtifactStore } from '@merv/artifacts';
+import { DiskBlobs } from '@merv/blobs';
+import { RecipeContextBuilder } from '@merv/context-builder';
+import { ReviewService } from '@merv/reviews';
+import { TaskService } from '@merv/tasks';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
 import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
 import type {
@@ -29,6 +38,7 @@ import {
   hostedCodexPlatform,
 } from '../packages/fleet/src/workflow.js';
 import { openState } from './fixtures/state.js';
+import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
@@ -152,7 +162,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
         capabilities: [...hostedCodexCapabilities],
       });
       await scope.require(caller, 'read');
-      const demand = demands.get(caller.projectId) ?? [];
+      const demand =
+        demands.get(caller.service ? `review:${caller.projectId}` : caller.projectId) ?? [];
       if (demand instanceof Error) throw demand;
       return { candidates: demand };
     },
@@ -560,11 +571,35 @@ test('a director who can no longer write directs nothing, and a failing project 
   assert.equal(f.serves(f.caller.projectId), false);
 });
 
+test('the review director takes only what the admin’s own hand may not, within that admin’s machines', async (t) => {
+  const f = await fixture(t, { maxAgents: 5, maxAgentsPerPerson: 2 });
+  f.demand(targets('shared', 1));
+  f.demand([...targets('shared', 1), ...targets('review', 3)], `review:${f.caller.projectId}`);
+  await f.adapter.reconcile();
+  await f.adapter.reconcile();
+  assert.deepEqual(
+    f.allocations.map((a) => [a.owner.id, a.source.kind]),
+    [
+      ['shared_0:0', 'human'],
+      ['review_0:0', 'service'],
+    ],
+  );
+});
+
 /** Real Scope, Workflows, Sessions and Fleet; only the sandbox provider is a test double. */
 async function hosted(t: TestContext, workers: number, lostLaunch = false) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
+  const directory = mkdtempSync(join(tmpdir(), 'merv-fleet-workflow-'));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const reviews = await createService(new ReviewService(state, scope, artifacts));
+  const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
+  const tasks = await createService(
+    new TaskService(state, scope, artifacts, workflows, reviews, context),
+  );
   const events = await createService(new DurableEvents(state));
   const secretEnv = `MERV_WORKFLOW_HMAC_${randomUUID().replaceAll('-', '')}`;
   const modelEnv = `MERV_WORKFLOW_KEY_${randomUUID().replaceAll('-', '')}`;
@@ -745,8 +780,10 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     await fleet.close();
     await sessions.close();
     await events.close();
+    tasks.dispose();
     await workflows.close();
     await state.close();
+    rmSync(directory, { recursive: true, force: true });
     delete process.env[secretEnv];
     delete process.env[modelEnv];
   });
@@ -758,6 +795,9 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     sessions,
     fleet,
     adapter,
+    artifacts,
+    reviews,
+    tasks,
     start: (caller: Caller, requestId = randomUUID()) =>
       workflow.start(caller, { workflow: 'hosted-bridge', requestId }),
     stopped,
@@ -768,6 +808,24 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     advance: (ms: number) => (now += ms),
   };
 }
+
+const heartbeat = (runnerId: string) => ({
+  runnerId,
+  machine: { hostname: runnerId, system: 'Linux', architecture: 'x64' },
+  platforms: [hostedCodexPlatform],
+  capabilities: [...hostedCodexCapabilities],
+  capacity: 1,
+});
+const claim = (runnerId: string) => ({
+  runnerId,
+  requestId: `claim-${runnerId}`,
+  secret: `ms_${randomBytes(32).toString('base64url')}`,
+  platform: {
+    name: hostedCodexPlatform.name,
+    harness: 'codex' as const,
+    model: hostedCodexPlatform.model,
+  },
+});
 
 /** Two projects whose founder chose Fleet; the first also has an external runner's work. */
 async function managedFleetScenario(t: TestContext, workerCount: number) {
@@ -787,23 +845,6 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
     ...(await Promise.all(Array.from({ length: workerCount }, () => h.start(first)))),
     await h.start(second),
   ];
-  const heartbeat = (runnerId: string) => ({
-    runnerId,
-    machine: { hostname: runnerId, system: 'Linux', architecture: 'x64' },
-    platforms: [hostedCodexPlatform],
-    capabilities: [...hostedCodexCapabilities],
-    capacity: 1,
-  });
-  const claim = (runnerId: string) => ({
-    runnerId,
-    requestId: `claim-${runnerId}`,
-    secret: `ms_${randomBytes(32).toString('base64url')}`,
-    platform: {
-      name: hostedCodexPlatform.name,
-      harness: 'codex' as const,
-      model: hostedCodexPlatform.model,
-    },
-  });
   // An ordinary runner claims through the existing path before Fleet reads demand.
   await sessions.heartbeatRunner(caller, heartbeat('external'));
   const externalClaim = claim('external');
@@ -937,4 +978,131 @@ test('a target that returns after more than 200 released allocations gets a new 
     (await h.fleet.listOwned(h.adapter, [])).map((a) => a.requestId),
     [requestId(201)],
   );
+});
+
+type Hosted = Awaited<ReturnType<typeof hosted>>;
+/** A task someone delivered at the desk, awaiting its review. */
+async function delivered(h: Hosted, by: Caller, requestId: string) {
+  const task = await h.tasks.create(by, {
+    title: requestId,
+    goal: 'Verify addition.',
+    checks: ['Two plus three equals five.'],
+    requestId,
+  });
+  const proof = await h.artifacts.create(by, { title: 'Proof', content: 'Observed 2 + 3 = 5.' });
+  return await h.tasks.submitDelivery(
+    by,
+    confirmedDelivery({
+      taskId: task.id,
+      expectedRevision: task.workflow.revision,
+      artifactIds: [proof.id],
+      requestId: `${requestId}-delivery`,
+    }),
+  );
+}
+/** The hosted runner on a launched allocation's machine enrolls, registers and leases once. */
+async function boot(h: Hosted, allocation: FleetAllocation) {
+  const current = await h.fleet.inspectOwned(h.adapter, allocation.id);
+  const { enrollmentToken } = JSON.parse(h.bootstraps.get(current.runtime!.sandboxId)!);
+  const enrolled = await h.sessions.enrollManaged(enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  const managed = await h.sessions.authenticateManaged(enrolled.controlToken);
+  const runnerId = `managed-${allocation.id}`;
+  await h.sessions.heartbeatRunner(managed, heartbeat(runnerId));
+  const request = claim(runnerId);
+  const { session } = await h.sessions.lease(managed, request);
+  assert.ok(session);
+  return { runnerId, session, secret: request.secret };
+}
+
+test('Fleet’s review director reviews what the admin, or Pi as them, delivered at the desk, and produces nothing', async (t) => {
+  const h = await hosted(t, 2);
+  const caller = await h.project('Reviewed');
+  await h.sessions.setDispatch(caller, { enabled: true });
+  // Pi acts with exactly its person's source, so its delivery is the founder's own.
+  const source = await h.scope.delegationSource(caller);
+  h.scope.registerConversationAuthority({ require: async () => source });
+  const pi: Caller = {
+    ...caller,
+    human: undefined,
+    conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
+  };
+  const review = await delivered(h, pi, 'pi');
+  const producing = await h.tasks.create(caller, {
+    title: 'Producing',
+    goal: 'Add.',
+    checks: ['It adds.'],
+    requestId: 'producing',
+  });
+  await h.adapter.start();
+  const allocations = await h.fleet.listOwned(h.adapter, []);
+  const by = (kind: string) => allocations.find((a) => a.source.kind === kind)!;
+  // The founder's hand takes the producing step; a fresh agent the founder vouches for reviews.
+  assert.deepEqual(
+    [by('human').owner.id, by('service').owner.id],
+    [`${producing.id}:${producing.workflow.revision}`, `${review.id}:${review.workflow.revision}`],
+  );
+  assert.deepEqual(by('service').source, {
+    actorId: by('service').source.actorId,
+    projectId: caller.projectId,
+    kind: 'service',
+    vouchedBy: source,
+  });
+  await h.fleet.tick(); // Reserve and provision.
+  await h.fleet.tick(); // Launch.
+  const machine = await boot(h, by('service'));
+  assert.deepEqual([machine.session.instanceId, machine.session.role], [review.id, 'reviewer']);
+  const claimed = await h.reviews.get(caller, review.reviewId!);
+  assert.deepEqual([claimed.status, claimed.reviewerId], ['started', machine.session.actorId]);
+  // Even named, a producing step is not its to lease.
+  await assert.rejects(
+    h.sessions.offer(sourceCaller(by('service').source), {
+      instanceId: producing.id,
+      expectedRevision: producing.workflow.revision,
+      runnerId: machine.runnerId,
+      requestId: 'produce',
+      secret: `ms_${randomBytes(32).toString('base64url')}`,
+    }),
+    { code: 'forbidden' },
+  );
+  // Nor does Fleet rent the workflow's machines to anyone who may not direct its work.
+  const reader = await h.scope.issueActor(caller, { name: 'Reader', role: 'reader' });
+  await assert.rejects(
+    h.fleet.request(
+      { projectId: caller.projectId, actorId: reader.actor.id, credentialId: reader.credential.id },
+      { requestId: 'reader', owner: { kind: 'workflow', id: `${producing.id}:0` } },
+    ),
+    { code: 'fleet_owner_denied' },
+  );
+});
+
+test('Fleet’s review director and its machine stop when the admin who vouched for it may no longer write', async (t) => {
+  const h = await hosted(t, 1);
+  const founder = await h.project('Vouched');
+  await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
+  const colleague = await h.scope.caller(await h.login('colleague'), founder.projectId);
+  await h.sessions.setDispatch(colleague, { enabled: true });
+  await delivered(h, colleague, 'colleague');
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  assert.equal(allocation?.source.kind, 'service');
+  await h.fleet.tick(); // Reserve and provision.
+  await h.fleet.tick(); // Launch.
+  const machine = await boot(h, allocation);
+  await h.sessions.authenticate(machine.secret);
+  await h.scope.changeMemberRole(h.founder, founder.projectId, {
+    subject: 'colleague',
+    role: 'reader',
+  });
+  // A demoted member no longer holds the membership the voucher named.
+  await assert.rejects(h.scope.requireDelegation(allocation.source, 'review'), {
+    code: 'membership_required',
+  });
+  // Its worker is refused, or its session already closed for that reason.
+  await assert.rejects(h.sessions.authenticate(machine.secret), (error: MervError) =>
+    /membership/.test(`${error.code} ${error.message}`),
+  );
+  await h.fleet.tick();
+  assert.equal(h.stopped.size, 1);
 });

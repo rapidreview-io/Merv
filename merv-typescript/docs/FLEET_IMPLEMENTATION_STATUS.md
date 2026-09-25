@@ -258,7 +258,11 @@ smoke passed, alongside 27 focused provider/launch tests.
   machines, acting as the admin who chose last, while that admin can write and
   is listed in `MERV_FLEET_WORKFLOW_PEOPLE` (or it is `["*"]`). Machines are
   capped in total and per person across projects, and projects without their
-  own connection rent through the host project.
+  own connection rent through the host project. Reviews that admin may not
+  direct (their own and Pi's deliveries, and Code-provenance reviews) go to a
+  second director: the project's credential-free `fleet-review` service actor, a
+  reviewer (scope@9), vouched for by the admin and valid only while they can
+  write. Its machines count against the admin and can lease only reviews.
   It carries enrollment and model credentials only through protected bootstrap,
   and waits for the supervisor's release acknowledgement and workspace capture
   before treating an assignment as finished. It adds no research dependency or

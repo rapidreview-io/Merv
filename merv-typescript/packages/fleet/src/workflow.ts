@@ -6,7 +6,6 @@ import {
   digest,
   MervError,
   sourceCaller,
-  type Actor,
   type DelegationSource,
   type Scope,
   type Transaction,
@@ -65,10 +64,14 @@ const skipped = (projectId: string, error: unknown) => {
 export class FleetWorkflowAdapter implements FleetOwner {
   /** Work in a project without its own Sandboxes connection rents through the host. */
   readonly rentsInHost = true;
+  /** Fleet asks only that a source can read; valid() holds each to its director's permission. */
+  readonly sourcePermission = 'read';
   private readonly config: z.infer<typeof workflowConfig>;
   private modelApiKey?: string;
   /** The projects the last reconcile rented for. */
   private served = new Set<string>();
+  /** Each project's review director actor, retained once made. */
+  private reviewers = new Map<string, string>();
   private disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Promise<void>;
@@ -128,8 +131,33 @@ export class FleetWorkflowAdapter implements FleetOwner {
   private accepted(a: FleetAllocation): boolean {
     return a.owner.kind === ownerKind;
   }
-  async valid(a: FleetAllocation, _tx: Transaction): Promise<boolean> {
-    return !this.closed && this.accepted(a) && a.deadlineAt > new Date(this.clock()).toISOString();
+  async valid(a: FleetAllocation, tx: Transaction): Promise<boolean> {
+    return (
+      !this.closed &&
+      this.accepted(a) &&
+      a.deadlineAt > new Date(this.clock()).toISOString() &&
+      !!(await this.director(a.source, tx))
+    );
+  }
+  /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
+   * machines: a person while they may write, the review director while it may review. */
+  private director(source: DelegationSource, tx?: Transaction) {
+    return this.scope
+      .requireDelegation(source, source.kind === 'service' ? 'review' : 'write', tx)
+      .catch((error: unknown) => {
+        if (error instanceof MervError && [401, 403].includes(error.status)) return null;
+        throw error;
+      });
+  }
+  /** Fleet's own reviewer in the admin's project, vouched for by that admin, so a fresh agent
+   * reviews what their hand may not: their and Pi's deliveries, and Code-provenance reviews. */
+  private async reviewer(source: DelegationSource): Promise<DelegationSource> {
+    const { projectId } = source;
+    const actorId =
+      this.reviewers.get(projectId) ??
+      (await this.scope.serviceActor('fleet-review', projectId, undefined, 'reviewer')).actorId;
+    this.reviewers.set(projectId, actorId);
+    return { actorId, projectId, kind: 'service', vouchedBy: source };
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
@@ -209,29 +237,35 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }));
   }
   /** Serves each project whose admin chose Fleet, as that admin, while they may write and are
-   * one of its people; a failure in one project leaves the others served. */
+   * one of its people, and its reviews that admin may not direct through its review director;
+   * a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
     this.modelApiKey ??= process.env[this.config.modelApiKeyEnv!];
     check(this.modelApiKey, 'fleet_workflow_secret', 'Fleet model key is unavailable', 503);
-    // Who a source acts as while it may write; null once it may not, which also stops its machines.
-    const director = (source: DelegationSource) =>
-      this.scope.requireDelegation(source, 'write').catch((error: unknown) => {
-        if (error instanceof MervError && [401, 403].includes(error.status)) return null;
-        throw error;
-      });
     // One person across projects: their sign-in identity, else the machine actor itself, which
-    // only '*' lists, since an identity is two words.
-    const person = (actor: Actor | null, source: DelegationSource) =>
-      actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : (actor?.id ?? source.actorId);
+    // only '*' lists, since an identity is two words. A review director counts as its voucher.
+    const person = async (source: DelegationSource) => {
+      if (source.kind === 'service') source = source.vouchedBy;
+      const actor = await this.director(source);
+      return {
+        actor,
+        who: actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : source.actorId,
+      };
+    };
     const everyone = this.config.people.includes('*');
-    const served = new Map<string, { source: DelegationSource; who: string; wanted: string[] }>();
+    // Each target a project wants, with the director whose machine takes it.
+    const served = new Map<string, { who: string; wanted: Map<string, DelegationSource> }>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
-        const actor = await director(source);
-        const who = person(actor, source);
+        const { actor, who } = await person(source);
         if (!actor || !(everyone || this.config.people.includes(who))) continue;
-        const demand = await this.sessions.dispatchDemand(sourceCaller(source), demandInput);
-        served.set(projectId, { source, who, wanted: demand.candidates.map(targetId) });
+        const wanted = new Map<string, DelegationSource>();
+        for (const director of [source, await this.reviewer(source)])
+          for (const target of (
+            await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
+          ).candidates)
+            if (!wanted.has(targetId(target))) wanted.set(targetId(target), director);
+        served.set(projectId, { who, wanted });
       } catch (error) {
         skipped(projectId, error);
       }
@@ -239,25 +273,21 @@ export class FleetWorkflowAdapter implements FleetOwner {
     this.served = new Set(served.keys());
     const allocations = await this.fleet.listOwned(
       this,
-      [...served.values()].flatMap((project) => project.wanted),
+      [...served.values()].flatMap((project) => [...project.wanted.keys()]),
     );
     const active = allocations.filter(occupied);
     for (const a of active)
-      if (
-        a.intent === 'run' &&
-        !launched(a) &&
-        !served.get(a.projectId)?.wanted.includes(a.owner.id)
-      )
+      if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.wanted.has(a.owner.id))
         await this.fleet.cancelOwned(this, a.id);
     const load = new Map<string, number>();
     for (const a of active) {
-      const who = person(await director(a.source), a.source);
+      const { who } = await person(a.source);
       load.set(who, (load.get(who) ?? 0) + 1);
     }
     const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
     let slots = Math.max(0, this.config.maxAgents - active.length);
-    const queue = [...served].flatMap(([projectId, { source, who, wanted }]) =>
-      wanted.map((id) => ({ projectId, source, who, id })),
+    const queue = [...served].flatMap(([projectId, { who, wanted }]) =>
+      [...wanted].map(([id, source]) => ({ projectId, source, who, id })),
     );
     for (const { projectId, source, who, id } of queue) {
       if (!slots || covered.has(id) || !this.served.has(projectId)) continue;
