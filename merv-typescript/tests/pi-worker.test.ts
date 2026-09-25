@@ -676,6 +676,18 @@ test('no output cap is sent; an answer the model itself stops for length says so
   assert.deepEqual(toolCut.completions[0].messages, [{ role: 'assistant', text: note }]);
 });
 
+test('every tool is sent with strict false, so the model may leave an optional input out', async () => {
+  // Without it OpenAI treats a function as strict and makes every property required, and the
+  // model invents values for inputs it should omit (a baseTaskId of "x" on a workspace-free
+  // experiment, refused 25 times in production on 2026-09-25).
+  const app = await fixture({});
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const tools = app.modelRequests[0].tools as { name: string; strict?: unknown }[];
+  assert.ok(tools.length);
+  for (const tool of tools) assert.equal(tool.strict, false, tool.name);
+});
+
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
   // Bytes bind the first conversation (gpt-6-luna's 304 KB beside 128 KB of tool results); relay
   // items bind the second.

@@ -404,8 +404,10 @@ async function executeTurn(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens,
-    // The model's own maximum applies: no max_output_tokens is sent.
-    compat: { supportsMaxOutputTokens: false },
+    // The model's own maximum applies: no max_output_tokens is sent. Every tool is sent with
+    // strict false: OpenAI reads a function without it as strict, which makes every optional
+    // input required and the model invent values for them.
+    compat: { supportsMaxOutputTokens: false, supportsStrictMode: true },
   };
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
