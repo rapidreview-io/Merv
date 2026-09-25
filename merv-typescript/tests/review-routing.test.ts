@@ -151,6 +151,7 @@ test('review owner registration is closed, copied, unique and safe against stale
     { ...valid, id: '../bad' },
     { ...valid, owns: true },
     { ...valid, submit: undefined },
+    { ...valid, claim: true },
     Object.create(valid),
     Object.defineProperty({ ...valid }, 'id', {
       get() {

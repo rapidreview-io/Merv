@@ -232,7 +232,7 @@ const GIT_REVIEW =
  * leased. The reviewer is told before claiming, because afterwards only a reissue frees the task.
  */
 const GIT_CLAIM =
-  'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it. Claim it only as that worker. A claim made without a lease can return or fail the task but never pass it, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
+  'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
@@ -330,6 +330,12 @@ export class TaskService implements Tasks {
               review.projectId,
             )),
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+          // Only the task's own current review has a pool of leased reviewers to shut out.
+          claim: async (caller, review, tx) => {
+            const row = await this.row(tx, caller, review.subjectId);
+            if (row.review_id === review.id)
+              await this.leasedClaim(caller, await this.workflows.get(caller, row.id, tx), tx);
+          },
         });
       } catch (error) {
         this.dispose();
@@ -417,6 +423,22 @@ export class TaskService implements Tasks {
           task_id: lease.instanceId,
         }),
     };
+  }
+
+  /**
+   * A claim made without a lease can never pass a Git task and shuts every leased reviewer out,
+   * so it is admitted only once review_rounds is used up: no runner is offered the review then,
+   * and the person the limit waits for may still end the task.
+   */
+  private async leasedClaim(caller: Caller, snapshot: WorkflowSnapshot, tx: Transaction) {
+    if (caller.session || taskWorkspace(snapshot.version) === 'none') return;
+    const limit = await this.workflows.limitStatus(caller, snapshot.id, 'review_rounds', tx);
+    check(
+      limit.from === snapshot.state && limit.exhausted,
+      'leased_review_required',
+      'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task',
+      403,
+    );
   }
 
   private async leaseRole({ caller, snapshot, tx }: WorkflowCheckContext): Promise<Role> {
@@ -835,14 +857,7 @@ export class TaskService implements Tasks {
               'reviewId must match this task submission',
               409,
             );
-            // Reviews admits an interactive claim of a Git review, which can never pass it and
-            // shuts every leased reviewer out, so it is offered to nobody interactive.
-            check(
-              context.caller.session || taskWorkspace(context.snapshot.version) === 'none',
-              'leased_review_required',
-              'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task',
-              403,
-            );
+            await this.leasedClaim(context.caller, context.snapshot, context.tx);
             await this.reviews.checkStart(context.caller, review.id, context.tx);
           },
         },

@@ -1519,6 +1519,8 @@ export interface ReviewSubmitOwner {
   id: string;
   owns(review: Readonly<ReviewRequest>, tx: Transaction): boolean | Promise<boolean>;
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
+  /** Refuses a claim of an owned review that the owner's rules could never let finish. */
+  claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
 }
 export interface Reviews {
   provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
