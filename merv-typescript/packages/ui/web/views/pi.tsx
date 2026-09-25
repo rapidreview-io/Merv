@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import {
   ApiError,
   call,
@@ -18,6 +17,8 @@ import {
   type PiConversation,
   type PiDelta,
   type PiEvent,
+  type PiHostView,
+  type PiMachine,
   type PiSnapshot,
 } from '../pi-stream';
 import { stepped } from '../record-picker';
@@ -73,7 +74,7 @@ const STOPPED: Record<string, string> = {
   ambiguous_prompt: 'The question may not have reached the agent. Ask again.',
   checkpoint_unavailable: 'The answer could not be saved. Ask again.',
 };
-const NOT_SET_UP = 'Agent isn’t set up for this project yet.';
+const UNAVAILABLE = 'Agent isn’t available right now.';
 /** What the server calls a conversation until Pi names it; until then its first question does. */
 const UNNAMED = 'New conversation';
 const clip = (text: string) => (text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text);
@@ -81,37 +82,22 @@ const RECONNECTING = 'Reconnecting…';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
 const said = (cause: unknown, fallback: string): string => {
   if (!(cause instanceof ApiError)) return fallback;
-  if (cause.code === 'pi_runtime_releasing')
-    return 'The previous agent is still finishing. Send again in a moment.';
   if (cause.status === 0) return 'Merv didn’t answer. Try again.';
   if (cause.status >= 500 || cause.code.startsWith('http_') || cause.code === 'invalid_response')
     return 'Something went wrong on the server. Try again.';
   return cause.message;
 };
-/** The previous agent refuses for a moment while it is released; the same request asks again. */
-async function whileReleasing<T>(
-  request: () => Promise<T>,
-  alive: () => boolean,
-  waiting = () => {},
-) {
-  const until = Date.now() + 60_000;
-  for (;;) {
-    try {
-      return await request();
-    } catch (cause) {
-      const releasing = cause instanceof ApiError && cause.code === 'pi_runtime_releasing';
-      if (!releasing || Date.now() > until) throw cause;
-      waiting();
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      if (!alive()) return null;
-    }
-  }
-}
-/** Starts the agent's machine before anything is sent, quietly: it never holds up a question. */
-const warm = (id: string | null, alive: () => boolean, requestId = identifier()) => {
-  const input = { requestId, ...(id ? { conversationId: id } : {}) };
-  return whileReleasing(() => call<PiSnapshot>('pi.warm', input), alive).catch(() => null);
-};
+/** Starts the person's machine here before anything is sent, quietly: it never holds up a
+ * question. */
+const warm = (id: string | null, requestId = identifier()) =>
+  call<PiSnapshot>('pi.warm', { requestId, ...(id ? { conversationId: id } : {}) }).catch(
+    () => null,
+  );
+/** ½ vCPU · 4 GiB, with the disk where a machine is chosen. */
+const specs = ({ vcpu, memoryGiB, diskGB }: PiMachine, disk = false) =>
+  `${vcpu % 1 === 0.5 ? `${Math.floor(vcpu) || ''}½` : vcpu} vCPU · ${memoryGiB} GiB${disk ? ` · ${diskGB} GB` : ''}`;
+const label = (host: PiHostView | undefined, key: string) =>
+  host?.catalog.find((machine) => machine.key === key)?.label ?? key;
 /** How long the current wait has lasted by the server's clock, `skew` ms ahead of this one; a
  * screen reader hears only what is waited on. */
 function Seconds({ since, skew }: { since: string; skew: number }) {
@@ -120,6 +106,165 @@ function Seconds({ since, skew }: { since: string; skew: number }) {
     <span className="tabular" aria-hidden="true">
       {` · ${Math.max(0, Math.floor((now + skew - Date.parse(since)) / 1000)) || 0} s`}
     </span>
+  );
+}
+/** Operated as the account menu is: the cursor goes to its first item, the arrows, Home and End
+ * move it, Escape hands it back to the button, and Tab or a click elsewhere shuts it. A menu that
+ * turns into its guard is a new `open`, so the cursor starts again at its first item. */
+function useMenu(box: RefObject<HTMLElement>, open: unknown, shut: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const items = () => [
+      ...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? []),
+    ];
+    items()[0]?.focus();
+    const click = (event: MouseEvent) => {
+      if (!box.current?.contains(event.target as Node)) shut();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        shut();
+        box.current?.querySelector('button')?.focus();
+      } else if (event.key === 'Tab') shut();
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const all = items();
+        all[
+          stepped(all.indexOf(document.activeElement as HTMLElement), all.length, event.key)
+        ]?.focus();
+        event.preventDefault();
+      }
+    };
+    document.addEventListener('mousedown', click);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', click);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+}
+
+/** The person's machine in this project, which all their conversations here share: what it is, a
+ * move under way or one that failed, and the picker. Stopping it asks first. */
+function Machine({
+  host,
+  skew,
+  choose,
+  stop,
+}: {
+  host: PiHostView;
+  skew: number;
+  choose(key: string): void;
+  stop(): void;
+}) {
+  const [menu, setMenu] = useState<false | 'pick' | 'stop'>(false);
+  const box = useRef<HTMLDivElement>(null);
+  useMenu(box, menu, () => setMenu(false));
+  const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
+  if (!on) return null;
+  const chosen = host.moving?.to ?? on.key;
+  const move = host.lastMove;
+  // A move that failed is news for as long as a machine's idle wait.
+  const failed =
+    host.machine &&
+    !host.moving &&
+    move?.outcome === 'failed' &&
+    Date.now() + skew - Date.parse(move.at) < 600_000;
+  const { conversations, projects } = host.shared;
+  const shared = conversations > 1;
+  const facts = [
+    shared &&
+      `Shared by your ${conversations} conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
+    `Stops 10 minutes after the last answer${shared ? ' in any of them' : ''}.`,
+    `Up to $${on.maxHourlyUsd.toFixed(2)}/h.`,
+  ];
+  const close = (then = () => {}) => {
+    setMenu(false);
+    box.current?.querySelector('button')?.focus();
+    then();
+  };
+  const actions: [string, () => void, string?][] =
+    menu === 'stop'
+      ? [
+          ['Stop machine', () => close(stop), ' pi-menu-item--danger'],
+          ['Cancel', () => setMenu('pick')],
+        ]
+      : host.state === 'none'
+        ? []
+        : [['Stop machine', () => setMenu('stop')]];
+  return (
+    <div className="pi-switch pi-machine" ref={box}>
+      <button
+        type="button"
+        className="pi-switch-button pi-machine-button"
+        aria-haspopup="menu"
+        aria-expanded={!!menu}
+        onClick={() => setMenu((value) => (value ? false : 'pick'))}
+      >
+        <span aria-live="polite">
+          {host.moving ? (
+            <>
+              Moving to a {label(host, host.moving.to)} machine
+              <Seconds since={host.moving.since} skew={skew} />
+            </>
+          ) : failed ? (
+            `Couldn’t start ${label(host, move.to)}${move.reason ? `: ${move.reason}` : ''}. Still on ${on.label}.`
+          ) : (
+            <>
+              {host.machine ? 'Runs on' : 'Starts on'} {on.label}
+              <span className="pi-machine-specs"> · {specs(on)}</span>
+            </>
+          )}
+        </span>
+        <ChevronsIcon />
+      </button>
+      {menu && (
+        <div
+          className="pi-menu"
+          role="menu"
+          aria-label="Machine"
+          aria-describedby="pi-machine-facts"
+        >
+          <p className="pi-menu-note" id="pi-machine-facts" role="none">
+            {menu === 'stop'
+              ? 'Answers still running here stop too.'
+              : facts.filter(Boolean).join(' ')}
+          </p>
+          {menu === 'pick' &&
+            host.catalog.map((machine) => (
+              <button
+                key={machine.key}
+                type="button"
+                role="menuitemradio"
+                tabIndex={-1}
+                className="pi-menu-item"
+                aria-checked={machine.key === chosen}
+                aria-disabled={!machine.available || undefined}
+                onClick={() => {
+                  if (!machine.available) return;
+                  close();
+                  // The machine it runs on, picked during a move, calls the move off.
+                  if (machine.key !== chosen) choose(machine.key);
+                }}
+              >
+                <span>{machine.label}</span>
+                <small>{machine.available ? specs(machine, true) : machine.reason}</small>
+              </button>
+            ))}
+          {actions.map(([words, act, tone = '']) => (
+            <button
+              key={words}
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              className={`pi-menu-item${tone}`}
+              onClick={act}
+            >
+              {words}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -132,7 +277,6 @@ function PiConversationPage() {
   const [menu, setMenu] = useState(false);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [finishing, setFinishing] = useState(false);
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
   const [streamError, setStreamError] = useState('');
@@ -150,9 +294,7 @@ function PiConversationPage() {
   // How far the server's clock ran ahead of this one when the latest snapshot arrived.
   const skew = useRef(0);
   const selection = useRef<string | null>(null);
-  // The page's first conversation warms at once; another only once a question is begun in it.
-  const eager = useRef(true);
-  const warming = useRef<string | null>(null);
+  const warming = useRef(false);
   const scope = useRef({
     epoch: scopeVersion(),
     identity: identityVersion(),
@@ -211,23 +353,22 @@ function PiConversationPage() {
     setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
     choose(item.id);
   };
-  /** Starts a machine for the open conversation if it has none; merely looking at one leaves the
-   * person's warm machine where it is. */
+  /** Starts the person's machine here when there is none, as a conversation opens or a question
+   * is begun; a machine that stopped while the page stood open stays stopped until then. */
   const warmUp = () => {
     const id = selection.current;
     const current = canonical.current;
-    const item = current?.conversation;
-    if (!id || warming.current === id || item?.id !== id || !current?.available) return;
-    if (item.runtimeId || item.activeCommandId) return;
-    warming.current = id;
-    void warm(id, () => valid() && selection.current === id).then((next) => {
-      if (warming.current === id) warming.current = null;
+    if (!id || warming.current || current?.conversation.id !== id || !current.available) return;
+    if (current.host?.state !== 'none') return;
+    warming.current = true;
+    void warm(id).then((next) => {
+      warming.current = false;
       if (next) replace(next);
     });
   };
 
-  // Opening the page reads the conversations there are and opens the one whose machine is warm,
-  // else the newest; with none, warming the agent opens one.
+  // Opening the page reads the conversations there are and opens the newest; with none, warming
+  // the agent opens one.
   useEffect(() => {
     let cancelled = false;
     const fresh = () => !cancelled && valid() && !selection.current;
@@ -236,14 +377,11 @@ function PiConversationPage() {
       (items) => {
         if (cancelled || !valid()) return;
         setConversations(items);
-        const kept =
-          items.find((item) => item.id === selection.current) ??
-          items.find((item) => item.runtimeId) ??
-          items[0];
+        const kept = items.find((item) => item.id === selection.current) ?? items[0];
         if (kept) choose(kept.id);
-        // A question sent while this waits out a release opens the same conversation, not another.
+        // A question sent before this answers opens the same conversation, not another.
         else
-          void warm(null, fresh, createId.current).then((next) => {
+          void warm(null, createId.current).then((next) => {
             if (next && fresh()) adopt(next.conversation);
           });
         setListed(true);
@@ -328,9 +466,7 @@ function PiConversationPage() {
       .then(() => {
         if (!alive()) return;
         void connect();
-        // New conversation hands the composer the cursor, which begins a question there too.
-        if (eager.current || document.activeElement === composer.current) warmUp();
-        eager.current = false;
+        warmUp();
       });
     return () => {
       stopped = true;
@@ -359,23 +495,25 @@ function PiConversationPage() {
       ? response
       : null;
   const stage = snapshot?.stage;
-  // Words streamed after the stage was read say the answer is being written before it does.
+  const host = snapshot?.host;
+  // Words streamed after the stage was read say the answer is being written before it does. A
+  // move leaves the machine it runs on serving, and the machine's own note counts the move.
   const step =
-    stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
-      ? 'writing'
-      : (stage?.name ?? '');
+    stage?.name === 'moving'
+      ? 'ready'
+      : stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
+        ? 'writing'
+        : (stage?.name ?? '');
   const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
   // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
   // while the stream that would end it is away.
   const [words, tone, since]: [string, string, string?] = unavailable
     ? ['Unavailable', '']
-    : finishing
-      ? ['Finishing the previous agent…', 'active']
-      : !phrase
-        ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
-        : WAITS.includes(step)
-          ? [phrase, 'active', streamError ? undefined : stage?.since]
-          : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
+    : !phrase
+      ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
+      : WAITS.includes(step)
+        ? [phrase, 'active', streamError ? undefined : stage?.since]
+        : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
   const state = (
     <>
       <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
@@ -392,37 +530,7 @@ function PiConversationPage() {
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
   const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
-  // Operated as the account menu is: the cursor goes to its first item, the arrows, Home and
-  // End move it, Escape hands it back to the button, and Tab or a click elsewhere shuts it.
-  useEffect(() => {
-    if (!menu) return;
-    const items = () => [
-      ...(switcher.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []),
-    ];
-    items()[0]?.focus();
-    const click = (event: MouseEvent) => {
-      if (!switcher.current?.contains(event.target as Node)) setMenu(false);
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMenu(false);
-        switcher.current?.querySelector('button')?.focus();
-      } else if (event.key === 'Tab') setMenu(false);
-      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-        const all = items();
-        all[
-          stepped(all.indexOf(document.activeElement as HTMLElement), all.length, event.key)
-        ]?.focus();
-        event.preventDefault();
-      }
-    };
-    document.addEventListener('mousedown', click);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', click);
-      document.removeEventListener('keydown', key);
-    };
-  }, [menu]);
+  useMenu(switcher, menu, () => setMenu(false));
 
   const open = async () => {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
@@ -462,11 +570,7 @@ function PiConversationPage() {
     try {
       id ??= await open();
       if (!id) return;
-      await whileReleasing(
-        () => call('pi.send', { id, commandId, text }),
-        () => valid() && selection.current === id,
-        () => setFinishing(true),
-      );
+      await call('pi.send', { id, commandId, text });
       if (!valid() || selection.current !== id) return;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
@@ -480,9 +584,23 @@ function PiConversationPage() {
     } finally {
       if (valid()) {
         setBusy(false);
-        setFinishing(false);
         composer.current?.focus();
       }
+    }
+  };
+  /** The picker answers with the machine as it now stands, the same in every conversation here. */
+  const machine = async (
+    tool: 'pi.machine.set' | 'pi.machine.stop',
+    input: Record<string, string>,
+  ) => {
+    setError('');
+    try {
+      const next = await call<PiHostView>(tool, input);
+      if (!valid() || !canonical.current) return;
+      canonical.current = { ...canonical.current, host: next };
+      setSnapshot((value) => value && { ...value, host: next });
+    } catch (cause) {
+      if (valid()) setError(said(cause, 'Could not change the machine.'));
     }
   };
   const stop = async () => {
@@ -558,15 +676,18 @@ function PiConversationPage() {
               </div>
             )}
           </div>
-          {!blocked && (snapshot || finishing) && (
+          {!blocked && snapshot && (
             <div className="pi-state" role="status">
               {state}
-              {snapshot?.conversation.runtimeId && (
-                <Link to={`/fleet/${encodeURIComponent(snapshot.conversation.runtimeId)}`}>
-                  Fleet details
-                </Link>
-              )}
             </div>
+          )}
+          {!blocked && !unavailable && host && (
+            <Machine
+              host={host}
+              skew={skew.current}
+              choose={(key) => void machine('pi.machine.set', { machine: key })}
+              stop={() => void machine('pi.machine.stop', {})}
+            />
           )}
         </div>
       )}
@@ -581,8 +702,14 @@ function PiConversationPage() {
             following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
           }}
         >
-          {snapshot?.commands.flatMap((item) =>
-            item.messages.map((message, index) => (
+          {snapshot?.commands.flatMap((item, at, all) => [
+            // Where the machine changed between two turns.
+            item.machine && all[at - 1]?.machine && item.machine !== all[at - 1].machine && (
+              <p className="pi-divider" key={`${item.id}-machine`}>
+                Moved to {label(host, item.machine)}
+              </p>
+            ),
+            ...item.messages.map((message, index) => (
               <article
                 className={`pi-message pi-message--${message.role}`}
                 key={`${item.id}-${index}`}
@@ -595,7 +722,7 @@ function PiConversationPage() {
                 )}
               </article>
             )),
-          )}
+          ])}
           {visible && (visible.text || visible.progress) && (
             <article className="pi-message pi-message--assistant pi-message--transient">
               <span className="pi-speaker">Agent · live</span>
@@ -613,7 +740,7 @@ function PiConversationPage() {
             <p className="muted">Loading conversation…</p>
           ) : blocked ? (
             <p className="muted" role="status">
-              {NOT_SET_UP}
+              {UNAVAILABLE}
             </p>
           ) : (
             !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>

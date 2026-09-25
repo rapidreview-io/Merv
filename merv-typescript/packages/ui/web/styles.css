@@ -4380,8 +4380,9 @@ del.cut {
   }
 }
 
-/* Agent: the conversation has the window. One slim bar says which conversation it is and
-   how its turn stands; the transcript scrolls between that bar and the composer. */
+/* Agent: the conversation has the window. One slim bar says which conversation it is, how its
+   turn stands and the machine it runs on; the transcript scrolls between that bar and the
+   composer. */
 .main:has(> .pi-page) {
   display: flex;
   flex-direction: column;
@@ -4403,17 +4404,30 @@ del.cut {
   align-items: center;
   gap: var(--space-2);
 }
-.pi-bar {
-  justify-content: space-between;
+.pi-bar > .pi-state {
+  margin-left: auto;
 }
-/* On a phone the turn's state keeps a line of its own, so neither the conversation's name nor
-   the bar's height moves with its words. */
+/* On a phone the conversation's name keeps a line of its own, so it never moves with the words
+   of the turn and the machine under it; the machine's note drops its figures there. */
 @media (max-width: 720px) {
   .pi-bar {
     flex-wrap: wrap;
   }
-  .pi-bar > .pi-state {
+  .pi-bar > .pi-switch:first-child {
     flex-basis: 100%;
+  }
+  .pi-bar > .pi-state {
+    margin-left: 0;
+  }
+  .pi-machine {
+    margin-left: auto;
+  }
+  .pi-machine-specs {
+    display: none;
+  }
+  /* A move that failed is said whole, on a line of its own if it needs one. */
+  .pi-machine .pi-machine-button span {
+    white-space: normal;
   }
 }
 .pi-switch {
@@ -4441,6 +4455,13 @@ del.cut {
 .pi-switch-button[aria-expanded='true'] {
   background: var(--bg-soft);
 }
+.pi-machine-button {
+  margin: 0 -8px 0 0;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+}
 .pi-switch-button span,
 .pi-menu-item span {
   min-width: 0;
@@ -4458,21 +4479,39 @@ del.cut {
   max-height: min(60vh, 420px);
   overflow: auto;
 }
+.pi-machine .pi-menu {
+  inset: calc(100% + 4px) -8px auto auto;
+}
+.pi-menu-note {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
 .pi-menu-item {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: var(--space-3);
 }
-.pi-menu-item[aria-current='true'] {
+.pi-menu-item:is([aria-current='true'], [aria-checked='true']) {
   color: var(--text);
   font-weight: 600;
 }
-.pi-menu-item time {
+.pi-menu-item :is(time, small) {
   flex: none;
   font-size: var(--text-xs);
   font-weight: 400;
   color: var(--faint);
+}
+/* A machine this person may not choose here says why in place of its figures. */
+.pi-menu-item[aria-disabled='true'] {
+  color: var(--faint);
+  background: none;
+  cursor: default;
+}
+.pi-menu-item.pi-menu-item--danger {
+  color: var(--refutes);
 }
 .pi-state {
   flex: none;
@@ -4509,6 +4548,22 @@ del.cut {
 }
 .pi-message {
   max-width: min(100%, 72ch);
+}
+/* Where the machine changed between two turns: one quiet line across the transcript. */
+.pi-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: none;
+  margin: 0;
+  color: var(--faint);
+  font-size: var(--text-xs);
+}
+.pi-divider::before,
+.pi-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--line);
 }
 /* Who said what is where it stands: your words on a faint ground to the right, the agent's
    on the page itself. */
