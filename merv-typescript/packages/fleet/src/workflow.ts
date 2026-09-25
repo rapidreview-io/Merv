@@ -6,13 +6,14 @@ import {
   digest,
   MervError,
   sourceCaller,
+  type Caller,
   type DelegationSource,
   type Scope,
   type Transaction,
 } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
-import { codexModelRelay } from './codex-relay.js';
+import { codexModelRelay, dailyTokens, setDailyTokens } from './codex-relay.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
 const workflowConfig = z
@@ -359,7 +360,7 @@ declare module 'cordis' {
 
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
-  inject: ['fleet', 'sessions', 'scope', 'api', 'state'],
+  inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
   async apply(ctx: Context, config: FleetWorkflowConfig = {}) {
     const adapter = new FleetWorkflowAdapter(ctx.fleet, ctx.sessions, ctx.scope, config);
     await adapter.start();
@@ -371,6 +372,32 @@ export const fleetWorkflowPlugin = {
         dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       });
       ctx.effect(() => ctx.api.mountModelRelay('/codex-model', relay));
+      // A person's own daily limit: only they, signed in, read or change it, never an agent.
+      const person = (caller: Caller) => {
+        check(
+          caller.human && !caller.key && !caller.session && !caller.conversation,
+          'fleet_forbidden',
+          'Only you, signed in, can see or change your daily tokens',
+          403,
+        );
+        return digest({ issuer: caller.human!.issuer, subject: caller.human!.subject });
+      };
+      ctx.effect(() =>
+        ctx.tools.register({
+          name: 'fleet.daily_tokens',
+          conversation: 'never' as const,
+          description:
+            'Your own daily limit of model tokens for Fleet workers, and what they used today (UTC). Only you, signed in, can change it.',
+          inputSchema: z
+            .object({ tokens: z.number().int().min(1).max(1_000_000_000).optional() })
+            .strict(),
+          handler: async (caller: Caller, input: { tokens?: number }) => {
+            const who = person(caller);
+            if (input.tokens !== undefined) await setDailyTokens(ctx.state, who, input.tokens);
+            return await dailyTokens(ctx.state, who, adapter.config.dailyTokensPerPerson);
+          },
+        }),
+      );
     }
     ctx.provide('fleetWorkflow', adapter);
   },

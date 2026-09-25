@@ -5,7 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { MervError } from '@merv/contracts';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
-import { codexModelRelay, codexPayload } from '../packages/fleet/src/codex-relay.js';
+import {
+  codexModelRelay,
+  codexPayload,
+  dailyTokens,
+  setDailyTokens,
+} from '../packages/fleet/src/codex-relay.js';
 import { openState } from './fixtures/state.js';
 
 const key = 'private-provider-key';
@@ -114,6 +119,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
       )?.tokens ?? 0,
     );
   return {
+    state,
     call,
     start,
     upstream,
@@ -253,4 +259,21 @@ test('the provider key never reaches a response or a log', async (t) => {
   const logs = f.logs.join('');
   assert.match(logs, /"event":"codex_relay_usage"/);
   for (const text of [...bodies, logs]) assert.equal(text.includes(key), false);
+});
+
+test('a person’s own daily limit governs their calls, above or below the deployment’s', async (t) => {
+  const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
+  const f = await fixture(t, most - 1);
+  assert.equal((await f.call()).status, 403, 'the deployment’s limit is below one call');
+  await setDailyTokens(f.state, grant.person, most + 50);
+  assert.equal((await f.call()).status, 200);
+  const deadline = Date.now() + 5000;
+  while ((await f.spent()) !== 110 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(await dailyTokens(f.state, grant.person, most - 1), {
+    tokens: most + 50,
+    usedToday: 110,
+  });
+  await setDailyTokens(f.state, grant.person, 100);
+  assert.equal((await f.call()).status, 403);
 });

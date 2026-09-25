@@ -14,6 +14,15 @@ export const usageMigration = {
   );`,
 };
 
+/** A person's own daily limit, where they set one (founder ruling 2026-09-25). */
+export const limitsMigration = {
+  version: 2,
+  sql: `CREATE TABLE fleet_model_limits (
+    person TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL
+  );`,
+};
+
 const maxRequestBytes = 16 * 1024 * 1024;
 /** One call's output, reasoning included: well above a step's longest answer, and a bound on a
  *  single call's spend. */
@@ -98,6 +107,31 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
 }
 
 const day = () => new Date().toISOString().slice(0, 10);
+
+/** A person's daily Fleet model tokens: their own limit, else the deployment's; and today's use. */
+export async function dailyTokens(state: State, person: string, fallback: number) {
+  return await state.read(async (sql) => {
+    const own = await sql.get<{ tokens: number | string }>(
+      'SELECT tokens FROM fleet_model_limits WHERE person=?',
+      person,
+    );
+    const used = await sql.get<{ tokens: number | string }>(
+      'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
+      person,
+      day(),
+    );
+    return { tokens: Number(own?.tokens ?? fallback), usedToday: Number(used?.tokens ?? 0) };
+  });
+}
+export async function setDailyTokens(state: State, person: string, tokens: number) {
+  await state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO fleet_model_limits(person,tokens) VALUES(?,?) ON CONFLICT(person) DO UPDATE SET tokens=excluded.tokens',
+      person,
+      tokens,
+    ),
+  );
+}
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
 
 /**
@@ -112,7 +146,7 @@ export async function codexModelRelay(
   state: State,
   options: { providerKey: () => string; dailyTokensPerPerson: number },
 ): Promise<ModelRelayConfig<ManagedModelGrant, 'codex'>> {
-  await state.migrate('fleet_workflow', [usageMigration]);
+  await state.migrate('fleet_workflow', [usageMigration, limitsMigration]);
   // The day each session's one call in flight was charged to.
   const days = new Map<string, string>();
   return {
@@ -128,17 +162,23 @@ export async function codexModelRelay(
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
       const today = day();
-      const charged =
-        most <= options.dailyTokensPerPerson &&
-        (await state.transaction((tx) =>
-          tx.get(
+      const charged = await state.transaction(async (tx) => {
+        const own = await tx.get<{ tokens: number | string }>(
+          'SELECT tokens FROM fleet_model_limits WHERE person=?',
+          grant.person,
+        );
+        const ceiling = Number(own?.tokens ?? options.dailyTokensPerPerson);
+        return (
+          most <= ceiling &&
+          (await tx.get(
             'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens WHERE fleet_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
             grant.person,
             today,
             most,
-            options.dailyTokensPerPerson,
-          ),
-        ));
+            ceiling,
+          ))
+        );
+      });
       if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
       check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);
       days.set(grant.id, today);

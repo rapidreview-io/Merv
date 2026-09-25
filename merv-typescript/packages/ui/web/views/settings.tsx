@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTool } from '../api';
+import { useCommand } from '../mutations';
 import { EmptyState, KV, LoadState, Ruled, StatusPill, Summary, col, cx } from '../components';
 import { ThreeStates } from '../states';
 import type { PluginState, Row } from '../shell-types';
@@ -159,9 +160,60 @@ function Plugins({ shell }: ViewProps) {
   );
 }
 
+/** A person's own daily limit of Fleet workers' model tokens, and what they used today. */
+function DailyTokens() {
+  const limit = useTool<{ tokens: number; usedToday: number }>('fleet.daily_tokens');
+  const [draft, setDraft] = useState<string>();
+  const save = useCommand<{ tokens: number }>({
+    tool: 'fleet.daily_tokens',
+    idempotent: true,
+    validate: (value) => Number.isSafeInteger(value?.tokens),
+    onSuccess: () => {
+      setDraft(undefined);
+      limit.reload();
+    },
+  });
+  if (!limit.data) return null;
+  const value = draft ?? String(limit.data.tokens);
+  const tokens = Number(value);
+  return (
+    <form
+      className="cluster"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save.submit({ tokens });
+      }}
+    >
+      <input
+        className="input"
+        type="number"
+        aria-label="Fleet tokens per day"
+        min={1}
+        max={1_000_000_000}
+        step={1}
+        value={value}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <span className="muted">{limit.data.usedToday.toLocaleString()} used today</span>
+      <button
+        className="btn"
+        disabled={
+          save.busy ||
+          !Number.isSafeInteger(tokens) ||
+          tokens < 1 ||
+          value === String(limit.data.tokens)
+        }
+      >
+        Save
+      </button>
+      {save.error && <span role="alert">{save.error}</span>}
+    </form>
+  );
+}
+
 /** The signed-in session, and the one control that ends it. */
 function SessionSection() {
-  const { actor, project, signOut } = useSession();
+  const { account, actor, project, signOut } = useSession();
   return (
     <div className="page-stage stack">
       <KV
@@ -170,6 +222,7 @@ function SessionSection() {
           // A directory name that is an identifier names nobody, so the row is left out.
           !!personName(actor.name) && ['Name', actor.name],
           ['Role', <StatusPill value={actor.role} />],
+          account.kind === 'user' && ['Fleet tokens a day', <DailyTokens />],
         ]}
       />
       <div>

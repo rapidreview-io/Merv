@@ -264,6 +264,50 @@ test('a plugin that is not active opens its table and is read first', async (t) 
   assert.ok(!sidebar!.open);
 });
 
+test('a signed-in person reads and sets their own daily Fleet tokens in the session room', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  boot('Operator');
+  serve('/account', { body: { kind: 'user', user, projects: [project] } });
+  const sent: unknown[] = [];
+  let tokens = 20_000_000;
+  serve('/tools/fleet.daily_tokens', (_call, body) => {
+    sent.push(body);
+    if (typeof body.tokens === 'number') tokens = body.tokens;
+    return { body: { result: { tokens, usedToday: 1_234 } } };
+  });
+  await open('/settings/session');
+  const field = document.querySelector<HTMLInputElement>(
+    'input[aria-label="Fleet tokens per day"]',
+  )!;
+  assert.equal(field.value, '20000000');
+  assert.ok(text().includes('1,234 used today'));
+  const save = [...document.querySelectorAll<HTMLButtonElement>('form button')].find(
+    (button) => button.textContent === 'Save',
+  )!;
+  assert.equal(save.disabled, true, 'nothing to save until the number changes');
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(field, '5000000');
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await click('Save');
+  await settle(10);
+  assert.deepEqual(sent.at(-2), { tokens: 5_000_000 });
+  assert.equal(
+    document.querySelector<HTMLInputElement>('input[aria-label="Fleet tokens per day"]')!.value,
+    '5000000',
+  );
+});
+
 test('the only operator is offered no control that would leave the project without one', async (t) => {
   t.after(async () => {
     await unmount();

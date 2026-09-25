@@ -473,6 +473,12 @@
       "published": false
     },
     {
+      "component": "fleet_workflow",
+      "version": 2,
+      "hash": "a1c6d4fffb03a822f8d94552d79247b6b26bbb72b1cdcffdefcb33f1bb90329a",
+      "published": false
+    },
+    {
       "component": "session_service_work",
       "version": 1,
       "hash": "3926794066e21646b403382a4a7e5da3e3745208cb6615f643c475c2d2a4f6e2",
