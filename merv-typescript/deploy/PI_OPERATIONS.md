@@ -6,12 +6,22 @@ authenticated, model-restricted relay with `gpt-6-luna`. Provider credentials st
 on the main server; workers receive only bounded per-command relay authority.
 
 Since 2026-09-24 18:17 UTC Pi is enabled for all existing human-accessible
-projects and the service pilot. Each project connected at 18:17 UTC or later has
-its own `merv-pi-*` namespace and a finite 30-day consumer grant. The QA project
-was connected at 19:33 UTC by the run that `pi-connect-project.py` generalises. A
-new project needs the same connection, not just a membership. Owner-authorized
-enablement does not certify unfinished security or full UI acceptance; see
-`docs/PI_IMPLEMENTATION_STATUS.md`.
+projects and the service pilot. Owner-authorized enablement does not certify
+unfinished security or full UI acceptance; see `docs/PI_IMPLEMENTATION_STATUS.md`.
+
+**Machines.** One operator-owned Pi host project rents every Pi machine with
+its reader key (`MERV_PI_HOST_KEY`), a capacity-only exception the founder
+approved on 2026-09-24 (`docs/PI_AGENT_PROPOSAL.md`). Each person gets one
+machine per project. All of their conversations in that project share it,
+running up to its slots at once (Standard 3, Large 4), and it stops 10 minutes
+after the last answer in any of them. Every read the agent makes still runs as
+the person, with their current permissions. A new project needs no Sandboxes
+connection and no onboarding for Pi.
+
+A project's own Sandboxes connection now decides only whether its writers, and
+their agents, may run on Large. Every project connected for Pi on 2026-09-24
+keeps its connection, so all of its writers may. To keep a project on
+Standard only, retire its connection (see below).
 
 ## Owner actions and deadlines
 
@@ -20,7 +30,10 @@ enablement does not certify unfinished security or full UI acceptance; see
   host's egress IP) used by the `cloudflare-fleet` provider. It expires on
   2026-09-30. After that Sandboxes refuses every launch after the billed
   machine was already created, so every turn ends as `turn_expired` without an
-  answer. The machine and its Fleet slot are held for up to the 1800 s deadline.
+  answer. The machine and its Fleet slot are held until the allocation's
+  deadline. The replacement must cover both Cloudflare apps, Standard and
+  Large: `cloudflare-fleet-large` carries its own copy in
+  `FLEET_CLOUDFLARE_BRIDGE_LARGE`.
 - **By 2026-10-17:** renew every consumer grant. They all expire on 2026-10-24:
   the canary grant at 16:14:06Z, then the 33 grants from the enablement, then
   the QA grant `tok_yd17ci1amwyjo2lv`. Nothing renews them automatically. After
@@ -28,6 +41,10 @@ enablement does not certify unfinished security or full UI acceptance; see
   per namespace, one catalog edit that adds every new ID to both allowlists, one
   Sandboxes recreate, one env edit, one Main recreate, then remove the old IDs
   and revoke the old grants.
+- **The Pi host's grant** renews like the others, by the `renewBy` in its
+  `sandboxes.receipt.json` (7 days before it expires). Every Pi machine for
+  every person is rented with it, so when it expires nobody can start one. Keep
+  an alarm on that date.
 
 ## Credentials and access
 
@@ -35,7 +52,12 @@ enablement does not certify unfinished security or full UI acceptance; see
   acceptance actor credential is not the browser credential or a production
   identity fallback. Enabling Pi does not make a project without an active human
   membership accessible.
-- Each configured project needs a Sandboxes connection with a consumer grant
+- The Pi host key is a reader actor credential in the host project, with no
+  expiry and no member behind it. It only rents machines there; it never reads
+  a person's project. To rotate it, adopt the host project
+  (`cli.js adopt-project`), issue a new reader credential, swap
+  `MERV_PI_HOST_KEY`, recreate Main, then revoke the old credential.
+- Each Sandboxes connection, the host's included, has a consumer grant
   restricted to its approved account, application, namespace and member. Its
   immutable grant ID must also be in the runtime-launch allowlist of both
   Sandboxes control and the pipelines worker, and `cloudflare-fleet` must list
@@ -50,6 +72,9 @@ enablement does not certify unfinished security or full UI acceptance; see
   service actor into the user's identity.
 
 ## Connecting a project
+
+Pi no longer needs this. Connect a project to let its writers run Pi on Large,
+or to give it Sandboxes rows, and to connect the Pi host itself.
 
 Run [`pi-connect-project.py`](pi-connect-project.py) as root on the production
 host, one phase at a time. Every release carries it under
@@ -111,6 +136,108 @@ Pi runtime VMs, and the pilot can do the same to theirs. The recommended fix is 
 dedicated namespace: run both phases with `--rehome` for that project. The pilot
 keeps the canary grant.
 
+## Setting up the Pi host
+
+Do this once, before the first release that reads `MERV_PI_HOST_PROJECT_ID`.
+That release refuses to render Pi without a host, so its health wait fails and
+it rolls back. Use one quiet window, and take a `pg_dump` of Main's database
+first. Every step below is either a script phase or an existing tool, and each
+phase refuses to run out of order.
+
+1. **Standard image.** Build and push the hosted image that speaks bootstrap v2.
+   Deploy it drained to the Standard Cloudflare app with
+   `deploy/cloudflare-sandbox/rollout.py`, and add its release to the Sandboxes
+   catalog as before. Keep its `rt1_` ID. The app's `max_instances` caps how many
+   Standard machines can run at once, and the production app (version 4) has
+   capacity 3. Raise it with the same deployment.
+2. **Large app** (the founder, holding the Wrangler login). Deploy
+   `wrangler deploy --env large` from a deployment copy of
+   `fleet-sandboxes/deploy/cloudflare-sandbox/worker/wrangler.jsonc`, with
+   `env.large.containers[0].image` set to the same `registry/...@sha256:`
+   reference as Standard. This creates Worker `merv-sandboxes-bridge-large` and
+   a `standard-3` application with `max_instances` 10. Give it its own token
+   (`openssl rand -hex 32`, then `wrangler secret put BRIDGE_TOKEN --env large`)
+   and note its application ID. Put its `bridge_url`, `bridge_token` and
+   `cloudflare_api_token` in one JSON object in a root-only file. The API token
+   is the native verification credential, and it must cover both apps.
+3. **Host project.** Run `python3 pi-connect-project.py host`. In Main's
+   database this creates the project `Pi host`, with no member, and a reader key.
+   The setup operator is retired as it finishes. The key stays in
+   `/var/lib/merv-fleet-pilot/pi-connect/_host/host.private.json`, and the
+   printed receipt names the host project ID.
+4. **Host connection.** Run `sandboxes <hostId>`, then `main <hostId>`. These
+   are the two ordinary phases above.
+5. **Large machine.** Run
+   `python3 pi-connect-project.py large <hostId> --release <Standard rt1_> --application <uuid> < large-bridge.json`.
+   It refuses unless Main and Sandboxes are drained and the bridge's `/health`
+   reports `standard-3`. It also refuses while a price cap on the account, the
+   member or the host namespace is below Large's $0.2201/h (see Machines). It
+   adds the `cloudflare-fleet-large` provider, which reaches only the host
+   namespace, and a copy of the Standard release with only the provider changed.
+   It recreates Sandboxes control and pipelines-worker and checks that the host
+   resolves Large, is offered `standard-3` and loaded both releases. Last, it
+   sets the host namespace's limit: 50 at once, 86400 s each, and $0.23/h.
+   Its receipt names the Large release ID. `hostConcurrency` is the lowest
+   concurrency cap on the host, so a cap below 50 shows there. A failed run
+   restores the catalog and leaves the limits alone. Move its `large-*` backups
+   aside before you rerun it.
+6. **Main's env.** Copy the new release's `deploy/` directory to the host, and
+   from it run `python3 pi-connect-project.py machines <hostId>`. The phase
+   writes these variables and recreates nothing:
+   - `MERV_FLEET_RUNTIMES`, with Standard (3 slots) and Large (4 slots, agent).
+   - `MERV_FLEET_PROJECT_LIMITS={"<hostId>":50}`.
+   - `MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS=86400`. A host moves to a fresh
+     machine 15 minutes before its deadline, so an 1800 s deadline would move a
+     busy host every 15 minutes.
+   - The host ID and key.
+   - `MERV_PI_RUNTIME_KEY=project` and `MERV_PI_AGENT_MOVES=true`.
+
+   The `MERV_FLEET_RUNTIME_*` lines stay. The phase dry-runs the render twice:
+   once with the running image, so a rollback still starts, and once with the
+   new release's renderer mounted over it. If either fails, it restores the env;
+   move its `*-machines-env.private` files aside before you rerun it.
+
+7. **Release.** Deploy with `release.mjs`, which runs the pi@2 migration. Until
+   that migration, `release.mjs` can roll the image back on the same env. After
+   it, the older image refuses the database, so rolling back means restoring
+   the `pg_dump` taken first.
+8. **Canary.** Check each of these:
+   - Two conversations in one project share one machine.
+   - Two projects get two machines.
+   - Revoking a membership fails only that project's turn.
+   - The machine stops 10 idle minutes after the last answer.
+   - A move to Large made mid-answer lets that answer finish on Standard.
+   - With Large switched off, people stay on Standard.
+
+   Record a `RELEASES.md` receipt from the phases' receipts, then shred both
+   directories.
+
+## Machines
+
+- `MERV_FLEET_RUNTIMES` is the one catalog. Each entry is a Sandboxes runtime
+  profile, and it is also the machine a person picks: `label` is what the
+  picker shows, `slots` how many turns share the machine, and `agent` whether
+  the agent may move itself there. The first entry is the default.
+- Standard is always allowed. A person, and their agent, may use another machine
+  only in a project that has its own Sandboxes connection, and only with at
+  least write permission there. Otherwise the picker shows the machine as
+  unavailable, and the agent is not offered `switch_machine`. The agent moves
+  only with `MERV_PI_AGENT_MOVES=true`. It starts the new machine and moves
+  there only once the machine is proven ready.
+- Sandboxes resource limits and provider controls name the plugin, `cloudflare`,
+  never the app, so nothing in Sandboxes caps or disables Large alone:
+  - The host namespace limit covers both machines.
+  - Large's only ceiling of its own is its app's `max_instances` of 10.
+  - A price cap below Large's price makes Large unrentable.
+  - A `cloudflare` provider control stops Standard and Large together.
+- **Turning Large off:** remove the `large` entry from `MERV_FLEET_RUNTIMES`
+  and recreate Main. To leave Main running instead, set `"enabled": false` on
+  the `cloudflare-fleet-large` provider and recreate Sandboxes. Its offer then
+  disappears, and moves to Large fail while people stay on Standard.
+- Fleet caps the host at its `MERV_FLEET_PROJECT_LIMITS` entry and at
+  `MERV_FLEET_GLOBAL_LIMIT`. Pi holds one machine per person per project, or
+  two while it moves, and starts a move only while at least 3 slots are free.
+
 ## Restarts and limits
 
 - Connections and grants are read when a service starts. Any onboarding, renewal
@@ -122,16 +249,17 @@ keeps the canary grant.
   `unless-stopped`, so a bad env value crash-loops Main. The rollback in
   `release.mjs` restores only the image, not the env. Keep a backup of the env
   and dry-run the render before any recreate.
-- A new `MERV_FLEET_RUNTIME_RELEASE_ID` changes the Fleet profile, and every
-  existing allocation is then asked to stop. Roll it out drained. The hosted
-  runtime is digest-pinned; rebuilding it requires its coordinated
-  release/catalog and isolation gates, not just a main-server rollout.
+- A changed release in a `MERV_FLEET_RUNTIMES` entry changes that machine's
+  profile, and every allocation on it is then asked to stop. Roll it out
+  drained. The hosted runtime is digest-pinned; rebuilding it requires its
+  coordinated release/catalog and isolation gates, not just a main-server
+  rollout.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
-  concurrency. Otherwise Sandboxes refuses the extra creates, and those turns
-  fail.
-- Keep the **USD 100 all-time cap**, accrued spend and accounting, Fleet limits
-  **1/1/1** and the native maximum of **3** unless the owner changes them.
+  concurrency. Also confirm that each Cloudflare app's `max_instances` allows
+  it. Otherwise the extra creates are refused, and those turns fail.
+- Keep the **USD 100 all-time cap** and accrued spend and accounting unless the
+  owner changes them.
 
 ## Consumer rotation
 
@@ -189,9 +317,10 @@ the only global slot held.
 - Use one transaction that first takes
   `pg_advisory_xact_lock(hashtextextended('merv-state:<schema>', 0))`. In it, set
   both the `phase` column and `data_json` to `phase: released`, `intent: stop`,
-  `retryAt: null`, `error: null` and `failures: 0`. Never delete the row: Pi's
-  reconcile would then fail on every tick, and Pi could not start. Never update
-  only the column, because Pi's runtime lock would then stay.
+  `retryAt: null`, `error: null` and `failures: 0`. Never delete the row: the
+  Pi host slot that names it could then never be reconciled. Never update only
+  the column: Fleet reads each allocation from `data_json`, so the slot would
+  stay held. Every Pi allocation is in the host project.
 
 ```sql
 SELECT id, project_id FROM <schema>.fleet_allocations
