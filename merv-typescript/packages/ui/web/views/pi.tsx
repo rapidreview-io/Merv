@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import {
   ApiError,
   call,
@@ -196,7 +196,8 @@ const linked = (text: string) =>
     ),
   );
 /** A call the agent proposed: the tool, Main's copy of its exact input, and Run, which runs it
- * once as the person. A secret result shows here and nowhere else. */
+ * once as the person and is heard with the tool's name and, as its description, that input. A
+ * secret result shows here and nowhere else. */
 function Proposal({
   proposal,
   secret,
@@ -208,14 +209,18 @@ function Proposal({
   disabled: boolean;
   run(): void;
 }) {
+  const id = useId();
   return (
     <article className="pi-proposal">
-      <code>{proposal.name}</code>
-      <pre>{JSON.stringify(proposal.input, null, 2)}</pre>
+      <code id={`${id}tool`}>{proposal.name}</code>
+      <pre id={`${id}input`}>{JSON.stringify(proposal.input, null, 2)}</pre>
       {secret && <pre>{linked(secret)}</pre>}
       <button
         className="btn btn--sm"
         type="button"
+        id={`${id}run`}
+        aria-labelledby={`${id}run ${id}tool`}
+        aria-describedby={`${id}input`}
         disabled={disabled || !!proposal.ran}
         onClick={run}
       >
@@ -726,35 +731,38 @@ function PiConversationPage() {
       },
     );
   };
-  const send = async (text = draft.trim()) => {
-    if (busy || blocked || unavailable || active || !text) return;
+  /** Whether the words reached the server. */
+  const send = async (text = draft.trim()): Promise<boolean> => {
+    if (busy || blocked || unavailable || active || !text) return false;
     let id = selection.current;
     setBusy(true);
     try {
       // A pick on its way goes first; one that failed keeps the question, and says why.
-      if (id && picking.current?.id === id && !(await picking.current.done)) return;
+      if (id && picking.current?.id === id && !(await picking.current.done)) return false;
       if (pending.current?.text !== text) pending.current = { id: identifier(), text };
       const commandId = pending.current.id;
       setError('');
       id ??= await open();
-      if (!id) return;
+      if (!id) return false;
       // Sent on the model the bar shows, or not at all.
       const shown =
         canonical.current?.conversation.id === id && canonical.current.conversation.model;
       await call('pi.send', { id, commandId, text, ...(shown && { model: shown }) });
-      if (!valid() || selection.current !== id) return;
+      if (!valid() || selection.current !== id) return true;
       setDraft((value) => (value.trim() === text ? '' : value));
       pending.current = null;
       following.current = true;
       const next = await call<PiSnapshot>('pi.snapshot', { id }).catch(() => null);
       if (next) replace(next);
+      return true;
     } catch (cause) {
-      if (!valid() || selection.current !== id) return;
+      if (!valid() || selection.current !== id) return false;
       if (cause instanceof ApiError && cause.code === 'sandbox_not_connected') setRefused(true);
       else setError(said(cause, 'Could not send the message.'));
       // Another page picked a model: the bar shows it before the question is sent again.
       if (cause instanceof ApiError && cause.code === 'pi_model_changed')
         void call<PiSnapshot>('pi.snapshot', { id }).then(replace, () => {});
+      return false;
     } finally {
       if (valid()) {
         setBusy(false);
@@ -762,7 +770,8 @@ function PiConversationPage() {
       }
     }
   };
-  /** Runs a proposed call as the person, then tells the agent what happened, as their message. */
+  /** Runs a proposed call as the person, then tells the agent what happened, as their message;
+   * words that could not be sent wait in the composer, ahead of anything typed there. */
   const run = async (commandId: string, proposal: PiProposal) => {
     if (!selected || running || busy || active) return;
     setRunning(proposal.id);
@@ -785,7 +794,9 @@ function PiConversationPage() {
     } finally {
       if (valid()) setRunning(null);
     }
-    if (valid() && selection.current === selected) await send(told);
+    const here = () => valid() && selection.current === selected;
+    if (here() && !(await send(told)) && here())
+      setDraft((value) => (value.trim() ? `${told}\n\n${value}` : told));
   };
   /** The picker answers with the machine as it now stands, the same in every conversation here. */
   const machine = async (

@@ -142,7 +142,12 @@ const github = (over: Record<string, unknown> = {}) => ({
 const connected = (over: Record<string, unknown> = {}) =>
   github({
     status: 'connected',
-    repository: { fullName: 'lab/grokking', defaultBranch: 'main', private: true, url: '' },
+    repository: {
+      fullName: 'lab/grokking',
+      defaultBranch: 'main',
+      private: true,
+      url: 'https://github.com/lab/grokking',
+    },
     ...over,
   });
 const nothingMade = () => {
@@ -177,6 +182,14 @@ test('connected with nothing made, a section is its name and a zero', async (t) 
   assert.ok(text().includes('Merges 0'), text());
   assert.ok(text().includes('Pull requests 0'), text());
   assert.ok(!/No (branches|pull requests)/.test(text()), text());
+  // The repository it is linked to is named, and is the way to it.
+  const linked = [...document.querySelectorAll('a')].filter(
+    (a) => a.textContent === 'lab/grokking',
+  );
+  assert.deepEqual(
+    linked.map((a) => a.getAttribute('href')),
+    ['https://github.com/lab/grokking'],
+  );
 });
 
 /* The model ---------------------------------------------------------------- */
