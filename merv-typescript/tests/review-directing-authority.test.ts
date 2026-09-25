@@ -34,6 +34,14 @@ async function fixture(t: TestContext) {
     credentialId: issued.credential.id,
   };
   let seq = 0;
+  const member = async (name: string): Promise<Caller> => {
+    const issued = await app.ctx.scope.issueActor(founder, { name, role: 'operator' });
+    return {
+      actorId: issued.actor.id,
+      projectId: founder.projectId,
+      credentialId: issued.credential.id,
+    };
+  };
   /** A worker identity whose every lease is directed by `source`. */
   const worker = async (source: Caller) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
@@ -45,7 +53,7 @@ async function fixture(t: TestContext) {
     });
     return {
       token,
-      assign: async (task: Task) =>
+      assign: async (task: Pick<Task, 'id' | 'workflow'>) =>
         await app.ctx.sessions.assignAgent(token, {
           instanceId: task.id,
           expectedRevision: task.workflow.revision,
@@ -81,7 +89,7 @@ async function fixture(t: TestContext) {
   };
   const candidates = async (source: Caller) =>
     (await app.ctx.workflows.dispatchCandidates(source)).map((item) => item.instanceId);
-  return { app, founder, other, worker, create, deliver, candidates };
+  return { app, founder, other, member, worker, create, deliver, candidates };
 }
 
 test('a worker whose directing authority produced the desk delivery is refused, never offered and never a dispatch candidate', async (t) => {
@@ -171,5 +179,55 @@ test('two workers one authority directs are different actors: either may review 
   assert.equal(
     (await f.app.ctx.reviews.get(f.founder, review.id)).reviewerId,
     (await second.caller()).actorId,
+  );
+});
+
+test('a worker whose directing authority wrote a lens is not offered, and cannot take, the reflection’s review', async (t) => {
+  const f = await fixture(t);
+  const { artifacts, reflections, research, reviews } = f.app.ctx;
+  const write = async (by: Caller, title: string) =>
+    await artifacts.create(by, {
+      title,
+      content: `# Summary\n${title}: source-linked observation.\n# Evidence\nNo completed experiments in the pinned corpus; no empirical conclusion is claimed.`,
+    });
+  const wave = await research.startReflection(f.founder, { requestId: 'wave' });
+  // The founder writes one lens at the desk; four other members write the rest.
+  for (const [index, lens] of wave.lenses.entries()) {
+    const by = index === 0 ? f.founder : await f.member(`Lens ${index}`);
+    await reflections.submitLens(by, {
+      lensId: lens.id,
+      artifactId: (await write(by, lens.perspective)).id,
+      expectedRevision: 0,
+      requestId: `lens-${index}`,
+    });
+  }
+  // Tab B writes the synthesis, so the review names Tab B as its producer.
+  const synthesizing = await reflections.get(f.other, wave.id);
+  const submitted = await reflections.submit(f.other, {
+    reflectionId: wave.id,
+    reportArtifactId: (await write(f.other, 'Synthesis')).id,
+    changeSpecArtifactId: (await write(f.other, 'Changes')).id,
+    expectedRevision: synthesizing.workflow.revision,
+    requestId: 'synthesis',
+  });
+  const review = submitted.review!;
+  assert.equal(review.producerId, f.other.actorId);
+  await assert.rejects(async () => await reviews.start(f.founder, review.id), {
+    code: 'review_independence',
+  });
+
+  // The founder's hand is no more independent of the founder's lens than the founder is.
+  assert.ok(!(await f.candidates(f.founder)).includes(wave.id));
+  const hand = await f.worker(f.founder);
+  assert.ok(!(await hand.offered()).includes(wave.id));
+  await assert.rejects(async () => await hand.assign(submitted), { code: 'review_independence' });
+  assert.equal((await reviews.get(f.founder, review.id)).status, 'requested');
+
+  // A member who wrote none of it directs an independent reviewer.
+  const independent = await f.worker(await f.member('Rhea'));
+  assert.equal((await independent.assign(submitted)).role, 'reviewer');
+  assert.equal(
+    (await reviews.get(f.founder, review.id)).reviewerId,
+    (await independent.caller()).actorId,
   );
 });
