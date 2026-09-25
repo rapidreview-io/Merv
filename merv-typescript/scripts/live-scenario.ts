@@ -32,7 +32,8 @@ const RUN_ID = randomBytes(4).toString('hex');
  *
  * Brief format: the Markdown the scenario briefs are written in
  * (`Scenarios/briefs/0N-*.md`). Sections are `## [N.] NAME [— …]` with NAME one of
- * PROJECT, CLAIMS, TASKS, EXPERIMENTS, REFLECTION, FEED, LIMITS. Inside them:
+ * PROJECT, CLAIMS, TASKS, EXPERIMENTS, REFLECTION, LIMITS; any other section, FEED
+ * included (Feed is switched off by default), is not read. Inside them:
  *
  *   PROJECT      **Name:** `project` — and an **Introduction** blockquote; the
  *                **Research cycle** bullets supply `name`.
@@ -42,8 +43,6 @@ const RUN_ID = randomBytes(4).toString('hex');
  *                **Numbered acceptance checks** list of quoted checks.
  *   EXPERIMENTS  `### Experiment \`name\`` with **Tests:**, **Depends on:**, an
  *                **Intent** blockquote and a **Details** blockquote.
- *   FEED         a numbered list; `[Role]` opens each item, the quoted string is
- *                the body.
  *   LIMITS       prose; the head of it is recorded in the run report.
  *
  * An **EXPECTED TRAJECTORY** table inside a record gives one row per review round
@@ -97,11 +96,6 @@ export interface RecordBrief {
   trajectory: string[];
   reviewRounds?: ReviewExpectation[];
 }
-export interface FeedBrief {
-  role: string;
-  body: string;
-  after?: string;
-}
 export interface Brief {
   project: {
     name: string;
@@ -110,19 +104,10 @@ export interface Brief {
   };
   claims: ClaimBrief[];
   records: RecordBrief[];
-  feed: FeedBrief[];
   limits: string;
 }
 
-const sectionNames = [
-  'PROJECT',
-  'CLAIMS',
-  'TASKS',
-  'EXPERIMENTS',
-  'REFLECTION',
-  'FEED',
-  'LIMITS',
-] as const;
+const sectionNames = ['PROJECT', 'CLAIMS', 'TASKS', 'EXPERIMENTS', 'REFLECTION', 'LIMITS'] as const;
 type SectionName = (typeof sectionNames)[number];
 
 /** `## 3. TASKS`, `## 7. LIMITS — …`: the first bare word names the section. */
@@ -389,15 +374,6 @@ export function parseBrief(markdown: string): Brief {
   for (const entry of records)
     entry.dependsOn = (entry.dependsOn ?? []).filter((dependency) => names.has(dependency));
 
-  const feed = (found.get('FEED') ?? '')
-    .split(/^\d+\.\s+/m)
-    .slice(1)
-    .flatMap((item) => {
-      const role = /\[([^\]]+)\]/.exec(item)?.[1];
-      const body = quotedStrings(item)[0];
-      return role && body ? [{ role, body }] : [];
-    });
-
   return {
     project: {
       name,
@@ -410,7 +386,6 @@ export function parseBrief(markdown: string): Brief {
     },
     claims,
     records,
-    feed,
     limits: (found.get('LIMITS') ?? '').trim().slice(0, 4000),
   };
 }
@@ -668,7 +643,6 @@ async function main(options: Options) {
   let failure: string | undefined;
   let harnessLaunches = 0;
   const observed = new Map<string, Observed>();
-  const feedPosts: { role: string; postId: string; after?: string }[] = [];
   let cycleId: string | null = null;
 
   try {
@@ -1061,21 +1035,6 @@ async function main(options: Options) {
     await Promise.allSettled([...launched]);
     await setDispatch(false);
 
-    // ---- Feed: the brief's entries, posted by the source credential. ----
-    if (!divergence && !draining)
-      for (const [index, post] of brief.feed.entries()) {
-        if (post.after && !observed.get(post.after.split(':')[0])?.finished) continue;
-        const created = await call('feed.post', {
-          body: `[${post.role}] ${post.body}`,
-          requestId: `scenario:feed:${index}`,
-        });
-        feedPosts.push({
-          role: post.role,
-          postId: created.id,
-          ...(post.after ? { after: post.after } : {}),
-        });
-      }
-
     async function launchHarnessStage(entry: Observed, state: string, round: number) {
       const current = await read(entry);
       const revision = current.workflow.revision;
@@ -1427,8 +1386,6 @@ async function main(options: Options) {
         harnessLaunchedStages: entry.launchedStages,
         finished: entry.finished,
       })),
-      feedPosts,
-      feedRoleSubstituted: feedPosts.length > 0,
       codexExecutions: {
         runnerDispatched: runnerLaunches,
         harnessLaunched: harnessLaunches,
@@ -1438,7 +1395,7 @@ async function main(options: Options) {
       limits: [
         'Trajectories and verdicts are asserted after the fact; no verdict text reaches any worker.',
         'A stage carrying a planted defect is launched by this harness, not the runner: the runner builds its child stdin from the frozen assignment and has no per-assignment prompt hook.',
-        'The production feed has no voices: each brief post is written by the source credential with its named role as a body prefix.',
+        "Feed is switched off by default, so the brief's FEED section is not posted.",
         'Reflection, consolidation and post-wave claim updates are outside this harness slice.',
         brief.limits,
       ].filter(Boolean),
@@ -1530,13 +1487,6 @@ function markdownReport(report: any): string {
       }
     }
   }
-  if (report.feedPosts.length)
-    lines.push(
-      '## Feed',
-      '',
-      ...report.feedPosts.map((post: any) => `- ${post.role} → \`${post.postId}\``),
-      '',
-    );
   lines.push('## Limits', '', ...report.limits.flatMap((limit: string) => [limit, '']));
   return lines.join('\n');
 }

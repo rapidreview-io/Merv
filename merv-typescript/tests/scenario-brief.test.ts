@@ -151,11 +151,8 @@ test('a scenario brief parses into the records the harness creates', () => {
   assert.deepEqual(experiment.dependsOn, ['harness']);
   assert.equal(experiment.intent, 'Establish whether the candidate beats the baseline.');
   assert.equal(experiment.details, 'METHOD CONTRACT. Train only on the training pool.');
-  assert.deepEqual(parsed.feed, [
-    { role: 'Execution agent — probe', body: 'probe is up, four runs queued.' },
-    { role: 'Founder', body: 'Wave 1 is terminal.' },
-  ]);
-  assert.match(parsed.limits, /The company does not exist\./);
+  // Feed is off by default: the FEED section is not read, nor does it spill into LIMITS.
+  assert.equal(parsed.limits, 'The company does not exist.');
 });
 
 test('the expected trajectory comes from the review rounds, never from a prompt', () => {
