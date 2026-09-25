@@ -949,9 +949,10 @@ export function Markdown({
 }
 
 /**
- * Where a text can be cut so that each piece reads as it does within the whole: at a line at the
- * margin after a blank one, outside any fence, that does not continue a list. Only `source` from
- * `from`, itself such a cut, is read.
+ * Where a text can be cut so that each piece reads as it does within the whole: at a finished line
+ * at the margin after a blank one, outside any fence, that does not continue a list. A line still
+ * being written may yet become an item (`2` before `2.`), and a finished one never changes, so a
+ * growing text's cuts all stay. Only `source` from `from`, itself such a cut, is read.
  */
 function cutsFrom(source: string, from: number): number[] {
   const cuts: number[] = [];
@@ -963,7 +964,15 @@ function cutsFrom(source: string, from: number): number[] {
     if (fence) {
       if (fence.test(line)) fence = null;
     } else {
-      if (after && at > from && !blank(line) && !gap(line[0]) && !ITEM.test(line)) cuts.push(at);
+      if (
+        after &&
+        at > from &&
+        end <= source.length &&
+        !blank(line) &&
+        !gap(line[0]) &&
+        !ITEM.test(line)
+      )
+        cuts.push(at);
       const open = FENCE.exec(line);
       if (open && !(open[1]!.startsWith('`') && open[2]!.includes('`')))
         fence = new RegExp(`^ {0,3}${open[1]![0]}{${open[1]!.length},}[ \\t]*$`);

@@ -495,6 +495,20 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
     '',
     '> quoted',
     '',
+    'Steps:',
+    '',
+    '1. **Install**',
+    '',
+    '   Run the installer.',
+    '',
+    '2. **Configure**',
+    '',
+    '   Set the key.',
+    '',
+    '10. **Check**',
+    '',
+    '    It answers.',
+    '',
     '| a | b |',
     '|---|---|',
     '| 1 | 2 |',
@@ -519,7 +533,8 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
   }
   await mount(createElement(MemoryRouter, null, createElement(Growing)));
   const whole = document.createElement('div');
-  for (let end = 1; end <= source.length; end += 3) {
+  // Every length: a frame may end anywhere, even at `2` before it becomes `2.`.
+  for (let end = 1; end <= source.length; end++) {
     await act(async () => grow(source.slice(0, end)));
     whole.innerHTML = renderToStaticMarkup(
       createElement(
