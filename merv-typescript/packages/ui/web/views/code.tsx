@@ -168,6 +168,22 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
     : undefined;
   return (
     <div className="page-stage stack stack--lg">
+      {/* The repository linked, as the way to it. What Merv made outlives the connection it
+          was made over, so it stays on the page; a missing one is a pill and the way to mend it. */}
+      {unlinked ? (
+        <p className="cluster">
+          <StatusPill value={github.status === 'disconnected' ? 'disconnected' : 'no repository'} />
+          {mends && connect(label)}
+        </p>
+      ) : (
+        github?.repository && (
+          <p>
+            <a href={github.repository.url} target="_blank" rel="noreferrer">
+              {github.repository.fullName}
+            </a>
+          </p>
+        )
+      )}
       {/* One press keeps the drawing whole and lights only what that blocker names;
           a chip of zero is a filter with nothing behind it and is not drawn. */}
       {chips.length > 0 && (
@@ -183,14 +199,6 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
             </button>
           ))}
         </div>
-      )}
-      {/* What Merv made outlives the connection it was made over, so it stays on the
-          page; the connection's own state is a pill and the way to mend it. */}
-      {unlinked && (
-        <p className="cluster">
-          <StatusPill value={github.status === 'disconnected' ? 'disconnected' : 'no repository'} />
-          {mends && connect(label)}
-        </p>
       )}
       <LoadState loading={read.loading} error={read.error} data={read.data} />
       {model.lanes.length > 0 && (
