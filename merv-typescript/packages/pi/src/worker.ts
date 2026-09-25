@@ -48,9 +48,9 @@ const NEXT_TIMEOUT_MS = 30_000;
 const FLUSH_MS = 100;
 const TOOL_OUTPUT_BYTES = 64_000;
 // No output cap is sent: the model's own maximum ends an answer. The history a turn restores, and
-// its checkpoint, hold at most HISTORY_BYTES in at most HISTORY_ITEMS relay items (of 512), which
-// leaves the model's window room for the turn's prompt, tool output and answer.
-const HISTORY_BYTES = 128_000;
+// its checkpoint, hold what the model's window leaves beside that answer (executeTurn), never more
+// than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items (of 512).
+const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
 type Post = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
@@ -367,8 +367,14 @@ async function executeTurn(
     ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS]
     : null;
   const contextWindow = known?.contextWindow ?? 32_000;
-  // A token is at least a byte, so a smaller window keeps history within it too.
-  const history = Math.min(HISTORY_BYTES, contextWindow);
+  const maxTokens = known?.maxTokens ?? 32_000;
+  // History fills the window but for the model's longest answer (at most half of it), at 3 bytes a
+  // token, a margin under prose's 4 characters that leaves room for the turn's prompt and tools:
+  // gpt-6-luna keeps 432 KB, about 144,000 tokens.
+  const history = Math.min(
+    HISTORY_BYTES,
+    3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)),
+  );
   const entries = checkpoint && recent(checkpoint.entries, checkpoint.leafId, history);
   const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
   const manager = SessionManager.inMemory(
@@ -399,7 +405,7 @@ async function executeTurn(
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
-    maxTokens: known?.maxTokens ?? 32_000,
+    maxTokens,
     // The model's own maximum applies: no max_output_tokens is sent.
     compat: { supportsMaxOutputTokens: false },
   };
@@ -676,35 +682,46 @@ async function executeTurn(
 }
 
 /** The whole tree while its active branch fits `bytes`; otherwise the newest whole exchanges that
- * do, and never less than the newest one: a long one keeps each long text's start and end. */
+ * do, and never less than the newest one. That one, alone too long, keeps its prompt, noting any
+ * steps (a model message and its tool results) left out, and its newest steps that fit; when not
+ * even its last step does, each long text keeps its start and end. It always ends at `leafId`. */
 function recent(entries: Entries, leafId: string | null, bytes: number): Entries {
   const byId = new Map(entries.map((entry) => [entry.id, entry as Entry]));
   const branch: Entry[] = [];
   for (let entry = byId.get(leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
     branch.unshift(entry);
-  let start = branch.length;
-  for (let index = branch.length - 1, size = 0, items = 0; index >= 0; index--) {
+  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  const asked = Math.max(
+    0,
+    branch.findLastIndex((entry) => entry.message?.role === 'user'),
+  );
+  // Newest first: the oldest whole exchange that fits, and the oldest step of the newest one that
+  // fits beside its prompt and note.
+  const beside = bytes - size(branch[asked] ?? null) - 200;
+  let [start, step] = [branch.length, branch.length];
+  for (let index = branch.length - 1, total = 0, items = 0; index >= 0; index--) {
     const { message } = branch[index];
-    size += Buffer.byteLength(JSON.stringify(branch[index]));
+    total += size(branch[index]);
     items += message?.role === 'assistant' ? message.content.length : 1;
-    if (size > bytes || items > HISTORY_ITEMS) break;
+    if (total > bytes || items > HISTORY_ITEMS) break;
     if (index === 0 || message?.role === 'user') start = index;
+    else if (message?.role === 'assistant' && total <= beside && items < HISTORY_ITEMS)
+      step = index;
   }
   if (start === 0) return entries;
   let kept = branch.slice(start);
   if (!kept.length) {
-    const newest = branch.slice(
-      Math.max(
-        0,
-        branch.findLastIndex((e) => e.message?.role === 'user'),
-      ),
-    );
-    for (let room = bytes / 2; room >= 1024 && !kept.length; room /= 2) {
-      const clipped = newest.map((entry) => shorten(entry, room));
-      if (Buffer.byteLength(JSON.stringify(clipped)) <= bytes) kept = clipped;
-    }
+    const last = branch.findLastIndex((entry) => entry.message?.role === 'assistant');
+    const from = Math.min(step, Math.max(asked + 1, last));
+    const left = branch
+      .slice(asked + 1, from)
+      .filter((entry) => entry.message?.role === 'assistant').length;
+    const newest = [left ? noted(branch[asked], left) : branch[asked], ...branch.slice(from)];
+    kept = newest;
+    for (let room = bytes / 2; size(kept) > bytes && room >= 1; room /= 2)
+      kept = newest.map((entry) => shorten(entry, room));
   }
-  return kept.map((entry, index) => (index ? entry : { ...entry, parentId: null }));
+  return kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
 }
 
 type Entries = WorkerCheckpoint['entries'];
@@ -730,5 +747,17 @@ function shorten(entry: Entry, room: number): Entry {
       : message.content.map((part) =>
           typeof part.text === 'string' ? { ...part, text: clip(part.text) } : part,
         );
+  return { ...entry, message: { ...message, content } };
+}
+
+/** An exchange's prompt, saying how many steps of its answer are left out after it. */
+function noted(entry: Entry, left: number): Entry {
+  const note = `[${left} earlier steps of this answer are left out: too long to send whole.]`;
+  const { message } = entry;
+  if (!message) return entry;
+  const content =
+    typeof message.content === 'string'
+      ? `${message.content}\n\n${note}`
+      : [...message.content, { type: 'text', text: note }];
   return { ...entry, message: { ...message, content } };
 }

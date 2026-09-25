@@ -87,6 +87,8 @@ async function fixture(
     progressFailures?: number[];
     /** The answer's words, streamed 10 ms apart. */
     paced?: string[];
+    /** One model call each, before the answer: a text and a tool call. */
+    sections?: string[];
   } = {},
 ) {
   const controller = new AbortController();
@@ -200,6 +202,15 @@ async function fixture(
             },
           });
           return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        }
+        const section = options.sections?.[modelRequests.length - 1];
+        if (section !== undefined) {
+          const index = modelRequests.length;
+          const items = [
+            { ...message(section), id: `msg_${index}` },
+            { ...call, id: `fc_${index}`, call_id: `call_${index}` },
+          ];
+          return new Response(sse(items), { headers: { 'content-type': 'text/event-stream' } });
         }
         const first = options.toolCall && modelRequests.length === 1;
         const items = first
@@ -509,9 +520,9 @@ test('no output cap is sent; an answer the model itself stops for length says so
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  // Bytes bind the first conversation; relay items bind the second.
+  // Bytes bind the first conversation (gpt-6-luna's 432 KB); relay items bind the second.
   for (const [turns, filler, kept] of [
-    [4, 60_000, 2],
+    [10, 60_000, 7],
     [200, 0, 150],
   ]) {
     const at = new Date().toISOString();
@@ -572,9 +583,10 @@ test('a long conversation keeps full-size answers and forgets only its oldest ex
   }
 });
 
-test('a long earlier answer is history like any other, past the relay’s old 100,000 characters', async () => {
+test('a long earlier answer is history like any other, sent whole while the window holds it', async () => {
   const at = new Date().toISOString();
-  const answer = `Start ${'y'.repeat(110_000)} end`;
+  // About 37,000 tokens: past the relay's old 100,000 characters and the old 128 KB of history.
+  const answer = `Start ${'y'.repeat(150_000)} end`;
   const message = (id: string, parentId: string | null, value: object) => ({
     type: 'message',
     id,
@@ -613,6 +625,35 @@ test('a long earlier answer is history like any other, past the relay’s old 10
   await app.run();
   assert.deepEqual(app.failures, []);
   assert.ok(JSON.stringify(app.modelRequests[0].input).includes(answer));
+  assert.ok(app.completions[0].checkpoint.includes(answer));
+});
+
+test('an answer of many steps is saved and sent on, however many of them fit the window', async () => {
+  // 31 calls, each writing a section and reading a project: no one text over 2,000 characters,
+  // about 144 KB in all, past the old 128 KB of history.
+  const sections = Array.from(
+    { length: 31 },
+    (_, index) => `Section ${index + 1}: ${'s'.repeat(1_800)}`,
+  );
+  const toolResult = { summary: 'x'.repeat(2_000) };
+  // gpt-6-luna keeps the whole answer; a 32,000-token window keeps its prompt, noting the steps
+  // left out, and its newest steps.
+  for (const model of ['gpt-6-luna', 'unknown-model']) {
+    const app = await fixture({ sections, toolResult, model, turns: 2 });
+    await app.run();
+    assert.deepEqual(app.failures, [], model);
+    assert.equal(app.completions.length, 3);
+    const first = app.completions[0];
+    assert.equal(first.messages.length, 32);
+    // Main keeps a checkpoint only if it ends at the answer's own last entry.
+    const saved = decodeCheckpoint({ content: first.checkpoint, hash: first.checkpointHash });
+    assert.equal(saved.leafId, saved.entries.at(-1)!.id);
+    const sent = JSON.stringify(app.modelRequests[32].input);
+    const whole = model === 'gpt-6-luna';
+    assert.equal(sent.includes(sections[0]), whole, model);
+    assert.ok(sent.includes(sections[30]) && sent.includes('Question 1'), model);
+    assert.equal(/\d+ earlier steps of this answer are left out/.test(sent), !whole, model);
+  }
 });
 
 test('an assignment the worker refuses is failed at once instead of left to expire', async () => {
@@ -899,6 +940,12 @@ test('bootstrap is v2, bounded and strict; checkpoints verify digest and tree in
   assert.throws(
     () => encodeCheckpoint({ getHeader: () => null, getEntries: () => [], getLeafId: () => null }),
     /Invalid session/,
+  );
+  // Nor does the worker save a checkpoint Main would refuse, as one whose leaf it left out.
+  const header = { type: 'session' as const, id: 's', cwd: '/pi-worker', timestamp: expires() };
+  assert.throws(
+    () => encodeCheckpoint({ getHeader: () => header, getEntries: () => [], getLeafId: () => 'a' }),
+    /Invalid checkpoint leaf/,
   );
   assert.equal(cause(new Error(`Rejected ${token}`)), 'Unexpected error');
   assert.equal(cause(new Error('fetch https://pi.test failed')), 'Unexpected error');

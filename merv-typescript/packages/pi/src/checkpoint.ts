@@ -24,7 +24,10 @@ export function encodeCheckpoint(session: {
     leafId: session.getLeafId(),
   });
   if (Buffer.byteLength(content) > MAX_BYTES) throw new Error('Checkpoint exceeds limit');
-  return { content, hash: hash(content) };
+  // Main refuses any checkpoint this would: a turn never ends on one it cannot keep.
+  const saved = { content, hash: hash(content) };
+  decodeCheckpoint(saved);
+  return saved;
 }
 
 export function decodeCheckpoint(checkpoint: { content: string; hash: string }): WorkerCheckpoint {
