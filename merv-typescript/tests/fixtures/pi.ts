@@ -62,6 +62,13 @@ export function checkpointTree(text = 'Earlier', branch = 'active'): string {
   });
 }
 
+/** The production catalog (MERV_PI_MODELS): Luna the default, Astra the one that reasons. */
+export const models = [
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5, effort: 'none' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10, effort: 'none' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50, effort: 'low' },
+] as const;
+
 /** Offers as Sandboxes describes Cloudflare standard-1 and standard-3. */
 export const offers: Record<string, Awaited<ReturnType<SandboxRuntimes['describe']>>> = {
   standard: { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074 },
@@ -159,7 +166,7 @@ export class FakeRuntimes implements SandboxRuntimes {
  * project with an operator. Tests tick Fleet and Pi themselves. */
 export async function fixture(
   t: TestContext,
-  options: { baseUrl?: string; startTime?: number; pi?: PiConfig } = {},
+  options: { baseUrl?: string; startTime?: number; pi?: PiConfig; machines?: number } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-pi-service-'));
   const state = await openState(directory);
@@ -232,7 +239,12 @@ export async function fixture(
       state,
       scope,
       runtimes,
-      { enabled: true, globalLimit: 8, projectLimit: 8, allocationTimeoutSeconds: 3600 },
+      {
+        enabled: true,
+        globalLimit: options.machines ?? 8,
+        projectLimit: options.machines ?? 8,
+        allocationTimeoutSeconds: 3600,
+      },
       clock,
     ),
   );
@@ -257,6 +269,7 @@ export async function fixture(
       { key: 'large', label: 'Large', slots: 4, agent: true },
     ],
     agentMoves: true,
+    models: [...models],
     ...options.pi,
   };
   const start = () =>
@@ -323,6 +336,24 @@ export async function fixture(
     checkpoint,
     checkpointHash: sha(checkpoint),
   });
+  /** `caller`'s new conversation, with a turn a worker has claimed and begun on its person's
+   * host, which may already run. */
+  async function begun(caller: Caller, text = 'hello') {
+    const conversation = await create(caller);
+    const command = await send(conversation, text, caller);
+    const credential = await token(command.runtimeId);
+    await fleet.tick();
+    await fleet.tick();
+    const { work } = await pi.next(credential, { workerId: 'worker_1' });
+    assert.ok(work);
+    const input = {
+      conversationId: conversation.id,
+      commandId: work.command.id,
+      workerId: 'worker_1',
+    };
+    assert.deepEqual(await pi.begin(credential, input), { apply: true });
+    return { conversation, token: credential, work, input };
+  }
   /** Begins and completes a claimed turn. */
   const finish = async (bound: Awaited<ReturnType<typeof claimed>>, tree?: string) => {
     await pi.begin(bound.token, bound.input);
@@ -346,6 +377,7 @@ export async function fixture(
     hosts,
     person,
     claimed,
+    begun,
     completion,
     finish,
     get pi() {
@@ -366,8 +398,10 @@ export async function fixture(
     advance: (milliseconds: number) => {
       now += milliseconds;
     },
-    restart: async () => {
+    /** A new service on the same state, with `changes` to its configuration. */
+    restart: async (changes: PiConfig = {}) => {
       await pi.close();
+      Object.assign(config, changes);
       pi = await start();
     },
   };

@@ -112,12 +112,28 @@ test('mixed session and conversation authority is refused before session admissi
   assert.equal(fixture.calls(), 0);
 });
 
-test('only registered native read tools are discoverable and callable', async () => {
+test('a conversation sees every conversable native tool and never a mounted, never, propose or secret one runs', async () => {
   const fixture = registry();
   const dispose = fixture.tools.registerConversationPolicy(fixture.provider);
   assert.throws(() => fixture.tools.registerConversationPolicy(fixture.provider), {
     code: 'conversation_provider_conflict',
   });
+  let ran = 0;
+  const probe = (name: string, conversation?: unknown, result: unknown = name) =>
+    fixture.tools.register({
+      name,
+      description: name,
+      inputSchema: z.object({ mode: z.string().optional() }).strict(),
+      conversation: conversation as 'never',
+      handler: () => {
+        ran++;
+        return result;
+      },
+    });
+  probe('never', 'never');
+  probe('propose', 'propose');
+  probe('secret', (input: { mode?: string }) => (input.mode === 'download' ? 'secret' : undefined));
+  probe('leaky', undefined, { nested: [{ token: 'bearer' }] });
   const catalog = fixture.tools.createCatalog('bridge');
   await catalog.replace([
     {
@@ -131,20 +147,28 @@ test('only registered native read tools are discoverable and callable', async ()
       },
     },
   ]);
+  const offered = ['leaky', 'mutate', 'propose', 'read', 'secret'];
   assert.deepEqual(
     (await fixture.tools.describe(caller)).map((entry) => entry.name),
-    ['read'],
+    offered,
   );
   assert.deepEqual(
     (await fixture.tools.list(caller)).map((entry) => entry.name),
-    ['read'],
+    offered,
   );
   assert.equal(await fixture.tools.call('read', caller, { value: 'ok' }), 'result');
-  await assert.rejects(fixture.tools.call('mutate', caller, {}), { code: 'tool_forbidden' });
-  await assert.rejects(fixture.tools.call('_bridge.remote', caller, {}), {
-    code: 'tool_forbidden',
-  });
-  assert.equal(fixture.calls(), 1);
+  assert.equal(await fixture.tools.call('mutate', caller, {}), 'mutated');
+  assert.equal(await fixture.tools.call('secret', caller, { mode: 'inline' }), 'secret');
+  for (const [name, input] of [
+    ['never', {}],
+    ['propose', {}],
+    ['secret', { mode: 'download' }],
+    ['_bridge.remote', {}],
+  ] as const)
+    await assert.rejects(fixture.tools.call(name, caller, input), { code: 'tool_forbidden' });
+  await assert.rejects(fixture.tools.call('leaky', caller, {}), { code: 'tool_result_secret' });
+  assert.equal(fixture.calls(), 2);
+  assert.equal(ran, 2);
   fixture.revokeGrant();
   assert.deepEqual(await fixture.tools.describe(caller), []);
   await assert.rejects(fixture.tools.call('read', caller, { value: 'ok' }), {
@@ -292,14 +316,15 @@ test(
       code: 'conversation_authority_registered',
     });
     assert.equal((await scope.require(agent, 'read')).id, user.actorId);
-    await assert.rejects(scope.require(agent, 'write'), { code: 'conversation_forbidden' });
+    // The conversation holds exactly its person's permissions: a reader's agent cannot write.
+    await assert.rejects(scope.require(agent, 'write'), { code: 'forbidden' });
     await assert.rejects(scope.require({ ...agent, credentialId: user.credentialId }, 'read'), {
       code: 'forbidden',
     });
     await assert.rejects(scope.require({ ...agent, session: { id: 'session_1' } }, 'read'), {
       code: 'forbidden',
     });
-    await assert.rejects(scope.delegationSource(agent), { code: 'nested_session' });
+    assert.deepEqual(await scope.delegationSource(agent), source);
     const worker = await state.transaction((tx) =>
       scope.createSessionActor(
         source,
@@ -375,5 +400,74 @@ test(
         .length,
       0,
     );
+  },
+);
+
+test(
+  'a conversation administers exactly as its source does, and names the source credential in self-checks',
+  { skip: !database && 'Requires MERV_TEST_POSTGRES_URL' },
+  async (t) => {
+    const { openState } = await import('./fixtures/state.js');
+    const state = await openState();
+    t.after(() => state.close());
+    const scope = await createService(new ProjectScope(state));
+    const alice = await scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example/auth/v1',
+      subject: 'alice',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const project = await scope.createProject(alice, { name: 'Sources', requestId: 'sources' });
+    const human = await scope.caller(alice, project.id);
+    const { token } = await scope.createKey(alice, { projectId: project.id });
+    const key = await scope.caller(
+      { kind: 'key', key: await scope.authenticateKey(token) },
+      project.id,
+    );
+    const robot = await scope.issueActor(human, { name: 'Robot', role: 'operator' });
+    const actor: Caller = {
+      actorId: robot.actor.id,
+      projectId: project.id,
+      credentialId: robot.credential.id,
+    };
+    let source = await scope.delegationSource(human);
+    scope.registerConversationAuthority({ require: async () => structuredClone(source) });
+    const agent = async (direct: Caller): Promise<Caller> => {
+      source = await scope.delegationSource(direct);
+      return { actorId: direct.actorId, projectId: direct.projectId, conversation };
+    };
+    // A signed-in person's agent administers, and the event names the conversation.
+    const made = await scope.issueActor(await agent(human), { name: 'Made', role: 'reader' });
+    const created = (await state.events(project.id)).find(
+      (event) => event.type === 'actor.created' && event.subjectId === made.actor.id,
+    );
+    assert.deepEqual(created?.data.source, {
+      kind: 'conversation',
+      conversationId: conversation.id,
+      commandId: conversation.commandId,
+    });
+    // A key refuses administration directly, and so does the agent of a key's conversation.
+    await assert.rejects(scope.issueActor(key, { name: 'No', role: 'reader' }), {
+      code: 'forbidden',
+    });
+    await assert.rejects(scope.issueActor(await agent(key), { name: 'No', role: 'reader' }), {
+      code: 'forbidden',
+    });
+    await assert.rejects(scope.actorCredentials(await agent(key), made.actor.id), {
+      code: 'forbidden',
+    });
+    assert.equal((await scope.actorCredentials(await agent(human), made.actor.id)).length, 1);
+    // An actor credential's agent cannot revoke or rotate the credential its source rests on.
+    const spare = await scope.issueActorCredential(actor, { actorId: robot.actor.id });
+    await assert.rejects(scope.revokeCredential(await agent(actor), robot.credential.id), {
+      code: 'self_revoke',
+    });
+    await assert.rejects(
+      scope.rotateCredential(await agent(actor), { credentialId: robot.credential.id }),
+      { code: 'self_rotation' },
+    );
+    await scope.revokeCredential(await agent(actor), spare.credential.id);
+    await assert.rejects(scope.revokeActor(await agent(actor), robot.actor.id), {
+      code: 'self_revoke',
+    });
   },
 );

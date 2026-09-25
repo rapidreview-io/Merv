@@ -483,17 +483,27 @@ test('a recoverable tool error reaches the model as a tool result', async () => 
   assert.equal(lost.modelRequests.length, 1);
 });
 
-test('a response with more tool calls than a turn allows ends before another model request', async () => {
+test('call 65 is refused before it runs, the next request carries tool_choice none, and the answer completes', async () => {
   const app = await fixture({ toolCall: true, calls: 65 });
   await app.run();
-  assert.deepEqual(app.failures, ['cmd_1']);
-  assert.equal(app.modelRequests.length, 1);
+  assert.deepEqual(app.failures, []);
+  assert.equal(app.toolRequests, 64);
+  assert.deepEqual(
+    app.modelRequests.map((request) => request.tool_choice),
+    [undefined, 'none'],
+  );
+  assert.match(JSON.stringify(app.modelRequests[1].input), /used its 64 tool calls: answer now/);
+  assert.equal(app.completions[0].outcomes.length, 64);
+  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
 });
 
 test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
+  // A third of what the window leaves beside the longest answer and the turn's instructions and
+  // tools, at most 128,000: 3 × (272,000 − 128,000) − 272 bytes for gpt-6-luna, and
+  // 3 × (32,000 − 16,000) − 272 for a model the worker does not know.
   for (const [model, budget] of [
-    ['gpt-6-luna', 64_000],
-    ['unknown-model', 32_000],
+    ['gpt-6-luna', 128_000],
+    ['unknown-model', 15_909],
   ] as const) {
     const toolResult = { content: 'x'.repeat(150_000) };
     const app = await fixture({ toolCall: true, toolResult, model });
@@ -504,6 +514,153 @@ test('oversized tool output is cut to the turn budget before it reaches the rela
     assert.equal(String(output.text).length, budget);
     assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
   }
+});
+
+test('a write receipt arrives whole after reads have spent the turn budget', async () => {
+  const tools = [
+    { ...tool, name: 'project.records', readOnly: true },
+    { ...tool, name: 'task.create', readOnly: false },
+  ];
+  const calling = (id: number, name: string) => ({
+    ...call,
+    id: `fc_${id}`,
+    call_id: `call_${id}`,
+    name,
+  });
+  const requests: Record<string, unknown>[] = [];
+  const receipt = { id: 'task_1', note: 'r'.repeat(5_000) };
+  const server = slotServer(3, {
+    next(count) {
+      if (server.bodies('complete').length) server.controller.abort();
+      return { work: count === 1 ? { ...assignment('a'), model: 'unknown-model', tools } : null };
+    },
+    model(_name, body) {
+      requests.push(body);
+      const reply = [calling(1, 'project_records'), calling(2, 'task_create')][requests.length - 1];
+      return new Response(reply ? sse([reply]) : sse([message('Done')], 'Done'));
+    },
+    tool: (body) => (body.name === 'task.create' ? receipt : { records: 'x'.repeat(40_000) }),
+  });
+  await server.run();
+  const [read, write] = server.bodies('complete')[0].outcomes as { output: object }[];
+  assert.equal((read.output as { truncated?: boolean }).truncated, true);
+  assert.deepEqual(write.output, receipt);
+  assert.ok(JSON.stringify(requests[2].input).includes(receipt.note));
+});
+
+/** A checkpoint of `steps`, each a message, one after another. */
+function tree(steps: object[]) {
+  const at = new Date().toISOString();
+  const content = JSON.stringify({
+    version: 1,
+    header: { type: 'session', version: 3, id: 'session_steps', cwd: '/pi-worker', timestamp: at },
+    entries: steps.map((message, index) => ({
+      type: 'message',
+      id: `step_${index}`,
+      parentId: index ? `step_${index - 1}` : null,
+      timestamp: at,
+      message,
+    })),
+    leafId: `step_${steps.length - 1}`,
+  });
+  return { content, hash: digest(content) };
+}
+const said = (content: object[], stopReason = 'stop') => ({
+  role: 'assistant',
+  content,
+  api: 'openai-responses',
+  provider: 'openai',
+  model: 'unknown-model',
+  usage: {
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 2,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason,
+  timestamp: 2,
+});
+
+test('older tool results and arguments are clipped before the first exchange is dropped', async () => {
+  const checkpoint = tree([
+    { role: 'user', content: 'Remember the budget is 5k', timestamp: 1 },
+    said([{ type: 'text', text: 'Noted: 5k.' }]),
+    { role: 'user', content: 'Read the records', timestamp: 1 },
+    said(
+      [
+        {
+          type: 'toolCall',
+          id: 'call_1',
+          name: 'project_get',
+          arguments: { note: 'a'.repeat(9_000) },
+        },
+      ],
+      'toolUse',
+    ),
+    {
+      role: 'toolResult',
+      toolCallId: 'call_1',
+      toolName: 'project_get',
+      content: [{ type: 'text', text: `Start ${'r'.repeat(40_000)} end` }],
+      isError: false,
+      timestamp: 3,
+    },
+    said([{ type: 'text', text: 'Read them.' }]),
+    { role: 'user', content: 'Thanks', timestamp: 1 },
+    said([{ type: 'text', text: 'Welcome.' }]),
+  ]);
+  const app = await fixture({ checkpoint, model: 'unknown-model' });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const sent = JSON.stringify(app.modelRequests[0].input);
+  assert.ok(sent.includes('Remember the budget is 5k') && sent.includes('Read them.'));
+  assert.ok(sent.includes('characters left out') && !sent.includes('r'.repeat(2_000)));
+  assert.ok(sent.includes('omitted') && !sent.includes('a'.repeat(2_000)));
+});
+
+test('one write argument over the history budget still completes, and the next turn restores', async () => {
+  const tools = [{ ...tool, name: 'artifact.create', readOnly: false }];
+  const huge = 'z'.repeat(40_000);
+  const requests: Record<string, unknown>[] = [];
+  let issued = 0;
+  const server = slotServer(3, {
+    next() {
+      const done = server.bodies('complete');
+      if (done.length === 2) server.controller.abort();
+      if (issued > done.length || issued === 2) return { work: null };
+      issued++;
+      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
+      return {
+        work: {
+          ...assignment(`t${issued}`, { conversationId: 'conv_a' }),
+          model: 'unknown-model',
+          tools,
+          checkpoint: previous
+            ? { content: previous.checkpoint, hash: previous.checkpointHash }
+            : null,
+        },
+      };
+    },
+    model(_name, body) {
+      requests.push(body);
+      return new Response(
+        requests.length === 1
+          ? sse([
+              { ...call, name: 'artifact_create', arguments: JSON.stringify({ content: huge }) },
+            ])
+          : sse([message('Stored')], 'Stored'),
+      );
+    },
+    tool: () => ({ id: 'art_1' }),
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(server.bodies('complete').length, 2);
+  assert.ok(JSON.stringify(requests[1].input).includes(huge));
+  assert.ok(!JSON.stringify(requests[2].input).includes(huge));
+  assert.match(JSON.stringify(requests[2].input), /Question t1/);
 });
 
 test('no output cap is sent; an answer the model itself stops for length says so', async () => {
@@ -520,9 +677,10 @@ test('no output cap is sent; an answer the model itself stops for length says so
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  // Bytes bind the first conversation (gpt-6-luna's 432 KB); relay items bind the second.
+  // Bytes bind the first conversation (gpt-6-luna's 304 KB beside 128 KB of tool results); relay
+  // items bind the second.
   for (const [turns, filler, kept] of [
-    [10, 60_000, 7],
+    [10, 60_000, 5],
     [200, 0, 150],
   ]) {
     const at = new Date().toISOString();
@@ -1023,7 +1181,10 @@ function slotServer(
       const reply = handlers.next(bodies('next').length, body);
       return reply instanceof Response ? reply : json(reply);
     }
-    if (route === 'tool') return json({ result: handlers.tool?.(body) ?? { title: 'Project' } });
+    if (route === 'tool') {
+      const result = await handlers.tool?.(body);
+      return result instanceof Response ? result : json({ result: result ?? { title: 'Project' } });
+    }
     return json(accepted[route]);
   };
   return {
@@ -1150,7 +1311,8 @@ test('an assignment for another slot or with oversized notes is failed and never
     assignment('a', { hostId: 'pih_2' }),
     assignment('a', { runtimeId: 'flt_other' }),
     assignment('a', { epoch: 2 }),
-    { ...assignment('a'), notes: ['1', '2', '3', '4', '5'] },
+    { ...assignment('a'), notes: Array.from({ length: 11 }, (_, index) => `${index}`) },
+    { ...assignment('a'), instructions: 'x'.repeat(32_001) },
     { ...assignment('a'), notes: ['x'.repeat(301)] },
   ]) {
     const server = slotServer(3, {
@@ -1168,19 +1330,19 @@ test('an assignment for another slot or with oversized notes is failed and never
   }
 });
 
-test('switch_machine is offered as machine.switch and sends only its machine and reason', async () => {
-  const described = (name: string) => ({
+test('any offered tool is exposed under its model name, and any object input is forwarded', async () => {
+  const described = (name: string, readOnly?: boolean) => ({
     name,
     description: name,
-    inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+    ...(readOnly === undefined ? {} : { readOnly }),
   });
-  const tools = ['project.get', 'task.list', 'artifact.list', 'artifact.get', 'artifact.read'];
   const reason = 'Out of memory loading the dataset';
-  const switchCall = (id: number, input: object) => ({
+  const calling = (id: number, name: string, input: object) => ({
     ...call,
     id: `fc_${id}`,
     call_id: `call_${id}`,
-    name: 'switch_machine',
+    name,
     arguments: JSON.stringify(input),
   });
   const requests: Record<string, unknown>[] = [];
@@ -1193,17 +1355,10 @@ test('switch_machine is offered as machine.switch and sends only its machine and
             ? {
                 ...assignment('a'),
                 tools: [
-                  ...tools.map(described),
-                  // Open to other fields, so the worker's own check is what refuses them.
-                  {
-                    name: 'machine.switch',
-                    description: 'Move to a bigger machine',
-                    inputSchema: {
-                      type: 'object',
-                      properties: { machine: { type: 'string' }, reason: { type: 'string' } },
-                      required: ['machine', 'reason'],
-                    },
-                  },
+                  described('paper.cite', false),
+                  described('workflow.status_and_next', true),
+                  described('feed.unknown_to_the_worker'),
+                  described('machine.switch'),
                 ],
               }
             : null,
@@ -1214,42 +1369,123 @@ test('switch_machine is offered as machine.switch and sends only its machine and
       return new Response(
         requests.length === 1
           ? sse([
-              switchCall(1, { machine: 'large', reason, projectId: 'proj_2' }),
-              switchCall(2, { machine: 'large', reason }),
+              calling(1, 'switch_machine', { machine: 'large', reason, projectId: 'proj_2' }),
+              calling(2, 'paper_cite', { url: 'https://arxiv.org/abs/1', nested: { a: [1] } }),
             ])
-          : sse([message('Moving to Large')], 'Moving to Large'),
+          : sse([message('Done')], 'Done'),
       );
     },
-    tool: () => ({ status: 'starting' }),
+    tool: (body) => ({ ran: body.name }),
   });
   await server.run();
   assert.deepEqual(
     (requests[0].tools as { name: string }[]).map((tool) => tool.name),
+    ['paper_cite', 'workflow_status_and_next', 'feed_unknown_to_the_worker', 'switch_machine'],
+  );
+  // Main checks every call as the person; the worker forwards what the model sent.
+  assert.deepEqual(
+    server.bodies('tool').map(({ name, input }) => ({ name, input })),
     [
-      'project_get',
-      'task_list',
-      'artifact_list',
-      'artifact_get',
-      'artifact_read',
-      'switch_machine',
+      { name: 'machine.switch', input: { machine: 'large', reason, projectId: 'proj_2' } },
+      { name: 'paper.cite', input: { url: 'https://arxiv.org/abs/1', nested: { a: [1] } } },
     ],
   );
-  assert.deepEqual(server.bodies('tool'), [
-    {
-      workerId: 'worker_1',
-      conversationId: 'conv_a',
-      commandId: 'cmd_a',
-      name: 'machine.switch',
-      input: { machine: 'large', reason },
+  assert.deepEqual(
+    (server.bodies('complete')[0].outcomes as { name: string }[]).map(({ name }) => name),
+    ['machine.switch', 'paper.cite'],
+  );
+});
+
+test('a write is posted once, even after a 503, and a read is retried; writes in one reply run in order', async () => {
+  const tools = [
+    { ...tool, name: 'task.create', readOnly: false },
+    { ...tool, name: 'feed.post', readOnly: false },
+    { ...tool, name: 'task.get', readOnly: true },
+  ];
+  const calling = (id: number, name: string) => ({
+    ...call,
+    id: `fc_${id}`,
+    call_id: `call_${id}`,
+    name,
+  });
+  let failed = 0;
+  const log: string[] = [];
+  let models = 0;
+  const server = slotServer(3, {
+    next(count) {
+      if (server.bodies('complete').length) server.controller.abort();
+      return { work: count === 1 ? { ...assignment('a'), tools } : null };
     },
-  ]);
-  assert.match(JSON.stringify(requests[1].input), /Tool arguments are not allowed/);
-  assert.deepEqual(server.bodies('complete')[0].outcomes, [
-    {
-      callId: 'call_2',
-      name: 'machine.switch',
-      input: { machine: 'large', reason },
-      output: { status: 'starting' },
+    model() {
+      models++;
+      return new Response(
+        models === 1
+          ? sse([calling(1, 'task_create'), calling(2, 'feed_post'), calling(3, 'task_get')])
+          : sse([message('Done')], 'Done'),
+      );
     },
-  ]);
+    async tool(body) {
+      const name = String(body.name);
+      log.push(`start ${name}`);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      log.push(`end ${name}`);
+      return name !== 'feed.post' && failed++ < 2
+        ? json({ error: { code: 'unavailable', message: 'Busy' } }, 503)
+        : { ran: name };
+    },
+  });
+  await server.run();
+  const posted = server.bodies('tool').map(({ name }) => name);
+  assert.equal(posted.filter((name) => name === 'task.create').length, 1);
+  assert.equal(posted.filter((name) => name === 'task.get').length, 2);
+  // The reply's calls run one at a time, in order, as it holds writes.
+  assert.deepEqual(
+    log,
+    ['task.create', 'feed.post', 'task.get', 'task.get'].flatMap((name) => [
+      `start ${name}`,
+      `end ${name}`,
+    ]),
+  );
+  assert.deepEqual(
+    (server.bodies('complete')[0].outcomes as { name: string }[]).map(({ name }) => name),
+    ['feed.post', 'task.get'],
+  );
+  assert.equal(server.bodies('fail').length, 0);
+});
+
+test('a conversation begun under older instructions continues under Main’s current ones', async () => {
+  const developer: string[] = [];
+  let issued = 0;
+  const server = slotServer(3, {
+    next() {
+      const done = server.bodies('complete');
+      if (done.length === 2) server.controller.abort();
+      if (issued > done.length || issued === 2) return { work: null };
+      issued++;
+      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
+      const work = assignment(`t${issued}`, { conversationId: 'conv_a' });
+      // An older Main sends no instructions; the current one does.
+      return {
+        work: previous
+          ? {
+              ...work,
+              instructions: 'You are Merv’s agent. Current instructions.',
+              checkpoint: { content: previous.checkpoint, hash: previous.checkpointHash },
+            }
+          : work,
+      };
+    },
+    model(_name, body) {
+      const [head, ...rest] = body.input as { role?: string; content?: unknown }[];
+      assert.equal(head.role, 'developer');
+      developer.push(String(head.content));
+      assert.ok(!JSON.stringify(rest).includes('read-only assistant'));
+      return new Response(sse([message('Answer')], 'Answer'));
+    },
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.match(developer[0], /^You are a read-only assistant\./);
+  assert.match(developer[1], /^You are Merv’s agent\. Current instructions\./);
+  assert.ok(!developer[1].includes('read-only assistant'));
 });

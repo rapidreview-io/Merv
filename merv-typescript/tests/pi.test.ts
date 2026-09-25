@@ -3,13 +3,22 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
-import { check, type Caller } from '@merv/contracts';
+import {
+  check,
+  MervError,
+  recorded,
+  type Caller,
+  type HumanPrincipal,
+  type Permission,
+  type Role,
+} from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
-import { checkpointTree, code, fixture, sha } from './fixtures/pi.js';
+import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
   const f = await fixture(t);
@@ -27,6 +36,7 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
     'checkpoint',
     'createdAt',
     'id',
+    'model',
     'previousCheckpoint',
     'projectId',
     'revision',
@@ -46,6 +56,35 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
     )?.name,
     null,
   );
+});
+
+test('a model catalog Pi cannot use is refused at start, naming the field, and by the render first', async (t) => {
+  const f = await fixture(t);
+  // The render's dry run makes the same checks, so it catches a catalog that would stop Main.
+  const { piModels } = await import('../deploy/schema.mjs');
+  assert.deepEqual(piModels(models, 'MERV_PI_MODELS'), models);
+  const [luna] = models;
+  for (const [catalog, at] of [
+    [[{ ...luna, id: '-luna' }], 'models.0.id'],
+    [[luna, luna], 'models'],
+    [Array.from({ length: 9 }, (_, index) => ({ ...luna, id: `model-${index}` })), 'models'],
+    [[{ ...luna, outputUsdPerM: undefined }], 'models.0.outputUsdPerM'],
+    [[{ ...luna, effort: 'high' }], 'models.0.effort'],
+    [[{ ...luna, provider: 'openai' }], 'models.0'],
+    [[{ ...luna, label: 'GPT-6 Luna, the everyday one' }], 'models.0.label'],
+  ] as const) {
+    assert.throws(
+      () =>
+        new PiService(f.state, f.scope, f.fleet, f.tools, f.blobs, {
+          models: catalog,
+        } as unknown as PiConfig),
+      (error: MervError) =>
+        error.code === 'pi_configuration' &&
+        error.status === 503 &&
+        error.message === `Invalid Pi configuration at ${at}`,
+    );
+    assert.throws(() => piModels(catalog, 'MERV_PI_MODELS'), /MERV_PI_MODELS/);
+  }
 });
 
 test('send commits a command, its host and the Fleet request atomically, deduplicates, and serializes turns', async (t) => {
@@ -269,140 +308,555 @@ test('concurrent sends to separate conversations share one host and one machine'
   assert.equal((await f.hosts()).length, 1);
 });
 
-test('a reader can chat but cannot request workflow capacity; worker claims and audits a native read only', async (t) => {
-  const f = await fixture(t);
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
-  const reader: Caller = {
-    projectId: f.operator.projectId,
-    actorId: issued.actor.id,
-    credentialId: issued.credential.id,
+/** A project a signed-in operator made, with a member of every role signed in, holding a user key
+ * and represented by an actor credential: every kind of source a conversation can have. */
+async function sources(f: PiFixture) {
+  const login = (subject: string) =>
+    f.scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example/auth/v1',
+      subject,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+  const principals = {
+    operator: await login('olive'),
+    producer: await login('pat'),
+    reviewer: await login('rae'),
+    reader: await login('reid'),
   };
-  const conversation = await f.create(reader);
-  const unregister = f.fleet.registerOwner('workflow', {
-    valid: async () => true,
-    bootstrap: async () => '',
-    observe: async () => 'running',
+  const project = await f.scope.createProject(principals.operator, {
+    name: 'Sources',
+    requestId: 'sources',
   });
-  try {
-    await assert.rejects(
-      f.fleet.request(reader, {
-        requestId: 'workflow_attempt',
-        owner: { kind: 'workflow', id: 'write_only' },
-      }),
-      code('forbidden'),
-    );
-  } finally {
-    unregister();
+  for (const [role, principal] of Object.entries(principals))
+    if (role !== 'operator')
+      await f.scope.addMember(principals.operator, project.id, {
+        subject: principal.user.subject,
+        role: role as Role,
+      });
+  const admin = await f.scope.caller(principals.operator, project.id);
+  const all: { kind: string; role: Role; caller: Caller }[] = [];
+  for (const [role, principal] of Object.entries(principals) as [Role, HumanPrincipal][]) {
+    all.push({ kind: 'human', role, caller: await f.scope.caller(principal, project.id) });
+    const { token } = await f.scope.createKey(principal, { projectId: project.id });
+    const key = await f.scope.caller({ kind: 'key', key: await f.scope.authenticateKey(token) });
+    all.push({ kind: 'key', role, caller: { ...key, projectId: project.id } });
+    const issued = await f.scope.issueActor(admin, { name: `${role} robot`, role });
+    all.push({
+      kind: 'actor',
+      role,
+      caller: {
+        projectId: project.id,
+        actorId: issued.actor.id,
+        credentialId: issued.credential.id,
+      },
+    });
   }
-  const command = await f.send(conversation, 'What project is this?', reader);
-  assert.equal(command.status, 'waiting');
-  const { token, work, input } = await f.claimed(command);
-  assert.equal(work.command.status, 'starting');
-  assert.deepEqual(
-    work.tools.map((tool) => tool.name),
-    ['project.get'],
+  return { project, principals, admin, all };
+}
+
+/** Tools that each need one permission and count their runs, with the flags a registration can
+ * carry. */
+function probes(f: PiFixture, t: TestContext) {
+  const runs: Record<string, number> = {};
+  const probe = (
+    name: string,
+    permission: Permission,
+    options: {
+      readOnly?: boolean;
+      conversation?: 'never' | 'propose' | 'secret';
+      result?: unknown;
+    } = {},
+  ) =>
+    t.after(
+      f.tools.register({
+        name,
+        description: `Probe ${name}`,
+        readOnly: options.readOnly,
+        conversation: options.conversation,
+        inputSchema: z.object({}).strict(),
+        handler: (caller: Caller) =>
+          f.state.transaction(async (tx) => {
+            await f.scope.require(caller, permission, tx);
+            runs[name] = (runs[name] ?? 0) + 1;
+            if (permission !== 'read') await recorded(f.state, tx, caller, name, 'probe', {});
+            return options.result ?? { ran: name };
+          }),
+      }),
+    );
+  probe('probe.read', 'read', { readOnly: true });
+  probe('probe.write', 'write');
+  probe('probe.review', 'review');
+  probe('probe.admin', 'admin');
+  probe('probe.propose', 'write', { conversation: 'propose' });
+  probe('probe.secret', 'admin', { conversation: 'secret', result: { token: 'secret' } });
+  probe('probe.leaky', 'read', { readOnly: true, result: { issued: [{ token: 'secret' }] } });
+  probe('probe.never', 'read', { readOnly: true, conversation: 'never' });
+  probe('pi.probe', 'read', { readOnly: true });
+  return runs;
+}
+
+test('the agent has exactly its person’s permissions, never more', async (t) => {
+  const f = await fixture(t, { machines: 16 });
+  const runs = probes(f, t);
+  t.after(
+    f.tools.register({
+      name: 'actor.credentials',
+      description: 'Read credential metadata',
+      readOnly: true,
+      inputSchema: z.object({ actorId: z.string().min(1).optional() }).strict(),
+      handler: (caller: Caller, input: { actorId?: string }) =>
+        f.scope.actorCredentials(caller, input.actorId),
+    }),
   );
-  assert.deepEqual(await f.pi.begin(token, input), { apply: true });
-  const project = await f.pi.tool(token, { ...input, name: 'project.get', input: {} });
-  assert.deepEqual(project, await f.scope.project(reader));
-  assert.equal(f.reads, 1);
-  await assert.rejects(
-    f.pi.tool(token, { ...input, name: 'task.create', input: {} }),
-    code('tool_forbidden'),
-  );
-  await assert.rejects(
-    f.pi.tool(token, { ...input, name: 'shell.run', input: {} }),
-    code('tool_forbidden'),
-  );
-  await assert.rejects(
-    f.pi.tool(token, { ...input, name: '_remote.read', input: {} }),
-    code('tool_forbidden'),
-  );
-  assert.equal(
-    (
-      (await f.pi.tool(token, {
-        ...input,
-        name: 'project.get',
-        input: { projectId: reader.projectId },
-      })) as { error: { code: string } }
-    ).error.code,
-    'invalid_input',
-  );
+  const { all, admin } = await sources(f);
+  const someone = await f.scope.issueActor(admin, { name: 'Someone', role: 'reader' });
+  const reads = ['actor.credentials', 'probe.leaky', 'probe.read', 'project.get', 'shell.run'];
+  const writes = ['probe.admin', 'probe.propose', 'probe.review', 'probe.secret', 'probe.write'];
+  for (const { kind, role, caller } of all) {
+    const label = `${kind} ${role}`;
+    const { token, work, input } = await f.begun(caller);
+    const offered = work.tools.map(({ name }) => name).filter((name) => name !== 'machine.switch');
+    assert.deepEqual(
+      offered,
+      [...reads, ...(role === 'reader' ? [] : [...writes, 'task.create'])].sort(),
+      label,
+    );
+    const agent = (name: string, value: object = {}) =>
+      f.pi.tool(token, { ...input, name, input: value });
+    for (const name of ['probe.read', 'probe.write', 'probe.review', 'probe.admin']) {
+      const before = runs[name] ?? 0;
+      const direct = await f.tools.call(name, caller, {}).then(
+        () => true,
+        (error) => (assert.equal(error.code, 'forbidden', label), false),
+      );
+      const via = offered.includes(name)
+        ? await agent(name)
+        : await assert.rejects(agent(name), code('pi_tool_forbidden'));
+      if (direct) assert.deepEqual(via, { ran: name }, `${label} ${name}`);
+      else if (offered.includes(name))
+        assert.equal((via as { error: { code: string } }).error.code, 'forbidden', label);
+      assert.equal(runs[name] ?? 0, before + (direct ? 2 : 0), `${label} ${name}`);
+    }
+    assert.equal((await f.pi.snapshot(caller, input.conversationId)).commands[0].status, 'working');
+    assert.equal(
+      ((await agent('probe.leaky')) as { error: { code: string } }).error.code,
+      'tool_result_secret',
+    );
+    for (const name of ['probe.never', 'pi.probe', '_remote.read', 'task.list'])
+      await assert.rejects(agent(name), code('pi_tool_forbidden'), `${label} ${name}`);
+    // The real actor tools: only an operator reads another actor's credentials, and never
+    // through a key, directly or through the agent.
+    // What only the person may run is proposed, never run; Run runs it as them, with exactly the
+    // outcome of their own direct call.
+    const proposed: string[] = [];
+    if (role !== 'reader')
+      for (const name of ['probe.propose', 'probe.secret']) {
+        const reply = (await agent(name)) as { proposed: { id: string; name: string } };
+        assert.equal(reply.proposed.name, name, label);
+        proposed.push(reply.proposed.id);
+      }
+    const other = { actorId: someone.actor.id };
+    const allowed = role === 'operator' && kind !== 'key';
+    const direct = await f.tools.call('actor.credentials', caller, other).then(
+      () => true,
+      () => false,
+    );
+    const via = (await agent('actor.credentials', other)) as { error?: { code: string } };
+    assert.deepEqual([direct, !via.error], [allowed, allowed], label);
+    for (const name of ['probe.propose', 'probe.secret', 'probe.never', 'pi.probe'])
+      assert.equal(runs[name], undefined);
+    await f.pi.complete(token, f.completion(input));
+    for (const [index, proposalId] of proposed.entries()) {
+      const name = ['probe.propose', 'probe.secret'][index];
+      const direct = await f.tools.call(name, caller, {}).then(
+        () => true,
+        () => false,
+      );
+      const ran = await f.pi
+        .run(caller, { id: input.conversationId, commandId: input.commandId, proposalId })
+        .then(
+          () => true,
+          (error) => (assert.equal(error.code, 'forbidden', label), false),
+        );
+      assert.equal(ran, direct, `${label} ${name}`);
+      delete runs[name];
+    }
+  }
   assert.equal(f.mutations, 0);
-  assert.equal((await f.pi.snapshot(reader, conversation.id)).commands[0].status, 'working');
-  const result = f.completion(input, checkpointTree('What project is this?'));
-  result.outcomes = [
-    {
-      callId: 'read_1',
-      name: 'project.get',
-      input: {},
-      output: JSON.parse(JSON.stringify(project)),
+});
+
+test('a write runs as the person and is recorded as the agent’s', async (t) => {
+  const f = await fixture(t);
+  probes(f, t);
+  const { all } = await sources(f);
+  const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
+  const { token, work, input } = await f.begun(producer);
+  assert.deepEqual(await f.pi.tool(token, { ...input, name: 'probe.write', input: {} }), {
+    ran: 'probe.write',
+  });
+  const [event] = (await f.state.events(producer.projectId)).filter(
+    ({ type }) => type === 'probe.write',
+  );
+  assert.equal(event.actorId, producer.actorId);
+  assert.deepEqual(event.data.source, {
+    kind: 'conversation',
+    conversationId: input.conversationId,
+    commandId: input.commandId,
+  });
+  const agent: Caller = {
+    actorId: producer.actorId,
+    projectId: producer.projectId,
+    conversation: {
+      id: input.conversationId,
+      commandId: input.commandId,
+      runtimeId: work.command.runtimeId,
+      epoch: work.command.epoch,
     },
+  };
+  assert.deepEqual(await f.scope.delegationSource(agent), await f.scope.delegationSource(producer));
+  const grant = await f.pi.authorizeModel(work.modelToken);
+  assert.ok(grant.toolNames.includes('probe_write'));
+  const result = f.completion(input);
+  result.outcomes = [
+    { callId: 'write_1', name: 'probe.write', input: {}, output: { ran: 'probe.write' } },
   ];
   assert.deepEqual(await f.pi.complete(token, result), { saved: true });
   assert.deepEqual(
-    (await f.pi.snapshot(reader, conversation.id)).commands[0].outcomes,
+    (await f.pi.snapshot(producer, input.conversationId)).commands[0].outcomes,
     result.outcomes,
   );
+});
+
+test('a role change ends the running turn, the next offers the new role’s tools, and the host project has no agent', async (t) => {
+  const f = await fixture(t);
+  probes(f, t);
+  const { all, principals, project } = await sources(f);
+  const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
+  const { token, input } = await f.begun(producer);
+  await f.scope.changeMemberRole(principals.operator, project.id, {
+    subject: principals.producer.user.subject,
+    role: 'reader',
+  });
+  await assert.rejects(
+    f.pi.tool(token, { ...input, name: 'probe.read', input: {} }),
+    code('pi_authority_stale'),
+  );
+  const reader = await f.scope.caller(principals.producer, project.id);
+  await f.pi.stop(reader, input.conversationId);
+  const next = await f.pi.send(reader, input.conversationId, { commandId: 'after', text: 'now' });
+  const { work } = await f.pi.next(token, { workerId: 'worker_1' });
+  assert.equal(work?.command.id, next.id);
+  assert.ok(work!.tools.every(({ readOnly }) => readOnly));
+  assert.ok(work!.tools.some(({ name }) => name === 'probe.read'));
+  await assert.rejects(
+    f.pi.create(f.hostCaller, { requestId: 'host', title: 'Chat' }),
+    code('pi_forbidden'),
+  );
+});
+
+test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
+  const f = await fixture(t);
+  const runs = probes(f, t);
+  // A gate only a signed-in person passes, as code.publication.merge and workflow.extend_limit keep.
+  t.after(
+    f.tools.register({
+      name: 'probe.signed',
+      description: 'Signed-in person only',
+      conversation: 'propose',
+      inputSchema: z.object({ note: z.string().optional() }).strict(),
+      handler: (caller: Caller) => {
+        check(caller.human && !caller.key, 'forbidden', 'A signed-in person must do this', 403);
+        return { signed: true };
+      },
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const key = all.find(({ kind, role }) => kind === 'key' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const agent = (name: string, value: object = {}) =>
+    f.pi.tool(turn.token, { ...turn.input, name, input: value });
+  const ids: string[] = [];
+  for (let index = 0; index < 16; index++)
+    ids.push(
+      ((await agent(index ? 'probe.signed' : 'probe.secret')) as { proposed: { id: string } })
+        .proposed.id,
+    );
+  assert.deepEqual(
+    ((await agent('probe.signed')) as { error: { code: string } }).error.code,
+    'too_many_proposals',
+  );
+  assert.equal(
+    ((await agent('probe.signed', { note: 7 })) as { error: { code: string } }).error.code,
+    'invalid_input',
+  );
+  const run = (caller: Caller, proposalId: string, commandId = turn.input.commandId) =>
+    f.pi.run(caller, { id: turn.input.conversationId, commandId, proposalId });
+  await assert.rejects(run(human, ids[1]), code('pi_turn_busy'));
+  const conversationCaller: Caller = {
+    actorId: human.actorId,
+    projectId: human.projectId,
+    conversation: {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      runtimeId: turn.work.command.runtimeId,
+      epoch: turn.work.command.epoch,
+    },
+  };
+  await assert.rejects(run(conversationCaller, ids[1]), code('pi_forbidden'));
+  const result = f.completion(turn.input);
+  result.outcomes = [
+    { callId: 'propose_1', name: 'probe.secret', input: {}, output: { proposed: {} } },
+  ];
+  await f.pi.complete(turn.token, result);
+  assert.deepEqual(await run(human, ids[0]), { result: { token: 'secret' } });
+  assert.equal(runs['probe.secret'], 1);
+  await assert.rejects(run(human, ids[0]), code('pi_proposal_ran'));
+  assert.equal(runs['probe.secret'], 1);
+  await assert.rejects(run(human, 'pip_missing'), code('pi_not_found'));
+  // The signed-in gate passes when the person presses Run, and fails through their key.
+  assert.deepEqual(await run(human, ids[1]), { result: { signed: true } });
+  const keyTurn = await f.begun(key);
+  await f.pi.tool(keyTurn.token, { ...keyTurn.input, name: 'probe.signed', input: {} });
+  await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
+  const [keyProposal] = (await f.pi.snapshot(key, keyTurn.input.conversationId)).commands[0]
+    .proposals!;
+  await assert.rejects(
+    f.pi.run(key, {
+      id: keyTurn.input.conversationId,
+      commandId: keyTurn.input.commandId,
+      proposalId: keyProposal.id,
+    }),
+    code('forbidden'),
+  );
+  const shown = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
+  assert.deepEqual(
+    shown.proposals!.slice(0, 2).map(({ name, secret, ran }) => [name, secret, ran?.ok]),
+    [
+      ['probe.secret', true, true],
+      ['probe.signed', undefined, true],
+    ],
+  );
+  // Nothing keeps a secret result: not the command, its outcomes or its messages.
+  assert.ok(!JSON.stringify(shown).includes('"token":"secret"'));
+  const stored = await f.state.read((sql) =>
+    sql.all<{ data_json: string }>('SELECT data_json FROM pi_commands'),
+  );
+  assert.ok(stored.every(({ data_json }) => !data_json.includes('"token":"secret"')));
+});
+
+test('a Fleet halt the person runs from a proposal is recorded as theirs', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.fleet.registerOwner('workflow', {
+      valid: async () => true,
+      bootstrap: async () => '',
+      observe: async () => 'running',
+    }),
+  );
+  t.after(
+    f.tools.register({
+      name: 'fleet.halt',
+      description: 'Halt an allocation',
+      conversation: 'propose',
+      inputSchema: z.object({ id: z.string() }).strict(),
+      handler: (caller: Caller, input: { id: string }) => f.fleet.cancel(caller, input.id),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const robot = all.find(({ kind, role }) => kind === 'actor' && role === 'producer')!.caller;
+  const allocation = await f.fleet.request(robot, {
+    requestId: 'robot_work',
+    owner: { kind: 'workflow', id: 'robot_work' },
+  });
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, {
+    ...turn.input,
+    name: 'fleet.halt',
+    input: { id: allocation.id },
+  })) as { proposed: { id: string } };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  await f.pi.run(human, {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  });
+  const halted = (await f.state.events(human.projectId)).filter(
+    ({ type, subjectId }) => type === 'fleet.changed' && subjectId === allocation.id,
+  );
+  assert.equal(halted.at(-1)?.actorId, human.actorId);
+  assert.equal(halted.at(-1)?.data.intent, 'stop');
+});
+
+test('each turn says whom the agent serves, where, on what, what the project lacks, and what a stopped answer made', async (t) => {
+  const f = await fixture(t);
+  probes(f, t);
+  t.after(
+    f.tools.register({
+      name: 'paper.read',
+      description: 'Read the paper',
+      readOnly: true,
+      inputSchema: z.object({ kind: z.string().optional() }).strict(),
+      handler: () => ({
+        current: {
+          sections: [
+            { id: 'problem', content: 'Why proteins misfold' },
+            { id: 'scope', content: '  ' },
+            { id: 'goals', content: 'A model' },
+            { id: 'constraints', content: 'None' },
+          ],
+        },
+      }),
+    }),
+  );
+  const { all, project } = await sources(f);
+  const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
+  const reviewer = all.find(({ kind, role }) => kind === 'human' && role === 'reviewer')!.caller;
+  const first = await f.begun(producer);
+  assert.deepEqual(first.work.notes.slice(0, 5), [
+    'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
+    `You serve ${producer.actorId}, a producer in project ${project.id}: they, and so you, can read everything and create and change work, but not review it or administer the project. actor.whoami and project.get name them.`,
+    'Today is 2026-09-23 (UTC).',
+    'Empty Problem sections: scope.',
+    'The Introduction is empty.',
+  ]);
+  assert.match(first.work.notes[5], /^Machine: Standard/);
+  assert.match(first.work.instructions!, /^You are this person's own agent in Merv/);
+  assert.match(first.work.instructions!, /never call yourself ChatGPT/);
+  // The agent writes, then its answer is stopped: the next turn says what it had made.
+  await f.pi.tool(first.token, { ...first.input, name: 'probe.write', input: {} });
+  await f.pi.stop(producer, first.input.conversationId);
+  await f.pi.send(producer, first.input.conversationId, { commandId: 'again', text: 'Go on' });
+  const { work } = await f.pi.next(first.token, { workerId: 'worker_1' });
+  assert.equal(
+    work!.notes[5],
+    'Your previous answer here stopped before it finished, after it had made: probe.write probe',
+  );
+  assert.equal(work!.instructions, first.work.instructions);
+  // A reviewer writes no paper: no Problem or Introduction line.
+  const other = await f.begun(reviewer);
+  assert.deepEqual(
+    other.work.notes.filter((note) => /Problem|Introduction/.test(note)),
+    [],
+  );
+  assert.match(other.work.notes[1], /a reviewer in project/);
 });
 
 test('recoverable tool failures and oversized results come back to the model as results', async (t) => {
   const f = await fixture(t);
   const content = 'line "quoted"\n'.repeat(12_000);
-  t.after(
-    f.tools.register({
-      name: 'artifact.read',
-      description: 'Read artifact',
-      readOnly: true,
-      inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
-      handler: async (_caller, input: { artifactId: string }) => {
-        check(input.artifactId.startsWith('art_b'), 'not_found', 'Artifact not found', 404);
-        return input.artifactId === 'art_big'
-          ? { artifact: { id: 'art_big' }, content, encoding: 'utf8' }
-          : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10_000), encoding: 'base64' };
-      },
-    }),
-  );
-  t.after(
-    f.tools.register({
-      name: 'artifact.list',
-      description: 'List artifacts',
-      readOnly: true,
-      inputSchema: z.object({}).strict(),
-      handler: async () =>
-        Array.from({ length: 1000 }, (_, index) => ({
-          id: `art_${index}`,
-          title: 'Meeting notes',
-        })),
-    }),
-  );
+  const register = (name: string, handler: (input: Record<string, unknown>) => unknown) =>
+    t.after(
+      f.tools.register({
+        name,
+        description: name,
+        readOnly: true,
+        inputSchema: z.record(z.unknown()),
+        handler: (_caller: Caller, input: Record<string, unknown>) => handler(input),
+      }),
+    );
+  register('artifact.read', ({ artifactId }) => {
+    check(String(artifactId).startsWith('art_b'), 'not_found', 'Artifact not found', 404);
+    return artifactId === 'art_big'
+      ? {
+          artifact: { id: 'art_big' },
+          content: content.slice(100),
+          encoding: 'utf8',
+          offset: 100,
+          total: content.length,
+        }
+      : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10), encoding: 'base64' };
+  });
+  const tasks = (count: number, goal?: string) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `task_${index}`,
+      title: `T${index}`,
+      status: 'open',
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, count - index)).toISOString(),
+      ...(goal && { goal }),
+      deliverables: [{ text: 'd'.repeat(500) }],
+    }));
+  register('task.list', ({ count, goal }) => ({ tasks: tasks(Number(count), goal as string) }));
+  register('project.records', () => ({ note: 'x'.repeat(100_000) }));
+  register('refused.forbidden', () => {
+    throw new MervError('forbidden', 'Actor lacks write permission', 403, { need: 'write' });
+  });
+  register('refused.conflict', () => {
+    throw new MervError('task_conflict', 'Task changed; reread it', 409);
+  });
+  register('refused.crash', () => {
+    throw new Error('private stack details');
+  });
   const conversation = await f.create();
   const { token, input } = await f.claimed(await f.send(conversation));
   await f.pi.begin(token, input);
-  const read = (artifactId: string) =>
-    f.pi.tool(token, { ...input, name: 'artifact.read', input: { artifactId } });
-  assert.deepEqual(await read('art_missing'), {
+  const call = (name: string, value: object = {}) =>
+    f.pi.tool(token, { ...input, name, input: value });
+  const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  assert.deepEqual(await call('artifact.read', { artifactId: 'art_missing' }), {
     error: { code: 'not_found', message: 'Artifact not found' },
   });
-  // A result stays a small part of the worker model's 32,000-token context.
-  const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-  const result = (await read('art_big')) as { content: string; truncated: string };
-  assert.ok(bytes(result) <= 24_000);
-  assert.ok(result.content.length > 15_000 && content.startsWith(result.content));
-  assert.equal(
-    result.truncated,
-    `Only the first ${result.content.length} of ${content.length} characters are shown`,
-  );
-  assert.deepEqual(await read('art_bin'), {
-    error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
-  });
-  const list = (await f.pi.tool(token, { ...input, name: 'artifact.list', input: {} })) as {
-    items: { id: string }[];
-    truncated: string;
+  // A long text keeps its start and says where to read on.
+  const text = (await call('artifact.read', { artifactId: 'art_big' })) as {
+    content: string;
+    note: string;
   };
-  assert.ok(bytes(list) <= 24_000 && list.items.length > 500);
-  assert.equal(list.items.at(-1)!.id, `art_${list.items.length - 1}`);
-  assert.equal(list.truncated, `Only the first ${list.items.length} of 1000 items are shown`);
+  assert.ok(bytes(text) <= 32_000 && text.content.length > 20_000);
+  assert.ok(content.slice(100).startsWith(text.content));
+  const end = 100 + text.content.length;
+  assert.equal(
+    text.note,
+    `Characters 100–${end} of ${content.length} are shown; read on with offset ${end}`,
+  );
+  // Bytes are never shown.
+  assert.deepEqual(await call('artifact.read', { artifactId: 'art_bin' }), {
+    artifact: { id: 'art_bin' },
+    encoding: 'base64',
+    note: 'Binary content (30 bytes) is not shown',
+  });
+  // 340 records come back as an index of every one; more than that fits keeps the newest.
+  const listed = (await call('task.list', { count: 340 })) as {
+    index: { tasks: { id: string; goal: string; deliverables?: unknown }[] };
+    note: string;
+  };
+  assert.equal(listed.note, 'Shown as an index: read one record with its get tool');
+  assert.deepEqual(
+    listed.index.tasks.map(({ id }) => id),
+    tasks(340).map(({ id }) => id),
+  );
+  assert.equal(listed.index.tasks[0].deliverables, undefined);
+  const clipped = (await call('task.list', { count: 60, goal: 'y'.repeat(400) })) as typeof listed;
+  assert.equal(clipped.index.tasks[0].goal, `${'y'.repeat(300)}…`);
+  const newest = (await call('task.list', { count: 2000 })) as typeof listed;
+  const shown = newest.index.tasks.length;
+  assert.ok(bytes(newest) <= 32_000 && shown > 100 && shown < 2000);
+  assert.deepEqual(newest.index.tasks[0].id, 'task_0');
+  assert.equal(
+    newest.note,
+    `Shown as an index: read one record with its get tool. tasks: ${shown} of 2000 shown, newest`,
+  );
+  const partial = (await call('project.records')) as { partial: string; truncated: string };
+  assert.ok(bytes(partial) <= 32_000 && partial.partial.startsWith('{"note":"xxx'));
+  assert.match(partial.truncated, /^Only the first \d+ of 100011 bytes are shown$/);
+  // A refusal of any kind is the model's to explain, and the turn goes on.
+  assert.deepEqual(await call('refused.forbidden'), {
+    error: {
+      code: 'forbidden',
+      message: 'Actor lacks write permission',
+      details: { need: 'write' },
+    },
+  });
+  assert.deepEqual(await call('refused.conflict'), {
+    error: { code: 'task_conflict', message: 'Task changed; reread it' },
+  });
+  assert.deepEqual(await call('refused.crash'), {
+    error: { code: 'tool_failed', message: 'The tool failed unexpectedly' },
+  });
+  assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands[0].status, 'working');
+  // Once the turn stops, a failing call ends with it.
+  await f.pi.stop(f.operator, conversation.id);
+  await assert.rejects(call('refused.conflict'), code('pi_command_stale'));
 });
 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {
@@ -624,7 +1078,8 @@ test('progress bursts do not add durable writes; stop ends only the turn and fen
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
     code('pi_command_stale'),
   );
-  assert.equal(f.reads, 0);
+  // Only the claim's own read, for its notes.
+  assert.equal(f.reads, 1);
 });
 
 test('a turn still streaming runs past the old five-minute deadline; one silent that long ends', async (t) => {
@@ -750,7 +1205,8 @@ test('revoking the person’s credential fails their turn, not the machine', asy
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
     code('pi_authority_stale'),
   );
-  assert.equal(f.reads, 0);
+  // Only the claim's own read, for its notes.
+  assert.equal(f.reads, 1);
   // The worker still ends the turn; its machine, rented by the host, keeps its admission.
   await f.pi.fail(bound.token, bound.input);
   const row = await f.state.read((sql) =>
@@ -948,16 +1404,178 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
     shown.push((await f.pi.snapshot(f.operator, id)).stage.detail),
     call(...args)
   );
-  for (const name of ['project.get', 'task.list']) {
+  for (const name of ['project.get', 'shell.run']) {
     const before = sequence();
     await f.pi.tool(token, { ...input, name, input: {} });
     assert.equal(sequence(), before + 2);
   }
-  assert.deepEqual(shown, ['Reading the project', 'Listing tasks']);
+  assert.deepEqual(shown, ['Using project.get', 'Using shell.run']);
   // Once the machine stops, the conversation's stage is forgotten.
   await f.pi.stopMachine(f.operator);
   await f.pi.tick();
   assert.equal(f.pi['live'].has(id), false);
+});
+
+test('each conversation keeps its model; a pick is the person’s default for new ones here', async (t) => {
+  const f = await fixture(t);
+  // One from before models were chosen, with history and no model stored.
+  const old = await f.create();
+  await f.finish(await f.claimed(await f.send(old)));
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE pi_conversations SET data_json=(data_json::jsonb - 'model')::text WHERE id=?",
+      old.id,
+    ),
+  );
+  f.advance(1000);
+  const first = await f.create();
+  assert.equal(first.model, 'gpt-6-luna');
+  const listed = async () => (await f.pi.list(f.operator)).map(({ id }) => id);
+  const order = await listed();
+  const picked = await f.pi.setModel(f.operator, { id: old.id, model: 'gpt-6-sol' });
+  assert.equal(picked.conversation.model, 'gpt-6-sol');
+  // The picker's catalog carries no effort.
+  assert.deepEqual(
+    picked.models.map((model) => Object.keys(model).sort()),
+    Array(3).fill(['id', 'inputUsdPerM', 'label', 'outputUsdPerM']),
+  );
+  // A pick moves nothing in the list and leaves the other conversations as they were.
+  assert.deepEqual(await listed(), order);
+  assert.equal((await f.pi.snapshot(f.operator, first.id)).conversation.model, 'gpt-6-luna');
+  // A new conversation opens on the latest pick; its own record, not the machine's.
+  assert.equal((await f.create()).model, 'gpt-6-sol');
+  await f.pi.setModel(f.operator, { id: first.id, model: 'gpt-6-astra' });
+  assert.equal((await f.create()).model, 'gpt-6-astra');
+  assert.equal(await f.person(`${first.userId}:${first.projectId}`), null);
+  assert.deepEqual(await f.person(`model:${first.userId}:${first.projectId}`), {
+    model: 'gpt-6-astra',
+  });
+});
+
+test('a page showing another model sends nothing; a retry is the same message', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-astra' });
+  const send = (commandId: string, model?: string) =>
+    f.pi.send(f.operator, chat.id, { commandId, text: 'hello', ...(model && { model }) });
+  await assert.rejects(
+    send('stale', 'gpt-6-luna'),
+    (error: MervError) =>
+      error.code === 'pi_model_changed' &&
+      error.status === 409 &&
+      error.message === 'This conversation now answers on GPT-6 Astra. Send again to use it.',
+  );
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).commands.length, 0);
+  const sent = await send('shown', 'gpt-6-astra');
+  assert.deepEqual(await send('shown', 'gpt-6-luna'), sent);
+  assert.deepEqual(await send('shown'), sent);
+  // A caller that names no model (MCP, the canary) sends on the conversation's.
+  await f.finish(await f.claimed(sent));
+  assert.equal((await send('plain')).status, 'starting');
+});
+
+test('a turn answers on the model its conversation has when a worker claims it', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  const waiting = await f.send(chat);
+  assert.equal(waiting.model, undefined);
+  // Picked while the turn waits: the claim takes it.
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-sol' });
+  const bound = await f.claimed(waiting);
+  assert.deepEqual([bound.work.model, bound.work.command.model], ['gpt-6-sol', 'gpt-6-sol']);
+  // The agent is told what it runs on, and has no model tool.
+  assert.equal(
+    bound.work.notes[0],
+    'Model: you are GPT-6 Sol (gpt-6-sol). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Sol.',
+  );
+  assert.ok(bound.work.tools.every(({ name }) => !name.startsWith('pi.')));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  assert.equal(grant.model, 'gpt-6-sol');
+  await f.pi.progress(bound.token, {
+    ...bound.input,
+    events: [{ type: 'text', text: 'Partial answer' }],
+  });
+  // Picked after the claim: the answer under way keeps its model, and streams on.
+  const mid = await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-astra' });
+  assert.ok(mid.tail.some((event) => event.type === 'text' && event.text === 'Partial answer'));
+  assert.deepEqual([mid.conversation.model, mid.commands[0].model], ['gpt-6-astra', 'gpt-6-sol']);
+  await f.pi.validateModel(grant);
+  await f.pi.complete(bound.token, f.completion(bound.input));
+  const next = await f.send(chat);
+  const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
+  assert.deepEqual([work?.command.id, work?.model], [next.id, 'gpt-6-astra']);
+});
+
+test('the note naming the model stays within the worker’s limit, however long the names', async (t) => {
+  const [id, label] = [`m${'-'.repeat(99)}`, 'L'.repeat(24)];
+  const f = await fixture(t, {
+    pi: { models: [{ id, label, inputUsdPerM: 1, outputUsdPerM: 1, effort: 'none' }] },
+  });
+  const { work } = await f.claimed(await f.send(await f.create()));
+  assert.ok(work.notes[0].startsWith(`Model: you are ${label} (${id}).`));
+  assert.ok(work.notes.every((note) => note.length <= 300));
+});
+
+test('only the person picks a conversation’s model', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  const bound = await f.claimed(await f.send(chat));
+  for (const caller of [
+    {
+      ...f.operator,
+      conversation: {
+        id: chat.id,
+        epoch: bound.work.command.epoch,
+        commandId: bound.work.command.id,
+        runtimeId: bound.work.command.runtimeId,
+      },
+    },
+    { ...f.operator, session: { id: 'session_1' } },
+    {
+      ...f.operator,
+      managed: { allocationId: 'flt_1', epoch: 1, credentialHash: 'x'.repeat(64) },
+    },
+  ])
+    await assert.rejects(
+      f.pi.setModel(caller, { id: chat.id, model: 'gpt-6-sol' }),
+      code('pi_forbidden'),
+    );
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  await assert.rejects(
+    f.pi.setModel(
+      {
+        projectId: other.project.id,
+        actorId: other.actor.id,
+        credentialId: other.credential.id,
+      },
+      { id: chat.id, model: 'gpt-6-sol' },
+    ),
+    code('pi_not_found'),
+  );
+  await assert.rejects(
+    f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-4' }),
+    code('pi_model_unavailable'),
+  );
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).conversation.model, 'gpt-6-luna');
+});
+
+test('a model withdrawn at a restart leaves its conversations on the default', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  await f.pi.setModel(f.operator, { id: chat.id, model: 'gpt-6-sol' });
+  // A restart ends every turn, so none was claimed on the model withdrawn.
+  await f.restart({ models: [models[0], models[2]] });
+  assert.equal((await f.pi.snapshot(f.operator, chat.id)).conversation.model, 'gpt-6-luna');
+  await assert.rejects(
+    f.pi.send(f.operator, chat.id, { commandId: 'stale', text: 'hello', model: 'gpt-6-sol' }),
+    code('pi_model_changed'),
+  );
+  const bound = await f.claimed(await f.send(chat));
+  await f.pi.begin(bound.token, bound.input);
+  assert.equal(bound.work.model, 'gpt-6-luna');
+  assert.equal((await f.pi.authorizeModel(bound.work.modelToken)).model, 'gpt-6-luna');
+  assert.equal((await f.create()).model, 'gpt-6-luna');
 });
 
 test('warming and stopping a machine leave a conversation where it was in the list', async (t) => {
@@ -1010,7 +1628,7 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   f.tools.call = async (...args) => ((reading = await stage()), call(...args));
   await f.pi.tool(token, { ...input, name: 'project.get', input: {} });
   f.tools.call = call;
-  assert.deepEqual([reading?.name, reading?.detail], ['tool', 'Reading the project']);
+  assert.deepEqual([reading?.name, reading?.detail], ['tool', 'Using project.get']);
   assert.equal((await stage()).name, 'thinking');
   f.advance(1000);
   await f.pi.progress(token, { ...input, events: [{ type: 'text', text: 'Answer' }] });
@@ -1077,7 +1695,7 @@ test(
     const requests: Record<string, unknown>[] = [];
     const relay = new PiModelRelay({
       enabled: true,
-      model: f.pi.config.model,
+      models: f.pi.config.models,
       providerKey: () => 'server-only-test-key',
       authority: {
         authorize: (token) => f.pi.authorizeModel(token),
@@ -1193,7 +1811,8 @@ test(
     }
     const first = await runTurn('Read this project');
     let snapshot = await f.pi.snapshot(f.operator, conversation.id);
-    assert.equal(f.reads, 1);
+    // The claim's read for its notes, and the agent's.
+    assert.equal(f.reads, 2);
     assert.equal(snapshot.commands[0].outcomes[0].name, 'project.get');
     assert.equal(snapshot.commands[0].messages.at(-1)?.text, 'Project verified');
     const checkpoint = snapshot.conversation.checkpoint;
@@ -1204,6 +1823,8 @@ test(
     await f.fleet.tick();
     f.runtimes.release('sbx_1');
     await f.fleet.tick();
+    // The person switches to Astra between the turns; the history comes along.
+    await f.pi.setModel(f.operator, { id: conversation.id, model: 'gpt-6-astra' });
     const second = await runTurn('Continue from the saved conversation');
     assert.notEqual(second.runtimeId, first.runtimeId);
     snapshot = await f.pi.snapshot(f.operator, conversation.id);
@@ -1212,6 +1833,17 @@ test(
     assert.equal(modelRequests, 3);
     assert.match(JSON.stringify(requests[2].input), /Read this project/);
     assert.match(JSON.stringify(requests[2].input), /Project verified/);
+    // Each call runs, and tells the agent it runs, on its turn's model at the catalog's effort.
+    assert.deepEqual(
+      requests.map(({ model, reasoning, include }) => [model, reasoning, include]),
+      [
+        ['gpt-6-luna', { effort: 'none' }, undefined],
+        ['gpt-6-luna', { effort: 'none' }, undefined],
+        ['gpt-6-astra', { effort: 'low' }, ['reasoning.encrypted_content']],
+      ],
+    );
+    assert.match(JSON.stringify(requests[0].input), /Model: you are GPT-6 Luna \(gpt-6-luna\)\./);
+    assert.match(JSON.stringify(requests[2].input), /Model: you are GPT-6 Astra \(gpt-6-astra\)\./);
     assert.equal(f.mutations, 0);
   },
 );

@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
-import { budgetSchema, releaseHoldSchema } from './dispatch.js';
+import { budgetSchema, haltSchema, releaseHoldSchema } from './dispatch.js';
 import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
@@ -29,6 +29,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'usage.set_budget',
+        conversation: 'propose',
         description:
           'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. A budget covers worker sessions only, never the charges of a remote job.',
         inputSchema: budgetSchema,
@@ -49,11 +50,46 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.release_hold',
+        conversation: 'propose',
         description:
           'Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.',
         inputSchema: releaseHoldSchema,
         handler: async (caller: Caller, input: Parameters<Sessions['releaseHold']>[1]) =>
           await sessions.releaseHold(caller, input),
+      }),
+    );
+    // The project controls a person uses from the Sessions page, as tools.
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.dispatch',
+        description:
+          'Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.',
+        conversation: 'propose',
+        inputSchema: z.object({ enabled: z.boolean() }).strict(),
+        handler: async (caller: Caller, input: { enabled: boolean }) =>
+          await sessions.setDispatch(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.halt',
+        description:
+          'Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.',
+        conversation: 'propose',
+        inputSchema: haltSchema,
+        handler: async (caller: Caller, input: { sessionId?: string; reason?: string }) =>
+          await sessions.halt(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.observe',
+        description:
+          'Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.',
+        readOnly: true,
+        inputSchema: z.object({ agentId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { agentId: string }) =>
+          await sessions.agentObservation(caller, input.agentId),
       }),
     );
   },

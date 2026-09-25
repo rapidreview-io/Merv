@@ -1,4 +1,5 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
+import type { PiModelConfig } from './schema.js';
 
 export type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
 /** Why a command was interrupted; the UI turns each into a sentence. */
@@ -36,6 +37,9 @@ export interface PiConversation {
   activeCommandId: string | null;
   checkpoint: PiCheckpoint | null;
   previousCheckpoint: PiCheckpoint | null;
+  /** Set at create from the person's last pick here; changed only by pi.model.set. Absent before
+   * 2026-09-25, meaning config.models[0]. */
+  model?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +58,8 @@ export interface PiCommand {
    * unclaimed turn, so both can change until a worker claims it. Absent on turns before pi@2. */
   hostId?: string;
   machine?: string;
+  /** The model it answers on, fixed when a worker claims it. */
+  model?: string;
   status: PiStatus;
   messages: PiMessage[];
   outcomes: PiToolOutcome[];
@@ -64,13 +70,32 @@ export interface PiCommand {
   firstTextAt?: string;
   expiresAt: string;
   completedAt: string | null;
+  /** Calls the agent proposed in this turn, which the person's page shows with Run. */
+  proposals?: PiProposal[];
+}
+/** A call only the person may run (ToolDefinition.conversation), as the agent proposed it: Main's
+ * parsed copy of its exact input. */
+export interface PiProposal {
+  /** 'pip_…' */
+  id: string;
+  /** The native tool name. */
+  name: string;
+  input: Data;
+  /** Its result is shown only to the person and never kept. */
+  secret?: true;
+  at: string;
+  /** Claimed when the person pressed Run, so it runs once; ok and code once it returned. */
+  ran?: { at: string; ok?: boolean; code?: string };
 }
 export interface PiCommandRecord extends PiCommand {
   inputHash: string;
   workerId: string | null;
   resultHash: string | null;
-  /** switch_machine was offered with this turn's work: its grant and result may use it. */
+  /** switch_machine was offered with this turn's claim: a claim served again offers it again. */
   canMove?: true;
+  /** The native names this turn offers, fixed at its first serve: its relay grant names exactly
+   * these, and its tool calls and outcomes only these. Absent until then. */
+  tools?: string[];
 }
 export interface PiEvent {
   sequence: number;
@@ -99,6 +124,8 @@ export interface PiStage {
   /** A short human phrase, e.g. the tool being used. */
   detail?: string;
 }
+/** A model a person may pick for a conversation (MERV_PI_MODELS), without the relay's effort. */
+export type PiModel = Omit<PiModelConfig, 'effort'>;
 export interface PiSnapshot {
   stage: PiStage;
   /** The server's clock when this was read, which a stage's `since` is counted against. */
@@ -110,6 +137,8 @@ export interface PiSnapshot {
   commands: PiCommand[];
   /** The machine this person's turns run on in this project, shared by all their conversations. */
   host: PiHostView;
+  /** What the person may pick; `conversation.model` is always one of them. */
+  models: PiModel[];
   streamId: string;
   sequence: number;
   tail: PiEvent[];
@@ -280,11 +309,16 @@ export interface PiWork {
   model: string;
   modelBaseUrl: string;
   modelToken: string;
-  /** Native names; machine.switch (model name switch_machine) only when offered this turn. */
-  tools: { name: string; description: string; inputSchema: Data }[];
-  /** At most 4 lines of at most 300 characters the worker appends to this turn's system prompt,
-   * e.g. the machine it runs on and a move that failed. */
+  /** Native names, which the worker calls by piModelToolName (machine.switch, only when offered
+   * this turn, is switch_machine). readOnly false marks a write: tried once, run in order, its
+   * result always shown whole. Absent (an older Main) is a read. */
+  tools: { name: string; description: string; inputSchema: Data; readOnly?: boolean }[];
+  /** At most 8 lines of at most 300 characters the worker appends to this turn's system prompt:
+   * who the agent serves, today and its model, what the project lacks, its machine. */
   notes: string[];
+  /** The agent's instructions (at most 32,000 characters), the same on every turn; an older Main
+   * sends none and the worker keeps its own. */
+  instructions?: string;
 }
 /** Agent tool machine.switch, seen by the model as switch_machine. Input: switchMachineInput. */
 export type PiSwitchMachineResult =
@@ -329,12 +363,16 @@ export interface Pi {
   setMachine(caller: Caller, input: unknown): Promise<PiHostView>;
   /** pi.machine.stop {}: interrupt every turn of the host, release every slot, clear sticky (T9). */
   stopMachine(caller: Caller): Promise<PiHostView>;
+  /** pi.run {id, commandId, proposalId}: run a call the agent proposed, once, as the person. */
+  run(caller: Caller, input: unknown): Promise<{ result: unknown }>;
+  /** pi.model.set {id, model}: the person picks the conversation's model, and their default here. */
+  setModel(caller: Caller, input: unknown): Promise<PiSnapshot>;
 }
 /** Server-facing contract: transport and UI do not need the service implementation. */
 export interface PiRuntime extends Pi {
   readonly config: {
     enabled: boolean;
-    model: string;
+    models: readonly PiModelConfig[];
     modelApiKeyEnv: string;
     turnTimeoutSeconds: number;
   };

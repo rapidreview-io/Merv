@@ -8,6 +8,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
+import { conversationUse, describeTool, isRemoteTool } from '../packages/api/src/registry.js';
+import { fit } from '../packages/pi/src/fit.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
+import { piTool } from '../packages/pi/src/relay-schema.js';
+import { piModelToolName } from '../packages/pi/src/tool-names.js';
+import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
+import { mainAgentGuide } from '@merv/contracts';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -38,7 +45,12 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 83);
+    assert.equal(catalog.length, 86);
+    for (const name of ['session.dispatch', 'session.halt', 'session.observe'])
+      assert.ok(
+        catalog.some((tool) => tool.name === name),
+        `${name} must be discoverable`,
+      );
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
     for (const name of [
@@ -277,6 +289,131 @@ test('application stop disposes Cordis and the state store after API shutdown re
   } finally {
     await originalStop();
     await app.ctx.fiber.dispose();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('a paper too long to show the agent whole reads on section by section', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const boot = await app.ctx.scope.bootstrap({ projectName: 'Paper', actorName: 'Owner' });
+    const caller = { actorId: boot.actor.id, projectId: boot.project.id };
+    const read = async (input: object) =>
+      fit('paper.read', await app.ctx.tools.call('paper.read', caller, input)) as {
+        index?: { current: { sections: { id: string; content: string }[] } };
+        note: string;
+        content: string;
+      };
+    const long = (letter: string, length: number) =>
+      Array.from({ length }, (_, n) => (n % 80 === 79 ? '\n' : letter)).join('');
+    const sections = ['a', 'b', 'c'].map((id) => ({ id, title: id, content: long(id, 12_000) }));
+    sections.push({ id: 'd', title: 'd', content: long('d', 70_000) });
+    await app.ctx.tools.call('paper.patch', caller, {
+      kind: 'methods',
+      expectedRevision: 0,
+      requestId: 'methods',
+      changes: sections,
+    });
+    // The document comes back as its sections' ids and openings, and says how to read one.
+    const document = await read({ kind: 'methods' });
+    assert.deepEqual(
+      document.index!.current.sections.map(({ id }) => id),
+      ['a', 'b', 'c', 'd'],
+    );
+    assert.equal(document.index!.current.sections[0].content.length, 301);
+    assert.equal(
+      document.note,
+      'Shown as an index: read one section with paper.read, its kind and section id',
+    );
+    // One section comes back whole; one too long for that, in slices that read on.
+    assert.equal((await read({ kind: 'methods', section: 'b' })).content, sections[1].content);
+    const first = await read({ kind: 'methods', section: 'd' });
+    const end = first.content.length;
+    assert.ok(end > 20_000 && end < 32_000);
+    assert.equal(first.note, `Characters 0–${end} of 70000 are shown; read on with offset ${end}`);
+    const next = await read({ kind: 'methods', section: 'd', offset: end });
+    assert.equal(
+      first.content + next.content,
+      sections[3].content.slice(0, end + next.content.length),
+    );
+    await assert.rejects(app.ctx.tools.call('paper.read', caller, { section: 'd' }), {
+      code: 'invalid_paper_input',
+    });
+    await assert.rejects(
+      app.ctx.tools.call('paper.read', caller, { kind: 'results', section: 'd' }),
+      { code: 'not_found' },
+    );
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('every tool reaches an agent conversation as the relay accepts it, under its own model name', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const offered = (await app.ctx.tools.list()).filter(
+      (tool): tool is ToolDefinition =>
+        !isRemoteTool(tool) && tool.conversation !== 'never' && !tool.name.startsWith('pi.'),
+    );
+    // A tool the relay would refuse is dropped from every turn: none may be.
+    assert.deepEqual(
+      offered
+        .filter((tool) => !piTool(describeTool(tool), tool.conversation))
+        .map(({ name }) => name),
+      [],
+    );
+    const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
+    assert.equal(new Set(models).size, models.length);
+    assert.ok(models.length <= 128, `${models.length} tools`);
+    // Every tool the agent's instructions and notes name is registered.
+    const named = [
+      piInstructions,
+      ...turnNotes({
+        role: 'producer',
+        actorId: 'actor_1',
+        projectId: 'project_1',
+        model: { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+        today: '2026-09-25',
+      }),
+    ].join('\n');
+    const names = [...named.matchAll(/\b[a-z]+(?:\.[a-z_]+)+\b/g)].map(([name]) => name);
+    assert.ok(names.length > 10);
+    for (const name of names)
+      assert.ok(
+        offered.some((tool) => tool.name === name),
+        name,
+      );
+    // Whatever fails work, claims or decides a review, or starts a reflection wave or the next
+    // wave is proposed, by every tool that reaches it.
+    for (const name of [
+      'task.mark_failed',
+      'review.start',
+      'review.submit',
+      'reflection.create',
+      'research.advance',
+    ])
+      for (const verdict of ['pass', 'needs_changes', 'fail'])
+        assert.equal(
+          conversationUse(
+            offered.find((tool) => tool.name === name)!,
+            { verdict },
+          ),
+          'propose',
+          `${name} ${verdict}`,
+        );
+    // MCP clients working with a person get the same guide.
+    const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
+    const mcp = await client(app.ctx.api.url!, credentials.token);
+    assert.ok(mcp.getInstructions()?.startsWith(mainAgentGuide));
+    // The Sessions page's controls, as tools.
+    assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
+    assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });
+    const observed = await mcp.callTool({ name: 'session.observe', arguments: { agentId: 'x' } });
+    assert.match(JSON.stringify(observed.content), /agent_not_found/);
+    await mcp.close();
+  } finally {
+    await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
 });

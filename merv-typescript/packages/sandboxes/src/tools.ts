@@ -19,6 +19,7 @@ export const sandboxesToolsPlugin = {
     const definitions = [
       {
         name: 'sandbox.extend',
+        conversation: 'propose' as const,
         description:
           'Adds seconds to the remaining lease on one sandbox: what is left is read first and carried, so extending a machine can only lengthen its life. The service refuses a sandbox that is no longer live, and refuses a total beyond the lease it allows. Answers the renewed record.',
         inputSchema: z.object({ id, seconds: z.number().int().min(60).max(86_400) }).strict(),
@@ -29,6 +30,7 @@ export const sandboxesToolsPlugin = {
       },
       {
         name: 'sandbox.release',
+        conversation: 'propose' as const,
         description:
           'Release one sandbox: the machine is deleted at the provider and everything on it goes with it, so retain what you need first. Retained job logs stay readable. Deletion is asynchronous — the answer is the record as it reads afterwards, usually while it is still deleting — and releasing an already-released sandbox changes nothing.',
         inputSchema: z.object({ id }).strict(),

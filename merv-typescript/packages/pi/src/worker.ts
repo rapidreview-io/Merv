@@ -28,14 +28,6 @@ import type {
   PiWork,
 } from './types.js';
 
-const allowedTools = new Set([
-  'project.get',
-  'task.list',
-  'artifact.list',
-  'artifact.get',
-  'artifact.read',
-  'machine.switch',
-]);
 const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 // A /next reply carries a checkpoint of up to 2 MB, escaped again as a JSON string.
 const MAX_RESPONSE_BYTES = 4_500_000;
@@ -46,10 +38,16 @@ const NEXT_TIMEOUT_MS = 30_000;
 // Streamed words reach Main this soon after the first one not yet sent, one request at a time: a
 // streaming turn makes at most about ten a second, however fast its words come.
 const FLUSH_MS = 100;
-const TOOL_OUTPUT_BYTES = 64_000;
+// What a turn's tools return, at most: every result counts, and only reads are cut once it is
+// spent (a write's receipt always arrives whole).
+const TOOL_OUTPUT_BYTES = 128_000;
+/** Tool calls one answer may make; the next is refused before it runs, and the model is told to
+ * answer with what it has. */
+const TOOL_CALLS = 64;
 // No output cap is sent: the model's own maximum ends an answer. The history a turn restores, and
-// its checkpoint, hold what the model's window leaves beside that answer (executeTurn), never more
-// than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items (of 512).
+// its checkpoint, hold what the model's window leaves beside that answer, its instructions, tools
+// and tool results (executeTurn), never more than HISTORY_BYTES (half a checkpoint) in
+// HISTORY_ITEMS relay items (of 512).
 const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
@@ -86,15 +84,17 @@ export interface WorkerOptions {
   pollIntervalMs?: number;
 }
 
+/** The instructions of an older Main, which sends none. */
+const LEGACY =
+  'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.';
 /** A turn's notes (its machine, a failed move) follow the fixed prompt for that turn only. */
-const resources = (notes: string[]): ResourceLoader => ({
+const resources = (instructions: string, notes: string[]): ResourceLoader => ({
   getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
   getSkills: () => ({ skills: [], diagnostics: [] }),
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
   getAgentsFiles: () => ({ agentsFiles: [] }),
-  getSystemPrompt: () =>
-    'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.',
+  getSystemPrompt: () => instructions,
   getSystemPromptSource: () => undefined,
   getAppendSystemPrompt: () => notes,
   getAppendSystemPromptSources: () => [],
@@ -117,13 +117,18 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     !/^[A-Za-z0-9_.-]{1,128}$/.test(work.model) ||
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
+    (work.instructions !== undefined &&
+      (typeof work.instructions !== 'string' || work.instructions.length > 32_000)) ||
     !Array.isArray(work.notes) ||
-    work.notes.length > 4 ||
+    work.notes.length > 10 ||
     work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
+    !Array.isArray(work.tools) ||
+    work.tools.length > 128 ||
     new Set(work.tools.map((tool) => tool.name)).size !== work.tools.length ||
     work.tools.some(
       (tool) =>
-        !allowedTools.has(tool.name) ||
+        typeof tool.name !== 'string' ||
+        !['boolean', 'undefined'].includes(typeof tool.readOnly) ||
         typeof tool.description !== 'string' ||
         !tool.inputSchema ||
         typeof tool.inputSchema !== 'object' ||
@@ -132,23 +137,6 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     )
   )
     throw new Error('Invalid worker assignment');
-}
-
-function allowedInput(name: string, input: Record<string, unknown>): boolean {
-  if (name === 'machine.switch')
-    return (
-      Object.keys(input).sort().join(',') === 'machine,reason' &&
-      typeof input.machine === 'string' &&
-      typeof input.reason === 'string'
-    );
-  if (name === 'artifact.get' || name === 'artifact.read')
-    return (
-      Object.keys(input).length === 1 &&
-      typeof input.artifactId === 'string' &&
-      input.artifactId.length > 0 &&
-      input.artifactId.length <= 200
-    );
-  return Object.keys(input).length === 0;
 }
 
 /** Runs up to `bootstrap.slots` turns at once, of any of the host's conversations, until the slot
@@ -182,8 +170,11 @@ export async function runPiWorker(
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
+      // A tool call runs as long as its tool does: only the turn's own signal bounds it.
       signal: AbortSignal.any([
-        AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000),
+        ...(path === 'tool'
+          ? []
+          : [AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000)]),
         ...(signal ? [signal] : []),
       ]),
     });
@@ -371,11 +362,18 @@ async function executeTurn(
   // History fills the window but for the model's longest answer (at most half of it), at 3 bytes a
   // token, a margin under prose's 4 characters that leaves room for the turn's prompt and tools:
   // gpt-6-luna keeps 432 KB, about 144,000 tokens.
-  const history = Math.min(
-    HISTORY_BYTES,
-    3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)),
-  );
+  // The window holds the model's longest answer (at most half of it) and, at 3 bytes a token, a
+  // margin under prose's 4 characters: what every call carries (instructions, notes, tools), the
+  // turn's tool results and the history it restores. gpt-6-luna gives about 115 KB to tool
+  // results and 231 KB to history beside 86 KB of instructions and tools.
+  const instructions = work.instructions ?? LEGACY;
+  const fixed = Buffer.byteLength(JSON.stringify([instructions, work.notes, work.tools]));
+  const room = Math.max(0, 3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)) - fixed);
+  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, Math.floor(room / 3));
+  const history = Math.min(HISTORY_BYTES, room - toolBytes);
   const entries = checkpoint && recent(checkpoint.entries, checkpoint.leafId, history);
+  // A conversation begun under older instructions continues under the current ones: the session
+  // records the change as a patch of its prompt, and sends the model only the prompt as patched.
   const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
   const manager = SessionManager.inMemory(
     '/pi-worker',
@@ -419,7 +417,7 @@ async function executeTurn(
   });
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
-  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
+  let calls = 0;
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
   // When the oldest word not yet sent was written, the timer that sends it, and whether anything
@@ -495,34 +493,29 @@ async function executeTurn(
     if (events.at(-1)?.text.length === 8192 || events.length >= 32) flush();
     else soon();
   };
+  // Main offers each tool and checks every call as the person; a write (readOnly false) is posted
+  // once and runs in order with the reply's other calls.
   const tools: ToolDefinition[] = work.tools.map((tool) => ({
     name: piModelToolName(tool.name),
     label: tool.name,
     description: tool.description,
-    parameters: Type.Unsafe<Record<string, unknown>>({
-      ...(tool.inputSchema as Record<string, unknown>),
-      required: Array.isArray((tool.inputSchema as Record<string, unknown>).required)
-        ? ((tool.inputSchema as Record<string, unknown>).required as string[]).filter(
-            (name) => name !== 'projectId',
-          )
-        : undefined,
-    }),
+    parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
+    ...(tool.readOnly === false && { executionMode: 'sequential' as const }),
     async execute(callId, input, toolSignal) {
       if (signal.aborted || failure) throw new Error('Turn cancelled');
-      if (
-        !input ||
-        typeof input !== 'object' ||
-        Array.isArray(input) ||
-        !allowedInput(tool.name, input as Record<string, unknown>)
-      )
-        throw new Error('Tool arguments are not allowed');
+      if (!input || typeof input !== 'object' || Array.isArray(input))
+        throw new Error('Tool arguments must be an object');
+      if (++calls > TOOL_CALLS)
+        throw new Error(
+          `This answer has used its ${TOOL_CALLS} tool calls: answer now with what you have, and say what is left`,
+        );
       let output: { result: unknown };
       try {
         output = await request<{ result: unknown }>(
           'tool',
           { ...ids, name: tool.name, input },
           toolSignal ? AbortSignal.any([signal, toolSignal]) : signal,
-          3,
+          tool.readOnly === false ? 1 : 3,
         );
         if (!Object.hasOwn(output ?? {}, 'result')) throw new Error('Invalid tool response');
       } catch (error) {
@@ -537,18 +530,16 @@ async function executeTurn(
       }
       if (signal.aborted || failure) throw new Error('Turn cancelled');
       const canonicalCallId = callId.split('|')[0];
-      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId) || outcomes.length >= 64) {
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId)) {
         failure = new Error('Invalid tool result');
         session.abort().catch(() => {});
         throw failure;
       }
       const text = JSON.stringify(output.result) ?? 'null';
       const size = Buffer.byteLength(text);
-      const kept = Buffer.from(text).subarray(0, toolBytes).toString();
-      const shown =
-        size <= toolBytes
-          ? text
-          : `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]`;
+      const cut = tool.readOnly !== false && size > toolBytes;
+      const kept = cut ? Buffer.from(text).subarray(0, toolBytes).toString() : text;
+      const shown = cut ? `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]` : text;
       toolBytes = Math.max(0, toolBytes - size);
       outcomes.push({
         callId: canonicalCallId,
@@ -570,7 +561,7 @@ async function executeTurn(
     noTools: 'all',
     tools: tools.map((tool) => tool.name),
     customTools: tools,
-    resourceLoader: resources(work.notes),
+    resourceLoader: resources(instructions, work.notes),
     sessionManager: manager,
     settingsManager: settings,
   });
@@ -596,7 +587,8 @@ async function executeTurn(
     streamOpenAIResponses(model, context, {
       signal: options?.signal,
       reasoning: options?.reasoning,
-      toolChoice: options?.toolChoice,
+      // From the last call on, the model answers instead of asking for another.
+      toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
       apiKey: work.modelToken,
       fetch: relayFetch,
       env: {},
@@ -687,7 +679,7 @@ async function executeTurn(
  * even its last step does, each long text keeps its start and end. It always ends at `leafId`. */
 function recent(entries: Entries, leafId: string | null, bytes: number): Entries {
   const byId = new Map(entries.map((entry) => [entry.id, entry as Entry]));
-  const branch: Entry[] = [];
+  let branch: Entry[] = [];
   for (let entry = byId.get(leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
     branch.unshift(entry);
   const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
@@ -695,6 +687,10 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     0,
     branch.findLastIndex((entry) => entry.message?.role === 'user'),
   );
+  // Before any exchange is left out, what earlier answers read and wrote is: tool results keep
+  // their start and end, and long call arguments only their size.
+  const clipped = size(branch) > bytes;
+  if (clipped) branch = branch.map((entry, index) => (index < asked ? brief(entry) : entry));
   // Newest first: the oldest whole exchange that fits, and the oldest step of the newest one that
   // fits beside its prompt and note.
   const beside = bytes - size(branch[asked] ?? null) - 200;
@@ -708,7 +704,7 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     else if (message?.role === 'assistant' && total <= beside && items < HISTORY_ITEMS)
       step = index;
   }
-  if (start === 0) return entries;
+  if (start === 0) return clipped ? relinked(branch) : entries;
   let kept = branch.slice(start);
   if (!kept.length) {
     const last = branch.findLastIndex((entry) => entry.message?.role === 'assistant');
@@ -721,7 +717,25 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     for (let room = bytes / 2; size(kept) > bytes && room >= 1; room /= 2)
       kept = newest.map((entry) => shorten(entry, room));
   }
-  return kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
+  return relinked(kept);
+}
+const relinked = (kept: Entry[]): Entries =>
+  kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
+/** An earlier step as later turns need it: its tool result's texts at most 2,000 characters, and
+ * each call's arguments over 2,000 bytes as their size. */
+function brief(entry: Entry): Entry {
+  const { message } = entry;
+  if (message?.role === 'toolResult') return shorten(entry, 2000);
+  if (message?.role !== 'assistant' || typeof message.content === 'string') return entry;
+  const content = message.content.map((part) => {
+    const bytes = Buffer.byteLength(
+      JSON.stringify((part as { arguments?: unknown }).arguments ?? null),
+    );
+    return (part as { type?: unknown }).type === 'toolCall' && bytes > 2000
+      ? { ...part, arguments: { omitted: bytes } }
+      : part;
+  });
+  return { ...entry, message: { ...message, content } };
 }
 
 type Entries = WorkerCheckpoint['entries'];

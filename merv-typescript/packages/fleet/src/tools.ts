@@ -29,6 +29,7 @@ export const fleetToolsPlugin = {
       },
       {
         name: 'fleet.drain',
+        conversation: 'propose' as const,
         description:
           'Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.',
         inputSchema: target,
@@ -36,6 +37,7 @@ export const fleetToolsPlugin = {
       },
       {
         name: 'fleet.halt',
+        conversation: 'propose' as const,
         description:
           'Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.',
         inputSchema: target,

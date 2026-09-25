@@ -20,6 +20,7 @@ import {
   codeCommandControlSchema,
   codeTransportInputSchema,
   CODE_PART_MAX_BYTES,
+  mainAgentGuide,
   plain,
   type Caller,
   type Principal,
@@ -1042,7 +1043,7 @@ export class ApiServer {
           instructions:
             principal.kind === 'session'
               ? 'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.'
-              : 'Merv is a durable task and independent review system. Human sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project. Request IDs make supported mutations retryable; supply the current expectedRevision for transitions.',
+              : `${mainAgentGuide}\n\nHuman sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.`,
         },
       );
       instance.setRequestHandler(ListToolsRequestSchema, async (request) => {

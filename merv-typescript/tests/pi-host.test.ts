@@ -6,6 +6,7 @@ import { hostMigration, migration } from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
 import { openState } from './fixtures/state.js';
 import { code, fixture, offers, type PiFixture } from './fixtures/pi.js';
+import { piModelToolName } from '../packages/pi/src/tool-names.js';
 
 const login = (f: PiFixture, subject: string) =>
   f.scope.acceptVerifiedIdentity({
@@ -334,8 +335,14 @@ test('a worker that lost the reply to its claim is given the same turn again: as
   // On the draining machine, the turn is told the machine it runs on.
   const again = await next();
   assert.deepEqual(
-    [again.work?.command.id, again.work?.notes],
-    [b.id, ['Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).']],
+    [again.work?.command.id, again.work?.notes.filter((note) => /^(Model|Machine):/.test(note))],
+    [
+      b.id,
+      [
+        'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
+        'Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).',
+      ],
+    ],
   );
   await f.pi.begin(a.token, { ...a.input, conversationId: b.conversationId, commandId: b.id });
   assert.deepEqual(await next(), { work: null, retire: true });
@@ -608,9 +615,12 @@ test('the agent moves up without asking where its person may, within capacity, a
     assert.ok(turn.work.tools.some(({ name }) => name === 'machine.switch'));
     await f.pi.begin(turn.token, turn.input);
   }
-  assert.ok(
-    (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.includes('switch_machine'),
+  // The grant names exactly the tools the turn was offered, switch_machine among them.
+  assert.deepEqual(
+    (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.sort(),
+    bound.work.tools.map(({ name }) => piModelToolName(name)).sort(),
   );
+  assert.ok(bound.work.tools.some(({ name }) => name === 'machine.switch'));
   const call = (turn: typeof bound, machine: string) =>
     f.pi.tool(turn.token, {
       ...turn.input,

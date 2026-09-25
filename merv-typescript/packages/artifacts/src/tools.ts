@@ -12,8 +12,11 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
+      conversation?: (input: z.infer<S>) => 'secret' | undefined,
     ) =>
-      ctx.effect(() => ctx.tools.register({ name, description, inputSchema, handler, readOnly }));
+      ctx.effect(() =>
+        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+      );
     register(
       'artifact.create',
       'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.',
@@ -39,13 +42,22 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB; binary content is base64. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.',
-      z.object({ artifactId: z.string().min(1), mode: z.literal('download').optional() }).strict(),
+      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.',
+      z
+        .object({
+          artifactId: z.string().min(1),
+          mode: z.literal('download').optional(),
+          offset: z.number().int().min(0).optional(),
+          length: z.number().int().min(1).optional(),
+        })
+        .strict(),
       async (c, i) =>
         i.mode === 'download'
           ? await ctx.artifacts.download(c, i.artifactId)
-          : await ctx.artifacts.read(c, i.artifactId),
+          : await ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
       true,
+      // A download URL is a bearer secret: only the person sees it.
+      (i) => (i.mode === 'download' ? 'secret' : undefined),
     );
     register(
       'artifact.list',

@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { deploymentSchema, fleetRuntimes, sandboxConnections } from './schema.mjs';
+import { deploymentSchema, fleetRuntimes, piModels, sandboxConnections } from './schema.mjs';
 
 const required = (name) => {
   const value = process.env[name];
@@ -243,8 +243,6 @@ if (piEnabled) {
   ) {
     throw new Error('Pi credentials are unavailable');
   }
-  const model = process.env.MERV_PI_MODEL ?? 'gpt-6-luna';
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(model)) throw new Error('Invalid MERV_PI_MODEL');
   // One operator-owned project rents every Pi machine with its own service key and Sandboxes
   // connection; each turn's reads still run as the person who sent it.
   const hostProjectId = required('MERV_PI_HOST_PROJECT_ID');
@@ -271,7 +269,11 @@ if (piEnabled) {
         enabled: true,
         secretEnv,
         modelApiKeyEnv,
-        model,
+        // Checked as Main checks it, so a dry run catches what would stop Main; the older
+        // MERV_PI_MODEL is ignored.
+        ...(process.env.MERV_PI_MODELS !== undefined && {
+          models: piModels(json('MERV_PI_MODELS'), 'MERV_PI_MODELS'),
+        }),
         baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
         idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),

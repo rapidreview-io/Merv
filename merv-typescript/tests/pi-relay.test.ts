@@ -8,6 +8,7 @@ import {
   type PiRelayConfig,
   type PiRelayFailureRecord,
   type PiRelayGrant,
+  type PiRelayUsageRecord,
 } from '../packages/pi/src/relay.js';
 import { moveTool, type PiMoveContext } from '../packages/pi/src/moves.js';
 
@@ -39,7 +40,10 @@ async function fixture(overrides: Partial<PiRelayConfig> = {}) {
   const upstreamCalls: { url: string; init: RequestInit }[] = [];
   const relay = new PiModelRelay({
     enabled: true,
-    model: 'test-model',
+    models: [
+      { id: 'test-model', effort: 'none' },
+      { id: 'reasoning-model', effort: 'low' },
+    ],
     providerKey: () => 'private-provider-key',
     authority: {
       async authorize(presented) {
@@ -198,7 +202,115 @@ test('relays only the fixed provider call and supports Pi function/reasoning tra
     authorization: 'Bearer private-provider-key',
     'content-type': 'application/json',
   });
-  assert.deepEqual(JSON.parse(String(call.init.body)), payload);
+  // Reasoning is the catalog's to set: no summary, and no encrypted reasoning at effort none.
+  const { include: _include, ...asked } = payload;
+  assert.deepEqual(JSON.parse(String(call.init.body)), { ...asked, reasoning: { effort: 'none' } });
+});
+
+test('a grant names a catalog model, and the relay alone sets each call’s reasoning', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  // A model outside the catalog reaches no provider, and a request must name its grant's model.
+  f.updateGrant({ ...grant(), model: 'gpt-4' });
+  assert.equal((await send(f, { ...request, model: 'gpt-4' })).status, 403);
+  f.updateGrant(grant());
+  assert.equal((await send(f, { ...request, model: 'reasoning-model' })).status, 400);
+  assert.equal(f.upstreamCalls.length, 0);
+  const asked = {
+    reasoning: { effort: 'xhigh', summary: 'detailed' },
+    include: ['reasoning.encrypted_content'],
+  };
+  await (await send(f, { ...request, ...asked })).text();
+  f.updateGrant({ ...grant(), id: 'grant-2', model: 'reasoning-model' });
+  await (await send(f, { ...request, ...asked, model: 'reasoning-model' })).text();
+  assert.deepEqual(
+    f.upstreamCalls.map((call) => JSON.parse(String(call.init.body))),
+    [
+      { ...request, reasoning: { effort: 'none' } },
+      {
+        ...request,
+        model: 'reasoning-model',
+        reasoning: { effort: 'low' },
+        include: ['reasoning.encrypted_content'],
+      },
+    ],
+  );
+});
+
+test('a model that reasons may stay silent longer before its call is ended', async (t) => {
+  const silent = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          const done = new TextEncoder().encode('data: {"type":"response.completed"}\n\n');
+          // A call ended at its idle limit has cancelled this stream by then.
+          setTimeout(() => {
+            try {
+              controller.enqueue(done);
+              controller.close();
+            } catch {}
+          }, 200);
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+  const f = await fixture({ idleTimeoutMs: 50, reasoningIdleTimeoutMs: 500, fetchImpl: silent });
+  t.after(() => f.close());
+  const quiet = await send(f);
+  assert.equal(quiet.status, 504);
+  await quiet.text();
+  f.updateGrant({ ...grant(), id: 'grant-2', model: 'reasoning-model' });
+  const reasoned = await send(f, { ...request, model: 'reasoning-model' });
+  assert.equal(reasoned.status, 200);
+  assert.match(await reasoned.text(), /response\.completed/);
+});
+
+test('each finished call reports its tokens by model, naming no one', async (t) => {
+  const usage: PiRelayUsageRecord[] = [];
+  const completed = `event: response.completed\ndata: ${JSON.stringify({
+    type: 'response.completed',
+    response: {
+      id: 'resp_1',
+      usage: {
+        input_tokens: 120,
+        input_tokens_details: { cached_tokens: 100 },
+        output_tokens: 30,
+        output_tokens_details: { reasoning_tokens: 12 },
+      },
+    },
+  })}\n\n`;
+  let body = completed;
+  const f = await fixture({
+    fetchImpl: async () => eventStream(body),
+    onUsage: (record) => void usage.push(record),
+  });
+  t.after(() => f.close());
+  await (await send(f)).text();
+  assert.deepEqual(usage, [
+    {
+      event: 'pi_relay_usage',
+      model: 'test-model',
+      inputTokens: 120,
+      cachedTokens: 100,
+      outputTokens: 30,
+      reasoningTokens: 12,
+    },
+  ]);
+  // A stream that never finishes reports nothing.
+  body = 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n';
+  await (await send(f)).text();
+  assert.equal(usage.length, 1);
+  // A callback that throws changes nothing.
+  const g = await fixture({
+    fetchImpl: async () => eventStream(completed),
+    onUsage: () => {
+      throw new Error('private callback failure');
+    },
+  });
+  t.after(() => g.close());
+  const answered = await send(g);
+  assert.equal(answered.status, 200);
+  assert.match(await answered.text(), /resp_1/);
 });
 
 test('replayed history keeps undeclared tool calls and forwards known reasoning fields only', async (t) => {
@@ -613,6 +725,45 @@ test('streamed frames reuse a recent authority read, and a turn fits dozens of m
   assert.equal(validations, 60, 'three admission checks per call, none per frame');
 });
 
+test('a turn offers up to 128 tools, whose fields may be named url, in 72 model calls', async (t) => {
+  const names = (count: number) => Array.from({ length: count }, (_, index) => `tool_${index}`);
+  const tools = (count: number) =>
+    names(count).map((name) => ({
+      type: 'function',
+      name,
+      // Only a URL is refused in a description or schema; "metadata:" is not "data:".
+      description: 'Reads the record metadata: its title and the url it cites.',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: 'metadata: the cited address' } },
+        required: ['url'],
+      },
+    }));
+  const f = await fixture();
+  t.after(() => f.close());
+  f.updateGrant({ ...grant(), toolNames: names(128) });
+  assert.equal((await send(f, { ...request, tools: tools(128) })).status, 200);
+  assert.equal((await send(f, { ...request, tools: tools(129) })).status, 400);
+  // A schema keyword named url is still refused, and so is a URL anywhere in a schema.
+  for (const parameters of [
+    { type: 'object', url: 'x' },
+    { type: 'object', properties: { url: { type: 'string', default: 'https://evil.example' } } },
+    { type: 'object', properties: { src: { type: 'string', description: 'see data:x' } } },
+  ])
+    assert.equal(
+      (await send(f, { ...request, tools: [{ type: 'function', name: 'tool_0', parameters }] }))
+        .status,
+      400,
+      JSON.stringify(parameters),
+    );
+  f.updateGrant({ ...grant(), toolNames: names(129) });
+  assert.equal((await send(f)).status, 401);
+  const counted = await fixture();
+  t.after(() => counted.close());
+  for (let call = 0; call < 72; call++) assert.equal((await send(counted)).status, 200);
+  assert.equal((await send(counted)).status, 429);
+});
+
 test('stalled downstream writes abort upstream at the idle deadline', async (t) => {
   let upstreamSignal!: AbortSignal;
   const f = await fixture({
@@ -747,6 +898,7 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
           'code',
           'elapsedMs',
           'event',
+          'model',
           'phase',
           ...(scenario.upstreamHttpStatus === undefined ? [] : ['upstreamHttpStatus']),
         ].sort(),
@@ -758,6 +910,7 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
         scenario.expectedStatus === 504 ? 'relay_timeout' : 'upstream_failed',
       );
       assert.equal(record.upstreamHttpStatus, scenario.upstreamHttpStatus);
+      assert.equal(record.model, 'test-model');
       assert.ok(
         Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0 && record.elapsedMs <= 900_000,
       );

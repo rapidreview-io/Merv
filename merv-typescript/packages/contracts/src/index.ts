@@ -18,6 +18,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
+export { mainAgentGuide } from './agent-guide.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
@@ -755,7 +756,15 @@ export function eventSource(caller: Caller): Data {
       ? {
           source: { kind: 'user-key', keyId: caller.key.id, membershipId: caller.key.membershipId },
         }
-      : {};
+      : caller.conversation
+        ? {
+            source: {
+              kind: 'conversation',
+              conversationId: caller.conversation.id,
+              commandId: caller.conversation.commandId,
+            },
+          }
+        : {};
 }
 export interface Actor {
   /** Credentialless service owning this actor, when present. */
@@ -976,10 +985,19 @@ export interface Artifacts {
   authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
+  /** With offset or length, `content` is that part of the content, in characters, and `offset`
+   * and `total` say where it starts and how long the whole is. */
   read(
     caller: Caller,
     artifactId: string,
-  ): Promise<{ artifact: Artifact; content: string; encoding: 'utf8' | 'base64' }>;
+    range?: { offset?: number; length?: number },
+  ): Promise<{
+    artifact: Artifact;
+    content: string;
+    encoding: 'utf8' | 'base64';
+    offset?: number;
+    total?: number;
+  }>;
   list(caller: Caller): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {

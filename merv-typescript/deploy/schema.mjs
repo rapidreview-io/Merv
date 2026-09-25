@@ -91,3 +91,33 @@ export function fleetRuntimes(entries, name) {
   }
   return runtimes;
 }
+
+/**
+ * The models a person may pick for a Pi conversation, the default first, as entries of
+ * { id, label, inputUsdPerM, outputUsdPerM, effort }. These are the checks Main's piConfig makes
+ * as it starts, so a dry run of the render refuses a catalog that would stop Main.
+ */
+export function piModels(entries, name) {
+  const price = (value) => Number.isFinite(value) && value >= 0 && value <= 1000;
+  if (!Array.isArray(entries) || !entries.length || entries.length > 8) {
+    throw new Error(`${name} must hold 1-8 models`);
+  }
+  const models = entries.map((entry) => {
+    const { id, label, inputUsdPerM, outputUsdPerM, effort, ...rest } = entry ?? {};
+    if (
+      Object.keys(rest).length ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(typeof id === 'string' ? id : '') ||
+      !/^\S(?:.{0,22}\S)?$/.test(typeof label === 'string' ? label : '') ||
+      !price(inputUsdPerM) ||
+      !price(outputUsdPerM) ||
+      !['none', 'low'].includes(effort)
+    ) {
+      throw new Error(`Invalid ${name} entry`);
+    }
+    return { id, label, inputUsdPerM, outputUsdPerM, effort };
+  });
+  if (new Set(models.map((model) => model.id)).size !== models.length) {
+    throw new Error(`${name} repeats a model id`);
+  }
+  return models;
+}

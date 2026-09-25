@@ -8,6 +8,7 @@ import {
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   digest,
+  eventSource,
   MervError,
   newId,
   now,
@@ -697,6 +698,7 @@ export class CodeStore {
         type: 'code.repository_rebound',
         subjectId: row.project_id,
         data: {
+          ...eventSource(caller),
           operationId: row.id,
           repositoryId: input.repositoryId,
           previousRepositoryId: bound.repository_id,

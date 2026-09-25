@@ -380,7 +380,7 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
   };
   const relay = new PiModelRelay({
     enabled: true,
-    model: 'test-model',
+    models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',
     maxRequestBytes: 512,
     authority: {
@@ -452,8 +452,11 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
       (forwarded[0].init.headers as Record<string, string>).authorization,
     'Bearer fake-secret',
   );
-  // Forwarded as the worker sent it: no output cap is added.
-  assert.deepEqual(JSON.parse(String(forwarded[0]?.init.body)), modelRequest);
+  // Forwarded as the worker sent it but for the catalog's reasoning: no output cap is added.
+  assert.deepEqual(JSON.parse(String(forwarded[0]?.init.body)), {
+    ...modelRequest,
+    reasoning: { effort: 'none' },
+  });
   const reader = response.body!.getReader();
   const first = await readEvent(reader, { text: '' });
   assert.equal(first.event, 'response.output_text.delta');
@@ -487,7 +490,7 @@ test('relay disconnect aborts the injected upstream and releases the conversatio
   let cancelled = false;
   const relay = new PiModelRelay({
     enabled: true,
-    model: 'test-model',
+    models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',
     authority: {
       async authorize() {

@@ -139,6 +139,7 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.mark_failed',
+        conversation: 'propose' as const,
         description:
           'Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.',
         inputSchema: z
@@ -154,6 +155,7 @@ export const taskToolsPlugin = {
       },
       {
         name: 'task.reissue_review',
+        conversation: 'propose' as const,
         description:
           'Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.',
         inputSchema: z

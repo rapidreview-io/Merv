@@ -32,13 +32,24 @@ export interface PiRelayFailureRecord {
   event: 'pi_relay_failure';
   phase: 'request' | 'upstream' | 'stream';
   code: (typeof failureCodes)[number];
+  model: string;
   elapsedMs: number;
   upstreamHttpStatus?: number;
+}
+/** One finished model call's tokens, for spend per model; it names no person or conversation. */
+export interface PiRelayUsageRecord {
+  event: 'pi_relay_usage';
+  model: string;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
 }
 
 export interface PiRelayConfig {
   enabled?: boolean;
-  model: string;
+  /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
+  models: readonly { id: string; effort: 'none' | 'low' }[];
   providerKey: () => string | Promise<string>;
   authority?: {
     authorize(token: string): Promise<PiRelayGrant>;
@@ -49,10 +60,13 @@ export interface PiRelayConfig {
   maxResponseBytes?: number;
   totalTimeoutMs?: number;
   idleTimeoutMs?: number;
+  /** For models whose effort is not `none`, which may reason in silence. */
+  reasoningIdleTimeoutMs?: number;
   maxConcurrent?: number;
   maxRequestsPerGrant?: number;
   maxGrantEntries?: number;
   onFailure?: (record: PiRelayFailureRecord) => void | Promise<void>;
+  onUsage?: (record: PiRelayUsageRecord) => void | Promise<void>;
 }
 
 class RelayFailure extends Error {
@@ -67,6 +81,21 @@ class RelayFailure extends Error {
 const reject = (status: number, code: string): never => {
   throw new RelayFailure(status, code);
 };
+/** Hands a record to its callback, which never changes the call. */
+const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) => {
+  try {
+    void Promise.resolve(callback?.(record)).catch(() => {});
+  } catch {}
+};
+/** The Responses API's `usage`, as a finished call's last frame carries it. */
+type Usage = {
+  input_tokens?: unknown;
+  input_tokens_details?: { cached_tokens?: unknown } | null;
+  output_tokens?: unknown;
+  output_tokens_details?: { reasoning_tokens?: unknown } | null;
+};
+const tokens = (value: unknown) =>
+  Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 
 function limit(value: number | undefined, fallback: number, minimum = 1): number {
   const resolved = value ?? fallback;
@@ -149,6 +178,7 @@ export class PiModelRelay {
       | 'maxResponseBytes'
       | 'totalTimeoutMs'
       | 'idleTimeoutMs'
+      | 'reasoningIdleTimeoutMs'
       | 'maxConcurrent'
       | 'maxRequestsPerGrant'
       | 'maxGrantEntries'
@@ -158,10 +188,12 @@ export class PiModelRelay {
   /** One model call at a time per conversation: a person's conversations share one machine. */
   private readonly conversations = new Set<string>();
   private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
+  private readonly efforts: Map<string, 'none' | 'low'>;
   private stopped = false;
 
   constructor(private readonly config: PiRelayConfig) {
-    if (!config.model || typeof config.providerKey !== 'function')
+    this.efforts = new Map(config.models?.map(({ id, effort }) => [id, effort]));
+    if (!this.efforts.size || typeof config.providerKey !== 'function')
       throw new Error('Pi relay requires a model and provider key source');
     // No output cap is added: the model's own maximum ends an answer. A maximal answer streams
     // about 40 MB of events, and ends with frames that each repeat its whole text; a call that
@@ -171,8 +203,9 @@ export class PiModelRelay {
       maxResponseBytes: limit(config.maxResponseBytes, 256 * 1024 * 1024),
       totalTimeoutMs: limit(config.totalTimeoutMs, turnCeilingMs),
       idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
+      reasoningIdleTimeoutMs: limit(config.reasoningIdleTimeoutMs, 120_000),
       maxConcurrent: limit(config.maxConcurrent, 200),
-      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 32),
+      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 72),
       maxGrantEntries: limit(config.maxGrantEntries, 4096),
     };
   }
@@ -219,7 +252,7 @@ export class PiModelRelay {
     const total = setTimeout(() => abort(504, 'relay_timeout'), this.options.totalTimeoutMs);
     let idle: NodeJS.Timeout | undefined;
     let fence: NodeJS.Timeout | undefined;
-    let admitted: string | undefined;
+    let admitted: PiRelayGrant | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let admittedAt = 0;
     let phase: PiRelayFailureRecord['phase'] = 'request';
@@ -237,7 +270,7 @@ export class PiModelRelay {
       // Streamed frames reuse an authority read up to a second old; the fence refreshes it.
       const validate = async (recent = false) => {
         if (signal.aborted) throw signal.reason;
-        if (Date.parse(grant.expiresAt) <= Date.now() || grant.model !== this.config.model)
+        if (Date.parse(grant.expiresAt) <= Date.now() || !this.efforts.has(grant.model))
           reject(403, 'grant_forbidden');
         if (recent && Date.now() - validatedAt < 1000) return;
         const started = Date.now();
@@ -253,7 +286,7 @@ export class PiModelRelay {
       await validate();
       if (this.conversations.has(grant.conversationId)) reject(429, 'relay_busy');
       this.conversations.add(grant.conversationId);
-      admitted = grant.conversationId;
+      admitted = grant;
       admittedAt = Date.now();
       const raw = await interruptible(
         readRequest(req, this.options.maxRequestBytes, signal),
@@ -262,8 +295,12 @@ export class PiModelRelay {
       const parsed = piResponsesSchema.safeParse(raw);
       if (!parsed.success) throw new RelayFailure(400, 'invalid_payload');
       const request = parsed.data;
-      if (request.model !== this.config.model || !validPiPayload(request, grant.toolNames))
+      if (request.model !== grant.model || !validPiPayload(request, grant.toolNames))
         reject(400, 'invalid_payload');
+      // The catalog's effort, whatever the worker asked: no summary, and encrypted reasoning to
+      // replay only where the model reasons.
+      const effort = this.efforts.get(grant.model)!;
+      const { reasoning: _reasoning, include: _include, ...rest } = request;
       phase = 'upstream';
       const key = await interruptible(
         Promise.resolve().then(() => this.config.providerKey()),
@@ -291,7 +328,11 @@ export class PiModelRelay {
           redirect: 'error',
           signal,
           headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-          body: JSON.stringify(request),
+          body: JSON.stringify({
+            ...rest,
+            reasoning: { effort },
+            ...(effort !== 'none' && { include: ['reasoning.encrypted_content'] }),
+          }),
         }),
         signal,
       );
@@ -316,7 +357,10 @@ export class PiModelRelay {
       };
       const resetIdle = () => {
         if (idle) clearTimeout(idle);
-        idle = setTimeout(() => abort(504, 'relay_timeout'), this.options.idleTimeoutMs);
+        idle = setTimeout(
+          () => abort(504, 'relay_timeout'),
+          effort === 'none' ? this.options.idleTimeoutMs : this.options.reasoningIdleTimeoutMs,
+        );
       };
       resetIdle();
       fence = setInterval(() => {
@@ -329,6 +373,7 @@ export class PiModelRelay {
       let held: Buffer[] = [];
       let heldBytes = 0;
       let tail = '';
+      let usage: Usage | null | undefined;
       while (true) {
         const next = await interruptible(reader.read(), signal);
         if (next.done) break;
@@ -353,6 +398,16 @@ export class PiModelRelay {
             /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
           )
             reject(502, 'upstream_failed');
+          if (
+            usage === undefined &&
+            (/^event:\s*response\.(?:completed|incomplete)\s*$/im.test(content) ||
+              /^\{\s*"type"\s*:\s*"response\.(?:completed|incomplete)"/.test(data))
+          )
+            try {
+              usage = JSON.parse(data).response?.usage ?? null;
+            } catch {
+              usage = null;
+            }
           await validate(true);
           startStream();
           await writeChunk(res, frame, signal);
@@ -369,23 +424,27 @@ export class PiModelRelay {
         startStream();
         res.end();
       }
+      if (usage && typeof usage === 'object')
+        report(this.config.onUsage, {
+          event: 'pi_relay_usage',
+          model: grant.model,
+          inputTokens: tokens(usage.input_tokens),
+          cachedTokens: tokens(usage.input_tokens_details?.cached_tokens),
+          outputTokens: tokens(usage.output_tokens),
+          reasoningTokens: tokens(usage.output_tokens_details?.reasoning_tokens),
+        });
     } catch (error) {
       const failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
-      if (admitted && this.config.onFailure) {
-        const code =
-          failureCodes.find((candidate) => candidate === failure.code) ?? 'upstream_failed';
-        const record: PiRelayFailureRecord = {
+      if (admitted)
+        report(this.config.onFailure, {
           event: 'pi_relay_failure',
           phase,
-          code,
+          code: failureCodes.find((candidate) => candidate === failure.code) ?? 'upstream_failed',
+          model: admitted.model,
           elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
           ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
-        };
-        try {
-          void Promise.resolve(this.config.onFailure(record)).catch(() => {});
-        } catch {}
-      }
+        });
       if (failure.status !== 499 && !res.destroyed) {
         if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');
         else this.error(res, failure.status, failure.code);
@@ -398,7 +457,7 @@ export class PiModelRelay {
       req.off('aborted', disconnected);
       res.off('close', disconnected);
       this.active.delete(controller);
-      if (admitted) this.conversations.delete(admitted);
+      if (admitted) this.conversations.delete(admitted.conversationId);
     }
   };
 

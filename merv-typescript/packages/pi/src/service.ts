@@ -10,6 +10,7 @@ import {
   type Caller,
   type Data,
   type DelegationSource,
+  type Role as MemberRole,
   type Scope,
   type Sql,
   type State,
@@ -25,8 +26,10 @@ import {
   hostMigration,
   machineInput,
   migration,
+  modelInput,
   nextInput,
   piConfig,
+  runInput,
   sendInput,
   switchMachineInput,
   warmInput,
@@ -37,6 +40,9 @@ import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
+import { fit } from './fit.js';
+import { piTool } from './relay-schema.js';
+import { piInstructions, turnNotes } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -60,6 +66,7 @@ import type {
   PiNextReply,
   PiNextSlot,
   PiPersonRecord,
+  PiProposal,
   PiSlot,
   PiSnapshot,
   PiStage,
@@ -73,27 +80,8 @@ const active = new Set(['waiting', 'starting', 'working', 'saving']);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
-const constraints: Record<string, z.ZodTypeAny> = {
-  'project.get': z.object({}).strict(),
-  'task.list': z.object({}).strict(),
-  'artifact.list': z.object({}).strict(),
-  'artifact.get': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
-  'artifact.read': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
-};
-export const piReadTools = Object.freeze(Object.keys(constraints));
-const phrases: Record<string, string> = {
-  'project.get': 'Reading the project',
-  'task.list': 'Listing tasks',
-  'artifact.list': 'Listing files',
-  'artifact.get': 'Reading a file',
-  'artifact.read': 'Reading a file',
-  'machine.switch': 'Moving to a bigger machine',
-};
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
-/** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
- * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
-const resultBytes = 24_000;
 /** A next slot proves ready within this, or the move fails and the current one serves on (T6). */
 const readyMs = 180_000;
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
@@ -128,6 +116,7 @@ const publicCommand = (record: PiCommandRecord): PiCommand => {
     workerId: _worker,
     resultHash: _result,
     canMove: _move,
+    tools: _tools,
     ...value
   } = record;
   return value;
@@ -194,7 +183,14 @@ export class PiService implements Pi, FleetOwner {
     config: PiConfig = {},
     private readonly clock: () => number = Date.now,
   ) {
-    this.config = parse(piConfig, config);
+    const parsed = piConfig.safeParse(config);
+    if (!parsed.success)
+      throw new MervError(
+        'pi_configuration',
+        `Invalid Pi configuration at ${parsed.error.issues[0]?.path.join('.')}`,
+        503,
+      );
+    this.config = parsed.data;
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
       !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
@@ -228,20 +224,11 @@ export class PiService implements Pi, FleetOwner {
       }),
     );
     this.disposers.push(
+      // Every native tool but Pi's own, run as the person: Scope applies their live role, and each
+      // tool's own registration says what only the person may run (ToolDefinition.conversation).
       this.tools.registerConversationPolicy({
-        allowsTool: async (caller, name) => {
-          await this.scope.require(caller, 'read');
-          return Object.hasOwn(constraints, name);
-        },
-        validate: async (caller, name, input) => {
-          await this.scope.require(caller, 'read');
-          check(
-            Object.hasOwn(constraints, name) && constraints[name].safeParse(input).success,
-            'pi_tool_forbidden',
-            'Conversation tool or arguments are not allowed',
-            403,
-          );
-        },
+        allowsTool: async (_caller, name) => !name.startsWith('pi.'),
+        validate: async () => {},
       }),
     );
     await this.tick();
@@ -272,6 +259,10 @@ export class PiService implements Pi, FleetOwner {
   private key(userId: string, projectId: string): string {
     return this.config.runtimeKey === 'project' ? `${userId}:${projectId}` : userId;
   }
+  /** A catalog model; a missing or withdrawn id means the default, models[0]. */
+  private model(id?: string) {
+    return this.config.models.find((model) => model.id === id) ?? this.config.models[0];
+  }
   private slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
   }
@@ -292,9 +283,14 @@ export class PiService implements Pi, FleetOwner {
     check(row, 'pi_command_not_found', 'Conversation command not found', 404);
     return decode(row);
   }
-  private async saveConversation(tx: Transaction, conversation: PiConversationRecord) {
+  /** Only a question, an answer or a name moves a conversation up the list (`touch`). */
+  private async saveConversation(
+    tx: Transaction,
+    conversation: PiConversationRecord,
+    touch = true,
+  ) {
     conversation.revision++;
-    conversation.updatedAt = this.time();
+    if (touch) conversation.updatedAt = this.time();
     await tx.run(
       'UPDATE pi_conversations SET data_json=? WHERE id=?',
       JSON.stringify(conversation),
@@ -367,6 +363,18 @@ export class PiService implements Pi, FleetOwner {
       ? decode(row)
       : { key, preferred: this.config.machines[0].key, sticky: null, choseAt: null, moves: [] };
   }
+  /** The person's last model pick here, a pi_people row of its own: never the machine record, and
+   * per project whatever runtimeKey says. */
+  private pickKey(userId: string, projectId: string): string {
+    return `model:${userId}:${projectId}`;
+  }
+  private async picked(sql: Sql, userId: string, projectId: string): Promise<string | undefined> {
+    const row = await sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_people WHERE key=?',
+      this.pickKey(userId, projectId),
+    );
+    return row ? decode<{ model: string }>(row).model : undefined;
+  }
   private async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
     const since = new Date(this.clock() - 86_400_000).toISOString();
     person.moves = person.moves.filter((move) => move.at > since);
@@ -389,6 +397,12 @@ export class PiService implements Pi, FleetOwner {
       !caller.session && !caller.managed && !caller.conversation,
       'pi_forbidden',
       'Workers cannot control conversations',
+      403,
+    );
+    check(
+      caller.projectId !== this.config.host?.projectId,
+      'pi_forbidden',
+      'Agent conversations are not available in the Pi host project',
       403,
     );
     const actor = await this.scope.require(caller, 'read', tx);
@@ -453,6 +467,7 @@ export class PiService implements Pi, FleetOwner {
         activeCommandId: null,
         checkpoint: null,
         previousCheckpoint: null,
+        model: this.model(await this.picked(tx, userId, caller.projectId)).id,
         source: await this.scope.delegationSource(caller, tx),
         createdAt: this.time(),
         updatedAt: this.time(),
@@ -510,9 +525,13 @@ export class PiService implements Pi, FleetOwner {
       stage: this.stage(conversation, turn ?? null, host, allocation),
       now: this.time(),
       available: this.fleet.connected(this.hostProject),
-      conversation: publicConversation(conversation),
+      conversation: {
+        ...publicConversation(conversation),
+        model: this.model(conversation.model).id,
+      },
       commands: commands.map(publicCommand),
       host: view,
+      models: this.config.models.map(({ effort: _effort, ...model }) => model),
       ...transient,
       tail: whole
         ? [
@@ -692,7 +711,8 @@ export class PiService implements Pi, FleetOwner {
 
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.ready();
-    const value = parse(sendInput, input);
+    // The model only guards the send: a retry is the same message whatever the page showed.
+    const { model, ...value } = parse(sendInput, input);
     const renter = await this.hostCaller();
     const { command, hostId } = await this.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
@@ -725,6 +745,14 @@ export class PiService implements Pi, FleetOwner {
         (count?.count ?? 0) < 100,
         'pi_conversation_full',
         'Open a new conversation to continue',
+        409,
+      );
+      // A page showing another model than the conversation's sends nothing on it.
+      const current = this.model(conversation.model);
+      check(
+        !model || model === current.id,
+        'pi_model_changed',
+        `This conversation now answers on ${current.label}. Send again to use it.`,
         409,
       );
       // Every read of the turn runs as the person, with their authority as of this message.
@@ -1060,17 +1088,18 @@ export class PiService implements Pi, FleetOwner {
       'Conversation command is no longer active',
       409,
     );
-    if (person)
-      await this.scope.requireDelegation(conversation.source, 'read', tx).catch((error) => {
-        if (error instanceof MervError && [401, 403].includes(error.status))
-          throw new MervError(
-            'pi_authority_stale',
-            'Conversation authority is no longer active',
-            403,
-          );
-        throw error;
-      });
-    return { conversation, command };
+    const actor = person
+      ? await this.scope.requireDelegation(conversation.source, 'read', tx).catch((error) => {
+          if (error instanceof MervError && [401, 403].includes(error.status))
+            throw new MervError(
+              'pi_authority_stale',
+              'Conversation authority is no longer active',
+              403,
+            );
+          throw error;
+        })
+      : undefined;
+    return { conversation, command, actor };
   }
 
   async next(token: string, input: unknown, holdMs = 0): Promise<PiNextReply> {
@@ -1118,33 +1147,50 @@ export class PiService implements Pi, FleetOwner {
         checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
       }
       const turn = { conversationId: conversation.id, commandId: command.id, workerId };
-      await this.read((tx) => this.bound(token, turn, tx));
+      const { actor } = await this.read((tx) => this.bound(token, turn, tx));
       const caller = this.conversationCaller(conversation, command);
-      const tools = (await this.tools.describe(caller)).map((tool) => {
-        const artifact = tool.name === 'artifact.get' || tool.name === 'artifact.read';
-        const inputSchema: Data = {
-          type: 'object',
-          properties: artifact
-            ? { artifactId: { type: 'string', minLength: 1, maxLength: 200 } }
-            : {},
-          required: artifact ? ['artifactId'] : [],
-          additionalProperties: false,
-        };
-        const description =
-          tool.name === 'artifact.read'
-            ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs. Long content is truncated.'
-            : (tool.description ?? tool.name);
-        return { name: tool.name, description, inputSchema };
+      // Every tool the person may use here, read-only for a reader, whose every other call a
+      // handler would refuse.
+      const uses = new Map(
+        (await this.tools.list()).map((tool) => [
+          tool.name,
+          'kind' in tool ? undefined : tool.conversation,
+        ]),
+      );
+      const described = (await this.tools.describe(caller)).flatMap((description) => {
+        const tool = piTool(description, uses.get(description.name));
+        return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
+      });
+      // The offered list is fixed for the turn: a claim served again keeps it, and the model
+      // grant names exactly it. switch_machine comes first, so no native tool's model name takes
+      // its place.
+      const tools = await this.state.transaction(async (tx) => {
+        const current = (await this.bound(token, turn, tx)).command;
+        if (!current.tools) {
+          const names = new Set<string>();
+          current.tools = [...(offered ? [offered] : []), ...described]
+            .filter(
+              ({ name }) => !names.has(piModelToolName(name)) && names.add(piModelToolName(name)),
+            )
+            .map(({ name }) => name);
+          await this.saveCommand(tx, current);
+        }
+        return current.tools;
       });
       this.streams.changed(conversation.id, command.id);
+      const model = this.model(command.model);
       return {
         command: publicCommand(command),
         checkpoint,
-        model: this.config.model,
+        model: model.id,
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
-        tools: offered ? [...tools, offered] : tools,
-        notes,
+        tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
+          tools.includes(name),
+        ),
+        instructions: piInstructions,
+        // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
+        notes: [...(await this.told(conversation, command, actor!.role, caller)), ...notes],
       };
     } catch {
       // A turn already ended (stopped) stays as it ended; a machine that no longer admits work is
@@ -1160,6 +1206,61 @@ export class PiService implements Pi, FleetOwner {
       this.announce();
       return null;
     }
+  }
+  /** This turn's notes (turnNotes) from what the person can read now; a read that fails leaves
+   * its line out. */
+  private async told(
+    conversation: PiConversationRecord,
+    command: PiCommandRecord,
+    role: MemberRole,
+    caller: Caller,
+  ): Promise<string[]> {
+    const read = <T>(name: string, input: object) =>
+      this.tools.call(name, caller, input).then(
+        (value) => value as T,
+        () => undefined,
+      );
+    const project = await read<{ summary?: string }>('project.get', {});
+    const problem = await read<{ current?: { sections?: { id: string; content: string }[] } }>(
+      'paper.read',
+      { kind: 'problem' },
+    );
+    // What an answer that stopped early had already changed, as its events recorded them.
+    const interrupted = await this.read(async (tx) => {
+      const row = await tx.get<{ data_json: string }>(
+        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1',
+        conversation.id,
+        command.id,
+      );
+      const before = row && decode<PiCommandRecord>(row);
+      if (before?.status !== 'interrupted') return [];
+      const events = await tx.all<{ type: string; subject_id: string }>(
+        `SELECT type,subject_id FROM events WHERE project_id=? AND actor_id=? AND created_at>=?
+          AND data_json::jsonb #>> '{source,conversationId}'=? AND data_json::jsonb #>> '{source,commandId}'=?
+          ORDER BY id LIMIT 6`,
+        conversation.projectId,
+        conversation.source.actorId,
+        before.startedAt ?? before.createdAt,
+        conversation.id,
+        before.id,
+      );
+      return events.map(({ type, subject_id }) => `${type} ${subject_id}`);
+    });
+    const sections = problem?.current?.sections;
+    return turnNotes({
+      role,
+      actorId: conversation.source.actorId,
+      projectId: conversation.projectId,
+      model: this.model(command.model),
+      today: this.time().slice(0, 10),
+      problem:
+        sections &&
+        ['problem', 'scope', 'goals', 'constraints'].filter(
+          (id) => !sections.find((section) => section.id === id)?.content.trim(),
+        ),
+      introduction: project && !project.summary?.trim(),
+      interrupted,
+    });
   }
   /** What /next gives this worker now: first a turn it claimed and has not begun, whose reply it
    * lost (a worker begins each turn before it asks again); else a draining slot retires (T5); a
@@ -1229,6 +1330,8 @@ export class PiService implements Pi, FleetOwner {
     if (changed) await this.saveHost(tx, host);
     if (!command) return {};
     const claim = await this.claim(tx, host, command, serving.machine);
+    // The model is the conversation's as the turn is claimed: a pick while it waited applies.
+    command.model = this.model(claim.conversation.model).id;
     command.status = 'starting';
     command.workerId = value.workerId;
     // Queueing and cold start spent the send-time budget; from here only a stall ends the turn
@@ -1361,52 +1464,146 @@ export class PiService implements Pi, FleetOwner {
       'Conversation turn is not working',
       409,
     );
+    check(
+      command.tools?.includes(value.name),
+      'pi_tool_forbidden',
+      'This tool was not offered in this turn',
+      403,
+    );
+    // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
+    const definition = (await this.tools.list()).find(({ name }) => name === value.name);
+    let use: 'propose' | 'secret' | undefined;
+    if (definition && !('kind' in definition) && definition.conversation) {
+      const parsed = await definition.inputSchema.safeParseAsync(value.input);
+      if (!parsed.success)
+        return {
+          error: {
+            code: 'invalid_input',
+            message: 'Tool input failed validation',
+            details: parsed.error.issues.map(({ path, message }) => ({ path, message })),
+          },
+        };
+      const found =
+        typeof definition.conversation === 'function'
+          ? definition.conversation(parsed.data)
+          : definition.conversation;
+      if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
+    }
     const key = `${conversation.id}:${command.id}`;
     this.progressAt.set(key, this.clock());
-    this.report(conversation.id, command.id, 'tool', phrases[value.name]);
+    this.report(
+      conversation.id,
+      command.id,
+      'tool',
+      use
+        ? `Proposing ${value.name}`
+        : value.name === 'machine.switch'
+          ? 'Moving to a bigger machine'
+          : `Using ${value.name}`,
+    );
     const result = await (
-      value.name === 'machine.switch'
-        ? this.switchMachine(conversation, command, value.input)
-        : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
+      use
+        ? this.propose(token, value, use)
+        : value.name === 'machine.switch'
+          ? this.switchMachine(conversation, command, value.input)
+          : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
     )
-      .catch((error: unknown) => {
-        // A wrong ID or input is the model's to correct; authority failures still end the call.
-        if (error instanceof MervError && [400, 404].includes(error.status))
-          return { error: { code: error.code, message: error.message } };
-        throw error;
+      .catch(async (error: unknown) => {
+        // A turn that ended, or whose person lost access here, ends with its call; any other
+        // refusal, the person's role included, is the model's to explain.
+        await this.read((tx) => this.bound(token, value, tx));
+        return error instanceof MervError
+          ? {
+              error: {
+                code: error.code,
+                message: error.message,
+                ...(error.details === undefined ? {} : { details: error.details }),
+              },
+            }
+          : { error: { code: 'tool_failed', message: 'The tool failed unexpectedly' } };
       })
       .finally(() => {
         this.progressAt.set(key, this.clock());
         this.report(conversation.id, command.id, 'thinking');
       });
-    const size = (part: unknown) => Buffer.byteLength(JSON.stringify(part ?? null));
-    let bytes = size(result);
-    if (bytes <= resultBytes) return result;
-    // Text and lists keep their start; anything else is only an error the model can explain.
-    const read =
-      value.name === 'artifact.read' && (result as { encoding?: unknown }).encoding === 'utf8';
-    const whole = read
-      ? (result as { content: string }).content
-      : Array.isArray(result)
-        ? result
-        : null;
-    if (!whole)
-      return {
-        error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
+    return fit(value.name, result);
+  }
+  /** A call only its person may run: kept on the turn for their page, where Run runs it as them
+   * (run). At most 16 an answer. */
+  private async propose(
+    token: string,
+    turn: PiTurnInput & { name: string; input: Record<string, unknown> },
+    use: 'propose' | 'secret',
+  ): Promise<unknown> {
+    const proposal = await this.state.transaction(async (tx) => {
+      const { command } = await this.bound(token, turn, tx);
+      if ((command.proposals?.length ?? 0) >= 16) return null;
+      const proposal: PiProposal = {
+        id: newId('pip'),
+        name: turn.name,
+        input: turn.input as Data,
+        ...(use === 'secret' && { secret: true as const }),
+        at: this.time(),
       };
-    const part = (shown: number) =>
-      read
-        ? { ...(result as object), content: whole.slice(0, shown) }
-        : { items: whole.slice(0, shown) };
-    let shown = whole.length;
-    for (const budget = resultBytes - 200; bytes > budget && shown > 0; bytes = size(part(shown)))
-      shown = Math.floor((shown * budget) / bytes);
-    const unit = read ? 'characters' : 'items';
+      (command.proposals ??= []).push(proposal);
+      await this.saveCommand(tx, command);
+      return proposal;
+    });
+    if (!proposal)
+      return {
+        error: {
+          code: 'too_many_proposals',
+          message: 'This answer has proposed 16 calls: say what is left',
+        },
+      };
+    this.streams.changed(turn.conversationId, turn.commandId);
     return {
-      ...part(shown),
-      truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
+      proposed: { id: proposal.id, name: proposal.name },
+      note: 'The person sees this exact call with a Run button; it runs as them only if they press it.',
     };
   }
+
+  /** pi.run: the person presses Run on a call their agent proposed, which runs once, as them, with
+   * every check their own call meets. A secret result reaches only them: nothing keeps it. */
+  async run(caller: Caller, input: unknown): Promise<{ result: unknown }> {
+    this.ready();
+    const value = parse(runInput, input);
+    const find = (command: PiCommandRecord) =>
+      command.proposals?.find(({ id }) => id === value.proposalId);
+    const proposal = await this.state.transaction(async (tx) => {
+      const conversation = await this.owned(caller, value.id, tx);
+      check(
+        !conversation.activeCommandId,
+        'pi_turn_busy',
+        'This conversation already has an active turn',
+        409,
+      );
+      const command = await this.command(tx, value.id, value.commandId);
+      const proposal = find(command);
+      check(proposal, 'pi_not_found', 'Proposal not found', 404);
+      check(!proposal.ran, 'pi_proposal_ran', 'This call has already run', 409);
+      proposal.ran = { at: this.time() };
+      await this.saveCommand(tx, command);
+      return proposal;
+    });
+    const settle = (ok: boolean, code?: string) =>
+      this.state.transaction(async (tx) => {
+        const command = await this.command(tx, value.id, value.commandId);
+        Object.assign(find(command)!.ran!, { ok, ...(code && { code }) });
+        await this.saveCommand(tx, command);
+      });
+    try {
+      const result = await this.tools.call(proposal.name, caller, proposal.input);
+      await settle(true);
+      return { result };
+    } catch (error) {
+      await settle(false, error instanceof MervError ? error.code : 'tool_failed');
+      throw error;
+    } finally {
+      this.streams.changed(value.id, value.commandId);
+    }
+  }
+
   /** switch_machine: the agent starts a move without asking (T2), within the move rules and only
    * to a machine its person may pick here. The new machine serves later turns once ready. */
   private async switchMachine(
@@ -1414,12 +1611,6 @@ export class PiService implements Pi, FleetOwner {
     command: PiCommandRecord,
     input: unknown,
   ): Promise<PiSwitchMachineResult> {
-    check(
-      command.canMove,
-      'pi_tool_forbidden',
-      'Conversation tool or arguments are not allowed',
-      403,
-    );
     // The agent's reason stays in the turn's outcome; nothing it wrote reaches a record.
     const value = switchMachineInput.safeParse(input);
     check(value.success, 'invalid_input', 'Name a machine and say why in 10 to 300 characters');
@@ -1556,13 +1747,13 @@ export class PiService implements Pi, FleetOwner {
         'pi_result_invalid',
         'Worker results must contain assistant messages',
       );
-      // switch_machine counts only in a turn it was offered to.
+      // An outcome names a tool this turn was offered; switch_machine keeps its own input.
       check(
-        value.outcomes.every((outcome) =>
-          outcome.name === 'machine.switch'
-            ? command.canMove && switchMachineInput.safeParse(outcome.input).success
-            : Object.hasOwn(constraints, outcome.name) &&
-              constraints[outcome.name].safeParse(outcome.input).success,
+        value.outcomes.every(
+          (outcome) =>
+            command.tools?.includes(outcome.name) &&
+            (outcome.name !== 'machine.switch' ||
+              switchMachineInput.safeParse(outcome.input).success),
         ),
         'pi_result_invalid',
         'Turn result contains an unsupported tool',
@@ -1636,9 +1827,11 @@ export class PiService implements Pi, FleetOwner {
   /** Once, after the first answer: the model names a conversation still called the default. */
   private async name(id: string, [asked, ...answer]: PiMessage[]): Promise<void> {
     const key = process.env[this.config.modelApiKeyEnv];
-    if (!key) return;
+    // A small call without reasoning, on the first model that answers at effort none.
+    const titler = this.config.models.find((model) => model.effort === 'none');
+    if (!key || !titler) return;
     const reply = answer.map((message) => message.text).join('\n\n');
-    const title = await piTitle(this.config.model, key, asked.text, reply);
+    const title = await piTitle(titler.id, key, asked.text, reply);
     if (!title) return;
     const named = await this.state.transaction(async (tx) => {
       const conversation = await this.conversation(tx, id);
@@ -1771,6 +1964,32 @@ export class PiService implements Pi, FleetOwner {
     return view;
   }
 
+  /** pi.model.set: the conversation's model from its next unclaimed turn, and the person's default
+   * for new conversations here. Only the person: conversation, session and managed callers are
+   * refused (user), and no agent tool reaches it. An answer under way keeps its model. */
+  async setModel(caller: Caller, input: unknown): Promise<PiSnapshot> {
+    this.ready();
+    const { id, model } = parse(modelInput, input);
+    await this.state.transaction(async (tx) => {
+      const conversation = await this.owned(caller, id, tx);
+      check(
+        this.config.models.some((offered) => offered.id === model),
+        'pi_model_unavailable',
+        'That model is not offered',
+        403,
+      );
+      conversation.model = model;
+      await this.saveConversation(tx, conversation, false);
+      await tx.run(
+        'INSERT INTO pi_people(key,data_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data_json=excluded.data_json',
+        this.pickKey(conversation.userId, conversation.projectId),
+        JSON.stringify({ model }),
+      );
+    });
+    this.streams.nudge(id);
+    return this.snapshot(caller, id);
+  }
+
   async authorizeModel(token: string) {
     this.ready();
     check(
@@ -1804,11 +2023,9 @@ export class PiService implements Pi, FleetOwner {
         runtimeId: command.runtimeId,
         epoch: command.epoch,
         expiresAt: command.expiresAt,
-        model: this.config.model,
-        // Only the tools this turn was offered.
-        toolNames: [...piReadTools, ...(command.canMove ? ['machine.switch'] : [])].map(
-          piModelToolName,
-        ),
+        model: this.model(command.model).id,
+        // Only the tools this turn was offered, the same for every call of the turn.
+        toolNames: (command.tools ?? []).map(piModelToolName),
       };
     });
   }
@@ -1824,7 +2041,7 @@ export class PiService implements Pi, FleetOwner {
           grant.runtimeId === command.runtimeId &&
           grant.epoch === command.epoch &&
           grant.expiresAt === command.expiresAt &&
-          grant.model === this.config.model &&
+          grant.model === this.model(command.model).id &&
           command.status === 'working',
         'pi_authority_stale',
         'Model authority is no longer active',

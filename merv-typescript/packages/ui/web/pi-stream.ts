@@ -5,6 +5,8 @@ export interface PiConversation {
   title: string;
   activeCommandId: string | null;
   updatedAt: string;
+  /** The model its next answer uses; an older server leaves it out. */
+  model?: string;
 }
 export interface PiCommand {
   id: string;
@@ -13,6 +15,23 @@ export interface PiCommand {
   error: string | null;
   /** The machine key the turn ran (or will run) on; absent on turns from before machines. */
   machine?: string;
+  /** Calls the agent proposed, which run as the person only when they press Run. */
+  proposals?: PiProposal[];
+  /** The model that answered it, fixed when a worker claimed it. */
+  model?: string;
+}
+/** Mirrors the server's PiProposal. */
+export interface PiProposal {
+  id: string;
+  name: string;
+  input: unknown;
+  secret?: true;
+  ran?: { at: string; ok?: boolean; code?: string };
+}
+/** A model the person may pick for a conversation. */
+export interface PiModel {
+  id: string;
+  label: string;
 }
 /** Mirrors the server's PiMachine, PiMachineOption, PiMove and PiHostView. */
 export interface PiMachine {
@@ -68,6 +87,8 @@ export interface PiSnapshot {
   commands: PiCommand[];
   /** The person's machine in this project; an older server leaves it out. */
   host?: PiHostView;
+  /** The models the person may pick; an older server leaves them out. */
+  models?: PiModel[];
   streamId: string;
   sequence: number;
   tail: PiEvent[];

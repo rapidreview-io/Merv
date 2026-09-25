@@ -2,8 +2,17 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
 import { z } from 'zod';
-import { citeSchema, kind, patchSchema } from './input.js';
-import type { PaperKind } from './types.js';
+import { check } from '@merv/contracts';
+import { citeSchema, id, kind, patchSchema } from './input.js';
+const readSchema = z
+  .object({
+    kind: kind.optional(),
+    history: z.boolean().optional(),
+    section: id.optional(),
+    offset: z.number().int().min(0).optional(),
+    length: z.number().int().min(1).optional(),
+  })
+  .strict();
 export const paperToolsPlugin = {
   name: 'merv-paper-tools',
   inject: ['paper', 'tools'],
@@ -13,15 +22,31 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.read',
         description:
-          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions.',
-        inputSchema: z.object({ kind: kind.optional(), history: z.boolean().optional() }).strict(),
+          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.',
+        inputSchema: readSchema,
         readOnly: true,
-        handler: async (caller, input: { kind?: PaperKind; history?: boolean }) =>
-          input.kind
-            ? input.history
-              ? await paper.history(caller, input.kind)
-              : (await paper.read(caller)).documents[input.kind]
-            : await paper.read(caller),
+        handler: async (caller, input: z.infer<typeof readSchema>) => {
+          if (input.section === undefined)
+            return input.kind
+              ? input.history
+                ? await paper.history(caller, input.kind)
+                : (await paper.read(caller)).documents[input.kind]
+              : await paper.read(caller);
+          check(input.kind, 'invalid_paper_input', 'Name the kind of the section to read');
+          const { revision, sections } = (await paper.read(caller)).documents[input.kind].current;
+          const found = sections.find(({ id }) => id === input.section);
+          check(found, 'not_found', 'Section not found', 404);
+          const offset = Math.min(input.offset ?? 0, found.content.length);
+          const end = input.length === undefined ? undefined : offset + input.length;
+          return {
+            ...found,
+            kind: input.kind,
+            revision,
+            content: found.content.slice(offset, end),
+            offset,
+            total: found.content.length,
+          };
+        },
       }),
     );
     ctx.effect(() =>

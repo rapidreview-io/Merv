@@ -165,7 +165,7 @@ export class ArtifactStore implements Artifacts {
     await this.get(caller, artifactId);
     return { artifact, download };
   }
-  async read(caller: Caller, artifactId: string) {
+  async read(caller: Caller, artifactId: string, range: { offset?: number; length?: number } = {}) {
     caller = structuredClone(caller);
     const artifact = await this.get(caller, artifactId);
     check(
@@ -175,16 +175,24 @@ export class ArtifactStore implements Artifacts {
     );
     const bytes = await this.blobs.get(caller.projectId, artifact.hash);
     await this.get(caller, artifactId);
-    // A text answer has to be one the caller could send back. Tool input refuses NUL in text,
-    // so bytes carrying it come back as base64 even though they decode as UTF-8; otherwise a
-    // read of this artifact could never be written again.
-    const encoding =
-      (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json') &&
-      isUtf8(bytes) &&
-      !bytes.includes(0)
-        ? ('utf8' as const)
-        : ('base64' as const);
-    return { artifact, content: bytes.toString(encoding), encoding };
+    // Any valid UTF-8 is text, whatever its media type. A text answer has to be one the caller
+    // could send back: tool input refuses NUL in text, so bytes carrying it come back as base64
+    // even though they decode as UTF-8; otherwise a read of this artifact could never be written
+    // again.
+    const encoding = isUtf8(bytes) && !bytes.includes(0) ? ('utf8' as const) : ('base64' as const);
+    const content = bytes.toString(encoding);
+    if (range.offset === undefined && range.length === undefined)
+      return { artifact, content, encoding };
+    // A part of a long text, in characters of the content: where it starts and the whole length.
+    const offset = Math.min(range.offset ?? 0, content.length);
+    const end = range.length === undefined ? content.length : offset + range.length;
+    return {
+      artifact,
+      content: content.slice(offset, end),
+      encoding,
+      offset,
+      total: content.length,
+    };
   }
   async list(caller: Caller): Promise<Artifact[]> {
     caller = structuredClone(caller);
