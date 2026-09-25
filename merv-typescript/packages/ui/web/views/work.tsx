@@ -430,7 +430,6 @@ export function CycleMove({
   onSaved(): void;
 }) {
   const home = useHome();
-  // A cycle that has ended has no move left.
   if (!isOpen(cycle.workflow.state)) return null;
   const read = home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id);
   // A gate read at another revision is not this cycle's, and leaves the plain move.
@@ -464,7 +463,7 @@ export function CycleMove({
         Write the definition <ArrowRightIcon size={14} />
       </Link>
     );
-  if (cycle.automation && isOpen(cycle.workflow.state))
+  if (cycle.automation)
     return (
       <div className="stack">
         <span>

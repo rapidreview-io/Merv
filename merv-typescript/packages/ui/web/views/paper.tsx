@@ -117,13 +117,6 @@ function compose(workspace: PaperWorkspace): DocView[] {
     for (const file of workspace.documents[kind].published?.publication.evidence ?? [])
       pinned.set(file.id, kind);
   let figure = 0;
-  // A section is found by its title; only a repeated title adds the end of its id.
-  const taken = new Set<string>();
-  const anchor = (plain: string, id: string) => {
-    const free = taken.has(plain) ? `${plain}-${id.slice(-6)}` : plain;
-    taken.add(free);
-    return free;
-  };
   return KINDS.map((kind, at) => {
     const held = workspace.documents[kind];
     // The address and the anchor are derived from the final order, once it is settled.
@@ -151,7 +144,12 @@ function compose(workspace: PaperWorkspace): DocView[] {
       rows: rows.map((row, index) => ({
         ...row,
         n: `${at + 1}.${index + 1}`,
-        anchor: anchor(`${kind}-${slug(row.section.title)}`, row.section.id),
+        // A section is found by its title; only a title its document repeats adds the end of its id.
+        anchor:
+          `${kind}-${slug(row.section.title)}` +
+          (rows.findIndex((other) => slug(other.section.title) === slug(row.section.title)) < index
+            ? `-${row.section.id.slice(-6)}`
+            : ''),
         published:
           moved.has(row.section.id) &&
           JSON.stringify(row.section) ===
