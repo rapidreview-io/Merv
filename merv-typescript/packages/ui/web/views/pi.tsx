@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import {
   ApiError,
   call,
@@ -196,7 +196,8 @@ const linked = (text: string) =>
     ),
   );
 /** A call the agent proposed: the tool, Main's copy of its exact input, and Run, which runs it
- * once as the person. A secret result shows here and nowhere else. */
+ * once as the person and is heard with the tool's name and, as its description, that input. A
+ * secret result shows here and nowhere else. */
 function Proposal({
   proposal,
   secret,
@@ -208,14 +209,18 @@ function Proposal({
   disabled: boolean;
   run(): void;
 }) {
+  const id = useId();
   return (
     <article className="pi-proposal">
-      <code>{proposal.name}</code>
-      <pre>{JSON.stringify(proposal.input, null, 2)}</pre>
+      <code id={`${id}tool`}>{proposal.name}</code>
+      <pre id={`${id}input`}>{JSON.stringify(proposal.input, null, 2)}</pre>
       {secret && <pre>{linked(secret)}</pre>}
       <button
         className="btn btn--sm"
         type="button"
+        id={`${id}run`}
+        aria-labelledby={`${id}run ${id}tool`}
+        aria-describedby={`${id}input`}
         disabled={disabled || !!proposal.ran}
         onClick={run}
       >

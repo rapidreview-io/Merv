@@ -1839,3 +1839,41 @@ test('incremental SSE parser handles split frames and rejects oversized events',
   parse(`data: ${'x'.repeat(70_000)}\n\n`);
   assert.deepEqual(frames, [{ event: 'delta', data: '{"text":"ok"}' }]);
 });
+
+/** What a screen reader calls an element: aria-labelledby, else aria-label, else its text. */
+const accessible = (element: Element, attribute = 'aria-labelledby') =>
+  element
+    .getAttribute(attribute)
+    ?.split(' ')
+    .map((id) => document.getElementById(id)?.textContent)
+    .join(' ') ??
+  element.getAttribute('aria-label') ??
+  element.textContent;
+
+test('each Run as me is named by the call it runs, and described by that call’s input', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const proposals = [
+    { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: '2026-09-20T00:00:01Z' },
+    { id: 'pip_task', name: 'task.create', input: { title: 'x' }, at: '2026-09-20T00:00:02Z' },
+  ];
+  boot(
+    () => snapshot(conversation(), [{ ...command('c1', 'completed'), proposals }]),
+    () => [conversation()],
+  );
+  await open();
+  const buttons = [...document.querySelectorAll('.pi-proposal button')];
+  assert.deepEqual(
+    buttons.map((button) => accessible(button)),
+    ['Run as me fleet.halt', 'Run as me task.create'],
+  );
+  assert.deepEqual(
+    buttons.map((button) => accessible(button, 'aria-describedby')),
+    proposals.map(({ input }) => JSON.stringify(input, null, 2)),
+  );
+  // Nothing visible was added to say it.
+  assert.equal(
+    document.querySelector('.pi-proposal')!.textContent,
+    `fleet.halt${JSON.stringify({ id: 'flt_1' }, null, 2)}Run as me`,
+  );
+});
