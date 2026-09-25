@@ -442,7 +442,7 @@ test("the reviewer's probe: no run starts unless a rollback could redeploy the p
   assert.equal(r.status, 2, r.out);
   assert.match(
     r.out,
-    /refused, nothing changed: a rollback needs the deployed Sandboxes commit's deploy\/cloudflare-sandbox\/worker, and ffffffff is not in /,
+    /refused, nothing changed: a rollback needs deploy\/cloudflare-sandbox\/worker\/src\/index.ts at the deployed Sandboxes commit, and ffffffff has none in /,
   );
   assert.deepEqual(r.steps, []);
   assert.equal(r.sim.active, null);
@@ -456,7 +456,10 @@ test('an open run is driven forward only while a rollback could run from here', 
   const current = { ...LIVE, sourceCommit: '0'.repeat(40), sandboxesCommit: 'f'.repeat(40) };
   const untouched = simulate('unready-untouched', openRun(current));
   assert.equal(untouched.status, 1, untouched.out);
-  assert.match(untouched.out, /R1 closed, production unchanged: a rollback needs the deployed/);
+  assert.match(
+    untouched.out,
+    /R1 closed, production unchanged: a rollback needs deploy\/cloudflare-sandbox\/worker\/src\/index.ts at the deployed/,
+  );
   assert.deepEqual(untouched.events, ['finish {"result":"refused"}']);
   assert.equal(untouched.sim.active, null);
   const run = openRun(current, { deployAttempted: true }, DEPLOYED);

@@ -401,12 +401,12 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       },
     });
   // Why a rollback to `previous` could not run from here, if it could not: it redeploys the bridge
-  // Worker of the deployed Sandboxes commit with this wrangler.
+  // Worker of the deployed Sandboxes commit, entered at this template's main, with this wrangler.
   const unready = ({ sandboxesCommit }) => {
-    const at = `${sandboxesCommit}^{commit}:${bridge}`;
-    const tree = spawnSync('git', ['-C', sandboxes, 'cat-file', '-t', at], { encoding: 'utf8' });
-    if (tree.stdout?.trim() !== 'tree')
-      return `a rollback needs the deployed Sandboxes commit's ${bridge}, and ${sandboxesCommit?.slice(0, 8)} is not in ${sandboxes}`;
+    const at = `${sandboxesCommit}^{commit}:${template.main}`;
+    const entry = spawnSync('git', ['-C', sandboxes, 'cat-file', '-t', at], { encoding: 'utf8' });
+    if (entry.stdout?.trim() !== 'blob')
+      return `a rollback needs ${template.main} at the deployed Sandboxes commit, and ${sandboxesCommit?.slice(0, 8)} has none in ${sandboxes}`;
     const who = wranglerRun(['whoami', '--json']);
     return who.status === 0
       ? null
@@ -464,6 +464,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     drainSeconds: Number(opt('--drain-minutes', '15')) * 60,
   };
   console.log(describePlan(plan));
+  if (dryRun && plan.lane !== 'none') {
+    const why = unready(current);
+    if (why) console.log(`A real run would refuse: ${why}.`);
+  }
   if (dryRun || (plan.lane === 'none' && current.verified !== false)) return 0;
   if (!clean()) return 2;
   const why = unready(current);
