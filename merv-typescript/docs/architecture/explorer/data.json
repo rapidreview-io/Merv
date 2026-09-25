@@ -905,7 +905,10 @@
       "requires": [
         "fleet",
         "sessions",
-        "scope"
+        "scope",
+        "api",
+        "state",
+        "tools"
       ],
       "optional": [],
       "kind": "service",
@@ -2002,7 +2005,7 @@
       "exposedTools": [
         {
           "name": "session.dispatch",
-          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.",
+          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act with the authority of the admin who changed either last.",
           "readOnly": false
         },
         {
@@ -2076,7 +2079,7 @@
       "exposedTools": [
         {
           "name": "session.dispatch",
-          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project. Turning it on also clears every failed-launch count, as the go-ahead for the whole project.",
+          "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act with the authority of the admin who changed either last.",
           "readOnly": false
         },
         {
@@ -2757,6 +2760,21 @@
       "optional": false
     },
     {
+      "from": "fleetWorkflow",
+      "to": "api",
+      "optional": false
+    },
+    {
+      "from": "fleetWorkflow",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "fleetWorkflow",
+      "to": "tools",
+      "optional": false
+    },
+    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -3296,7 +3314,7 @@
     "plugins": 63,
     "providers": 28,
     "adapters": 35,
-    "dependencies": 167
+    "dependencies": 170
   },
   "network": [
     {

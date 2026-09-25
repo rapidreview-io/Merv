@@ -36,7 +36,12 @@ plan task refuses the release, and one more: a managed runner bound to a session
 refuses it too, because that binding is kept permanently. The census reports the new ledger rows
 in C1 and the managed-runner refusal as C14.
 
-| Environment | Release | Census before | After | Backup |
-| ----------- | ------- | ------------- | ----- | ------ |
-| Staging     | pending |               |       |        |
-| Production  | pending |               |       |        |
+| Environment                           | Release                                  | Census before | After                                                              | Backup     |
+| ------------------------------------- | ---------------------------------------- | ------------- | ------------------------------------------------------------------ | ---------- |
+| Staging                               | unknown                                  | not run       | not verified                                                       | none known |
+| Production (`merv_ts_prod_20260916a`) | `20260925T203550Z-fff33218-29d77b23ca89` | not run       | 57/60 plugins active, as before; the deleted count is not verified | none known |
+
+The migrations reached production inside a routine release, before the census was run, so the
+number of `experiment.plan` tasks deleted is not recorded. To verify, read the ledger rows under
+`recipe_experiment.plan_2`, the five `component_migrations` rows, and confirm no `tasks` row of
+type `experiment.plan` remains. Only a backup from before 20:37 UTC could restore those tasks.

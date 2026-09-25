@@ -10,10 +10,10 @@
   "apiEntries": 36,
   "serverPlugins": 62,
   "machinePlugins": 1,
-  "directDependencyCount": 167,
+  "directDependencyCount": 170,
   "optionalDependencyCount": 14,
   "directConsumers": {
-    "api": 4,
+    "api": 5,
     "artifacts": 12,
     "blobs": 2,
     "code": 1,
@@ -36,9 +36,9 @@
     "sandboxes": 4,
     "scope": 23,
     "sessions": 5,
-    "state": 18,
+    "state": 19,
     "tasks": 4,
-    "tools": 21,
+    "tools": 22,
     "ui": 16,
     "workflows": 8
   },
@@ -361,7 +361,10 @@
       "requires": [
         "fleet",
         "sessions",
-        "scope"
+        "scope",
+        "api",
+        "state",
+        "tools"
       ],
       "optional": [],
       "kind": "service",
