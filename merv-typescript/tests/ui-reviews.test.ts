@@ -230,6 +230,31 @@ test('an owner the default leaves out decides the review as owner, with one cont
   assert.ok(!text().includes(refusal));
   await click('Decide as owner');
   assert.deepEqual(claims, [{ reviewId: 'review_1', override: true }]);
+  await unmount();
+
+  // A claim held back for another reason is not lifted by deciding as owner.
+  const taken = 'Review is already claimed or closed';
+  serve('/tools/workflow.status_and_next', {
+    body: {
+      result: {
+        ...desk('task', 'in_review'),
+        actions: [
+          {
+            action: 'start_review',
+            tool: 'review.start',
+            status: 'blocked',
+            arguments: {},
+            blockers: [{ code: 'review_unavailable', message: taken }],
+            instruction: '',
+          },
+        ],
+      },
+    },
+  });
+  await mount(page());
+  await settle(10);
+  assert.ok(!text().includes('Decide as owner'));
+  assert.ok(text().includes(taken));
 });
 
 test('a verdict the owner gave as owner says so where it says who gave it', async (t) => {

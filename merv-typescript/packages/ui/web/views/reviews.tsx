@@ -520,8 +520,12 @@ function Controls({
         onDone={onDone}
       />
     );
-  // What the default leaves to an independent reviewer, the project's owner may still decide.
-  const own = start?.status !== 'ready' && review.overridable;
+  // What the default leaves to an independent reviewer, the project's owner may still decide;
+  // a claim held back for any other reason is not the owner's to take either.
+  const own =
+    review.overridable &&
+    !!start?.blockers.length &&
+    start.blockers.every((b) => ['review_independence', 'leased_review_required'].includes(b.code));
   const verb = own ? 'Decide as owner' : 'Claim review';
   if (start?.status === 'ready' || own)
     return (

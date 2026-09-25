@@ -819,7 +819,7 @@ export class ReviewService implements Reviews {
       check(
         await this.independent(caller, actor, current, tx),
         'review_independence',
-        current.override
+        override
           ? 'Only the project owner, acting as themself, may decide a review as owner'
           : 'A producer, contributor or directing authority cannot review their own work',
         403,
