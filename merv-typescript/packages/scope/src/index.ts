@@ -154,6 +154,32 @@ export class ProjectScope implements Scope {
       );
     };
   }
+  async projectOwners(
+    tx?: Transaction,
+  ): Promise<{ projectId: string; source: DelegationSource }[]> {
+    const read = (sql: Sql) =>
+      sql.all<{
+        id: string;
+        project_id: string;
+        actor_id: string;
+        issuer: string;
+        subject: string;
+      }>(
+        "SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM project_memberships m JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator' ORDER BY m.created_at,m.id",
+      );
+    const owners = new Map<string, DelegationSource>();
+    for (const row of tx ? await read(tx) : await this.state.read(read))
+      if (!owners.has(row.project_id))
+        owners.set(row.project_id, {
+          actorId: row.actor_id,
+          projectId: row.project_id,
+          kind: 'human',
+          issuer: row.issuer,
+          subject: row.subject,
+          membershipId: row.id,
+        });
+    return [...owners].map(([projectId, source]) => ({ projectId, source }));
+  }
   async serviceActor(
     provider: string,
     projectId: string,

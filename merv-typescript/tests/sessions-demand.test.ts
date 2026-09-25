@@ -17,6 +17,45 @@ import { countWrites, openState } from './fixtures/state.js';
 
 const platform = { name: 'codex', harness: 'codex' as const, enabled: true, parallelism: 1 };
 const profile = { platform };
+test('with dispatch on by default, Fleet serves each project nobody switched under its owner', async (t) => {
+  const state = await openState();
+  const scope = await createService(new ProjectScope(state));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const events = await createService(new DurableEvents(state));
+  const sessions = await createService(
+    new LeasedSessions(state, scope, workflows, events, {
+      sweepIntervalMs: 60_000,
+      dispatchByDefault: true,
+    }),
+  );
+  t.after(async () => {
+    await sessions.close();
+    await events.close();
+    await workflows.close();
+    await state.close();
+  });
+  const person = await scope.acceptVerifiedIdentity({
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'founder',
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const project = async (name: string) => {
+    const created = await scope.createProject(person, { name, requestId: name });
+    return await scope.caller(person, created.id);
+  };
+  const untouched = await project('Untouched');
+  const off = await project('Off');
+  const own = await project('Own machines');
+  await sessions.setDispatch(off, { enabled: false });
+  await sessions.setDispatch(own, { ownMachines: true });
+  assert.equal((await sessions.projectStatus(untouched)).dispatch.enabled, true);
+  // A project made by bootstrap has no signed-in operator to direct it, so it is not served.
+  await scope.bootstrap({ projectName: 'Actors only', actorName: 'Owner' });
+  assert.deepEqual(await sessions.servedSources(), [
+    { projectId: untouched.projectId, source: await scope.delegationSource(untouched) },
+  ]);
+});
+
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 
 async function fixture(t: TestContext, maxLaunchFailures = 3) {
@@ -321,7 +360,7 @@ test('Fleet serves each project an admin turned on for it, as the admin who chos
   ]);
 });
 
-test('a project whose dispatch was on before the upgrade keeps its own machines', async (t) => {
+test('every project runs its work on Fleet’s machines after the upgrade, whatever it was before', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
@@ -370,7 +409,7 @@ test('a project whose dispatch was on before the upgrade keeps its own machines'
     return [enabled, ownMachines];
   };
   assert.deepEqual(await Promise.all(projects.map(read)), [
-    [true, true],
-    [false, false],
+    [true, false],
+    [true, false],
   ]);
 });

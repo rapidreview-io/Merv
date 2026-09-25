@@ -175,7 +175,8 @@ if (fleetEnabled) {
   if (Buffer.byteLength(process.env[managedSecretEnv] ?? '') < 32) {
     throw new Error('Fleet managed secret is unavailable');
   }
-  set('sessions', { managedSecretEnv });
+  // With Fleet serving every project, a project nobody has switched runs its work (the ruling).
+  set('sessions', { managedSecretEnv, ...(workflowEnabled && { dispatchByDefault: true }) });
   // Caps that replace the project limit for the named projects, such as the Pi host's.
   const projectLimits =
     process.env.MERV_FLEET_PROJECT_LIMITS === undefined ? {} : json('MERV_FLEET_PROJECT_LIMITS');

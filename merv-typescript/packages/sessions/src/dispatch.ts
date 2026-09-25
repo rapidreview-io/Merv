@@ -259,6 +259,8 @@ interface DispatchRow {
 }
 interface Hooks {
   managed: ManagedRunnerBindings;
+  /** Whether a project nobody has switched runs its automatic work. */
+  byDefault: boolean;
   prepare(caller: Caller): Promise<void>;
   offer(caller: Caller, input: SessionOffer, tx: Transaction): Promise<Session>;
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
@@ -327,8 +329,8 @@ export class SessionDispatch {
           sql: postgresMigrations[4],
         },
         {
-          // Where automatic work may run, and whose authority chose it. A project already on
-          // runs on its own machines, so none moves to Fleet until an admin picks it.
+          // Where automatic work may run, and whose authority chose it. The founder's ruling
+          // (2026-09-25): every project runs its work, on Fleet's machines, until someone says not.
           version: 5,
           sql: postgresMigrations[5],
         },
@@ -369,7 +371,7 @@ export class SessionDispatch {
       projectId,
     );
     return {
-      enabled: !!row?.enabled,
+      enabled: row ? !!row.enabled : this.hooks.byDefault,
       ownMachines: !!row?.own_machines,
       fleet: this.hooks.managed.validating,
       updatedAt: row?.updated_at ?? null,
@@ -960,14 +962,33 @@ export class SessionDispatch {
                 : 'no_candidates',
     };
   }
-  /** Every project whose admin chose Fleet, with the source of the admin who chose last. */
+  /**
+   * Every project Fleet serves, with who directs its work: the admin who chose last, else, where
+   * nobody has chosen, the project's longest-standing signed-in operator.
+   */
   async servedSources(): Promise<{ projectId: string; source: DelegationSource }[]> {
     const rows = await this.state.read((sql) =>
-      sql.all<{ project_id: string; source_json: string }>(
-        'SELECT project_id,source_json FROM project_session_dispatch WHERE enabled=1 AND own_machines=0 AND source_json IS NOT NULL ORDER BY updated_at,project_id',
+      sql.all<{
+        project_id: string;
+        enabled: number;
+        own_machines: number;
+        source_json: string | null;
+      }>(
+        'SELECT project_id,enabled,own_machines,source_json FROM project_session_dispatch ORDER BY updated_at,project_id',
       ),
     );
-    return rows.map((row) => ({ projectId: row.project_id, source: JSON.parse(row.source_json) }));
+    const chosen = new Map(rows.map((row) => [row.project_id, row]));
+    const on = (projectId: string) => {
+      const row = chosen.get(projectId);
+      return row ? !!row.enabled && !row.own_machines : this.hooks.byDefault;
+    };
+    const served = rows
+      .filter((row) => row.source_json && on(row.project_id))
+      .map((row) => ({ projectId: row.project_id, source: JSON.parse(row.source_json!) }));
+    const directed = new Set(served.map((project) => project.projectId));
+    for (const owner of await this.scope.projectOwners())
+      if (!directed.has(owner.projectId) && on(owner.projectId)) served.push(owner);
+    return served;
   }
   /** A read-only hint for a configured source and a prospective runner profile. */
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {

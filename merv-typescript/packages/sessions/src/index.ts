@@ -100,6 +100,9 @@ const configSchema = z
     quietReadySeconds: between(60, 2_592_000, 21_600),
     /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
     refusalSeconds: between(30, 86_400, 300),
+    /** Whether a project nobody has switched is on: the founder's ruling (2026-09-25) is that
+     * every project runs its work unless someone turns it off. */
+    dispatchByDefault: z.boolean().default(false),
     /** Separate operator secret for deterministic managed credentials. */
     managedSecretEnv: z
       .string()
@@ -377,6 +380,7 @@ export class LeasedSessions implements Sessions {
           this.observations,
           {
             managed: this.managed,
+            byDefault: config.dispatchByDefault,
             prepare: async (caller) => await this.prepareControl(caller),
             offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
             close: async (session, reason, tx) => {

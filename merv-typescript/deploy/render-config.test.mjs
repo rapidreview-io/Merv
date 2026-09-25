@@ -240,6 +240,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   };
   assert.equal(run(workflow).status, 0);
   config = JSON.parse(readFileSync(output));
+  assert.equal(config.plugins.find((p) => p.id === 'sessions').config.dispatchByDefault, true);
   // A workflow machine may outlive Main, so no machine is leased for more than 15 minutes.
   const leases = config.plugins
     .find((p) => p.id === 'sandboxes')
