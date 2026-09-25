@@ -54,8 +54,10 @@ const newest = (value: unknown, count: number, cut: string[], name = 'items'): u
  * first of these that fits, each saying how to read the rest. A write's receipt goes the same way:
  * it still says the write succeeded, and keeps its ids. */
 export function fit(name: string, result: unknown): unknown {
+  // An artifact's text, or one section of the paper: a slice, and where to read on.
   const read =
-    name === 'artifact.read' && typeof (result as { content?: unknown })?.content === 'string'
+    (name === 'artifact.read' || name === 'paper.read') &&
+    typeof (result as { content?: unknown })?.content === 'string'
       ? (result as { content: string; encoding?: string; offset?: number; total?: number })
       : null;
   // Base64 is never shown: it is bytes the model cannot read.
@@ -79,7 +81,10 @@ export function fit(name: string, result: unknown): unknown {
       };
     });
   }
-  const note = 'Shown as an index: read one record with its get tool';
+  const note =
+    name === 'paper.read'
+      ? 'Shown as an index: read one section with paper.read, its kind and section id'
+      : 'Shown as an index: read one record with its get tool';
   const listed = index(result);
   if (size(listed) < size(result)) {
     if (size({ index: listed, note }) <= resultBytes) return { index: listed, note };

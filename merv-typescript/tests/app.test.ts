@@ -9,6 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
 import { conversationUse, describeTool, isRemoteTool } from '../packages/api/src/registry.js';
+import { fit } from '../packages/pi/src/fit.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
@@ -288,6 +289,62 @@ test('application stop disposes Cordis and the state store after API shutdown re
   } finally {
     await originalStop();
     await app.ctx.fiber.dispose();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('a paper too long to show the agent whole reads on section by section', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const boot = await app.ctx.scope.bootstrap({ projectName: 'Paper', actorName: 'Owner' });
+    const caller = { actorId: boot.actor.id, projectId: boot.project.id };
+    const read = async (input: object) =>
+      fit('paper.read', await app.ctx.tools.call('paper.read', caller, input)) as {
+        index?: { current: { sections: { id: string; content: string }[] } };
+        note: string;
+        content: string;
+      };
+    const long = (letter: string, length: number) =>
+      Array.from({ length }, (_, n) => (n % 80 === 79 ? '\n' : letter)).join('');
+    const sections = ['a', 'b', 'c'].map((id) => ({ id, title: id, content: long(id, 12_000) }));
+    sections.push({ id: 'd', title: 'd', content: long('d', 70_000) });
+    await app.ctx.tools.call('paper.patch', caller, {
+      kind: 'methods',
+      expectedRevision: 0,
+      requestId: 'methods',
+      changes: sections,
+    });
+    // The document comes back as its sections' ids and openings, and says how to read one.
+    const document = await read({ kind: 'methods' });
+    assert.deepEqual(
+      document.index!.current.sections.map(({ id }) => id),
+      ['a', 'b', 'c', 'd'],
+    );
+    assert.equal(document.index!.current.sections[0].content.length, 301);
+    assert.equal(
+      document.note,
+      'Shown as an index: read one section with paper.read, its kind and section id',
+    );
+    // One section comes back whole; one too long for that, in slices that read on.
+    assert.equal((await read({ kind: 'methods', section: 'b' })).content, sections[1].content);
+    const first = await read({ kind: 'methods', section: 'd' });
+    const end = first.content.length;
+    assert.ok(end > 20_000 && end < 32_000);
+    assert.equal(first.note, `Characters 0–${end} of 70000 are shown; read on with offset ${end}`);
+    const next = await read({ kind: 'methods', section: 'd', offset: end });
+    assert.equal(
+      first.content + next.content,
+      sections[3].content.slice(0, end + next.content.length),
+    );
+    await assert.rejects(app.ctx.tools.call('paper.read', caller, { section: 'd' }), {
+      code: 'invalid_paper_input',
+    });
+    await assert.rejects(
+      app.ctx.tools.call('paper.read', caller, { kind: 'results', section: 'd' }),
+      { code: 'not_found' },
+    );
+  } finally {
+    await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
 });
