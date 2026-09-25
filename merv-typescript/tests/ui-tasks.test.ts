@@ -935,3 +935,82 @@ test('a ready gate is the one move, and it sends nothing it was not asked for', 
   await click('Start next step');
   assert.deepEqual(Object.keys(sent[0]!).sort(), ['expectedRevision', 'requestId', 'researchId']);
 });
+
+test('a cycle whose wave was abandoned names the wave and its state, and offers the end the server offers', async (t) => {
+  t.after(unmount);
+  const refusal = {
+    code: 'dependency_failed',
+    status: 409,
+    message: 'The reflection wf_wave was abandoned. End this cycle with research.end.',
+  };
+  const reflecting = home('reflecting', { status: 'blocked', blockers: [refusal] });
+  const [gate] = reflecting.body.result.workflows.workflows;
+  const end = {
+    action: 'end',
+    tool: 'research.end',
+    instruction: 'End this research cycle when it cannot reach an answer.',
+    arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
+    requiredInput: ['outcome', 'reason'],
+    status: 'needs_input',
+    blockers: [{ code: 'input_required', status: 400, message: 'Supply outcome and reason.' }],
+  };
+  Object.assign(gate!, {
+    currentGate: 'dependency_failed',
+    nextAction: end,
+    actions: [end, ...gate!.actions],
+    // As the server reads them: the work first, then the wave the cycle opened.
+    dependencies: [
+      // Work a cycle reflects on may fail and still be read: it stopped nothing.
+      { ...dependency('wf_task', 'Seed sweep', 'abandoned', false), failed: true },
+      {
+        ...dependency('wf_wave', 'Wave 1', 'abandoned', false),
+        workflow: 'reflection',
+        failed: true,
+      },
+    ],
+  });
+  serve('/tools/ui.home', reflecting);
+  const ended: Record<string, unknown>[] = [];
+  serve('/tools/research.end', (_call, body) => {
+    ended.push(body);
+    return { body: { result: { ...cycle('reflecting'), id: 'wf_cycle' } } };
+  });
+  const move = (listed: boolean) =>
+    createElement(
+      MemoryRouter,
+      null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(CycleMove as any, {
+        cycle: { ...cycle('reflecting'), reflectionId: 'wf_wave' },
+        shell: { rows: [], plugins: [] },
+        listed,
+        onSaved() {},
+      }),
+    );
+  await mount(move(false));
+  await settle(10);
+  assert.deepEqual(buttons(), [['End cycle', false]]);
+  const wave = document.querySelector<HTMLAnchorElement>('a[href="/reflections/wf_wave"]');
+  assert.equal(wave?.textContent, 'Wave 1');
+  assert.equal(wave?.closest('p')?.querySelector('.status')?.textContent, 'abandoned');
+  assert.ok(!text().includes('Seed sweep'), text());
+  assert.ok(!text().includes('research.end'), 'the refusal is data, not the server’s sentence');
+  await click('End cycle');
+  assert.deepEqual(
+    { ...ended[0], requestId: typeof ended[0]!.requestId },
+    {
+      researchId: 'wf_cycle',
+      expectedRevision: 3,
+      outcome: 'abandoned',
+      reason: 'Wave 1 was abandoned.',
+      requestId: 'string',
+    },
+  );
+  await unmount();
+  // The cycle's own page already lists what it waits on, the wave among them: only the move.
+  serve('/tools/ui.home', reflecting);
+  await mount(move(true));
+  await settle(10);
+  assert.deepEqual(buttons(), [['End cycle', false]]);
+  assert.equal(document.querySelector('a[href="/reflections/wf_wave"]'), null);
+});

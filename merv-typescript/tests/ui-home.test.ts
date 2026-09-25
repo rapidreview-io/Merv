@@ -153,7 +153,7 @@ test('a move is one sentence made from the gate’s facts, never the agent’s i
   assert.equal(
     recordSentence('unknown', {
       nextAction: null,
-      dependencies: [dependency('Baseline run', { failed: true })],
+      dependencies: [dependency('Baseline run', { failed: true, state: 'failed' })],
     }),
     'Stopped: Baseline run failed',
   );
@@ -753,4 +753,36 @@ test('an operator’s move with no control here is still theirs, and promises no
   );
   assert.equal(lines.yours[0].desk, undefined, 'no page here makes this move');
   assert.deepEqual([...lines.agent, ...lines.nobody, ...lines.unknown], []);
+});
+
+test('a cycle its abandoned wave stopped names the wave, not the work it reflects on', () => {
+  const data = home({
+    cycles: [{ id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('reflecting') }],
+    workflows: {
+      workflows: [
+        gate('wf_cycle', {
+          workflow: 'research',
+          state: 'reflecting',
+          currentGate: 'dependency_failed',
+          nextAction: { action: 'end', tool: 'research.end', status: 'needs_input' },
+          blockers: [
+            blocker('dependency_failed', 'The reflection wf_wave was abandoned.'),
+            blocker('input_required'),
+          ],
+          // As the server reads them: the work first, then the wave the cycle opened. Work a
+          // cycle selected may fail and still be reflected on: it stopped nothing.
+          dependencies: [
+            dependency('Seed sweep', { state: 'abandoned', failed: true, workflow: 'experiment' }),
+            dependency('Wave 1', { state: 'abandoned', failed: true, workflow: 'reflection' }),
+          ],
+        }),
+      ],
+    },
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines = standingOf(rows as any, data as any, me, named);
+  assert.deepEqual(
+    lines.yours.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
+    [['wf_cycle', 'Decide what happens next: Wave 1 abandoned']],
+  );
 });

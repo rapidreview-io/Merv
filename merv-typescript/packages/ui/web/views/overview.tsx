@@ -14,6 +14,7 @@ import {
   StatusPill,
   Summary,
   kindOf,
+  words,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import type { RecordNames } from '../markdown';
@@ -133,16 +134,17 @@ export function recordSentence(
   gate: {
     currentGate?: string;
     nextAction: { action: string } | null;
-    dependencies: Pick<WorkflowDependency, 'name' | 'settled' | 'failed'>[];
+    dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'settled' | 'failed'>[];
     blockers?: { message: string }[];
   },
   holder?: string,
   returned = false,
 ): string {
-  const failed = gate.dependencies.find((item) => item.failed)?.name;
+  const ended = gate.dependencies.find((item) => item.failed);
+  const failed = ended && `${ended.name} ${words(ended.state)}`;
   const pending = gate.dependencies.filter((item) => !item.settled && !item.failed);
   if (bucket === 'yours') {
-    if (failed) return `Decide what happens next: ${failed} failed`;
+    if (failed) return `Decide what happens next: ${failed}`;
     const ask = ASKS[gate.nextAction?.action ?? ''];
     if (!ask) return 'Needs your input';
     return returned ? `Changes requested: ${ask[0].toLowerCase()}${ask.slice(1)}` : ask;
@@ -155,7 +157,7 @@ export function recordSentence(
     return pending.length
       ? `Waiting on ${listed(pending.map((item) => item.name))}`
       : 'Waiting on earlier work';
-  if (failed) return `Stopped: ${failed} failed`;
+  if (failed) return `Stopped: ${failed}`;
   return gate.blockers?.find((item) => item.message)?.message ?? 'Waiting';
 }
 
@@ -288,9 +290,13 @@ export function standingOf(
       const next = (bucket === 'yours' && ask) || decision.nextAction;
       const desk = bucket === 'yours' && next?.status !== 'blocked' && DESKS[next?.tool ?? ''];
       const verdict = lastVerdict.get(item.id);
+      // A cycle is stopped by its own wave ending unapproved, never by work it reflects on.
+      const dependencies = decision.dependencies.filter(
+        (item) => kind !== 'research' || !item.failed || item.workflow === 'reflection',
+      );
       const sentence = recordSentence(
         bucket,
-        { ...decision, nextAction: next },
+        { ...decision, nextAction: next, dependencies },
         (began !== me && named(began)) || named(item.owner),
         !!verdict && verdict !== 'pass',
       );

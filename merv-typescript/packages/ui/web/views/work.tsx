@@ -436,11 +436,16 @@ export function CycleMove({
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
   const refused = (code: string) => !!advance?.blockers.some((item) => item.code === code);
   const paper = shell.rows.find((row) => row.view.kind === 'paper');
-  const move = (label: string, choice: Record<string, unknown> = {}, disabled = false) => (
+  const move = (
+    label: string,
+    choice: Record<string, unknown> = {},
+    disabled = false,
+    tool = 'research.advance',
+  ) => (
     <ResearchCommand
       key={label}
       disabled={disabled}
-      tool="research.advance"
+      tool={tool}
       input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision, ...choice }}
       label={label}
       onSaved={() => {
@@ -449,6 +454,8 @@ export function CycleMove({
       }}
     />
   );
+  const end = (label: string, reason: string) =>
+    move(label, { outcome: 'abandoned', reason }, false, 'research.end');
   if (refused(UNDEFINED) && paper)
     return (
       <Link className="btn" to={paper.path}>
@@ -464,17 +471,7 @@ export function CycleMove({
         {cycle.automation.blocker && <span>{cycle.automation.blocker.message}</span>}
         {cycle.automation.blocker?.code === 'research_definition_changed' &&
           move('Accept changed definition')}
-        <ResearchCommand
-          tool="research.end"
-          input={{
-            researchId: cycle.id,
-            expectedRevision: cycle.workflow.revision,
-            outcome: 'abandoned',
-            reason: 'The owner stopped automatic research from the Work page.',
-          }}
-          label="Stop automatic research"
-          onSaved={onSaved}
-        />
+        {end('Stop automatic research', 'The owner stopped automatic research from the Work page.')}
       </div>
     );
   if (advance?.requiredInput.includes('nextWave'))
@@ -485,6 +482,22 @@ export function CycleMove({
       </div>
     );
   if (refused('integration_failed')) return move('Retry consolidation', { retryIntegration: true });
+  // A wave that ended unapproved stops its cycle, though work it reflects on may fail and still be
+  // read: the wave where it stands, unless the page lists it, and the end the gate offers instead.
+  const ends = gate?.actions.some(
+    (item) => item.tool === 'research.end' && item.status !== 'blocked',
+  );
+  if (refused('dependency_failed') && ends) {
+    const waves = gate!.dependencies.filter(
+      (item) => item.failed && item.workflow === 'reflection',
+    );
+    return (
+      <div className="stack">
+        {!listed && waves.map((item) => <Dependency key={item.id} item={item} />)}
+        {end('End cycle', `${waves[0]?.name ?? 'Its reflection'} was abandoned.`)}
+      </div>
+    );
+  }
   const blocked = advance?.status === 'blocked';
   return (
     <div className="stack">
