@@ -473,8 +473,10 @@ def large():
     assert set(credential) - {'cloudflare_api_token'} == {'bridge_url', 'bridge_token'} and all(
         isinstance(v, str) and v and v.strip() == v for v in credential.values()), 'credential_unexpected'
     assert re.fullmatch(r'https://[a-z0-9.-]+', credential['bridge_url']), 'bridge_url_unexpected'
+    # Cloudflare refuses Python's default User-Agent (error 1010) before the Worker sees the call.
     health = urllib.request.Request(credential['bridge_url'] + '/health',
-                                    headers={'authorization': 'Bearer ' + credential['bridge_token']})
+                                    headers={'authorization': 'Bearer ' + credential['bridge_token'],
+                                             'user-agent': 'merv-pi-connect/1'})
     with urllib.request.urlopen(health, timeout=15) as response:
         assert json.load(response).get('shape') == LARGE_SHAPE, 'bridge_not_large'
     drains()
