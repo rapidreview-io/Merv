@@ -1641,7 +1641,19 @@ export class SessionDispatch {
         )
         .catch((error: unknown) => {
           const status = (error as { status?: number })?.status ?? 500;
-          if (status >= 500) throw error;
+          if (status >= 500) {
+            // The whole lease rolls back, leaving no decision, hold or event: only this says why.
+            process.stderr.write(
+              `${JSON.stringify({
+                event: 'dispatch.offer_failed',
+                instanceId: candidate.instanceId,
+                status,
+                code: (error as { code?: unknown })?.code ?? null,
+                message: String((error as Error)?.message ?? error).slice(0, 300),
+              })}\n`,
+            );
+            throw error;
+          }
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
             error,
