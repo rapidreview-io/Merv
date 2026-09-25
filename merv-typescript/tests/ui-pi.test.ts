@@ -442,7 +442,7 @@ test('an ambiguous send retry retains its command ID', async (t) => {
   assert.deepEqual(sent, [sent[0], sent[0]]);
 });
 
-test('snapshot tail and live deltas share ordered, bounded transient output', async (context) => {
+test('snapshot tail and live deltas share ordered transient output, however long', async (context) => {
   context.after(cleanup);
   setProject('p1');
   const active = { ...conversation(), activeCommandId: 'command_1' };
@@ -469,7 +469,7 @@ test('snapshot tail and live deltas share ordered, bounded transient output', as
   const transientProgress = () =>
     document.querySelector<HTMLElement>('.pi-message--transient .muted')?.textContent;
   await open();
-  assert.equal(transientText(), `${'a'.repeat(16_380)}tail`);
+  assert.equal(transientText(), `${'a'.repeat(17_000)}tail`);
   assert.equal(transientProgress(), 'p'.repeat(300));
 
   await act(async () => {
@@ -483,8 +483,163 @@ test('snapshot tail and live deltas share ordered, bounded transient output', as
     });
   });
   await settle(10);
-  assert.equal(transientText(), `${'a'.repeat(16_376)}taillive`);
+  assert.equal(transientText(), `${'a'.repeat(17_000)}taillive`);
   assert.equal(transientProgress(), 'q'.repeat(300));
+});
+
+test('a streamed answer is drawn at the pace it arrives, never half a second behind, and whole once saved', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  // Motion allowed: by default this page asks for less, and every word shows at once.
+  const media = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    ...media(query),
+    matches: !query.includes('reduced-motion'),
+  })) as typeof window.matchMedia;
+  t.after(() => {
+    window.matchMedia = media;
+  });
+  const active = { ...conversation(), activeCommandId: 'command_1' };
+  let state = snapshot(active, [command('command_1', 'working', [{ role: 'user', text: 'Hi' }])]);
+  const stream = boot(
+    () => state,
+    () => [active],
+  );
+  await open();
+  const live = () =>
+    document.querySelector<HTMLElement>('.pi-message--transient .md')?.textContent ?? '';
+  const words = (from: number) =>
+    Array.from({ length: 60 }, (_, index) => `word${from + index}`).join(' ');
+  const say = (sequence: number, text: string) =>
+    act(async () =>
+      stream.push('delta', {
+        streamId: 'stream_1',
+        sequence,
+        commandId: 'command_1',
+        type: 'text',
+        text,
+      }),
+    );
+  await say(1, words(0));
+  await settle(60);
+  const early = live().length;
+  assert.ok(early > 0 && early < words(0).length, `${early} of ${words(0).length} shown`);
+  await settle(300);
+  assert.equal(live(), words(0));
+  // More words pick up where the last stopped, and catch up as soon.
+  await say(2, ` ${words(60)}`);
+  await settle(60);
+  assert.ok(live().length > words(0).length && live().length < 2 * words(0).length);
+  await settle(300);
+  assert.equal(live(), `${words(0)} ${words(60)}`);
+  // Saved mid-reveal: the whole answer shows at once.
+  await say(3, ` ${words(120)}`);
+  const answer = `${words(0)} ${words(60)} ${words(120)}`;
+  state = snapshot(
+    { ...conversation() },
+    [
+      command('command_1', 'completed', [
+        { role: 'user', text: 'Hi' },
+        { role: 'assistant', text: answer },
+      ]),
+    ],
+    4,
+  );
+  await act(async () =>
+    stream.push('delta', {
+      streamId: 'stream_1',
+      sequence: 4,
+      commandId: 'command_1',
+      type: 'changed',
+      text: '',
+    }),
+  );
+  await settle(20);
+  assert.ok(!document.querySelector('.pi-message--transient'));
+  assert.equal(
+    document.querySelector<HTMLElement>('.pi-message--assistant .md')?.textContent,
+    answer,
+  );
+});
+
+test('a reader who asks for less motion gets each word as it arrives', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = { ...conversation(), activeCommandId: 'command_1' };
+  const stream = boot(
+    () => snapshot(active, [command('command_1', 'working', [{ role: 'user', text: 'Hi' }])]),
+    () => [active],
+  );
+  await open();
+  const text = Array.from({ length: 200 }, (_, index) => `word${index}`).join(' ');
+  await act(async () =>
+    stream.push('delta', {
+      streamId: 'stream_1',
+      sequence: 1,
+      commandId: 'command_1',
+      type: 'text',
+      text,
+    }),
+  );
+  await settle(0);
+  assert.equal(
+    document.querySelector<HTMLElement>('.pi-message--transient .md')?.textContent,
+    text,
+  );
+});
+
+test('the conversation menu names each item and holds still while an answer streams', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const active = {
+    ...conversation(),
+    title: 'Protein folding',
+    activeCommandId: 'command_1',
+    updatedAt: '2026-09-22T00:00:00Z',
+  };
+  const older = {
+    ...conversation('conversation_2'),
+    title: 'Earlier inquiry',
+    updatedAt: '2026-09-21T00:00:00Z',
+  };
+  let current = active;
+  const stream = boot(
+    () =>
+      current.id === older.id
+        ? snapshot(older)
+        : snapshot(current, [command('command_1', 'working', [{ role: 'user', text: 'Hi' }])]),
+    () => [active, older],
+  );
+  await open();
+  const bar = () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!;
+  const items = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+  await act(async () => bar().click());
+  const opened = items();
+  // Named by label, or by their words where those are the whole name.
+  const names = () => items().map((item) => item.getAttribute('aria-label') ?? item.textContent);
+  assert.equal(names()[0], 'New conversation');
+  assert.match(names()[1], /^Protein folding, \S/);
+  assert.match(names()[2], /^Earlier inquiry, \S/);
+  // Words stream and the conversation's own snapshot moves it below the other: the open menu
+  // keeps every item where it was.
+  current = { ...active, updatedAt: '2026-09-20T00:00:00Z' };
+  for (let sequence = 1; sequence <= 3; sequence++)
+    await act(async () =>
+      stream.push('delta', {
+        streamId: 'stream_1',
+        sequence,
+        commandId: 'command_1',
+        type: sequence === 2 ? 'changed' : 'text',
+        text: sequence === 2 ? '' : 'more ',
+      }),
+    );
+  await settle(20);
+  assert.equal(bar().getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(items(), opened);
+  current = older;
+  await act(async () => items()[2].click());
+  await settle(10);
+  assert.equal(bar().textContent, 'Earlier inquiry');
 });
 
 test('reconnect fetches canonical messages and removes stale transient response', async (t) => {

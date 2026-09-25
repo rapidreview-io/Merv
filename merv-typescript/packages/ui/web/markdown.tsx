@@ -1,4 +1,4 @@
-import { Fragment, useMemo, type ReactNode } from 'react';
+import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react';
 import { Link, useHref } from 'react-router-dom';
 import { useTool } from './api';
 
@@ -946,4 +946,65 @@ export function Markdown({
   const read = useRecordNames(names || long ? '' : source);
   if (long) return <pre className="doc">{source}</pre>;
   return <div className="md">{blocks(tree, names ?? read, under)}</div>;
+}
+
+/**
+ * Where a text can be cut so that each piece reads as it does within the whole: at a line at the
+ * margin after a blank one, outside any fence, that does not continue a list. Only `source` from
+ * `from`, itself such a cut, is read.
+ */
+function cutsFrom(source: string, from: number): number[] {
+  const cuts: number[] = [];
+  let fence: RegExp | null = null;
+  let after = false;
+  for (let at = from; at < source.length;) {
+    const end = source.indexOf('\n', at) + 1 || source.length + 1;
+    const line = source.slice(at, end - 1);
+    if (fence) {
+      if (fence.test(line)) fence = null;
+    } else {
+      if (after && at > from && !blank(line) && !gap(line[0]) && !ITEM.test(line)) cuts.push(at);
+      const open = FENCE.exec(line);
+      if (open && !(open[1]!.startsWith('`') && open[2]!.includes('`')))
+        fence = new RegExp(`^ {0,3}${open[1]![0]}{${open[1]!.length},}[ \\t]*$`);
+    }
+    after = blank(line);
+    at = end;
+  }
+  return cuts;
+}
+
+const Piece = memo(function Piece({ source, names }: { source: string; names: RecordNames }) {
+  const long = source.length > MAX_READ;
+  const tree = useMemo(() => (long ? [] : parseMarkdown(source)), [source, long]);
+  return long ? <pre>{source}</pre> : <>{blocks(tree, names, 2)}</>;
+});
+
+/**
+ * `Markdown` for a text that grows while it is read, as a streamed answer does, or one too long to
+ * read whole: the same page, drawn in pieces (`cutsFrom`) that are each read once. Only a growing
+ * text's last piece is read again, and MAX_READ bounds each piece rather than the text.
+ */
+export function MarkdownPieces({ source, names }: { source: string; names?: RecordNames }) {
+  const read = useRecordNames(names ? '' : source);
+  const last = useRef({ source: '', starts: [0], pieces: [] as string[] });
+  const pieces = useMemo(() => {
+    const before = last.current;
+    // A text that only grew keeps its pieces but the last, which is cut again.
+    const kept = source.startsWith(before.source) ? before.starts.length - 1 : 0;
+    const from = before.starts[kept]!;
+    const starts = [...before.starts.slice(0, kept), from, ...cutsFrom(source, from)];
+    const next = starts.map((start, index) =>
+      index < kept ? before.pieces[index]! : source.slice(start, starts[index + 1]),
+    );
+    last.current = { source, starts, pieces: next };
+    return next;
+  }, [source]);
+  return (
+    <div className="md">
+      {pieces.map((piece, index) => (
+        <Piece key={index} source={piece} names={names ?? read} />
+      ))}
+    </div>
+  );
 }
