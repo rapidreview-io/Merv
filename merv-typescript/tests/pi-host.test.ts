@@ -612,7 +612,7 @@ test('stopping the machine ends every turn on it and releases every slot', async
   await assert.rejects(f.pi.next(a.token, { workerId: 'worker_1' }), code('pi_unauthorized'));
 });
 
-test('a machine in use near its deadline hands over to a fresh one of its kind, or the default once its person may not choose it', async (t) => {
+test('a machine in use near its deadline hands over to a fresh one of its kind without a project connection', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 3600 } });
   const conversation = await f.create();
   const other = await f.create();
@@ -641,7 +641,7 @@ test('a machine in use near its deadline hands over to a fresh one of its kind, 
     input: { ...bound.input, commandId: sent.id, workerId: 'worker_next' },
   });
   f.runtimes.connected = (projectId) => projectId !== f.operator.projectId;
-  assert.equal((await nearDeadline()).host.next?.machine, 'standard');
+  assert.equal((await nearDeadline()).host.next?.machine, 'large');
 });
 
 test('picking the current machine while a move starts cancels the move', async (t) => {
@@ -659,7 +659,7 @@ test('picking the current machine while a move starts cancels the move', async (
   assert.equal((await f.host(bound.work.command)).next, null);
 });
 
-test('only a person who could rent sandboxes in the project may choose a larger machine', async (t) => {
+test('a writer may choose Large without a project Sandboxes connection', async (t) => {
   const f = await fixture(t);
   const large = async (caller: Caller, id: string) =>
     (await f.pi.snapshot(caller, id)).host.catalog.find(({ key }) => key === 'large');
@@ -681,15 +681,11 @@ test('only a person who could rent sandboxes in the project may choose a larger 
   assert.equal((await large(f.operator, chat.id))?.available, true);
   const unconnected = (projectId: string) => projectId !== f.operator.projectId;
   f.runtimes.connected = unconnected;
-  assert.equal((await large(f.operator, chat.id))?.reason, 'needs Sandboxes in this project');
-  // A pick that is no longer allowed starts the machine on the default.
-  f.runtimes.connected = () => true;
+  assert.equal((await large(f.operator, chat.id))?.available, true);
   await f.pi.setMachine(f.operator, { machine: 'large' });
   assert.deepEqual(await f.fleet.list(f.hostCaller), []);
-  f.runtimes.connected = unconnected;
-  assert.equal((await f.send(chat)).machine, 'standard');
+  assert.equal((await f.send(chat)).machine, 'large');
   await f.pi.stopMachine(f.operator);
-  f.runtimes.connected = () => true;
   assert.equal((await f.send(chat)).machine, 'large');
   // An offer Sandboxes no longer describes is hidden.
   f.runtimes.describe = async (_projectId, key) => (key === 'large' ? null : offers[key]);

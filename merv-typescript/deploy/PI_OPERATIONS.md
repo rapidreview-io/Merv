@@ -20,10 +20,8 @@ person picks the machine or releases it (Release machine) on the Agent page. Eve
 the person, with their current permissions. A new project needs no Sandboxes
 connection and no onboarding for Pi.
 
-A project's own Sandboxes connection now decides only whether its writers, and
-their agents, may run on Large. Every project connected for Pi on 2026-09-24
-keeps its connection, so all of its writers may. To keep a project on
-Standard only, retire its connection (see below).
+Writers and their agents may choose Large in any project. Fleet's $20 per UTC day
+per-person compute cap bounds Standard and Large together.
 
 ## ML allowance
 
@@ -57,14 +55,9 @@ Sandboxes to stop new rentals; existing workflows run to their deadlines.
   deadline. The replacement must cover both Cloudflare apps, Standard and
   Large: `cloudflare-fleet-large` carries its own copy in
   `FLEET_CLOUDFLARE_BRIDGE_LARGE`.
-- **By 2026-10-17:** renew every consumer grant. They all expire on 2026-10-24:
-  the canary grant at 16:14:06Z, then the 33 grants from the enablement, then
-  the QA grant `tok_yd17ci1amwyjo2lv`. Nothing renews them automatically. After
-  expiry that project's writers lose Large and its Sandboxes rows; only the host
-  grant's expiry (below) stops Pi itself. Renew in one batch: a new grant
-  per namespace, one catalog edit that adds every new ID to both allowlists, one
-  Sandboxes recreate, one env edit, one Main recreate, then remove the old IDs
-  and revoke the old grants.
+- **By 2026-10-17:** renew only the Pi host grant. The 33 per-project grants
+  expire on 2026-10-24 and may lapse. Their Sandboxes sidebar rows then disappear;
+  Pi machine choice and rental continue through the host grant.
 - **The Pi host's grant** renews like the others, by the `renewBy` in its
   `sandboxes.receipt.json` (7 days before it expires). Every Pi machine for
   every person is rented with it, so when it expires nobody can start one. Keep
@@ -97,8 +90,8 @@ Sandboxes to stop new rentals; existing workflows run to their deadlines.
 
 ## Connecting a project
 
-Pi no longer needs this. Connect a project to let its writers run Pi on Large,
-or to give it Sandboxes rows, and to connect the Pi host itself.
+Pi no longer needs per-project connections. Connect a project only to give it
+Sandboxes rows, or to connect the Pi host itself.
 
 Run [`pi-connect-project.py`](pi-connect-project.py) as root on the production
 host, one phase at a time. Every release carries it under
@@ -290,8 +283,7 @@ from step 1 have to be done again.
   picker shows, `slots` how many turns share the machine, and `agent` whether
   the agent may move itself there. The first entry is the default.
 - Standard is always allowed. A person, and their agent, may use another machine
-  only in a project that has its own Sandboxes connection, and only with at
-  least write permission there. Otherwise the picker shows the machine as
+  with write permission in the project. Otherwise the picker shows the machine as
   unavailable, and the agent is not offered `switch_machine`. The agent moves
   only with `MERV_PI_AGENT_MOVES=true`. It starts the new machine and moves
   there only once the machine is proven ready.

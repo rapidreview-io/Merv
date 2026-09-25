@@ -557,11 +557,9 @@ export class PiService implements Pi, FleetOwner {
     const allocation = host?.current && (await this.allocation(host.current.allocationId, tx));
     return { host, allocation: allocation || null };
   }
-  /** Founder ruling 2026-09-24: the agent assumes the person's permissions. The default machine
-   * is always allowed; any other only where the person could rent sandboxes themselves: their
-   * project (source.projectId, never the host project) has its own Sandboxes connection and
-   * `source` holds at least write there now. Otherwise the picker shows the reason, a new host
-   * starts on the default, and switch_machine is not offered. Checked again at each claim: a
+  /** The agent assumes the person's permissions. The default machine is always allowed;
+   * another requires write permission in this project. Otherwise the picker shows the reason,
+   * a new host starts on the default, and switch_machine is not offered. Checked again at each claim: a
    * machine its person may no longer choose takes none of their turns and is left for the
    * default (take, settle). With runtimeKey 'person' one host serves several projects, and a turn
    * from one where the machine is not allowed waits for that move. */
@@ -573,8 +571,6 @@ export class PiService implements Pi, FleetOwner {
     if (machine === this.config.machines[0].key) return { allowed: true };
     if (!this.config.machines.some(({ key }) => key === machine))
       return { allowed: false, reason: 'not offered' };
-    if (!this.fleet.connected(source.projectId))
-      return { allowed: false, reason: 'needs Sandboxes in this project' };
     try {
       await this.scope.requireDelegation(source, 'write', tx);
     } catch (error) {
