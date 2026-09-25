@@ -254,6 +254,11 @@ smoke passed, alongside 27 focused provider/launch tests.
   continue to use their existing authentication.
 - The optional `@merv/fleet/workflow` entry connects shared Sessions demand to
   Fleet with the fixed `hosted-codex` / `gpt-6-luna` profile and code.v2 support.
+  It serves every project whose admin turned dispatch on without choosing own
+  machines, acting as the admin who chose last, while that admin can write and
+  is listed in `MERV_FLEET_WORKFLOW_PEOPLE` (or it is `["*"]`). Machines are
+  capped in total and per person across projects, and projects without their
+  own connection rent through the host project.
   It carries enrollment and model credentials only through protected bootstrap,
   and waits for the supervisor's release acknowledgement and workspace capture
   before treating an assignment as finished. It adds no research dependency or
@@ -274,8 +279,9 @@ claims, one lost launch reply recovered without another create or launch,
 provider-confirmed cleanup, and a coexisting external runner. All five workflow
 tests passed, as did TypeScript typecheck. The provider remains a test double in
 this integration; this is not the three-VM Cloudflare acceptance. Deployment
-supports `MERV_FLEET_WORKFLOW_MAX_AGENTS`, defaulting to one, so the pilot can
-raise concurrency explicitly after the single-worker gate passes.
+supports `MERV_FLEET_WORKFLOW_MAX_AGENTS` (10 by default) and
+`MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON` (5); the single-project source
+credential of the pilot is retired.
 
 Ten Fleet PostgreSQL tests passed, including global/project capacity contention,
 lost-reply recovery, source revocation, cancellation during bootstrap, drain and

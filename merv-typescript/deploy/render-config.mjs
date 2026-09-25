@@ -214,28 +214,27 @@ if (fleetEnabled) {
     },
   );
   if (workflowEnabled) {
-    const projectId = required('MERV_FLEET_WORKFLOW_PROJECT_ID');
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(projectId)) {
-      throw new Error('Invalid MERV_FLEET_WORKFLOW_PROJECT_ID');
+    // Only these sign-in identities' choice of Fleet is served; '*' once sign-up is closed.
+    const people = json('MERV_FLEET_WORKFLOW_PEOPLE');
+    if (
+      !Array.isArray(people) ||
+      !people.length ||
+      people.some((person) => typeof person !== 'string' || !/^(\*|\S+ \S+)$/.test(person))
+    ) {
+      throw new Error('Invalid MERV_FLEET_WORKFLOW_PEOPLE');
     }
-    if (!connections.some((entry) => entry.projectId === projectId)) {
-      throw new Error('Fleet workflow project has no sandbox connection');
-    }
-    const sourceCredentialEnv = envName('MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV');
     const modelApiKeyEnv = envName('MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV');
-    for (const name of [sourceCredentialEnv, modelApiKeyEnv]) {
-      if (!process.env[name]) throw new Error('Fleet workflow credential is unavailable');
-    }
+    if (!process.env[modelApiKeyEnv]) throw new Error('Fleet workflow credential is unavailable');
     config.plugins.push({
       id: 'fleet-workflow',
       name: '@merv/fleet/workflow',
       config: {
         enabled: true,
-        projectId,
-        sourceCredentialEnv,
+        people,
         modelApiKeyEnv,
         baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
-        maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 1, 1, 32),
+        maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 10, 1, 64),
+        maxAgentsPerPerson: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON', 5, 1, 64),
       },
     });
   }

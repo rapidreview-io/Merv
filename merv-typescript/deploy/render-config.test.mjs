@@ -233,11 +233,9 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     MERV_FLEET_GLOBAL_LIMIT: '2',
     MERV_FLEET_PROJECT_LIMIT: '2',
     MERV_FLEET_WORKFLOW_ENABLED: 'true',
-    MERV_FLEET_WORKFLOW_PROJECT_ID: 'project_1',
-    MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'WORKFLOW_SOURCE',
+    MERV_FLEET_WORKFLOW_PEOPLE: JSON.stringify(['https://identity.example/auth/v1 founder']),
     MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV: 'MODEL_KEY',
     MERV_FLEET_WORKFLOW_BASE_URL: 'https://merv.example',
-    WORKFLOW_SOURCE: 'source-secret',
     MODEL_KEY: 'model-secret',
   };
   assert.equal(run(workflow).status, 0);
@@ -254,17 +252,31 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(config.plugins.find((p) => p.id === 'fleet').config.allocationTimeoutSeconds, 1800);
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
     enabled: true,
-    projectId: 'project_1',
-    sourceCredentialEnv: 'WORKFLOW_SOURCE',
+    people: ['https://identity.example/auth/v1 founder'],
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
-    maxAgents: 1,
+    maxAgents: 10,
+    maxAgentsPerPerson: 5,
   });
-  assert.ok(!readFileSync(output, 'utf8').includes(workflow.WORKFLOW_SOURCE));
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
-  assert.equal(run({ ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '2' }).status, 0);
+  // The retired single-project source is ignored if an old environment still names it.
+  const retired = {
+    MERV_FLEET_WORKFLOW_PROJECT_ID: 'project_1',
+    MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'WORKFLOW_SOURCE',
+    WORKFLOW_SOURCE: 'source-secret',
+  };
+  const everyone = {
+    MERV_FLEET_WORKFLOW_PEOPLE: '["*"]',
+    MERV_FLEET_WORKFLOW_MAX_AGENTS: '64',
+    MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '2',
+  };
+  assert.equal(run({ ...workflow, ...retired, ...everyone }).status, 0);
+  assert.ok(!readFileSync(output, 'utf8').includes(retired.WORKFLOW_SOURCE));
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.find((p) => p.id === 'fleet-workflow').config.maxAgents, 2);
+  const { people, maxAgents, maxAgentsPerPerson } = config.plugins.find(
+    (p) => p.id === 'fleet-workflow',
+  ).config;
+  assert.deepEqual([people, maxAgents, maxAgentsPerPerson], [['*'], 64, 2]);
   for (const broken of [
     { MERV_FLEET_ENABLED: 'true' },
     { ...fleet, MERV_FLEET_RUNTIME_RELEASE_ID: 'latest' },
@@ -277,10 +289,15 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     { ...fleet, MERV_FLEET_MANAGED_SECRET_ENV: 'bad-name' },
     { ...fleet, MANAGED_SECRET: 'short' },
     { ...fleet, MERV_FLEET_WORKFLOW_ENABLED: 'true' },
-    { ...workflow, MERV_FLEET_WORKFLOW_PROJECT_ID: 'other_project' },
-    { ...workflow, MERV_FLEET_WORKFLOW_SOURCE_CREDENTIAL_ENV: 'missing_secret' },
+    { ...workflow, MERV_FLEET_WORKFLOW_PEOPLE: undefined },
+    { ...workflow, MERV_FLEET_WORKFLOW_PEOPLE: '[]' },
+    { ...workflow, MERV_FLEET_WORKFLOW_PEOPLE: '["founder"]' },
+    { ...workflow, MERV_FLEET_WORKFLOW_PEOPLE: '*' },
+    { ...workflow, MODEL_KEY: undefined },
     { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '0' },
-    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '33' },
+    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '65' },
+    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '0' },
+    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '65' },
   ]) {
     assert.notEqual(run(broken).status, 0);
   }

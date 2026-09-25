@@ -209,6 +209,20 @@ export class FleetService implements Fleet {
     };
     return tx ? read(tx) : this.state.read(read);
   }
+  async listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]> {
+    const kind = [...this.owners].find(([, value]) => value === owner)?.[0];
+    check(kind, 'fleet_owner_denied', 'Only a registered owner may list its allocations', 403);
+    const ids = targets.map(() => '?').join(',') || 'NULL';
+    const rows = await this.state.read((sql) =>
+      sql.all<Row>(
+        `SELECT data_json FROM fleet_allocations WHERE data_json::jsonb #>> '{owner,kind}'=? AND
+         (phase<>'released' OR data_json::jsonb #>> '{owner,id}' IN (${ids})) ORDER BY created_at,id`,
+        kind,
+        ...targets,
+      ),
+    );
+    return rows.map(decode);
+  }
   async cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
     return inTransaction(this.state, tx, async (tx) => {
       const allocation = await this.inspectOwned(owner, id, tx);

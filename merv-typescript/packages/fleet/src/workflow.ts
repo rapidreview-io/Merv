@@ -5,7 +5,9 @@ import {
   check,
   digest,
   MervError,
-  type Caller,
+  sourceCaller,
+  type Actor,
+  type DelegationSource,
   type Scope,
   type Transaction,
 } from '@merv/contracts';
@@ -16,17 +18,18 @@ import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
 const workflowConfig = z
   .object({
     enabled: z.boolean().default(false),
-    projectId: z.string().min(1).max(200).optional(),
-    sourceCredentialEnv: z
-      .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-      .optional(),
+    /** Whose choice of Fleet it serves: sign-in identities as 'issuer subject', or '*' for all. */
+    people: z
+      .array(z.string().regex(/^(\*|\S+ \S+)$/))
+      .max(100)
+      .default([]),
     modelApiKeyEnv: z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .optional(),
     baseUrl: z.string().url().max(2048).optional(),
-    maxAgents: z.number().int().min(1).max(32).default(1),
+    maxAgents: z.number().int().min(1).max(64).default(10),
+    maxAgentsPerPerson: z.number().int().min(1).max(64).default(5),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
   .strict();
@@ -51,14 +54,21 @@ const targetId = (candidate: { instanceId: string; expectedRevision: number }) =
 const occupied = (allocation: FleetAllocation) => allocation.phase !== 'released';
 /** Before Fleet observes the launch no runner can have enrolled, so nothing claimed is at stake. */
 const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'launched';
+const demandInput = { platform: hostedCodexPlatform, capabilities: [...hostedCodexCapabilities] };
+/** Messages may carry credentials; operators get the project and the finite code only. */
+const skipped = (projectId: string, error: unknown) => {
+  const code = error instanceof MervError ? error.code : 'unexpected';
+  process.stderr.write(`${JSON.stringify({ event: 'fleet.workflow_skipped', projectId, code })}\n`);
+};
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
+  /** Work in a project without its own Sandboxes connection rents through the host. */
+  readonly rentsInHost = true;
   private readonly config: z.infer<typeof workflowConfig>;
-  private caller?: Caller;
   private modelApiKey?: string;
-  /** Why the last reconcile could not serve hosted demand; null once one succeeds. */
-  unavailable: string | null = null;
+  /** The projects the last reconcile rented for. */
+  private served = new Set<string>();
   private disposers: (() => void)[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Promise<void>;
@@ -80,12 +90,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
     this.config = parsed.data;
     if (this.config.enabled)
       check(
-        this.config.projectId &&
-          this.config.sourceCredentialEnv &&
-          this.config.modelApiKeyEnv &&
-          this.config.baseUrl,
+        this.config.people.length && this.config.modelApiKeyEnv && this.config.baseUrl,
         'invalid_fleet_workflow_config',
-        'Enabled Fleet workflow needs a project, source credential, model key and API URL',
+        'Enabled Fleet workflow needs its people, a model key and API URL',
       );
   }
   async start(): Promise<void> {
@@ -103,6 +110,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
           current: async (binding, tx) => await this.current(binding, tx),
           admits: async (allocationId, epoch, tx) =>
             await this.fleet.admits(allocationId, epoch, tx),
+          serves: (projectId) => this.served.has(projectId),
         }),
       );
     } catch (error) {
@@ -113,45 +121,15 @@ export class FleetWorkflowAdapter implements FleetOwner {
       void this.reconcile().catch(() => undefined);
     }, this.config.pollIntervalMs);
     this.timer.unref();
-    // A missing secret or revoked key leaves demand unserved with its reason, never the server down.
+    // A missing model key leaves demand unserved, never the server down.
     await this.reconcile().catch(() => undefined);
   }
-  private async connect(): Promise<Caller> {
-    if (this.caller) return this.caller;
-    const token = process.env[this.config.sourceCredentialEnv!];
-    const modelApiKey = process.env[this.config.modelApiKeyEnv!];
-    check(
-      token && modelApiKey,
-      'fleet_workflow_secret',
-      'Fleet workflow credentials are unavailable',
-      503,
-    );
-    const actor = await this.scope.authenticate(token);
-    check(
-      actor.projectId === this.config.projectId,
-      'fleet_workflow_source',
-      'Fleet workflow source is outside its configured project',
-      403,
-    );
-    this.modelApiKey = modelApiKey;
-    return (this.caller = {
-      actorId: actor.id,
-      projectId: actor.projectId,
-      credentialId: actor.credential.id,
-    });
-  }
-  /** Revocation is fenced by each allocation's own source; a replaced key lets work finish. */
+  /** Revocation is fenced by each allocation's own source; a new director lets work finish. */
   private accepted(a: FleetAllocation): boolean {
-    return a.owner.kind === ownerKind && a.projectId === this.config.projectId;
+    return a.owner.kind === ownerKind;
   }
   async valid(a: FleetAllocation, _tx: Transaction): Promise<boolean> {
-    // Until its own source authenticates the adapter launches nothing; launched work runs on.
-    return (
-      !this.closed &&
-      this.accepted(a) &&
-      (!!this.caller || launched(a)) &&
-      a.deadlineAt > new Date(this.clock()).toISOString()
-    );
+    return !this.closed && this.accepted(a) && a.deadlineAt > new Date(this.clock()).toISOString();
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
@@ -217,10 +195,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }
     // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
-    const demand = await this.sessions.dispatchDemand(await this.connect(), {
-      platform: hostedCodexPlatform,
-      capabilities: [...hostedCodexCapabilities],
-    });
+    const demand = await this.sessions.dispatchDemand(sourceCaller(a.source), demandInput);
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
     if (!demand.candidates.length && this.clock() - Date.parse(a.createdAt) >= grace)
       return 'finished';
@@ -229,35 +204,64 @@ export class FleetWorkflowAdapter implements FleetOwner {
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
     if (!this.config.enabled || this.closed) return Promise.resolve();
-    return (this.pending ??= this.reconcileOnce()
-      .then(
-        () => void (this.unavailable = null),
-        (error: unknown) => {
-          this.unavailable = error instanceof MervError ? error.code : 'fleet_workflow_unavailable';
-          throw error;
-        },
-      )
-      .finally(() => {
-        this.pending = undefined;
-      }));
+    return (this.pending ??= this.reconcileOnce().finally(() => {
+      this.pending = undefined;
+    }));
   }
+  /** Serves each project whose admin chose Fleet, as that admin, while they may write and are
+   * one of its people; a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
-    const caller = await this.connect();
-    const demand = await this.sessions.dispatchDemand(caller, {
-      platform: hostedCodexPlatform,
-      capabilities: [...hostedCodexCapabilities],
-    });
-    const allocations = (await this.fleet.list(caller)).filter((a) => this.accepted(a));
+    this.modelApiKey ??= process.env[this.config.modelApiKeyEnv!];
+    check(this.modelApiKey, 'fleet_workflow_secret', 'Fleet model key is unavailable', 503);
+    // Who a source acts as while it may write; null once it may not, which also stops its machines.
+    const director = (source: DelegationSource) =>
+      this.scope.requireDelegation(source, 'write').catch((error: unknown) => {
+        if (error instanceof MervError && [401, 403].includes(error.status)) return null;
+        throw error;
+      });
+    // One person across projects: their sign-in identity, else the machine actor itself, which
+    // only '*' lists, since an identity is two words.
+    const person = (actor: Actor | null, source: DelegationSource) =>
+      actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : (actor?.id ?? source.actorId);
+    const everyone = this.config.people.includes('*');
+    const served = new Map<string, { source: DelegationSource; who: string; wanted: string[] }>();
+    for (const { projectId, source } of await this.sessions.servedSources()) {
+      try {
+        const actor = await director(source);
+        const who = person(actor, source);
+        if (!actor || !(everyone || this.config.people.includes(who))) continue;
+        const demand = await this.sessions.dispatchDemand(sourceCaller(source), demandInput);
+        served.set(projectId, { source, who, wanted: demand.candidates.map(targetId) });
+      } catch (error) {
+        skipped(projectId, error);
+      }
+    }
+    this.served = new Set(served.keys());
+    const allocations = await this.fleet.listOwned(
+      this,
+      [...served.values()].flatMap((project) => project.wanted),
+    );
     const active = allocations.filter(occupied);
-    const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
-    const wanted = new Set(demand.candidates.map(targetId));
     for (const a of active)
-      if (!wanted.has(a.owner.id) && a.intent === 'run' && !launched(a))
+      if (
+        a.intent === 'run' &&
+        !launched(a) &&
+        !served.get(a.projectId)?.wanted.includes(a.owner.id)
+      )
         await this.fleet.cancelOwned(this, a.id);
+    const load = new Map<string, number>();
+    for (const a of active) {
+      const who = person(await director(a.source), a.source);
+      load.set(who, (load.get(who) ?? 0) + 1);
+    }
+    const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
     let slots = Math.max(0, this.config.maxAgents - active.length);
-    for (const candidate of demand.candidates) {
-      const id = targetId(candidate);
-      if (!slots || covered.has(id)) continue;
+    const queue = [...served].flatMap(([projectId, { source, who, wanted }]) =>
+      wanted.map((id) => ({ projectId, source, who, id })),
+    );
+    for (const { projectId, source, who, id } of queue) {
+      if (!slots || covered.has(id) || !this.served.has(projectId)) continue;
+      if ((load.get(who) ?? 0) >= this.config.maxAgentsPerPerson) continue;
       const released = allocations.filter((a) => a.owner.id === id && a.phase === 'released');
       let unclaimed = 0;
       let lastUnclaimedAt = 0;
@@ -276,12 +280,20 @@ export class FleetWorkflowAdapter implements FleetOwner {
       )
         continue;
       const generation = released.length;
-      await this.fleet.request(caller, {
-        requestId: `wf:${digest({ id, generation })}`,
-        owner: { kind: ownerKind, id },
-      });
+      try {
+        await this.fleet.request(sourceCaller(source), {
+          requestId: `wf:${digest({ id, generation })}`,
+          owner: { kind: ownerKind, id },
+        });
+      } catch (error) {
+        // Fleet refuses this project (no connection, say): it is not served.
+        skipped(projectId, error);
+        this.served.delete(projectId);
+        continue;
+      }
       covered.add(id);
       slots--;
+      load.set(who, (load.get(who) ?? 0) + 1);
     }
   }
   async close(): Promise<void> {

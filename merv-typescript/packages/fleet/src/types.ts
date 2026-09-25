@@ -100,6 +100,9 @@ export interface Fleet {
   describe(projectId: string, key: string): Promise<FleetMachine | null>;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
+  /** The owner's open allocations in every project, oldest first, with every released one whose
+   * owner id is in `targets`: exact counts, however long the history. */
+  listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation>;
   inspect(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
