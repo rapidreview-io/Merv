@@ -22,11 +22,12 @@ import {
   completionInput,
   createInput,
   defaultTitle,
+  hostMigration,
   migration,
+  nextInput,
   piConfig,
   sendInput,
   warmInput,
-  workerInput,
   type PiConfig,
 } from './schema.js';
 import { PiStreams } from './stream.js';
@@ -35,14 +36,17 @@ import { piTitle } from './relay.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
-  PiBootstrap,
+  PiBootstrapV1,
   PiCommand,
   PiCommandRecord,
   PiCompletion,
   PiConversation,
   PiConversationRecord,
+  PiHostView,
   PiInterruption,
+  PiMachineChoice,
   PiMessage,
+  PiNextReply,
   PiSnapshot,
   PiStage,
   PiStageName,
@@ -145,7 +149,7 @@ export class PiService implements Pi, FleetOwner {
   }
 
   async initialize(): Promise<void> {
-    await this.state.migrate('pi', [migration]);
+    await this.state.migrate('pi', [migration, hostMigration]);
     if (!this.config.enabled) return;
     this.disposers.push(this.fleet.registerOwner('pi', this));
     this.disposers.push(
@@ -361,8 +365,41 @@ export class PiService implements Pi, FleetOwner {
       available: this.fleet.connected(caller.projectId),
       conversation: publicConversation(conversation),
       commands: commands.map(publicCommand),
+      // C0 stub: G2 reads the person's host.
+      host: {
+        machine: null,
+        preferred: this.config.machines[0].key,
+        catalog: [],
+        state: 'none',
+        idleEndsAt: null,
+        shared: { conversations: 0, projects: 0 },
+        moving: null,
+        lastMove: null,
+      },
       ...transient,
     };
+  }
+  /** Founder ruling 2026-09-24: the agent assumes the person's permissions. The default machine
+   * is always allowed; any other only where the person could rent sandboxes themselves: the
+   * project (source.projectId, never the host project) has its own Sandboxes connection
+   * (fleet.connected) and `source` holds at least write there now. Otherwise the picker shows the
+   * machine unavailable with the reason, a new host starts on the default, and switch_machine is
+   * not offered. C0 stub, safe by default: only the default machine; G2 implements the rule. */
+  async machineChoice(
+    _source: DelegationSource,
+    machine: string,
+    _tx: Transaction,
+  ): Promise<PiMachineChoice> {
+    return machine === this.config.machines[0].key
+      ? { allowed: true }
+      : { allowed: false, reason: 'Not available yet' };
+  }
+  /** C0 stubs: G2 implements pi.machine.set (T2/T11) and pi.machine.stop (T9). */
+  async setMachine(_caller: Caller, _input: unknown): Promise<PiHostView> {
+    throw new MervError('pi_unavailable', 'Machine choice is not available yet', 503);
+  }
+  async stopMachine(_caller: Caller): Promise<PiHostView> {
+    throw new MervError('pi_unavailable', 'Machine choice is not available yet', 503);
   }
   /** What the person waits on now, from the turn, its machine and what the worker last reported. */
   private stage(
@@ -651,7 +688,7 @@ export class PiService implements Pi, FleetOwner {
         'Conversation runtime is stale',
         403,
       );
-      const bootstrap: PiBootstrap = {
+      const bootstrap: PiBootstrapV1 = {
         kind: 'pi',
         baseUrl: new URL(this.config.baseUrl!).origin,
         projectId: conversation.projectId,
@@ -733,8 +770,8 @@ export class PiService implements Pi, FleetOwner {
     return { conversation, command };
   }
 
-  async next(token: string, input: unknown, holdMs = 0): Promise<PiWork | null> {
-    const value = parse(workerInput, input);
+  async next(token: string, input: unknown, holdMs = 0): Promise<PiNextReply> {
+    const value = parse(nextInput, input);
     const lookup = async (tx: Transaction) => {
       const conversation = await this.worker(token, tx);
       const command = conversation.activeCommandId
@@ -774,7 +811,7 @@ export class PiService implements Pi, FleetOwner {
       });
     }
     const { conversation, command } = record;
-    if (!command) return null;
+    if (!command) return { work: null };
     let checkpoint: PiWork['checkpoint'] = null;
     if (conversation.checkpoint) {
       const bytes = await this.blobs.get(conversation.projectId, conversation.checkpoint.hash);
@@ -809,12 +846,15 @@ export class PiService implements Pi, FleetOwner {
     });
     this.streams.changed(conversation.id, command.id);
     return {
-      command: publicCommand(command),
-      checkpoint,
-      model: this.config.model,
-      modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
-      modelToken: this.modelToken(command),
-      tools,
+      work: {
+        command: publicCommand(command),
+        checkpoint,
+        model: this.config.model,
+        modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
+        modelToken: this.modelToken(command),
+        tools,
+        notes: [],
+      },
     };
   }
 

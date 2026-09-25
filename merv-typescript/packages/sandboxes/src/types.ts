@@ -24,8 +24,11 @@ export interface SandboxesConfig {
    * Without it there are no checks at all: `Sandboxes.checks` is undefined.
    */
   storageOrigins?: string[];
-  /** Operator-selected protected runtime profile. Absence disables the server-only capability. */
+  /** @deprecated The single profile, which G1 replaces with `runtimes` (rendered as `standard`). */
   runtime?: SandboxRuntimeProfile;
+  /** Operator-selected protected runtime profiles by key, the default first (MERV_FLEET_RUNTIMES).
+   * Absence disables the server-only capability. */
+  runtimes?: (SandboxRuntimeProfile & { key: string })[];
 }
 
 /** Fixed by the operator; Fleet work cannot select a provider, offer, image or release. */
@@ -35,6 +38,24 @@ export interface SandboxRuntimeProfile {
   releaseId: string;
   leaseSeconds: number;
   ttlSeconds?: number;
+}
+
+/** One configured profile as the runtime capability exposes it. */
+export interface SandboxRuntimeProfileRef {
+  /** 'standard', 'large'. */
+  key: string;
+  /** srp_ hash of provider, offer, release, lease and ttl (never the key, so the standard profile
+   * keeps today's id): an allocation whose profileId is no longer listed is stale. */
+  id: string;
+  leaseSeconds: number;
+}
+/** A profile's offer as GET /v1/options describes it. */
+export interface SandboxRuntimeOffer {
+  key: string;
+  vcpu: number;
+  memoryGiB: number;
+  diskGB: number;
+  maxHourlyUsd: number;
 }
 
 export type SandboxRuntimeState =
@@ -65,23 +86,40 @@ export interface SandboxRuntimeHandle {
 
 /** Server-owned capability, deliberately absent from agent tools and the UI manifest. */
 export interface SandboxRuntimes {
+  /** The default profile's id. */
   readonly profileId: string;
   /** Every create and renewal asks for this lease; the service reaps a machine when it ends. */
   readonly leaseSeconds: number;
+  /** Every configured profile, the default first. */
+  readonly profiles: readonly SandboxRuntimeProfileRef[];
   /** False (no connection, or no grant for it) proves no call for this project can reach the service. */
   connected(projectId: string): boolean;
-  provision(projectId: string, operationKey: string): Promise<SandboxRuntimeHandle>;
+  /** `profileId` (SandboxRuntimeProfileRef.id) picks the profile of provision, launch and renew;
+   * absent means the default. */
+  provision(
+    projectId: string,
+    operationKey: string,
+    profileId?: string,
+  ): Promise<SandboxRuntimeHandle>;
   inspect(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   launch(
     projectId: string,
     handle: SandboxRuntimeHandle,
     operationKey: string,
     bootstrap: string,
+    profileId?: string,
   ): Promise<SandboxRuntimeHandle>;
   acknowledge(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   stop(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
   /** Renew to the operator's configured lease, never an agent-selected lifetime. */
-  renew(projectId: string, handle: SandboxRuntimeHandle): Promise<SandboxRuntimeHandle>;
+  renew(
+    projectId: string,
+    handle: SandboxRuntimeHandle,
+    profileId?: string,
+  ): Promise<SandboxRuntimeHandle>;
+  /** The offer behind a profile key, from GET /v1/options cached with the manifest; null when
+   * the key is not configured or the service no longer lists its offer. */
+  describe(projectId: string, key: string): Promise<SandboxRuntimeOffer | null>;
 }
 
 /** The machine and the command, without the bytes: what every step after the first needs. */

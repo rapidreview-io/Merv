@@ -230,7 +230,7 @@ test('worker mount enforces exact method, path, origin, bearer and bounded JSON 
     assert.equal(result.status, 200);
     const value = await json(result);
     // Only /next is held, well inside the running workers' 10 s request timeout.
-    assert.deepEqual(action === 'next' ? value.work : action === 'tool' ? value.result : value, {
+    assert.deepEqual(action === 'tool' ? value.result : value, {
       action,
       input: { action },
       ...(action === 'next' && { holdMs: 5_000 }),

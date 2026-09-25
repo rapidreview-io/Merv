@@ -18,7 +18,7 @@ import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
 import { piModelToolName } from './tool-names.js';
-import type { PiBootstrap, PiCompletion, PiToolOutcome, PiWork } from './types.js';
+import type { PiBootstrapV1, PiCompletion, PiToolOutcome, PiWork } from './types.js';
 
 const allowedTools = new Set([
   'project.get',
@@ -90,7 +90,7 @@ const resources: ResourceLoader = {
   reload: async () => {},
 };
 
-function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
+function validateWork(work: PiWork, bootstrap: PiBootstrapV1): void {
   if (
     work.command.conversationId !== bootstrap.conversationId ||
     work.command.epoch !== bootstrap.epoch ||
@@ -130,7 +130,7 @@ function allowedInput(name: string, input: Record<string, unknown>): boolean {
 }
 
 export async function runPiWorker(
-  bootstrap: PiBootstrap,
+  bootstrap: PiBootstrapV1,
   options: WorkerOptions = {},
 ): Promise<void> {
   const workerId = options.workerId ?? randomUUID();

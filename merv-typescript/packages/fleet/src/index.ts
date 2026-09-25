@@ -32,13 +32,21 @@ const token = z
   .max(200)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const requestSchema = z
-  .object({ requestId: token, owner: z.object({ kind: token, id: token }).strict() })
+  .object({
+    requestId: token,
+    owner: z.object({ kind: token, id: token }).strict(),
+    profile: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,31}$/)
+      .optional(),
+  })
   .strict();
 export const fleetConfig = z
   .object({
     enabled: z.boolean().default(false),
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
+    projectLimits: z.record(token, z.number().int().min(1).max(64)).default({}),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
     allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
   })
@@ -110,6 +118,14 @@ export class FleetService implements Fleet {
   }
   connected(projectId: string): boolean {
     return this.config.enabled && !!this.runtimes?.connected(projectId);
+  }
+  /** C0 stub: G1 counts queued and occupied allocations against both limits. */
+  async free(_projectId: string, _tx?: Transaction): Promise<number> {
+    return this.config.globalLimit;
+  }
+  /** C0 stub: G1 checks the key against the configured profiles. */
+  async describe(projectId: string, key: string) {
+    return this.connected(projectId) ? this.runtimes!.describe(projectId, key) : null;
   }
   /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {

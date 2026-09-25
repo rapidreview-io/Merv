@@ -42,6 +42,8 @@ export type {
   SandboxRow,
   SandboxTarget,
   SandboxRuntimeProfile,
+  SandboxRuntimeProfileRef,
+  SandboxRuntimeOffer,
   SandboxRuntimeState,
   SandboxRuntimeLaunch,
   SandboxRuntimeHandle,
@@ -182,9 +184,13 @@ export class SandboxService implements Sandboxes {
         (projectId) => this.#connectionFor(projectId),
         parsed.data.runtime,
       );
+      const { leaseSeconds } = parsed.data.runtime;
       this.runtimes = {
         profileId: runner.profileId,
-        leaseSeconds: parsed.data.runtime.leaseSeconds,
+        leaseSeconds,
+        // C0 stub: G1 builds one runner per configured profile and describes their offers.
+        profiles: [{ key: 'standard', id: runner.profileId, leaseSeconds }],
+        describe: async () => null,
         connected: (projectId) =>
           this.#connections.some(
             (entry) => entry.projectId === projectId && this.#client.configured(entry),

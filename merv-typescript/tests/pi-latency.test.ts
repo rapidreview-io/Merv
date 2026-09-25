@@ -17,6 +17,10 @@ import { assessment } from './fixtures/review-verdict.js';
 class LocalRuntimes implements SandboxRuntimes {
   profileId = 'latency-fixture';
   leaseSeconds = 600;
+  get profiles() {
+    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
+  }
+  describe = async () => null;
   connected = () => true;
   private handle?: SandboxRuntimeHandle;
 
@@ -267,7 +271,7 @@ test(
     const token = (JSON.parse(await pi.bootstrap(allocation)) as PiBootstrap).workerToken;
     await fleet.tick();
     await fleet.tick();
-    const work = await pi.next(token, { workerId: 'latency-worker' });
+    const { work } = await pi.next(token, { workerId: 'latency-worker' });
     assert.ok(work);
     const bound = { commandId: work.command.id, workerId: 'latency-worker' };
     assert.deepEqual(await pi.begin(token, bound), { apply: true });

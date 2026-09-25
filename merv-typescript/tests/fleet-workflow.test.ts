@@ -494,6 +494,8 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
   const runtimes: SandboxRuntimes = {
     profileId: 'real-fixed-profile',
     leaseSeconds: 600,
+    profiles: [{ key: 'standard', id: 'real-fixed-profile', leaseSeconds: 600 }],
+    describe: async () => null,
     connected: () => true,
     async provision(_projectId, operationKey) {
       let handle = creates.get(operationKey);

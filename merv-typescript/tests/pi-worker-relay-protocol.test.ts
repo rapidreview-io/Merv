@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
-import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
+import type { PiBootstrapV1, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
 const modelToken = `pir_${'b'.repeat(43)}`;
@@ -191,7 +191,7 @@ for (const upstreamStatus of [
       server.closeAllConnections();
       server.close();
     });
-    const bootstrap: PiBootstrap = {
+    const bootstrap: PiBootstrapV1 = {
       kind: 'pi',
       baseUrl,
       projectId: 'fixture-project',
@@ -231,6 +231,7 @@ for (const upstreamStatus of [
           },
         },
       ],
+      notes: [],
     };
     let nextCount = 0;
     const fetchImpl: typeof fetch = async (input, init) => {

@@ -4,6 +4,7 @@ const names: Readonly<Record<string, string>> = Object.freeze({
   'artifact.list': 'artifact_list',
   'artifact.get': 'artifact_get',
   'artifact.read': 'artifact_read',
+  'machine.switch': 'switch_machine',
 });
 
 export function piModelToolName(nativeName: string): string {

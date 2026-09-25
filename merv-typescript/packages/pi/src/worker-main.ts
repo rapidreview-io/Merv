@@ -1,10 +1,10 @@
 import { cause, mark, runPiWorker } from './worker.js';
-import type { PiBootstrap } from './types.js';
+import type { PiBootstrapV1 } from './types.js';
 import { pathToFileURL } from 'node:url';
 
 export async function readBootstrap(
   input: AsyncIterable<Uint8Array | string> = process.stdin,
-): Promise<PiBootstrap> {
+): Promise<PiBootstrapV1> {
   let content = '';
   for await (const chunk of input) {
     content += chunk.toString();
@@ -37,7 +37,7 @@ export async function readBootstrap(
   )
     throw new Error('Invalid Pi bootstrap');
   // runPiWorker checks the origin, lifetime and credential before any request.
-  return bootstrap as unknown as PiBootstrap;
+  return bootstrap as unknown as PiBootstrapV1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

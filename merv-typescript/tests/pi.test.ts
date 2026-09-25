@@ -18,6 +18,7 @@ import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
 import type {
   PiBootstrap,
+  PiBootstrapV1,
   PiCompletion,
   PiConversation,
   PiStage,
@@ -68,6 +69,10 @@ function checkpointTree(text = 'Earlier', branch = 'active'): string {
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'pi-test-profile';
   leaseSeconds = 600;
+  get profiles() {
+    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
+  }
+  describe = async () => null;
   connected = () => true;
   readonly handles = new Map<string, SandboxRuntimeHandle>();
   readonly launched: string[] = [];
@@ -261,7 +266,7 @@ async function fixture(
     await fleet.tick();
     await fleet.tick();
     assert.equal((await fleet.inspect(caller, conversation.runtimeId!)).phase, 'starting');
-    const work = await pi.next(token, { workerId });
+    const { work } = await pi.next(token, { workerId });
     assert.ok(work);
     return { token, work, input: { commandId: work.command.id, workerId } };
   }
@@ -567,7 +572,7 @@ test('Pi names a new conversation from its first exchange, once, without holding
   assert.match(String(asked[0].input), /^User: How do proteins fold\?/);
   assert.ok(String(asked[0].input).length < 2100);
   await f.send(conversation, 'And misfolding?');
-  const next = await f.pi.next(first.token, { workerId: 'worker_2' });
+  const next = (await f.pi.next(first.token, { workerId: 'worker_2' })).work;
   const input = { commandId: next!.command.id, workerId: 'worker_2' };
   await f.pi.begin(first.token, input);
   const again = f.completion(input.commandId, input.workerId, checkpointTree('second'));
@@ -822,7 +827,7 @@ test('checkpoint save failure keeps canonical result and previous pointer; exact
     code('pi_result_conflict'),
   );
   await f.send(conversation, 'next');
-  const next = await f.pi.next(first.token, { workerId: 'worker_2' });
+  const next = (await f.pi.next(first.token, { workerId: 'worker_2' })).work;
   assert.equal(next?.checkpoint?.content, tree);
   assert.equal(next?.checkpoint?.hash, sha(tree));
   const input = { commandId: next!.command.id, workerId: 'worker_2' };
@@ -1200,7 +1205,7 @@ test('a warm machine shows its stages and, unused, is released after the idle ti
   assert.equal(await stage(), 'agent');
   const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
   const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
-  assert.equal(await f.pi.next(token, { workerId: 'worker_1' }), null);
+  assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work, null);
   assert.equal(await stage(), 'ready');
   f.advance(5_000);
   assert.equal(await stage(), 'idle');
@@ -1232,7 +1237,7 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
   assert.equal(await pass(), 'agent');
   const allocation = await f.fleet.inspect(f.operator, conversation.runtimeId!);
   const token = (JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap).workerToken;
-  assert.equal(await f.pi.next(token, { workerId: 'worker_1' }), null);
+  assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work, null);
   assert.equal(await pass(), 'ready');
   assert.equal(await pass(), null);
   const commandId = (await f.send(conversation)).id;
@@ -1325,12 +1330,12 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   await f.pi.complete(token, result);
   assert.equal((await stage()).name, 'ready');
   assert.equal(f.kicks, 2);
-  assert.equal(await f.pi.next(token, { workerId: 'worker_2' }, 50), null);
+  assert.equal((await f.pi.next(token, { workerId: 'worker_2' }, 50)).work, null);
   const held = f.pi.next(token, { workerId: 'worker_2' }, 5_000);
   await pause(50);
   const sentAt = Date.now();
   const sent = await f.send(conversation, 'More');
-  assert.equal((await held)?.command.id, sent.id);
+  assert.equal((await held).work?.command.id, sent.id);
   assert.ok(Date.now() - sentAt < 1000);
   // Warming during a turn leaves its runtime alone, even past the machine's deadline.
   f.advance(3_600_000);
@@ -1451,7 +1456,7 @@ test(
     async function runTurn(text: string) {
       const command = await f.send(conversation, text);
       const allocation = await f.fleet.inspect(f.operator, command.runtimeId);
-      const bootstrap = JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrap;
+      const bootstrap = JSON.parse(await f.pi.bootstrap(allocation)) as PiBootstrapV1;
       await f.fleet.tick();
       await f.fleet.tick();
       const controller = new AbortController();

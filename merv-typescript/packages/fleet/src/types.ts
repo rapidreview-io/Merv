@@ -1,5 +1,5 @@
 import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
-import type { SandboxRuntimeHandle } from '@merv/sandboxes/types';
+import type { SandboxRuntimeHandle, SandboxRuntimeOffer } from '@merv/sandboxes/types';
 
 export type FleetPhase =
   | 'queued'
@@ -42,13 +42,22 @@ export interface FleetAllocation {
 export type FleetError = 'runtime_unavailable' | 'runtime_refused';
 export interface FleetRequest {
   requestId: string;
+  /** Pi hosts are kind `pi-host`, id `${hostId}:${epoch}`, requested by the Pi host identity. */
   owner: { kind: string; id: string };
+  /** The Sandboxes runtime profile key to rent ('standard', 'large'); absent means the default
+   * (first) profile. Part of the request's fingerprint; the allocation keeps that profile's id. */
+  profile?: string;
 }
+/** A machine Fleet can rent, as the service's options describe the profile's offer. */
+export type FleetMachine = SandboxRuntimeOffer;
 export interface FleetConfig {
   /** Deployment opt-in; keep false until the actual provider gates pass. */
   enabled?: boolean;
   globalLimit?: number;
   projectLimit?: number;
+  /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects, e.g. the
+   * Pi host project's 50. */
+  projectLimits?: Record<string, number>;
   /** How often running machines are checked; one starting or stopping is checked each second. */
   pollIntervalMs?: number;
   allocationTimeoutSeconds?: number;
@@ -72,6 +81,13 @@ export interface Fleet {
   kick(): void;
   /** Whether this project can rent machines at all; false means every request is refused. */
   connected(projectId: string): boolean;
+  /** Slots a new request in this project could take now: the smaller of the global and this
+   * project's room, less what is already queued. A move holds two, so Pi starts one only at ≥ 3. */
+  free(projectId: string, tx?: Transaction): Promise<number>;
+  /** The machine behind a profile key for this project, from Sandboxes' cached options (cheap
+   * enough for every snapshot); null when the key is not configured or its offer is missing,
+   * and then the machine is hidden. */
+  describe(projectId: string, key: string): Promise<FleetMachine | null>;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
   cancelOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;

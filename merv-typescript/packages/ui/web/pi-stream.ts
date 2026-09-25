@@ -12,6 +12,41 @@ export interface PiCommand {
   status: 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
   messages: { role: 'user' | 'assistant'; text: string }[];
   error: string | null;
+  /** The machine key the turn ran (or will run) on; absent on turns from before machines. */
+  machine?: string;
+}
+/** Mirrors the server's PiMachine, PiMachineOption, PiMove and PiHostView. */
+export interface PiMachine {
+  key: string;
+  label: string;
+  vcpu: number;
+  memoryGiB: number;
+  diskGB: number;
+  maxHourlyUsd: number;
+}
+export interface PiMachineOption extends PiMachine {
+  available: boolean;
+  reason?: string;
+}
+export type PiMoveBy = 'person' | 'agent' | 'deadline';
+export interface PiMove {
+  at: string;
+  by: PiMoveBy;
+  from: string;
+  to: string;
+  outcome: 'moved' | 'failed' | 'cancelled';
+  reason?: string;
+  conversationId?: string;
+}
+export interface PiHostView {
+  machine: PiMachine | null;
+  preferred: string;
+  catalog: PiMachineOption[];
+  state: 'none' | 'starting' | 'ready';
+  idleEndsAt: string | null;
+  shared: { conversations: number; projects: number };
+  moving: { to: string; by: PiMoveBy; since: string } | null;
+  lastMove: PiMove | null;
 }
 export interface PiEvent {
   sequence: number;
@@ -33,6 +68,8 @@ export interface PiSnapshot {
   available: boolean;
   conversation: PiConversation;
   commands: PiCommand[];
+  /** The person's machine in this project; an older server leaves it out. */
+  host?: PiHostView;
   streamId: string;
   sequence: number;
   tail: PiEvent[];

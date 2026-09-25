@@ -28,6 +28,10 @@ async function within(ms: number, ok: () => boolean | Promise<boolean>) {
 class FakeRuntimes implements SandboxRuntimes {
   profileId = 'fixed-profile';
   leaseSeconds = 600;
+  get profiles() {
+    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
+  }
+  describe = async () => null;
   readonly disconnected = new Set<string>();
   connected(projectId: string) {
     return !this.disconnected.has(projectId);

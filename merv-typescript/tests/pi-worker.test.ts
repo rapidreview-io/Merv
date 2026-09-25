@@ -5,7 +5,7 @@ import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoin
 import { readBootstrap } from '../packages/pi/src/worker-main.js';
 import { cause, runPiWorker } from '../packages/pi/src/worker.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
-import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
+import type { PiBootstrapV1, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 const token = `piw_flt_test.${'a'.repeat(43)}`;
 const relayToken = `pir_${'b'.repeat(43)}`;
@@ -193,6 +193,7 @@ async function fixture(
           modelBaseUrl: `${baseUrl}/pi-model`,
           modelToken: relayToken,
           tools: [tool],
+          notes: [],
         };
         return json({ work });
       }
@@ -245,7 +246,7 @@ async function fixture(
       return json({ error: { code: 'unavailable', message: 'unavailable' } }, 503);
     }
   };
-  const bootstrap: PiBootstrap = {
+  const bootstrap: PiBootstrapV1 = {
     kind: 'pi',
     baseUrl,
     projectId: 'proj_1',

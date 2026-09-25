@@ -87,8 +87,7 @@ export class PiHttp implements PiApiProvider {
       const input = await body(req);
       check(!this.closed && !res.destroyed, 'pi_unavailable', 'Worker connection closed', 503);
       const action = match[1];
-      if (action === 'next')
-        json(res, 200, { work: await this.pi.next(token, input, this.holdMs) });
+      if (action === 'next') json(res, 200, await this.pi.next(token, input, this.holdMs));
       else if (action === 'tool') json(res, 200, { result: await this.pi.tool(token, input) });
       else if (action === 'begin') json(res, 200, await this.pi.begin(token, input));
       else if (action === 'progress') json(res, 200, await this.pi.progress(token, input));
