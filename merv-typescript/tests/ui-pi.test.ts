@@ -1877,3 +1877,62 @@ test('each Run as me is named by the call it runs, and described by that call’
     `fleet.halt${JSON.stringify({ id: 'flt_1' }, null, 2)}Run as me`,
   );
 });
+
+test('what Run as me tells the agent is kept in the composer when it cannot be sent, and sent again as it was', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const halt = { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: 'later' };
+  let state = modelled('gpt-6-luna', conversation(), [
+    { ...command('c1', 'completed'), proposals: [halt] },
+  ]);
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  serve('/tools/pi.run', { body: { result: { result: { halted: true } } } });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (count, input) => {
+    sent.push(input);
+    return count === 1
+      ? {
+          status: 409,
+          body: {
+            error: {
+              code: 'pi_model_changed',
+              message: 'This conversation now answers on GPT-6 Sol. Send again to use it.',
+            },
+          },
+        }
+      : { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  const draft = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!.value;
+  const told = 'Ran fleet.halt: {"halted":true}';
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
+  await settle(10);
+  assert.equal(sent[0].text, told);
+  assert.equal(
+    document.querySelector('[role="alert"]')?.textContent,
+    'This conversation now answers on GPT-6 Sol. Send again to use it.',
+  );
+  assert.equal(draft(), told);
+  // The same words go again under the same command, so an answer that did arrive is not doubled.
+  await click('Retry send');
+  await settle(10);
+  assert.deepEqual(sent[1], sent[0]);
+  assert.equal(draft(), '');
+
+  // A pick that fails first keeps the words too, ahead of anything typed meanwhile.
+  serve('/tools/pi.model.set', {
+    status: 403,
+    body: { error: { code: 'pi_model_unavailable', message: 'That model is not offered' } },
+  });
+  const release = holdPicks();
+  await pick(1);
+  await write('And then?');
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
+  await release();
+  assert.equal(sent.length, 2);
+  assert.equal(draft(), `${told}\n\nAnd then?`);
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'That model is not offered');
+});
