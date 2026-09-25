@@ -245,7 +245,11 @@ export const piApiPlugin = {
             validate: (grant) => ctx.pi.validateModel(grant),
           },
           onFailure: log,
-          onUsage: log,
+          reserve: (grant, body) => ctx.pi.reserveModel(grant, body),
+          onUsage: async (record, grant, reserved) => {
+            log(record);
+            await ctx.pi.settleModel(record, grant, reserved);
+          },
         }),
       ),
     );

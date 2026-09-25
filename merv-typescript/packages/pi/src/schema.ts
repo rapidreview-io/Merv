@@ -101,6 +101,8 @@ export const piConfig = z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
       .default('MERV_PI_MODEL_API_KEY'),
+    /** A person's Agent model tokens in a UTC day (founder ruling 2026-09-25: 100M, fixed). */
+    dailyTokensPerPerson: z.number().int().min(1).default(100_000_000),
     /** How long a turn may go without progress: to reach its machine, then between any two signs
      * of work (its claim, a streamed word, a tool call). Its one ceiling is turnCeilingMs. */
     turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
@@ -201,4 +203,14 @@ export const hostMigration = {
   DROP INDEX pi_one_runtime_per_user;
   ALTER TABLE pi_conversations DROP COLUMN runtime_id;
   CREATE INDEX pi_conversations_by_user ON pi_conversations(user_id);`,
+};
+/** Published migration text is immutable after release. A person's Agent tokens for each UTC day. */
+export const usageMigration = {
+  version: 3,
+  sql: `CREATE TABLE pi_model_usage (
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    tokens BIGINT NOT NULL,
+    PRIMARY KEY(person, day)
+  );`,
 };

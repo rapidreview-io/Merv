@@ -33,6 +33,7 @@ import {
   runInput,
   sendInput,
   switchMachineInput,
+  usageMigration,
   warmInput,
   type PiConfig,
 } from './schema.js';
@@ -221,7 +222,7 @@ export class PiService implements Pi, FleetOwner {
   }
 
   async initialize(): Promise<void> {
-    await this.state.migrate('pi', [migration, hostMigration]);
+    await this.state.migrate('pi', [migration, hostMigration, usageMigration]);
     if (!this.config.enabled) return;
     this.disposers.push(this.fleet.registerOwner('pi-host', this));
     this.disposers.push(
@@ -2068,6 +2069,50 @@ export class PiService implements Pi, FleetOwner {
     });
   }
 
+  /** The day each conversation's one call in flight was charged to. */
+  private charged = new Map<string, string>();
+  /**
+   * A person's Agent tokens today: a call is charged at its most (its request and its output)
+   * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
+   * The day's total refuses any call that would pass the ceiling.
+   */
+  async reserveModel(
+    grant: Awaited<ReturnType<PiService['authorizeModel']>>,
+    body: Record<string, unknown>,
+  ): Promise<number> {
+    const most =
+      Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
+    const day = this.time().slice(0, 10);
+    const ceiling = this.config.dailyTokensPerPerson;
+    const charged =
+      most <= ceiling &&
+      (await this.state.transaction((tx) =>
+        tx.get(
+          'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=pi_model_usage.tokens+excluded.tokens WHERE pi_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
+          grant.userId,
+          day,
+          most,
+          ceiling,
+        ),
+      ));
+    check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
+    this.charged.set(grant.conversationId, day);
+    return most;
+  }
+  async settleModel(
+    usage: { inputTokens: number; outputTokens: number },
+    grant: Awaited<ReturnType<PiService['authorizeModel']>>,
+    reserved: number,
+  ): Promise<void> {
+    await this.state.transaction((tx) =>
+      tx.run(
+        'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
+        usage.inputTokens + usage.outputTokens - reserved,
+        grant.userId,
+        this.charged.get(grant.conversationId) ?? this.time().slice(0, 10),
+      ),
+    );
+  }
   async validateModel(grant: Awaited<ReturnType<PiService['authorizeModel']>>): Promise<void> {
     this.ready();
     await this.read(async (tx) => {

@@ -1906,3 +1906,19 @@ test(
     assert.equal(f.mutations, 0);
   },
 );
+
+test('a person’s Agent tokens are charged before each call and settled after, and refused at the day’s ceiling', async (t) => {
+  const f = await fixture(t, { pi: { dailyTokensPerPerson: 1_000 } as PiConfig });
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  const body = { model: grant.model, input: [], max_output_tokens: 600 };
+  const charged = await f.pi.reserveModel(grant, body);
+  assert.equal(charged, Math.ceil(JSON.stringify(body).length / 4) + 600);
+  // A second call at its most would pass the ceiling while the first is still out.
+  await assert.rejects(f.pi.reserveModel(grant, body), code('pi_model_ceiling'));
+  // Settled to what it used, the day has room again.
+  await f.pi.settleModel({ inputTokens: 40, outputTokens: 10 }, grant, charged);
+  assert.equal(await f.pi.reserveModel(grant, body), charged);
+});

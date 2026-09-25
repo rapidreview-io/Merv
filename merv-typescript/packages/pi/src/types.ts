@@ -395,6 +395,13 @@ export interface PiRuntime extends Pi {
   fail(token: string, input: unknown): Promise<{ interrupted: true }>;
   authorizeModel(token: string): Promise<PiRelayGrant>;
   validateModel(grant: PiRelayGrant): Promise<void>;
+  /** Charges a call to its person's Agent tokens today and returns the charge; refuses at the ceiling. */
+  reserveModel(grant: PiRelayGrant, body: Record<string, unknown>): Promise<number>;
+  settleModel(
+    usage: { inputTokens: number; outputTokens: number },
+    grant: PiRelayGrant,
+    reserved: number,
+  ): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {
