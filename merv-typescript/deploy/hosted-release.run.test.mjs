@@ -65,6 +65,8 @@ const fs = require('node:fs');
 const sim = JSON.parse(fs.readFileSync(process.env.SIM, 'utf8'));
 const save = () => fs.writeFileSync(process.env.SIM, JSON.stringify(sim));
 const event = (e) => fs.appendFileSync(process.env.SIM_LOG, e + '\\n');
+// down: calls the host is out of reach for, as ssh reports it.
+if (sim.down) { sim.down -= 1; save(); process.exit(255); }
 const argv = process.argv.slice(2);
 const input = fs.readFileSync(0, 'utf8');
 const at = argv.indexOf('python3');
@@ -151,6 +153,7 @@ const which = image === sim.liveImage ? 'previous' : 'next';
 if (sim.fail.deploy === 'all' || sim.fail.deploy === which) process.exit(1);
 const instances = { failed: sim.fail.settle === which ? 1 : 0, scheduling: 0, starting: 0 };
 sim.native = { ...sim.native, image, version: sim.native.version + 1, health: { errors: [], instances } };
+if (which === 'next' && sim.reboot) sim.down = sim.reboot; // the host reboots as the image lands
 fs.writeFileSync(process.env.SIM, JSON.stringify(sim));
 `;
 
@@ -528,11 +531,66 @@ test('--abandon closes a stuck run once production agrees on one of its releases
   const closed = abandon();
   assert.equal(closed.status, 0, closed.out);
   assert.equal(closed.sim.active, null);
-  assert.equal(closed.sim.state.current.releaseId, NEXT_ID);
+  assert.deepEqual(closed.sim.state.current, {
+    image: NEXT,
+    releaseId: NEXT_ID,
+    localId: `sha256:${'c'.repeat(64)}`,
+    sourceCommit: head,
+    sandboxesCommit: git(sandboxes, 'rev-parse', 'HEAD'),
+  });
   assert.equal(JSON.parse(closed.record).current.image, NEXT);
+  // The run's own release never passed a canary, so the abandon runs one.
+  assert.equal(closed.steps.at(-2), 'canary');
   assert.match(
     closed.ledger.split('\n').at(-2),
-    /\| abandoned \| production agrees on the new release \|/,
+    /\| completed in 42s \| abandoned \| production agrees on the new release \|/,
   );
   assert.match(abandon().out, /No hosted run is open/);
+});
+
+test("the reviewer's probe: a release abandoned after a failed canary stays unverified until one passes", () => {
+  const stuck = simulate('unverified', { fail: { canary: 'new', deploy: 'previous' } });
+  assert.equal(stuck.status, 3, stuck.out);
+  const again = (patch, args = []) => {
+    const sim = JSON.parse(readFileSync(join(stuck.dir, 'sim.json'), 'utf8'));
+    for (const run of Object.values(sim.runs)) run.lease.seen -= 400_000;
+    writeFileSync(join(stuck.dir, 'sim.json'), JSON.stringify({ ...sim, ...patch }));
+    return simulate('unverified', {}, { dir: stuck.dir, args });
+  };
+  const abandoned = again({ fail: { canary: 'all' } }, ['--abandon']);
+  assert.equal(abandoned.status, 4, abandoned.out);
+  assert.equal(abandoned.sim.active, null);
+  // Production runs it, so it is the live pins, but marked unverified, on the host and in Git.
+  assert.equal(abandoned.sim.state.current.releaseId, NEXT_ID);
+  assert.equal(abandoned.sim.state.current.verified, false);
+  assert.equal(JSON.parse(abandoned.record).current.verified, false);
+  assert.match(
+    abandoned.ledger.split('\n').at(-2),
+    /\| — \| ABANDONED, CANARY FAILED \| production agrees on the new release; canary: canary_failed/,
+  );
+  // The next run from the same HEAD has no hosted change, yet rebuilds and canaries it again.
+  const failing = again({ lane: 'none' });
+  assert.equal(failing.status, 4, failing.out);
+  assert.match(failing.out, /UNVERIFIED: it failed its canary\n(.*\n)*.*lane {6}none/);
+  order(failing.steps.slice(abandoned.steps.length), 'upload', 'build', 'canary', 'finish');
+  assert.equal(failing.sim.state.current.verified, false);
+  assert.match(failing.ledger.split('\n').at(-2), /\| RECHECKED, CANARY FAILED \|/);
+  const passing = again({ fail: {} });
+  assert.equal(passing.status, 0, passing.out);
+  assert.equal(passing.sim.state.current.releaseId, NEXT_ID);
+  assert.equal('verified' in passing.sim.state.current, false);
+  assert.ok(!passing.steps.slice(failing.steps.length).includes('wrangler'));
+  assert.match(passing.ledger.split('\n').at(-2), /\| completed in 42s \| rechecked \|/);
+});
+
+test('a host that reboots as the image lands is waited out, and the release finishes', () => {
+  const r = simulate('reboot', { reboot: 3 });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.out.match(/fake is out of reach \(ssh exit 255\); retrying/g).length, 3);
+  assert.equal(r.sim.main, NEXT_ID);
+  assert.equal(r.sim.active, null);
+  // One out of reach for longer is waited out for a bounded time, then leaves the run open.
+  const gone = simulate('gone', { reboot: 1e6 });
+  assert.equal(gone.status, 3, gone.out);
+  assert.match(gone.out, /ROLLBACK INCOMPLETE: status: no result \(ssh exit 255\)/);
 });

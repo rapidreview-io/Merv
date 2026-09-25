@@ -408,38 +408,48 @@ print(json.dumps(res))`,
   assert.equal(out.progress.guard.releaseId, `rt1_${'b'.repeat(64)}`);
 });
 
-test('every step from the first deploy attempt re-arms the guard timer unless it runs', () => {
+test('from the first deploy attempt every step keeps the open run an enabled guard timer', () => {
   const out = py(
-    `${scratch}calls,timer=[],{'active':False}
+    `${scratch}vm.GUARD=t/'merv-hosted-guard';calls,timer=[],{'active':False}
 class Done:
     def __init__(self,code): self.returncode=code
 def systemctl(c,**k):
-    calls.append(c[1]);return Done(0 if timer['active'] else 3)
+    calls.append(' '.join(c[1:3]));return Done(0 if timer['active'] else 3)
 def run(c,**k):
-    calls.append(c[0]);timer['active']=True
+    calls.append(c[1]);timer['active']=True
 vm.subprocess.run,vm.run=systemctl,run
-def arm(arg):
-    calls.clear();vm.arm(r,arg);return calls[:]
+def arm(arg,run=r):
+    calls.clear();vm.arm(run,arg);return calls[:]
 res={'before':arm({}),'first':arm({'deployAttempted':True})}
+res['units']=[vm.GUARD.with_suffix(s).read_text() for s in ('.service','.timer')]
 (r/'progress.json').write_text(json.dumps({'deployAttempted':True}))
 res['armed']=arm({})
-timer['active']=False  # a host reboot drops the transient timer
-res['rebooted']=arm({})
-def broken(c,**k): raise RuntimeError('command_failed: systemd-run')
+timer['active']=False  # stopped by hand
+res['stopped']=arm({})
+r2=t/'run2';r2.mkdir();res['next run']=arm({'deployAttempted':True},r2)
+def broken(c,**k): raise RuntimeError('command_failed: systemctl')
 vm.run,timer['active']=broken,False
 res['later']=arm({})
 try: arm({'deployAttempted':True})
 except RuntimeError as e: res['deploy']=str(e)
+vm.claim('run2');calls.clear();vm.Step(r,{}).finish({});res['finished other']=calls[:]
+calls.clear();vm.Step(r2,{}).finish({});res['finished own']=calls[:1]
 print(json.dumps(res))`,
   );
-  const armed = ['is-active', 'stop', 'systemd-run'];
   assert.deepEqual(out.before, []);
-  assert.deepEqual(out.first, armed);
-  assert.deepEqual(out.armed, ['is-active']);
-  assert.deepEqual(out.rebooted, armed);
+  assert.deepEqual(out.first, ['daemon-reload', 'enable']);
+  // Installed and enabled, not transient: a reboot starts it again.
+  assert.match(out.units[0], /^ExecStart=\S+python\S* \S+hosted-release-vm\.py guard \S+\/run1$/m);
+  assert.match(out.units[1], /\[Install\]\nWantedBy=timers\.target/);
+  assert.deepEqual(out.armed, ['is-active --quiet']);
+  assert.deepEqual(out.stopped, ['is-active --quiet', 'daemon-reload', 'enable']);
+  assert.deepEqual(out['next run'], ['daemon-reload', 'enable']);
   // A later step, a rollback's included, goes on without the timer; a first deploy never does.
-  assert.deepEqual(out.later, ['is-active', 'stop']);
-  assert.match(out.deploy, /systemd-run/);
+  assert.deepEqual(out.later, []);
+  assert.match(out.deploy, /systemctl/);
+  // Only the run that holds the host stops the timer when it finishes.
+  assert.ok(!out['finished other'].includes('disable --now'), out['finished other']);
+  assert.deepEqual(out['finished own'], ['disable --now']);
 });
 
 test('abandon names the release production agrees on, or says what disagrees', () => {

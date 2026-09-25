@@ -133,7 +133,9 @@ keeps the canary grant.
   closes it once production agrees on one of its releases: Cloudflare runs that
   image with no rollout, Main and the env file name its release id, and both
   Sandboxes services' catalog holds it. Otherwise it refuses and names what
-  disagrees; the run stays open.
+  disagrees; the run stays open. On the run's own release it first runs a
+  canary; if that fails, it exits 4 and marks the live pins unverified, and
+  every later run canaries them again until one passes.
 - Before you raise a Fleet limit, confirm that Sandboxes `infra_resource_limits`
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Otherwise Sandboxes refuses the extra creates, and those turns

@@ -6,10 +6,10 @@ and prints one JSON line. Results land in <run>/<step>.json, so an interrupted r
 One run at a time holds HOME/active from preflight to finish; release.mjs's Main job refuses to
 start while it exists. One driver at a time holds the run's lease: a running step keeps it fresh,
 and a lease unseen for LEASE seconds may be taken over. SIGHUP is ignored, so a dropped SSH
-session does not stop a step. From the first deploy attempt until finish every step arms a systemd
-timer, unless it runs (a reboot drops it), that runs `guard`: when the driver has gone silent it
-points Main at whichever release Cloudflare runs, so a lost laptop never leaves Pi refusing every
-launch. `abandon` lets the driver close a run that can neither finish nor roll back.
+session does not stop a step. From the first deploy attempt until finish every step arms an
+enabled systemd timer, unless it runs, so a reboot keeps it; it runs `guard`: when the driver has
+gone silent it points Main at whichever release Cloudflare runs, so a lost laptop never leaves Pi
+refusing every launch. `abandon` lets the driver close a run that can neither finish nor roll back.
 Never prints a secret: the registry credential and the canary token stay inside this process,
 and every backup of the env file or the Sandboxes catalog is root-private inside the run.
 """
@@ -36,6 +36,7 @@ from pathlib import Path
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 ENV = Path('/etc/merv/typescript.env')
 HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
+GUARD = Path('/etc/systemd/system/merv-hosted-guard')  # .service and .timer, for the open run
 KEY, CATALOG, PROVIDER = 'MERV_FLEET_RUNTIME_RELEASE_ID', 'SANDBOXES_RUNTIME_RELEASES', 'cloudflare-fleet'
 NAMESPACE = 'fleet-cloudflare-canary'  # resolves the provider for native reads
 ACTIVE = ('waiting', 'starting', 'working', 'saving')
@@ -201,24 +202,28 @@ def main_release_running():
                           capture_output=True).returncode == 0
 
 
-def guard_unit(directory):
-    return 'merv-hosted-guard-' + directory.name
-
-
 def arm(directory, arg):
-    """From the first deploy attempt, the guard timer, unless it already runs. The first deploy never
-    goes ahead without it; any later step re-arms it as best it can."""
+    """From the first deploy attempt, the guard timer for this run, unless it already runs: installed
+    and enabled, so a reboot keeps it. The first deploy never goes ahead without it; any later step
+    re-arms it as best it can."""
     if not (arg.get('deployAttempted') or (read(directory / 'progress.json') or {}).get('deployAttempted')):
         return
-    unit = guard_unit(directory)
-    if subprocess.run(['systemctl', 'is-active', '--quiet', unit + '.timer'], capture_output=True).returncode:
-        subprocess.run(['systemctl', 'stop', unit + '.timer'], capture_output=True)
-        try:
-            run(['systemd-run', '--collect', '--unit', unit, '--on-active=300', '--on-unit-active=120',
-                 sys.executable, Path(__file__).resolve(), 'guard', directory])
-        except RuntimeError:
-            if arg.get('deployAttempted'):
-                raise
+    timer = GUARD.name + '.timer'
+    units = {GUARD.with_suffix('.service'): '[Service]\nType=oneshot\n'
+             f'ExecStart={sys.executable} {Path(__file__).resolve()} guard {directory}\n',
+             GUARD.with_suffix('.timer'): '[Timer]\nOnActiveSec=300\nOnUnitActiveSec=120\n'
+             '[Install]\nWantedBy=timers.target\n'}
+    if all(p.exists() and p.read_text() == text for p, text in units.items()) and \
+            subprocess.run(['systemctl', 'is-active', '--quiet', timer], capture_output=True).returncode == 0:
+        return
+    try:
+        for path, text in units.items():
+            atomic(path, text.encode(), 0o644)
+        run(['systemctl', 'daemon-reload'])
+        run(['systemctl', 'enable', '--now', timer])
+    except (RuntimeError, OSError):
+        if arg.get('deployAttempted'):
+            raise
 
 
 @contextlib.contextmanager
@@ -654,10 +659,10 @@ class Step:
         for name in ('catalog.before', 'env.before'):  # they hold secrets
             if (self.run / name).exists():
                 subprocess.run(['shred', '-u', self.run / name], capture_output=True)
-        if owner() == self.run.name:
+        if owner() == self.run.name:  # the guard timer is the open run's
+            subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             (HOME / 'active').unlink()
-        for tidy in (['systemctl', 'stop', guard_unit(self.run) + '.timer'],
-                     ['docker', 'image', 'rm', 'merv-hosted-sandbox:' + self.run.name],
+        for tidy in (['docker', 'image', 'rm', 'merv-hosted-sandbox:' + self.run.name],
                      ['docker', 'builder', 'prune', '-f', '--filter', 'until=168h']):  # best effort
             with contextlib.suppress(subprocess.SubprocessError):
                 subprocess.run(tidy, capture_output=True, timeout=600)
@@ -674,7 +679,7 @@ class Step:
         LEASE seconds, points Main at whichever release Cloudflare settled on; the run stays open
         for the next hosted-release.mjs to canary or roll back."""
         if (self.run / 'finish.json').exists() or owner() != self.run.name:
-            subprocess.run(['systemctl', 'stop', guard_unit(self.run) + '.timer'], capture_output=True)
+            subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             return {'guard': 'closed'}
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:

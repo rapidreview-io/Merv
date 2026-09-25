@@ -8,7 +8,10 @@ the commit and the content hash of its allowlisted archive; both are also image 
 Sandboxes catalog pin, and Release is the `rt1_` id Main uses. The host keeps the live pins;
 [`hosted-release.json`](hosted-release.json) seeds them and records the latest release. A stuck
 run closed with `--abandon` is `abandoned`: production agreed on the release in its row, which the
-host keeps as the live pins (see [`PI_OPERATIONS.md`](PI_OPERATIONS.md)).
+host keeps as the live pins (see [`PI_OPERATIONS.md`](PI_OPERATIONS.md)). The run's own release is
+canaried first; if that fails, the row is `ABANDONED, CANARY FAILED` and the pins are marked
+unverified, so each later run rebuilds and canaries them (`rechecked`) until a canary passes or a new
+release replaces them.
 
 | UTC               | Run            | Source       | Lane   | Image          | Release        | App | Gates             | Canary                 | Result | Notes                                                                                                                                                       |
 | ----------------- | -------------- | ------------ | ------ | -------------- | -------------- | --- | ----------------- | ---------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |

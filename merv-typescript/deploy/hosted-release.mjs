@@ -5,7 +5,8 @@
 //        [--sandboxes <main checkout>/output/fleet-sandboxes] [--wrangler <path to wrangler.js>]
 //   node deploy/hosted-release.mjs --mint-canary   (once: the canary's root-only reader key)
 //   node deploy/hosted-release.mjs --abandon   (closes a stuck run once production agrees on one
-//        of its releases: Cloudflare runs its image, Main names it, the Sandboxes catalog holds it)
+//        of its releases: Cloudflare runs its image, Main names it, the Sandboxes catalog holds it;
+//        its own release is canaried first, and one that fails stays the live pins as unverified)
 // release.mjs finishes any open run before a production release and starts one after it. The
 // image is pinned in three places that move together: the Cloudflare container app, the Sandboxes
 // release catalog (control and pipelines-worker) and Main's MERV_FLEET_RUNTIME_RELEASE_ID. The host
@@ -13,11 +14,12 @@
 // deploy/HOSTED_RELEASES.md logs each run.
 //  1 plan: hosted inputs changed since the deployed commits, in Merv and in the Sandboxes checkout
 //    (the sandbox base, its agent, the bridge Worker), pick a lane: worker-only or the
-//    supervisor/bootstrap boundary. No change ends the run, and --dry-run always stops here.
+//    supervisor/bootstrap boundary. No change ends the run, unless the live release is unverified,
+//    and --dry-run always stops here.
 //  2 build on the host from archives of both committed HEADs: the sandbox base, the compiled
 //    bundle (worker tests included), then scripts/hosted-runner/Dockerfile. The host diffs the whole
 //    image against the deployed one: anything beyond the Pi worker bundle is the boundary, and an
-//    identical image ends the run.
+//    identical image ends the run, after a canary if the live release is unverified.
 //  3 gates, chosen on the host from its lane: linux-pi-gate; the boundary adds the workflow gate
 //    and the isolation probe. A failure stops with nothing changed.
 //  4 push with a 30-minute registry credential minted by the local wrangler and piped over ssh
@@ -34,10 +36,10 @@
 // after 5 rolls back automatically, in the same order (previous digest and Worker, previous release
 // id), and checks that with a canary. A real run detaches from the terminal and keeps the Mac awake;
 // a later run, or release.mjs, finishes an open run first, rolling it back if the pipeline changed
-// meanwhile; and while this Mac is silent mid-deploy a host timer points Main at whatever Cloudflare
-// runs. Exit: 0 released, abandoned or nothing to do; 1 failed with production unchanged or rolled
-// back; 2 refused; 3 a run is left open; 4 rolled back, but the canary on the previous release
-// failed too.
+// meanwhile. A host out of reach is waited out for 10 minutes, and while this Mac is silent
+// mid-deploy a host timer, which a reboot keeps, points Main at whatever Cloudflare runs. Exit: 0
+// released, abandoned or nothing to do; 1 failed with production unchanged or rolled back; 2
+// refused; 3 a run is left open; 4 closed, but the release left live failed its canary.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
@@ -227,13 +229,15 @@ export function describePlan(p) {
     `${merv.slice(0, 8)} + Sandboxes ${sandboxes?.slice(0, 8) ?? '?'}`;
   return [
     `hosted release ${p.run}`,
-    `  deployed  ${at(p.current.sourceCommit, p.current.sandboxesCommit)} as ${p.current.releaseId.slice(0, 16)}…`,
+    `  deployed  ${at(p.current.sourceCommit, p.current.sandboxesCommit)} as ${p.current.releaseId.slice(0, 16)}…${p.current.verified === false ? ' UNVERIFIED: it failed its canary' : ''}`,
     `  HEAD      ${at(p.sourceCommit, p.sandboxesCommit)}`,
     `  changed   ${list(p.changed)}`,
     `  sandboxes ${list(p.sandboxChanged)}`,
     `  lane      ${LANE_TEXT[p.lane]}`,
     ...(p.lane === 'none'
-      ? []
+      ? p.current.verified === false
+        ? ['  steps     build; an identical image gets a live canary Pi turn as deployed']
+        : []
       : [
           `  gates     ${GATES[p.lane].join(', ')}, then a live canary Pi turn (the host's image diff may raise the lane)`,
           `  steps     ${STEPS}; rollback after catalog`,
@@ -305,10 +309,18 @@ async function main(args) {
       stdio: ['pipe', 'pipe', 'inherit'],
       maxBuffer: 64 << 20,
     });
+  // A host out of reach (a reboot, a network blip) is waited out for about 10 minutes, never taken
+  // for a failed step: a repeated step is harmless, and the next one re-arms the host's guard.
   const onHost = (run, step, arg = {}) => {
     const dir = `${RUNS}/${run}`;
     const script = `${dir}/source/deploy/hosted-release-vm.py`;
-    const r = ssh(['sudo', '-n', 'python3', script, step, dir], JSON.stringify({ driver, arg }));
+    let r;
+    for (let wait = POLL, until = Date.now() + 60 * POLL; ; wait = Math.min(2 * wait, 6 * POLL)) {
+      r = ssh(['sudo', '-n', 'python3', script, step, dir], JSON.stringify({ driver, arg }));
+      if (r.status !== 255 || Date.now() > until) break;
+      console.error(`${step}: ${host} is out of reach (ssh exit 255); retrying`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+    }
     let out;
     try {
       out = JSON.parse(r.stdout.trim().split('\n').pop());
@@ -452,7 +464,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     drainSeconds: Number(opt('--drain-minutes', '15')) * 60,
   };
   console.log(describePlan(plan));
-  if (dryRun || plan.lane === 'none') return 0;
+  if (dryRun || (plan.lane === 'none' && current.verified !== false)) return 0;
   if (!clean()) return 2;
   const why = unready(current);
   if (why) {
@@ -522,7 +534,8 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     // The ledger is committed: a note keeps each step's reason, never a command's output.
     const record = (result, ...notes) => {
       const file = join(RECORDS, 'HOSTED_RELEASES.md');
-      appendFileSync(file, ledgerRow({ ...row, result, note: notes.map(brief).join('; ') }));
+      const note = notes.filter(Boolean).map(brief).join('; ');
+      appendFileSync(file, ledgerRow({ ...row, result, note }));
       prettier(file);
     };
     const close = (result, state) => {
@@ -571,6 +584,25 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     };
     const landed = (image, minVersion) => poll(image, minVersion, true);
     const settle = (image, minVersion) => poll(image, minVersion, false);
+    // Closes the run on a live release no canary has passed: it becomes the live pins either way,
+    // but one whose canary fails is marked unverified, and the next run canaries it again.
+    const closeCanaried = ({ verified, ...current }, result, note) => {
+      Object.assign(row, { image: current.image, releaseId: current.releaseId });
+      let failed;
+      try {
+        const turn = onHost(run, 'canary', { releaseId: current.releaseId });
+        row.canary = `${turn.status} in ${turn.seconds}s`;
+      } catch (error) {
+        failed = error.message;
+        current.verified = false;
+      }
+      close(failed ? `${result}, canary failed` : result, { current, inputs: build.inputs });
+      record(failed ? `${result.toUpperCase()}, CANARY FAILED` : result, note, failed);
+      const said = `hosted run ${run} ${result}: ${note}`;
+      if (!failed) console.log(`${said}, and it passed a canary`);
+      else console.error(`${said}, but it failed its canary, so it stays live as UNVERIFIED`);
+      return failed ? 4 : 0;
+    };
 
     if (mode === 'abandon') {
       let agreed;
@@ -580,16 +612,16 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
         console.error(`hosted run ${run} stays open: ${error.message}`);
         return 2;
       }
-      // On the run's own release, that release becomes the live pins.
       const ours = agreed.releaseId !== previous.releaseId;
-      const { image, releaseId: id } = agreed;
-      const current = ours && { image, releaseId: id, localId: build.candidate, ...commits };
-      close('abandoned', ours && { current, inputs: build.inputs });
-      Object.assign(row, { image, releaseId: id });
-      record('abandoned', `production agrees on the ${ours ? 'new' : 'previous'} release`);
-      console.log(
-        `hosted run ${run} abandoned; production runs its ${ours ? 'new' : 'previous'} release`,
-      );
+      const note = `production agrees on the ${ours ? 'new' : 'previous'} release`;
+      if (ours) {
+        const current = { ...agreed, localId: build.candidate, ...commits };
+        return closeCanaried(current, 'abandoned', note);
+      }
+      close('abandoned');
+      Object.assign(row, agreed);
+      record('abandoned', note);
+      console.log(`hosted run ${run} abandoned: ${note}`);
       return 0;
     }
     let failure = progress.rollback;
@@ -620,7 +652,10 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       build ??= onHost(run, 'build');
       row.lane = build.lane;
       if (build.lane === 'none') {
-        close('current', { current: { ...previous, ...commits }, inputs: build.inputs });
+        const current = { ...previous, ...commits };
+        if (previous.verified === false)
+          return closeCanaried(current, 'rechecked', 'unverified, rebuilt identical');
+        close('current', { current, inputs: build.inputs });
         console.log('The hosted image is current: the rebuilt image matches the deployed one.');
         return 0;
       }
