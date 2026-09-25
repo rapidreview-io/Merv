@@ -844,7 +844,10 @@ def step(name, directory, payload):
     work = Step(directory, json.loads((directory / 'plan.json').read_bytes()))
     HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
     if name in ('status', 'pins'):  # reads only, and holds nothing
-        return getattr(work, name)(arg)
+        result = getattr(work, name)(arg)
+        if name == 'pins' and directory.name.endswith('-check'):  # a --check run keeps no copy
+            shutil.rmtree(directory)
+        return result
     with (HOME / 'lock').open('a') as lock:
         if not locked(lock, 0 if name == 'guard' else 1200):
             need(name == 'guard', 'another hosted-release step held the host lock for 20 minutes')
