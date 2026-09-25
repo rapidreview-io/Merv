@@ -23,34 +23,47 @@ import {
   createInput,
   defaultTitle,
   hostMigration,
+  machineInput,
   migration,
   nextInput,
   piConfig,
   sendInput,
+  switchMachineInput,
   warmInput,
   type PiConfig,
 } from './schema.js';
 import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
+import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
-  PiBootstrapV1,
+  PiBootstrap,
   PiCommand,
   PiCommandRecord,
   PiCompletion,
   PiConversation,
   PiConversationRecord,
+  PiHostRecord,
   PiHostView,
   PiInterruption,
+  PiMachine,
   PiMachineChoice,
+  PiMachineOption,
   PiMessage,
+  PiMove,
+  PiMoveBy,
   PiNextReply,
+  PiNextSlot,
+  PiPersonRecord,
+  PiSlot,
   PiSnapshot,
   PiStage,
   PiStageName,
+  PiSwitchMachineResult,
   PiToolOutcome,
+  PiTurnInput,
   PiWork,
 } from './types.js';
 
@@ -72,25 +85,49 @@ const phrases: Record<string, string> = {
   'artifact.list': 'Listing files',
   'artifact.get': 'Reading a file',
   'artifact.read': 'Reading a file',
+  'machine.switch': 'Moving to a bigger machine',
 };
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
 /** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
  * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
 const resultBytes = 24_000;
+/** A next slot proves ready within this, or the move fails and the current one serves on (T6). */
+const readyMs = 180_000;
+/** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
+const rolloverMs = 15 * 60_000;
+/** A move holds two machines, so it starts only with room left for someone else's first. */
+const moveRoom = 3;
+/** The host's slots: C serves new turns, N starts to replace it, D finishes C's claimed turns. */
+const roles = ['current', 'next', 'draining'] as const;
+type Role = (typeof roles)[number];
+const roleOf = (host: PiHostRecord, allocationId: string) =>
+  roles.find((role) => host[role]?.allocationId === allocationId);
+/** Fleet no longer runs this allocation for the host. */
+const gone = (a: FleetAllocation | null | undefined, now: string) =>
+  !a ||
+  a.intent !== 'run' ||
+  ['releasing', 'released'].includes(a.phase) ||
+  a.runtime?.state === 'failed' ||
+  a.deadlineAt <= now;
+/** Why a turn on a gone slot ended. Fleet stops a failed machine too, but no one chose that. */
+const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
+  a?.error === 'runtime_refused'
+    ? 'runtime_refused'
+    : a && a.intent !== 'run' && a.runtime?.state !== 'failed'
+      ? 'runtime_stopped'
+      : 'runtime_lost';
 const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
-const publicConversation = (record: PiConversationRecord): PiConversation => {
+const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
+  value;
+const publicCommand = (record: PiCommandRecord): PiCommand => {
   const {
-    source: _source,
-    runtimeEpoch: _epoch,
-    runtimeExpiresAt: _expires,
-    idleSince: _idle,
+    inputHash: _input,
+    workerId: _worker,
+    resultHash: _result,
+    canMove: _move,
     ...value
   } = record;
-  return value;
-};
-const publicCommand = (record: PiCommandRecord): PiCommand => {
-  const { inputHash: _input, workerId: _worker, resultHash: _result, ...value } = record;
   return value;
 };
 function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
@@ -98,6 +135,17 @@ function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.output<T> {
   check(parsed.success, 'invalid_pi_input', 'Invalid conversation request');
   return parsed.data;
 }
+/** What /next hands a worker: retirement, a probe to echo, or a claimed turn. */
+type Taken = {
+  retire?: true;
+  probe?: string;
+  claim?: {
+    conversation: PiConversationRecord;
+    command: PiCommandRecord;
+    offered: PiWork['tools'][number] | null;
+    notes: string[];
+  };
+};
 
 export class PiService implements Pi, FleetOwner {
   readonly sourcePermission = 'read' as const;
@@ -105,12 +153,19 @@ export class PiService implements Pi, FleetOwner {
   readonly config: z.output<typeof piConfig>;
   private readonly secret: string;
   private readonly disposers: (() => void)[] = [];
-  /** Memory only, never State: the stage each live conversation last showed, what its worker last
-   * reported within a turn, and the runtime whose worker has asked for work. */
+  /** Memory only, never State: the stage each open conversation last showed, and what its worker
+   * last reported within a turn. */
   private readonly live = new Map<
     string,
-    { stage?: PiStage; turn?: PiStage & { commandId: string }; runtimeId?: string | null }
+    { stage?: PiStage; turn?: PiStage & { commandId: string } }
   >();
+  /** Owner ids Fleet is admitting now: valid() accepts a slot before its host records it. */
+  private readonly renting = new Set<string>();
+  /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
+   * announcement only makes an open page read again. */
+  private readonly unsent = new Set<string>();
+  /** The Pi host identity, which rents every slot; never the person. */
+  private renter?: Caller;
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Promise<void>;
   private closed = false;
@@ -127,9 +182,9 @@ export class PiService implements Pi, FleetOwner {
     this.config = parse(piConfig, config);
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
-      !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
+      !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl && this.config.host),
       'pi_configuration',
-      'Enabled Pi needs a private signing secret and API URL',
+      'Enabled Pi needs a private signing secret, an API URL and a host project',
       503,
     );
     if (this.config.baseUrl) {
@@ -151,7 +206,7 @@ export class PiService implements Pi, FleetOwner {
   async initialize(): Promise<void> {
     await this.state.migrate('pi', [migration, hostMigration]);
     if (!this.config.enabled) return;
-    this.disposers.push(this.fleet.registerOwner('pi', this));
+    this.disposers.push(this.fleet.registerOwner('pi-host', this));
     this.disposers.push(
       this.scope.registerConversationAuthority({
         require: (caller, tx) => this.requireConversation(caller, tx),
@@ -195,6 +250,16 @@ export class PiService implements Pi, FleetOwner {
   private read<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.state.snapshot(() => this.state.transaction(fn));
   }
+  private get hostProject(): string {
+    return this.config.host!.projectId;
+  }
+  /** One host per person per project (the ruling), or per person with runtimeKey 'person'. */
+  private key(userId: string, projectId: string): string {
+    return this.config.runtimeKey === 'project' ? `${userId}:${projectId}` : userId;
+  }
+  private slots(machine: string): number {
+    return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
+  }
   private async conversation(sql: Sql, id: string): Promise<PiConversationRecord> {
     const row = await sql.get<{ data_json: string }>(
       'SELECT data_json FROM pi_conversations WHERE id=?',
@@ -212,29 +277,80 @@ export class PiService implements Pi, FleetOwner {
     check(row, 'pi_command_not_found', 'Conversation command not found', 404);
     return decode(row);
   }
-  /** A runtime-only change keeps updatedAt, so a warm-up never lifts a conversation up the list. */
-  private async saveConversation(
-    tx: Transaction,
-    conversation: PiConversationRecord,
-    moved = true,
-  ): Promise<void> {
+  private async saveConversation(tx: Transaction, conversation: PiConversationRecord) {
     conversation.revision++;
-    if (moved) conversation.updatedAt = this.time();
+    conversation.updatedAt = this.time();
     await tx.run(
-      'UPDATE pi_conversations SET runtime_id=?,data_json=? WHERE id=?',
-      conversation.runtimeId,
+      'UPDATE pi_conversations SET data_json=? WHERE id=?',
       JSON.stringify(conversation),
       conversation.id,
     );
   }
+  /** The relay hash follows the turn's slot, which a cut-over may change before it is claimed. */
   private async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
     await tx.run(
-      'UPDATE pi_commands SET status=?,data_json=? WHERE conversation_id=? AND id=?',
+      'UPDATE pi_commands SET status=?,relay_hash=?,data_json=? WHERE conversation_id=? AND id=?',
       command.status,
+      hash(this.modelToken(command)),
       JSON.stringify(command),
       command.conversationId,
       command.id,
     );
+  }
+  private async host(sql: Sql, id: string): Promise<PiHostRecord | null> {
+    const row = await sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_hosts WHERE id=?',
+      id,
+    );
+    return row ? decode(row) : null;
+  }
+  private async liveHost(sql: Sql, key: string): Promise<PiHostRecord | null> {
+    const row = await sql.get<{ data_json: string }>(
+      "SELECT data_json FROM pi_hosts WHERE key=? AND status='live'",
+      key,
+    );
+    return row ? decode(row) : null;
+  }
+  private async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
+    host.revision++;
+    await tx.run(
+      'INSERT INTO pi_hosts(id,key,status,created_at,data_json) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,data_json=excluded.data_json',
+      host.id,
+      host.key,
+      host.status,
+      host.createdAt,
+      JSON.stringify(host),
+    );
+  }
+  /** The host's turns that have not ended, oldest first. */
+  private async turns(sql: Sql, hostId: string): Promise<PiCommandRecord[]> {
+    return (
+      await sql.all<{ data_json: string }>(
+        "SELECT data_json FROM pi_commands WHERE host_id=? AND status IN ('waiting','starting','working','saving') ORDER BY created_at,id",
+        hostId,
+      )
+    ).map(decode<PiCommandRecord>);
+  }
+  private async person(sql: Sql, key: string): Promise<PiPersonRecord> {
+    const row = await sql.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_people WHERE key=?',
+      key,
+    );
+    return row
+      ? decode(row)
+      : { key, preferred: this.config.machines[0].key, sticky: null, choseAt: null, moves: [] };
+  }
+  private async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
+    const since = new Date(this.clock() - 86_400_000).toISOString();
+    person.moves = person.moves.filter((move) => move.at > since);
+    await tx.run(
+      'INSERT INTO pi_people(key,data_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data_json=excluded.data_json',
+      person.key,
+      JSON.stringify(person),
+    );
+  }
+  private record(person: PiPersonRecord, move: Omit<PiMove, 'at'>): void {
+    person.moves.push({ at: this.time(), ...move });
   }
   private async user(caller: Caller, tx: Transaction): Promise<string> {
     check(
@@ -266,8 +382,11 @@ export class PiService implements Pi, FleetOwner {
       .update(JSON.stringify([kind, value]))
       .digest('base64url');
   }
-  private workerToken(conversation: PiConversationRecord): string {
-    return `piw_${conversation.runtimeId}.${this.signature('worker', [conversation.id, conversation.runtimeId, conversation.epoch])}`;
+  private workerToken(hostId: string, slot: PiSlot): string {
+    return `piw_${slot.allocationId}.${this.signature('worker', [hostId, slot.allocationId, slot.epoch])}`;
+  }
+  private probe(hostId: string, slot: PiSlot, workerId: string): string {
+    return this.signature('probe', [hostId, slot.allocationId, workerId]);
   }
   private modelToken(command: PiCommandRecord): string {
     return `pir_${this.signature('model', [command.conversationId, command.id, command.epoch, command.runtimeId])}`;
@@ -293,33 +412,26 @@ export class PiService implements Pi, FleetOwner {
         );
         return publicConversation(decode(existing));
       }
-      const source = await this.scope.delegationSource(caller, tx);
       const conversation: PiConversationRecord = {
         id: newId('pic'),
         projectId: caller.projectId,
         userId,
         title: value.title,
         revision: 1,
-        epoch: 0,
-        runtimeId: null,
-        runtimeEpoch: null,
-        runtimeExpiresAt: null,
         activeCommandId: null,
         checkpoint: null,
         previousCheckpoint: null,
-        source,
-        idleSince: null,
+        source: await this.scope.delegationSource(caller, tx),
         createdAt: this.time(),
         updatedAt: this.time(),
       };
       await tx.run(
-        'INSERT INTO pi_conversations(id,project_id,user_id,request_id,input_hash,runtime_id,data_json) VALUES(?,?,?,?,?,?,?)',
+        'INSERT INTO pi_conversations(id,project_id,user_id,request_id,input_hash,data_json) VALUES(?,?,?,?,?,?)',
         conversation.id,
         conversation.projectId,
         userId,
         value.requestId,
         digest(value),
-        null,
         JSON.stringify(conversation),
       );
       return publicConversation(conversation);
@@ -344,67 +456,140 @@ export class PiService implements Pi, FleetOwner {
     this.ready();
     await this.authorizeStream(caller, id);
     const transient = this.streams.snapshot(id);
-    const { conversation, commands, allocation } = await this.read(async (tx) => {
+    const { conversation, commands, host, allocation, view } = await this.read(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const rows = await tx.all<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
         id,
       );
-      const runtime = conversation.runtimeId && (await this.allocation(conversation.runtimeId, tx));
-      return {
-        conversation,
-        commands: rows.map(decode<PiCommandRecord>),
-        allocation: runtime || null,
-      };
+      const { host, allocation } = await this.machineOf(tx, conversation);
+      const source = await this.scope.delegationSource(caller, tx);
+      const view = await this.hostView(tx, host, conversation, source);
+      return { conversation, commands: rows.map(decode<PiCommandRecord>), host, allocation, view };
     });
     await this.scope.require(caller, 'read');
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
     return {
-      stage: this.stage(conversation, turn ?? null, allocation),
+      stage: this.stage(conversation, turn ?? null, host, allocation),
       now: this.time(),
-      available: this.fleet.connected(caller.projectId),
+      available: this.fleet.connected(this.hostProject),
       conversation: publicConversation(conversation),
       commands: commands.map(publicCommand),
-      // C0 stub: G2 reads the person's host.
-      host: {
-        machine: null,
-        preferred: this.config.machines[0].key,
-        catalog: [],
-        state: 'none',
-        idleEndsAt: null,
-        shared: { conversations: 0, projects: 0 },
-        moving: null,
-        lastMove: null,
-      },
+      host: view,
       ...transient,
     };
   }
+  /** The conversation's live host and the allocation of the slot serving its new turns. */
+  private async machineOf(tx: Transaction, conversation: PiConversationRecord) {
+    const host = await this.liveHost(tx, this.key(conversation.userId, conversation.projectId));
+    const allocation = host?.current && (await this.allocation(host.current.allocationId, tx));
+    return { host, allocation: allocation || null };
+  }
   /** Founder ruling 2026-09-24: the agent assumes the person's permissions. The default machine
-   * is always allowed; any other only where the person could rent sandboxes themselves: the
-   * project (source.projectId, never the host project) has its own Sandboxes connection
-   * (fleet.connected) and `source` holds at least write there now. Otherwise the picker shows the
-   * machine unavailable with the reason, a new host starts on the default, and switch_machine is
-   * not offered. C0 stub, safe by default: only the default machine; G2 implements the rule. */
+   * is always allowed; any other only where the person could rent sandboxes themselves: their
+   * project (source.projectId, never the host project) has its own Sandboxes connection and
+   * `source` holds at least write there now. Otherwise the picker shows the reason, a new host
+   * starts on the default, and switch_machine is not offered. With runtimeKey 'person' one host
+   * serves several projects, and a machine allowed in one is then shared with the others. */
   async machineChoice(
-    _source: DelegationSource,
+    source: DelegationSource,
     machine: string,
-    _tx: Transaction,
+    tx: Transaction,
   ): Promise<PiMachineChoice> {
-    return machine === this.config.machines[0].key
-      ? { allowed: true }
-      : { allowed: false, reason: 'Not available yet' };
+    if (machine === this.config.machines[0].key) return { allowed: true };
+    if (!this.config.machines.some(({ key }) => key === machine))
+      return { allowed: false, reason: 'Not offered' };
+    if (!this.fleet.connected(source.projectId))
+      return { allowed: false, reason: 'Needs Sandboxes in this project' };
+    try {
+      await this.scope.requireDelegation(source, 'write', tx);
+    } catch (error) {
+      if (error instanceof MervError && [401, 403].includes(error.status))
+        return { allowed: false, reason: 'Needs write access in this project' };
+      throw error;
+    }
+    return { allowed: true };
   }
-  /** C0 stubs: G2 implements pi.machine.set (T2/T11) and pi.machine.stop (T9). */
-  async setMachine(_caller: Caller, _input: unknown): Promise<PiHostView> {
-    throw new MervError('pi_unavailable', 'Machine choice is not available yet', 503);
+  /** A configured machine as Sandboxes describes its offer; null hides it. */
+  private async machine(key: string): Promise<PiMachine | null> {
+    const configured = this.config.machines.find((machine) => machine.key === key);
+    const offer = configured && (await this.fleet.describe(this.hostProject, key));
+    return offer
+      ? {
+          key,
+          label: configured.label,
+          vcpu: offer.vcpu,
+          memoryGiB: offer.memoryGiB,
+          diskGB: offer.diskGB,
+          maxHourlyUsd: offer.maxHourlyUsd,
+        }
+      : null;
   }
-  async stopMachine(_caller: Caller): Promise<PiHostView> {
-    throw new MervError('pi_unavailable', 'Machine choice is not available yet', 503);
+  private async catalog(source: DelegationSource, tx: Transaction): Promise<PiMachineOption[]> {
+    const options: PiMachineOption[] = [];
+    for (const { key } of this.config.machines) {
+      const machine = await this.machine(key);
+      const choice = machine && (await this.machineChoice(source, key, tx));
+      if (choice)
+        options.push(
+          choice.allowed
+            ? { ...machine, available: true }
+            : { ...machine, available: false, reason: choice.reason },
+        );
+    }
+    return options;
+  }
+  /** Where a new host starts: the agent's last move, else the person's pick, while allowed. */
+  private async starting(
+    person: PiPersonRecord,
+    source: DelegationSource,
+    tx: Transaction,
+  ): Promise<string> {
+    const wanted = person.sticky ?? person.preferred;
+    return (await this.machine(wanted)) && (await this.machineChoice(source, wanted, tx)).allowed
+      ? wanted
+      : this.config.machines[0].key;
+  }
+  private async hostView(
+    tx: Transaction,
+    host: PiHostRecord | null,
+    { userId, projectId }: { userId: string; projectId: string },
+    source: DelegationSource,
+  ): Promise<PiHostView> {
+    const person = await this.person(tx, this.key(userId, projectId));
+    const catalog = await this.catalog(source, tx);
+    const live = host && !this.idleOver(host) ? host : null;
+    const shown = live?.current && catalog.find(({ key }) => key === live.current!.machine);
+    const perProject = this.config.runtimeKey === 'project';
+    const shared = await tx.get<{ conversations: number; projects: number }>(
+      `SELECT COUNT(*)::integer AS conversations,COUNT(DISTINCT project_id)::integer AS projects
+        FROM pi_conversations WHERE user_id=?${perProject ? ' AND project_id=?' : ''}`,
+      userId,
+      ...(perProject ? [projectId] : []),
+    );
+    return {
+      machine: shown ? (({ available: _a, reason: _r, ...machine }) => machine)(shown) : null,
+      preferred: await this.starting(person, source, tx),
+      catalog,
+      state: !live?.current ? 'none' : live.current.workerId ? 'ready' : 'starting',
+      idleEndsAt: live?.idleSince
+        ? new Date(Date.parse(live.idleSince) + this.config.idleTimeoutSeconds * 1000).toISOString()
+        : null,
+      shared: shared ?? { conversations: 0, projects: 0 },
+      moving: live?.next
+        ? { to: live.next.machine, by: live.next.by, since: this.movingSince(live.next) }
+        : null,
+      lastMove: person.moves.at(-1) ?? null,
+    };
+  }
+  private movingSince(next: PiNextSlot): string {
+    return new Date(Date.parse(next.readyBy) - readyMs).toISOString();
   }
   /** What the person waits on now, from the turn, its machine and what the worker last reported. */
   private stage(
     conversation: PiConversationRecord,
     command: PiCommandRecord | null,
+    host: PiHostRecord | null,
     allocation: FleetAllocation | null,
   ): PiStage {
     const { id } = conversation;
@@ -419,21 +604,20 @@ export class PiService implements Pi, FleetOwner {
             ? { name: 'writing', since: command.firstTextAt }
             : { name: 'thinking', since: command.startedAt },
       );
-    if (
-      allocation?.intent !== 'run' ||
-      ['releasing', 'released'].includes(allocation.phase) ||
-      (!command && this.idle(conversation))
-    )
+    // With no turn of its own, a conversation waits on its host's move.
+    if (!command && host?.next)
+      return this.show(id, { name: 'moving', since: this.movingSince(host.next) });
+    const slot = host?.current;
+    if (!slot || gone(allocation, this.time()) || (!command && this.idleOver(host!)))
       return this.show(id, { name: 'idle', since: conversation.updatedAt });
-    if (allocation.runtime?.launch?.deliveryState !== 'launched') {
-      const waited = Date.parse(allocation.createdAt) + queuedMs < this.clock();
+    if (allocation!.runtime?.launch?.deliveryState !== 'launched') {
+      const waited = Date.parse(allocation!.createdAt) + queuedMs < this.clock();
       return this.show(id, {
-        name: allocation.phase === 'queued' && waited ? 'queued' : 'machine',
+        name: allocation!.phase === 'queued' && waited ? 'queued' : 'machine',
       });
     }
-    // A live worker picks a new turn up at once, so the turn reads as thinking, not loading.
-    const loaded = live?.runtimeId === allocation.id;
-    return this.show(id, { name: !loaded ? 'agent' : command ? 'thinking' : 'ready' });
+    // An enrolled worker picks a new turn up at once, so the turn reads as thinking, not loading.
+    return this.show(id, { name: !slot.workerId ? 'agent' : command ? 'thinking' : 'ready' });
   }
   /** Keeps a stage's start while it lasts, and wakes open pages when it moves. */
   private show(id: string, next: Omit<PiStage, 'since'> & { since?: string }): PiStage {
@@ -453,9 +637,11 @@ export class PiService implements Pi, FleetOwner {
     this.live.set(id, { ...this.live.get(id), turn });
     this.show(id, turn);
   }
-  /** A turn or runtime moved: open pages reload it, and Fleet reconciles now, not at its tick. */
-  private changed(id: string, commandId?: string): void {
-    this.streams.changed(id, commandId);
+  /** Open pages re-read the turns a committed transaction ended or moved (and `ids`), and Fleet
+   * reconciles now, not at its tick. */
+  private announce(...ids: string[]): void {
+    for (const id of [...this.unsent, ...ids]) this.streams.changed(id);
+    this.unsent.clear();
     this.fleet.kick();
   }
   async authorizeStream(caller: Caller, id: string): Promise<void> {
@@ -466,8 +652,8 @@ export class PiService implements Pi, FleetOwner {
   async send(caller: Caller, id: string, input: unknown): Promise<PiCommand> {
     this.ready();
     const value = parse(sendInput, input);
-    // A string result is the reason a previous runtime is releasing: commit that, then refuse.
-    const result = await this.state.transaction(async (tx): Promise<PiCommand | string> => {
+    const renter = await this.hostCaller();
+    const { command, hostId } = await this.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const existing = await tx.get<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
@@ -482,7 +668,7 @@ export class PiService implements Pi, FleetOwner {
           'Command ID was reused with different input',
           409,
         );
-        return publicCommand(command);
+        return { command: publicCommand(command), hostId: command.hostId };
       }
       check(
         !conversation.activeCommandId,
@@ -500,18 +686,19 @@ export class PiService implements Pi, FleetOwner {
         'Open a new conversation to continue',
         409,
       );
-      conversation.activeCommandId = value.commandId;
-      const allocation = await this.runtime(caller, conversation, tx);
-      if (typeof allocation === 'string') return allocation;
-      conversation.idleSince = null;
-      const queued = allocation.phase === 'queued';
-      const expiry = this.turnEnd(conversation, queued);
+      // Every read of the turn runs as the person, with their authority as of this message.
+      conversation.source = await this.scope.delegationSource(caller, tx);
+      const { host, queued } = await this.ensure(renter, conversation, conversation.source, tx);
+      const slot = host.current!;
+      const expiry = this.turnEnd(slot, conversation.source, queued);
       check(expiry > this.clock(), 'pi_expired', 'Conversation source has expired', 403);
       const command: PiCommandRecord = {
         id: value.commandId,
         conversationId: id,
-        epoch: conversation.epoch,
-        runtimeId: conversation.runtimeId!,
+        epoch: slot.epoch,
+        runtimeId: slot.allocationId,
+        hostId: host.id,
+        machine: slot.machine,
         status: queued ? 'waiting' : 'starting',
         messages: [{ role: 'user', text: value.text }],
         outcomes: [],
@@ -524,20 +711,26 @@ export class PiService implements Pi, FleetOwner {
         resultHash: null,
       };
       await tx.run(
-        'INSERT INTO pi_commands(id,conversation_id,status,relay_hash,created_at,data_json) VALUES(?,?,?,?,?,?)',
+        'INSERT INTO pi_commands(id,conversation_id,status,relay_hash,created_at,host_id,data_json) VALUES(?,?,?,?,?,?,?)',
         command.id,
         id,
         command.status,
         hash(this.modelToken(command)),
         command.createdAt,
+        host.id,
         JSON.stringify(command),
       );
+      if (host.idleSince) {
+        host.idleSince = null;
+        await this.saveHost(tx, host);
+      }
+      conversation.activeCommandId = command.id;
       await this.saveConversation(tx, conversation);
-      return publicCommand(command);
+      return { command: publicCommand(command), hostId: host.id };
     });
-    if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
-    this.streams.changed(id, result.id);
-    return result;
+    this.streams.changed(id, command.id);
+    if (hostId) this.streams.wake(hostId);
+    return command;
   }
 
   async warm(caller: Caller, input: unknown): Promise<PiSnapshot> {
@@ -555,263 +748,285 @@ export class PiService implements Pi, FleetOwner {
       value.conversationId ??
       (await this.read(empty))?.id ??
       (await this.create(caller, { requestId: value.requestId })).id;
-    if (!this.fleet.connected(caller.projectId)) return this.snapshot(caller, id);
-    // A string is why an earlier runtime is releasing; a turn elsewhere keeps the person's runtime.
-    const result = await this.state
-      .transaction(async (tx): Promise<string | boolean> => {
-        const conversation = await this.owned(caller, id, tx);
-        if (conversation.activeCommandId) return false;
-        const fresh = !conversation.runtimeId;
-        // Unused, a warm runtime is released after the idle timeout like any other.
-        if (fresh) conversation.idleSince = this.time();
-        const allocation = await this.runtime(caller, conversation, tx);
-        if (typeof allocation === 'string') return allocation;
-        if (fresh) await this.saveConversation(tx, conversation, false);
-        return fresh;
-      })
-      .catch((error: unknown) => {
-        if (error instanceof MervError && error.code === 'pi_runtime_busy') return false;
-        throw error;
-      });
-    if (typeof result === 'string') throw new MervError('pi_runtime_releasing', result, 409);
-    if (result) this.streams.changed(id);
+    if (!this.fleet.connected(this.hostProject)) return this.snapshot(caller, id);
+    const renter = await this.hostCaller();
+    const fresh = await this.state.transaction(async (tx) => {
+      const conversation = await this.owned(caller, id, tx);
+      const source = await this.scope.delegationSource(caller, tx);
+      return (await this.ensure(renter, conversation, source, tx, true)).fresh;
+    });
+    if (fresh) this.streams.changed(id);
     return this.snapshot(caller, id);
   }
-  /** The conversation's runtime, requested when it has none; a string says why an earlier one is
-   * releasing, to commit and then refuse. One runtime per person across projects. */
-  private async runtime(
-    caller: Caller,
-    conversation: PiConversationRecord,
+  /** T1: the person's live host here, with a current slot for new turns: one is rented when it
+   * has none. A host that has idled out is ended, not raced; the next send starts a fresh one. */
+  private async ensure(
+    renter: Caller,
+    { userId, projectId }: PiConversationRecord,
+    source: DelegationSource,
     tx: Transaction,
-  ): Promise<FleetAllocation | string> {
-    if (conversation.runtimeId) {
-      const allocation = await this.allocation(conversation.runtimeId, tx);
-      // Reuse only a runtime Fleet keeps (not idle past its release) that holds the caller's
-      // current authority: a role change issues a new membership, so rebind on a new runtime.
-      if (
-        allocation?.intent === 'run' &&
-        !['releasing', 'released'].includes(allocation.phase) &&
-        allocation.deadlineAt > this.time() &&
-        !this.idle(conversation) &&
-        digest(await this.scope.delegationSource(caller, tx)) === digest(conversation.source)
-      )
-        return allocation;
-      await this.release(conversation.runtimeId, tx);
-      return 'The previous agent is still releasing; retry shortly';
+    warm = false,
+  ): Promise<{ host: PiHostRecord; queued: boolean; fresh: boolean }> {
+    const key = this.key(userId, projectId);
+    let host = await this.liveHost(tx, key);
+    if (host) await this.settle(tx, host, renter);
+    if (host?.status === 'live' && host.current) {
+      const allocation = await this.allocation(host.current.allocationId, tx);
+      return { host, queued: allocation?.phase === 'queued', fresh: false };
     }
-    const row = await tx.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_conversations WHERE user_id=? AND runtime_id IS NOT NULL',
-      conversation.userId,
-    );
-    if (row) {
-      // An idle one elsewhere is released for this request's retry.
-      const other = decode<PiConversationRecord>(row);
-      const where = other.projectId === conversation.projectId ? 'this' : 'another';
-      check(
-        !other.activeCommandId,
-        'pi_runtime_busy',
-        `Your conversation “${other.title}” in ${where} project is still working; wait for it or stop it`,
-        409,
-      );
-      await this.release(other.runtimeId!, tx);
-      return `Your agent in “${other.title}” in ${where} project is being released; retry shortly`;
-    }
-    conversation.source = await this.scope.delegationSource(caller, tx);
-    conversation.epoch++;
-    await this.saveConversation(tx, conversation, false);
-    const owner = `${conversation.id}:${conversation.epoch}`;
-    const allocation = await this.fleet.request(
-      caller,
-      { requestId: owner, owner: { kind: 'pi', id: owner } },
-      tx,
-    );
-    conversation.runtimeId = allocation.id;
-    conversation.runtimeEpoch = allocation.epoch;
-    conversation.runtimeExpiresAt = allocation.deadlineAt;
-    return allocation;
+    const machine = await this.starting(await this.person(tx, key), source, tx);
+    if (host?.status !== 'live')
+      host = {
+        id: newId('pih'),
+        key,
+        userId,
+        status: 'live',
+        source: await this.scope.delegationSource(renter, tx),
+        epoch: 0,
+        revision: 0,
+        current: null,
+        next: null,
+        draining: null,
+        idleSince: null,
+        createdAt: this.time(),
+        ended: null,
+      };
+    host.current = await this.rent(renter, host, machine, tx);
+    // Unused, a warmed host ends after the idle timeout like any other.
+    if (warm && !(await this.turns(tx, host.id)).length) host.idleSince = this.time();
+    await this.saveHost(tx, host);
+    return { host, queued: true, fresh: true };
   }
-  /** The earliest of the runtime deadline, the source's expiry and, unless queued, a full turn. */
-  private turnEnd(conversation: PiConversationRecord, queued = false): number {
+  /** The Pi host identity (config.host.credentialEnv) rents every slot in the host project, so a
+   * person's project needs no Sandboxes of its own. It only rents: turns read as the person. */
+  private async hostCaller(): Promise<Caller> {
+    check(
+      this.fleet.connected(this.hostProject),
+      'pi_unavailable',
+      'Agent machines are unavailable right now',
+      503,
+    );
+    if (this.renter) return this.renter;
+    const token = process.env[this.config.host!.credentialEnv];
+    check(token, 'pi_configuration', 'The Pi host credential is unavailable', 503);
+    const actor = await this.scope.authenticate(token);
+    check(
+      actor.projectId === this.hostProject,
+      'pi_configuration',
+      'The Pi host credential is outside its project',
+      503,
+    );
+    return (this.renter = {
+      actorId: actor.id,
+      projectId: actor.projectId,
+      credentialId: actor.credential.id,
+    });
+  }
+  /** A new slot on `machine` for the host, requested by the host identity under a new epoch. */
+  private async rent(
+    renter: Caller,
+    host: PiHostRecord,
+    machine: string,
+    tx: Transaction,
+  ): Promise<PiSlot> {
+    const epoch = ++host.epoch;
+    const id = `${host.id}:${epoch}`;
+    this.renting.add(id);
+    try {
+      const allocation = await this.fleet.request(
+        renter,
+        { requestId: id, owner: { kind: 'pi-host', id }, profile: machine },
+        tx,
+      );
+      return {
+        allocationId: allocation.id,
+        allocationEpoch: allocation.epoch,
+        epoch,
+        machine,
+        expiresAt: allocation.deadlineAt,
+        workerId: null,
+        enrolledAt: null,
+        readyAt: null,
+      };
+    } finally {
+      this.renting.delete(id);
+    }
+  }
+  /** The earliest of the slot's deadline, the source's expiry and, unless queued, a full turn. */
+  private turnEnd(slot: PiSlot, source: DelegationSource, queued = false): number {
     return Math.min(
       queued ? Infinity : this.clock() + this.config.turnTimeoutSeconds * 1000,
-      Date.parse(conversation.runtimeExpiresAt!),
-      conversation.source.kind === 'human' || !conversation.source.expiresAt
-        ? Infinity
-        : Date.parse(conversation.source.expiresAt),
+      Date.parse(slot.expiresAt),
+      source.kind === 'human' || !source.expiresAt ? Infinity : Date.parse(source.expiresAt),
     );
   }
-  private idle(conversation: PiConversationRecord): boolean {
+  private idleOver(host: PiHostRecord): boolean {
     return (
-      !!conversation.idleSince &&
-      Date.parse(conversation.idleSince) + this.config.idleTimeoutSeconds * 1000 <= this.clock()
+      !!host.idleSince &&
+      Date.parse(host.idleSince) + this.config.idleTimeoutSeconds * 1000 <= this.clock()
     );
   }
-  /** An operator may delete a stuck allocation row; Pi then treats the runtime as lost. */
+  /** The host's idle clock starts when the last turn in any of its conversations has ended. */
+  private async quiet(tx: Transaction, hostId: string | undefined): Promise<void> {
+    const host = hostId ? await this.host(tx, hostId) : null;
+    if (host?.status !== 'live' || host.idleSince || (await this.turns(tx, host.id)).length) return;
+    host.idleSince = this.time();
+    await this.saveHost(tx, host);
+  }
+  /** An operator may delete a stuck allocation row; Pi then treats the machine as lost. */
   private allocation(id: string, tx?: Transaction): Promise<FleetAllocation | null> {
     return this.fleet.inspectOwned(this, id, tx).catch((error: unknown) => {
-      if (error instanceof MervError && error.code === 'fleet_not_found') return null;
+      if (
+        error instanceof MervError &&
+        ['fleet_not_found', 'fleet_owner_denied'].includes(error.code)
+      )
+        return null;
       throw error;
     });
   }
-  private async release(id: string, tx: Transaction): Promise<void> {
-    if (await this.allocation(id, tx)) await this.fleet.cancelOwned(this, id, tx);
-  }
 
+  /** The live host slot an allocation serves. */
+  private async owning(allocation: FleetAllocation, tx: Transaction) {
+    if (this.closed || !this.config.enabled || allocation.owner.kind !== 'pi-host') return null;
+    const [hostId, epoch] = allocation.owner.id.split(':');
+    const host = await this.host(tx, hostId);
+    const role =
+      host?.status === 'live' && digest(host.source) === digest(allocation.source)
+        ? roleOf(host, allocation.id)
+        : undefined;
+    const slot = role && host![role];
+    return slot && slot.epoch === Number(epoch) ? { host: host!, role: role!, slot } : null;
+  }
+  /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {
-    if (this.closed || !this.config.enabled || allocation.owner.kind !== 'pi') return false;
-    const [id, epoch] = allocation.owner.id.split(':');
-    const conversation = await this.conversation(tx, id);
-    return (
-      conversation.epoch === Number(epoch) &&
-      (!conversation.runtimeId || conversation.runtimeId === allocation.id) &&
-      digest(conversation.source) === digest(allocation.source) &&
-      // Idle, a runtime stays warm once launched, or until its idle time ends while it starts.
-      (conversation.activeCommandId !== null ||
-        (conversation.idleSince !== null &&
-          (allocation.runtime?.launch?.deliveryState === 'launched' || !this.idle(conversation))))
+    if (allocation.owner.kind === 'pi-host' && this.renting.has(allocation.owner.id)) return true;
+    const owned = await this.owning(allocation, tx);
+    if (!owned) return false;
+    if (owned.role === 'current') return !this.idleOver(owned.host);
+    if (owned.role === 'next') return owned.host.next!.readyBy > this.time();
+    return (await this.turns(tx, owned.host.id)).some(
+      (turn) => turn.runtimeId === allocation.id && turn.workerId,
     );
   }
 
   async bootstrap(allocation: FleetAllocation): Promise<string> {
     this.ready();
     return this.read(async (tx) => {
+      const owned = await this.owning(allocation, tx);
       check(
-        await this.valid(allocation, tx),
+        owned && (await this.valid(allocation, tx)),
         'pi_runtime_stale',
         'Conversation runtime is stale',
         403,
       );
-      const conversation = await this.conversation(tx, allocation.owner.id.split(':')[0]);
-      check(
-        conversation.runtimeId === allocation.id,
-        'pi_runtime_stale',
-        'Conversation runtime is stale',
-        403,
-      );
-      const bootstrap: PiBootstrapV1 = {
+      const { host, slot } = owned;
+      const bootstrap: PiBootstrap = {
         kind: 'pi',
+        version: 2,
         baseUrl: new URL(this.config.baseUrl!).origin,
-        projectId: conversation.projectId,
-        conversationId: conversation.id,
+        hostId: host.id,
         runtimeId: allocation.id,
-        epoch: conversation.epoch,
-        workerToken: this.workerToken(conversation),
+        epoch: slot.epoch,
+        machine: slot.machine,
+        slots: this.slots(slot.machine),
+        workerToken: this.workerToken(host.id, slot),
         expiresAt: allocation.deadlineAt,
       };
       return JSON.stringify(bootstrap);
     });
   }
 
+  /** Running once a worker has enrolled, which acknowledges the launch; finished once invalid. */
   async observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
     return this.read(async (tx) => {
-      const conversation = await this.conversation(tx, allocation.owner.id.split(':')[0]);
-      if (conversation.runtimeId !== allocation.id || !(await this.valid(allocation, tx)))
-        return 'finished';
-      if (conversation.activeCommandId) {
-        const command = await this.command(tx, conversation.id, conversation.activeCommandId);
-        return command.workerId ? 'running' : 'starting';
-      }
-      // A drained runtime has finished its turn; release it without waiting out the idle time.
-      return allocation.intent !== 'run' || this.idle(conversation) ? 'finished' : 'running';
+      const owned = await this.owning(allocation, tx);
+      if (!owned || !(await this.valid(allocation, tx))) return 'finished';
+      return owned.role === 'draining' || owned.slot.workerId ? 'running' : 'starting';
     });
   }
 
-  private async worker(token: string, tx: Transaction): Promise<PiConversationRecord> {
+  /** The live host slot a worker credential names, while Fleet admits its machine. */
+  private async worker(token: string, tx: Transaction) {
     this.ready();
     const match = /^piw_(flt_[A-Za-z0-9]+)\.([A-Za-z0-9_-]{43})$/.exec(token);
     check(match, 'pi_unauthorized', 'Invalid conversation worker credential', 401);
-    const row = await tx.get<{ data_json: string }>(
-      'SELECT data_json FROM pi_conversations WHERE runtime_id=?',
-      match[1],
-    );
-    check(row, 'pi_unauthorized', 'Conversation runtime is unavailable', 401);
-    const conversation = decode<PiConversationRecord>(row);
+    const allocation = await this.allocation(match[1], tx);
+    const owned = allocation && (await this.owning(allocation, tx));
+    check(owned, 'pi_unauthorized', 'Conversation runtime is unavailable', 401);
     check(
-      equal(token, this.workerToken(conversation)),
+      equal(token, this.workerToken(owned.host.id, owned.slot)),
       'pi_unauthorized',
       'Invalid conversation worker credential',
       401,
     );
     check(
-      await this.fleet.admits(conversation.runtimeId!, conversation.runtimeEpoch!, tx),
+      await this.fleet.admits(owned.slot.allocationId, owned.slot.allocationEpoch, tx),
       'pi_runtime_stale',
       'Conversation runtime no longer admits work',
       401,
     );
-    await this.scope.requireDelegation(conversation.source, 'read', tx);
-    return conversation;
+    return owned;
   }
   async authenticateWorker(token: string): Promise<void> {
     await this.read((tx) => this.worker(token, tx));
   }
 
+  /** The worker's turn on its own slot. Unless ending it, the person must still read here: losing
+   * that fails only this turn. */
   private async bound(
     token: string,
-    input: { commandId: string; workerId: string },
+    input: { conversationId: string; commandId: string; workerId: string },
     tx: Transaction,
-  ): Promise<{ conversation: PiConversationRecord; command: PiCommandRecord }> {
-    const conversation = await this.worker(token, tx);
-    check(
-      conversation.activeCommandId === input.commandId,
-      'pi_command_stale',
-      'Conversation command is no longer active',
-      409,
-    );
+    person = true,
+  ) {
+    const { host, slot } = await this.worker(token, tx);
+    const conversation = await this.conversation(tx, input.conversationId);
     const command = await this.command(tx, conversation.id, input.commandId);
     check(
-      command.epoch === conversation.epoch &&
-        command.runtimeId === conversation.runtimeId &&
+      conversation.activeCommandId === command.id &&
+        command.hostId === host.id &&
+        command.runtimeId === slot.allocationId &&
+        command.epoch === slot.epoch &&
         command.workerId === input.workerId &&
         command.expiresAt > this.time(),
       'pi_command_stale',
       'Conversation command is no longer active',
       409,
     );
+    if (person)
+      await this.scope.requireDelegation(conversation.source, 'read', tx).catch((error) => {
+        if (error instanceof MervError && [401, 403].includes(error.status))
+          throw new MervError(
+            'pi_authority_stale',
+            'Conversation authority is no longer active',
+            403,
+          );
+        throw error;
+      });
     return { conversation, command };
   }
 
   async next(token: string, input: unknown, holdMs = 0): Promise<PiNextReply> {
     const value = parse(nextInput, input);
-    const lookup = async (tx: Transaction) => {
-      const conversation = await this.worker(token, tx);
-      const command = conversation.activeCommandId
-        ? await this.command(tx, conversation.id, conversation.activeCommandId)
-        : null;
-      if (!command || !['waiting', 'starting'].includes(command.status)) return { conversation };
-      if (command.expiresAt <= this.time()) return { conversation };
-      check(
-        !command.workerId || command.workerId === value.workerId,
-        'pi_worker_conflict',
-        'This turn was delivered to another worker',
-        409,
-      );
-      return { conversation, command };
-    };
-    let record = await this.read(lookup);
-    const { id, runtimeId } = record.conversation;
-    this.live.set(id, { ...this.live.get(id), runtimeId });
-    // Held until a send commits work (its stream event wakes this) or the hold ends.
-    for (const end = Date.now() + holdMs; !record.command && Date.now() < end;) {
+    const { host } = await this.read((tx) => this.worker(token, tx));
+    let taken: Taken | 'due';
+    // Held until a send commits work for this host (it wakes this) or the hold ends.
+    for (const end = Date.now() + holdMs; ;) {
       this.ready();
-      const woken = this.streams.wait(id, end - Date.now());
-      record = await this.read(lookup);
-      if (!record.command) await woken;
+      const woken = this.streams.wait(host.id, Math.max(0, end - Date.now()));
+      taken = await this.read((tx) => this.take(token, value, tx, true));
+      if (taken === 'due') {
+        taken = await this.state.transaction((tx) => this.take(token, value, tx));
+        this.streams.wake(host.id);
+        this.announce();
+      }
+      if ((taken as Taken).retire || (taken as Taken).probe || (taken as Taken).claim) break;
+      if (Date.now() >= end) break;
+      await woken;
     }
-    if (record.command && !record.command.workerId) {
-      record = await this.state.transaction(async (tx) => {
-        const current = await lookup(tx);
-        if (current.command && !current.command.workerId) {
-          current.command.status = 'starting';
-          current.command.workerId = value.workerId;
-          // Queueing and cold start spent the send-time budget; the model gets a full turn.
-          current.command.expiresAt = new Date(this.turnEnd(current.conversation)).toISOString();
-          await this.saveCommand(tx, current.command);
-        }
-        return current;
-      });
-    }
-    const { conversation, command } = record;
-    if (!command) return { work: null };
+    const { retire, probe, claim } = taken as Taken;
+    if (!claim) return { work: null, ...(retire && { retire }), ...(probe && { probe }) };
+    const { conversation, command, offered, notes } = claim;
     let checkpoint: PiWork['checkpoint'] = null;
     if (conversation.checkpoint) {
       const bytes = await this.blobs.get(conversation.projectId, conversation.checkpoint.hash);
@@ -824,9 +1039,12 @@ export class PiService implements Pi, FleetOwner {
       );
       checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
     }
-    await this.read((tx) =>
-      this.bound(token, { commandId: command.id, workerId: value.workerId }, tx),
-    );
+    const turn = {
+      conversationId: conversation.id,
+      commandId: command.id,
+      workerId: value.workerId,
+    };
+    await this.read((tx) => this.bound(token, turn, tx));
     const caller = this.conversationCaller(conversation, command);
     const tools = (await this.tools.describe(caller)).map((tool) => {
       const artifact = tool.name === 'artifact.get' || tool.name === 'artifact.read';
@@ -852,29 +1070,118 @@ export class PiService implements Pi, FleetOwner {
         model: this.config.model,
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
-        tools,
-        notes: [],
+        tools: offered ? [...tools, offered] : tools,
+        notes,
       },
+    };
+  }
+  /** What /next gives this worker now: a draining slot retires (T5); a next slot enrolls its first
+   * worker with a probe (T3) and cuts over when that worker echoes it (T4); a current slot enrolls
+   * and claims its oldest waiting turn while it runs fewer than its machine's slots. With `dry`,
+   * in a read, it answers 'due' instead of writing. */
+  private async take(
+    token: string,
+    value: z.output<typeof nextInput>,
+    tx: Transaction,
+    dry = false,
+  ): Promise<Taken | 'due'> {
+    const { host, slot, role } = await this.worker(token, tx);
+    if (role === 'draining') return { retire: true };
+    const now = this.time();
+    let changed = false;
+    if (role === 'next') {
+      const probe = this.probe(host.id, slot, value.workerId);
+      if (slot.workerId) {
+        check(
+          slot.workerId === value.workerId,
+          'pi_worker_conflict',
+          'This machine enrolled another worker',
+          409,
+        );
+        if (!value.probe || !equal(value.probe, probe)) return { probe };
+      }
+      if (dry) return 'due';
+      if (!slot.workerId) {
+        Object.assign(slot, { workerId: value.workerId, enrolledAt: now });
+        await this.saveHost(tx, host);
+        return { probe };
+      }
+      await this.promote(tx, host);
+      changed = true;
+    } else if (!slot.workerId) {
+      if (dry) return 'due';
+      Object.assign(slot, { workerId: value.workerId, enrolledAt: now, readyAt: now });
+      changed = true;
+    }
+    const serving = host.current!;
+    const mine = (await this.turns(tx, host.id)).filter(
+      (turn) => turn.runtimeId === serving.allocationId,
+    );
+    const command =
+      mine.filter((turn) => turn.workerId).length < this.slots(serving.machine)
+        ? mine.find((turn) => !turn.workerId && turn.expiresAt > now)
+        : undefined;
+    if (command && dry) return 'due';
+    if (changed) await this.saveHost(tx, host);
+    if (!command) return {};
+    const conversation = await this.conversation(tx, command.conversationId);
+    const context = await this.moveContext(tx, host, conversation);
+    const offered = context?.targets.length ? moveTool(context) : null;
+    command.status = 'starting';
+    command.workerId = value.workerId;
+    // Queueing and cold start spent the send-time budget; the model gets a full turn.
+    command.expiresAt = new Date(this.turnEnd(serving, conversation.source)).toISOString();
+    if (offered) command.canMove = true;
+    await this.saveCommand(tx, command);
+    return {
+      claim: { conversation, command, offered, notes: context ? moveNotes(context) : [] },
+    };
+  }
+  /** What the agent-move rules read for this turn; targets are only machines its person may pick
+   * here, so without write access or a Sandboxes connection switch_machine is never offered. */
+  private async moveContext(
+    tx: Transaction,
+    host: PiHostRecord,
+    conversation: PiConversationRecord,
+  ): Promise<PiMoveContext | null> {
+    const current = host.current && (await this.machine(host.current.machine));
+    if (!current) return null;
+    const targets: PiMachine[] = [];
+    for (const { key, agent } of this.config.machines) {
+      const machine = agent && key !== current.key ? await this.machine(key) : null;
+      if (machine && (await this.machineChoice(conversation.source, key, tx)).allowed)
+        targets.push(machine);
+    }
+    return {
+      now: this.clock(),
+      enabled: this.config.agentMoves,
+      host,
+      person: await this.person(tx, host.key),
+      conversationId: conversation.id,
+      current,
+      targets,
     };
   }
 
   async begin(token: string, input: unknown): Promise<{ apply: boolean }> {
     const value = parse(commandInput, input);
-    const result = await this.state.transaction(async (tx) => {
-      const { conversation, command } = await this.bound(token, value, tx);
+    const apply = await this.state.transaction(async (tx) => {
+      const { command } = await this.bound(token, value, tx);
       if (command.status !== 'starting') {
-        if (command.status === 'working')
-          await this.interrupt(tx, conversation, command, 'ambiguous_prompt');
-        return { id: conversation.id, apply: false };
+        if (command.status === 'working') {
+          await this.interrupt(tx, command, 'ambiguous_prompt');
+          await this.quiet(tx, command.hostId);
+        }
+        return false;
       }
       command.status = 'working';
       command.startedAt = this.time();
       await this.saveCommand(tx, command);
-      return { id: conversation.id, apply: true };
+      return true;
     });
-    if (!result.apply) this.fleet.kick();
-    this.streams.changed(result.id, value.commandId);
-    return { apply: result.apply };
+    if (!apply) this.announce();
+    this.streams.changed(value.conversationId, value.commandId);
+    return { apply };
   }
 
   private conversationCaller(conversation: PiConversationRecord, command: PiCommandRecord): Caller {
@@ -894,14 +1201,17 @@ export class PiService implements Pi, FleetOwner {
     check(caller.conversation, 'pi_forbidden', 'Conversation authority is required', 403);
     const conversation = await this.conversation(tx, caller.conversation.id);
     const command = await this.command(tx, conversation.id, caller.conversation.commandId);
+    const host = command.hostId ? await this.host(tx, command.hostId) : null;
+    const role = host?.status === 'live' ? roleOf(host, command.runtimeId) : undefined;
+    const slot = role && host![role];
     check(
-      conversation.activeCommandId === command.id &&
+      slot &&
+        slot.epoch === command.epoch &&
+        conversation.activeCommandId === command.id &&
         conversation.source.actorId === caller.actorId &&
         conversation.projectId === caller.projectId &&
-        conversation.epoch === caller.conversation.epoch &&
-        conversation.runtimeId === caller.conversation.runtimeId &&
-        command.epoch === conversation.epoch &&
-        command.runtimeId === conversation.runtimeId &&
+        command.runtimeId === caller.conversation.runtimeId &&
+        command.epoch === caller.conversation.epoch &&
         ['starting', 'working'].includes(command.status) &&
         command.expiresAt > this.time(),
       'pi_authority_stale',
@@ -909,7 +1219,7 @@ export class PiService implements Pi, FleetOwner {
       403,
     );
     check(
-      await this.fleet.admits(conversation.runtimeId!, conversation.runtimeEpoch!, tx),
+      await this.fleet.admits(slot.allocationId, slot.allocationEpoch, tx),
       'pi_runtime_stale',
       'Conversation runtime no longer admits work',
       403,
@@ -932,8 +1242,11 @@ export class PiService implements Pi, FleetOwner {
       409,
     );
     this.report(conversation.id, command.id, 'tool', phrases[value.name]);
-    const result = await this.tools
-      .call(value.name, this.conversationCaller(conversation, command), value.input)
+    const result = await (
+      value.name === 'machine.switch'
+        ? this.switchMachine(conversation, command, value.input)
+        : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
+    )
       .catch((error: unknown) => {
         // A wrong ID or input is the model's to correct; authority failures still end the call.
         if (error instanceof MervError && [400, 404].includes(error.status))
@@ -968,6 +1281,44 @@ export class PiService implements Pi, FleetOwner {
       ...part(shown),
       truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
     };
+  }
+  /** switch_machine: the agent starts a move without asking (T2), within the move rules and only
+   * to a machine its person may pick here. The new machine serves later turns once ready. */
+  private async switchMachine(
+    conversation: PiConversationRecord,
+    command: PiCommandRecord,
+    input: unknown,
+  ): Promise<PiSwitchMachineResult> {
+    check(
+      command.canMove,
+      'pi_tool_forbidden',
+      'Conversation tool or arguments are not allowed',
+      403,
+    );
+    const value = switchMachineInput.safeParse(input);
+    check(value.success, 'invalid_input', 'Name a machine and say why in 10 to 300 characters');
+    const { machine, reason } = value.data;
+    const renter = await this.hostCaller();
+    return this.state.transaction(async (tx) => {
+      const host = await this.host(tx, command.hostId!);
+      check(host?.status === 'live' && host.current, 'pi_command_stale', 'The machine ended', 409);
+      if (host.current.machine === machine) return { status: 'already' };
+      const context = await this.moveContext(tx, host, conversation);
+      const refusal = context?.targets.some(({ key }) => key === machine)
+        ? moveRefusal(context, machine)
+        : { code: 'machine_unavailable' as const };
+      if (refusal) return { error: refusal };
+      const { person } = context!;
+      const started = await this.move(tx, renter, host, person, machine, 'agent', reason, {
+        conversationId: conversation.id,
+      });
+      if (!started) {
+        await this.savePerson(tx, person);
+        return { error: { code: 'machine_unavailable' } };
+      }
+      await this.saveHost(tx, host);
+      return { status: 'starting' };
+    });
   }
 
   async progress(token: string, input: unknown): Promise<{ accepted: true }> {
@@ -1005,7 +1356,7 @@ export class PiService implements Pi, FleetOwner {
   }
 
   async complete(token: string, input: unknown): Promise<{ saved: boolean }> {
-    const value = parse(completionInput, input) as PiCompletion;
+    const value = parse(completionInput, input) as PiCompletion & PiTurnInput;
     const bytes = Buffer.from(value.checkpoint);
     check(
       bytes.length <= 2_000_000 && hash(bytes) === value.checkpointHash,
@@ -1037,19 +1388,22 @@ export class PiService implements Pi, FleetOwner {
       'Canonical conversation result exceeds its limit',
       413,
     );
+    // A replay after completion only has to match what was saved.
+    const replayed = async (tx: Transaction) => {
+      await this.worker(token, tx);
+      const command = await this.command(tx, value.conversationId, value.commandId);
+      if (command.status !== 'completed') return false;
+      check(
+        command.resultHash === resultHash && command.workerId === value.workerId,
+        'pi_result_conflict',
+        'Turn result changed on replay',
+        409,
+      );
+      return true;
+    };
     const retained = await this.state.transaction(async (tx) => {
-      const conversation = await this.worker(token, tx);
-      const command = await this.command(tx, conversation.id, value.commandId);
-      if (command.status === 'completed') {
-        check(
-          command.resultHash === resultHash && command.workerId === value.workerId,
-          'pi_result_conflict',
-          'Turn result changed on replay',
-          409,
-        );
-        return { conversation, command, complete: true };
-      }
-      await this.bound(token, value, tx);
+      if (await replayed(tx)) return null;
+      const { conversation, command } = await this.bound(token, value, tx);
       check(
         ['working', 'saving'].includes(command.status),
         'pi_command_stale',
@@ -1067,11 +1421,13 @@ export class PiService implements Pi, FleetOwner {
         'pi_result_invalid',
         'Worker results must contain assistant messages',
       );
+      // switch_machine counts only in a turn it was offered to.
       check(
-        value.outcomes.every(
-          (outcome) =>
-            Object.hasOwn(constraints, outcome.name) &&
-            constraints[outcome.name].safeParse(outcome.input).success,
+        value.outcomes.every((outcome) =>
+          outcome.name === 'machine.switch'
+            ? command.canMove && switchMachineInput.safeParse(outcome.input).success
+            : Object.hasOwn(constraints, outcome.name) &&
+              constraints[outcome.name].safeParse(outcome.input).success,
         ),
         'pi_result_invalid',
         'Turn result contains an unsupported tool',
@@ -1083,19 +1439,20 @@ export class PiService implements Pi, FleetOwner {
         command.status = 'saving';
         await this.saveCommand(tx, command);
       }
-      return { conversation, command, complete: false };
+      return { conversation, command };
     });
-    if (retained.complete) return { saved: true };
-    this.streams.changed(retained.conversation.id, value.commandId);
+    if (!retained) return { saved: true };
+    this.streams.changed(value.conversationId, value.commandId);
+    const { projectId } = retained.conversation;
     let stored: { hash: string; size: number };
     try {
-      stored = await this.blobs.put(retained.conversation.projectId, bytes);
+      stored = await this.blobs.put(projectId, bytes);
       check(
         stored.hash === value.checkpointHash && stored.size === bytes.length,
         'pi_checkpoint_invalid',
         'Checkpoint storage receipt mismatch',
       );
-      const verified = await this.blobs.get(retained.conversation.projectId, stored.hash);
+      const verified = await this.blobs.get(projectId, stored.hash);
       check(
         hash(verified) === stored.hash && verified.length === stored.size,
         'pi_checkpoint_invalid',
@@ -1103,27 +1460,17 @@ export class PiService implements Pi, FleetOwner {
       );
     } catch {
       await this.state.transaction(async (tx) => {
-        const command = await this.command(tx, retained.conversation.id, value.commandId);
+        const command = await this.command(tx, value.conversationId, value.commandId);
         if (command.status === 'saving' && command.error !== 'checkpoint_unavailable') {
           command.error = 'checkpoint_unavailable';
           await this.saveCommand(tx, command);
         }
       });
-      this.streams.changed(retained.conversation.id, value.commandId);
+      this.streams.changed(value.conversationId, value.commandId);
       return { saved: false };
     }
     const first = await this.state.transaction(async (tx) => {
-      const current = await this.worker(token, tx);
-      const existing = await this.command(tx, current.id, value.commandId);
-      if (existing.status === 'completed') {
-        check(
-          existing.resultHash === resultHash && existing.workerId === value.workerId,
-          'pi_result_conflict',
-          'Turn result changed on replay',
-          409,
-        );
-        return false;
-      }
+      if (await replayed(tx)) return false;
       const { conversation, command } = await this.bound(token, value, tx);
       check(
         command.status === 'saving' &&
@@ -1137,16 +1484,16 @@ export class PiService implements Pi, FleetOwner {
       conversation.previousCheckpoint = conversation.checkpoint;
       conversation.checkpoint = { ...stored, commandId: command.id };
       conversation.activeCommandId = null;
-      conversation.idleSince = this.time();
       command.status = 'completed';
       command.error = null;
       command.completedAt = this.time();
       await this.saveCommand(tx, command);
       await this.saveConversation(tx, conversation);
+      await this.quiet(tx, command.hostId);
       return first;
     });
-    this.changed(retained.conversation.id, value.commandId);
-    if (first) void this.name(retained.conversation.id, retained.command.messages).catch(() => {});
+    this.announce(value.conversationId);
+    if (first) void this.name(value.conversationId, retained.command.messages).catch(() => {});
     return { saved: true };
   }
 
@@ -1170,46 +1517,124 @@ export class PiService implements Pi, FleetOwner {
 
   private async interrupt(
     tx: Transaction,
-    conversation: PiConversationRecord,
     command: PiCommandRecord,
     reason: PiInterruption,
   ): Promise<void> {
     if (!active.has(command.status)) return;
+    const conversation = await this.conversation(tx, command.conversationId);
     command.status = 'interrupted';
     command.error = reason;
     command.completedAt = this.time();
-    conversation.activeCommandId = null;
-    conversation.idleSince = this.time();
+    if (conversation.activeCommandId === command.id) conversation.activeCommandId = null;
     await this.saveCommand(tx, command);
     await this.saveConversation(tx, conversation);
+    this.unsent.add(conversation.id);
+  }
+  /** The host ends with any turn still on it, and every slot is released. */
+  private async end(
+    tx: Transaction,
+    host: PiHostRecord,
+    reason: string,
+    turnsEnd: PiInterruption = 'cancelled',
+  ): Promise<void> {
+    for (const turn of await this.turns(tx, host.id)) await this.interrupt(tx, turn, turnsEnd);
+    for (const role of roles) {
+      const slot = host[role];
+      if (slot && (await this.allocation(slot.allocationId, tx)))
+        await this.fleet.cancelOwned(this, slot.allocationId, tx);
+    }
+    host.status = 'ended';
+    host.ended = { at: this.time(), reason };
+    await this.saveHost(tx, host);
   }
 
   async fail(token: string, input: unknown): Promise<{ interrupted: true }> {
     const value = parse(commandInput, input);
-    const id = await this.state.transaction(async (tx) => {
-      const { conversation, command } = await this.bound(token, value, tx);
-      await this.interrupt(tx, conversation, command, 'worker_interrupted');
-      return conversation.id;
+    await this.state.transaction(async (tx) => {
+      const { command } = await this.bound(token, value, tx, false);
+      await this.interrupt(tx, command, 'worker_interrupted');
+      await this.quiet(tx, command.hostId);
     });
-    this.changed(id, value.commandId);
+    this.announce();
     return { interrupted: true };
   }
 
+  /** Interrupts this conversation's turn only; the host serves the person's others. */
   async stop(caller: Caller, id: string): Promise<PiSnapshot> {
     this.ready();
     await this.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
-      if (conversation.activeCommandId)
-        await this.interrupt(
-          tx,
-          conversation,
-          await this.command(tx, id, conversation.activeCommandId),
-          'cancelled',
-        );
-      if (conversation.runtimeId) await this.release(conversation.runtimeId, tx);
+      if (!conversation.activeCommandId) return;
+      const command = await this.command(tx, id, conversation.activeCommandId);
+      await this.interrupt(tx, command, 'cancelled');
+      await this.quiet(tx, command.hostId);
     });
-    this.changed(id);
+    this.announce();
     return this.snapshot(caller, id);
+  }
+
+  /** pi.machine.set: the person's pick, for new hosts and now (T2), or back to C while N starts
+   * (T11). Only a machine they may choose here; it replaces where the agent last moved them. */
+  async setMachine(caller: Caller, input: unknown): Promise<PiHostView> {
+    this.ready();
+    const { machine } = parse(machineInput, input);
+    const renter = await this.hostCaller();
+    const view = await this.state.transaction(async (tx) => {
+      const userId = await this.user(caller, tx);
+      const source = await this.scope.delegationSource(caller, tx);
+      const option = (await this.catalog(source, tx)).find(({ key }) => key === machine);
+      check(
+        option?.available,
+        'pi_machine_unavailable',
+        option?.reason ?? 'This machine is not offered',
+        403,
+      );
+      const key = this.key(userId, caller.projectId);
+      const person = await this.person(tx, key);
+      Object.assign(person, { preferred: machine, sticky: null, choseAt: this.time() });
+      const found = await this.liveHost(tx, key);
+      if (found) await this.settle(tx, found, renter);
+      const host = found?.status === 'live' ? found : null;
+      const { current, next } = host ?? {};
+      if (host && current && next && current.machine === machine && next.machine !== machine) {
+        await this.fleet.cancelOwned(this, next.allocationId, tx);
+        this.record(person, {
+          by: next.by,
+          from: current.machine,
+          to: next.machine,
+          outcome: 'cancelled',
+          ...(next.conversationId && { conversationId: next.conversationId }),
+        });
+        host.next = null;
+        await this.saveHost(tx, host);
+      } else if (host && current && current.machine !== machine && next?.machine !== machine) {
+        if (await this.move(tx, renter, host, person, machine, 'person', ''))
+          await this.saveHost(tx, host);
+      }
+      await this.savePerson(tx, person);
+      return this.hostView(tx, host, { userId, projectId: caller.projectId }, source);
+    });
+    this.fleet.kick();
+    return view;
+  }
+
+  /** pi.machine.stop (T9): every turn of the host ends, every slot is released, and the next
+   * host starts on the person's own pick. */
+  async stopMachine(caller: Caller): Promise<PiHostView> {
+    this.ready();
+    const view = await this.state.transaction(async (tx) => {
+      const userId = await this.user(caller, tx);
+      const key = this.key(userId, caller.projectId);
+      const person = await this.person(tx, key);
+      person.sticky = null;
+      await this.savePerson(tx, person);
+      const host = await this.liveHost(tx, key);
+      if (host) await this.end(tx, host, 'stopped');
+      const source = await this.scope.delegationSource(caller, tx);
+      return this.hostView(tx, null, { userId, projectId: caller.projectId }, source);
+    });
+    this.announce();
+    return view;
   }
 
   async authorizeModel(token: string) {
@@ -1246,7 +1671,10 @@ export class PiService implements Pi, FleetOwner {
         epoch: command.epoch,
         expiresAt: command.expiresAt,
         model: this.config.model,
-        toolNames: piReadTools.map(piModelToolName),
+        // Only the tools this turn was offered.
+        toolNames: [...piReadTools, ...(command.canMove ? ['machine.switch'] : [])].map(
+          piModelToolName,
+        ),
       };
     });
   }
@@ -1281,78 +1709,242 @@ export class PiService implements Pi, FleetOwner {
   }
 
   private async reconcile(): Promise<void> {
-    const records = await this.state.read((sql) =>
-      sql.all<{ data_json: string }>(
-        'SELECT data_json FROM pi_conversations WHERE runtime_id IS NOT NULL',
-      ),
+    const renter = await this.hostCaller().catch(() => undefined);
+    const hosts = await this.state.read((sql) =>
+      sql.all<{ data_json: string }>("SELECT data_json FROM pi_hosts WHERE status='live'"),
     );
-    for (const record of records) {
-      const previous = decode<PiConversationRecord>(record);
-      let allocation = await this.allocation(previous.runtimeId!);
-      const previousCommand = previous.activeCommandId
-        ? await this.state.read((sql) => this.command(sql, previous.id, previous.activeCommandId!))
-        : null;
-      if (
-        allocation &&
-        allocation.phase !== 'released' &&
-        (!previousCommand ||
-          (allocation.intent === 'run' &&
-            previousCommand.expiresAt > this.time() &&
-            (previousCommand.status !== 'waiting' || allocation.phase === 'queued')))
-      ) {
-        // Fleet's progress is what an open page is waiting on.
-        this.stage(previous, previousCommand, allocation);
-        continue;
+    for (const row of hosts) {
+      const seen = decode<PiHostRecord>(row);
+      try {
+        // Most passes find nothing to do: look first, and take the writer lock only to act.
+        if (!(await this.read((tx) => this.settle(tx, seen, renter, true)))) continue;
+        await this.state.transaction(async (tx) => {
+          const host = await this.host(tx, seen.id);
+          if (host?.status === 'live') await this.settle(tx, host, renter);
+        });
+        this.streams.wake(seen.id);
+        this.announce();
+      } catch {
+        // One host's failure leaves the others' passes alone; the next pass retries it.
       }
-      const changed = await this.state.transaction(async (tx) => {
-        const conversation = await this.conversation(tx, previous.id);
-        if (conversation.runtimeId !== previous.runtimeId) return false;
-        let changed = false;
-        if (conversation.activeCommandId) {
-          const command = await this.command(tx, conversation.id, conversation.activeCommandId);
-          // Fleet also stops a failed machine, but no one chose that. (A revoked launch or a
-          // deleting machine is what an operator's stop leaves too, so those stay 'stopped'.)
-          const reason: PiInterruption | null =
-            allocation?.error === 'runtime_refused'
-              ? 'runtime_refused'
-              : !allocation ||
-                  (allocation.intent === 'run' && allocation.phase === 'released') ||
-                  allocation.runtime?.state === 'failed'
-                ? 'runtime_lost'
-                : allocation.intent !== 'run'
-                  ? 'runtime_stopped'
-                  : command.expiresAt <= this.time()
-                    ? 'turn_expired'
-                    : null;
-          if (reason) {
-            await this.interrupt(tx, conversation, command, reason);
-            // A turn that ends before its machine launched must not rent one for nothing.
-            if (allocation && allocation.runtime?.launch?.deliveryState !== 'launched')
-              allocation = await this.fleet.cancelOwned(this, allocation.id, tx);
-            changed = true;
-          } else if (allocation && command.status === 'waiting' && allocation.phase !== 'queued') {
-            // Out of the queue: cold start gets a turn's time, within the deadline Fleet now keeps.
-            conversation.runtimeExpiresAt = allocation.deadlineAt;
-            command.status = 'starting';
-            command.expiresAt = new Date(this.turnEnd(conversation)).toISOString();
-            await this.saveCommand(tx, command);
-            await this.saveConversation(tx, conversation, false);
-            changed = true;
-          }
-        }
-        if (!allocation || allocation.phase === 'released') {
-          conversation.runtimeId = null;
-          conversation.runtimeEpoch = null;
-          conversation.runtimeExpiresAt = null;
-          conversation.idleSince = null;
-          await this.saveConversation(tx, conversation, false);
-          changed = true;
-        }
-        return changed;
-      });
-      if (!allocation || allocation.phase === 'released') this.live.delete(previous.id);
-      if (changed) this.changed(previous.id);
     }
+    // Fleet's progress is what open pages are waiting on.
+    for (const id of [...this.live.keys()]) {
+      const seen = await this.read(async (tx) => {
+        const conversation = await this.conversation(tx, id);
+        const command = conversation.activeCommandId
+          ? await this.command(tx, id, conversation.activeCommandId)
+          : null;
+        return { conversation, command, ...(await this.machineOf(tx, conversation)) };
+      }).catch(() => null);
+      if (seen) this.stage(seen.conversation, seen.command, seen.host, seen.allocation);
+    }
+  }
+  /** Applies Fleet's facts to a host: N not ready (T6), C lost (T7), D released once drained
+   * (T5), turns expired or out of the queue, the idle end (T8) and a deadline's rollover (T10).
+   * With `dry`, in a read, only whether any of that is due. */
+  private async settle(
+    tx: Transaction,
+    host: PiHostRecord,
+    renter?: Caller,
+    dry = false,
+  ): Promise<boolean> {
+    const now = this.time();
+    if (this.idleOver(host)) {
+      if (dry) return true;
+      const person = await this.person(tx, host.key);
+      person.sticky = null;
+      await this.savePerson(tx, person);
+      await this.end(tx, host, 'idle');
+      return true;
+    }
+    const facts = new Map<string, FleetAllocation | null>();
+    for (const role of roles) {
+      const slot = host[role];
+      if (slot) facts.set(slot.allocationId, await this.allocation(slot.allocationId, tx));
+    }
+    const fact = (slot: PiSlot | null) => (slot && facts.get(slot.allocationId)) || null;
+    let turns = await this.turns(tx, host.id);
+    let changed = false;
+    const { next } = host;
+    if (next && (gone(fact(next), now) || next.readyBy <= now)) {
+      if (dry) return true;
+      const allocation = fact(next);
+      if (allocation) await this.fleet.cancelOwned(this, allocation.id, tx);
+      const person = await this.person(tx, host.key);
+      this.record(person, {
+        by: next.by,
+        from: host.current?.machine ?? next.machine,
+        to: next.machine,
+        outcome: 'failed',
+        reason:
+          allocation?.error === 'runtime_refused'
+            ? 'no free machine'
+            : next.readyBy <= now
+              ? 'not ready in time'
+              : 'the machine stopped',
+        ...(next.conversationId && { conversationId: next.conversationId }),
+      });
+      await this.savePerson(tx, person);
+      host.next = null;
+      changed = true;
+    }
+    if (host.current && gone(fact(host.current), now)) {
+      if (dry) return true;
+      const reason = lost(fact(host.current));
+      if (host.next) await this.promote(tx, host, reason, fact(host.next)?.phase === 'queued');
+      else {
+        const { allocationId } = host.current;
+        for (const turn of turns.filter(({ runtimeId }) => runtimeId === allocationId))
+          await this.interrupt(tx, turn, reason);
+        host.current = null;
+      }
+      changed = true;
+    }
+    if (host.draining && gone(fact(host.draining), now)) {
+      if (dry) return true;
+      const reason = lost(fact(host.draining));
+      for (const turn of turns.filter(({ runtimeId }) => runtimeId === host.draining!.allocationId))
+        await this.interrupt(tx, turn, reason);
+      host.draining = null;
+      changed = true;
+    }
+    // Slot deadlines follow Fleet's, which restarts one as it leaves the queue.
+    for (const role of roles) {
+      const slot = host[role];
+      const allocation = fact(slot);
+      if (slot && allocation && slot.expiresAt !== allocation.deadlineAt) {
+        if (dry) return true;
+        slot.expiresAt = allocation.deadlineAt;
+        changed = true;
+      }
+    }
+    if (changed) turns = await this.turns(tx, host.id);
+    for (const turn of turns) {
+      const role = roleOf(host, turn.runtimeId);
+      if (turn.expiresAt <= now) {
+        if (dry) return true;
+        await this.interrupt(tx, turn, 'turn_expired');
+        changed = true;
+      } else if (turn.status === 'waiting' && role && fact(host[role])?.phase !== 'queued') {
+        // Out of the queue: cold start gets a turn's time, within the deadline Fleet now keeps.
+        if (dry) return true;
+        await this.reassign(tx, turn, host[role]!, false);
+        changed = true;
+      }
+    }
+    const { current } = host;
+    if (
+      current?.workerId &&
+      !host.next &&
+      !host.draining &&
+      renter &&
+      Date.parse(current.expiresAt) - this.clock() < rolloverMs &&
+      (await this.fleet.free(this.hostProject, tx)) >= moveRoom
+    ) {
+      if (dry) return true;
+      const rolled = await this.move(tx, renter, host, null, current.machine, 'deadline', '');
+      changed ||= rolled;
+    }
+    if (!host.current && !host.next && !host.draining) {
+      if (dry) return true;
+      await this.end(tx, host, 'lost');
+      return true;
+    }
+    if (!changed || dry) return false;
+    if (!(await this.turns(tx, host.id)).length) host.idleSince ??= now;
+    await this.saveHost(tx, host);
+    return true;
+  }
+  /** N becomes C: at cut-over once proven ready (T4), or first when C is lost (T7, with the
+   * reason C's claimed turns end). C's unclaimed turns follow N; at cut-over its claimed turns
+   * finish on D while C drains, or C stops at once. */
+  private async promote(
+    tx: Transaction,
+    host: PiHostRecord,
+    lostWith?: PiInterruption,
+    queued = false,
+  ): Promise<void> {
+    const old = host.current!;
+    const { by, reason, conversationId, readyBy: _, ...slot } = host.next!;
+    host.current = lostWith ? slot : { ...slot, readyAt: this.time() };
+    host.next = null;
+    const turns = (await this.turns(tx, host.id)).filter(
+      ({ runtimeId }) => runtimeId === old.allocationId,
+    );
+    for (const turn of turns)
+      if (!turn.workerId) await this.reassign(tx, turn, host.current, queued);
+      else if (lostWith) await this.interrupt(tx, turn, lostWith);
+    if (!lostWith) {
+      if (turns.some(({ workerId }) => workerId)) host.draining = old;
+      else await this.fleet.cancelOwned(this, old.allocationId, tx);
+    }
+    const person = await this.person(tx, host.key);
+    this.record(person, {
+      by,
+      from: old.machine,
+      to: slot.machine,
+      outcome: 'moved',
+      ...(reason && { reason }),
+      ...(conversationId && { conversationId }),
+    });
+    if (by === 'agent') person.sticky = slot.machine;
+    await this.savePerson(tx, person);
+  }
+  /** An unclaimed turn moves to another slot: a new model credential, and a turn's time there. */
+  private async reassign(
+    tx: Transaction,
+    turn: PiCommandRecord,
+    slot: PiSlot,
+    queued: boolean,
+  ): Promise<void> {
+    const { source } = await this.conversation(tx, turn.conversationId);
+    turn.runtimeId = slot.allocationId;
+    turn.epoch = slot.epoch;
+    turn.machine = slot.machine;
+    turn.status = queued ? 'waiting' : 'starting';
+    turn.expiresAt = new Date(this.turnEnd(slot, source, queued)).toISOString();
+    await this.saveCommand(tx, turn);
+    this.unsent.add(turn.conversationId);
+  }
+  /** T2: starts `to` as the next slot while C keeps serving. False, recorded as a failed move for
+   * the person or agent, when Fleet has no room for a second machine. */
+  private async move(
+    tx: Transaction,
+    renter: Caller,
+    host: PiHostRecord,
+    person: PiPersonRecord | null,
+    to: string,
+    by: PiMoveBy,
+    reason: string,
+    { conversationId }: { conversationId?: string } = {},
+  ): Promise<boolean> {
+    check(
+      host.current && !host.next && !host.draining,
+      'pi_move_in_progress',
+      'A move is already under way; try again shortly',
+      409,
+    );
+    if ((await this.fleet.free(this.hostProject, tx)) < moveRoom) {
+      if (person)
+        this.record(person, {
+          by,
+          from: host.current.machine,
+          to,
+          outcome: 'failed',
+          reason: 'no free machine',
+          ...(conversationId && { conversationId }),
+        });
+      return false;
+    }
+    host.next = {
+      ...(await this.rent(renter, host, to, tx)),
+      by,
+      reason,
+      conversationId: conversationId ?? null,
+      readyBy: new Date(this.clock() + readyMs).toISOString(),
+    };
+    return true;
   }
 
   async close(): Promise<void> {
@@ -1360,22 +1952,14 @@ export class PiService implements Pi, FleetOwner {
     this.closed = true;
     clearInterval(this.timer);
     await this.pending?.catch(() => undefined);
+    // A restart releases every machine; the next send starts one where the person left off.
     if (this.config.enabled) {
       await this.state.transaction(async (tx) => {
-        const records = await tx.all<{ data_json: string }>(
-          'SELECT data_json FROM pi_conversations WHERE runtime_id IS NOT NULL',
+        const hosts = await tx.all<{ data_json: string }>(
+          "SELECT data_json FROM pi_hosts WHERE status='live'",
         );
-        for (const row of records) {
-          const conversation = decode<PiConversationRecord>(row);
-          if (conversation.activeCommandId)
-            await this.interrupt(
-              tx,
-              conversation,
-              await this.command(tx, conversation.id, conversation.activeCommandId),
-              'service_unavailable',
-            );
-          await this.release(conversation.runtimeId!, tx);
-        }
+        for (const row of hosts)
+          await this.end(tx, decode<PiHostRecord>(row), 'restart', 'service_unavailable');
       });
     }
     for (const dispose of this.disposers.reverse()) dispose();

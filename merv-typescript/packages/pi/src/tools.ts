@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
-import { createInput, id, sendInput, warmInput } from './schema.js';
+import { createInput, id, machineInput, sendInput, warmInput } from './schema.js';
 
 export const piToolsPlugin = {
   name: 'merv-pi-tools',
@@ -46,17 +46,33 @@ export const piToolsPlugin = {
       {
         name: 'pi.warm',
         description:
-          'Start an agent machine for a conversation before its first message; without an id, your latest empty conversation or a new one.',
+          'Start your agent machine in this project before a first message, for a conversation (without an id, your latest empty one or a new one).',
         inputSchema: warmInput,
         handler: (caller: Parameters<typeof ctx.pi.warm>[0], input: unknown) =>
           ctx.pi.warm(caller, input),
       },
       {
         name: 'pi.stop',
-        description: 'Interrupt this conversation turn and release its agent.',
+        description:
+          "Interrupt this conversation's turn; your agent machine keeps serving your other conversations.",
         inputSchema: z.object({ id }).strict(),
         handler: (caller: Parameters<typeof ctx.pi.stop>[0], input: { id: string }) =>
           ctx.pi.stop(caller, input.id),
+      },
+      {
+        name: 'pi.machine.set',
+        description:
+          'Choose the machine your agent runs on in this project. It starts before the current one stops, so answers under way finish where they began.',
+        inputSchema: machineInput,
+        handler: (caller: Parameters<typeof ctx.pi.setMachine>[0], input: unknown) =>
+          ctx.pi.setMachine(caller, input),
+      },
+      {
+        name: 'pi.machine.stop',
+        description:
+          'Stop your agent machine in this project now, ending every answer under way; the next message starts it again.',
+        inputSchema: z.object({}).strict(),
+        handler: (caller: Parameters<typeof ctx.pi.stopMachine>[0]) => ctx.pi.stopMachine(caller),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
