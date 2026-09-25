@@ -902,7 +902,7 @@ export class ExperimentProgram {
           : state === 'experiment_review'
             ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
             : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.'
-        : '';
+        : '\nYour working directory is private, writable scratch space for this session: download, build and compute there, not in /tmp. It is discarded when the session ends, so retain what must outlive it through the declared artifact tools.';
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
