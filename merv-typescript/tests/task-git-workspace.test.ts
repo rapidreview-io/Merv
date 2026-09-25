@@ -752,6 +752,44 @@ test('A Git task passes only from the leased review pinned to its delivered comm
   );
 });
 
+test('An interactive reviewer is not offered the claim of a Git task review it could never pass, and a leased one is (C2)', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create({ workspace: 'git' });
+  const held = await f.lease(task);
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId);
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  const start = (await f.workflows.evaluate(f.reviewer, task.id)).actions.find(
+    (action) => action.action === 'start_review',
+  )!;
+  assert.equal(start.status, 'blocked', 'neither the desk nor Now shows Claim review');
+  assert.deepEqual(
+    start.blockers.map((blocker) => blocker.code),
+    ['leased_review_required'],
+  );
+  // The pool of leased reviewers stays open: the reviewer's runner still leases the review.
+  const review = await f.leaseReview(delivered);
+  assert.equal(
+    (await f.reviews.get(f.source, delivered.reviewId!)).reviewerId,
+    review.worker.actorId,
+  );
+  // A scratch task's review is still claimed at the desk.
+  const scratch = await f.create();
+  const note = await f.artifacts.create(f.source, { title: 'Note', content: 'Evidence.' });
+  const handed = await f.tasks.submitDelivery(f.source, {
+    ...confirmedDelivery({ taskId: scratch.id, artifactIds: [note.id] }),
+    expectedRevision: 0,
+    requestId: f.request(),
+  });
+  assert.equal(
+    (await f.workflows.evaluate(f.reviewer, handed.id)).actions.find(
+      (action) => action.action === 'start_review',
+    )!.status,
+    'ready',
+  );
+});
+
 test('An unhosted Git task runs on the central-base version and records its legacy acceptance', async (t) => {
   const f = await fixture(t);
   const task = await f.create({ workspace: 'git' });

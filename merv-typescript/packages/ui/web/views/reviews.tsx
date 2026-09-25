@@ -526,10 +526,12 @@ function Controls({
         onClick={() => void claim.submit({ reviewId: review.id })}
       />
     );
+  // An unclaimed review is held back by whatever refuses its claim.
+  const held = (review.status === 'requested' && start) || submit || start;
   return (
     <Primary
       label="Submit verdict"
-      help={(submit ?? start)?.blockers[0]?.message ?? guidance.data.instruction}
+      help={held?.blockers[0]?.message ?? guidance.data.instruction}
       disabled
     />
   );

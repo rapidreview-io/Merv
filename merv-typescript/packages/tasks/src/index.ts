@@ -835,6 +835,14 @@ export class TaskService implements Tasks {
               'reviewId must match this task submission',
               409,
             );
+            // Reviews admits an interactive claim of a Git review, which can never pass it and
+            // shuts every leased reviewer out, so it is offered to nobody interactive.
+            check(
+              context.caller.session || taskWorkspace(context.snapshot.version) === 'none',
+              'leased_review_required',
+              'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task',
+              403,
+            );
             await this.reviews.checkStart(context.caller, review.id, context.tx);
           },
         },

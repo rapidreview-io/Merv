@@ -155,3 +155,40 @@ test('a task review offers no return route, because its domain takes none', asyn
   assert.equal(submitted.body?.verdict, 'needs_changes');
   assert.equal('returnTo' in (submitted.body ?? {}), false);
 });
+
+test('a Git task review nobody interactive can pass offers no claim, and says what holds it', async (t) => {
+  t.after(async () => await unmount());
+  const refusal =
+    'Only a leased review worker, in a checkout of the delivered commit, can pass a Git task';
+  const blocked = (action: string, tool: string, code: string, message: string) => ({
+    action,
+    tool,
+    status: 'blocked',
+    arguments: {},
+    blockers: [{ code, message }],
+    instruction: '',
+  });
+  serve('/tools/review.get', {
+    body: { result: { ...claimed, status: 'requested', reviewerId: null, claimId: null } },
+  });
+  serve('/tools/workflow.status_and_next', {
+    body: {
+      result: {
+        ...desk('task', 'in_review'),
+        actions: [
+          blocked(
+            'submit_review',
+            'review.submit',
+            'review_closed',
+            'Review must be claimed first',
+          ),
+          blocked('start_review', 'review.start', 'leased_review_required', refusal),
+        ],
+      },
+    },
+  });
+  await mount(page());
+  await settle(10);
+  assert.ok(!text().includes('Claim review'));
+  assert.ok(text().includes(refusal));
+});
