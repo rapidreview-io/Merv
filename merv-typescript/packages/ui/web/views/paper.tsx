@@ -144,7 +144,12 @@ function compose(workspace: PaperWorkspace): DocView[] {
       rows: rows.map((row, index) => ({
         ...row,
         n: `${at + 1}.${index + 1}`,
-        anchor: `${kind}-${slug(row.section.title)}-${row.section.id.slice(-6)}`,
+        // A section is found by its title; only a title its document repeats adds the end of its id.
+        anchor:
+          `${kind}-${slug(row.section.title)}` +
+          (rows.findIndex((other) => slug(other.section.title) === slug(row.section.title)) < index
+            ? `-${row.section.id.slice(-6)}`
+            : ''),
         published:
           moved.has(row.section.id) &&
           JSON.stringify(row.section) ===

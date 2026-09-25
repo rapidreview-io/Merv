@@ -222,7 +222,7 @@ function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output
       'invalid_input',
       'Request body failed validation',
       400,
-      parsed.error.issues.map(({ path, message }) => ({ path, message })),
+      parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
     );
   return parsed.data;
 }

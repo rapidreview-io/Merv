@@ -430,6 +430,7 @@ export function CycleMove({
   onSaved(): void;
 }) {
   const home = useHome();
+  if (!isOpen(cycle.workflow.state)) return null;
   const read = home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id);
   // A gate read at another revision is not this cycle's, and leaves the plain move.
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
@@ -462,7 +463,7 @@ export function CycleMove({
         Write the definition <ArrowRightIcon size={14} />
       </Link>
     );
-  if (cycle.automation && isOpen(cycle.workflow.state))
+  if (cycle.automation)
     return (
       <div className="stack">
         <span>
@@ -501,7 +502,7 @@ export function CycleMove({
   const blocked = advance?.status === 'blocked';
   return (
     <div className="stack">
-      {move('Start next step', {}, blocked || !isOpen(cycle.workflow.state))}
+      {move('Start next step', {}, blocked)}
       {blocked &&
         !listed &&
         gate!.dependencies
