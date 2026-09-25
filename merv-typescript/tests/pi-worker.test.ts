@@ -1239,7 +1239,7 @@ test('any offered tool is exposed under its model name, and any object input is 
     ],
   );
   assert.deepEqual(
-    server.bodies('complete')[0].outcomes.map(({ name }: { name: string }) => name),
+    (server.bodies('complete')[0].outcomes as { name: string }[]).map(({ name }) => name),
     ['machine.switch', 'paper.cite'],
   );
 });
@@ -1295,7 +1295,7 @@ test('a write is posted once, even after a 503, and a read is retried; writes in
     ]),
   );
   assert.deepEqual(
-    server.bodies('complete')[0].outcomes.map(({ name }: { name: string }) => name),
+    (server.bodies('complete')[0].outcomes as { name: string }[]).map(({ name }) => name),
     ['feed.post', 'task.get'],
   );
   assert.equal(server.bodies('fail').length, 0);

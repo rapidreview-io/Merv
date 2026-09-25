@@ -27,6 +27,7 @@ import {
   migration,
   nextInput,
   piConfig,
+  runInput,
   sendInput,
   switchMachineInput,
   warmInput,
@@ -38,6 +39,7 @@ import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
 import { piTool } from './relay-schema.js';
+import { conversationUse, isRemoteTool } from '@merv/api/registry';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -61,6 +63,7 @@ import type {
   PiNextReply,
   PiNextSlot,
   PiPersonRecord,
+  PiProposal,
   PiSlot,
   PiSnapshot,
   PiStage,
@@ -1359,18 +1362,40 @@ export class PiService implements Pi, FleetOwner {
       'This tool was not offered in this turn',
       403,
     );
+    // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
+    const definition = (await this.tools.list()).find(({ name }) => name === value.name);
+    let use: 'propose' | 'secret' | undefined;
+    if (definition && !isRemoteTool(definition) && definition.conversation) {
+      const parsed = await definition.inputSchema.safeParseAsync(value.input);
+      if (!parsed.success)
+        return {
+          error: {
+            code: 'invalid_input',
+            message: 'Tool input failed validation',
+            details: parsed.error.issues.map(({ path, message }) => ({ path, message })),
+          },
+        };
+      const found = conversationUse(definition, parsed.data);
+      if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
+    }
     const key = `${conversation.id}:${command.id}`;
     this.progressAt.set(key, this.clock());
     this.report(
       conversation.id,
       command.id,
       'tool',
-      value.name === 'machine.switch' ? 'Moving to a bigger machine' : `Using ${value.name}`,
+      use
+        ? `Proposing ${value.name}`
+        : value.name === 'machine.switch'
+          ? 'Moving to a bigger machine'
+          : `Using ${value.name}`,
     );
     const result = await (
-      value.name === 'machine.switch'
-        ? this.switchMachine(conversation, command, value.input)
-        : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
+      use
+        ? this.propose(token, value, use)
+        : value.name === 'machine.switch'
+          ? this.switchMachine(conversation, command, value.input)
+          : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
     )
       .catch(async (error: unknown) => {
         // A turn that ended, or whose person lost access here, ends with its call; any other
@@ -1418,6 +1443,82 @@ export class PiService implements Pi, FleetOwner {
       truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
     };
   }
+  /** A call only its person may run: kept on the turn for their page, where Run runs it as them
+   * (run). At most 16 an answer. */
+  private async propose(
+    token: string,
+    turn: PiTurnInput & { name: string; input: Record<string, unknown> },
+    use: 'propose' | 'secret',
+  ): Promise<unknown> {
+    const proposal = await this.state.transaction(async (tx) => {
+      const { command } = await this.bound(token, turn, tx);
+      if ((command.proposals?.length ?? 0) >= 16) return null;
+      const proposal: PiProposal = {
+        id: newId('pip'),
+        name: turn.name,
+        input: turn.input as Data,
+        ...(use === 'secret' && { secret: true as const }),
+        at: this.time(),
+      };
+      (command.proposals ??= []).push(proposal);
+      await this.saveCommand(tx, command);
+      return proposal;
+    });
+    if (!proposal)
+      return {
+        error: {
+          code: 'too_many_proposals',
+          message: 'This answer has proposed 16 calls: say what is left',
+        },
+      };
+    this.streams.changed(turn.conversationId, turn.commandId);
+    return {
+      proposed: { id: proposal.id, name: proposal.name },
+      note: 'The person sees this exact call with a Run button; it runs as them only if they press it.',
+    };
+  }
+
+  /** pi.run: the person presses Run on a call their agent proposed, which runs once, as them, with
+   * every check their own call meets. A secret result reaches only them: nothing keeps it. */
+  async run(caller: Caller, input: unknown): Promise<{ result: unknown }> {
+    this.ready();
+    const value = parse(runInput, input);
+    const find = (command: PiCommandRecord) =>
+      command.proposals?.find(({ id }) => id === value.proposalId);
+    const proposal = await this.state.transaction(async (tx) => {
+      const conversation = await this.owned(caller, value.id, tx);
+      check(
+        !conversation.activeCommandId,
+        'pi_turn_busy',
+        'This conversation already has an active turn',
+        409,
+      );
+      const command = await this.command(tx, value.id, value.commandId);
+      const proposal = find(command);
+      check(proposal, 'pi_not_found', 'Proposal not found', 404);
+      check(!proposal.ran, 'pi_proposal_ran', 'This call has already run', 409);
+      proposal.ran = { at: this.time() };
+      await this.saveCommand(tx, command);
+      return proposal;
+    });
+    const settle = (ok: boolean, code?: string) =>
+      this.state.transaction(async (tx) => {
+        const command = await this.command(tx, value.id, value.commandId);
+        Object.assign(find(command)!.ran!, { ok, ...(code && { code }) });
+        await this.saveCommand(tx, command);
+      });
+    try {
+      const result = await this.tools.call(proposal.name, caller, proposal.input);
+      await settle(true);
+      return { result };
+    } catch (error) {
+      await settle(false, error instanceof MervError ? error.code : 'tool_failed');
+      throw error;
+    } finally {
+      this.streams.changed(value.id, value.commandId);
+    }
+  }
+
   /** switch_machine: the agent starts a move without asking (T2), within the move rules and only
    * to a machine its person may pick here. The new machine serves later turns once ready. */
   private async switchMachine(

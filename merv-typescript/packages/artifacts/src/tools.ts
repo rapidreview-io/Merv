@@ -12,8 +12,11 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
+      conversation?: (input: z.infer<S>) => 'secret' | undefined,
     ) =>
-      ctx.effect(() => ctx.tools.register({ name, description, inputSchema, handler, readOnly }));
+      ctx.effect(() =>
+        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+      );
     register(
       'artifact.create',
       'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.',
@@ -46,6 +49,8 @@ export const artifactToolsPlugin = {
           ? await ctx.artifacts.download(c, i.artifactId)
           : await ctx.artifacts.read(c, i.artifactId),
       true,
+      // A download URL is a bearer secret: only the person sees it.
+      (i) => (i.mode === 'download' ? 'secret' : undefined),
     );
     register(
       'artifact.list',

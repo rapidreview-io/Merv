@@ -64,6 +64,22 @@ export interface PiCommand {
   firstTextAt?: string;
   expiresAt: string;
   completedAt: string | null;
+  /** Calls the agent proposed in this turn, which the person's page shows with Run. */
+  proposals?: PiProposal[];
+}
+/** A call only the person may run (ToolDefinition.conversation), as the agent proposed it: Main's
+ * parsed copy of its exact input. */
+export interface PiProposal {
+  /** 'pip_…' */
+  id: string;
+  /** The native tool name. */
+  name: string;
+  input: Data;
+  /** Its result is shown only to the person and never kept. */
+  secret?: true;
+  at: string;
+  /** Claimed when the person pressed Run, so it runs once; ok and code once it returned. */
+  ran?: { at: string; ok?: boolean; code?: string };
 }
 export interface PiCommandRecord extends PiCommand {
   inputHash: string;
@@ -334,6 +350,8 @@ export interface Pi {
   setMachine(caller: Caller, input: unknown): Promise<PiHostView>;
   /** pi.machine.stop {}: interrupt every turn of the host, release every slot, clear sticky (T9). */
   stopMachine(caller: Caller): Promise<PiHostView>;
+  /** pi.run {id, commandId, proposalId}: run a call the agent proposed, once, as the person. */
+  run(caller: Caller, input: unknown): Promise<{ result: unknown }>;
 }
 /** Server-facing contract: transport and UI do not need the service implementation. */
 export interface PiRuntime extends Pi {

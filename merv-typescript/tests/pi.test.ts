@@ -414,6 +414,15 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
       await assert.rejects(agent(name), code('pi_tool_forbidden'), `${label} ${name}`);
     // The real actor tools: only an operator reads another actor's credentials, and never
     // through a key, directly or through the agent.
+    // What only the person may run is proposed, never run; Run runs it as them, with exactly the
+    // outcome of their own direct call.
+    const proposed: string[] = [];
+    if (role !== 'reader')
+      for (const name of ['probe.propose', 'probe.secret']) {
+        const reply = (await agent(name)) as { proposed: { id: string; name: string } };
+        assert.equal(reply.proposed.name, name, label);
+        proposed.push(reply.proposed.id);
+      }
     const other = { actorId: someone.actor.id };
     const allowed = role === 'operator' && kind !== 'key';
     const direct = await f.tools.call('actor.credentials', caller, other).then(
@@ -422,10 +431,25 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
     );
     const via = (await agent('actor.credentials', other)) as { error?: { code: string } };
     assert.deepEqual([direct, !via.error], [allowed, allowed], label);
+    for (const name of ['probe.propose', 'probe.secret', 'probe.never', 'pi.probe'])
+      assert.equal(runs[name], undefined);
     await f.pi.complete(token, f.completion(input));
+    for (const [index, proposalId] of proposed.entries()) {
+      const name = ['probe.propose', 'probe.secret'][index];
+      const direct = await f.tools.call(name, caller, {}).then(
+        () => true,
+        () => false,
+      );
+      const ran = await f.pi
+        .run(caller, { id: input.conversationId, commandId: input.commandId, proposalId })
+        .then(
+          () => true,
+          (error) => (assert.equal(error.code, 'forbidden', label), false),
+        );
+      assert.equal(ran, direct, `${label} ${name}`);
+      delete runs[name];
+    }
   }
-  for (const name of ['probe.propose', 'probe.secret', 'probe.never', 'pi.probe'])
-    assert.equal(runs[name], undefined);
   assert.equal(f.mutations, 0);
 });
 
@@ -496,6 +520,141 @@ test('a role change ends the running turn, the next offers the new role’s tool
     f.pi.create(f.hostCaller, { requestId: 'host', title: 'Chat' }),
     code('pi_forbidden'),
   );
+});
+
+test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
+  const f = await fixture(t);
+  const runs = probes(f, t);
+  // A gate only a signed-in person passes, as code.publication.merge and workflow.extend_limit keep.
+  t.after(
+    f.tools.register({
+      name: 'probe.signed',
+      description: 'Signed-in person only',
+      conversation: 'propose',
+      inputSchema: z.object({ note: z.string().optional() }).strict(),
+      handler: (caller: Caller) => {
+        check(caller.human && !caller.key, 'forbidden', 'A signed-in person must do this', 403);
+        return { signed: true };
+      },
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const key = all.find(({ kind, role }) => kind === 'key' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const agent = (name: string, value: object = {}) =>
+    f.pi.tool(turn.token, { ...turn.input, name, input: value });
+  const ids: string[] = [];
+  for (let index = 0; index < 16; index++)
+    ids.push(
+      ((await agent(index ? 'probe.signed' : 'probe.secret')) as { proposed: { id: string } })
+        .proposed.id,
+    );
+  assert.deepEqual(
+    ((await agent('probe.signed')) as { error: { code: string } }).error.code,
+    'too_many_proposals',
+  );
+  assert.equal(
+    ((await agent('probe.signed', { note: 7 })) as { error: { code: string } }).error.code,
+    'invalid_input',
+  );
+  const run = (caller: Caller, proposalId: string, commandId = turn.input.commandId) =>
+    f.pi.run(caller, { id: turn.input.conversationId, commandId, proposalId });
+  await assert.rejects(run(human, ids[1]), code('pi_turn_busy'));
+  const conversationCaller: Caller = {
+    actorId: human.actorId,
+    projectId: human.projectId,
+    conversation: {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      runtimeId: turn.work.command.runtimeId,
+      epoch: turn.work.command.epoch,
+    },
+  };
+  await assert.rejects(run(conversationCaller, ids[1]), code('pi_forbidden'));
+  const result = f.completion(turn.input);
+  result.outcomes = [
+    { callId: 'propose_1', name: 'probe.secret', input: {}, output: { proposed: {} } },
+  ];
+  await f.pi.complete(turn.token, result);
+  assert.deepEqual(await run(human, ids[0]), { result: { token: 'secret' } });
+  assert.equal(runs['probe.secret'], 1);
+  await assert.rejects(run(human, ids[0]), code('pi_proposal_ran'));
+  assert.equal(runs['probe.secret'], 1);
+  await assert.rejects(run(human, 'pip_missing'), code('pi_not_found'));
+  // The signed-in gate passes when the person presses Run, and fails through their key.
+  assert.deepEqual(await run(human, ids[1]), { result: { signed: true } });
+  const keyTurn = await f.begun(key);
+  await f.pi.tool(keyTurn.token, { ...keyTurn.input, name: 'probe.signed', input: {} });
+  await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
+  const [keyProposal] = (await f.pi.snapshot(key, keyTurn.input.conversationId)).commands[0]
+    .proposals!;
+  await assert.rejects(
+    f.pi.run(key, {
+      id: keyTurn.input.conversationId,
+      commandId: keyTurn.input.commandId,
+      proposalId: keyProposal.id,
+    }),
+    code('forbidden'),
+  );
+  const shown = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
+  assert.deepEqual(
+    shown.proposals!.slice(0, 2).map(({ name, secret, ran }) => [name, secret, ran?.ok]),
+    [
+      ['probe.secret', true, true],
+      ['probe.signed', undefined, true],
+    ],
+  );
+  // Nothing keeps a secret result: not the command, its outcomes or its messages.
+  assert.ok(!JSON.stringify(shown).includes('"token":"secret"'));
+  const stored = await f.state.read((sql) =>
+    sql.all<{ data_json: string }>('SELECT data_json FROM pi_commands'),
+  );
+  assert.ok(stored.every(({ data_json }) => !data_json.includes('"token":"secret"')));
+});
+
+test('a Fleet halt the person runs from a proposal is recorded as theirs', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.fleet.registerOwner('workflow', {
+      valid: async () => true,
+      bootstrap: async () => '',
+      observe: async () => 'running',
+    }),
+  );
+  t.after(
+    f.tools.register({
+      name: 'fleet.halt',
+      description: 'Halt an allocation',
+      conversation: 'propose',
+      inputSchema: z.object({ id: z.string() }).strict(),
+      handler: (caller: Caller, input: { id: string }) => f.fleet.cancel(caller, input.id),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const robot = all.find(({ kind, role }) => kind === 'actor' && role === 'producer')!.caller;
+  const allocation = await f.fleet.request(robot, {
+    requestId: 'robot_work',
+    owner: { kind: 'workflow', id: 'robot_work' },
+  });
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, {
+    ...turn.input,
+    name: 'fleet.halt',
+    input: { id: allocation.id },
+  })) as { proposed: { id: string } };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  await f.pi.run(human, {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  });
+  const halted = (await f.state.events(human.projectId)).filter(
+    ({ type, subjectId }) => type === 'fleet.changed' && subjectId === allocation.id,
+  );
+  assert.equal(halted.at(-1)?.actorId, human.actorId);
+  assert.equal(halted.at(-1)?.data.intent, 'stop');
 });
 
 test('recoverable tool failures and oversized results come back to the model as results', async (t) => {

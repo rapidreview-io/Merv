@@ -19,6 +19,7 @@ import {
   type PiEvent,
   type PiHostView,
   type PiMachine,
+  type PiProposal,
   type PiSnapshot,
 } from '../pi-stream';
 import { stepped } from '../record-picker';
@@ -181,6 +182,47 @@ function LiveAnswer({ text, follow }: { text: string; follow(): void }) {
   return <MarkdownPieces source={text.slice(0, shown)} names={names} />;
 }
 
+/** A result as text, its links live. */
+const linked = (text: string) =>
+  text.split(/(https?:\/\/[^\s"]+)/).map((part, index) =>
+    index % 2 ? (
+      <a key={index} href={part} target="_blank" rel="noreferrer">
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  );
+/** A call the agent proposed: the tool, Main's copy of its exact input, and Run, which runs it
+ * once as the person. A secret result shows here and nowhere else. */
+function Proposal({
+  proposal,
+  secret,
+  disabled,
+  run,
+}: {
+  proposal: PiProposal;
+  secret?: string;
+  disabled: boolean;
+  run(): void;
+}) {
+  return (
+    <article className="pi-proposal">
+      <code>{proposal.name}</code>
+      <pre>{JSON.stringify(proposal.input, null, 2)}</pre>
+      {secret && <pre>{linked(secret)}</pre>}
+      <button
+        className="btn btn--sm"
+        type="button"
+        disabled={disabled || !!proposal.ran}
+        onClick={run}
+      >
+        {!proposal.ran ? 'Run as me' : proposal.ran.ok === false ? 'Refused' : 'Ran'}
+      </button>
+    </article>
+  );
+}
+
 /** The person's machine in this project, which all their conversations here share: what it is, a
  * move under way or one that failed, and the picker. Releasing it asks first. */
 function Machine({
@@ -310,6 +352,9 @@ function PiConversationPage() {
   const [menu, setMenu] = useState<PiConversation[] | null>(null);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The proposal running now, and the secret results this page alone holds.
+  const [running, setRunning] = useState<string | null>(null);
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState('');
   const [streamError, setStreamError] = useState('');
@@ -595,8 +640,7 @@ function PiConversationPage() {
       },
     );
   };
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (text = draft.trim()) => {
     if (busy || blocked || unavailable || active || !text) return;
     if (pending.current?.text !== text) pending.current = { id: identifier(), text };
     const commandId = pending.current.id;
@@ -623,6 +667,31 @@ function PiConversationPage() {
         composer.current?.focus();
       }
     }
+  };
+  /** Runs a proposed call as the person, then tells the agent what happened, as their message. */
+  const run = async (commandId: string, proposal: PiProposal) => {
+    if (!selected || running || busy || active) return;
+    setRunning(proposal.id);
+    setError('');
+    let told: string;
+    try {
+      const { result } = await call<{ result: unknown }>('pi.run', {
+        id: selected,
+        commandId,
+        proposalId: proposal.id,
+      });
+      const json = JSON.stringify(result, null, 2) ?? 'null';
+      if (proposal.secret) setSecrets((value) => ({ ...value, [proposal.id]: json }));
+      const clipped = (JSON.stringify(result) ?? 'null').slice(0, 4000);
+      told = proposal.secret
+        ? `Ran ${proposal.name}; its result is shown only to me.`
+        : `Ran ${proposal.name}: ${clipped}`;
+    } catch (cause) {
+      told = `${proposal.name} was refused: ${said(cause, 'it failed')}`;
+    } finally {
+      if (valid()) setRunning(null);
+    }
+    if (valid() && selection.current === selected) await send(told);
   };
   /** The picker answers with the machine as it now stands, the same in every conversation here. */
   const machine = async (
@@ -781,6 +850,15 @@ function PiConversationPage() {
               {visible.progress && <p className="muted">{visible.progress}</p>}
             </article>
           )}
+          {latest?.proposals?.map((proposal) => (
+            <Proposal
+              key={proposal.id}
+              proposal={proposal}
+              secret={secrets[proposal.id]}
+              disabled={active || busy || !!running}
+              run={() => void run(latest.id, proposal)}
+            />
+          ))}
           {active && !unavailable && (
             // Where the eye waits; the bar above already says it aloud.
             <p className="pi-state" aria-hidden="true">

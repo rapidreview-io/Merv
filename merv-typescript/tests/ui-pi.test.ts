@@ -1452,6 +1452,85 @@ test('the transcript marks where the machine changed between two turns', async (
   assert.equal(dividers[0].nextElementSibling?.textContent, 'Youthird');
 });
 
+test('a proposed call shows as the tool, its input and Run, which runs it once as the person', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const proposals = [
+    { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: '2026-09-20T00:00:01Z' },
+    {
+      id: 'pip_download',
+      name: 'artifact.read',
+      input: { artifactId: 'art_1', mode: 'download' },
+      secret: true,
+      at: '2026-09-20T00:00:02Z',
+    },
+  ];
+  const asked = [{ role: 'user', text: 'Stop that machine' }];
+  const turn = (status: string, ran: Record<string, object> = {}) => ({
+    ...command('c1', status, asked),
+    proposals: proposals.map((proposal) =>
+      ran[proposal.id] ? { ...proposal, ran: ran[proposal.id] } : proposal,
+    ),
+  });
+  let state = snapshot({ ...conversation(), activeCommandId: 'c1' }, [turn('working')]);
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  const runs: Record<string, unknown>[] = [];
+  serve('/tools/pi.run', (_count, input) => {
+    runs.push(input);
+    return input.proposalId === 'pip_halt'
+      ? {
+          status: 403,
+          body: { error: { code: 'forbidden', message: 'Actor lacks admin permission' } },
+        }
+      : {
+          body: {
+            result: { result: { url: 'https://files.example/art_1?sig=abc', expiresAt: 'soon' } },
+          },
+        };
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await settle(10);
+  const cards = () => [...document.querySelectorAll('.pi-proposal')];
+  assert.equal(cards().length, 2);
+  // The tool, its exact input and the button: nothing else.
+  assert.equal(
+    cards()[0].textContent,
+    `fleet.halt${JSON.stringify({ id: 'flt_1' }, null, 2)}Run as me`,
+  );
+  const buttons = () => cards().map((card) => card.querySelector('button')!);
+  // While the turn runs, nothing can be run.
+  assert.ok(buttons().every((button) => button.disabled));
+  state = snapshot(conversation(), [turn('completed')]);
+  await act(async () => stream.push('snapshot', state));
+  assert.ok(buttons().every((button) => !button.disabled));
+  await act(async () => buttons()[1].click());
+  await settle(10);
+  assert.deepEqual(runs[0], { id: 'conversation_1', commandId: 'c1', proposalId: 'pip_download' });
+  // A secret result shows only in its card, with its link live, and never reaches the agent.
+  const link = cards()[1].querySelector('a')!;
+  assert.equal(link.href, 'https://files.example/art_1?sig=abc');
+  assert.deepEqual(
+    sent.map(({ text }) => text),
+    ['Ran artifact.read; its result is shown only to me.'],
+  );
+  assert.ok(!JSON.stringify(sent).includes('sig=abc'));
+  state = snapshot(conversation(), [turn('completed', { pip_download: { at: 'now', ok: true } })]);
+  await act(async () => stream.push('snapshot', state));
+  assert.equal(buttons()[1].disabled, true);
+  assert.equal(buttons()[1].textContent, 'Ran');
+  await act(async () => buttons()[0].click());
+  await settle(10);
+  assert.equal(sent[1].text, 'fleet.halt was refused: Actor lacks admin permission');
+});
+
 test('unavailable Agent is inert, including SSE and list', async (t) => {
   t.after(cleanup);
   setProject('p1');

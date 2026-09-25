@@ -13,6 +13,16 @@ export interface PiCommand {
   error: string | null;
   /** The machine key the turn ran (or will run) on; absent on turns from before machines. */
   machine?: string;
+  /** Calls the agent proposed, which run as the person only when they press Run. */
+  proposals?: PiProposal[];
+}
+/** Mirrors the server's PiProposal. */
+export interface PiProposal {
+  id: string;
+  name: string;
+  input: unknown;
+  secret?: true;
+  ran?: { at: string; ok?: boolean; code?: string };
 }
 /** Mirrors the server's PiMachine, PiMachineOption, PiMove and PiHostView. */
 export interface PiMachine {

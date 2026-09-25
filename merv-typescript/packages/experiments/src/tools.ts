@@ -55,6 +55,9 @@ export const experimentsToolsPlugin = {
         description:
           'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. Retry preserves the approved plan and attempt. Terminal closure requires a specific reason in evidence.reason. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
         inputSchema: experimentTransitionSchema,
+        // Ending an experiment cannot be undone: the person does it.
+        conversation: (input: ExperimentTransition) =>
+          ['abandon', 'mark_failed'].includes(input.transition) ? 'propose' : undefined,
         handler: async (caller: Caller, input: ExperimentTransition) =>
           await experiments.transition(caller, input),
       },

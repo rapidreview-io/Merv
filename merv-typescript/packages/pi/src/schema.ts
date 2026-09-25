@@ -15,6 +15,8 @@ export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000) })
   .strict();
 export const warmInput = z.object({ requestId: id, conversationId: id.optional() }).strict();
+/** pi.run: the conversation, the turn and the proposal whose call the person runs. */
+export const runInput = z.object({ id, commandId: id, proposalId: id }).strict();
 /** A PiMachine key, e.g. 'standard' or 'large'. */
 export const machineKey = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/);
 /** pi.machine.set */

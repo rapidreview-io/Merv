@@ -13,8 +13,11 @@ export const scopeToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
+      conversation?: 'propose' | 'secret',
     ) =>
-      ctx.effect(() => ctx.tools.register({ name, description, inputSchema, handler, readOnly }));
+      ctx.effect(() =>
+        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+      );
     register(
       'project.get',
       'Read the current project.',
@@ -58,6 +61,8 @@ export const scopeToolsPlugin = {
         })
         .strict(),
       async (c, i) => await ctx.scope.issueActor(c, i),
+      false,
+      'secret',
     );
     register(
       'actor.credentials',
@@ -81,6 +86,8 @@ export const scopeToolsPlugin = {
         })
         .strict(),
       async (c, i) => await ctx.scope.issueActorCredential(c, i),
+      false,
+      'secret',
     );
     register(
       'actor.rotate_token',
@@ -97,6 +104,8 @@ export const scopeToolsPlugin = {
         })
         .strict(),
       async (c, i) => await ctx.scope.rotateCredential(c, i),
+      false,
+      'secret',
     );
     register(
       'actor.revoke_token',
@@ -106,6 +115,8 @@ export const scopeToolsPlugin = {
         await ctx.scope.revokeCredential(c, i.credentialId);
         return { revoked: true };
       },
+      false,
+      'propose',
     );
     register(
       'actor.revoke',
@@ -115,6 +126,8 @@ export const scopeToolsPlugin = {
         await ctx.scope.revokeActor(c, i.actorId);
         return { revoked: true };
       },
+      false,
+      'propose',
     );
   },
 };

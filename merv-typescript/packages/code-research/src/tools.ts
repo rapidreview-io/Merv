@@ -35,6 +35,7 @@ export const codeToolsPlugin = {
     const definitions = [
       {
         name: 'code.repository.prepare',
+        conversation: 'propose' as const,
         description:
           'Prepare the linked GitHub repository for research using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Binds the repository and imports its history using durable operations; ready means the selected commit is stored. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.',
         inputSchema: repositoryPrepareSchema,
@@ -43,6 +44,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.publication.merge',
+        conversation: 'propose' as const,
         description:
           'Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.',
         inputSchema: codePublicationMergeSchema,
@@ -51,6 +53,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.publication.sync',
+        conversation: 'propose' as const,
         description:
           'Reconcile the server publication journal: open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Requires project write authority and refuses leased workers.',
         inputSchema: z.object({}).strict(),
@@ -58,6 +61,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.publication.control',
+        conversation: 'propose' as const,
         description:
           'Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
         inputSchema: publicationControlSchema,
@@ -66,6 +70,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.commit',
+        conversation: 'never' as const,
         description:
           'Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.',
         inputSchema: codeCommitInputSchema,
@@ -74,6 +79,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.merge',
+        conversation: 'never' as const,
         description:
           'Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.',
         inputSchema: codeMergeInputSchema,
@@ -118,6 +124,9 @@ export const codeToolsPlugin = {
         ] as const
       ).map(([action, instruction]) => ({
         name: `code.base.${action}`,
+        conversation: ['retry', 'cancel', 'quarantine'].includes(action)
+          ? ('propose' as const)
+          : undefined,
         description: `${instruction} Supply the key from code.status, a reason and a stable requestId. Only a human or operator key with project admin permission may call it, never a leased worker.`,
         inputSchema: baseControlSchema.omit({ action: true }),
         handler: async (caller: Caller, input: Omit<CodeBaseControl, 'action'>) =>
@@ -126,6 +135,7 @@ export const codeToolsPlugin = {
       // Nothing below is granted by any execution policy, so no leased worker calls it.
       {
         name: 'code.local.bind',
+        conversation: 'propose' as const,
         description:
           'Bind this project to a repository identity and name the commit of its main before importing history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. Use the existing runner repositoryId when importing legacy acceptances. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
         inputSchema: codeLocalBindInputSchema,
@@ -153,6 +163,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.repository.import',
+        conversation: 'propose' as const,
         description:
           'Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker, and the project must already be bound with code.local.bind. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.',
         inputSchema: codeRepositoryImportInputSchema,
@@ -161,6 +172,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.repository.configure',
+        conversation: 'propose' as const,
         description:
           'Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.',
         inputSchema: codeRepositoryConfigureInputSchema,
@@ -169,6 +181,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.repository.rebind',
+        conversation: 'propose' as const,
         description:
           'Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.',
         inputSchema: codeRepositoryRebindInputSchema,
@@ -177,6 +190,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.unit.fence',
+        conversation: 'propose' as const,
         description:
           'End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.',
         inputSchema: codeUnitFenceInputSchema,
@@ -193,6 +207,7 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.mirror.retry',
+        conversation: 'propose' as const,
         description:
           'Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.',
         inputSchema: codeMirrorRetryInputSchema,

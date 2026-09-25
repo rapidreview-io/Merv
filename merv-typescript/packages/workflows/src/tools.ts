@@ -94,6 +94,7 @@ export const workflowToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'workflow.extend_limit',
+        conversation: 'propose',
         description:
           'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return buys one more automated review.',
         readOnly: false,

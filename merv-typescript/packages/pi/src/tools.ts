@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
-import { createInput, id, machineInput, sendInput, warmInput } from './schema.js';
+import { createInput, id, machineInput, runInput, sendInput, warmInput } from './schema.js';
 
 export const piToolsPlugin = {
   name: 'merv-pi-tools',
@@ -66,6 +66,14 @@ export const piToolsPlugin = {
         inputSchema: machineInput,
         handler: (caller: Parameters<typeof ctx.pi.setMachine>[0], input: unknown) =>
           ctx.pi.setMachine(caller, input),
+      },
+      {
+        name: 'pi.run',
+        description:
+          'Run a call your agent proposed in this conversation, once, as you. Its result comes back only to you.',
+        inputSchema: runInput,
+        handler: (caller: Parameters<typeof ctx.pi.run>[0], input: unknown) =>
+          ctx.pi.run(caller, input),
       },
       {
         name: 'pi.machine.stop',
