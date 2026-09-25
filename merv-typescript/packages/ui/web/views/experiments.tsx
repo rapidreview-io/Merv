@@ -31,11 +31,11 @@ import { WorkList } from './work';
 import type { ViewProps } from './index';
 
 /** The domain's own order; a role with nothing retained under it is left out. */
-const ROLES = ['plan', 'result', 'report', 'exhibit'] as const;
+const ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'] as const;
 const STAGE = { design: 'Design review', results: 'Results review' };
 
 /** Retained files grouped by the part they play, each opening where it is listed. */
-function EvidenceFiles({
+export function EvidenceFiles({
   evidence,
   figures,
 }: {

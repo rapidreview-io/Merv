@@ -509,6 +509,11 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
   f.unbind();
   f.unbindReviews();
   await assert.rejects(f.reviews.start(f.admin, request.id), { code: 'review_independence' });
+  // What follows is the Reviews protocol alone: as the task's own review, only a leased worker
+  // could claim it.
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE tasks SET review_id=NULL WHERE id=?', taskId).then(() => undefined),
+  );
   const independent = {
     projectId: f.admin.projectId,
     actorId: (await f.scope.issueActor(f.admin, { name: 'Independent', role: 'reviewer' })).actor
@@ -1151,6 +1156,23 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     capacity: 1,
     capabilities: ['code.v2'],
   });
+  // Each round's review is leased: only a leased worker may claim a Git task's review.
+  const reviewerIdentity = await f.scope.issueActor(f.admin, {
+    name: 'Independent review runner',
+    role: 'operator',
+  });
+  const reviewer = {
+    projectId: f.admin.projectId,
+    actorId: reviewerIdentity.actor.id,
+    credentialId: reviewerIdentity.credential.id,
+  };
+  await f.sessions.heartbeatRunner(reviewer, {
+    runnerId: 'round-reviewer',
+    machine: { hostname: 'rounds', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
   const ids: string[] = [];
   const submissions: string[] = [];
   for (let round = 1; round <= 3; round++) {
@@ -1229,7 +1251,17 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       (caller) => f.tasks.submitDelivery(caller, delivery),
     );
     submissions.push(submitted.deliveryCodeArtifactId!);
-    const review = await f.reviews.start(f.admin, submitted.reviewId!);
+    await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
+    const reviewSecret = `ms_${randomBytes(32).toString('base64url')}`;
+    const reviewSession = await f.sessions.offer(reviewer, {
+      instanceId: taskId,
+      expectedRevision: submitted.workflow.revision,
+      runnerId: 'round-reviewer',
+      requestId: `round-review-${round}`,
+      secret: reviewSecret,
+    });
+    const reviewWorker = await f.sessions.authenticate(reviewSecret);
+    const review = await f.reviews.get(reviewWorker, submitted.reviewId!);
     ids.push(review.id);
     const assessment = {
       ...reviewedFindings(review),
@@ -1247,9 +1279,12 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       })),
       requestId: `verdict-${round}`,
     };
-    const returned = await f.tasks.submitReview(f.admin, assessment);
+    const returned = await f.sessions.run(
+      await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
+      (caller) => f.tasks.submitReview(caller, assessment),
+    );
     assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
-    await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
+    await f.sessions.release(reviewer, { sessionId: reviewSession.id, runnerId: 'round-reviewer' });
     await f.events.drain();
     if (round === 1) {
       // A waiter that arrives while the returned resolution is reworked joins the same task.

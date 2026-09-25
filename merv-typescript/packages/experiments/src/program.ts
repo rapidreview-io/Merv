@@ -1,4 +1,4 @@
-import { excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
+import { requireDirecting, excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -1050,7 +1050,9 @@ export class ExperimentProgram {
           'This review is already reserved or claimed',
           409,
         );
-        // Source identity may be shared with a prior producer session. Independence belongs to the new worker.
+        // A source may have directed a prior producer session, but never directs the review of
+        // work it produced itself. The rest of independence belongs to the new worker.
+        requireDirecting(review, context.caller.actorId);
         return 'reviewer';
       },
       acquire: async (context) => {

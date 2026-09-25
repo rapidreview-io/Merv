@@ -440,11 +440,19 @@ export class ReflectionService implements Reflections {
     );
     return row;
   }
+  /**
+   * Every lens author and the synthesis author produced the wave, and a reviewer one of them
+   * directs is that author's hand.
+   */
   private async independent(caller: Caller, wave: WaveRow, tx: Transaction): Promise<void> {
     const submission = wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
+    const authors = [
+      submission?.producerId,
+      ...(await this.lensRows(wave, tx)).map((lens) => lens.producer_id),
+    ];
+    const authority = (await this.scope.authorityActor(caller, tx)).id;
     check(
-      caller.actorId !== submission?.producerId &&
-        !(await this.lensRows(wave, tx)).some((lens) => lens.producer_id === caller.actorId),
+      !authors.includes(caller.actorId) && !authors.includes(authority),
       'review_independence',
       'Reflection review must be independent of every lens author and the synthesis author',
       403,
@@ -493,7 +501,7 @@ export class ReflectionService implements Reflections {
       }
     } else if (reviewing) {
       check(wave.review_id, 'stale_review', 'Reflection review is missing', 409);
-      if (!delegated) await this.independent(caller, wave, tx);
+      await this.independent(caller, wave, tx);
       const review = await this.reviews.get(caller, wave.review_id, tx);
       check(
         review.subjectRevision === snapshot.revision,

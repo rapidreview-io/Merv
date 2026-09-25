@@ -29,7 +29,7 @@ import { openState } from './fixtures/state.js';
 
 const oid = (char: string) => char.repeat(40);
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-git-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
@@ -40,7 +40,7 @@ async function fixture(t: TestContext) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, limits),
   );
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -124,7 +124,7 @@ async function fixture(t: TestContext) {
     });
     return { session, control, checkout, worker: await sessions.authenticate(secret) };
   };
-  const verdict = async (caller: Caller, task: Task, value: 'pass' | 'needs_changes') => {
+  const verdict = async (caller: Caller, task: Task, value: 'pass' | 'needs_changes' | 'fail') => {
     const review = await reviews.get(caller, task.reviewId!);
     const input = {
       ...reviewedFindings(review),
@@ -485,17 +485,10 @@ test('A delivered commit is pinned for review as a rendered record, alone or bes
   // Returned for changes, the successor re-enters the checkout and delivers a commit of its own,
   // with a file beside it; neither rendered record of the first round may come back as evidence.
   await f.release(held.session.id);
-  const claimed = await f.reviews.start(f.reviewer, review.id);
-  const returned = await f.tasks.submitReview(f.reviewer, {
-    ...reviewedFindings(claimed),
-    reviewId: claimed.id,
-    claimId: claimed.claimId!,
-    verdict: 'needs_changes',
-    notes: 'The harness skips the last fixture; include it.',
-    expectedRevision: delivered.workflow.revision,
-    requestId: f.request(),
-  } as Parameters<typeof f.tasks.submitReview>[1]);
+  const reviewer = await f.leaseReview(delivered);
+  const returned = await f.verdict(reviewer.worker, delivered, 'needs_changes');
   assert.equal(returned.workflow.state, 'in_progress');
+  await f.release(reviewer.session.id, f.reviewer);
   const successor = await f.lease(returned, oid('a'));
   const next = await f.commit(successor, oid('b'));
   await f.receipt(successor, next, oid('d'));
@@ -569,7 +562,7 @@ test('A Git task passes only from the leased review pinned to its delivered comm
   assert.equal(reissued.workflow.revision, delivered.workflow.revision + 1);
   assert.deepEqual(reissued.deliveryCode, delivered.deliveryCode);
 
-  // Reviews admits an interactive claim without asking Tasks, so the guidance warns beforehand.
+  // The guidance says who may claim the review, and why.
   const guidance = await f.workflows.evaluate(f.reviewer, task.id);
   assert.match(
     guidance.actions.find((action) => action.action === 'start_review')!.instruction,
@@ -579,31 +572,13 @@ test('A Git task passes only from the leased review pinned to its delivered comm
     (await f.workflows.assignment(f.reviewer, task.id)).brief,
     /only a leased review worker.*task\.reissue_review/,
   );
-  // An interactive reviewer has no checkout: it may return the task but never pass it, and its
-  // claim shuts every leased reviewer out.
-  const claimed = await f.reviews.start(f.reviewer, reissued.reviewId!);
-  await assert.rejects(async () => await f.leaseReview(reissued), { code: 'review_unavailable' });
+  // A leased reviewer returns the task without a checkout; only a pass needs one.
+  const first = await f.leaseReview(reissued);
+  const claimed = await f.reviews.get(f.source, reissued.reviewId!);
   assert.ok(claimed.artifactIds.includes(delivered.deliveryCodeArtifactId!));
-  await assert.rejects(async () => await f.verdict(f.reviewer, reissued, 'pass'), {
-    code: 'task_commit_unfetched',
-  });
-  assert.deepEqual(
-    (
-      await f.workflows.evaluate(f.reviewer, task.id, {
-        action: 'submit_review',
-        input: {
-          ...reviewedFindings(claimed),
-          reviewId: claimed.id,
-          claimId: claimed.claimId!,
-          verdict: 'pass',
-          notes: 'Looks right.',
-        },
-      })
-    ).blockers.map((blocker) => blocker.code),
-    ['task_commit_unfetched'],
-  );
-  const returned = await f.verdict(f.reviewer, reissued, 'needs_changes');
+  const returned = await f.verdict(first.worker, reissued, 'needs_changes');
   assert.equal(returned.workflow.state, 'in_progress');
+  await f.release(first.session.id, f.reviewer);
 
   const successor = await f.lease(returned);
   const next = await f.commit(successor, oid('b'));
@@ -750,6 +725,102 @@ test('A Git task passes only from the leased review pinned to its delivered comm
       }),
     { code: 'workspace_base_conflict' },
   );
+});
+
+test('An interactive reviewer can neither be offered nor make the claim of a Git task review it could never pass, and a leased one can (C2)', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create({ workspace: 'git' });
+  const held = await f.lease(task);
+  const commandId = await f.commit(held);
+  await f.receipt(held, commandId);
+  const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+  await f.release(held.session.id);
+  const start = (await f.workflows.evaluate(f.reviewer, task.id)).actions.find(
+    (action) => action.action === 'start_review',
+  )!;
+  assert.equal(start.status, 'blocked', 'neither the desk nor Now shows Claim review');
+  assert.deepEqual(
+    start.blockers.map((blocker) => blocker.code),
+    ['leased_review_required'],
+  );
+  // Nor does the claim succeed from a tool caller that ignores the gate, an Agent included.
+  await assert.rejects(async () => await f.reviews.start(f.reviewer, delivered.reviewId!), {
+    code: 'leased_review_required',
+  });
+  assert.equal((await f.reviews.get(f.source, delivered.reviewId!)).status, 'requested');
+  // The pool of leased reviewers stays open: the reviewer's runner still leases the review.
+  const review = await f.leaseReview(delivered);
+  assert.equal(
+    (await f.reviews.get(f.source, delivered.reviewId!)).reviewerId,
+    review.worker.actorId,
+  );
+  // A scratch task's review is still claimed at the desk.
+  const scratch = await f.create();
+  const note = await f.artifacts.create(f.source, { title: 'Note', content: 'Evidence.' });
+  const handed = await f.tasks.submitDelivery(f.source, {
+    ...confirmedDelivery({ taskId: scratch.id, artifactIds: [note.id] }),
+    expectedRevision: 0,
+    requestId: f.request(),
+  });
+  assert.equal(
+    (await f.workflows.evaluate(f.reviewer, handed.id)).actions.find(
+      (action) => action.action === 'start_review',
+    )!.status,
+    'ready',
+  );
+});
+
+test('A Git task review past its review_rounds limit, which no runner is offered, is the interactive reviewer’s to claim and end', async (t) => {
+  const f = await fixture(t, { reviewRounds: 1 });
+  const task = await f.create({ workspace: 'git' });
+  const deliverOnce = async (current: Task, baseOid: string, headOid: string) => {
+    const held = await f.lease(current, baseOid);
+    const commandId = await f.commit(held, baseOid);
+    await f.receipt(held, commandId, headOid);
+    const delivered = await f.deliver(held, { artifactIds: [], commandId, confirmations: met() });
+    await f.release(held.session.id);
+    return delivered;
+  };
+  const first = await deliverOnce(task, oid('a'), oid('b'));
+  const review = await f.leaseReview(first);
+  await f.sessions.attach(f.reviewer, { ...review.control, workspace: review.checkout(oid('b')) });
+  const returned = await f.verdict(review.worker, first, 'needs_changes');
+  await f.release(review.session.id, f.reviewer);
+  const again = await deliverOnce(returned, oid('b'), oid('d'));
+
+  // The one allowed return is used: no runner is offered the review any more.
+  const status = await f.workflows.evaluate(f.reviewer, task.id);
+  assert.equal(status.currentGate, 'loop_limit_reached');
+  assert.ok(
+    !(await f.workflows.dispatchCandidates(f.reviewer)).some((item) => item.instanceId === task.id),
+  );
+  const start = status.actions.find((action) => action.action === 'start_review')!;
+  assert.equal(start.status, 'ready', 'the person the limit waits for may claim it');
+  const claimed = await f.reviews.start(f.reviewer, again.reviewId!);
+  // Without a checkout it may not pass the task, and the limit allows no return: it ends it.
+  await assert.rejects(async () => await f.verdict(f.reviewer, again, 'pass'), {
+    code: 'task_commit_unfetched',
+  });
+  assert.deepEqual(
+    (
+      await f.workflows.evaluate(f.reviewer, task.id, {
+        action: 'submit_review',
+        input: {
+          ...reviewedFindings(claimed),
+          reviewId: claimed.id,
+          claimId: claimed.claimId!,
+          verdict: 'pass',
+          notes: 'Looks right.',
+        },
+      })
+    ).blockers.map((blocker) => blocker.code),
+    ['task_commit_unfetched'],
+  );
+  await assert.rejects(async () => await f.verdict(f.reviewer, again, 'needs_changes'), {
+    code: 'loop_limit_reached',
+  });
+  const ended = await f.verdict(f.reviewer, again, 'fail');
+  assert.equal(ended.workflow.state, 'failed');
 });
 
 test('An unhosted Git task runs on the central-base version and records its legacy acceptance', async (t) => {

@@ -304,7 +304,7 @@ test('work whose delivery waits on the reader is theirs even when its gate repor
   );
 });
 
-test('a review is yours when the server says so, and claimed here only when its gate is ready', () => {
+test('a review is yours when the server says so and its gate lets you claim it, and claimed here only then', () => {
   const review = (id: string, subjectId: string, over: Record<string, unknown> = {}) => ({
     id,
     subjectId,
@@ -346,12 +346,14 @@ test('a review is yours when the server says so, and claimed here only when its 
   );
   assert.deepEqual(lines.yours.map((line: { id: string }) => line.id).sort(), [
     'review_a',
-    'review_b',
     'review_d',
   ]);
   assert.equal(byId.review_a.sentence, 'Review this delivery');
   assert.equal(byId.review_a.who, 'Ada', 'whose work it is');
   assert.equal(byId.review_a.claim, 'review_a');
+  // A review the server would let this reader claim, but whose gate refuses the claim, is not
+  // the reader's move: a Git task's review waits for a leased reviewer (C2).
+  assert.equal(byId.review_b.sentence, 'Waiting for a reviewer');
   assert.equal(byId.review_b.claim, undefined, 'a gate that is not ready offers no claim here');
   assert.equal(byId.review_d.sentence, 'Finish your review');
   assert.equal(byId.review_d.claim, undefined);

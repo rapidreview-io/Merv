@@ -36,7 +36,7 @@ export const reviewToolsPlugin = {
       {
         name: 'review.start',
         description:
-          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. For owner-certified reviews, both you and your directing authority must be independent of every retained contributor.',
+          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
         inputSchema: z.object({ reviewId: z.string().min(1) }).strict(),
         handler: async (
           caller: Parameters<typeof ctx.reviews.start>[0],
