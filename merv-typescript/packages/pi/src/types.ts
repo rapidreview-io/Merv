@@ -7,6 +7,7 @@ export type PiInterruption =
   | 'worker_interrupted'
   | 'runtime_lost'
   | 'runtime_refused'
+  | 'wallet_refused'
   | 'runtime_stopped'
   | 'turn_expired'
   | 'service_unavailable'

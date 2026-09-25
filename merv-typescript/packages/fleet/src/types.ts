@@ -45,7 +45,7 @@ export interface FleetAllocation {
 }
 /** runtime_unavailable: an ambiguous failure being retried with the same keys.
  * runtime_refused: the service refused before any machine could exist, so the slot was freed. */
-export type FleetError = 'runtime_unavailable' | 'runtime_refused';
+export type FleetError = 'runtime_unavailable' | 'runtime_refused' | 'wallet_refused';
 export interface FleetRequest {
   requestId: string;
   /** Pi hosts are kind `pi-host`, id `${hostId}:${epoch}`, requested by the Pi host identity. */

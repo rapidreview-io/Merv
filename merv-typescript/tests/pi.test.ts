@@ -1321,6 +1321,9 @@ test('Fleet outcomes end a turn with their own reason; a missing row counts as l
   await f.pi.tick();
   // With its only machine gone the host ends; the next send starts another.
   assert.deepEqual(await latest(), { error: 'runtime_refused', state: 'none' });
+  await rewrite((await f.send(conversation)).runtimeId, { error: 'wallet_refused' });
+  await f.pi.tick();
+  assert.deepEqual(await latest(), { error: 'wallet_refused', state: 'none' });
   // A lost machine's turn that has shown nothing starts again, once, on a fresh one.
   const deleted = (await f.send(conversation)).runtimeId;
   await f.state.transaction((tx) => tx.run('DELETE FROM fleet_allocations WHERE id=?', deleted));

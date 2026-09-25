@@ -84,6 +84,7 @@ interface Options {
   identity?: Json;
   manifest?: unknown;
   redirect?: boolean;
+  refusal?: { code: string; message: string; details?: { reason: string } };
 }
 interface Seen {
   path: string;
@@ -110,6 +111,10 @@ async function fixture(t: TestContext, options: Options = {}) {
     if (options.redirect && path === '/v1/sandboxes') {
       response.writeHead(302, { location: 'https://elsewhere.invalid/v1/sandboxes' });
       return response.end();
+    }
+    if (options.refusal && path === '/v1/sandboxes/sbx_one/renew') {
+      response.writeHead(400, { 'content-type': 'application/json' });
+      return response.end(JSON.stringify({ error: options.refusal }));
     }
     const body =
       path === '/v1/auth/me'
@@ -261,6 +266,25 @@ const failure = (code: string) => (error: unknown) => {
   assert.equal(error.code, code);
   return true;
 };
+
+test('wallet reasons keep their public refusal code while plain validation stays validation', async (t) => {
+  for (const reason of ['budget_exceeded', 'spending_suspended', undefined]) {
+    await t.test(reason ?? 'plain validation', async (child) => {
+      const remote = await fixture(child, {
+        refusal: {
+          code: 'validation',
+          message: 'refused',
+          ...(reason ? { details: { reason } } : {}),
+        },
+      });
+      const client = new SandboxClient(remote.url);
+      await assert.rejects(
+        client.write(configuration.connections[0]!, 'POST', '/v1/sandboxes/sbx_one/renew', {}),
+        failure(reason ? `sandbox_${reason}` : 'sandbox_validation'),
+      );
+    });
+  }
+});
 
 test('a manifest is accepted only in the published shape, and unusable controls never register', () => {
   const kept = parseManifest(manifest());

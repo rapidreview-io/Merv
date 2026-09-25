@@ -21,6 +21,7 @@ import type {
   Fleet,
   FleetAllocation,
   FleetConfig,
+  FleetError,
   FleetIntent,
   FleetOwner,
   FleetRequest,
@@ -67,6 +68,15 @@ const refused = (error: unknown) =>
   error.status >= 400 &&
   error.status < 500 &&
   ![408, 409, 429].includes(error.status);
+const walletRefused = (error: unknown) =>
+  error instanceof MervError &&
+  [
+    'sandbox_budget_exceeded',
+    'sandbox_spending_suspended',
+    'sandbox_provider_disabled',
+    'sandbox_usage_unresolved',
+    'sandbox_concurrency_exceeded',
+  ].includes(error.code);
 /** Provider and owner messages may carry credentials; operators get the finite code only. */
 const report = (event: string, a: FleetAllocation, error: unknown) => {
   const code = error instanceof MervError ? error.code : 'unexpected';
@@ -707,6 +717,7 @@ export class FleetService implements Fleet {
       // A false marker proves no create could have happened; older records count as attempted.
       let first = false;
       let create = false;
+      let refusal: FleetError = 'runtime_refused';
       a = await this.update(a.id, (current) => {
         if (current.runtime || current.phase === 'released') return;
         const connected = runtime.connected(place);
@@ -729,6 +740,7 @@ export class FleetService implements Fleet {
         .catch((error) => {
           // Refusing the first attempt proves no machine exists: free the slot, do not retry.
           if (!first || !refused(error)) throw error;
+          if (walletRefused(error)) refusal = 'wallet_refused';
           report('fleet.refused', a, error);
         });
       if (handle) await this.observed(a, handle, 'provisioning');
@@ -737,7 +749,7 @@ export class FleetService implements Fleet {
           if (current.runtime) return;
           current.intent = 'stop';
           current.phase = 'released';
-          current.error = 'runtime_refused';
+          current.error = refusal;
         });
       return;
     }

@@ -311,6 +311,40 @@ test('workflow bounds created but unclaimed retries across restart without block
   assert.equal(f.allocations[4]?.owner.id, 'task_b:2');
 });
 
+test('wallet refusals pause all workflow demand, retry one target, and preserve task attempts', async (t) => {
+  const f = await fixture(t, { maxAgents: 5 });
+  f.demand(targets('task', 4));
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 4);
+  for (const a of f.allocations) {
+    a.phase = 'released';
+    a.createAttempted = true;
+    a.error = 'wallet_refused';
+  }
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 4);
+  f.advance(15 * 60_000);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 5);
+  f.allocations[4]!.phase = 'released';
+  f.allocations[4]!.createAttempted = true;
+  f.allocations[4]!.error = 'wallet_refused';
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 5);
+  f.advance(15 * 60_000);
+  await f.adapter.reconcile();
+  assert.equal(
+    f.allocations.length,
+    6,
+    'the same revision can retry after repeated wallet refusals',
+  );
+  f.allocations[5]!.runtime = { sandboxId: 'admitted' } as FleetAllocation['runtime'];
+  f.allocations[5]!.phase = 'running';
+  f.allocations[5]!.updatedAt = new Date(Date.parse(f.allocations[4]!.updatedAt) + 1).toISOString();
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 9, 'one admission restores normal filling');
+});
+
 test('bootstrap carries only the managed enrollment and model key, with fixed profile and current identity', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);

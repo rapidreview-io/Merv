@@ -7,6 +7,13 @@ const route = /^\/v1\/[A-Za-z0-9._~/-]*$/;
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 /** The service's published error vocabulary: a lowercase token, never free text. */
 const errorCode = /^[a-z][a-z_]{0,39}$/;
+const walletReasons = new Set([
+  'budget_exceeded',
+  'spending_suspended',
+  'provider_disabled',
+  'usage_unresolved',
+  'concurrency_exceeded',
+]);
 const bodyLimit = 4_000_000;
 
 /** Count decoded response bytes as they arrive, even with absent/compressed Content-Length. */
@@ -299,7 +306,7 @@ export class SandboxClient {
     const envelope = disclose ? await this.#envelope(response) : undefined;
     return new MervError(
       envelope
-        ? `sandbox_${envelope.code}`
+        ? `sandbox_${envelope.reason && walletReasons.has(envelope.reason) ? envelope.reason : envelope.code}`
         : status === 404
           ? 'sandbox_not_found'
           : status < 500
@@ -310,14 +317,21 @@ export class SandboxClient {
     );
   }
 
-  async #envelope(response: Response): Promise<{ code: string; message: string } | undefined> {
+  async #envelope(
+    response: Response,
+  ): Promise<{ code: string; message: string; reason?: string } | undefined> {
     try {
       const text = await boundedText(response, 4096);
-      const error = (JSON.parse(text) as { error?: { code?: unknown; message?: unknown } }).error;
+      const error = (
+        JSON.parse(text) as {
+          error?: { code?: unknown; message?: unknown; details?: { reason?: unknown } };
+        }
+      ).error;
       const code = error?.code;
       return typeof code === 'string' && errorCode.test(code)
         ? {
             code,
+            reason: typeof error?.details?.reason === 'string' ? error.details.reason : undefined,
             message:
               typeof error?.message === 'string' && error.message
                 ? error.message.slice(0, 200)

@@ -104,11 +104,13 @@ const gone = (a: FleetAllocation | null | undefined, now: string) =>
   a.deadlineAt <= now;
 /** Why a turn on a gone slot ended. Fleet stops a failed machine too, but no one chose that. */
 const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
-  a?.error === 'runtime_refused'
-    ? 'runtime_refused'
-    : a && a.intent !== 'run' && a.runtime?.state !== 'failed'
-      ? 'runtime_stopped'
-      : 'runtime_lost';
+  a?.error === 'wallet_refused'
+    ? 'wallet_refused'
+    : a?.error === 'runtime_refused'
+      ? 'runtime_refused'
+      : a && a.intent !== 'run' && a.runtime?.state !== 'failed'
+        ? 'runtime_stopped'
+        : 'runtime_lost';
 const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
 const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
   value;
@@ -997,7 +999,9 @@ export class PiService implements Pi, FleetOwner {
   }
   /** A host's machines are for its person, whose day's compute they count toward. */
   async payer(_source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null> {
-    return this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null;
+    return (
+      this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null
+    );
   }
   /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {

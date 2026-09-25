@@ -404,8 +404,8 @@ from step 1 have to be done again.
   (`max_concurrent` for the account, member and namespaces) allows the new
   concurrency. Also confirm that each Cloudflare app's `max_instances` allows
   it. Otherwise the extra creates are refused, and those turns fail.
-- Keep the **USD 100 all-time cap** and accrued spend and accounting unless the
-  owner changes them.
+- The Fleet wallet cap is policy `fleet-canary-monthly`: USD 5,000 per UTC month,
+  all users (founder, 2026-09-25).
 
 ## Consumer rotation
 

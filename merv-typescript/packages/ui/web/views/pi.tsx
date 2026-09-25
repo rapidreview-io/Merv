@@ -73,6 +73,7 @@ const STOPPED: Record<string, string> = {
   worker_interrupted: 'The agent stopped unexpectedly. Ask again.',
   runtime_lost: 'The agent’s machine went away. Ask again.',
   runtime_refused: 'No machine could be started for the agent. Ask again later.',
+  wallet_refused: "Fleet's spending limit is reached.",
   runtime_stopped: 'The agent’s machine was stopped. Ask again.',
   turn_expired: 'The answer took too long. Ask again.',
   service_unavailable: 'The agent service is unavailable. Ask again later.',

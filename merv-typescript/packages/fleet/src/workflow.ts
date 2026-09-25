@@ -43,6 +43,7 @@ const startupGraceMs = 60_000;
 const emptyRunnerGraceMs = 30_000;
 const unclaimedRetryCooldownMs = 60_000;
 const unclaimedAttemptLimit = 2;
+const walletRetryCooldownMs = 15 * 60_000;
 /** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
 export const hostedCodexPlatform = Object.freeze({
   name: 'hosted-codex',
@@ -297,10 +298,22 @@ export class FleetWorkflowAdapter implements FleetOwner {
       this,
       [...served.values()].flatMap((wanted) => [...wanted.keys()]),
     );
+    const newestWallet = Math.max(
+      0,
+      ...allocations
+        .filter((a) => a.error === 'wallet_refused')
+        .map((a) => Date.parse(a.updatedAt)),
+    );
+    const newestAdmitted = Math.max(
+      0,
+      ...allocations.filter((a) => a.runtime).map((a) => Date.parse(a.updatedAt)),
+    );
+    const walletPaused = newestWallet > newestAdmitted;
     const active = allocations.filter(occupied);
     for (const a of active)
       if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.has(a.owner.id))
         await this.fleet.cancelOwned(this, a.id);
+    if (walletPaused && this.clock() - newestWallet < walletRetryCooldownMs) return;
     const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
     let slots = Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
@@ -314,7 +327,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work; a claimed session starts a new streak.
       for (const a of released.toReversed()) {
-        if (!a.createAttempted) continue;
+        if (!a.createAttempted || a.error === 'wallet_refused') continue;
         if ((await this.sessions.inspectManaged(a.id, a.epoch))?.session) break;
         unclaimed++;
         if (!lastUnclaimedAt) lastUnclaimedAt = Date.parse(a.updatedAt);
@@ -340,6 +353,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       }
       covered.add(id);
       slots--;
+      if (walletPaused) break;
     }
   }
   async close(): Promise<void> {
