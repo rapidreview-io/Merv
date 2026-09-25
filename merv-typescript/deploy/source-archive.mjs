@@ -84,12 +84,15 @@ export function publishLedgers(files, subject) {
     console.error(`${names} left uncommitted: HEAD is not origin/main's tip; commit them by path.`);
     return;
   }
-  for (const step of [
-    ['commit', '-q', '-m', `${subject} [skip ci]`, '--', ...files],
-    ['push', '-q', 'origin', 'HEAD:main'],
-  ]) {
-    const r = git(...step);
-    if (r.status !== 0) return console.error(`${names}: git ${step[0]} failed: ${r.stderr.trim()}`);
-  }
-  console.log(`${names} committed and pushed to origin main`);
+  const failed = (r, step) =>
+    r.status !== 0 && !console.error(`${names}: git ${step} failed: ${r.stderr.trim()}`);
+  if (failed(git('commit', '-q', '-m', `${subject} [skip ci]`, '--', ...files), 'commit')) return;
+  // A peer session may commit here meanwhile: push only this commit, and only if it sits on the tip.
+  const [commit, parent] = git('rev-parse', 'HEAD', 'HEAD^').stdout.split('\n');
+  if (parent !== tip)
+    return console.error(
+      `${names} committed but not pushed: a peer's commit landed under them; push once it is reviewed.`,
+    );
+  if (!failed(git('push', '-q', 'origin', `${commit}:refs/heads/main`), 'push'))
+    console.log(`${names} committed and pushed to origin main`);
 }

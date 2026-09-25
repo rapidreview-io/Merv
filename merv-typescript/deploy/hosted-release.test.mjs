@@ -712,6 +712,25 @@ test("a production ledger is committed by path and pushed only from origin/main'
     publishLedgers(ledgers, 'Record run R2');
     assert.equal(git(origin, 'log', '-1', '--format=%s', 'main'), 'Record run R1 [skip ci]');
     assert.equal(git(work, 'status', '--porcelain'), 'M RELEASES.md');
+    // A peer commit made while ls-remote runs lands under the ledger commit, so neither is pushed.
+    git(work, 'reset', '-q', '--hard', 'origin/main');
+    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const peer = `${real} -C ${work} commit -qm peer -- peer.txt`;
+    writeFileSync(
+      join(t, 'git'),
+      `#!/bin/sh\ncase "$*" in *ls-remote*) ${peer};; esac\nexec ${real} "$@"\n`,
+    );
+    execFileSync('chmod', ['+x', join(t, 'git')]);
+    for (const file of [...ledgers, join(work, 'peer.txt')]) writeFileSync(file, 'v4\n');
+    const path = process.env.PATH;
+    process.env.PATH = `${t}:${path}`;
+    try {
+      publishLedgers(ledgers, 'Record run R3');
+    } finally {
+      process.env.PATH = path;
+    }
+    assert.equal(git(origin, 'log', '-1', '--format=%s', 'main'), 'Record run R1 [skip ci]');
+    assert.equal(git(work, 'log', '-2', '--format=%s'), 'Record run R3 [skip ci]\npeer');
   } finally {
     rmSync(t, { recursive: true, force: true });
   }
