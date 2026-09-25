@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useSyncExternalStore } from 'react';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { useTool } from './api';
 import { useSession } from './session';
@@ -77,27 +78,27 @@ function useNeedsYou(rows: Row[]): number {
   return standingOf(rows, home.data, actor, () => undefined).yours.length;
 }
 
-function useTheme() {
-  const [theme, setTheme] = useState(
-    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
-  );
-  const apply = (next: 'light' | 'dark') => {
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem('merv:theme', next);
-    } catch {
-      /* preference lives for this page only */
-    }
-    setTheme(next);
-  };
-  return { theme, toggle: () => apply(theme === 'dark' ? 'light' : 'dark') };
+/** The theme the page wears: the system's, as index.html follows it, until one is chosen here. */
+const worn = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+const onWorn = (changed: () => void) => {
+  const watch = new MutationObserver(changed);
+  watch.observe(document.documentElement, { attributeFilter: ['data-theme'] });
+  return () => watch.disconnect();
+};
+function wear(theme: 'light' | 'dark') {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem('merv:theme', theme);
+  } catch {
+    /* preference lives for this page only */
+  }
 }
 
 function AccountFoot() {
   const { actor, signOut } = useSession();
   // A person is named, never identified: a directory name that is an id names nobody.
   const who = personName(actor.name) ?? signedInEmail();
-  const { theme, toggle } = useTheme();
+  const theme = useSyncExternalStore(onWorn, worn);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLButtonElement>(null);
@@ -168,7 +169,7 @@ function AccountFoot() {
             role="menuitem"
             tabIndex={-1}
             className="account-menu-item"
-            onClick={toggle}
+            onClick={() => wear(theme === 'dark' ? 'light' : 'dark')}
           >
             Theme · {theme}
           </button>

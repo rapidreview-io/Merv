@@ -637,7 +637,8 @@ header.page-lede {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
 }
 .page-summary {
   margin-top: 6px;
@@ -2439,8 +2440,10 @@ select.input,
   .rail-switch {
     opacity: 1;
   }
-  .main {
-    padding-top: var(--topbar-h);
+  /* The rail is an overlay here, hidden or not, so there is no edge control to clear. */
+  .main,
+  .shell--nosb .main {
+    padding: var(--topbar-h) 0 0;
   }
   .agent-detail {
     scroll-margin-top: calc(var(--topbar-h) + var(--space-4));

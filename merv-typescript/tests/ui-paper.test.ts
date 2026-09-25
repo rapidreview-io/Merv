@@ -122,6 +122,26 @@ test('a section’s control is a named glyph, its text is read as markdown, and 
   assert.ok(text().includes('Longest documentProblem & scope'));
 });
 
+test('a section is linked by its document and title, and only a repeated title adds the end of its id', async (t) => {
+  t.after(async () => await unmount());
+  boot(
+    workspace([
+      section('problem', 'Problem'),
+      section('scope', 'Scope'),
+      section('s_scope2', 'Scope'),
+    ]),
+  );
+  await open();
+  assert.deepEqual(
+    [...document.querySelectorAll('.sec')].map((node) => node.id),
+    ['problem-problem', 'problem-scope', 'problem-scope-scope2'],
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('.out-sec')].map((link) => link.getAttribute('href')),
+    ['#problem-problem', '#problem-scope', '#problem-scope-scope2'],
+  );
+});
+
 test('with nothing written the limits row is left out, and a reader is offered no control', async (t) => {
   t.after(async () => await unmount());
   boot(workspace([]), 'reader');

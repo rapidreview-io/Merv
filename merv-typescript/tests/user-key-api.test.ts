@@ -195,7 +195,7 @@ test('only the verified owner manages key metadata, rotation lineage and strict 
   );
   assert.equal(widened.status, 400);
   assert.deepEqual(widened.body.error.details, [
-    { path: [], message: "Unrecognized key(s) in object: 'grantScope'" },
+    { path: [], message: "Unrecognized key(s) in object: 'grantScope'", code: 'unrecognized_keys' },
   ]);
   const rotated = await f.request<IssuedUserKey>(`/account/keys/${issued.key.id}/rotate`, {
     body: {},
