@@ -168,13 +168,9 @@ def _identity() -> dict[str, object]:
 
 def _listeners() -> list[str]:
     """Every TCP listener in this network namespace, as its local address and owner's uid."""
-    found = []
-    for table in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")):
-        for line in (table.read_text().splitlines()[1:] if table.exists() else []):
-            fields = line.split()
-            if fields[3] == "0A":
-                found.append(f"{fields[1]} {fields[7]}")
-    return sorted(found)
+    tables = [path for path in (Path("/proc/net/tcp"), Path("/proc/net/tcp6")) if path.exists()]
+    return sorted(f"{fields[1]} {fields[7]}" for table in tables
+                  for fields in map(str.split, table.read_text().splitlines()[1:]) if fields[3] == "0A")
 
 
 def _sshd() -> None:
