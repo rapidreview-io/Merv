@@ -21,6 +21,7 @@ on stdin, with a cloudflare_api_token that defaults to Standard's), its copy of 
 the host namespace's limits, then recreates Sandboxes. `machines` writes the host, the machine catalog and the host's Fleet
 limit into Main's env and dry-runs both the running image's render and this directory's, without
 recreating Main: the release that reads them does. Run it from that release's deploy directory.
+Both refuse unless Main and its env still name that Standard release and both apps run its image.
 Every phase refuses while a hosted-image run is open, and holds that pipeline's host lock.
 Never prints a secret. Every mutation follows a root-private backup and is undone on failure; the backups
 hold secrets, so shred ROOT once the connection is verified and recorded. See deploy/PI_OPERATIONS.md.
@@ -149,6 +150,23 @@ async def main():
         await c.stop()
 asyncio.run(main())'''
 
+# The image each named Cloudflare app runs, read natively through its Sandboxes provider.
+SBX_IMAGES = r'''import asyncio,json,sys
+from merv_sandboxes.config import Settings
+from merv_sandboxes.runtime import Container
+async def main():
+    c=Container(Settings.load())
+    try:
+        out={}
+        for name in json.load(sys.stdin):
+            d=c.providers._host[name].driver
+            a,_=await d._native_result(f'/accounts/{d._account_id}/containers/applications/{d._application_id}')
+            out[name]=(a.get('configuration') or {}).get('image')
+        print(json.dumps(out))
+    finally:
+        await c.stop()
+asyncio.run(main())'''
+
 MAIN_DRAIN = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});
 await c.connect();
@@ -258,6 +276,17 @@ def drains():
     assert all(v == 0 for v in sbx['drain'].values()), ('sandboxes_not_drained', sbx['drain'])
     assert main == {'fleet': 0, 'commands': 0, 'project': 1}, ('main_not_drained_or_project_unknown', main)
     return sbx['namespaces']
+
+
+def live_release(release, digest=None, apps=()):
+    """Main and its env file name `release` as Standard's (the legacy key), and each of `apps` runs the
+    image `digest` pins, as its provider reads it: another release in between would leave them stale."""
+    main = dict(item.split('=', 1) for item in inspect(MAIN)['Config']['Env'])
+    named = [env.get('MERV_FLEET_RUNTIME_RELEASE_ID') for env in (env_values(ENV.read_bytes()), main)]
+    assert named == [release, release], ('release_not_live', named)
+    if apps:
+        images = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_IMAGES], json.dumps(apps).encode()))
+        assert all(str(images[app]).endswith('@' + digest) for app in apps), ('image_not_live', images)
 
 
 def env_values(raw):
@@ -435,6 +464,7 @@ def large():
     release, application = OPTIONS['--release'], OPTIONS['--application']
     assert re.fullmatch(r'rt1_[0-9a-f]{64}', release), 'invalid_release'
     assert re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', application), 'invalid_application'
+    live_release(release)
     # The Large bridge's URL and token, and a native verification token that covers the Large app:
     # unless given, Standard's, which must then cover both apps.
     raw = sys.stdin.read(16385)
@@ -492,6 +522,7 @@ def large():
                                json.dumps({'account': ACCOUNT, 'namespace': NAMESPACE, 'check': LARGE}).encode()))
         assert check['resolved'] == 'host' and LARGE_SHAPE + ':cloudflare' in check['offers'], 'large_not_offered'
         assert {release, large_id} <= set(check['releases']), 'release_not_loaded'
+        live_release(release, standard[0]['image_digest'], [PROVIDER, LARGE])
         # Last, so a failure before it leaves the limits as they were.
         after = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_LIMITS], json.dumps(
             {'account': ACCOUNT, 'id': HOST_LIMIT_ID, 'set': HOST_LIMIT}).encode()))['limits']
@@ -500,6 +531,7 @@ def large():
                   ('SANDBOXES_PROVIDERS', 'SANDBOXES_RUNTIME_RELEASES', LARGE_CREDENTIAL_ENV), verify)
     receipt = {'phase': 'large-done', 'projectId': PROJECT, 'namespace': NAMESPACE, 'provider': LARGE,
                'applicationId': application, 'standardReleaseId': release, 'largeReleaseId': large_id,
+               'releaseDigest': standard[0]['image_digest'],
                'hostLimit': HOST_LIMIT_ID,
                # The most machines every concurrency cap on the host namespace lets it hold at once.
                'hostConcurrency': min([l['max_concurrent'] for l in caps if l['max_concurrent'] is not None]
@@ -524,6 +556,7 @@ def machines():
     values = env_values(env_raw)
     connected = [c['projectId'] for c in json.loads(values['MERV_SANDBOXES_CONNECTIONS'])]
     assert values.get('MERV_PI_ENABLED') == 'true' and PROJECT in connected, 'host_not_connected'
+    live_release(large['standardReleaseId'], large['releaseDigest'], [PROVIDER, LARGE])
     lease = int(values['MERV_FLEET_RUNTIME_LEASE_SECONDS'])
     catalog = [
         {'key': 'standard', 'label': 'Standard', 'slots': 3, 'provider': values['MERV_FLEET_RUNTIME_PROVIDER'],

@@ -10,9 +10,9 @@
 // private env files. --public also selects that log: the production origin writes
 // deploy/RELEASES.md, and any other origin (a staging VM) writes deploy/STAGING_RELEASES.md,
 // so a staging deploy can never be mistaken for a production one. A production release first lets
-// deploy/hosted-release.mjs finish any open hosted-image run, and after passing runs it again, which
-// does nothing unless the hosted Pi/Codex image's sources changed; --skip-hosted leaves the hosted
-// image for an emergency Main-only release. A production row is committed by path and pushed when
+// deploy/hosted-release.mjs finish any open hosted-image run and check the live pins, and after
+// passing runs it again, which does nothing unless the hosted Pi/Codex image's sources changed;
+// --skip-hosted leaves the hosted image for an emergency Main-only release. A production row is committed by path and pushed when
 // this checkout is at origin/main's tip.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
@@ -180,6 +180,12 @@ if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
   console.error(
     'A hosted image run is still open; Main was not released. Once production agrees on one of its releases, `node deploy/hosted-release.mjs --abandon` closes it.',
   );
+  process.exit(1);
+}
+// The hosted run after Main's release refuses pins that differ from the host's record; so does this
+// check, before Main names them.
+if (local && PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted('--check') !== 0) {
+  console.error("The hosted pins differ from the host's record (above); Main was not released.");
   process.exit(1);
 }
 const release = resume ?? local.release;

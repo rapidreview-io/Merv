@@ -529,6 +529,23 @@ print(json.dumps(res))`,
   assert.equal(out.restored, out.kept);
 });
 
+test('the pin check reads the apps of the machines Main or the env file names, and claims nothing', () => {
+  const out = py(
+    `${scratch}vm.ENV=t/'typescript.env'
+runtimes=json.dumps([{'provider':'cloudflare-fleet','releaseId':'${OLD}'},{'provider':'cloudflare-fleet-large','releaseId':'${OLD_L}'}])
+vm.ENV.write_text(f"{vm.KEY}=${OLD}\\n{vm.RUNTIMES}='{runtimes}'\\n")
+vm.env_of=lambda n:{vm.KEY:'${OLD}'} if n==vm.MAIN else {vm.CATALOG:'[]'}
+vm.native=lambda p:{'image':p};vm.release_ids=lambda entries:[]
+pins=vm.Step(r,{}).pins();pins['active']=vm.owner()
+print(json.dumps(pins))`,
+  );
+  // At the cutover the env file names Large before a release recreates Main with it.
+  assert.deepEqual(Object.keys(out.apps), ['cloudflare-fleet', 'cloudflare-fleet-large']);
+  assert.deepEqual(out.releases, { 'cloudflare-fleet': OLD });
+  assert.deepEqual(out.fileReleases, { 'cloudflare-fleet': OLD, 'cloudflare-fleet-large': OLD_L });
+  assert.equal(out.active, '');
+});
+
 test('the guard points each machine at the release its app runs once the driver falls silent', () => {
   const out = py(
     `${scratch}vm.claim('run1')
@@ -799,4 +816,49 @@ print(json.dumps(res))`,
   assert.equal(out.held, true);
   assert.match(out.busy, /a hosted-release step holds the host lock/);
   assert.match(out.open, /^hosted_run_open/);
+});
+
+test('the Pi host phases refuse a Standard release another release has since replaced', () => {
+  const connect = new URL('pi-connect-project.py', import.meta.url).pathname;
+  const env = (legacy) =>
+    [
+      'MERV_PI_ENABLED=true',
+      `MERV_SANDBOXES_CONNECTIONS='[{"projectId":"host_1"}]'`,
+      'MERV_FLEET_RUNTIME_LEASE_SECONDS=600',
+      'MERV_FLEET_RUNTIME_PROVIDER=cloudflare-fleet',
+      'MERV_FLEET_RUNTIME_OFFER_ID=o',
+      `MERV_FLEET_RUNTIME_RELEASE_ID=${legacy}\n`,
+    ].join('\n');
+  const out = py(
+    `import contextlib,io,pathlib,tempfile
+live={'main':'${OLD}','image':'reg@sha256:old'}
+def phase(*argv,large=None,env='${OLD}'):
+    sys.argv=['pi-connect-project.py',*argv]
+    spec=importlib.util.spec_from_file_location('connect',${JSON.stringify(connect)})
+    m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    t=pathlib.Path(tempfile.mkdtemp());m.HOST_ROOT,m.ROOT,m.ENV=t/'_host',t/'host_1',t/'env'
+    m.HOST_ROOT.mkdir();m.ROOT.mkdir();m.ENV.write_text(i[env])
+    for d,n,v in ((m.HOST_ROOT,'host.receipt.json',{'projectId':'host_1'}),(m.HOST_ROOT,'host.private.json',
+                  {'projectId':'host_1','token':'k'}),(m.ROOT,'main.receipt.json',{}),(m.ROOT,'large.receipt.json',large)):
+        if v is not None: (d/n).write_text(json.dumps(v))
+    labels={'com.docker.compose.project.working_dir':str(t)}
+    m.inspect=lambda n:{'Image':'img','Config':{'Env':['MERV_FLEET_RUNTIME_RELEASE_ID='+live['main']],'Labels':labels}}
+    m.run=lambda c,payload=None,**k:json.dumps({a:live['image'] for a in json.loads(payload)}).encode() if 'python' in c else b''
+    try:
+        with contextlib.redirect_stdout(io.StringIO()): getattr(m,argv[0])()
+        return (m.ROOT/'machines.receipt.json').exists()
+    except AssertionError as e: return e.args[0]
+receipt={'projectId':'host_1','standardReleaseId':'${OLD}','largeReleaseId':'${OLD_L}','releaseDigest':'sha256:old'}
+res={'live':phase('machines','host_1',large=receipt),'moved':phase('machines','host_1',large=receipt,env='${NEW}')}
+res['large']=phase('large','host_1','--release','${OLD}','--application','0'*8+'-0000'*3+'-'+'0'*12,env='${NEW}')
+live['image']='reg@sha256:new';res['image']=phase('machines','host_1',large=receipt)
+print(json.dumps(res))`,
+    { [OLD]: env(OLD), [NEW]: env(NEW) },
+  );
+  assert.equal(out.live, true);
+  // The legacy key moved on since the Large copy was made, or since --release was read.
+  assert.deepEqual(out.moved, ['release_not_live', [NEW, OLD]]);
+  assert.deepEqual(out.large, ['release_not_live', [NEW, OLD]]);
+  // Or Cloudflare runs another image than the release pins.
+  assert.equal(out.image[0], 'image_not_live');
 });

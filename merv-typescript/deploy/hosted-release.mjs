@@ -4,6 +4,8 @@
 //        [--drain-minutes 15] [--canary-credential <root-only path on the host>]
 //        [--sandboxes <main checkout>/output/fleet-sandboxes] [--wrangler <path to wrangler.js>]
 //   node deploy/hosted-release.mjs --mint-canary   (once: the canary's root-only reader key)
+//   node deploy/hosted-release.mjs --check   (reads only: the live pins agree with the host's
+//        record, as Main will run them once released from the env file; release.mjs runs it first)
 //   node deploy/hosted-release.mjs --abandon   (closes a stuck run once production agrees on one
 //        of its releases: Cloudflare runs its image, Main names it, the Sandboxes catalog holds it;
 //        its own release is canaried first, and one that fails stays the live pins as unverified)
@@ -308,7 +310,8 @@ async function main(args) {
     return args.includes(k) && value && !value.startsWith('--') ? value : d;
   };
   const dryRun = args.includes('--dry-run');
-  if (!dryRun && !process.env.MERV_HOSTED_DRIVER) return detached(args);
+  if (!dryRun && !args.includes('--check') && !process.env.MERV_HOSTED_DRIVER)
+    return detached(args);
   const host = opt('--host', 'ResearchSuite_Control');
   const git = (a, cwd = root) => sh('git', a, cwd).trim();
   // The defaults sit in the main checkout, which a worktree shares its Git directory with.
@@ -455,6 +458,22 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     console.log(`(${error.message}; planning from deploy/hosted-release.json at HEAD)`);
     live = { state: null, active: null };
   }
+  const { current, inputs } = live.state ?? seed;
+  if (args.includes('--check')) {
+    if (live.active) {
+      console.error(`hosted run ${live.active} is open`);
+      return 2;
+    }
+    const run = `${stamp()}-check`;
+    upload(run, sandboxesHead());
+    const pins = onHost(run, 'pins');
+    // Main names the env file's releases once a release recreates it.
+    const as = { ...pins, mainReleaseId: pins.fileReleaseId, releases: pins.fileReleases };
+    const problems = pinProblems(current, templates, as);
+    if (problems.length)
+      console.error(`Live pins differ from the host's record: ${problems.join('; ')}`);
+    return problems.length ? 2 : 0;
+  }
   const mode = args.includes('--abandon') ? 'abandon' : 'resume';
   if (live.active) {
     const doing = { abandon: 'abandoning it', resume: 'finishing it' }[mode];
@@ -467,7 +486,6 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     console.log('No hosted run is open.');
     return 0;
   }
-  const { current, inputs } = live.state ?? seed;
   const since = (from, to, paths, cwd) =>
     from && spawnSync('git', ['-C', cwd, 'cat-file', '-e', `${from}^{commit}`]).status === 0
       ? git(['diff', '--name-only', '--relative', from, to, '--', ...paths], cwd)

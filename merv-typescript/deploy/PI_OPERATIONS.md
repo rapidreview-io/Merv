@@ -146,9 +146,16 @@ That release refuses to render Pi without a host, so its health wait fails and
 it rolls back. Use one quiet window. Every step below is either a script phase
 or an existing tool, and each phase refuses to run out of order or while a
 hosted-image run is open. Until step 6, Main keeps launching its v1 release on
-the old image, so Pi keeps working. The live Standard release is `current` in
-`deploy/hosted-release.json` at origin/main (its `image` and `releaseId`, which
-Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
+the old image, so Pi keeps working. The live Standard release is `current` in the
+host's `/var/lib/merv-fleet-pilot/hosted-release/state.json` (its `image` and
+`releaseId`), and Main names it in `MERV_FLEET_RUNTIME_RELEASE_ID`;
+`deploy/hosted-release.json` in Git can lag behind it.
+
+Freeze production releases from step 1 until step 6 is done. A `release.mjs` in
+between can move Standard to a new image, and the Large copy and the machines
+would then pin a retired release. The `large` and `machines` phases and
+`release.mjs` refuse such stale pins, but after one of those refusals the steps
+from step 1 have to be done again.
 
 1. **Large app** (the founder, holding the Wrangler login). With the pipeline's
    wrangler (`output/fleet-cloudflare-tools`), run `wrangler deploy --env large`
@@ -179,8 +186,10 @@ Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
    member or the host namespace is below Large's $0.2201/h (see Machines). It
    adds the `cloudflare-fleet-large` provider, which reaches only the host
    namespace, and a copy of the live Standard release with only the provider
-   changed. It recreates Sandboxes control and pipelines-worker and checks that
-   the host resolves Large, is offered `standard-3` and loaded both releases.
+   changed. It refuses unless Main and its env name `--release` for Standard.
+   It recreates Sandboxes control and pipelines-worker and checks that the host
+   resolves Large, is offered `standard-3`, loaded both releases, and that both
+   apps run the release's image.
    Last, it sets the host namespace's limit: 50 at once, 86400 s each, and
    $0.23/h. Its receipt names the Large release ID. `hostConcurrency` is the
    lowest concurrency cap on the host, so a cap below 50 shows there. A failed
@@ -197,14 +206,18 @@ Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
    - The host ID and key.
    - `MERV_PI_RUNTIME_KEY=project` and `MERV_PI_AGENT_MOVES=true`.
 
-   The `MERV_FLEET_RUNTIME_*` lines stay. The phase dry-runs the render twice:
+   The `MERV_FLEET_RUNTIME_*` lines stay. The phase refuses unless Main and its
+   env still name step 4's Standard release and both apps still run its image.
+   It dry-runs the render twice:
    once with the running image, so a rollback still starts, and once with the
    new release's renderer mounted over it. If either fails, it restores the env;
    move its `*-machines-env.private` files aside before you rerun it.
 
 6. **Release.** Take a `pg_dump` of Main's database now, after step 2 has
    created the host project. Then run `node deploy/release.mjs` from origin/main's
-   tip. It releases Main, which runs the pi@2 migration, and its hosted run then
+   tip. It first checks the pins Main will take from the env against the host's
+   record (`hosted-release.mjs --check`), and refuses before any change if they
+   differ. It releases Main, which runs the pi@2 migration, and its hosted run then
    builds and gates the v2 image, deploys it to both apps, points both machines
    (and the legacy key) at its releases and canaries a Pi turn, whose machine it
    releases. Both ledgers commit themselves.
@@ -263,8 +276,9 @@ Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
   and recreate Main. To leave Main running instead, set `"enabled": false` on
   the `cloudflare-fleet-large` provider and recreate Sandboxes. Its offer then
   disappears, and moves to Large fail while people stay on Standard. Hosted
-  releases then refuse until it is enabled again, since they cannot read the
-  Large app that Main still names.
+  releases, and so production `release.mjs` runs without `--skip-hosted`, then
+  refuse until it is enabled again, since they cannot read the Large app that
+  Main still names.
 - Fleet caps the host at its `MERV_FLEET_PROJECT_LIMITS` entry and at
   `MERV_FLEET_GLOBAL_LIMIT`. Pi holds one machine per person per project, or
   two while it moves, and starts a move only while at least 3 slots are free.
@@ -289,7 +303,7 @@ Main names in `MERV_FLEET_RUNTIME_RELEASE_ID`).
   `MERV_FLEET_RUNTIMES` names it), the release and its Large copy in the
   catalog, and each machine's release id (Standard's also in
   `MERV_FLEET_RUNTIME_RELEASE_ID`). It refuses while any of them differs from
-  what it recorded.
+  what it recorded, and `release.mjs` checks the same before releasing Main.
 - An open hosted run blocks every Main release, emergencies included. When it
   can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
   closes it once production agrees on one of its releases: every live Cloudflare

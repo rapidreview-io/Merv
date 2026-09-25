@@ -65,7 +65,7 @@ LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
-         'status', 'guard', 'abandon', 'mint_canary'}
+         'status', 'guard', 'abandon', 'mint_canary', 'pins'}
 # One read-only row from Main's database; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();
@@ -468,19 +468,23 @@ class Step:
             run(['docker', 'image', 'inspect', '--format', '{{.Id}}', self.plan['current']['localId']])
             cred = credential(Path(self.plan['canary']['credential']))
             whoami(cred)
-            catalog = json.loads(env_of(CONTROL)[CATALOG])
-            need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
-            main, raw = env_of(MAIN), ENV.read_bytes()
-            releases = machines(main)
-            return {'apps': {provider: native(provider) for provider in releases}, 'mainReleaseId': main.get(KEY),
-                    'fileReleaseId': env_value(raw, KEY), 'releases': releases,
-                    'fileReleases': machines(file_env(raw)), 'canaryActor': cred['actorId'],
-                    'catalog': [{'provider': r['provider'], 'digest': r['image_digest'], 'id': i}
-                                for r, i in zip(catalog, release_ids(catalog))]}
+            return {**self.pins(), 'canaryActor': cred['actorId']}
         except BaseException:
             if owner() == self.run.name:
                 (HOME / 'active').unlink()
             raise
+
+    def pins(self, _=None):
+        """The live pins, reading only: each app serving Main's or the env file's machines, natively,
+        the releases both name, and the catalog's release ids."""
+        catalog = json.loads(env_of(CONTROL)[CATALOG])
+        need(catalog == json.loads(env_of(PIPELINE)[CATALOG]), 'catalog_services_differ')
+        main, raw = env_of(MAIN), ENV.read_bytes()
+        releases, file_releases = machines(main), machines(file_env(raw))
+        return {'apps': {p: native(p) for p in {**releases, **file_releases}}, 'mainReleaseId': main.get(KEY),
+                'fileReleaseId': env_value(raw, KEY), 'releases': releases, 'fileReleases': file_releases,
+                'catalog': [{'provider': r['provider'], 'digest': r['image_digest'], 'id': i}
+                            for r, i in zip(catalog, release_ids(catalog))]}
 
     def build(self, _):
         """The whole image from committed sources: the Sandboxes base (with its agent built from Go
@@ -834,13 +838,13 @@ def step(name, directory, payload):
     need(directory.is_dir() and not directory.is_symlink(), f'no hosted run at {directory}')
     need(directory.stat().st_uid == 0 and directory.stat().st_mode & 0o077 == 0, 'run directory must be root-private')
     driver, arg = payload.get('driver'), payload.get('arg') or {}
-    if name in ('preflight', 'mint_canary'):  # the plan arrives with the first step of a run
+    if name in ('preflight', 'mint_canary', 'pins'):  # the plan arrives with the first step of a run
         atomic(directory / 'plan.json', json.dumps(arg).encode())
         arg = {}
     work = Step(directory, json.loads((directory / 'plan.json').read_bytes()))
     HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if name == 'status':
-        return work.status(arg)
+    if name in ('status', 'pins'):  # reads only, and holds nothing
+        return getattr(work, name)(arg)
     with (HOME / 'lock').open('a') as lock:
         if not locked(lock, 0 if name == 'guard' else 1200):
             need(name == 'guard', 'another hosted-release step held the host lock for 20 minutes')

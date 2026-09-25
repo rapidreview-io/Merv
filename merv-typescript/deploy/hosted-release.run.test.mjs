@@ -109,7 +109,7 @@ event(step + ' ' + (step === 'push' ? Object.keys(arg.credential).join('+') : JS
 const stale = counted ? R.staleAfter <= 0 : Date.now() - (R.lease?.seen ?? 0) > 300000;
 if (R.lease && R.lease.driver !== driver && !stale) err('driven by another process');
 R.lease = { driver, seen: Date.now() }; R.staleAfter = null;
-if (!['preflight', 'finish'].includes(step) && sim.active !== run) err('run does not hold the marker');
+if (!['preflight', 'finish', 'pins'].includes(step) && sim.active !== run) err('run does not hold the marker');
 const fail = sim.fail[step], previous = R.rec.plan?.current;
 // others: the apps besides Standard; machines: Main's MERV_FLEET_RUNTIMES, absent before the cutover.
 const CF = 'cloudflare-fleet', apps = () => ({ [CF]: sim.native, ...sim.others });
@@ -119,6 +119,12 @@ if (step === 'preflight') {
   sim.active = run; R.rec.plan = arg;
   out({ apps: apps(), mainReleaseId: sim.main, fileReleaseId: sim.main, releases: machines(),
     fileReleases: machines(), catalog: sim.catalog }, true);
+}
+// file: the env file's pins where they differ from Main's, which a release has yet to recreate.
+if (step === 'pins') {
+  const file = { main: sim.main, machines: machines(), ...sim.file };
+  out({ apps: apps(), mainReleaseId: sim.main, fileReleaseId: file.main, releases: machines(),
+    fileReleases: file.machines, catalog: sim.catalog });
 }
 if (step === 'build') {
   if (fail) err(fail);
@@ -718,4 +724,32 @@ test('a Large app Sandboxes stops reading after the switch leaves only its own m
   assert.equal(r.sim.main, LIVE.releaseId);
   assert.notEqual(r.sim.active, null);
   assert.match(r.ledger, /\| ROLLBACK FAILED \| native: .*; its machine keeps its release \|/);
+});
+
+test('--check reads the pins a release would give Main, and refuses them once they went stale', () => {
+  // At the cutover Main runs only the legacy key until the release recreates it from the env file.
+  const cutover = { ...TWO, machines: undefined, file: { machines: TWO.machines } };
+  const fresh = simulate('check', cutover, { args: ['--check'] });
+  assert.equal(fresh.status, 0, fresh.out);
+  assert.deepEqual(fresh.steps, ['upload', 'pins']);
+  // Another session's release moved Standard to NEXT after the file's machines were written.
+  const stale = simulate(
+    'check-stale',
+    {
+      ...cutover,
+      state: { current: { ...LIVE, image: NEXT, releaseId: NEXT_ID }, inputs: [] },
+      main: NEXT_ID,
+      native: ON_NEXT.native,
+      catalog: [...TWO.catalog, held(CF, NEXT, NEXT_ID)],
+    },
+    { args: ['--check'] },
+  );
+  assert.equal(stale.status, 2, stale.out);
+  assert.match(
+    stale.out,
+    new RegExp(
+      `cloudflare-fleet-large image \\S+a{64}; Main runs ${LIVE.releaseId}; the Sandboxes catalog lacks cloudflare-fleet's live release; the Sandboxes catalog lacks cloudflare-fleet-large's live release`,
+    ),
+  );
+  assert.deepEqual(stale.steps, ['upload', 'pins']);
 });
