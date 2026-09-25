@@ -58,7 +58,7 @@ async function fixture(t: TestContext) {
     },
     async request(
       _caller: Caller,
-      input: { requestId: string; owner: { kind: string; id: string } },
+      input: { requestId: string; owner: { kind: string; id: string }; seconds?: number },
     ) {
       const prior = allocations.find((a) => a.requestId === input.requestId);
       if (prior) return prior;
@@ -68,6 +68,7 @@ async function fixture(t: TestContext) {
         source,
         owner: input.owner,
         requestId: input.requestId,
+        seconds: input.seconds,
         profileId: 'image-profile',
         epoch: 1,
         phase: 'queued',
@@ -188,6 +189,8 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'task_a:2' });
+  // A two-hour step, and ten minutes more for its machine to start and stop.
+  assert.equal(f.allocations[0]?.seconds, 130 * 60);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   f.allocations[0]!.phase = 'released';

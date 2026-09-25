@@ -100,13 +100,13 @@ async function main() {
   process.on('SIGINT', () => {
     stopping = true;
   });
-  const until = Date.now() + 20 * 60_000;
+  // The step's own deadline, which the server sets, ends the launch; this adds no clock of its own.
   const emptyUntil = Date.now() + 60_000;
   try {
     status('starting');
     await runner.start();
     status('connected');
-    while (!stopping && Date.now() < until) {
+    while (!stopping) {
       const snapshot = runner.snapshot();
       if (snapshot.launches.length > 1) throw new Error('one-assignment invariant failed');
       const launch = snapshot.launches[0];

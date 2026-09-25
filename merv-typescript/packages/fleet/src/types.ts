@@ -17,6 +17,8 @@ export interface FleetAllocation {
   source: DelegationSource;
   owner: { kind: string; id: string };
   requestId: string;
+  /** The request's own machine time, when it set one. */
+  seconds?: number;
   profileId: string;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
@@ -47,6 +49,10 @@ export interface FleetRequest {
   /** The Sandboxes runtime profile key to rent ('standard', 'large'); absent means the default
    * (first) profile. Part of the request's fingerprint; the allocation keeps that profile's id. */
   profile?: string;
+  /** How long the machine may run once it leaves the queue, 60 s to 24 h, and never longer than
+   * allocationTimeoutSeconds (the default); a queued request gives up after as long. Part of the
+   * fingerprint. */
+  seconds?: number;
 }
 /** A machine Fleet can rent, as the service's options describe the profile's offer. */
 export type FleetMachine = SandboxRuntimeOffer;

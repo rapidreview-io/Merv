@@ -431,6 +431,22 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
 });
 
+test('a hosted step ends five minutes before its machine, and a machine with under ten left starts none', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  // The machine runs until its allocation's end, fixed at enrollment an hour from now.
+  now = Date.parse(f.input.expiresAt) - 599_999;
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await assert.rejects(f.sessions.lease(f.caller, f.lease()), { code: 'managed_expiring' });
+  // With ten minutes left it does start, and its step, whatever the runner asked, ends at five.
+  now -= 1;
+  const { session } = await f.sessions.lease(f.caller, { ...f.lease(), hardDeadlineSeconds: 3600 });
+  assert.ok(session);
+  assert.equal(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt) - 300_000);
+});
+
 test('the sweep ends a bound session once its machine is no longer current', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));

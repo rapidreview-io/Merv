@@ -28,6 +28,8 @@ const workflowConfig = z
       .optional(),
     baseUrl: z.string().url().max(2048).optional(),
     maxAgents: z.number().int().min(1).max(32).default(1),
+    /** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
+    stepMinutes: z.number().int().min(10).max(1430).default(120),
     dailyTokensPerPerson: z.number().int().min(1).default(5_000_000),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
@@ -277,6 +279,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       await this.fleet.request(caller, {
         requestId: `wf:${digest({ id, generation })}`,
         owner: { kind: ownerKind, id },
+        seconds: this.config.stepMinutes * 60 + 600,
       });
       covered.add(id);
       slots--;
