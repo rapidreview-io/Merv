@@ -151,7 +151,8 @@ export class PiModelRelay {
     >
   >;
   private readonly active = new Set<AbortController>();
-  private readonly users = new Set<string>();
+  /** One model call at a time per conversation: a person's conversations share one machine. */
+  private readonly conversations = new Set<string>();
   private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
   private stopped = false;
 
@@ -164,7 +165,7 @@ export class PiModelRelay {
       maxOutputTokens: limit(config.maxOutputTokens, 4096, 16),
       totalTimeoutMs: limit(config.totalTimeoutMs, 120_000),
       idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
-      maxConcurrent: limit(config.maxConcurrent, 64),
+      maxConcurrent: limit(config.maxConcurrent, 200),
       maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 32),
       maxGrantEntries: limit(config.maxGrantEntries, 4096),
     };
@@ -212,7 +213,7 @@ export class PiModelRelay {
     const total = setTimeout(() => abort(504, 'relay_timeout'), this.options.totalTimeoutMs);
     let idle: NodeJS.Timeout | undefined;
     let fence: NodeJS.Timeout | undefined;
-    let admittedUser: string | undefined;
+    let admitted: string | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let admittedAt = 0;
     let phase: PiRelayFailureRecord['phase'] = 'request';
@@ -244,9 +245,9 @@ export class PiModelRelay {
         validatedAt = started;
       };
       await validate();
-      if (this.users.has(grant.userId)) reject(429, 'relay_busy');
-      this.users.add(grant.userId);
-      admittedUser = grant.userId;
+      if (this.conversations.has(grant.conversationId)) reject(429, 'relay_busy');
+      this.conversations.add(grant.conversationId);
+      admitted = grant.conversationId;
       admittedAt = Date.now();
       const raw = await interruptible(
         readRequest(req, this.options.maxRequestBytes, signal),
@@ -366,7 +367,7 @@ export class PiModelRelay {
     } catch (error) {
       const failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
-      if (admittedUser && this.config.onFailure) {
+      if (admitted && this.config.onFailure) {
         const code =
           failureCodes.find((candidate) => candidate === failure.code) ?? 'upstream_failed';
         const record: PiRelayFailureRecord = {
@@ -392,7 +393,7 @@ export class PiModelRelay {
       req.off('aborted', disconnected);
       res.off('close', disconnected);
       this.active.delete(controller);
-      if (admittedUser) this.users.delete(admittedUser);
+      if (admitted) this.conversations.delete(admitted);
     }
   };
 
