@@ -114,12 +114,14 @@
     {
       "id": "feed-ui",
       "name": "@merv/feed/ui",
-      "required": false
+      "required": false,
+      "disabled": true
     },
     {
       "id": "feed-tools",
       "name": "@merv/feed/tools",
-      "required": false
+      "required": false,
+      "disabled": true
     },
     {
       "id": "tasks-tools",
@@ -157,7 +159,8 @@
     {
       "id": "feed",
       "name": "@merv/feed",
-      "required": false
+      "required": false,
+      "disabled": true
     },
     {
       "id": "tasks",

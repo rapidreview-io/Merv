@@ -206,7 +206,7 @@ function Machine({
             `Couldn’t start ${label(host, move.to)}${move.reason ? `: ${move.reason}` : ''}. Still on ${on.label}.`
           ) : (
             <>
-              {host.machine ? 'Runs on' : 'Starts on'} {on.label}
+              {on.label}
               <span className="pi-machine-specs"> · {specs(on)}</span>
             </>
           )}

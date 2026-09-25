@@ -65,10 +65,10 @@ export async function exerciseRuntime(start) {
   try {
     checkpoint('activate');
     app = await start();
-    assert.ok(
-      app.status().every((entry) => entry.state === 'active'),
-      'Every default plugin must activate',
-    );
+    // A plugin the default configuration switches off (Feed) stays off; every other one runs.
+    const running = () =>
+      app.status().every((entry) => ['active', 'disabled'].includes(entry.state));
+    assert.ok(running(), 'Every enabled default plugin must activate');
     assert.ok(app.ctx.artifacts.downloadSupported, 'Acceptance requires the actual S3 provider');
     const pluginCount = app.status().length;
     const page = await fetch(`${app.ctx.api.url}/ui/`, { signal: AbortSignal.timeout(30_000) });
@@ -299,7 +299,7 @@ export async function exerciseRuntime(start) {
     await closeClients();
     await app.stop();
     app = await start();
-    assert.ok(app.status().every((entry) => entry.state === 'active'));
+    assert.ok(running());
     const restarted = await connect(boot.token);
     assert.equal((await call(restarted, 'task.get', { taskId: first.id })).workflow.state, 'done');
     assert.equal(

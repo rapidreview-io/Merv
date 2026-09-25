@@ -765,7 +765,7 @@ test('an agent that cannot start machines says so calmly and never reads Ready',
   );
   await open();
   assert.match(text(), /Agent isn’t available right now/);
-  assert.doesNotMatch(text(), /Ready|Starts on/);
+  assert.doesNotMatch(text(), /Ready|Standard ·/);
   assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
   // Nothing is warmed where no machine can start.
   assert.equal(
@@ -882,7 +882,7 @@ test('the machine warms where the page opens or a question begins with none, and
   await settle(10);
   assert.equal(started, 1);
   assert.deepEqual(warmed, ['conversation_1']);
-  assert.match(text(), /Runs on Standard/);
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   // Every conversation here shares it: opening another, or asking there, starts nothing.
   await go(second);
   await focus();
@@ -891,9 +891,9 @@ test('the machine warms where the page opens or a question begins with none, and
   machine = 'none';
   await act(async () => stream.push('snapshot', snapshot(second, [], 1, [], true, host('none'))));
   await settle(10);
-  assert.match(text(), /Starts on Standard/);
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   await go(first);
-  assert.match(text(), /Starts on Standard/);
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   assert.deepEqual(warmed, ['conversation_1']);
   // Beginning a question starts it again.
   await focus();
@@ -1110,7 +1110,8 @@ test('the bar names the machine every conversation here shares, and its picker s
     () => [conversation()],
   );
   await open();
-  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  // The hardware alone, with no words around it.
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   assert.equal(note().getAttribute('aria-haspopup'), 'menu');
   await act(async () => note().click());
   // The picker is its machines alone: no note explains the machine.
@@ -1208,9 +1209,9 @@ test('picking Large counts the move while the machine still serves, and a failur
   await show(host('ready', { lastMove: failure(60_000) }));
   assert.equal(note().textContent, 'Couldn’t start Large: no free machine. Still on Standard.');
   // With no machine left it is on nothing, and a deadline's rollover is no news.
-  const runs = 'Runs on Standard · ½ vCPU · 4 GiB';
+  const runs = 'Standard · ½ vCPU · 4 GiB';
   await show(host('none', { lastMove: failure(60_000) }));
-  assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
+  assert.equal(note().textContent, runs);
   await show(host('ready', { lastMove: failure(60_000, { by: 'deadline', to: 'standard' }) }));
   assert.equal(note().textContent, runs);
   await show(host('ready', { moving: { to: 'standard', by: 'deadline', since } }));
@@ -1256,12 +1257,12 @@ test('releasing the machine asks first, then releases it for every conversation 
   await confirm();
   assert.equal(stopped, 1);
   assert.equal(document.querySelector('[role="alert"]')?.textContent, 'A move is under way');
-  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   await act(async () => note().click());
   await confirm();
   assert.equal(stopped, 2);
   assert.equal(document.querySelector('[role="alert"]'), null);
-  assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
+  assert.equal(note().textContent, 'Standard · ½ vCPU · 4 GiB');
   // With no machine there is nothing to stop.
   await act(async () => note().click());
   assert.deepEqual(

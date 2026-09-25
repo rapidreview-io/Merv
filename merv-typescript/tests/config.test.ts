@@ -48,7 +48,7 @@ test('default configuration includes session enforcement and API adds its contro
     core.entries.every(
       (entry) =>
         entry.required === !['feed', 'code', 'code-research'].includes(entry.id) &&
-        entry.disabled === false,
+        entry.disabled === (entry.id === 'feed'),
     ),
   );
   assert.deepEqual(core.entries.find((entry) => entry.id === 'state')?.config, {
@@ -156,20 +156,24 @@ test('legacy selection keeps only matching providers and adapters without adding
   );
 });
 
-test('default Feed is optional so disabling it preserves the other declarations', () => {
+test('Feed is kept but off by default, its tools and page with it, and the rest stay declared', () => {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  config.plugins.find((entry) => entry.id === 'feed')!.disabled = true;
   const loaded = configuration(config);
   assert.equal(loaded.entries.length, 49);
+  for (const [id, name] of [
+    ['feed', '@merv/feed'],
+    ['feed-tools', '@merv/feed/tools'],
+    ['feed-ui', '@merv/feed/ui'],
+  ])
+    assert.deepEqual(
+      loaded.entries.find((entry) => entry.id === id),
+      { id, name, required: false, disabled: true },
+    );
   assert.deepEqual(
-    loaded.entries.find((entry) => entry.id === 'feed'),
-    { id: 'feed', name: '@merv/feed', required: false, disabled: true },
-  );
-  assert.deepEqual(
-    loaded.entries.find((entry) => entry.id === 'feed-tools'),
-    { id: 'feed-tools', name: '@merv/feed/tools', required: false, disabled: false },
+    loaded.entries.filter((entry) => entry.disabled).map((entry) => entry.id),
+    ['feed-ui', 'feed-tools', 'feed'],
   );
   const browser = (id: string) => id === 'ui' || id.endsWith('-ui');
   assert.ok(
