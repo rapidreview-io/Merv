@@ -22,7 +22,7 @@ const { createElement } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
-const { setToken } = await import('../packages/ui/web/api.js');
+const { setProject, setToken } = await import('../packages/ui/web/api.js');
 
 const project = {
   id: 'project_1',
@@ -197,6 +197,52 @@ test('a plugin that is not active opens its table and is read first', async (t) 
   assert.ok(first.textContent!.includes('feed-ui'));
   assert.equal(first.querySelector('[data-label="State"]')!.textContent, 'disabled');
   assert.ok(!sidebar!.open);
+});
+
+test('the only operator is offered no control that would leave the project without one', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  const member = (n: number, role: string) => ({
+    id: `member_${n}`,
+    projectId: project.id,
+    issuer: user.issuer,
+    subject: `subject-${n}`,
+    actorId: `actor_${n}`,
+    role,
+    active: true,
+  });
+  const names = ['Operator', 'Reviewer'].map((name, at) => ({ id: `actor_${at + 1}`, name }));
+  const controls = (name: string) => {
+    const role = document.querySelector<HTMLSelectElement>(
+      `select[aria-label="Role for ${name}"]`,
+    )!;
+    const remove = [...role.closest('.states')!.querySelectorAll('button')].at(-1)!;
+    assert.equal(remove.textContent, 'Remove');
+    return [role.disabled, remove.disabled];
+  };
+  for (const [second, locked] of [
+    ['reviewer', true],
+    ['operator', false],
+  ] as const) {
+    boot('Operator');
+    serve('/account', { body: { kind: 'user', user, projects: [project] } });
+    serve('/tools/actor.list', { body: { result: names } });
+    serve(`/projects/${project.id}/members`, {
+      body: { memberships: [member(1, 'operator'), member(2, second)] },
+    });
+    await open('/settings/members');
+    assert.deepEqual(controls('Operator'), [locked, locked], second);
+    assert.deepEqual(controls('Reviewer'), [false, false], second);
+    await unmount();
+  }
 });
 
 test('a room with nothing in it is an empty state, and the session room ends the session in one size of button', async (t) => {

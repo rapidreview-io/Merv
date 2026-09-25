@@ -101,6 +101,10 @@ export function PeopleView() {
   );
   const isOperator = (human ? currentMember?.role : actor.role) === 'operator';
   const canManage = human && isOperator;
+  // The project always keeps an operator, so the only one can be neither demoted nor removed.
+  const lastOperator = (member: Membership) =>
+    member.role === 'operator' &&
+    members?.filter((other) => other.role === 'operator').length === 1;
   const path = `/projects/${encodeURIComponent(project.id)}/members`;
   const filter = useListFilter(members, {
     stateOf: (member) => member.role,
@@ -255,7 +259,7 @@ export function PeopleView() {
                 className="input"
                 aria-label={`Role for ${label(member)}`}
                 value={draftRoles[member.id] ?? member.role}
-                disabled={busy}
+                disabled={busy || lastOperator(member)}
                 onChange={(event) =>
                   setDraftRoles((previous) => ({
                     ...previous,
@@ -280,7 +284,7 @@ export function PeopleView() {
               </button>
               <button
                 className="btn"
-                disabled={busy}
+                disabled={busy || lastOperator(member)}
                 onClick={() => void mutate('DELETE', member.subject)}
               >
                 Remove
