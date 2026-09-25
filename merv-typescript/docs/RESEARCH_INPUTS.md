@@ -13,6 +13,14 @@ Introduction) and `contextRevision`. `project.context.update` accepts
 edit it; worker sessions and credentialless worker actors cannot. An empty
 Introduction is allowed and creates no workflow gate.
 
+The Problem is the one source of what the project is. When a research cycle
+leaves `defining`, Research rewrites the Introduction from the Problem it pins:
+its four sections under Markdown headings, cut to fit with a note pointing at
+`paper.read` when longer than 16,000 bytes. The rewrite is an ordinary
+`project.context.update` in the advance's transaction, by the advancing
+caller, and is skipped when the text would not change. An operator's edit lasts
+until the next cycle starts; agents are told not to write it.
+
 New text is trimmed and bounded to 16,000 UTF-8 bytes. `expectedSummary` must
 match the exact stored text, including existing whitespace. An accepted new
 command advances `contextRevision`, even if its text is unchanged. Repeating

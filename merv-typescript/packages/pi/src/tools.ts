@@ -42,6 +42,15 @@ export const piToolsPlugin = {
           ctx.pi.snapshot(caller, input.id),
       },
       {
+        name: 'pi.prompt',
+        description:
+          "Read what your conversation's agent is given: the instructions every turn shares, and the latest turn's appended notes and offered tools as that turn was served.",
+        inputSchema: z.object({ id }).strict(),
+        readOnly: true,
+        handler: (caller: Parameters<typeof ctx.pi.prompt>[0], input: { id: string }) =>
+          ctx.pi.prompt(caller, input.id),
+      },
+      {
         name: 'pi.send',
         description:
           'Send one message and request agent capacity. Reuse commandId only to retry the exact same message.',

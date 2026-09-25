@@ -51,6 +51,7 @@ import type {
   PiBootstrap,
   PiCommand,
   PiCommandRecord,
+  PiPrompt,
   PiCompletion,
   PiConversation,
   PiConversationRecord,
@@ -121,6 +122,7 @@ const publicCommand = (record: PiCommandRecord): PiCommand => {
     resultHash: _result,
     canMove: _move,
     tools: _tools,
+    notes: _notes,
     calledAt: _called,
     retried: _retried,
     ...value
@@ -710,6 +712,29 @@ export class PiService implements Pi, FleetOwner {
     this.sharers.clear();
     this.fleet.kick();
   }
+  async prompt(caller: Caller, id: string): Promise<PiPrompt> {
+    this.ready();
+    const { conversation, commands } = await this.read(async (tx) => ({
+      conversation: await this.owned(caller, id, tx),
+      commands: (
+        await tx.all<{ data_json: string }>(
+          'SELECT data_json FROM pi_commands WHERE conversation_id=? ORDER BY created_at,id',
+          id,
+        )
+      ).map(decode<PiCommandRecord>),
+    }));
+    await this.scope.require(caller, 'read');
+    // The turn under way, else the newest one that was served.
+    const active = commands.find(({ id }) => id === conversation.activeCommandId);
+    const served = active?.notes ? active : commands.findLast((command) => command.notes);
+    return {
+      instructions: piInstructions,
+      turn: served
+        ? { commandId: served.id, notes: served.notes!, tools: served.tools ?? [] }
+        : null,
+    };
+  }
+
   async authorizeStream(caller: Caller, id: string): Promise<void> {
     this.ready();
     await this.read((tx) => this.owned(caller, id, tx));
@@ -1170,21 +1195,24 @@ export class PiService implements Pi, FleetOwner {
         const tool = piTool(description, uses.get(description.name));
         return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
       });
+      // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
+      const told = [...(await this.told(conversation, command, actor!.role, caller)), ...notes];
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
       // grant names exactly it. switch_machine comes first, so no native tool's model name takes
-      // its place.
-      const tools = await this.state.transaction(async (tx) => {
+      // its place. Its notes are kept the same way, so pi.prompt shows what the turn was given.
+      const { tools, sent } = await this.state.transaction(async (tx) => {
         const current = (await this.bound(token, turn, tx)).command;
-        if (!current.tools) {
+        if (!current.tools || !current.notes) {
           const names = new Set<string>();
-          current.tools = [...(offered ? [offered] : []), ...described]
+          current.tools ??= [...(offered ? [offered] : []), ...described]
             .filter(
               ({ name }) => !names.has(piModelToolName(name)) && names.add(piModelToolName(name)),
             )
             .map(({ name }) => name);
+          current.notes ??= told;
           await this.saveCommand(tx, current);
         }
-        return current.tools;
+        return { tools: current.tools, sent: current.notes };
       });
       this.streams.changed(conversation.id, command.id);
       const model = this.model(command.model);
@@ -1198,8 +1226,7 @@ export class PiService implements Pi, FleetOwner {
           tools.includes(name),
         ),
         instructions: piInstructions,
-        // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
-        notes: [...(await this.told(conversation, command, actor!.role, caller)), ...notes],
+        notes: sent,
       };
     } catch {
       // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept
@@ -1228,7 +1255,6 @@ export class PiService implements Pi, FleetOwner {
         (value) => value as T,
         () => undefined,
       );
-    const project = await read<{ summary?: string }>('project.get', {});
     const problem = await read<{ current?: { sections?: { id: string; content: string }[] } }>(
       'paper.read',
       { kind: 'problem' },
@@ -1266,7 +1292,6 @@ export class PiService implements Pi, FleetOwner {
         ['problem', 'scope', 'goals', 'constraints'].filter(
           (id) => !sections.find((section) => section.id === id)?.content.trim(),
         ),
-      introduction: project && !project.summary?.trim(),
       interrupted,
     });
   }

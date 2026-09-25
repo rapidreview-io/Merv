@@ -110,6 +110,10 @@ export function ProjectIntroduction() {
   const project = useTool<Project>('project.get', {}, { every: 8000 });
   return (
     <section className="stack" aria-label="Project introduction">
+      <p className="muted">
+        Every worker's assignment carries this. Merv rewrites it from the Problem each time a
+        research cycle starts, so an edit here lasts until then.
+      </p>
       <LoadState {...project} />
       {project.data && (
         <>

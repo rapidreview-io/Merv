@@ -31,8 +31,6 @@ export function turnNotes(turn: {
   today: string;
   /** The Problem sections still empty, when the read succeeded. */
   problem?: string[];
-  /** The Introduction is empty. */
-  introduction?: boolean;
   /** `type subjectId` of each event the previous, interrupted answer recorded. */
   interrupted?: string[];
 }): string[] {
@@ -47,7 +45,6 @@ export function turnNotes(turn: {
     ...(writes && turn.problem?.length
       ? [`Empty Problem sections: ${turn.problem.join(', ')}.`]
       : []),
-    ...(writes && turn.introduction ? ['The Introduction is empty.'] : []),
     ...(turn.interrupted?.length
       ? [
           `Your previous answer here stopped before it finished, after it had made: ${turn.interrupted.join('; ')}`,

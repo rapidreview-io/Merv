@@ -4568,6 +4568,39 @@ del.cut {
 .pi-page:has(.pi-messages > .pi-state) .pi-bar .pi-state-dot {
   animation: none;
 }
+.pi-context-button {
+  flex: none;
+  margin-left: 0;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--muted);
+}
+/* What the agent is given: under the bar, scrolling on its own so the transcript keeps its place. */
+.pi-context {
+  flex: none;
+  max-height: 45vh;
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+  font-size: var(--text-sm);
+}
+.pi-context h3 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+}
+.pi-context-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.pi-context-tools {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
 .pi-messages {
   flex: 1;
   min-height: 0;
