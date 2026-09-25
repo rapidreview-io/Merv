@@ -257,12 +257,39 @@ function Keys() {
  * its connection and the access its agents have in it. The Code page draws what
  * that connection produced; everything that configures it is here.
  */
-function Integrations({ shell }: ViewProps) {
-  if (!shell.rows.some((row) => row.view.kind === 'code'))
-    return <Nothing icon="link" said="No integrations" />;
+export function Integrations({ shell }: ViewProps) {
+  const code = shell.rows.some((row) => row.view.kind === 'code');
+  const compute = useTool<{
+    entitled: boolean;
+    allowance: {
+      month_to_date: { currency: string; amount: string }[];
+      cap: { currency: string; amount: string } | null;
+    } | null;
+  }>('compute.offers', {}, { every: 60_000 });
+  const allowance =
+    compute.data?.entitled && compute.data.allowance?.cap?.amount ? compute.data.allowance : null;
+  if (!code && !allowance && compute.loading)
+    return (
+      <div className="page-stage">
+        <LoadState {...compute} />
+      </div>
+    );
+  if (!code && !allowance) return <Nothing icon="link" said="No integrations" />;
+  const used = allowance?.month_to_date.find((money) => money.currency === 'USD')?.amount ?? '0';
+  const month = new Date().toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   return (
     <div className="page-stage stack stack--lg">
-      <GitHubConnection />
+      {code && <GitHubConnection />}
+      {allowance && (
+        <KV
+          rows={[
+            [
+              'ML compute',
+              `$${Number(used).toFixed(2)} of $${Number(allowance.cap!.amount).toFixed(0)}  ${month}`,
+            ],
+          ]}
+        />
+      )}
     </div>
   );
 }

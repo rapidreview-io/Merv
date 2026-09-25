@@ -20,6 +20,7 @@
     "tests/ui-sessions.test.ts",
     "tests/ui-process.test.ts",
     "tests/ui-code.test.ts",
+    "tests/ui-compute.test.ts",
     "tests/ui-experiments.test.ts",
     "tests/ui-feed.test.ts",
     "tests/ui-foundation.test.ts",
