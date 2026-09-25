@@ -72,7 +72,10 @@ export class FakeRuntimes implements SandboxRuntimes {
   profileId = 'pi-test-profile';
   leaseSeconds = 600;
   get profiles() {
-    return [{ key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds }];
+    return [
+      { key: 'standard', id: this.profileId, leaseSeconds: this.leaseSeconds },
+      { key: 'large', id: 'pi-test-large', leaseSeconds: this.leaseSeconds },
+    ];
   }
   describe = async (_projectId: string, key: string) => offers[key] ?? null;
   connected: (projectId: string) => boolean = () => true;

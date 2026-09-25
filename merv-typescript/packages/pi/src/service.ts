@@ -604,8 +604,8 @@ export class PiService implements Pi, FleetOwner {
             ? { name: 'writing', since: command.firstTextAt }
             : { name: 'thinking', since: command.startedAt },
       );
-    // With no turn of its own, a conversation waits on its host's move.
-    if (!command && host?.next)
+    // With no turn of its own, a conversation waits on its host's move; a rollover is unseen.
+    if (!command && host?.next && host.next.by !== 'deadline')
       return this.show(id, { name: 'moving', since: this.movingSince(host.next) });
     const slot = host?.current;
     if (!slot || gone(allocation, this.time()) || (!command && this.idleOver(host!)))
@@ -885,15 +885,12 @@ export class PiService implements Pi, FleetOwner {
     });
   }
 
-  /** The live host slot an allocation serves. */
+  /** The live host slot an allocation serves; only Pi records a slot's allocation on a host. */
   private async owning(allocation: FleetAllocation, tx: Transaction) {
     if (this.closed || !this.config.enabled || allocation.owner.kind !== 'pi-host') return null;
     const [hostId, epoch] = allocation.owner.id.split(':');
     const host = await this.host(tx, hostId);
-    const role =
-      host?.status === 'live' && digest(host.source) === digest(allocation.source)
-        ? roleOf(host, allocation.id)
-        : undefined;
+    const role = host?.status === 'live' ? roleOf(host, allocation.id) : undefined;
     const slot = role && host![role];
     return slot && slot.epoch === Number(epoch) ? { host: host!, role: role!, slot } : null;
   }
@@ -1009,62 +1006,68 @@ export class PiService implements Pi, FleetOwner {
   async next(token: string, input: unknown, holdMs = 0): Promise<PiNextReply> {
     const value = parse(nextInput, input);
     const { host } = await this.read((tx) => this.worker(token, tx));
-    let taken: Taken | 'due';
     // Held until a send commits work for this host (it wakes this) or the hold ends.
     for (const end = Date.now() + holdMs; ;) {
       this.ready();
       const woken = this.streams.wait(host.id, Math.max(0, end - Date.now()));
-      taken = await this.read((tx) => this.take(token, value, tx, true));
+      let taken = await this.read((tx) => this.take(token, value, tx, true));
       if (taken === 'due') {
         taken = await this.state.transaction((tx) => this.take(token, value, tx));
         this.streams.wake(host.id);
         this.announce();
       }
-      if ((taken as Taken).retire || (taken as Taken).probe || (taken as Taken).claim) break;
-      if (Date.now() >= end) break;
-      await woken;
+      const { retire, probe, claim } = taken as Taken;
+      if (retire || probe)
+        return { work: null, ...(retire && { retire }), ...(probe && { probe }) };
+      if (claim) {
+        const work = await this.work(token, value.workerId, claim);
+        if (work) return { work };
+      } else if (Date.now() >= end) return { work: null };
+      else await woken;
     }
-    const { retire, probe, claim } = taken as Taken;
-    if (!claim) return { work: null, ...(retire && { retire }), ...(probe && { probe }) };
-    const { conversation, command, offered, notes } = claim;
-    let checkpoint: PiWork['checkpoint'] = null;
-    if (conversation.checkpoint) {
-      const bytes = await this.blobs.get(conversation.projectId, conversation.checkpoint.hash);
-      check(
-        bytes.length === conversation.checkpoint.size &&
-          hash(bytes) === conversation.checkpoint.hash,
-        'pi_checkpoint_invalid',
-        'Saved conversation checkpoint failed verification',
-        503,
-      );
-      checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
-    }
-    const turn = {
-      conversationId: conversation.id,
-      commandId: command.id,
-      workerId: value.workerId,
-    };
-    await this.read((tx) => this.bound(token, turn, tx));
-    const caller = this.conversationCaller(conversation, command);
-    const tools = (await this.tools.describe(caller)).map((tool) => {
-      const artifact = tool.name === 'artifact.get' || tool.name === 'artifact.read';
-      const inputSchema: Data = {
-        type: 'object',
-        properties: artifact
-          ? { artifactId: { type: 'string', minLength: 1, maxLength: 200 } }
-          : {},
-        required: artifact ? ['artifactId'] : [],
-        additionalProperties: false,
-      };
-      const description =
-        tool.name === 'artifact.read'
-          ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs. Long content is truncated.'
-          : (tool.description ?? tool.name);
-      return { name: tool.name, description, inputSchema };
-    });
-    this.streams.changed(conversation.id, command.id);
-    return {
-      work: {
+  }
+  /** A claimed turn's work. /next serves every conversation on the machine, so a turn that cannot
+   * start here (its person lost access, it was stopped, its checkpoint is unreadable) ends alone,
+   * and /next looks for the next one. */
+  private async work(
+    token: string,
+    workerId: string,
+    { conversation, command, offered, notes }: NonNullable<Taken['claim']>,
+  ): Promise<PiWork | null> {
+    try {
+      let checkpoint: PiWork['checkpoint'] = null;
+      if (conversation.checkpoint) {
+        const bytes = await this.blobs.get(conversation.projectId, conversation.checkpoint.hash);
+        check(
+          bytes.length === conversation.checkpoint.size &&
+            hash(bytes) === conversation.checkpoint.hash,
+          'pi_checkpoint_invalid',
+          'Saved conversation checkpoint failed verification',
+          503,
+        );
+        checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
+      }
+      const turn = { conversationId: conversation.id, commandId: command.id, workerId };
+      await this.read((tx) => this.bound(token, turn, tx));
+      const caller = this.conversationCaller(conversation, command);
+      const tools = (await this.tools.describe(caller)).map((tool) => {
+        const artifact = tool.name === 'artifact.get' || tool.name === 'artifact.read';
+        const inputSchema: Data = {
+          type: 'object',
+          properties: artifact
+            ? { artifactId: { type: 'string', minLength: 1, maxLength: 200 } }
+            : {},
+          required: artifact ? ['artifactId'] : [],
+          additionalProperties: false,
+        };
+        const description =
+          tool.name === 'artifact.read'
+            ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs. Long content is truncated.'
+            : (tool.description ?? tool.name);
+        return { name: tool.name, description, inputSchema };
+      });
+      this.streams.changed(conversation.id, command.id);
+      return {
         command: publicCommand(command),
         checkpoint,
         model: this.config.model,
@@ -1072,8 +1075,21 @@ export class PiService implements Pi, FleetOwner {
         modelToken: this.modelToken(command),
         tools: offered ? [...tools, offered] : tools,
         notes,
-      },
-    };
+      };
+    } catch {
+      // A turn already ended (stopped) stays as it ended; a machine that no longer admits work is
+      // what the next take reports.
+      await this.state.transaction(async (tx) => {
+        await this.interrupt(
+          tx,
+          await this.command(tx, conversation.id, command.id),
+          'worker_interrupted',
+        );
+        await this.quiet(tx, command.hostId);
+      });
+      this.announce();
+      return null;
+    }
   }
   /** What /next gives this worker now: a draining slot retires (T5); a next slot enrolls its first
    * worker with a probe (T3) and cuts over when that worker echoes it (T4); a current slot enrolls
@@ -1834,8 +1850,10 @@ export class PiService implements Pi, FleetOwner {
       }
     }
     const { current } = host;
+    const newest = turns.at(-1);
     if (
       current?.workerId &&
+      newest &&
       !host.next &&
       !host.draining &&
       renter &&
@@ -1843,7 +1861,13 @@ export class PiService implements Pi, FleetOwner {
       (await this.fleet.free(this.hostProject, tx)) >= moveRoom
     ) {
       if (dry) return true;
-      const rolled = await this.move(tx, renter, host, null, current.machine, 'deadline', '');
+      // Only a machine in use is renewed: of its kind while the newest turn's person may still
+      // choose it, else the default.
+      const { source } = await this.conversation(tx, newest.conversationId);
+      const to = (await this.machineChoice(source, current.machine, tx)).allowed
+        ? current.machine
+        : this.config.machines[0].key;
+      const rolled = await this.move(tx, renter, host, null, to, 'deadline', '');
       changed ||= rolled;
     }
     if (!host.current && !host.next && !host.draining) {

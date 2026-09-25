@@ -527,13 +527,13 @@ test('rejects invalid checkpoint digest and corrupted stored bytes before delive
   const original = f.blobs.get;
   f.blobs.get = async () => Buffer.from('corrupt');
   try {
-    await assert.rejects(
-      f.pi.next(bound.token, { workerId: 'worker_restore' }),
-      code('pi_checkpoint_invalid'),
-    );
+    // Never delivered: that turn ends, and the machine serves on.
+    assert.deepEqual(await f.pi.next(bound.token, { workerId: 'worker_restore' }), { work: null });
   } finally {
     f.blobs.get = original;
   }
+  const ended = (await f.pi.snapshot(f.operator, conversation.id)).commands.at(-1)!;
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'worker_interrupted']);
 });
 
 test('concurrent identical completion saves once and preserves the previous checkpoint', async (t) => {

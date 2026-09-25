@@ -146,6 +146,44 @@ test('a machine runs as many turns at once as its slots; the next one waits for 
   assert.equal((await f.pi.next(token, { workerId: 'worker_1' })).work?.command.id, sent[3].id);
 });
 
+test('a turn that cannot start ends alone: /next never fails the machine, and serves the next turn', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create();
+  const running = await f.claimed(await f.send(chat));
+  await f.pi.begin(running.token, running.input);
+  // The same person sends with a key of their own, then revokes it while that turn waits.
+  const issued = await f.scope.issueActorCredential(f.operator, { actorId: f.operator.actorId });
+  const key = { ...f.operator, credentialId: issued.credential.id };
+  const revoked = await f.send(await f.create(key), 'hello', key);
+  const served = await f.send(await f.create());
+  assert.equal(revoked.hostId, served.hostId);
+  await f.scope.revokeCredential(f.operator, issued.credential.id);
+  const next = () => f.pi.next(running.token, { workerId: 'worker_1' });
+  assert.equal((await next()).work?.command.id, served.id);
+  const ended = await command(f, revoked);
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'worker_interrupted']);
+  // Stopped between its claim and its work, or with its checkpoint unreadable: only it ends.
+  await f.pi.complete(running.token, f.completion(running.input));
+  const get = f.blobs.get;
+  f.blobs.get = async (...read) => {
+    f.blobs.get = get;
+    await f.pi.stop(f.operator, chat.id);
+    return get(...read);
+  };
+  const stopped = await f.send(chat);
+  assert.deepEqual(await next(), { work: null });
+  assert.equal((await command(f, stopped)).error, 'cancelled');
+  f.blobs.get = async () => {
+    f.blobs.get = get;
+    throw new Error('blob store unavailable');
+  };
+  const unread = await f.send(chat);
+  assert.deepEqual(await next(), { work: null });
+  assert.equal((await command(f, unread)).error, 'worker_interrupted');
+  const again = await f.send(chat);
+  assert.equal((await next()).work?.command.id, again.id);
+});
+
 test('the idle clock starts when the last turn in any of the machine’s conversations ends', async (t) => {
   const f = await fixture(t);
   const a = await f.claimed(await f.send(await f.create()));
@@ -232,6 +270,25 @@ test('a move starts the new machine first: its worker proves ready, new turns cu
   );
 });
 
+test('turns finishing on the old machine take none of the new machine’s slots', async (t) => {
+  const f = await fixture(t);
+  const a = await f.claimed(await f.send(await f.create()));
+  for (let index = 0; index < 2; index++) {
+    await f.send(await f.create());
+    assert.ok((await f.pi.next(a.token, { workerId: 'worker_1' })).work);
+  }
+  await f.pi.setMachine(f.operator, { machine: 'large' });
+  const waiting = [];
+  for (let index = 0; index < 4; index++) waiting.push((await f.send(await f.create())).id);
+  const { token, reply } = await cutOver(f, await f.host(a.work.command));
+  const claimed = [reply.work?.command.id];
+  for (let index = 0; index < 3; index++)
+    claimed.push((await f.pi.next(token, { workerId: 'worker_next' })).work?.command.id);
+  // Turns sent in the same instant are taken in id order.
+  assert.deepEqual(claimed.sort(), waiting.sort());
+  assert.equal((await f.host(a.work.command)).draining?.allocationId, a.work.command.runtimeId);
+});
+
 test('a new machine that never proves ready fails the move, and the current one serves on', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const conversation = await f.create();
@@ -240,7 +297,17 @@ test('a new machine that never proves ready fails the move, and the current one 
   const lastMove = async () => (await f.pi.snapshot(f.operator, conversation.id)).host;
   await f.pi.setMachine(f.operator, { machine: 'large' });
   const late = (await f.host(bound.work.command)).next!;
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const token = await f.token(late.allocationId);
+  const { probe } = await f.pi.next(token, { workerId: 'worker_late' });
+  // A probe echoed after its time proves nothing.
   f.advance(180_000);
+  await assert.rejects(
+    f.pi.next(token, { workerId: 'worker_late', probe }),
+    code('pi_runtime_stale'),
+  );
+  assert.equal((await f.host(bound.work.command)).current?.machine, 'standard');
   await f.fleet.tick();
   await f.pi.tick();
   assert.equal((await f.allocation(late.allocationId)).intent, 'stop');
@@ -322,21 +389,36 @@ test('stopping the machine ends every turn on it and releases every slot', async
   await assert.rejects(f.pi.next(a.token, { workerId: 'worker_1' }), code('pi_unauthorized'));
 });
 
-test('a machine near its deadline hands over to a fresh one of the same kind', async (t) => {
+test('a machine in use near its deadline hands over to a fresh one of its kind, or the default once its person may not choose it', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 3600 } });
   const conversation = await f.create();
+  const other = await f.create();
+  await f.pi.setMachine(f.operator, { machine: 'large' });
   const bound = await f.claimed(await f.send(conversation));
   await f.finish(bound);
-  await f.pi.tick();
-  assert.equal((await f.host(bound.work.command)).next, null);
-  f.advance(3_600_000 - 15 * 60_000 + 1000);
-  await f.pi.tick();
-  const host = await f.host(bound.work.command);
-  assert.deepEqual([host.next?.machine, host.next?.by], ['standard', 'deadline']);
-  assert.equal((await f.pi.snapshot(f.operator, conversation.id)).host.moving?.by, 'deadline');
-  await cutOver(f, host);
-  assert.equal((await f.host(bound.work.command)).current?.allocationId, host.next!.allocationId);
+  const nearDeadline = async () => {
+    f.advance(3_600_000 - 15 * 60_000 + 1000);
+    await f.pi.tick();
+    // An idle machine is not renewed: it idles out, or ends at its deadline.
+    assert.equal((await f.host(bound.work.command)).next, null);
+    const sent = await f.send(conversation);
+    await f.pi.tick();
+    return { sent, host: await f.host(sent) };
+  };
+  const { sent, host } = await nearDeadline();
+  assert.deepEqual([host.next?.machine, host.next?.by], ['large', 'deadline']);
+  const { stage, host: view } = await f.pi.snapshot(f.operator, other.id);
+  assert.deepEqual([stage.name, view.moving?.by], ['ready', 'deadline']);
+  const { token, reply } = await cutOver(f, host);
+  assert.equal((await f.host(sent)).current?.allocationId, host.next!.allocationId);
   assert.equal((await f.allocation(bound.work.command.runtimeId)).intent, 'stop');
+  await f.finish({
+    token,
+    work: reply.work!,
+    input: { ...bound.input, commandId: sent.id, workerId: 'worker_next' },
+  });
+  f.runtimes.connected = (projectId) => projectId !== f.operator.projectId;
+  assert.equal((await nearDeadline()).host.next?.machine, 'standard');
 });
 
 test('picking the current machine while a move starts cancels the move', async (t) => {
