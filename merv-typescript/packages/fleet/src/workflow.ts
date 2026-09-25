@@ -29,7 +29,6 @@ const workflowConfig = z
       .optional(),
     baseUrl: z.string().url().max(2048).optional(),
     maxAgents: z.number().int().min(1).max(64).default(10),
-    maxAgentsPerPerson: z.number().int().min(1).max(64).default(5),
     /** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
     stepMinutes: z.number().int().min(10).max(1430).default(120),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
@@ -264,7 +263,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     };
     const everyone = this.config.people.includes('*');
     // Each target a project wants, with the director whose machine takes it.
-    const served = new Map<string, { who: string; wanted: Map<string, DelegationSource> }>();
+    const served = new Map<string, Map<string, DelegationSource>>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
         const { actor, who } = await person(source);
@@ -275,7 +274,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
             await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
           ).candidates)
             if (!wanted.has(targetId(target))) wanted.set(targetId(target), director);
-        served.set(projectId, { who, wanted });
+        served.set(projectId, wanted);
       } catch (error) {
         skipped(projectId, error);
       }
@@ -283,25 +282,19 @@ export class FleetWorkflowAdapter implements FleetOwner {
     this.served = new Set(served.keys());
     const allocations = await this.fleet.listOwned(
       this,
-      [...served.values()].flatMap((project) => [...project.wanted.keys()]),
+      [...served.values()].flatMap((wanted) => [...wanted.keys()]),
     );
     const active = allocations.filter(occupied);
     for (const a of active)
-      if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.wanted.has(a.owner.id))
+      if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.has(a.owner.id))
         await this.fleet.cancelOwned(this, a.id);
-    const load = new Map<string, number>();
-    for (const a of active) {
-      const { who } = await person(a.source);
-      load.set(who, (load.get(who) ?? 0) + 1);
-    }
     const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
     let slots = Math.max(0, this.config.maxAgents - active.length);
-    const queue = [...served].flatMap(([projectId, { who, wanted }]) =>
-      [...wanted].map(([id, source]) => ({ projectId, source, who, id })),
+    const queue = [...served].flatMap(([projectId, wanted]) =>
+      [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
-    for (const { projectId, source, who, id } of queue) {
+    for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || !this.served.has(projectId)) continue;
-      if ((load.get(who) ?? 0) >= this.config.maxAgentsPerPerson) continue;
       const released = allocations.filter((a) => a.owner.id === id && a.phase === 'released');
       let unclaimed = 0;
       let lastUnclaimedAt = 0;
@@ -334,7 +327,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
       }
       covered.add(id);
       slots--;
-      load.set(who, (load.get(who) ?? 0) + 1);
     }
   }
   async close(): Promise<void> {

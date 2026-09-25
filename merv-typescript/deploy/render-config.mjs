@@ -242,7 +242,6 @@ if (fleetEnabled) {
         modelApiKeyEnv,
         baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
         maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 10, 1, 64),
-        maxAgentsPerPerson: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON', 5, 1, 64),
         dailyTokensPerPerson: integer(
           'MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON',
           20_000_000,
