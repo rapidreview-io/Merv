@@ -60,6 +60,16 @@ jobs:
       - name: Test the release scripts
         run: npm run test:deploy
 
+      # The plugin map is generated from the Cordis inject declarations. A plugin or dependency
+      # change must commit the regenerated map (npm run docs:architecture).
+      - name: Check the plugin map is current
+        run: |
+          npm run docs:architecture
+          git diff --exit-code -- docs/architecture || {
+            echo '::error::The plugin map is stale. Run npm run docs:architecture and commit the result.'
+            exit 1
+          }
+
       # The server runs on PostgreSQL only, and so does every server test. Each test creates its
       # own schema, so the role owns the database; the suite opens far more than the default 100
       # connections.

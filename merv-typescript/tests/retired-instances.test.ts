@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PostgresState } from '@merv/state';
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
 import { postgresMigrations as research } from '../packages/research/src/index.postgres.js';
 import { postgresMigrations as tasks } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as workflows } from '../packages/workflows/src/index.postgres.js';
@@ -73,6 +77,49 @@ test('The retirement ledger is an idempotent no-op on a fresh database', async (
   );
   assert.deepEqual(await ledger(state), []);
   assert.deepEqual(await disabledTriggers(state), []);
+});
+
+test('The experiment.plan retirement is a no-op on a fresh database', async () => {
+  const state = await openState();
+  await probe(state, 'a', retiredPlanTasksSql);
+  await migrateInputs(state);
+  await probe(state, 'b', retiredPlanTasksSql);
+  assert.deepEqual(await ledger(state), []);
+});
+
+test('The experiment.plan retirement refuses a plan task whose session a managed runner holds', async () => {
+  const state = await openState();
+  await migrateInputs(state);
+  await state.transaction(async (tx) => {
+    // Only the columns the preconditions read; the real tables are Sessions'. The session is
+    // closed, so only the binding refuses.
+    await tx.run(
+      'CREATE TABLE worker_sessions (id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, status TEXT NOT NULL)',
+    );
+    await tx.run(
+      'CREATE TABLE session_managed_runners (allocation_id TEXT PRIMARY KEY, bound_session_id TEXT)',
+    );
+    await tx.run(
+      `INSERT INTO tasks(id,project_id,title,goal,checks,producer_id,brief_id,created_at,type_name,type_version,evidence_version)
+       VALUES('task-plan-2','p','t','g','[]','actor','brief','2026-01-01T00:00:00.000Z','experiment.plan',2,2)`,
+    );
+    await tx.run("INSERT INTO worker_sessions VALUES('session-1','task-plan-2','closed')");
+    await tx.run("INSERT INTO session_managed_runners VALUES('allocation-1','session-1')");
+  });
+  // State reports every refusal as state_constraint; removing the binding shows which one it was.
+  await assert.rejects(probe(state, 'plan', retiredPlanTasksSql), { code: 'state_constraint' });
+  // Nothing committed: the ledger the refused migration began does not exist.
+  assert.deepEqual(
+    await state.read((sql) => sql.all("SELECT to_regclass('wf_retired_instances') AS ledger")),
+    [{ ledger: null }],
+  );
+  await state.transaction(async (tx) => {
+    await tx.run('DELETE FROM session_managed_runners');
+  });
+  await probe(state, 'plan', retiredPlanTasksSql);
+  assert.deepEqual(await ledger(state), [
+    { id: 'task-plan-2', workflow: 'task', version: '0', reason: 'recipe_experiment.plan_2' },
+  ]);
 });
 
 test('The retirement ledger records each retired instance once, with its reason', async () => {
@@ -169,4 +216,13 @@ test('The retirement ledger records each retired instance once, with its reason'
   assert.deepEqual(await ledger(state), expected);
   await probe(state, 'b');
   assert.deepEqual(await ledger(state), expected);
+  // The experiment.plan retirement adds the version 2 task and keeps version 1's first reason.
+  const withPlans = [
+    ...expected,
+    { id: 'task-plan-2', workflow: 'task', version: '2', reason: 'recipe_experiment.plan_2' },
+  ].sort((a, b) => (a.id < b.id ? -1 : 1));
+  await probe(state, 'plan-a', retiredPlanTasksSql);
+  assert.deepEqual(await ledger(state), withPlans);
+  await probe(state, 'plan-b', retiredPlanTasksSql);
+  assert.deepEqual(await ledger(state), withPlans);
 });

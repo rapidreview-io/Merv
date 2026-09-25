@@ -112,6 +112,11 @@ const migrations = [
     version: 7,
     sql: postgresMigrations[7],
   },
+  {
+    // Deletes the instances of retired experiment.plan tasks; see packages/workflows/README.md.
+    version: 8,
+    sql: postgresMigrations[8],
+  },
 ];
 
 /** The most instances one dependency closure is walked over. */

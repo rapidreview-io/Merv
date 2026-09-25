@@ -1,4 +1,9 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTaskIds,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
@@ -45,5 +50,12 @@ ${withoutTriggers(
   'context_packages',
   ['context_packages_no_delete'],
   `DELETE FROM context_packages WHERE package::jsonb #>> '{subject,id}' IN (SELECT id FROM wf_retired_instances);`,
+)}`,
+  // Deletes the packages built for retired experiment.plan tasks. Their recipe rows stay.
+  3: `${retiredPlanTasksSql}
+${withoutTriggers(
+  'context_packages',
+  ['context_packages_no_delete'],
+  `DELETE FROM context_packages WHERE package::jsonb #>> '{subject,id}' IN (${retiredPlanTaskIds});`,
 )}`,
 };

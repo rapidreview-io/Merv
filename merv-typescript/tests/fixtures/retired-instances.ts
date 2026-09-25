@@ -24,6 +24,12 @@ export const retirementMigrations = [
   ['reflections', 2],
   ['research', 7],
   ['knowledge', 2],
+  // The 2026-09-25 retirement of the experiment.plan task type.
+  ['workflows', 8],
+  ['sessions', 9],
+  ['tasks', 9],
+  ['reviews', 12],
+  ['context_builder', 3],
 ] as const;
 
 /**
@@ -125,6 +131,7 @@ export const retiredVersions: [workflow: string, version: number][] = [
 /** Recipes that can no longer be selected; their pinned rows are kept as documentation. */
 export const retiredRecipes: [type: string, version: number][] = [
   ['experiment.plan', 1],
+  ['experiment.plan', 2],
   ['reflection.synthesis', 7],
   ['reflection.review', 7],
 ];
@@ -183,6 +190,16 @@ export const RETIRED: (Instance & { reason: string })[] = [
     state: 'in_progress',
     task: task('experiment.plan', 1),
     reason: 'recipe_experiment.plan_1',
+  },
+  // Retired on 2026-09-25 with the type: Experiments plans its own designs.
+  {
+    id: 'r-plan2',
+    place: 'history',
+    workflow: 'task',
+    version: 2,
+    state: 'done',
+    task: task('experiment.plan', 2),
+    reason: 'recipe_experiment.plan_2',
   },
   ...[1, 2, 3, 4].map((version) => ({
     id: `r-exp${version}`,
@@ -308,14 +325,6 @@ export const SURVIVORS: Instance[] = [
     version: 2,
     state: 'done',
     task: task('task.work', 1),
-  },
-  {
-    id: 'l-plan2',
-    place: 'history',
-    workflow: 'task',
-    version: 2,
-    state: 'done',
-    task: task('experiment.plan', 2),
   },
   ...[5, 6, 7, 8].map((version) => ({
     id: `l-exp${version}`,

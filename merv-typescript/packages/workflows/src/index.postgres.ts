@@ -1,4 +1,9 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTaskIds,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
@@ -184,4 +189,27 @@ BEGIN
     RAISE EXCEPTION USING MESSAGE = 'Retired workflow instances remain', ERRCODE = '23514';
   END IF;
 END $check$;`,
+  // Deletes the instances of retired experiment.plan tasks; Tasks checks that none remain.
+  8: `${retiredPlanTasksSql}
+DELETE FROM wf_dependencies WHERE source_id IN (${retiredPlanTaskIds})
+  OR target_id IN (${retiredPlanTaskIds});
+DELETE FROM wf_blockers WHERE instance_id IN (${retiredPlanTaskIds});
+DELETE FROM wf_requests WHERE response_json::jsonb->>'id' IN (${retiredPlanTaskIds});
+${withoutTriggers(
+  'wf_system_requests',
+  ['wf_system_requests_guard'],
+  `DELETE FROM wf_system_requests WHERE fingerprint::jsonb->>'instanceId' IN (${retiredPlanTaskIds});`,
+)}
+${withoutTriggers(
+  'wf_work_starts',
+  ['wf_work_starts_no_delete'],
+  `DELETE FROM wf_work_starts WHERE instance_id IN (${retiredPlanTaskIds});`,
+)}
+${withoutTriggers(
+  'wf_limit_grants',
+  ['wf_limit_grants_no_delete'],
+  `DELETE FROM wf_limit_grants WHERE instance_id IN (${retiredPlanTaskIds});`,
+)}
+DELETE FROM wf_history WHERE instance_id IN (${retiredPlanTaskIds});
+DELETE FROM wf_instances WHERE id IN (${retiredPlanTaskIds});`,
 };

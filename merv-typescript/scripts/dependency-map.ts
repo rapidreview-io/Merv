@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -143,10 +143,18 @@ const data = {
   scope:
     'Current working-tree declarations. The Runner plugin runs in a separate machine context; it is not part of server composition. See verification records for tested behavior.',
 };
-writeFileSync(
-  resolve(root, 'docs/architecture/current-dependencies.json'),
-  JSON.stringify(data, null, 2) + '\n',
-);
+// The snapshot dates the last change to the graph, not the last run, so an unchanged source
+// regenerates identical files and CI can fail on any difference.
+const inventoryFile = resolve(root, 'docs/architecture/current-dependencies.json');
+const previous = existsSync(inventoryFile)
+  ? (JSON.parse(readFileSync(inventoryFile, 'utf8')) as typeof data)
+  : undefined;
+if (
+  previous &&
+  JSON.stringify({ ...previous, snapshot: '' }) === JSON.stringify({ ...data, snapshot: '' })
+)
+  data.snapshot = previous.snapshot;
+writeFileSync(inventoryFile, JSON.stringify(data, null, 2) + '\n');
 const id = (name: string) => name.replaceAll('-', '_');
 let graph = 'flowchart BT\n';
 for (const runtime of ['server', 'machine'] as const) {

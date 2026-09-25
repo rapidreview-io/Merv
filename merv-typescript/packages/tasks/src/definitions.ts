@@ -11,18 +11,6 @@ const checkpointEvidence = section(
 );
 const feedback = section('feedback', 'Revision feedback', false);
 
-const planInstructions =
-  'Design an experiment that can test the stated research claim. Use the supplied research and constraints; distinguish established findings from hypotheses.';
-const planSections = [
-  task,
-  brief,
-  section('research', 'Relevant research and prior findings'),
-  section('constraints', 'Project and execution constraints'),
-  feedback,
-  checkpoints,
-  checkpointEvidence,
-];
-
 /**
  * What a worker may look at, said in the recipe because the assignment's own tool list reads as
  * the boundary of it: measured over one project, 22 of 22 task and experiment workers made no
@@ -60,18 +48,6 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
       maxChars: 48000,
       outputInstructions:
         'Save evidence as immutable artifacts. Submit the delivery with task.submit_delivery using the current task revision and a stable request ID. Do not review your own delivery.',
-    },
-  },
-  {
-    name: 'experiment.plan',
-    version: 2,
-    kind: 'work',
-    recipe: {
-      instructions: planInstructions,
-      sections: planSections,
-      maxChars: 64000,
-      outputInstructions:
-        'Produce a plan covering the hypothesis, controls, baselines, data, metrics, procedure, resource budget and decision criteria. State its feasibility in the plan: what it requires against what exists — data, compute and time, each with the record the figure was measured from — every dependency and whether it is present, and any known blocker. Measure, do not assume; the feasibility check of this task is required and its review cannot waive it. Save the plan as an artifact and submit it through task.submit_delivery for independent review. This assignment is planning; it does not authorize experiment execution.',
     },
   },
   {
@@ -132,14 +108,3 @@ export const RESERVED_CONTEXT_INPUTS = new Set([
   'checkpoints',
   'checkpointEvidence',
 ]);
-
-/**
- * Checks the server adds to every new task of a type, and that the delivery review may not waive.
- * A plan whose data or compute does not exist cost scenario run 01 four design-review rounds; the
- * fact is cheap to establish while planning.
- */
-export const TYPE_REQUIRED_CHECKS: Record<string, string[]> = {
-  'experiment.plan': [
-    'The plan states what it requires against what exists — data, compute and time with the measured basis of each — names every dependency and whether it is present, and leaves no known blocker.',
-  ],
-};

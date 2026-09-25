@@ -1,4 +1,9 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import {
+  retiredInstancesSql,
+  retiredPlanTaskIds,
+  retiredPlanTasksSql,
+  withoutTriggers,
+} from '@merv/contracts/retired-instances';
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
@@ -113,6 +118,27 @@ DO $check$
 BEGIN
   IF EXISTS (SELECT 1 FROM tasks WHERE evidence_version=1 OR (type_name='experiment.plan' AND type_version=1)) THEN
     RAISE EXCEPTION USING MESSAGE = 'Retired tasks remain', ERRCODE = '23514';
+  END IF;
+END $check$;`,
+  // Deletes every experiment.plan task: Experiments plans its own designs, and the recipe is gone.
+  9: `${retiredPlanTasksSql}
+${withoutTriggers(
+  'task_leases',
+  ['task_lease_no_delete'],
+  `DELETE FROM task_leases WHERE task_id IN (${retiredPlanTaskIds});`,
+)}
+${withoutTriggers(
+  'task_checkpoints',
+  ['task_checkpoints_no_delete'],
+  `DELETE FROM task_checkpoints WHERE task_id IN (${retiredPlanTaskIds});`,
+)}
+DELETE FROM task_commands WHERE result::jsonb->>'id' IN (${retiredPlanTaskIds})
+  OR result::jsonb->>'taskId' IN (${retiredPlanTaskIds});
+DELETE FROM tasks WHERE id IN (${retiredPlanTaskIds});
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM tasks WHERE type_name='experiment.plan') THEN
+    RAISE EXCEPTION USING MESSAGE = 'Retired experiment.plan tasks remain', ERRCODE = '23514';
   END IF;
 END $check$;`,
 };

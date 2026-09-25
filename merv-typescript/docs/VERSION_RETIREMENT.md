@@ -19,3 +19,24 @@ One surviving, finished task@2 had a dependency edge to a retired experiment; th
 removed. Both servers started with 50/50 plugins active and zero restarts.
 
 Rolling back the image alone fails with `migration_ahead`; recovery means restoring the backup.
+
+## The experiment.plan task type (2026-09-25)
+
+The owner dropped the `experiment.plan` task type: experiments are planned in the experiment
+program, which never created one, so no current flow does. Tasks no longer registers the recipe
+or the feasibility check it appended to every plan task, and `task.create` refuses the type with
+`task_type_unavailable`. Five migrations (workflows@8, sessions@9, tasks@9, reviews@12,
+context_builder@3) delete every `experiment.plan` task with the records keyed by it, as the
+earlier retirement did. They add those tasks to the same ledger with the reason
+`recipe_experiment.plan_2` (a version 1 task already there keeps its reason) and delete only
+rows under that reason. The recipe rows of both versions stay in `context_recipes` as history.
+
+Each of the five runs the earlier preconditions against the whole ledger, so a live session of a
+plan task refuses the release, and one more: a managed runner bound to a session of a plan task
+refuses it too, because that binding is kept permanently. The census reports the new ledger rows
+in C1 and the managed-runner refusal as C14.
+
+| Environment | Release | Census before | After | Backup |
+| ----------- | ------- | ------------- | ----- | ------ |
+| Staging     | pending |               |       |        |
+| Production  | pending |               |       |        |

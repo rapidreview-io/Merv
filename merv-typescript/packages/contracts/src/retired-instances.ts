@@ -108,6 +108,46 @@ export const retiredInstancesSql = `${retirementLedgerSql}
 ${retirementPreconditionsSql}`;
 
 /**
+ * The 2026-09-25 retirement of the experiment.plan task type: Experiments plans its own designs,
+ * so no current flow creates one. It adds every experiment.plan task to the same ledger while
+ * `tasks` still holds them; an experiment.plan@1 task the ledger above already holds keeps its
+ * reason. As with the ledger, whichever of its migrations runs first captures the set.
+ */
+export const planRetirementLedgerSql = `DO $retire_plan$
+BEGIN
+  IF to_regclass('tasks') IS NULL THEN RETURN; END IF;
+  INSERT INTO wf_retired_instances(id,project_id,workflow,version,reason)
+  SELECT t.id,t.project_id,'task',COALESCE(i.version,0),'recipe_experiment.plan_2'
+  FROM tasks t LEFT JOIN wf_instances i ON i.id=t.id
+  WHERE t.type_name='experiment.plan'
+  ON CONFLICT (id) DO NOTHING;
+END $retire_plan$;`;
+
+/**
+ * A managed runner keeps its binding to a worker session permanently, so the session of a retired
+ * task it was bound to cannot be deleted; the release is refused instead, as for a live session.
+ */
+export const planRetirementPreconditionsSql = `DO $refuse_plan$
+BEGIN
+  IF to_regclass('session_managed_runners') IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM session_managed_runners r JOIN worker_sessions s ON s.id=r.bound_session_id
+      WHERE s.instance_id IN (SELECT id FROM wf_retired_instances WHERE reason='recipe_experiment.plan_2')) THEN
+      RAISE EXCEPTION USING ERRCODE = '23514',
+        MESSAGE = 'Retirement refused: a managed runner is bound to a session of a retired experiment.plan task';
+    END IF;
+  END IF;
+END $refuse_plan$;`;
+
+/** What every experiment.plan retirement migration runs before its deletes. */
+export const retiredPlanTasksSql = `${retirementLedgerSql}
+${planRetirementLedgerSql}
+${retirementPreconditionsSql}
+${planRetirementPreconditionsSql}`;
+
+/** The ids that retirement deletes: its own ledger rows, never those of the earlier release. */
+export const retiredPlanTaskIds = `SELECT id FROM wf_retired_instances WHERE reason='recipe_experiment.plan_2'`;
+
+/**
  * `statements` between `ALTER TABLE <table> DISABLE TRIGGER <trigger>;` and the matching ENABLE,
  * one line per trigger. DISABLE TRIGGER is transactional, so other sessions never see a guard off,
  * and it names the one guard without copying its pinned DDL; it needs table ownership. The emitted

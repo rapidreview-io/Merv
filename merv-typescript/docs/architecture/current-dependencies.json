@@ -1,50 +1,59 @@
 {
-  "snapshot": "2026-09-22",
+  "snapshot": "2026-09-25",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 55,
-  "serviceProviders": 25,
-  "toolAdapters": 14,
-  "uiAdapters": 14,
-  "apiAdapters": 2,
+  "pluginCount": 63,
+  "serviceProviders": 28,
+  "toolAdapters": 16,
+  "uiAdapters": 16,
+  "apiAdapters": 3,
   "defaultEntries": 49,
   "apiEntries": 36,
-  "serverPlugins": 54,
+  "serverPlugins": 62,
   "machinePlugins": 1,
-  "directDependencyCount": 145,
-  "optionalDependencyCount": 13,
+  "directDependencyCount": 167,
+  "optionalDependencyCount": 14,
   "directConsumers": {
-    "api": 3,
+    "api": 4,
     "artifacts": 12,
-    "blobs": 1,
+    "blobs": 2,
     "code": 1,
     "codeResearch": 7,
     "contextBuilder": 3,
     "domainEvents": 4,
     "experiments": 4,
     "feed": 2,
+    "fleet": 4,
+    "fleetWorkflow": 0,
     "identity": 1,
     "knowledge": 3,
     "mounts": 1,
     "paper": 5,
+    "pi": 3,
     "reflections": 3,
     "research": 2,
     "reviews": 7,
     "runner": 0,
-    "sandboxes": 3,
-    "scope": 20,
-    "sessions": 4,
-    "state": 16,
+    "sandboxes": 4,
+    "scope": 23,
+    "sessions": 5,
+    "state": 18,
     "tasks": 4,
-    "tools": 17,
-    "ui": 14,
+    "tools": 21,
+    "ui": 16,
     "workflows": 8
   },
   "plugins": [
     {
       "plugin": "merv-api",
       "source": "packages/api/src/index.ts",
-      "provides": ["api"],
-      "requires": ["scope", "tools", "identity"],
+      "provides": [
+        "api"
+      ],
+      "requires": [
+        "scope",
+        "tools",
+        "identity"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -54,7 +63,10 @@
       "plugin": "merv-artifact-tools",
       "source": "packages/artifacts/src/tools.ts",
       "provides": [],
-      "requires": ["artifacts", "tools"],
+      "requires": [
+        "artifacts",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -64,7 +76,10 @@
       "plugin": "merv-artifact-ui",
       "source": "packages/artifacts/src/ui.ts",
       "provides": [],
-      "requires": ["artifacts", "ui"],
+      "requires": [
+        "artifacts",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -73,8 +88,14 @@
     {
       "plugin": "merv-artifacts",
       "source": "packages/artifacts/src/index.ts",
-      "provides": ["artifacts"],
-      "requires": ["state", "scope", "blobs"],
+      "provides": [
+        "artifacts"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "blobs"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -83,7 +104,9 @@
     {
       "plugin": "merv-blobs",
       "source": "packages/blobs/src/index.ts",
-      "provides": ["blobs"],
+      "provides": [
+        "blobs"
+      ],
       "requires": [],
       "optional": [],
       "kind": "service",
@@ -93,8 +116,13 @@
     {
       "plugin": "merv-code",
       "source": "packages/code/src/index.ts",
-      "provides": ["code"],
-      "requires": ["state", "scope"],
+      "provides": [
+        "code"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -104,7 +132,10 @@
       "plugin": "merv-code-api",
       "source": "packages/code-research/src/api.ts",
       "provides": [],
-      "requires": ["api", "codeResearch"],
+      "requires": [
+        "api",
+        "codeResearch"
+      ],
       "optional": [],
       "kind": "api",
       "runtime": "server",
@@ -113,9 +144,22 @@
     {
       "plugin": "merv-code-research",
       "source": "packages/code-research/src/index.ts",
-      "provides": ["codeResearch"],
-      "requires": ["code", "state", "scope", "sessions", "artifacts", "workflows", "domainEvents"],
-      "optional": ["reviews", "sandboxes"],
+      "provides": [
+        "codeResearch"
+      ],
+      "requires": [
+        "code",
+        "state",
+        "scope",
+        "sessions",
+        "artifacts",
+        "workflows",
+        "domainEvents"
+      ],
+      "optional": [
+        "reviews",
+        "sandboxes"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -124,7 +168,10 @@
       "plugin": "merv-code-tools",
       "source": "packages/code-research/src/tools.ts",
       "provides": [],
-      "requires": ["codeResearch", "tools"],
+      "requires": [
+        "codeResearch",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -134,7 +181,10 @@
       "plugin": "merv-code-ui",
       "source": "packages/code-research/src/ui.ts",
       "provides": [],
-      "requires": ["codeResearch", "ui"],
+      "requires": [
+        "codeResearch",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -143,8 +193,14 @@
     {
       "plugin": "merv-context-builder",
       "source": "packages/context-builder/src/index.ts",
-      "provides": ["contextBuilder"],
-      "requires": ["state", "scope", "artifacts"],
+      "provides": [
+        "contextBuilder"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -153,8 +209,12 @@
     {
       "plugin": "merv-domain-events",
       "source": "packages/domain-events/src/index.ts",
-      "provides": ["domainEvents"],
-      "requires": ["state"],
+      "provides": [
+        "domainEvents"
+      ],
+      "requires": [
+        "state"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -163,7 +223,9 @@
     {
       "plugin": "merv-experiments",
       "source": "packages/experiments/src/index.ts",
-      "provides": ["experiments"],
+      "provides": [
+        "experiments"
+      ],
       "requires": [
         "state",
         "scope",
@@ -173,7 +235,9 @@
         "contextBuilder",
         "paper"
       ],
-      "optional": ["codeResearch"],
+      "optional": [
+        "codeResearch"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -182,7 +246,10 @@
       "plugin": "merv-experiments-tools",
       "source": "packages/experiments/src/tools.ts",
       "provides": [],
-      "requires": ["experiments", "tools"],
+      "requires": [
+        "experiments",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -192,7 +259,10 @@
       "plugin": "merv-experiments-ui",
       "source": "packages/experiments/src/ui.ts",
       "provides": [],
-      "requires": ["experiments", "ui"],
+      "requires": [
+        "experiments",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -201,8 +271,14 @@
     {
       "plugin": "merv-feed",
       "source": "packages/feed/src/index.ts",
-      "provides": ["feed"],
-      "requires": ["state", "scope", "artifacts"],
+      "provides": [
+        "feed"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -212,7 +288,10 @@
       "plugin": "merv-feed-tools",
       "source": "packages/feed/src/tools.ts",
       "provides": [],
-      "requires": ["feed", "tools"],
+      "requires": [
+        "feed",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -222,16 +301,79 @@
       "plugin": "merv-feed-ui",
       "source": "packages/feed/src/ui.ts",
       "provides": [],
-      "requires": ["feed", "ui"],
+      "requires": [
+        "feed",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-fleet",
+      "source": "packages/fleet/src/index.ts",
+      "provides": [
+        "fleet"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "sandboxes"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-fleet-tools",
+      "source": "packages/fleet/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "fleet",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-fleet-ui",
+      "source": "packages/fleet/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "fleet",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-fleet-workflow",
+      "source": "packages/fleet/src/workflow.ts",
+      "provides": [
+        "fleetWorkflow"
+      ],
+      "requires": [
+        "fleet",
+        "sessions",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-identity",
       "source": "packages/identity/src/index.ts",
-      "provides": ["identity"],
+      "provides": [
+        "identity"
+      ],
       "requires": [],
       "optional": [],
       "kind": "service",
@@ -241,9 +383,21 @@
     {
       "plugin": "merv-knowledge",
       "source": "packages/knowledge/src/index.ts",
-      "provides": ["knowledge"],
-      "requires": ["state", "scope", "tasks", "experiments", "artifacts", "reviews", "workflows"],
-      "optional": ["codeResearch"],
+      "provides": [
+        "knowledge"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "tasks",
+        "experiments",
+        "artifacts",
+        "reviews",
+        "workflows"
+      ],
+      "optional": [
+        "codeResearch"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -252,7 +406,10 @@
       "plugin": "merv-knowledge-tools",
       "source": "packages/knowledge/src/tools.ts",
       "provides": [],
-      "requires": ["knowledge", "tools"],
+      "requires": [
+        "knowledge",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -262,7 +419,10 @@
       "plugin": "merv-knowledge-ui",
       "source": "packages/knowledge/src/ui.ts",
       "provides": [],
-      "requires": ["knowledge", "ui"],
+      "requires": [
+        "knowledge",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -271,8 +431,13 @@
     {
       "plugin": "merv-mounts",
       "source": "packages/mounts/src/index.ts",
-      "provides": ["mounts"],
-      "requires": ["tools", "scope"],
+      "provides": [
+        "mounts"
+      ],
+      "requires": [
+        "tools",
+        "scope"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -282,7 +447,10 @@
       "plugin": "merv-mounts-ui",
       "source": "packages/mounts/src/ui.ts",
       "provides": [],
-      "requires": ["mounts", "ui"],
+      "requires": [
+        "mounts",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -291,8 +459,14 @@
     {
       "plugin": "merv-paper",
       "source": "packages/paper/src/index.ts",
-      "provides": ["paper"],
-      "requires": ["state", "scope", "artifacts"],
+      "provides": [
+        "paper"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -302,7 +476,10 @@
       "plugin": "merv-paper-tools",
       "source": "packages/paper/src/tools.ts",
       "provides": [],
-      "requires": ["paper", "tools"],
+      "requires": [
+        "paper",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -312,17 +489,80 @@
       "plugin": "merv-paper-ui",
       "source": "packages/paper/src/ui.ts",
       "provides": [],
-      "requires": ["paper", "ui"],
+      "requires": [
+        "paper",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-pi",
+      "source": "packages/pi/src/index.ts",
+      "provides": [
+        "pi"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "fleet",
+        "tools",
+        "blobs"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-pi-api",
+      "source": "packages/pi/src/api.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-pi-tools",
+      "source": "packages/pi/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-pi-ui",
+      "source": "packages/pi/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "pi",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
       "plugin": "merv-reflection-tools",
       "source": "packages/reflections/src/tools.ts",
       "provides": [],
-      "requires": ["reflections", "tools"],
+      "requires": [
+        "reflections",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -332,7 +572,10 @@
       "plugin": "merv-reflection-ui",
       "source": "packages/reflections/src/ui.ts",
       "provides": [],
-      "requires": ["reflections", "ui"],
+      "requires": [
+        "reflections",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -341,7 +584,9 @@
     {
       "plugin": "merv-reflections",
       "source": "packages/reflections/src/index.ts",
-      "provides": ["reflections"],
+      "provides": [
+        "reflections"
+      ],
       "requires": [
         "state",
         "scope",
@@ -359,8 +604,14 @@
     {
       "plugin": "merv-research",
       "source": "packages/research/src/index.ts",
-      "provides": ["research"],
-      "requires": ["state", "scope", "workflows"],
+      "provides": [
+        "research"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows"
+      ],
       "optional": [
         "domainEvents",
         "paper",
@@ -379,7 +630,10 @@
       "plugin": "merv-research-tools",
       "source": "packages/research/src/tools.ts",
       "provides": [],
-      "requires": ["research", "tools"],
+      "requires": [
+        "research",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -389,7 +643,10 @@
       "plugin": "merv-research-ui",
       "source": "packages/research/src/ui.ts",
       "provides": [],
-      "requires": ["research", "ui"],
+      "requires": [
+        "research",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -399,7 +656,10 @@
       "plugin": "merv-review-tools",
       "source": "packages/reviews/src/tools.ts",
       "provides": [],
-      "requires": ["tools", "reviews"],
+      "requires": [
+        "tools",
+        "reviews"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -409,7 +669,10 @@
       "plugin": "merv-review-ui",
       "source": "packages/reviews/src/ui.ts",
       "provides": [],
-      "requires": ["reviews", "ui"],
+      "requires": [
+        "reviews",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -418,8 +681,15 @@
     {
       "plugin": "merv-reviews",
       "source": "packages/reviews/src/index.ts",
-      "provides": ["reviews"],
-      "requires": ["state", "scope", "artifacts", "domainEvents"],
+      "provides": [
+        "reviews"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "domainEvents"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -428,7 +698,9 @@
     {
       "plugin": "merv-runner",
       "source": "packages/runner/src/index.ts",
-      "provides": ["runner"],
+      "provides": [
+        "runner"
+      ],
       "requires": [],
       "optional": [],
       "kind": "service",
@@ -438,7 +710,9 @@
     {
       "plugin": "merv-sandboxes",
       "source": "packages/sandboxes/src/index.ts",
-      "provides": ["sandboxes"],
+      "provides": [
+        "sandboxes"
+      ],
       "requires": [],
       "optional": [],
       "kind": "service",
@@ -449,7 +723,11 @@
       "plugin": "merv-sandboxes-tools",
       "source": "packages/sandboxes/src/tools.ts",
       "provides": [],
-      "requires": ["sandboxes", "tools", "scope"],
+      "requires": [
+        "sandboxes",
+        "tools",
+        "scope"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -459,7 +737,10 @@
       "plugin": "merv-sandboxes-ui",
       "source": "packages/sandboxes/src/ui.ts",
       "provides": [],
-      "requires": ["sandboxes", "ui"],
+      "requires": [
+        "sandboxes",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -468,8 +749,12 @@
     {
       "plugin": "merv-scope",
       "source": "packages/scope/src/index.ts",
-      "provides": ["scope"],
-      "requires": ["state"],
+      "provides": [
+        "scope"
+      ],
+      "requires": [
+        "state"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -479,7 +764,10 @@
       "plugin": "merv-scope-tools",
       "source": "packages/scope/src/tools.ts",
       "provides": [],
-      "requires": ["scope", "tools"],
+      "requires": [
+        "scope",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -489,7 +777,10 @@
       "plugin": "merv-scope-ui",
       "source": "packages/scope/src/ui.ts",
       "provides": [],
-      "requires": ["scope", "ui"],
+      "requires": [
+        "scope",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -498,9 +789,18 @@
     {
       "plugin": "merv-sessions",
       "source": "packages/sessions/src/index.ts",
-      "provides": ["sessions"],
-      "requires": ["state", "scope", "workflows", "domainEvents"],
-      "optional": [],
+      "provides": [
+        "sessions"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "workflows",
+        "domainEvents"
+      ],
+      "optional": [
+        "tools"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -509,7 +809,10 @@
       "plugin": "merv-sessions-api",
       "source": "packages/sessions/src/api.ts",
       "provides": [],
-      "requires": ["sessions", "api"],
+      "requires": [
+        "sessions",
+        "api"
+      ],
       "optional": [],
       "kind": "api",
       "runtime": "server",
@@ -519,7 +822,10 @@
       "plugin": "merv-sessions-tools",
       "source": "packages/sessions/src/tools.ts",
       "provides": [],
-      "requires": ["sessions", "tools"],
+      "requires": [
+        "sessions",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -529,7 +835,10 @@
       "plugin": "merv-sessions-ui",
       "source": "packages/sessions/src/ui.ts",
       "provides": [],
-      "requires": ["sessions", "ui"],
+      "requires": [
+        "sessions",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -538,7 +847,9 @@
     {
       "plugin": "merv-state",
       "source": "packages/state/src/index.ts",
-      "provides": ["state"],
+      "provides": [
+        "state"
+      ],
       "requires": [],
       "optional": [],
       "kind": "service",
@@ -549,7 +860,10 @@
       "plugin": "merv-task-tools",
       "source": "packages/tasks/src/tools.ts",
       "provides": [],
-      "requires": ["tools", "tasks"],
+      "requires": [
+        "tools",
+        "tasks"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -559,7 +873,10 @@
       "plugin": "merv-task-ui",
       "source": "packages/tasks/src/ui.ts",
       "provides": [],
-      "requires": ["tasks", "ui"],
+      "requires": [
+        "tasks",
+        "ui"
+      ],
       "optional": [],
       "kind": "ui",
       "runtime": "server",
@@ -568,9 +885,20 @@
     {
       "plugin": "merv-tasks",
       "source": "packages/tasks/src/index.ts",
-      "provides": ["tasks"],
-      "requires": ["state", "scope", "artifacts", "workflows", "reviews", "contextBuilder"],
-      "optional": ["codeResearch"],
+      "provides": [
+        "tasks"
+      ],
+      "requires": [
+        "state",
+        "scope",
+        "artifacts",
+        "workflows",
+        "reviews",
+        "contextBuilder"
+      ],
+      "optional": [
+        "codeResearch"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -578,8 +906,12 @@
     {
       "plugin": "merv-tools",
       "source": "packages/api/src/index.ts",
-      "provides": ["tools"],
-      "requires": ["scope"],
+      "provides": [
+        "tools"
+      ],
+      "requires": [
+        "scope"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -588,8 +920,13 @@
     {
       "plugin": "merv-ui",
       "source": "packages/ui/src/index.ts",
-      "provides": ["ui"],
-      "requires": ["api", "tools"],
+      "provides": [
+        "ui"
+      ],
+      "requires": [
+        "api",
+        "tools"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -599,7 +936,10 @@
       "plugin": "merv-workflow-tools",
       "source": "packages/workflows/src/tools.ts",
       "provides": [],
-      "requires": ["workflows", "tools"],
+      "requires": [
+        "workflows",
+        "tools"
+      ],
       "optional": [],
       "kind": "tools",
       "runtime": "server",
@@ -608,15 +948,23 @@
     {
       "plugin": "merv-workflows",
       "source": "packages/workflows/src/index.ts",
-      "provides": ["workflows"],
-      "requires": ["state", "scope"],
+      "provides": [
+        "workflows"
+      ],
+      "requires": [
+        "state",
+        "scope"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
     }
   ],
-  "externalServices": ["Nisa MCP via Mounts", "Sandboxes MCP via Mounts"],
+  "externalServices": [
+    "Nisa MCP via Mounts",
+    "Sandboxes MCP via Mounts"
+  ],
   "connections": [
     {
       "from": "runner",
