@@ -424,3 +424,47 @@ test('choosing an agent brings its panel to the top of the view, and again once 
   assert.equal(opener.getAttribute('aria-controls'), 'agent-detail');
   assert.equal(opener.getAttribute('aria-expanded'), 'true');
 });
+
+test('an agent a runner started is named for that runner, as the Runners table names it', async (t) => {
+  t.after(unmount);
+  const runner = '0c27f0b2-fefb-447a-83d1-ce2c68d2ae7c';
+  const gone = '5d1e9a40-3b7c-4d11-9f0e-7a2b8c4d6e1f';
+  const base = status();
+  const agent = (id: string, runnerId: string, name = `Agent ${runnerId}`) => ({
+    ...base.agents[0],
+    id,
+    name,
+    runnerId,
+    currentExecutionId: null,
+    currentAssignment: null,
+  });
+  serve('/tools/ui.read', () =>
+    read({
+      runners: [
+        {
+          ...base.runners[0],
+          runnerId: runner,
+          machine: { ...base.runners[0].machine, hostname: 'Gurals-MacBook-Pro.local' },
+        },
+      ],
+      sessions: [{ ...base.sessions[0], agentId: 'agent_mac' }],
+      agents: [
+        { ...agent('agent_mac', runner), currentExecutionId: 'sess_1' },
+        agent('agent_qa', 'qa-launcher'),
+        agent('agent_gone', gone),
+        agent('agent_named', runner, 'Weight-decay researcher'),
+      ],
+    }),
+  );
+  await mount(page());
+  const lease = document.querySelector('.lease-row > span')!;
+  assert.equal(lease.textContent, 'Gurals-MacBook-Pro.local');
+  const listed = [...document.querySelectorAll('.agent-select')].map((node) => node.textContent);
+  assert.deepEqual(listed.sort(), [
+    '5d1e9a40…4d6e1f',
+    'Gurals-MacBook-Pro.local',
+    'Weight-decay researcher',
+    'qa-launcher',
+  ]);
+  assert.ok(!text().includes(runner) && !text().includes(gone), 'a raw runner id names nobody');
+});
