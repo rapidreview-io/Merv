@@ -8,9 +8,9 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
-import { Ago, useNow } from '../components';
+import { Ago, relativeTime, useNow } from '../components';
 import { ChevronsIcon } from '../icons';
-import { Markdown } from '../markdown';
+import { MarkdownPieces, useRecordNames } from '../markdown';
 import {
   PiStreamError,
   readPiEvents,
@@ -35,7 +35,7 @@ const accumulateResponse = (before: TransientResponse | null, event: PiEvent) =>
       ? before
       : { commandId: event.commandId, text: '', progress: '', written: 0 };
   return event.type === 'text'
-    ? { ...previous, text: (previous.text + event.text).slice(-16_384), written: event.sequence }
+    ? { ...previous, text: previous.text + event.text, written: event.sequence }
     : { ...previous, progress: event.text.slice(-300) };
 };
 const identifier = () =>
@@ -143,6 +143,42 @@ function useMenu(box: RefObject<HTMLElement>, open: unknown, shut: () => void) {
       document.removeEventListener('keydown', key);
     };
   }, [open]);
+}
+
+/** How long after its words arrive an answer shows them all. */
+const REVEAL_MS = 250;
+/**
+ * The answer as it streams, drawn at the pace its words arrive rather than in bursts: whatever
+ * arrived is spread over the next REVEAL_MS, so a steady stream reads at its own rate and nothing
+ * shows later than that. A reader who asks for less motion gets each burst at once, and the saved
+ * answer replaces this one, whole, the moment the turn ends.
+ */
+function LiveAnswer({ text, follow }: { text: string; follow(): void }) {
+  const names = useRecordNames(text);
+  const [shown, setShown] = useState(0);
+  // Reveals run linearly from `from` at `start` to the whole of `text` REVEAL_MS later.
+  const reveal = useRef({ text: '', from: 0, start: 0 });
+  useEffect(() => {
+    const now = performance.now();
+    const at = (time: number) => {
+      const { text, from, start } = reveal.current;
+      return Math.min(text.length, from + ((text.length - from) * (time - start)) / REVEAL_MS);
+    };
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const grew = text.startsWith(reveal.current.text);
+    reveal.current = { text, from: grew && !still ? at(now) : text.length, start: now };
+    let frame = 0;
+    const step = () => {
+      const next = at(performance.now());
+      // Never half a character.
+      setShown(Math.floor(next) - (/[\uD800-\uDBFF]/.test(text[Math.floor(next) - 1]) ? 1 : 0));
+      if (next < text.length) frame = requestAnimationFrame(step);
+    };
+    step();
+    return () => cancelAnimationFrame(frame);
+  }, [text]);
+  useLayoutEffect(follow);
+  return <MarkdownPieces source={text.slice(0, shown)} names={names} />;
 }
 
 /** The person's machine in this project, which all their conversations here share: what it is, a
@@ -270,7 +306,8 @@ function PiConversationPage() {
   const [snapshot, setSnapshot] = useState<PiSnapshot | null>(null);
   const [response, setResponse] = useState<TransientResponse | null>(null);
   const [draft, setDraft] = useState('');
-  const [menu, setMenu] = useState(false);
+  // The conversations as the menu opened: an answer streaming meanwhile moves none of them.
+  const [menu, setMenu] = useState<PiConversation[] | null>(null);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState(false);
@@ -521,14 +558,15 @@ function PiConversationPage() {
       </span>
     </>
   );
-  useLayoutEffect(() => {
+  const follow = useRef(() => {
     const list = transcript.current;
     if (list && following.current) list.scrollTop = list.scrollHeight;
-  });
+  }).current;
+  useLayoutEffect(follow);
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
   const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
-  useMenu(switcher, menu, () => setMenu(false));
+  useMenu(switcher, menu, () => setMenu(null));
 
   const open = async () => {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
@@ -625,10 +663,18 @@ function PiConversationPage() {
               type="button"
               className="pi-switch-button"
               aria-haspopup="menu"
-              aria-expanded={menu}
+              aria-expanded={!!menu}
               title={title}
               disabled={busy}
-              onClick={() => setMenu((value) => !value)}
+              onClick={() =>
+                setMenu((value) =>
+                  value
+                    ? null
+                    : [...conversations].sort((left, right) =>
+                        right.updatedAt.localeCompare(left.updatedAt),
+                      ),
+                )
+              }
             >
               <span>{title}</span>
               <ChevronsIcon />
@@ -641,24 +687,25 @@ function PiConversationPage() {
                   tabIndex={-1}
                   className="pi-menu-item"
                   onClick={() => {
-                    setMenu(false);
+                    setMenu(null);
                     create();
                   }}
                 >
                   New conversation
                 </button>
-                {[...conversations]
-                  .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-                  .map((item) => (
+                {menu.map((item) => {
+                  const name = item.id === selected ? title : item.title;
+                  return (
                     <button
                       key={item.id}
                       type="button"
                       role="menuitem"
                       tabIndex={-1}
                       className="pi-menu-item"
+                      aria-label={`${name}, ${relativeTime(item.updatedAt)}`}
                       aria-current={item.id === selected || undefined}
                       onClick={() => {
-                        setMenu(false);
+                        setMenu(null);
                         switcher.current?.querySelector('button')?.focus();
                         if (item.id === selected) return;
                         pending.current = null;
@@ -667,10 +714,11 @@ function PiConversationPage() {
                         choose(item.id);
                       }}
                     >
-                      <span>{item.id === selected ? title : item.title}</span>
+                      <span>{name}</span>
                       <Ago at={item.updatedAt} />
                     </button>
-                  ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -716,7 +764,7 @@ function PiConversationPage() {
                 {message.role === 'user' ? (
                   <div className="pi-message-text">{message.text}</div>
                 ) : (
-                  <Markdown source={message.text} />
+                  <MarkdownPieces source={message.text} />
                 )}
               </article>
             )),
@@ -729,7 +777,7 @@ function PiConversationPage() {
           {visible && (visible.text || visible.progress) && (
             <article className="pi-message pi-message--assistant pi-message--transient">
               <span className="pi-speaker">Agent · live</span>
-              {visible.text && <Markdown source={visible.text} />}
+              {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
               {visible.progress && <p className="muted">{visible.progress}</p>}
             </article>
           )}

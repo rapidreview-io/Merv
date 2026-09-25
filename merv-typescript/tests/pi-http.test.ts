@@ -251,7 +251,7 @@ test('worker mount enforces exact method, path, origin, bearer and bounded JSON 
     await response.arrayBuffer();
   }
   assert.equal((await post(path, { body: '{' })).status, 400);
-  const oversized = await post(path, { body: JSON.stringify({ padding: 'x'.repeat(3_000_000) }) });
+  const oversized = await post(path, { body: JSON.stringify({ padding: 'x'.repeat(16_000_000) }) });
   assert.equal(oversized.status, 413);
   assert.deepEqual(f.calls, ['next', 'begin', 'tool', 'progress', 'complete', 'fail']);
 });
@@ -452,10 +452,8 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
       (forwarded[0].init.headers as Record<string, string>).authorization,
     'Bearer fake-secret',
   );
-  assert.deepEqual(JSON.parse(String(forwarded[0]?.init.body)), {
-    ...modelRequest,
-    max_output_tokens: 4096,
-  });
+  // Forwarded as the worker sent it: no output cap is added.
+  assert.deepEqual(JSON.parse(String(forwarded[0]?.init.body)), modelRequest);
   const reader = response.body!.getReader();
   const first = await readEvent(reader, { text: '' });
   assert.equal(first.event, 'response.output_text.delta');

@@ -9,11 +9,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mount, serve, settle, text, unmount } from './ui-render.js';
 
-const { createElement } = await import('react');
+const { createElement, useState } = await import('react');
+const { act } = await import('react-dom/test-utils');
+const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router-dom');
 const {
   MAX_READ,
   Markdown,
+  MarkdownPieces,
   RecordText,
   idsIn,
   parseInline,
@@ -469,6 +472,88 @@ test('a document’s headings sit under its host’s, and a text too long to rea
   await mount(page(long, new Map()));
   assert.equal(document.querySelector('.md'), null);
   assert.ok(document.querySelector('pre.doc')!.textContent!.startsWith('# Not read'));
+});
+
+test('a growing text drawn in pieces reads as the whole does at every length', async (t) => {
+  t.after(async () => await unmount());
+  const source = [
+    '# Findings',
+    '',
+    'A paragraph',
+    'on two lines.',
+    '',
+    '1. first',
+    '',
+    '2. second',
+    '   still the second',
+    '',
+    '```ts',
+    'const a = 1;',
+    '',
+    'const b = 2;',
+    '```',
+    '',
+    '> quoted',
+    '',
+    'Steps:',
+    '',
+    '1. **Install**',
+    '',
+    '   Run the installer.',
+    '',
+    '2. **Configure**',
+    '',
+    '   Set the key.',
+    '',
+    '10. **Check**',
+    '',
+    '    It answers.',
+    '',
+    '| a | b |',
+    '|---|---|',
+    '| 1 | 2 |',
+    '',
+    '    indented code',
+    '',
+    '    more of it',
+    '',
+    '- [x] done',
+    '- open',
+    '',
+    '---',
+    '',
+    `See ${ART}.`,
+  ].join('\n');
+  const names = recordNames([{ id: ART, title: 'Notes' }]);
+  let grow!: (text: string) => void;
+  function Growing() {
+    const [text, setText] = useState('');
+    grow = setText;
+    return createElement(MarkdownPieces, { source: text, names });
+  }
+  await mount(createElement(MemoryRouter, null, createElement(Growing)));
+  const whole = document.createElement('div');
+  // Every length: a frame may end anywhere, even at `2` before it becomes `2.`.
+  for (let end = 1; end <= source.length; end++) {
+    await act(async () => grow(source.slice(0, end)));
+    whole.innerHTML = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(Markdown, { source: source.slice(0, end), names }),
+      ),
+    );
+    assert.equal(
+      document.querySelector('.md')!.innerHTML,
+      whole.firstElementChild!.innerHTML,
+      `at ${end}`,
+    );
+  }
+  // A text too long to read whole is still read, piece by piece.
+  const long = `# Read\n\n${'A line of an answer.\n\n'.repeat(12_000)}`;
+  assert.ok(long.length > MAX_READ);
+  await act(async () => grow(long));
+  assert.equal(document.querySelectorAll('.md p').length, 12_000);
 });
 
 test('ids outside Markdown are named the same way, and a document reads its own names', async (t) => {

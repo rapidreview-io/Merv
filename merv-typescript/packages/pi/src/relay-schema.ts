@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-const text = z.string().max(100_000);
+/** A model call's request: the history a turn restores (worker HISTORY_BYTES), its prompt and tool
+ * outputs, and whatever the model already wrote within the turn, up to its whole context window. */
+export const relayRequestBytes = 8 * 1024 * 1024;
+/** Any one text fits if its request does: a long earlier answer is history like any other. */
+const text = z.string().max(relayRequestBytes);
 const identifier = z.string().min(1).max(128);
 const toolName = z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/);
 

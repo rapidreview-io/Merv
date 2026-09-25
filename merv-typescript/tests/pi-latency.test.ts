@@ -371,6 +371,10 @@ test(
       1,
       'streaming takes one writer transaction, for its first text',
     );
+    assert.ok(
+      counts.progress.readTransactions < 49,
+      'a streaming turn and its page read their authority about once a second, not once a request',
+    );
     await stream.cancel();
     await streamDone;
     assert.ok(

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { check, type Caller } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, sha } from './fixtures/pi.js';
@@ -626,6 +627,59 @@ test('progress bursts do not add durable writes; stop ends only the turn and fen
   assert.equal(f.reads, 0);
 });
 
+test('a turn still streaming runs past the old five-minute deadline; one silent that long ends', async (t) => {
+  const f = await fixture(t);
+  const [talking, silent] = [await f.create(), await f.create()];
+  const a = await f.claimed(await f.send(talking));
+  await f.pi.begin(a.token, a.input);
+  // The person's machine takes the other conversation's turn too.
+  const other = await f.send(silent);
+  const { work } = await f.pi.next(a.token, { workerId: 'worker_1' });
+  assert.equal(work?.command.id, other.id);
+  await f.pi.begin(a.token, { ...a.input, conversationId: silent.id, commandId: other.id });
+  const turn = async (id: string) => (await f.pi.snapshot(f.operator, id)).commands[0];
+  for (let minute = 1; minute <= 15; minute++) {
+    f.advance(60_000);
+    await f.pi.progress(a.token, { ...a.input, events: [{ type: 'text', text: `${minute} ` }] });
+    await f.pi.tick();
+  }
+  assert.equal((await turn(talking.id)).status, 'working');
+  assert.deepEqual(
+    [(await turn(silent.id)).status, (await turn(silent.id)).error],
+    ['interrupted', 'turn_expired'],
+  );
+  // A heartbeat is no progress: the talking turn ends five minutes after its last word.
+  f.advance(299_000);
+  await f.pi.progress(a.token, { ...a.input, events: [] });
+  await f.pi.tick();
+  assert.equal((await turn(talking.id)).status, 'working');
+  f.advance(1_000);
+  await f.pi.tick();
+  const ended = await turn(talking.id);
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'turn_expired']);
+  assert.equal(ended.messages[1].text, Array.from({ length: 15 }, (_, i) => `${i + 1} `).join(''));
+});
+
+test('a page opened mid-answer reads the whole answer so far, however far past the tail', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  // Five times the stream's 64 KB tail.
+  const words = Array.from({ length: 40 }, (_, index) => `${index}`.padEnd(8192, '.'));
+  for (let at = 0; at < words.length; at += 32)
+    await f.pi.progress(bound.token, {
+      ...bound.input,
+      events: words.slice(at, at + 32).map((text) => ({ type: 'text', text })),
+    });
+  const { tail, sequence } = await f.pi.snapshot(f.operator, conversation.id);
+  const text = tail.filter((event) => event.type === 'text');
+  assert.equal(text.length, 1);
+  assert.equal(text[0].text, words.join(''));
+  assert.equal(text[0].commandId, bound.input.commandId);
+  assert.ok(text[0].sequence > 0 && text[0].sequence <= sequence);
+});
+
 test('a turn ended early keeps the words it streamed, bounded like any message, as its answer', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
@@ -650,14 +704,15 @@ test('a turn ended early keeps the words it streamed, bounded like any message, 
   const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
   const input = { ...bound.input, commandId: work!.command.id };
   await f.pi.begin(bound.token, input);
+  // Past messageChars, the bound falling inside a character.
   const smile = '\u{1F600}';
-  await say(
-    input,
-    ...Array.from({ length: 16 }, (_, i): [string, string] => [
-      'text',
-      i < 15 ? 'x'.repeat(8191) : smile.repeat(4096),
-    ]),
-  );
+  let xs = Math.floor(messageChars / 8191);
+  if ((messageChars - xs * 8191) % 2 === 0) xs--;
+  const events = Array.from({ length: xs + 2 }, (_, i): [string, string] => [
+    'text',
+    i < xs ? 'x'.repeat(8191) : smile.repeat(4096),
+  ]);
+  for (let at = 0; at < events.length; at += 32) await say(input, ...events.slice(at, at + 32));
   await f.restart();
   const commands = (await f.pi.snapshot(f.operator, conversation.id)).commands;
   assert.deepEqual(commands[0], stopped);
@@ -669,7 +724,10 @@ test('a turn ended early keeps the words it streamed, bounded like any message, 
     ],
   );
   // The cap falls inside a character: its half becomes U+FFFD, so Postgres still reads the row.
-  assert.equal(commands[2].messages[1].text, `${'x'.repeat(8191 * 15)}${smile.repeat(2567)}\uFFFD`);
+  assert.equal(
+    commands[2].messages[1].text,
+    `${'x'.repeat(8191 * xs)}${smile.repeat((messageChars - 8191 * xs - 1) / 2)}\uFFFD`,
+  );
   const statuses = await f.state.read((sql) =>
     sql.all<{ status: string }>("SELECT data_json::jsonb->>'status' AS status FROM pi_commands"),
   );
@@ -792,7 +850,8 @@ test('a queued turn waits for capacity; its clock restarts out of the queue and 
   assert.equal(snapshot.commands[0].expiresAt, '2026-09-23T01:03:20.000Z');
   f.advance(100_000);
   const bound = await f.claimed(snapshot.commands[0]);
-  assert.equal(bound.work.command.expiresAt, '2026-09-23T01:05:00.000Z');
+  // Claimed, only the machine's deadline bounds it; a stall ends it sooner.
+  assert.equal(bound.work.command.expiresAt, '2026-09-23T01:58:20.000Z');
   await f.finish(bound);
   // A warm machine needs no queue.
   assert.equal((await f.send(conversation)).status, 'starting');

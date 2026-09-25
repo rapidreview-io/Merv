@@ -17,6 +17,7 @@ import {
 import { streamSimple as streamOpenAIResponses } from '@earendil-works/pi-ai/api/openai-responses';
 import { OPENAI_MODELS } from '@earendil-works/pi-ai/providers/openai.models';
 import { decodeCheckpoint, encodeCheckpoint, type WorkerCheckpoint } from './checkpoint.js';
+import { messageChars } from './limits.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   PiBootstrap,
@@ -36,16 +37,20 @@ const allowedTools = new Set([
   'machine.switch',
 ]);
 const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
-const MAX_RESPONSE_BYTES = 2_100_000;
+// A /next reply carries a checkpoint of up to 2 MB, escaped again as a JSON string.
+const MAX_RESPONSE_BYTES = 4_500_000;
 const DELAY = 250;
 const STARTUP_WAIT_MS = 60_000;
 // The server may hold /next open until work exists.
 const NEXT_TIMEOUT_MS = 30_000;
-// A relay request carries at most 512 KiB in 512 items of 100k characters and asks for at most 4096
-// tokens. History and tool output leave room for a turn's prompt, its answers and JSON re-escaping.
-const MAX_OUTPUT_TOKENS = 4096;
+// Streamed words reach Main this soon after the first one not yet sent, one request at a time: a
+// streaming turn makes at most about ten a second, however fast its words come.
+const FLUSH_MS = 100;
 const TOOL_OUTPUT_BYTES = 64_000;
-const HISTORY_BYTES = 128_000;
+// No output cap is sent: the model's own maximum ends an answer. The history a turn restores, and
+// its checkpoint, hold what the model's window leaves beside that answer (executeTurn), never more
+// than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items (of 512).
+const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
 type Post = <T>(path: string, body: unknown, signal?: AbortSignal, tries?: number) => Promise<T>;
@@ -358,11 +363,19 @@ async function executeTurn(
   pollIntervalMs: number,
 ): Promise<PiCompletion & PiTurnInput> {
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
-  const contextWindow = Object.hasOwn(OPENAI_MODELS, work.model)
-    ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS].contextWindow
-    : 32_000;
-  // A token is at least a byte, so a smaller window keeps history within it too.
-  const entries = checkpoint && recent(checkpoint, Math.min(HISTORY_BYTES, contextWindow));
+  const known = Object.hasOwn(OPENAI_MODELS, work.model)
+    ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS]
+    : null;
+  const contextWindow = known?.contextWindow ?? 32_000;
+  const maxTokens = known?.maxTokens ?? 32_000;
+  // History fills the window but for the model's longest answer (at most half of it), at 3 bytes a
+  // token, a margin under prose's 4 characters that leaves room for the turn's prompt and tools:
+  // gpt-6-luna keeps 432 KB, about 144,000 tokens.
+  const history = Math.min(
+    HISTORY_BYTES,
+    3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)),
+  );
+  const entries = checkpoint && recent(checkpoint.entries, checkpoint.leafId, history);
   const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
   const manager = SessionManager.inMemory(
     '/pi-worker',
@@ -392,7 +405,9 @@ async function executeTurn(
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
-    maxTokens: MAX_OUTPUT_TOKENS,
+    maxTokens,
+    // The model's own maximum applies: no max_output_tokens is sent.
+    compat: { supportsMaxOutputTokens: false },
   };
   const settings = SettingsManager.inMemory({
     compaction: { enabled: false },
@@ -407,8 +422,26 @@ async function executeTurn(
   let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
+  // When the oldest word not yet sent was written, the timer that sends it, and whether anything
+  // was sent since the last pulse (a silent turn still asks whether it stands).
+  let since = 0;
+  let due: ReturnType<typeof setTimeout> | undefined;
+  let spoke = false;
+  const soon = () => {
+    if (due || sending) return;
+    due = setTimeout(
+      () => {
+        due = undefined;
+        flush();
+      },
+      Math.max(0, since + FLUSH_MS - Date.now()),
+    );
+  };
   const flush = (heartbeat = false) => {
     if (sending || (!events.length && !heartbeat) || failure || signal.aborted) return;
+    clearTimeout(due);
+    due = undefined;
+    spoke = true;
     const batch = events.splice(0, 32);
     const pending = Promise.resolve()
       .then(async () => {
@@ -427,7 +460,7 @@ async function executeTurn(
       })
       .finally(() => {
         if (sending === pending) sending = null;
-        if (events.length && !failure && !signal.aborted) flush();
+        if (events.length && !failure && !signal.aborted) soon();
       });
     sending = pending;
   };
@@ -440,6 +473,7 @@ async function executeTurn(
   };
   const enqueue = (type: ProgressEvent['type'], text: string) => {
     if (failure || signal.aborted) return;
+    if (!events.length) since = Date.now();
     for (let index = 0; index < text.length;) {
       const last = events.at(-1);
       const end = last?.type === type ? cut(text, index, 8192 - last.text.length) : index;
@@ -447,7 +481,8 @@ async function executeTurn(
         last.text += text.slice(index, end);
         index = end;
       } else {
-        if (events.length >= 64) {
+        // Unsent words beyond a whole answer mean Main has stopped taking them.
+        if (events.length * 8192 >= messageChars) {
           failure = new Error('Progress buffer full');
           session.abort().catch(() => {});
           return;
@@ -458,6 +493,7 @@ async function executeTurn(
       }
     }
     if (events.at(-1)?.text.length === 8192 || events.length >= 32) flush();
+    else soon();
   };
   const tools: ToolDefinition[] = work.tools.map((tool) => ({
     name: piModelToolName(tool.name),
@@ -561,7 +597,6 @@ async function executeTurn(
       signal: options?.signal,
       reasoning: options?.reasoning,
       toolChoice: options?.toolChoice,
-      maxTokens: options?.maxTokens,
       apiKey: work.modelToken,
       fetch: relayFetch,
       env: {},
@@ -581,7 +616,8 @@ async function executeTurn(
         session.abort().catch(() => {});
         return;
       }
-      flush(true);
+      if (!spoke) flush(true);
+      spoke = false;
     },
     Math.max(250, Math.min(pollIntervalMs, 1_000)),
   );
@@ -607,9 +643,10 @@ async function executeTurn(
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join(''),
-        // A cut-off tool call is failed back to the model, which then answers.
+        // No cap is sent, so only the model's own maximum stops an answer early. A cut-off tool
+        // call is failed back to the model, which then answers.
         message.stopReason === 'length' && !message.content.some((part) => part.type === 'toolCall')
-          ? '[Answer cut off at the response length limit.]'
+          ? '[The model stopped here: this answer reached the longest it can write.]'
           : '',
       ]
         .filter(Boolean)
@@ -619,11 +656,16 @@ async function executeTurn(
     if (
       !messages.length ||
       messages.length > 128 ||
-      messages.some((message) => message.text.length > 128_000) ||
+      messages.some((message) => message.text.length > messageChars) ||
       outcomes.length > 64
     )
       throw new Error('Invalid model result');
-    const saved = encodeCheckpoint(manager);
+    // The checkpoint keeps what a later turn will send, so a long answer never outgrows it.
+    const saved = encodeCheckpoint({
+      getHeader: () => manager.getHeader(),
+      getEntries: () => recent(manager.getEntries(), manager.getLeafId(), history),
+      getLeafId: () => manager.getLeafId(),
+    });
     return {
       ...ids,
       messages,
@@ -633,28 +675,89 @@ async function executeTurn(
     };
   } finally {
     clearInterval(pulse);
+    clearTimeout(due);
     unsubscribe();
     session.dispose();
   }
 }
 
-/** The whole tree while its active branch fits a request; otherwise the newest whole exchanges that do. */
-function recent(checkpoint: WorkerCheckpoint, bytes: number): WorkerCheckpoint['entries'] {
-  type Entry = WorkerCheckpoint['entries'][number] & {
-    message?: { role: string; content: unknown[] };
-  };
-  const byId = new Map(checkpoint.entries.map((entry) => [entry.id, entry as Entry]));
+/** The whole tree while its active branch fits `bytes`; otherwise the newest whole exchanges that
+ * do, and never less than the newest one. That one, alone too long, keeps its prompt, noting any
+ * steps (a model message and its tool results) left out, and its newest steps that fit; when not
+ * even its last step does, each long text keeps its start and end. It always ends at `leafId`. */
+function recent(entries: Entries, leafId: string | null, bytes: number): Entries {
+  const byId = new Map(entries.map((entry) => [entry.id, entry as Entry]));
   const branch: Entry[] = [];
-  for (let entry = byId.get(checkpoint.leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
+  for (let entry = byId.get(leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
     branch.unshift(entry);
-  let start = branch.length;
-  for (let index = branch.length - 1, size = 0, items = 0; index >= 0; index--) {
+  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  const asked = Math.max(
+    0,
+    branch.findLastIndex((entry) => entry.message?.role === 'user'),
+  );
+  // Newest first: the oldest whole exchange that fits, and the oldest step of the newest one that
+  // fits beside its prompt and note.
+  const beside = bytes - size(branch[asked] ?? null) - 200;
+  let [start, step] = [branch.length, branch.length];
+  for (let index = branch.length - 1, total = 0, items = 0; index >= 0; index--) {
     const { message } = branch[index];
-    size += Buffer.byteLength(JSON.stringify(branch[index]));
+    total += size(branch[index]);
     items += message?.role === 'assistant' ? message.content.length : 1;
-    if (size > bytes || items > HISTORY_ITEMS) break;
+    if (total > bytes || items > HISTORY_ITEMS) break;
     if (index === 0 || message?.role === 'user') start = index;
+    else if (message?.role === 'assistant' && total <= beside && items < HISTORY_ITEMS)
+      step = index;
   }
-  if (start === 0) return checkpoint.entries;
-  return branch.slice(start).map((entry, index) => (index ? entry : { ...entry, parentId: null }));
+  if (start === 0) return entries;
+  let kept = branch.slice(start);
+  if (!kept.length) {
+    const last = branch.findLastIndex((entry) => entry.message?.role === 'assistant');
+    const from = Math.min(step, Math.max(asked + 1, last));
+    const left = branch
+      .slice(asked + 1, from)
+      .filter((entry) => entry.message?.role === 'assistant').length;
+    const newest = [left ? noted(branch[asked], left) : branch[asked], ...branch.slice(from)];
+    kept = newest;
+    for (let room = bytes / 2; size(kept) > bytes && room >= 1; room /= 2)
+      kept = newest.map((entry) => shorten(entry, room));
+  }
+  return kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
+}
+
+type Entries = WorkerCheckpoint['entries'];
+type Entry = Entries[number] & {
+  message?: { role: string; content: string | { text?: unknown }[] };
+};
+/** An entry whose texts keep at most `room` characters each: their start and end. */
+function shorten(entry: Entry, room: number): Entry {
+  const clip = (text: string) => {
+    if (text.length <= room) return text;
+    // Never half a character.
+    let head = Math.floor(room / 2);
+    let tail = text.length - head;
+    if (/[\uD800-\uDBFF]/.test(text[head - 1])) head--;
+    if (/[\uDC00-\uDFFF]/.test(text[tail])) tail++;
+    return `${text.slice(0, head)}\n\n[${tail - head} characters left out]\n\n${text.slice(tail)}`;
+  };
+  const { message } = entry;
+  if (!message) return entry;
+  const content =
+    typeof message.content === 'string'
+      ? clip(message.content)
+      : message.content.map((part) =>
+          typeof part.text === 'string' ? { ...part, text: clip(part.text) } : part,
+        );
+  return { ...entry, message: { ...message, content } };
+}
+
+/** An exchange's prompt, saying how many steps of its answer are left out after it. */
+function noted(entry: Entry, left: number): Entry {
+  const note = `[${left} earlier steps of this answer are left out: too long to send whole.]`;
+  const { message } = entry;
+  if (!message) return entry;
+  const content =
+    typeof message.content === 'string'
+      ? `${message.content}\n\n${note}`
+      : [...message.content, { type: 'text', text: note }];
+  return { ...entry, message: { ...message, content } };
 }

@@ -17,6 +17,8 @@ export class PiStreams {
   private readonly waiters = new Map<string, Set<() => void>>();
 
   constructor(
+    // Recent events, for pages keeping up; one further behind reads a snapshot, which carries the
+    // answer so far whole (PiService.snapshot).
     private readonly maxBytes = 64_000,
     private readonly maxConversations = 128,
   ) {}
@@ -37,9 +39,10 @@ export class PiStreams {
     return tail;
   }
 
+  /** Published events never change, so a page reads the tail without copying each of them. */
   snapshot(id: string) {
     const tail = this.get(id);
-    return { streamId: tail.id, sequence: tail.sequence, tail: structuredClone(tail.events) };
+    return { streamId: tail.id, sequence: tail.sequence, tail: tail.events.slice() };
   }
 
   /** Resolves at the next wake(id), or after `ms`; no tail or reader slot is taken. */
