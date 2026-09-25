@@ -67,6 +67,8 @@ type Named = (id: string | null | undefined) => string | undefined;
 /** Codes meaning another role must act, as scope.require and the policies throw them. */
 const ROLE = ['forbidden', 'membership_required', 'stale_lease'];
 const ENDED = ['complete', 'abandoned', 'failed'];
+/** The cycle's refusals on a child of its own ending unapproved: its wave, its consolidation. */
+const STOPS = ['dependency_failed', 'integration_failed'];
 
 const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind === kind);
 
@@ -290,9 +292,13 @@ export function standingOf(
       const next = (bucket === 'yours' && ask) || decision.nextAction;
       const desk = bucket === 'yours' && next?.status !== 'blocked' && DESKS[next?.tool ?? ''];
       const verdict = lastVerdict.get(item.id);
-      // A cycle is stopped by its own wave ending unapproved, never by work it reflects on.
+      // A cycle is stopped only when its gate refuses on its own wave or consolidation task,
+      // declared after the work it reflects on, which may fail and stop nothing.
+      const stop =
+        decision.blockers.some((item) => STOPS.includes(item.code)) &&
+        decision.dependencies.filter((item) => item.failed).at(-1);
       const dependencies = decision.dependencies.filter(
-        (item) => kind !== 'research' || !item.failed || item.workflow === 'reflection',
+        (item) => kind !== 'research' || !item.failed || item === stop,
       );
       const sentence = recordSentence(
         bucket,

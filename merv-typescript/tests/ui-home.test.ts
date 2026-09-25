@@ -786,3 +786,48 @@ test('a cycle its abandoned wave stopped names the wave, not the work it reflect
     [['wf_cycle', 'Decide what happens next: Wave 1 abandoned']],
   );
 });
+
+test('a cycle its consolidation task stopped names the task; work it reflects on stops nothing', () => {
+  const data = home({
+    cycles: [
+      { id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('consolidating') },
+      { id: 'wf_next', name: 'Cycle 2', ownerId: me.id, workflow: flow('reflecting') },
+    ],
+    workflows: {
+      workflows: [
+        gate('wf_cycle', {
+          workflow: 'research',
+          state: 'consolidating',
+          currentGate: 'integration_failed',
+          blockers: [
+            blocker(
+              'integration_failed',
+              'The consolidation task wf_task ended failed. Retry with research.advance { retryIntegration: true } to inject a fresh task, or end the cycle with research.end.',
+            ),
+          ],
+          dependencies: [
+            dependency('Seed sweep', { state: 'failed', failed: true, workflow: 'experiment' }),
+            dependency('Wave 1', { state: 'approved', settled: true, workflow: 'reflection' }),
+            dependency('Consolidate Wave 1', { state: 'failed', failed: true }),
+          ],
+        }),
+        gate('wf_next', {
+          workflow: 'research',
+          state: 'reflecting',
+          currentGate: 'input_required',
+          blockers: [blocker('input_required')],
+          dependencies: [
+            dependency('Seed sweep', { state: 'failed', failed: true, workflow: 'experiment' }),
+            dependency('Wave 2', { state: 'approved', settled: true, workflow: 'reflection' }),
+          ],
+        }),
+      ],
+    },
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lines = standingOf(rows as any, data as any, me, named);
+  const sentences = (bucket: { id: string; sentence: string }[]) =>
+    bucket.map((line) => [line.id, line.sentence]);
+  assert.deepEqual(sentences(lines.unknown), [['wf_cycle', 'Stopped: Consolidate Wave 1 failed']]);
+  assert.deepEqual(sentences(lines.yours), [['wf_next', 'Needs your input']]);
+});
