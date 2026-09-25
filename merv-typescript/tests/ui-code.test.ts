@@ -1942,7 +1942,26 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     await mount(createElement(GitHubConnection));
     assert.match(text(), /Research base: research-base/);
     assert.doesNotMatch(text(), /GitHub default: main/);
-    assert.match(text(), /It can have any branch name/);
+  });
+
+  test('repository automation is a pill and its controls, never a sentence about them', async (t) => {
+    t.after(unmount);
+    // The one state each sentence was written for: no App key yet, and a mode chosen.
+    await mount(
+      createElement(GitHubAutomation, {
+        status: { ...status, automationConfigured: false },
+        onChanged: () => {},
+      }),
+    );
+    const said = document.querySelector('[aria-label="Repository automation"]')!.textContent!;
+    for (const gone of ['GitHub App key', 'main branch for new work', 'any branch name'])
+      assert.ok(!said.includes(gone), `“${gone}” is still said: ${said}`);
+    // What cannot be chosen without the key is a constraint: its options are not offered.
+    const options = [...document.querySelectorAll('option')].filter((item) => item.disabled);
+    assert.deepEqual(
+      options.map((item) => item.textContent),
+      ['Read only', 'Read and publish reviewable changes'],
+    );
   });
 
   test('branch selection saves the chosen branch with the connection revision', async (t) => {
