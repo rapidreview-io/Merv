@@ -148,10 +148,11 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     if (managed) delete process.env[managedSecretEnv];
     rmSync(directory, { recursive: true, force: true });
   });
-  const make = (fetcher?: typeof fetch) => {
+  const make = (fetcher?: typeof fetch, clock?: () => number) => {
     const runner = new MachineRunner(config, {
       autoPoll: false,
       ...(fetcher ? { fetch: fetcher } : {}),
+      clock,
     });
     diagnostics.set(runner, () =>
       files(runnerDirectory)
@@ -480,170 +481,192 @@ test(
   },
 );
 
-test(
-  'managed one-assignment runner acknowledges completed handoff without a usage file',
-  { timeout: 35_000 },
-  async (t) => {
-    const f = await fixture(t, [], true);
-    await f.app.ctx.tasks.markFailed(f.source, {
-      taskId: f.task.id,
-      expectedRevision: 0,
-      reason: 'Use the dedicated managed handoff workflow for this Runner test.',
-      requestId: 'retire-fixture-task',
-    });
-    const program = await f.app.ctx.workflows.register(
-      {
-        name: 'runner-managed-handoff',
-        version: 1,
-        managed: true,
-        initial: 'working',
-        states: ['working', 'done'],
-        terminal: ['done'],
-        edges: [{ from: 'working', action: 'finish', to: 'done' }],
-      },
-      {
-        successStates: ['done'],
-        actions: [
-          {
-            name: 'finish',
-            states: ['working'],
-            transitions: ['finish'],
-            tool: 'step.finish',
-            instruction: 'Finish this assignment.',
-            check: async () => {},
-          },
-        ],
-        assignments: [
-          {
-            state: 'working',
-            check: async () => {},
-            execution: {
-              readOnly: false,
-              tools: [{ name: 'step.finish', alternatives: [{}] }],
+for (const linger of [false, true])
+  test(
+    `managed one-assignment runner lets Codex finish the turn after its handoff and reports what it spent${linger ? ', stopping one that lingers when its grace ends' : ''}`,
+    { timeout: 35_000 },
+    async (t) => {
+      const f = await fixture(t, [], true);
+      await f.app.ctx.tasks.markFailed(f.source, {
+        taskId: f.task.id,
+        expectedRevision: 0,
+        reason: 'Use the dedicated managed handoff workflow for this Runner test.',
+        requestId: 'retire-fixture-task',
+      });
+      const program = await f.app.ctx.workflows.register(
+        {
+          name: 'runner-managed-handoff',
+          version: 1,
+          managed: true,
+          initial: 'working',
+          states: ['working', 'done'],
+          terminal: ['done'],
+          edges: [{ from: 'working', action: 'finish', to: 'done' }],
+        },
+        {
+          successStates: ['done'],
+          actions: [
+            {
+              name: 'finish',
+              states: ['working'],
+              transitions: ['finish'],
+              tool: 'step.finish',
+              instruction: 'Finish this assignment.',
+              check: async () => {},
             },
-            build: () => ({
-              role: 'producer',
-              label: 'Managed handoff',
-              brief: 'Complete the handoff and hold until Runner stops this process.',
-              references: [],
-              handoff: { instruction: 'Call step.finish.', tools: ['step.finish'] },
+          ],
+          assignments: [
+            {
+              state: 'working',
+              check: async () => {},
               execution: {
                 readOnly: false,
-                tools: [{ name: 'step.finish', arguments: {} }],
+                tools: [{ name: 'step.finish', alternatives: [{}] }],
               },
-              context: null,
-            }),
-            lease: {
-              role: () => 'producer' as const,
-              acquire: () => ({}),
-              check: () => {},
-              release: () => {},
+              build: () => ({
+                role: 'producer',
+                label: 'Managed handoff',
+                brief: `Complete the handoff${linger ? ', then linger until Runner stops this process' : ''}.`,
+                references: [],
+                handoff: { instruction: 'Call step.finish.', tools: ['step.finish'] },
+                execution: {
+                  readOnly: false,
+                  tools: [{ name: 'step.finish', arguments: {} }],
+                },
+                context: null,
+              }),
+              lease: {
+                role: () => 'producer' as const,
+                acquire: () => ({}),
+                check: () => {},
+                release: () => {},
+              },
             },
-          },
-        ],
-      },
-    );
-    t.after(program.dispose);
-    const target = await program.start(f.source, {
-      workflow: 'runner-managed-handoff',
-      requestId: 'managed-handoff-start',
-    });
-    const unregisterTool = f.app.ctx.tools.register({
-      name: 'step.finish',
-      description: 'Complete the managed handoff.',
-      inputSchema: z.object({}).strict(),
-      handler: async (caller) =>
-        await program.transition(caller, {
-          instanceId: target.id,
-          expectedRevision: 0,
-          action: 'finish',
-          requestId: 'managed-handoff-finish',
-        }),
-    });
-    t.after(unregisterTool);
-    f.config.oneAssignment = true;
-    f.config.profiles = [
-      {
+          ],
+        },
+      );
+      t.after(program.dispose);
+      const target = await program.start(f.source, {
+        workflow: 'runner-managed-handoff',
+        requestId: 'managed-handoff-start',
+      });
+      const unregisterTool = f.app.ctx.tools.register({
+        name: 'step.finish',
+        description: 'Complete the managed handoff.',
+        inputSchema: z.object({}).strict(),
+        handler: async (caller) =>
+          await program.transition(caller, {
+            instanceId: target.id,
+            expectedRevision: 0,
+            action: 'finish',
+            requestId: 'managed-handoff-finish',
+          }),
+      });
+      t.after(unregisterTool);
+      f.config.oneAssignment = true;
+      f.config.profiles = [
+        {
+          name: 'test-worker',
+          harness: 'codex',
+          executable: handoffExecutable,
+          isolatedLauncher: process.execPath,
+          enabled: true,
+          parallelism: 1,
+        },
+      ];
+      const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
+      const profile = {
         name: 'test-worker',
-        harness: 'codex',
-        executable: handoffExecutable,
-        isolatedLauncher: process.execPath,
+        harness: 'codex' as const,
         enabled: true,
         parallelism: 1,
-      },
-    ];
-    const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
-    const profile = {
-      name: 'test-worker',
-      harness: 'codex' as const,
-      enabled: true,
-      parallelism: 1,
-    };
-    const unregister = f.app.ctx.sessions.registerManagedValidator({
-      current: async (binding) => binding.allocationId === allocationId,
-      admits: async () => true,
-    });
-    t.after(unregister);
-    const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
-      allocationId,
-      epoch: 1,
-      source: await f.app.ctx.scope.delegationSource(f.source),
-      runtimeProfileId: 'test-profile',
-      platform: profile,
-      capabilities: [],
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    });
-    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
-      workerNonce: randomBytes(32).toString('hex'),
-    });
-    process.env[f.credentialEnv] = control.controlToken;
-    const releases: unknown[] = [];
-    let dropFirstAcknowledgement = true;
-    const runner = f.make(async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.pathname.endsWith('/release')) {
-        releases.push(JSON.parse(String(init?.body)));
-        if (dropFirstAcknowledgement) {
-          dropFirstAcknowledgement = false;
-          throw new TypeError('Injected transient release acknowledgement outage');
-        }
+      };
+      const unregister = f.app.ctx.sessions.registerManagedValidator({
+        current: async (binding) => binding.allocationId === allocationId,
+        admits: async () => true,
+      });
+      t.after(unregister);
+      const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
+        allocationId,
+        epoch: 1,
+        source: await f.app.ctx.scope.delegationSource(f.source),
+        runtimeProfileId: 'test-profile',
+        platform: profile,
+        capabilities: [],
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      });
+      const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
+        workerNonce: randomBytes(32).toString('hex'),
+      });
+      process.env[f.credentialEnv] = control.controlToken;
+      const releases: unknown[] = [];
+      let dropFirstAcknowledgement = true,
+        skew = 0;
+      const runner = f.make(
+        async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname.endsWith('/release')) {
+            releases.push(JSON.parse(String(init?.body)));
+            if (dropFirstAcknowledgement) {
+              dropFirstAcknowledgement = false;
+              throw new TypeError('Injected transient release acknowledgement outage');
+            }
+          }
+          return fetch(input, init);
+        },
+        () => Date.now() + skew,
+      );
+      await runner.start();
+      await f.enabled(true);
+      await until(
+        async () =>
+          (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.outcome ===
+          'completed',
+        runner,
+        'completed managed handoff',
+      );
+      if (linger) {
+        await until(
+          () =>
+            files(f.runnerDirectory).some(
+              (path) =>
+                path.endsWith('/stdout.log') &&
+                readFileSync(path, 'utf8').includes('turn.completed'),
+            ),
+          runner,
+          'the turn completing after the handoff',
+        );
+        for (let i = 0; i < 3; i++) await runner.tick();
+        assert.equal(runner.snapshot().launches[0]?.status, 'running');
+        skew = 60_000;
       }
-      return fetch(input, init);
-    });
-    await runner.start();
-    await f.enabled(true);
-    await until(
-      async () =>
-        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.outcome ===
-        'completed',
-      runner,
-      'completed managed handoff',
-    );
-    await until(
-      () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
-      runner,
-      'local process stop',
-    );
-    await until(() => releases.length === 1, runner, 'first managed release attempt');
-    assert.equal(runner.snapshot().launches[0]?.releasePending, true);
-    assert.equal(
-      (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
-      false,
-    );
-    await until(() => releases.length === 2, runner, 'retried managed release acknowledgement');
-    assert.deepEqual(releases, [
-      { runnerId: runner.snapshot().runnerId },
-      { runnerId: runner.snapshot().runnerId },
-    ]);
-    assert.equal(runner.snapshot().launches[0]?.releasePending, false);
-    assert.equal(
-      (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
-      true,
-    );
-    await runner.tick();
-    assert.equal(releases.length, 2, 'the durable ledger prevents a duplicate acknowledgement');
-  },
-);
+      await until(
+        () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
+        runner,
+        'local process end',
+      );
+      assert.equal(runner.snapshot().launches[0]?.status, linger ? 'stopped' : 'exited');
+      await until(() => releases.length === 1, runner, 'first managed release attempt');
+      assert.equal(runner.snapshot().launches[0]?.releasePending, true);
+      assert.equal(
+        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+        false,
+      );
+      await until(() => releases.length === 2, runner, 'retried managed release acknowledgement');
+      const acknowledgement = {
+        runnerId: runner.snapshot().runnerId,
+        usage: { inputTokens: 175540, outputTokens: 1488 },
+      };
+      assert.deepEqual(releases, [acknowledgement, acknowledgement]);
+      assert.equal(runner.snapshot().launches[0]?.releasePending, false);
+      assert.equal(
+        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+        true,
+      );
+      await runner.tick();
+      assert.equal(releases.length, 2, 'the durable ledger prevents a duplicate acknowledgement');
+    },
+  );
 
 test(
   'ordinary runner still skips an empty report after remote closure',

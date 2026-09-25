@@ -19,6 +19,7 @@ import type { Session } from '@merv/sessions/types';
 import {
   buildLaunch,
   collectRepositorySkillPaths,
+  handoffGraceMs,
   harnessUsage,
   validateProfile,
   mcpUrlVariable,
@@ -691,6 +692,8 @@ test('Codex usage is each thread’s last turn.completed, whatever else the stre
     assert.equal(harnessUsage(codex, stream(started, bad)), undefined, bad);
   assert.equal(harnessUsage(claude, real), undefined);
   assert.equal(harnessUsage(command, real), undefined);
+  // Only a harness whose usage prints after its closing message waits for it past a handoff.
+  assert.deepEqual([codex, claude, command].map(handoffGraceMs), [60_000, 0, 0]);
 });
 
 test('a usage file the launch wrote wins; without one, only a regular log is read', async () => {

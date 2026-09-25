@@ -35,6 +35,7 @@ import { GitWorkspaceManager } from './workspaces.js';
 import {
   buildLaunch,
   collectRepositorySkillPaths,
+  handoffGraceMs,
   harnessUsage,
   validateProfile,
   type RunnerProfile,
@@ -534,6 +535,18 @@ export class MachineRunner implements Runner {
       ...(session.hostRef === record.id ? { attached: true } : {}),
     });
     if (!liveSession(session)) {
+      // Its own handoff closed it: the profile's grace, within its deadline, lets it finish
+      // the turn and exit. The final capture is still taken only once it has ended.
+      const since = Number(record.metadata.handedOffAt ?? this.clock()),
+        grace = handoffGraceMs(record.metadata.profile as RunnerProfile);
+      if (
+        session.closeReason === 'handoff' &&
+        record.status === 'running' &&
+        this.clock() < Math.min(record.deadline, since + grace)
+      ) {
+        this.save(record.id, { handedOffAt: since });
+        return;
+      }
       record = await this.host.stop(record.id);
       this.save(record.id, {
         remoteClosed: true,

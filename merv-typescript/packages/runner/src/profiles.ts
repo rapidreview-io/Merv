@@ -471,6 +471,14 @@ const sealed = (session: LaunchRequest['session']): boolean => {
 };
 
 /**
+ * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
+ * a closing message after the handoff tool returns and prints its `turn.completed` only then, so
+ * it gets a minute; a harness that prints nothing Merv reads is stopped at once.
+ */
+export const handoffGraceMs = (profile: RunnerProfile) =>
+  profile.harness === 'codex' ? 60_000 : 0;
+
+/**
  * What a launch spent, read from its own output when the harness prints it there. `codex exec
  * --json` ends its one turn with `turn.completed`, whose usage is the thread's running total
  * (`input_tokens` includes cached input): a thread's last one counts and threads add up. A line
