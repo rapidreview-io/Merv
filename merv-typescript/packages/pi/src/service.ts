@@ -10,6 +10,7 @@ import {
   type Caller,
   type Data,
   type DelegationSource,
+  type Role as MemberRole,
   type Scope,
   type Sql,
   type State,
@@ -39,6 +40,7 @@ import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
 import { piTool } from './relay-schema.js';
+import { piInstructions, turnNotes } from './prompt.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -1253,7 +1255,11 @@ export class PiService implements Pi, FleetOwner {
         tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
           tools.includes(name),
         ),
-        notes,
+        instructions: piInstructions,
+        notes: [...(await this.told(conversation, command, actor!.role, caller)), ...notes].slice(
+          0,
+          8,
+        ),
       };
     } catch {
       // A turn already ended (stopped) stays as it ended; a machine that no longer admits work is
@@ -1269,6 +1275,61 @@ export class PiService implements Pi, FleetOwner {
       this.announce();
       return null;
     }
+  }
+  /** This turn's notes (turnNotes) from what the person can read now; a read that fails leaves
+   * its line out. */
+  private async told(
+    conversation: PiConversationRecord,
+    command: PiCommandRecord,
+    role: MemberRole,
+    caller: Caller,
+  ): Promise<string[]> {
+    const read = <T>(name: string, input: object) =>
+      this.tools.call(name, caller, input).then(
+        (value) => value as T,
+        () => undefined,
+      );
+    const project = await read<{ summary?: string }>('project.get', {});
+    const problem = await read<{ current?: { sections?: { id: string; content: string }[] } }>(
+      'paper.read',
+      { kind: 'problem' },
+    );
+    // What an answer that stopped early had already changed, as its events recorded them.
+    const interrupted = await this.read(async (tx) => {
+      const row = await tx.get<{ data_json: string }>(
+        'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id<>? ORDER BY created_at DESC,id DESC LIMIT 1',
+        conversation.id,
+        command.id,
+      );
+      const before = row && decode<PiCommandRecord>(row);
+      if (before?.status !== 'interrupted') return [];
+      const events = await tx.all<{ type: string; subject_id: string }>(
+        `SELECT type,subject_id FROM events WHERE project_id=? AND actor_id=? AND created_at>=?
+          AND data_json::jsonb #>> '{source,conversationId}'=? AND data_json::jsonb #>> '{source,commandId}'=?
+          ORDER BY id LIMIT 6`,
+        conversation.projectId,
+        conversation.source.actorId,
+        before.startedAt ?? before.createdAt,
+        conversation.id,
+        before.id,
+      );
+      return events.map(({ type, subject_id }) => `${type} ${subject_id}`);
+    });
+    const sections = problem?.current?.sections;
+    return turnNotes({
+      role,
+      actorId: conversation.source.actorId,
+      projectId: conversation.projectId,
+      model: this.config.model,
+      today: this.time().slice(0, 10),
+      problem:
+        sections &&
+        ['problem', 'scope', 'goals', 'constraints'].filter(
+          (id) => !sections.find((section) => section.id === id)?.content.trim(),
+        ),
+      introduction: project && !project.summary?.trim(),
+      interrupted,
+    });
   }
   /** What /next gives this worker now: first a turn it claimed and has not begun, whose reply it
    * lost (a worker begins each turn before it asks again); else a draining slot retires (T5); a

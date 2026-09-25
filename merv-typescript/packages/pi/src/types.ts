@@ -303,9 +303,12 @@ export interface PiWork {
    * this turn, is switch_machine). readOnly false marks a write: tried once, run in order, its
    * result always shown whole. Absent (an older Main) is a read. */
   tools: { name: string; description: string; inputSchema: Data; readOnly?: boolean }[];
-  /** At most 4 lines of at most 300 characters the worker appends to this turn's system prompt,
-   * e.g. the machine it runs on and a move that failed. */
+  /** At most 8 lines of at most 300 characters the worker appends to this turn's system prompt:
+   * who the agent serves, today and its model, what the project lacks, its machine. */
   notes: string[];
+  /** The agent's instructions (at most 32,000 characters), the same on every turn; an older Main
+   * sends none and the worker keeps its own. */
+  instructions?: string;
 }
 /** Agent tool machine.switch, seen by the model as switch_machine. Input: switchMachineInput. */
 export type PiSwitchMachineResult =

@@ -1312,6 +1312,7 @@ test('an assignment for another slot or with oversized notes is failed and never
     assignment('a', { runtimeId: 'flt_other' }),
     assignment('a', { epoch: 2 }),
     { ...assignment('a'), notes: ['1', '2', '3', '4', '5', '6', '7', '8', '9'] },
+    { ...assignment('a'), instructions: 'x'.repeat(32_001) },
     { ...assignment('a'), notes: ['x'.repeat(301)] },
   ]) {
     const server = slotServer(3, {
@@ -1450,4 +1451,41 @@ test('a write is posted once, even after a 503, and a read is retried; writes in
     ['feed.post', 'task.get'],
   );
   assert.equal(server.bodies('fail').length, 0);
+});
+
+test('a conversation begun under older instructions continues under Main’s current ones', async () => {
+  const developer: string[] = [];
+  let issued = 0;
+  const server = slotServer(3, {
+    next() {
+      const done = server.bodies('complete');
+      if (done.length === 2) server.controller.abort();
+      if (issued > done.length || issued === 2) return { work: null };
+      issued++;
+      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
+      const work = assignment(`t${issued}`, { conversationId: 'conv_a' });
+      // An older Main sends no instructions; the current one does.
+      return {
+        work: previous
+          ? {
+              ...work,
+              instructions: 'You are Merv’s agent. Current instructions.',
+              checkpoint: { content: previous.checkpoint, hash: previous.checkpointHash },
+            }
+          : work,
+      };
+    },
+    model(_name, body) {
+      const [head, ...rest] = body.input as { role?: string; content?: unknown }[];
+      assert.equal(head.role, 'developer');
+      developer.push(String(head.content));
+      assert.ok(!JSON.stringify(rest).includes('read-only assistant'));
+      return new Response(sse([message('Answer')], 'Answer'));
+    },
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.match(developer[0], /^You are a read-only assistant\./);
+  assert.match(developer[1], /^You are Merv’s agent\. Current instructions\./);
+  assert.ok(!developer[1].includes('read-only assistant'));
 });

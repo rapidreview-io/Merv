@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
+import { piInstructions } from '../packages/pi/src/prompt.js';
 import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
@@ -241,7 +242,8 @@ for (const upstreamStatus of [
           },
         },
       ],
-      notes: [],
+      notes: ['Today is 2026-09-25 (UTC). You run on the model gpt-6-luna.'],
+      instructions: piInstructions,
     };
     let nextCount = 0;
     let followed = false;
@@ -316,6 +318,13 @@ for (const upstreamStatus of [
           : 1,
     );
     assert.equal(forwarded[0]?.model, 'gpt-6-luna');
+    // Main's instructions lead, the turn's notes follow, and the relay accepts them.
+    if (forwarded[0]) {
+      const [head] = piResponsesSchema.parse(forwarded[0]).input;
+      assert.ok('role' in head && head.role === 'developer');
+      assert.ok(String(head.content).startsWith(`${piInstructions}\n\n<addendum>\nToday is`));
+      assert.ok(validPiPayload(piResponsesSchema.parse(forwarded[0]), ['project_get']));
+    }
     // No cap is sent: the model's own maximum ends an answer.
     assert.equal(forwarded[0]?.max_output_tokens, undefined);
     assert.deepEqual(forwarded[0]?.reasoning, { effort: 'none' });

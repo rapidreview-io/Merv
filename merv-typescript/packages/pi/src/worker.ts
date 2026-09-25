@@ -84,17 +84,17 @@ export interface WorkerOptions {
   pollIntervalMs?: number;
 }
 
-/** The instructions of a Main that sends none. */
+/** The instructions of an older Main, which sends none. */
 const LEGACY =
   'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.';
 /** A turn's notes (its machine, a failed move) follow the fixed prompt for that turn only. */
-const resources = (notes: string[]): ResourceLoader => ({
+const resources = (instructions: string, notes: string[]): ResourceLoader => ({
   getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
   getSkills: () => ({ skills: [], diagnostics: [] }),
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
   getAgentsFiles: () => ({ agentsFiles: [] }),
-  getSystemPrompt: () => LEGACY,
+  getSystemPrompt: () => instructions,
   getSystemPromptSource: () => undefined,
   getAppendSystemPrompt: () => notes,
   getAppendSystemPromptSources: () => [],
@@ -117,6 +117,8 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     !/^[A-Za-z0-9_.-]{1,128}$/.test(work.model) ||
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
+    (work.instructions !== undefined &&
+      (typeof work.instructions !== 'string' || work.instructions.length > 32_000)) ||
     !Array.isArray(work.notes) ||
     work.notes.length > 8 ||
     work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
@@ -364,11 +366,14 @@ async function executeTurn(
   // margin under prose's 4 characters: what every call carries (instructions, notes, tools), the
   // turn's tool results and the history it restores. gpt-6-luna gives about 115 KB to tool
   // results and 231 KB to history beside 86 KB of instructions and tools.
-  const fixed = Buffer.byteLength(JSON.stringify([LEGACY, work.notes, work.tools]));
+  const instructions = work.instructions ?? LEGACY;
+  const fixed = Buffer.byteLength(JSON.stringify([instructions, work.notes, work.tools]));
   const room = Math.max(0, 3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)) - fixed);
   let toolBytes = Math.min(TOOL_OUTPUT_BYTES, Math.floor(room / 3));
   const history = Math.min(HISTORY_BYTES, room - toolBytes);
   const entries = checkpoint && recent(checkpoint.entries, checkpoint.leafId, history);
+  // A conversation begun under older instructions continues under the current ones: the session
+  // records the change as a patch of its prompt, and sends the model only the prompt as patched.
   const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
   const manager = SessionManager.inMemory(
     '/pi-worker',
@@ -556,7 +561,7 @@ async function executeTurn(
     noTools: 'all',
     tools: tools.map((tool) => tool.name),
     customTools: tools,
-    resourceLoader: resources(work.notes),
+    resourceLoader: resources(instructions, work.notes),
     sessionManager: manager,
     settingsManager: settings,
   });

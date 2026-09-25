@@ -335,7 +335,7 @@ test('a worker that lost the reply to its claim is given the same turn again: as
   // On the draining machine, the turn is told the machine it runs on.
   const again = await next();
   assert.deepEqual(
-    [again.work?.command.id, again.work?.notes],
+    [again.work?.command.id, again.work?.notes.filter((note) => note.startsWith('Machine'))],
     [b.id, ['Machine: Standard (½ vCPU, 4 GiB, 8 GB disk).']],
   );
   await f.pi.begin(a.token, { ...a.input, conversationId: b.conversationId, commandId: b.id });

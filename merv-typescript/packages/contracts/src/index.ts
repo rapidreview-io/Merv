@@ -18,6 +18,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, visible } from './text.js';
+export { mainAgentGuide } from './agent-guide.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
