@@ -5,6 +5,8 @@ import {
   check,
   digest,
   RUNNER_HARNESSES,
+  sessionSecretPattern,
+  type Actor,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -17,9 +19,13 @@ import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
   ManagedEnrollmentInput,
+  ManagedModelGrant,
   ManagedRunnerInspection,
   ManagedBindingRow,
 } from './managed-types.js';
+
+/** The runner lets Codex finish its closing turn this long after its own handoff (handoffGraceMs). */
+const handoffGraceMs = 60_000;
 
 const profile = z
   .object({
@@ -110,7 +116,7 @@ export class ManagedRunnerBindings {
       expiresAt: row.control_expires_at,
     };
   }
-  private async current(row: ManagedBindingRow, tx: Transaction): Promise<void> {
+  private async current(row: ManagedBindingRow, tx: Transaction): Promise<Actor> {
     check(this.validator, 'managed_unavailable', 'Managed validator is unavailable', 503);
     check(
       await this.validator.current(this.identity(row), tx),
@@ -118,7 +124,7 @@ export class ManagedRunnerBindings {
       'Managed allocation is no longer current',
       401,
     );
-    await this.scope.requireDelegation(JSON.parse(row.source_json), 'read', tx);
+    return await this.scope.requireDelegation(JSON.parse(row.source_json), 'read', tx);
   }
   async admits(row: ManagedBindingRow, tx: Transaction): Promise<void> {
     await this.current(row, tx);
@@ -275,6 +281,54 @@ export class ManagedRunnerBindings {
         );
         await this.current(row, tx);
         return this.caller(row);
+      }),
+    );
+  }
+  /** The model authority of a bound session, by its bearer or, when the relay checks again, its
+   *  id: live, or closed by its own handoff within the runner's grace so Codex finishes its
+   *  closing turn. Reading it never activates an offered session. */
+  async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
+    return await this.state.snapshot(() =>
+      this.state.transaction(async (tx) => {
+        const bearer = sessionSecretPattern.test(tokenOrSessionId);
+        const found = await tx.get<{ session_json: string }>(
+          `SELECT session_json FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
+          bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
+        );
+        const session: Session | undefined = found && JSON.parse(found.session_json);
+        const row =
+          session &&
+          (await tx.get<ManagedBindingRow>(
+            'SELECT * FROM session_managed_runners WHERE bound_session_id=?',
+            session.id,
+          ));
+        const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
+        const now = this.clock();
+        check(
+          session &&
+            row &&
+            platform?.model &&
+            (session.status === 'offered' || session.status === 'active'
+              ? Date.parse(session.expiresAt) > now
+              : session.closeReason === 'handoff' &&
+                now - Date.parse(session.closedAt!) < handoffGraceMs),
+          'unauthorized',
+          'No live managed session holds this credential',
+          401,
+        );
+        const { user, projectId, id } = await this.current(row, tx);
+        return {
+          id: session.id,
+          projectId: row.project_id,
+          person: digest(
+            user ? { issuer: user.issuer, subject: user.subject } : { projectId, actorId: id },
+          ),
+          model: platform.model,
+          ...(platform.effort ? { effort: platform.effort } : {}),
+          expiresAt: new Date(
+            Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
+          ).toISOString(),
+        };
       }),
     );
   }

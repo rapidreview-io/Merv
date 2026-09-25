@@ -30,12 +30,14 @@ import type {
 import type {} from 'cordis';
 import type {
   ManagedEnrollmentInput,
+  ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from './managed-types.js';
 export type {
   ManagedEnrollmentInput,
+  ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
@@ -218,6 +220,8 @@ export interface Sessions {
   ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
   enrollManaged(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }>;
   authenticateManaged(token: string): Promise<Caller>;
+  /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
+  managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;
   /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
   inspectManaged(allocationId: string, epoch: number): Promise<ManagedRunnerInspection | null>;
   /** Retained producers only; their delegation is historical, never current authority. */

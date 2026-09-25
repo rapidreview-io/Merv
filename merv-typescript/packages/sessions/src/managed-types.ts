@@ -18,6 +18,17 @@ export type ManagedRunnerValidator = {
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];
 };
+/** A hosted session's authority to call the model through Main's relay. */
+export interface ManagedModelGrant {
+  /** The session. */
+  id: string;
+  projectId: string;
+  /** Whose spend it is: the directing member, keyed as Pi keys a person, or else its actor. */
+  person: string;
+  model: string;
+  effort?: string;
+  expiresAt: string;
+}
 export interface ManagedRunnerInspection {
   runnerId: string | null;
   /** After this no runner can enroll on the allocation. */

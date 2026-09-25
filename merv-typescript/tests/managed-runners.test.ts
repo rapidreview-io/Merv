@@ -1,7 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createService, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import { createService, digest, type Caller, type WorkflowPolicy } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
@@ -525,6 +525,73 @@ test('revoking the captured source credential ends managed authority', async (t)
   );
   await assert.rejects(
     f.sessions.heartbeatRunner(f.caller, f.heartbeat(1)),
+    (error: any) => error?.status === 401 || error?.status === 403,
+  );
+});
+
+test('a hosted session’s model grant holds while it is live or just handed off, and never activates it', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { clock: () => now });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const request = f.lease();
+  const { session } = await f.sessions.lease(f.caller, request);
+  assert.ok(session);
+  const grant = await f.sessions.managedModelGrant(request.secret);
+  assert.deepEqual(grant, {
+    id: session.id,
+    projectId: f.source.projectId,
+    // Keyed as Pi keys a person; this source is an issued actor, not a member.
+    person: digest({ projectId: f.source.projectId, actorId: f.source.actorId }),
+    model: profile.model,
+    expiresAt: new Date(
+      Math.min(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt)),
+    ).toISOString(),
+  });
+  assert.equal((await f.sessions.get(f.caller, session.id)).status, 'offered');
+  assert.deepEqual(await f.sessions.managedModelGrant(session.id), grant);
+  // A session no managed runner holds, a stopped allocation and a source without read get none.
+  await assert.rejects(f.sessions.managedModelGrant(secret()), { code: 'unauthorized' });
+  f.current(false);
+  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'managed_revoked' });
+  f.current(true);
+  const worker = await f.sessions.authenticate(request.secret);
+  const prepared = await f.sessions.prepare(worker, 'finish', {});
+  await f.sessions.run(prepared, (caller) =>
+    f.state.transaction((tx) =>
+      f.handle.transition(
+        caller,
+        {
+          instanceId: session.instanceId,
+          expectedRevision: session.expectedRevision,
+          action: 'finish',
+          requestId: 'finish',
+        },
+        tx,
+      ),
+    ),
+  );
+  await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
+  assert.equal((await f.sessions.get(f.caller, session.id)).closeReason, 'handoff');
+  // Codex writes its closing turn after the handoff: the runner's minute of grace.
+  now += 59_000;
+  assert.deepEqual(await f.sessions.managedModelGrant(request.secret), grant);
+  now += 2_000;
+  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'unauthorized' });
+});
+
+test('a model grant ends when the managed source loses read', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const request = f.lease();
+  assert.ok((await f.sessions.lease(f.caller, request)).session);
+  await f.sessions.managedModelGrant(request.secret);
+  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await assert.rejects(
+    f.sessions.managedModelGrant(request.secret),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
 });

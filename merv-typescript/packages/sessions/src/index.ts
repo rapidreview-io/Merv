@@ -37,6 +37,7 @@ import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings } from './managed.js';
 import type {
   ManagedEnrollmentInput,
+  ManagedModelGrant,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from './managed-types.js';
@@ -1682,6 +1683,10 @@ export class LeasedSessions implements Sessions {
   async authenticateManaged(token: string): Promise<Caller> {
     this.ensureOpen();
     return await this.managed.authenticate(token);
+  }
+  async managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
+    this.ensureOpen();
+    return await this.managed.modelGrant(tokenOrSessionId);
   }
   async inspectManaged(
     allocationId: string,
