@@ -41,6 +41,7 @@ export type FleetWorkflowConfig = z.input<typeof workflowConfig>;
 const ownerKind = 'workflow';
 const startupGraceMs = 60_000;
 const emptyRunnerGraceMs = 30_000;
+const releaseAckGraceMs = 120_000;
 const unclaimedRetryCooldownMs = 60_000;
 const unclaimedAttemptLimit = 2;
 /** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
@@ -232,8 +233,13 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const observed = await this.sessions.inspectManaged(a.id, a.epoch);
     if (observed?.session) {
       const session = observed.session;
+      // A runner whose acknowledgement was lost, as when Main restarts while it closes, never
+      // sends another: past the grace its machine stops anyway. The relay metered its tokens.
+      const acknowledged =
+        session.releaseAcknowledged ||
+        (!!session.closedAt && this.clock() - Date.parse(session.closedAt) >= releaseAckGraceMs);
       return (session.status === 'released' || session.status === 'expired') &&
-        session.releaseAcknowledged &&
+        acknowledged &&
         !session.capturePending
         ? 'finished'
         : 'running';
