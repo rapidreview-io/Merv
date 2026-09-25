@@ -3,11 +3,13 @@
 Run on the production host as root, in a quiet window, one phase after the other:
   python3 pi-connect-project.py sandboxes <projectId> [--rehome]
   python3 pi-connect-project.py main <projectId> [--rehome]
-(or `python3 - <phase> <projectId> < pi-connect-project.py`). The first phase creates the namespace and a
-30-day consumer grant, scopes cloudflare-fleet to every merv-pi-* namespace, allowlists the grant and
-recreates Sandboxes control and pipelines-worker. The second adds the connection and the grant variable to
-Main's env and recreates Main. Each recreate stops live work, so both phases refuse unless Main and
-Sandboxes are drained. --rehome moves a project off the shared fleet-cloudflare-canary namespace.
+(these two also run as `python3 - <phase> <projectId> < pi-connect-project.py`; `large` reads its
+bridge from stdin and `machines` finds the renderer beside this file, so both run from a file). The
+first phase creates the namespace and a 30-day consumer grant, scopes cloudflare-fleet to every
+merv-pi-* namespace, allowlists the grant and recreates Sandboxes control and pipelines-worker. The
+second adds the connection and the grant variable to Main's env and recreates Main. Each recreate
+stops live work, so both phases refuse unless Main and Sandboxes are drained. --rehome moves a
+project off the shared fleet-cloudflare-canary namespace.
 
 The Pi host is set up once, by these phases around the two above run for <hostId>:
   python3 pi-connect-project.py host

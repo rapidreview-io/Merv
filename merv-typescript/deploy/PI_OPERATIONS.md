@@ -14,7 +14,8 @@ its reader key (`MERV_PI_HOST_KEY`), a capacity-only exception the founder
 approved on 2026-09-24 (`docs/PI_AGENT_PROPOSAL.md`). Each person gets one
 machine per project. All of their conversations in that project share it,
 running up to its slots at once (Standard 3, Large 4), and it stops 10 minutes
-after the last answer in any of them. Every read the agent makes still runs as
+(`MERV_PI_IDLE_TIMEOUT_SECONDS`) after the last answer in any of them. The
+person picks the machine or releases it (Release machine) on the Agent page. Every read the agent makes still runs as
 the person, with their current permissions. A new project needs no Sandboxes
 connection and no onboarding for Pi.
 
@@ -37,7 +38,8 @@ Standard only, retire its connection (see below).
 - **By 2026-10-17:** renew every consumer grant. They all expire on 2026-10-24:
   the canary grant at 16:14:06Z, then the 33 grants from the enablement, then
   the QA grant `tok_yd17ci1amwyjo2lv`. Nothing renews them automatically. After
-  expiry a project's first send fails at create. Renew in one batch: a new grant
+  expiry that project's writers lose Large and its Sandboxes rows; only the host
+  grant's expiry (below) stops Pi itself. Renew in one batch: a new grant
   per namespace, one catalog edit that adds every new ID to both allowlists, one
   Sandboxes recreate, one env edit, one Main recreate, then remove the old IDs
   and revoke the old grants.
@@ -148,8 +150,8 @@ phase refuses to run out of order.
    Deploy it drained to the Standard Cloudflare app with
    `deploy/cloudflare-sandbox/rollout.py`, and add its release to the Sandboxes
    catalog as before. Keep its `rt1_` ID. The app's `max_instances` caps how many
-   Standard machines can run at once, and the production app (version 4) has
-   capacity 3. Raise it with the same deployment.
+   Standard machines can run at once; the production app (version 14) is at 50,
+   the host limit, so keep it there.
 2. **Large app** (the founder, holding the Wrangler login). Deploy
    `wrangler deploy --env large` from a deployment copy of
    `fleet-sandboxes/deploy/cloudflare-sandbox/worker/wrangler.jsonc`, with
@@ -186,9 +188,9 @@ phase refuses to run out of order.
    writes these variables and recreates nothing:
    - `MERV_FLEET_RUNTIMES`, with Standard (3 slots) and Large (4 slots, agent).
    - `MERV_FLEET_PROJECT_LIMITS={"<hostId>":50}`.
-   - `MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS=86400`. A host moves to a fresh
-     machine 15 minutes before its deadline, so an 1800 s deadline would move a
-     busy host every 15 minutes.
+   - `MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS=86400`, the value production already
+     runs. A host moves to a fresh machine 15 minutes before its deadline, so the
+     deadline must stay long.
    - The host ID and key.
    - `MERV_PI_RUNTIME_KEY=project` and `MERV_PI_AGENT_MOVES=true`.
 
@@ -200,7 +202,9 @@ phase refuses to run out of order.
 7. **Release.** Deploy with `release.mjs`, which runs the pi@2 migration. Until
    that migration, `release.mjs` can roll the image back on the same env. After
    it, the older image refuses the database, so rolling back means restoring
-   the `pg_dump` taken first.
+   the `pg_dump` taken first. Either way the Standard app keeps the v2 image,
+   which refuses the older Main's v1 bootstrap: roll that back too, with
+   `rollout.py` and the previous image.
 8. **Canary.** Check each of these:
    - Two conversations in one project share one machine.
    - Two projects get two machines.
