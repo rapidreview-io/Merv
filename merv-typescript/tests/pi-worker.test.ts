@@ -5,7 +5,7 @@ import { decodeCheckpoint, encodeCheckpoint } from '../packages/pi/src/checkpoin
 import { readBootstrap } from '../packages/pi/src/worker-main.js';
 import { cause, runPiWorker } from '../packages/pi/src/worker.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
-import type { PiBootstrapV1, PiCompletion, PiWork } from '../packages/pi/src/types.js';
+import type { PiBootstrap, PiCompletion, PiNextReply, PiWork } from '../packages/pi/src/types.js';
 
 const token = `piw_flt_test.${'a'.repeat(43)}`;
 const relayToken = `pir_${'b'.repeat(43)}`;
@@ -165,6 +165,8 @@ async function fixture(
         });
       }
       assert.equal(auth, `Bearer ${token}`);
+      // One worker serves many conversations, so every turn route names the turn's.
+      if (path !== '/pi-worker/next') assert.equal(body.conversationId, 'conv_1');
       if (path === '/pi-worker/next') {
         if (issued && completions.length >= issued && nextAfterGrant.length)
           return json({ error: 'Authority unavailable' }, nextAfterGrant.shift());
@@ -176,6 +178,8 @@ async function fixture(
           command: {
             id: commandId,
             conversationId: 'conv_1',
+            hostId: 'pih_1',
+            machine: 'standard',
             runtimeId: 'flt_test',
             epoch: 1,
             status: 'starting',
@@ -246,16 +250,7 @@ async function fixture(
       return json({ error: { code: 'unavailable', message: 'unavailable' } }, 503);
     }
   };
-  const bootstrap: PiBootstrapV1 = {
-    kind: 'pi',
-    baseUrl,
-    projectId: 'proj_1',
-    conversationId: 'conv_1',
-    runtimeId: 'flt_test',
-    epoch: 1,
-    workerToken: token,
-    expiresAt: expires(),
-  };
+  const bootstrap = slotBootstrap(1, baseUrl);
   return {
     bootstrap,
     controller,
@@ -290,6 +285,19 @@ async function fixture(
     },
   };
 }
+
+const slotBootstrap = (slots: number, baseUrl = 'https://pi-worker.test'): PiBootstrap => ({
+  kind: 'pi',
+  version: 2,
+  baseUrl,
+  hostId: 'pih_1',
+  runtimeId: 'flt_test',
+  epoch: 1,
+  machine: 'standard',
+  slots,
+  workerToken: token,
+  expiresAt: expires(),
+});
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -731,38 +739,28 @@ test('revocation aborts an outstanding read tool before another model request', 
   assert.equal(app.completions.length, 0);
 });
 
-test('bootstrap is bounded and strict; checkpoints verify digest and tree integrity', async () => {
-  const bootstrap = await readBootstrap(
-    (async function* () {
-      yield JSON.stringify({
-        kind: 'pi',
-        baseUrl: 'http://127.0.0.1',
-        projectId: 'proj_1',
-        conversationId: 'conv_1',
-        runtimeId: 'flt_test',
-        epoch: 1,
-        workerToken: token,
-        expiresAt: expires(),
-      });
-    })(),
-  );
+test('bootstrap is v2, bounded and strict; checkpoints verify digest and tree integrity', async () => {
+  const read = (value: unknown) =>
+    readBootstrap(
+      (async function* () {
+        yield typeof value === 'string' ? value : JSON.stringify(value);
+      })(),
+    );
+  const bootstrap = await read(slotBootstrap(3, 'http://127.0.0.1'));
   assert.equal(bootstrap.workerToken, token);
-  await assert.rejects(
-    readBootstrap(
-      (async function* () {
-        yield 'a'.repeat(4100);
-      })(),
-    ),
-    /Invalid Pi bootstrap/,
-  );
-  await assert.rejects(
-    readBootstrap(
-      (async function* () {
-        yield JSON.stringify({ ...bootstrap, unexpected: 'secret' });
-      })(),
-    ),
-    /Invalid Pi bootstrap/,
-  );
+  assert.equal(bootstrap.slots, 3);
+  const { version: _version, hostId: _hostId, machine: _machine, slots: _slots, ...v1 } = bootstrap;
+  for (const refused of [
+    'a'.repeat(4100),
+    { ...bootstrap, unexpected: 'secret' },
+    { ...v1, projectId: 'proj_1', conversationId: 'conv_1' },
+    { ...bootstrap, version: 1 },
+    { ...bootstrap, slots: 0 },
+    { ...bootstrap, slots: 9 },
+    { ...bootstrap, machine: 'Large' },
+    { ...bootstrap, hostId: '../host' },
+  ])
+    await assert.rejects(read(refused), /Invalid Pi bootstrap/);
   const content = JSON.stringify({
     version: 1,
     header: { type: 'session', id: 's', cwd: '/pi-worker', timestamp: expires() },
@@ -780,4 +778,307 @@ test('bootstrap is bounded and strict; checkpoints verify digest and tree integr
   );
   assert.equal(cause(new Error(`Rejected ${token}`)), 'Unexpected error');
   assert.equal(cause(new Error('fetch https://pi.test failed')), 'Unexpected error');
+});
+
+const assignment = (name: string, change: Partial<PiWork['command']> = {}): PiWork => ({
+  command: {
+    id: `cmd_${name}`,
+    conversationId: `conv_${name}`,
+    hostId: 'pih_1',
+    machine: 'standard',
+    runtimeId: 'flt_test',
+    epoch: 1,
+    status: 'starting',
+    messages: [{ role: 'user', text: `Question ${name}` }],
+    outcomes: [],
+    error: null,
+    createdAt: expires(),
+    expiresAt: expires(),
+    completedAt: null,
+    ...change,
+  },
+  checkpoint: null,
+  model: 'gpt-6-luna',
+  modelBaseUrl: 'https://pi-worker.test/pi-model',
+  modelToken: relayToken,
+  tools: [tool],
+  notes: [`Note ${name}`],
+});
+/** An answer whose stream shows its first text, then waits for `release` to finish. */
+function held(text: string, release: Promise<unknown>, started = () => {}): Response {
+  const frames = sse([message(text)], text).split(/(?<=\n\n)/);
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(frames.slice(0, 3).join('')));
+        started();
+        await release;
+        controller.enqueue(encoder.encode(frames.slice(3).join('')));
+        controller.close();
+      },
+    }),
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+/** One host slot's server: `next` scripts each /next reply and `model` each model request, named
+ * by the turn's prompt; every other route accepts. */
+const accepted: Record<string, object> = {
+  begin: { apply: true },
+  progress: { accepted: true },
+  complete: { saved: true },
+  fail: { interrupted: true },
+};
+function slotServer(
+  slots: number,
+  handlers: {
+    next(count: number, body: Record<string, unknown>): PiNextReply | Response;
+    model(name: string, body: Record<string, unknown>): Response;
+    tool?(body: Record<string, unknown>): unknown;
+  },
+) {
+  const controller = new AbortController();
+  const calls: { route: string; body: Record<string, unknown> }[] = [];
+  const bodies = (route: string) =>
+    calls.filter((call) => call.route === route).map((call) => call.body);
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const incoming = new Request(input, init);
+    const route = new URL(incoming.url).pathname.split('/').at(-1)!;
+    const body = JSON.parse(await incoming.text()) as Record<string, unknown>;
+    calls.push({ route, body });
+    if (route === 'responses')
+      return handlers.model(JSON.stringify(body.input).match(/.*Question (\w+)/)![1], body);
+    if (route === 'next') {
+      const reply = handlers.next(bodies('next').length, body);
+      return reply instanceof Response ? reply : json(reply);
+    }
+    if (route === 'tool') return json({ result: handlers.tool?.(body) ?? { title: 'Project' } });
+    return json(accepted[route]);
+  };
+  return {
+    controller,
+    calls,
+    bodies,
+    async run() {
+      const safety = setTimeout(() => controller.abort(), 6_000);
+      try {
+        await runPiWorker(slotBootstrap(slots), {
+          fetchImpl,
+          signal: controller.signal,
+          pollIntervalMs: 250,
+          workerId: 'worker_1',
+        });
+      } finally {
+        clearTimeout(safety);
+      }
+    },
+  };
+}
+
+test('one worker streams turns of several conversations at once, never more than its slots', async () => {
+  // a and b each finish only once both have streamed; turns run one at a time wait out 2 s instead.
+  const order: string[] = [];
+  const streaming = new Map<string, () => void>();
+  const both = Promise.race([
+    Promise.all(
+      ['a', 'b'].map((name) => new Promise<void>((resolve) => streaming.set(name, resolve))),
+    ),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)).then(() => order.push('serial')),
+  ]);
+  const queue = ['a', 'b', 'c'].map((name) => assignment(name));
+  const busy: number[] = [];
+  const server = slotServer(2, {
+    next() {
+      const done = server.bodies('complete').length + server.bodies('fail').length;
+      busy.push(server.bodies('begin').length - done);
+      return { work: queue.shift() ?? null };
+    },
+    model(name, body) {
+      order.push(`model ${name}`);
+      const notes = JSON.stringify(body.input).match(/Note \w/g);
+      assert.deepEqual(notes, [`Note ${name}`]);
+      return name === 'c'
+        ? new Response(sse([message('Answer c')], 'Answer c'))
+        : held(`Answer ${name}`, both, streaming.get(name));
+    },
+  });
+  const { bodies } = server;
+  const run = server.run();
+  while (bodies('complete').length < 3 && !server.controller.signal.aborted)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  server.controller.abort();
+  await run;
+  assert.equal(bodies('fail').length, 0);
+  // Each turn answers and streams only its own conversation's text, and c waits for a free slot.
+  for (const name of ['a', 'b', 'c']) {
+    const mine = (route: string) =>
+      bodies(route).filter((body) => body.conversationId === `conv_${name}`);
+    assert.deepEqual(mine('complete')[0].messages, [{ role: 'assistant', text: `Answer ${name}` }]);
+    assert.equal(
+      mine('progress')
+        .flatMap((body) => body.events as { text: string }[])
+        .map((event) => event.text)
+        .join(''),
+      `Answer ${name}`,
+    );
+  }
+  assert.deepEqual(order.slice(0, 2).sort(), ['model a', 'model b']);
+  assert.equal(order[2], 'model c');
+  // A message keeps a failure from making assert parse this file for one.
+  assert.ok(busy.every((count) => count < 2) && busy.length >= 3, 'At most 2 turns run at once');
+});
+
+test('a probe is echoed on the next poll at once, again after a failed poll, then dropped', async () => {
+  const probe = 'p'.repeat(43);
+  const asked: number[] = [];
+  const server = slotServer(3, {
+    next(count) {
+      asked.push(Date.now());
+      if (count === 4) server.controller.abort();
+      return count === 1
+        ? { work: null, probe }
+        : count === 2
+          ? json({ error: { code: 'unavailable', message: 'unavailable' } }, 503)
+          : { work: null };
+    },
+    model: () => assert.fail('No turn was assigned'),
+  });
+  await server.run();
+  assert.deepEqual(server.bodies('next'), [
+    { workerId: 'worker_1' },
+    { workerId: 'worker_1', probe },
+    { workerId: 'worker_1', probe },
+    { workerId: 'worker_1' },
+  ]);
+  assert.ok(asked[1] - asked[0] < 200, 'The probe is echoed at once');
+});
+
+test('retire takes no more work, lets the running turn finish, then exits', async () => {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  const server = slotServer(3, {
+    next(count) {
+      if (count === 2) setTimeout(release, 100);
+      return count === 1
+        ? { work: assignment('a') }
+        : { work: null, retire: count === 2 || undefined };
+    },
+    model: () => held('Answer a', released),
+  });
+  await server.run();
+  assert.equal(server.controller.signal.aborted, false);
+  assert.equal(server.bodies('next').length, 2);
+  assert.deepEqual(
+    server.bodies('complete').map((body) => body.commandId),
+    ['cmd_a'],
+  );
+});
+
+test('an assignment for another slot or with oversized notes is failed and never begun', async () => {
+  for (const work of [
+    assignment('a', { hostId: 'pih_2' }),
+    assignment('a', { runtimeId: 'flt_other' }),
+    assignment('a', { epoch: 2 }),
+    { ...assignment('a'), notes: ['1', '2', '3', '4', '5'] },
+    { ...assignment('a'), notes: ['x'.repeat(301)] },
+  ]) {
+    const server = slotServer(3, {
+      next(count) {
+        if (count > 1) server.controller.abort();
+        return { work: count === 1 ? work : null };
+      },
+      model: () => assert.fail('A refused turn reached the model'),
+    });
+    await stderrOf(() => server.run());
+    assert.deepEqual(server.bodies('fail'), [
+      { workerId: 'worker_1', conversationId: 'conv_a', commandId: 'cmd_a' },
+    ]);
+    assert.equal(server.bodies('begin').length, 0);
+  }
+});
+
+test('switch_machine is offered as machine.switch and sends only its machine and reason', async () => {
+  const described = (name: string) => ({
+    name,
+    description: name,
+    inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+  });
+  const tools = ['project.get', 'task.list', 'artifact.list', 'artifact.get', 'artifact.read'];
+  const reason = 'Out of memory loading the dataset';
+  const switchCall = (id: number, input: object) => ({
+    ...call,
+    id: `fc_${id}`,
+    call_id: `call_${id}`,
+    name: 'switch_machine',
+    arguments: JSON.stringify(input),
+  });
+  const requests: Record<string, unknown>[] = [];
+  const server = slotServer(3, {
+    next(count) {
+      if (server.bodies('complete').length) server.controller.abort();
+      return {
+        work:
+          count === 1
+            ? {
+                ...assignment('a'),
+                tools: [
+                  ...tools.map(described),
+                  // Open to other fields, so the worker's own check is what refuses them.
+                  {
+                    name: 'machine.switch',
+                    description: 'Move to a bigger machine',
+                    inputSchema: {
+                      type: 'object',
+                      properties: { machine: { type: 'string' }, reason: { type: 'string' } },
+                      required: ['machine', 'reason'],
+                    },
+                  },
+                ],
+              }
+            : null,
+      };
+    },
+    model(_name, body) {
+      requests.push(body);
+      return new Response(
+        requests.length === 1
+          ? sse([
+              switchCall(1, { machine: 'large', reason, projectId: 'proj_2' }),
+              switchCall(2, { machine: 'large', reason }),
+            ])
+          : sse([message('Moving to Large')], 'Moving to Large'),
+      );
+    },
+    tool: () => ({ status: 'starting' }),
+  });
+  await server.run();
+  assert.deepEqual(
+    (requests[0].tools as { name: string }[]).map((tool) => tool.name),
+    [
+      'project_get',
+      'task_list',
+      'artifact_list',
+      'artifact_get',
+      'artifact_read',
+      'switch_machine',
+    ],
+  );
+  assert.deepEqual(server.bodies('tool'), [
+    {
+      workerId: 'worker_1',
+      conversationId: 'conv_a',
+      commandId: 'cmd_a',
+      name: 'machine.switch',
+      input: { machine: 'large', reason },
+    },
+  ]);
+  assert.match(JSON.stringify(requests[1].input), /Tool arguments are not allowed/);
+  assert.deepEqual(server.bodies('complete')[0].outcomes, [
+    {
+      callId: 'call_2',
+      name: 'machine.switch',
+      input: { machine: 'large', reason },
+      output: { status: 'starting' },
+    },
+  ]);
 });

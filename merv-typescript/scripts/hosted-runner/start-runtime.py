@@ -72,14 +72,18 @@ def worker():
 
 
 def validate_pi(data, size):
+    # Version 2 only: one worker per host slot, running up to `slots` turns at once.
     if (size > 4096 or type(data) is not dict or
-            set(data) != {'kind', 'baseUrl', 'projectId', 'conversationId',
-                          'runtimeId', 'epoch', 'workerToken', 'expiresAt'} or
-            data['kind'] != 'pi' or type(data['epoch']) is not int or
-            not 0 <= data['epoch'] <= 9007199254740991 or
+            set(data) != {'kind', 'version', 'baseUrl', 'hostId', 'runtimeId', 'epoch',
+                          'machine', 'slots', 'workerToken', 'expiresAt'} or
+            data['kind'] != 'pi' or type(data['version']) is not int or data['version'] != 2 or
+            type(data['epoch']) is not int or not 0 <= data['epoch'] <= 9007199254740991 or
+            type(data['slots']) is not int or not 1 <= data['slots'] <= 8 or
+            not isinstance(data['machine'], str) or
+            not re.fullmatch(r'[a-z][a-z0-9-]{0,31}', data['machine']) or
             any(not isinstance(data[key], str) or
                 not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', data[key])
-                for key in ('projectId', 'conversationId', 'runtimeId')) or
+                for key in ('hostId', 'runtimeId')) or
             not isinstance(data['workerToken'], str) or
             not re.fullmatch(r'piw_flt_[A-Za-z0-9]+\.[A-Za-z0-9_-]{43}', data['workerToken']) or
             not isinstance(data['baseUrl'], str) or

@@ -77,7 +77,11 @@ runtime gates before enabling Fleet.
 
 The candidate now includes a fixed dispatcher for the workflow supervisor and
 the isolated Pi SDK worker. Pi receives allocation-bound authority on private
-stdin, not a provider key. Its pinned dependencies and lockfile come from
+stdin, not a provider key. One worker serves one slot of a person's Pi host
+(bootstrap version 2; the supervisor and worker refuse any other): it runs up to
+`slots` turns of that person's conversations at once, echoes the probe that
+proves it ready for a machine move, and on `retire` finishes its running turns
+and exits. Its pinned dependencies and lockfile come from
 `packages/pi/worker-runtime`. The image entrypoint `boot` starts one worker at
 container boot through the same identity drop; it loads Pi and waits on its
 private stdin. A root-only socket hands its pipes to the first Pi supervisor,
