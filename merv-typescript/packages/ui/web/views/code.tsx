@@ -204,6 +204,8 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
         reload={published.reload}
         operator={signedIn}
         named={named}
+        controls={read.data?.status?.publication?.controls}
+        onControlled={read.reload}
       />
       <CodeOperations status={read.data?.status} manages={manages} onDone={read.reload} />
     </div>

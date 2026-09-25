@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
@@ -19,7 +19,7 @@ const { RecordPicker, narrowed, stepped } = await import('../packages/ui/web/rec
 const { TaskChecks, useDelivery } = await import('../packages/ui/web/views/tasks.js');
 const { fileInput } = await import('../packages/ui/web/views/artifacts.js');
 const { Gate } = await import('../packages/ui/web/process.js');
-const { CreateResearch, chained } = await import('../packages/ui/web/views/work.js');
+const { CreateResearch, CycleMove, chained } = await import('../packages/ui/web/views/work.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { setToken } = await import('../packages/ui/web/api.js');
 
@@ -774,4 +774,164 @@ test('work is listed as its chains: what waits stands under what it waits on, ne
   );
   assert.deepEqual(waits.both, ['Name lone'], 'a settled prerequisite is not waited on');
   assert.equal(rows.length, items.length, 'no row is ever lost');
+});
+
+/*
+ * The cycle's one move, rendered against the gate the project's one read reports. It
+ * must never offer a press the gate refuses, and it must be able to send every answer
+ * the gate asks for: the plan's next wave, and a fresh consolidation task.
+ */
+const cycle = (state: string) => ({
+  id: 'wf_cycle',
+  projectId: 'project_1',
+  ownerId: 'actor_1',
+  automation: null,
+  name: 'QA cycle 1',
+  createdAt: new Date().toISOString(),
+  researchDependencies: ['wf_task', 'wf_done'],
+  workflow: { state, revision: 3, updatedAt: new Date().toISOString() },
+  problem: null,
+  reflectionId: null,
+  integrations: [],
+  origin: null,
+  successorId: null,
+});
+const dependency = (id: string, name: string, state: string, settled: boolean) => ({
+  id,
+  workflow: 'task',
+  version: 5,
+  name,
+  state,
+  settled,
+  failed: false,
+});
+/** The project's one read, holding the cycle's gate as `workflow.status_and_next` reports it. */
+const home = (state: string, advance: Record<string, unknown>) => ({
+  body: {
+    result: {
+      workflows: {
+        workflows: [
+          {
+            instanceId: 'wf_cycle',
+            workflow: 'research',
+            version: 4,
+            state,
+            revision: 3,
+            actions: [
+              {
+                action: `advance_${state}`,
+                tool: 'research.advance',
+                instruction: 'Advance the cycle.',
+                arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
+                requiredInput: [],
+                blockers: [],
+                ...advance,
+              },
+            ],
+            dependencies: [
+              dependency('wf_task', 'Sweep weight decay', 'in_progress', false),
+              dependency('wf_done', 'Baseline run', 'done', true),
+            ],
+          },
+        ],
+      },
+    },
+  },
+});
+const sent: Record<string, unknown>[] = [];
+const page = (state: string) => {
+  sent.length = 0;
+  serve('/tools/research.advance', (_call, body) => {
+    sent.push(body);
+    return { body: { result: { ...cycle(state), revision: 4 } } };
+  });
+  return createElement(
+    MemoryRouter,
+    null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createElement(CycleMove as any, {
+      cycle: cycle(state),
+      shell: { rows: [], plugins: [] },
+      onSaved() {},
+    }),
+  );
+};
+const buttons = () =>
+  [...document.querySelectorAll('button')].map((button) => [button.textContent, button.disabled]);
+
+test('a move the gate refuses is not offered, and what it waits on is named with its state', async (t) => {
+  t.after(unmount);
+  serve(
+    '/tools/ui.home',
+    home('researching', {
+      status: 'blocked',
+      blockers: [
+        {
+          code: 'dependencies_pending',
+          status: 409,
+          message: 'Waiting for research outcomes: Sweep weight decay (in_progress)',
+        },
+      ],
+    }),
+  );
+  await mount(page('researching'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Start next step', true]]);
+  const shown = text();
+  assert.ok(shown.includes('Sweep weight decay'), shown);
+  assert.ok(shown.includes('in progress'), shown);
+  assert.ok(!shown.includes('Baseline run'), 'a settled prerequisite holds nothing up');
+  assert.ok(!shown.includes('Waiting for'), 'the refusal is data, not the server’s sentence');
+});
+
+test('a plan that continues is answered from the page: create the next wave, or skip it', async (t) => {
+  t.after(unmount);
+  serve(
+    '/tools/ui.home',
+    home('consolidating', {
+      status: 'needs_input',
+      requiredInput: ['nextWave'],
+      blockers: [{ code: 'input_required', status: 400, message: 'Supply nextWave.' }],
+    }),
+  );
+  await mount(page('consolidating'));
+  await settle(10);
+  assert.deepEqual(buttons(), [
+    ['Create next wave', false],
+    ['Skip next wave', false],
+  ]);
+  await click('Create next wave');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(
+    { ...sent[0], requestId: typeof sent[0]!.requestId },
+    { researchId: 'wf_cycle', expectedRevision: 3, nextWave: 'create', requestId: 'string' },
+  );
+});
+
+test('a consolidation task that ended without acceptance is retried from the page', async (t) => {
+  t.after(unmount);
+  serve(
+    '/tools/ui.home',
+    home('consolidating', {
+      status: 'blocked',
+      blockers: [{ code: 'integration_failed', status: 409, message: 'The task ended failed.' }],
+    }),
+  );
+  await mount(page('consolidating'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Retry consolidation', false]]);
+  await click('Retry consolidation');
+  assert.equal(sent[0]!.retryIntegration, true);
+  assert.equal(sent[0]!.nextWave, undefined);
+});
+
+test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', home('researching', { status: 'ready' }));
+  await mount(page('researching'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Start next step', false]]);
+  assert.ok(!text().includes('Sweep weight decay'), 'nothing is waited on while the move is open');
+  await click('Start next step');
+  assert.deepEqual(Object.keys(sent[0]!).sort(), ['expectedRevision', 'requestId', 'researchId']);
 });

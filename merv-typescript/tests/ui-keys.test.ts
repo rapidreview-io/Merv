@@ -95,6 +95,21 @@ test('a key is a row: its name, how it stands, and times that are times', async 
   assert.ok(closed);
 });
 
+test('the Fleet source credential is its title and its control, never a sentence about them', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  serve('/tools/ui.shell', fleetShell('operator'));
+  await open([]);
+  await settle(10);
+  const said = document.querySelector('[aria-label="Fleet source credential"]')!.textContent!;
+  assert.ok(said.startsWith('Fleet source credential'), said);
+  assert.ok(!said.includes('temporary operator identity'), said);
+  assert.equal(document.querySelector('[aria-label="Fleet source credential"] p'), null, said);
+});
+
 test('Fleet source creation is operator-only, finite, and reveals its secret only until scope changes', async (t) => {
   t.after(async () => {
     await unmount();
