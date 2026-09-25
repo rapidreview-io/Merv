@@ -14,15 +14,15 @@ export const piPlugin = {
   Config: piConfig,
   inject: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   async apply(ctx: Context, config: PiConfig) {
-    const parsed = piConfig.parse(config);
+    // The service checks the configuration, naming the first field it refuses.
+    const pi = new PiService(ctx.state, ctx.scope, ctx.fleet, ctx.tools, ctx.blobs, config);
+    const { enabled, modelApiKeyEnv, host } = pi.config;
     check(
-      !parsed.enabled ||
-        (process.env[parsed.modelApiKeyEnv] && process.env[parsed.host!.credentialEnv]),
+      !enabled || (process.env[modelApiKeyEnv] && process.env[host!.credentialEnv]),
       'pi_configuration',
       'Pi model or host credentials are unavailable',
       503,
     );
-    const pi = new PiService(ctx.state, ctx.scope, ctx.fleet, ctx.tools, ctx.blobs, parsed);
     await pi.initialize();
     ctx.effect(() => () => pi.close());
     ctx.provide('pi', pi);

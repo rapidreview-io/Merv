@@ -170,7 +170,27 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(JSON.stringify(piConfig).includes(pi.PI_PROVIDER_KEY), false);
   assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-api'));
   assert.ok(piConfig.plugins.some((entry) => entry.id === 'pi-ui'));
-  assert.notEqual(run({ ...pi, MERV_PI_MODEL: 'https://untrusted.example' }).status, 0);
+  // The catalog passes through for Main to check; the older single model is ignored.
+  const models = [
+    {
+      id: 'gpt-6-luna',
+      label: 'GPT-6 Luna',
+      inputUsdPerM: 0.1,
+      outputUsdPerM: 0.5,
+      effort: 'none',
+    },
+    { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10, effort: 'none' },
+    { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50, effort: 'low' },
+  ];
+  assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(models) }).status, 0);
+  const rendered = JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config;
+  assert.deepEqual(rendered.models, models);
+  assert.notEqual(run({ ...pi, MERV_PI_MODELS: 'gpt-6-sol' }).status, 0);
+  assert.equal(run({ ...pi, MERV_PI_MODEL: 'https://untrusted.example' }).status, 0);
+  assert.equal(
+    'models' in JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config,
+    false,
+  );
   assert.equal(run(fleet).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
@@ -266,7 +286,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     enabled: true,
     secretEnv: 'PI_PRIVATE_SECRET',
     modelApiKeyEnv: 'PI_PROVIDER_KEY',
-    model: 'gpt-6-luna',
     baseUrl: 'https://merv.example',
     turnTimeoutSeconds: 300,
     idleTimeoutSeconds: 600,

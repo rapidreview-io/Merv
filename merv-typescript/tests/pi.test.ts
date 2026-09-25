@@ -3,13 +3,14 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
-import { check, type Caller } from '@merv/contracts';
+import { check, type Caller, type MervError } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { PiModelRelay } from '../packages/pi/src/relay.js';
+import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
-import { checkpointTree, code, fixture, sha } from './fixtures/pi.js';
+import { checkpointTree, code, fixture, models, sha } from './fixtures/pi.js';
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
   const f = await fixture(t);
@@ -46,6 +47,30 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
     )?.name,
     null,
   );
+});
+
+test('a model catalog Pi cannot use is refused at start, naming the field', async (t) => {
+  const f = await fixture(t);
+  const [luna] = models;
+  for (const [catalog, at] of [
+    [[{ ...luna, id: '-luna' }], 'models.0.id'],
+    [[luna, luna], 'models'],
+    [Array.from({ length: 9 }, (_, index) => ({ ...luna, id: `model-${index}` })), 'models'],
+    [[{ ...luna, outputUsdPerM: undefined }], 'models.0.outputUsdPerM'],
+    [[{ ...luna, effort: 'high' }], 'models.0.effort'],
+    [[{ ...luna, provider: 'openai' }], 'models.0'],
+    [[{ ...luna, label: 'GPT-6 Luna, the everyday one' }], 'models.0.label'],
+  ] as const)
+    assert.throws(
+      () =>
+        new PiService(f.state, f.scope, f.fleet, f.tools, f.blobs, {
+          models: catalog,
+        } as unknown as PiConfig),
+      (error: MervError) =>
+        error.code === 'pi_configuration' &&
+        error.status === 503 &&
+        error.message === `Invalid Pi configuration at ${at}`,
+    );
 });
 
 test('send commits a command, its host and the Fleet request atomically, deduplicates, and serializes turns', async (t) => {
@@ -384,7 +409,7 @@ test('recoverable tool failures and oversized results come back to the model as 
   assert.deepEqual(await read('art_missing'), {
     error: { code: 'not_found', message: 'Artifact not found' },
   });
-  // A result stays a small part of the worker model's 32,000-token context.
+  // A result stays small against every model's window, and the worker's 32,000-token fallback.
   const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
   const result = (await read('art_big')) as { content: string; truncated: string };
   assert.ok(bytes(result) <= 24_000);
@@ -1077,7 +1102,7 @@ test(
     const requests: Record<string, unknown>[] = [];
     const relay = new PiModelRelay({
       enabled: true,
-      model: f.pi.config.model,
+      models: f.pi.config.models,
       providerKey: () => 'server-only-test-key',
       authority: {
         authorize: (token) => f.pi.authorizeModel(token),

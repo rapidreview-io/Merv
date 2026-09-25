@@ -91,8 +91,9 @@ const phrases: Record<string, string> = {
 };
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
-/** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
- * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
+/** Small against every catalog model's window (and a quarter of the worker's 32,000-token
+ * fallback), since later turns replay each result. UTF-8 bytes track tokens better than characters
+ * and stay inside the relay's string limit. */
 const resultBytes = 24_000;
 /** A next slot proves ready within this, or the move fails and the current one serves on (T6). */
 const readyMs = 180_000;
@@ -194,7 +195,14 @@ export class PiService implements Pi, FleetOwner {
     config: PiConfig = {},
     private readonly clock: () => number = Date.now,
   ) {
-    this.config = parse(piConfig, config);
+    const parsed = piConfig.safeParse(config);
+    if (!parsed.success)
+      throw new MervError(
+        'pi_configuration',
+        `Invalid Pi configuration at ${parsed.error.issues[0]?.path.join('.')}`,
+        503,
+      );
+    this.config = parsed.data;
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
       !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
@@ -271,6 +279,10 @@ export class PiService implements Pi, FleetOwner {
   /** One host per person per project (the ruling), or per person with runtimeKey 'person'. */
   private key(userId: string, projectId: string): string {
     return this.config.runtimeKey === 'project' ? `${userId}:${projectId}` : userId;
+  }
+  /** A catalog model; a missing or withdrawn id means the default, models[0]. */
+  private model(id?: string) {
+    return this.config.models.find((model) => model.id === id) ?? this.config.models[0];
   }
   private slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
@@ -1140,7 +1152,7 @@ export class PiService implements Pi, FleetOwner {
       return {
         command: publicCommand(command),
         checkpoint,
-        model: this.config.model,
+        model: this.config.models[0].id,
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
         tools: offered ? [...tools, offered] : tools,
@@ -1636,9 +1648,11 @@ export class PiService implements Pi, FleetOwner {
   /** Once, after the first answer: the model names a conversation still called the default. */
   private async name(id: string, [asked, ...answer]: PiMessage[]): Promise<void> {
     const key = process.env[this.config.modelApiKeyEnv];
-    if (!key) return;
+    // A small call without reasoning, on the first model that answers at effort none.
+    const titler = this.config.models.find((model) => model.effort === 'none');
+    if (!key || !titler) return;
     const reply = answer.map((message) => message.text).join('\n\n');
-    const title = await piTitle(this.config.model, key, asked.text, reply);
+    const title = await piTitle(titler.id, key, asked.text, reply);
     if (!title) return;
     const named = await this.state.transaction(async (tx) => {
       const conversation = await this.conversation(tx, id);
@@ -1804,7 +1818,7 @@ export class PiService implements Pi, FleetOwner {
         runtimeId: command.runtimeId,
         epoch: command.epoch,
         expiresAt: command.expiresAt,
-        model: this.config.model,
+        model: this.config.models[0].id,
         // Only the tools this turn was offered.
         toolNames: [...piReadTools, ...(command.canMove ? ['machine.switch'] : [])].map(
           piModelToolName,
@@ -1824,7 +1838,7 @@ export class PiService implements Pi, FleetOwner {
           grant.runtimeId === command.runtimeId &&
           grant.epoch === command.epoch &&
           grant.expiresAt === command.expiresAt &&
-          grant.model === this.config.model &&
+          grant.model === this.config.models[0].id &&
           command.status === 'working',
         'pi_authority_stale',
         'Model authority is no longer active',

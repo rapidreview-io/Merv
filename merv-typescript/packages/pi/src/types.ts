@@ -1,4 +1,5 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
+import type { PiModelConfig } from './schema.js';
 
 export type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
 /** Why a command was interrupted; the UI turns each into a sentence. */
@@ -334,7 +335,7 @@ export interface Pi {
 export interface PiRuntime extends Pi {
   readonly config: {
     enabled: boolean;
-    model: string;
+    models: readonly PiModelConfig[];
     modelApiKeyEnv: string;
     turnTimeoutSeconds: number;
   };
