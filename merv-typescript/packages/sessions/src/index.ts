@@ -1975,7 +1975,13 @@ export class LeasedSessions implements Sessions {
       const session = await this.decode(row, tx);
       if (await this.reconcile(session, tx)) continue;
       if (stranded.has(session.id))
-        await this.closeSession(session, 'managed_revoked', tx, 'expired', 'host_failed');
+        await this.closeSession(
+          session,
+          'managed_revoked',
+          tx,
+          'expired',
+          stranded.get(session.id) ? 'machine_retired' : 'host_failed',
+        );
       else if (idle.due(session))
         await this.progress(session, (await idle.activity()).get(session.id), tx);
     }

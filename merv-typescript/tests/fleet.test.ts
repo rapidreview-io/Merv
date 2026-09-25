@@ -790,6 +790,36 @@ test('cancellation during slow bootstrap prevents a later launch', async (t) => 
   assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
 });
 
+test('closing leaves a kept owner’s launched machine running and stops the rest; a successor takes it back', async (t) => {
+  const f = await fixture(t, { globalLimit: 3, projectLimit: 3 });
+  f.unregister();
+  const kept: FleetOwner = { ...f.owner, keepsRunning: true };
+  f.fleet.registerOwner('workflow', kept);
+  f.fleet.registerOwner('pi-host', f.owner);
+  const work = await f.fleet.request(f.caller, input('kept'));
+  const chat = await f.fleet.request(f.caller, {
+    requestId: 'chat',
+    owner: { kind: 'pi-host', id: 'host_1' },
+  });
+  for (let i = 0; i < 3; i++) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [kept1, chat1] = [await machine(work.id), await machine(chat.id)];
+  await f.fleet.close();
+  assert.deepEqual(f.runtimes.stopped, [chat1], 'only the chat machine ends with the process');
+  assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
+  const successor = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
+    ),
+  );
+  successor.registerOwner('workflow', kept);
+  f.runtimes.leaseSoon(kept1);
+  await successor.tick();
+  assert.ok(f.runtimes.renewed.includes(kept1), 'the restarted Fleet renews the kept machine');
+  assert.equal((await successor.inspect(f.caller, work.id)).intent, 'run');
+  await successor.close();
+});
+
 test('drain waits for owner completion and close leaves pending delete for a successor', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('drain'));

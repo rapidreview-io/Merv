@@ -364,11 +364,15 @@ from step 1 have to be done again.
 
 - Connections and grants are read when a service starts. Any onboarding, renewal
   or retirement therefore recreates Sandboxes control, pipelines-worker and Main.
-  Main's shutdown stops every Fleet allocation and interrupts, with
+  Main's shutdown stops every Pi allocation and interrupts, with
   `service_unavailable`, every live Pi turn that has shown a word or called a
   tool. A turn that has not waits, and starts on a fresh machine once Main is
-  back; so does one whose machine is lost, once. Schedule the change for a
-  quiet window all the same.
+  back; so does one whose machine is lost, once. A machine Fleet rented for a
+  workflow step keeps running through the restart (its lease is at most 900 s,
+  renewed by Fleet), and the restarted Main takes it back; a hosted-image
+  rollout stops it, and its session closes as `machine_retired`, which never
+  builds a hold. `MERV_FLEET_WORKFLOW_ENABLED=false` with Fleet on stops them.
+  Schedule the change for a quiet window all the same.
 - `render-config.mjs` runs on every start, and the restart policy is
   `unless-stopped`, so a bad env value crash-loops Main. The rollback in
   `release.mjs` restores only the image, not the env. Keep a backup of the env

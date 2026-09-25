@@ -75,6 +75,9 @@ export interface FleetOwner {
   /** Rent through the host project, so work in a project without its own connection can rent.
    * connected(), free() and describe() still answer for the project's own connection. */
   rentsInHost?: true;
+  /** Its launched machines outlive a Main restart: closing leaves them running, and the owner
+   * registering again after the restart takes them back. Pi's end with the process. */
+  keepsRunning?: true;
   /** Read-only transactional check; false fences new authority and starts cleanup. */
   valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** Stable bytes for this allocation/epoch across retries, never persisted by Fleet. */
@@ -100,6 +103,8 @@ export interface Fleet {
   describe(projectId: string, key: string): Promise<FleetMachine | null>;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
+  /** Whether a release retired this allocation's machine: its profile is no longer configured. */
+  retired(id: string, tx?: Transaction): Promise<boolean>;
   /** The owner's open allocations in every project, oldest first, with every released one whose
    * owner id is in `targets`: exact counts, however long the history. */
   listOwned(owner: FleetOwner, targets: string[]): Promise<FleetAllocation[]>;

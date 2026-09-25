@@ -80,6 +80,8 @@ export class FleetService implements Fleet {
   private fullAt = 0;
   private watching = false;
   private awake = false;
+  /** Owner kinds whose launched machines outlive a Main restart. */
+  private readonly kept = new Set<string>();
   private unlisten?: () => void;
   /** Timers never inherit a caller's database scope: kicks come from inside transactions. */
   private readonly detached = AsyncResource.bind((fn: () => void) => fn());
@@ -173,6 +175,8 @@ export class FleetService implements Fleet {
       'Fleet owner is invalid or already registered',
     );
     this.owners.set(kind, owner);
+    // Kept even after the owner leaves: closing reads it after the owners have gone.
+    if (owner.keepsRunning) this.kept.add(kind);
     return () => {
       if (this.owners.get(kind) === owner) this.owners.delete(kind);
     };
@@ -194,6 +198,10 @@ export class FleetService implements Fleet {
         "SELECT data_json FROM fleet_allocations WHERE phase <> 'released' ORDER BY created_at,id",
       )
     ).map(decode);
+  }
+  async retired(id: string, tx?: Transaction): Promise<boolean> {
+    const read = async (sql: Sql) => this.stale(await this.get(sql, id));
+    return tx ? await read(tx) : await this.state.read(read);
   }
   async inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation> {
     if (tx) this.state.assertTransaction(tx);
@@ -640,6 +648,8 @@ export class FleetService implements Fleet {
     return allocations.some((a) => !steady(a));
   }
   private async advance(a: FleetAllocation): Promise<void> {
+    // Closing stops only what close() fenced; a kept machine is left as it is.
+    if (this.closed && a.intent !== 'stop') return;
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
     const owner = this.owners.get(a.owner.kind);
@@ -781,6 +791,12 @@ export class FleetService implements Fleet {
       await this.pending?.catch(() => undefined);
       await this.state.transaction(async (tx) => {
         for (const a of await this.all(tx)) {
+          if (
+            this.kept.has(a.owner.kind) &&
+            a.intent === 'run' &&
+            a.runtime?.launch?.deliveryState === 'launched'
+          )
+            continue;
           const before = structuredClone(a);
           a.intent = 'stop';
           if (a.phase === 'queued') a.phase = 'released';

@@ -240,6 +240,19 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   };
   assert.equal(run(workflow).status, 0);
   config = JSON.parse(readFileSync(output));
+  // A workflow machine may outlive Main, so no machine is leased for more than 15 minutes.
+  const leases = config.plugins
+    .find((p) => p.id === 'sandboxes')
+    .config.runtimes.map((profile) => profile.leaseSeconds);
+  assert.ok(leases.length && leases.every((seconds) => seconds <= 900), String(leases));
+  assert.equal(run({ ...workflow, MERV_FLEET_RUNTIME_LEASE_SECONDS: '3600' }).status, 0);
+  assert.equal(
+    JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'sandboxes').config.runtimes[0]
+      .leaseSeconds,
+    900,
+  );
+  assert.equal(run(workflow).status, 0);
+  config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
     enabled: true,
     globalLimit: 2,

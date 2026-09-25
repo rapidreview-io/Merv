@@ -66,6 +66,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
   readonly rentsInHost = true;
   /** Fleet asks only that a source can read; valid() holds each to its director's permission. */
   readonly sourcePermission = 'read';
+  /** A step in progress survives a Main release: the restarted adapter takes its machine back. */
+  readonly keepsRunning = true;
   private readonly config: z.infer<typeof workflowConfig>;
   private modelApiKey?: string;
   /** The projects the last reconcile rented for. */
@@ -114,6 +116,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
           admits: async (allocationId, epoch, tx) =>
             await this.fleet.admits(allocationId, epoch, tx),
           serves: (projectId) => this.served.has(projectId),
+          retired: async (binding, tx) => await this.fleet.retired(binding.allocationId, tx),
         }),
       );
     } catch (error) {

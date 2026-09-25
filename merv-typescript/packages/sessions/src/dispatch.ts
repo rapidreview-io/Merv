@@ -144,7 +144,7 @@ export const failureReasons = new Set([
  * work's history lives was away, busy or full. No hold can form from them; they only space the
  * attempts out, exactly as a failure's backoff does.
  */
-const deferredReasons = new Set(['preparation_deferred']);
+const deferredReasons = new Set(['preparation_deferred', 'machine_retired']);
 /** How long three deferred closes in a row must run before an operator is told about them. */
 const deferredRun = 3;
 const deferredSinceMs = 7 * 24 * 3600_000;

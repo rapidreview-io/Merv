@@ -43,6 +43,8 @@ export type SessionOutcome =
    * where the history lives is away, busy or full. It is never counted against the work.
    */
   | 'preparation_deferred'
+  /** A release retired the machine's image mid-step: nothing about the work was wrong. */
+  | 'machine_retired'
   | 'crash_loop';
 /** What a machine may report a launch ended as; only a worker's own handoff records completion. */
 export type SessionReleaseOutcome =

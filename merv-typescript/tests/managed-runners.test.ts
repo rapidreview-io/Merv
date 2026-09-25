@@ -126,10 +126,12 @@ async function fixture(
     }),
   );
   let current = true,
-    admits = true;
+    admits = true,
+    retired = false;
   const validator: Parameters<LeasedSessions['registerManagedValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
+    retired: async () => retired,
   };
   sessions.registerManagedValidator(validator);
   t.after(async () => {
@@ -179,6 +181,10 @@ async function fixture(
     },
     admits: (value: boolean) => {
       admits = value;
+    },
+    retire: () => {
+      current = false;
+      retired = true;
     },
     input,
     workerNonce,
@@ -456,6 +462,30 @@ test('a failure on one rented machine holds its target back on the next, and a r
   const listed = (await f.sessions.projectStatus(f.owner)).runners.map((r) => r.runnerId);
   assert.ok(listed.includes(runnerId));
   assert.ok(!listed.includes(f.runnerId), 'a machine whose release was acknowledged is gone');
+});
+
+test('a machine a release retired mid-step closes its session as machine_retired, which counts against nothing', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.handle.start(f.source, {
+    workflow: 'managed-test',
+    requestId: randomUUID(),
+  });
+  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  assert.ok(bound);
+  f.retire();
+  await f.sessions.sweep();
+  const closed = await f.sessions.get(f.source, bound.id);
+  assert.equal(closed.status, 'expired');
+  assert.equal(closed.outcome, 'machine_retired');
+  const hold = await f.state.read((sql) =>
+    sql.get<{ attempts: number }>(
+      'SELECT attempts FROM session_dispatch_holds WHERE instance_id=?',
+      target.id,
+    ),
+  );
+  assert.equal(Number(hold?.attempts ?? 0), 0, 'a retired machine is no failed attempt');
 });
 
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {

@@ -390,20 +390,28 @@ def rootfs(image):
 def busy(release=False):
     """Pi turns and launches in flight, by id; idle warm runtimes do not count. With `release` (the
     drain) the same statement first releases idle Pi hosts (IDLE), and every Pi machine up for a
-    host, which a turn could still land on, counts until Main has released it."""
+    host, which a turn could still land on, counts until Main has released it. Machines Fleet rents
+    for workflow steps never count: they outlive a release by design, and a switch stops them."""
     agg = "coalesce((SELECT json_agg({}) FROM {} WHERE {}), '[]'::json)::text"
+    workflow = "data_json::jsonb#>>'{owner,kind}' = 'workflow'"
     reads = {'turns': ("conversation_id || '/' || id", '{s}.pi_commands', f"status IN {ACTIVE}"),
-             'launches': ('id', '{s}.fleet_allocations', "phase IN ('queued','provisioning','launching','starting')"),
+             'launches': ('id', '{s}.fleet_allocations',
+                          f"phase IN ('queued','provisioning','launching','starting') AND NOT ({workflow})"),
+             'kept': ("json_build_array(data_json::jsonb#>>'{runtime,sandboxId}', "
+                      "data_json::jsonb#>>'{runtime,launch,launchId}')",
+                      '{s}.fleet_allocations', f"phase <> 'released' AND {workflow}"),
              **({'warm': ('id', '{s}.fleet_allocations', "phase <> 'released' AND data_json::jsonb->>'intent' = "
                           "'run' AND data_json::jsonb#>>'{owner,kind}' = 'pi-host'")} if release else {})}
     main = main_read((IDLE if release else '') + 'SELECT ' +
                      ', '.join(agg.format(*read) + ' AS ' + key for key, read in reads.items()), write=release)
+    kept = {part for pair in json.loads(main.pop('kept', '[]')) for part in pair if part}
     lists = {**main,
              'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider LIKE 'cloudflare-fleet%' AND "
                                                                              "state IN ('provisioning','deleting')")),
              'bootstraps': sbx(MERV_Q='SELECT ' + agg.format('launch_id', 'runtime_bootstraps',
                                                             "state='pending' AND expires_at > now()"))}
-    return {key: ids for key, ids in ((k, json.loads(v)) for k, v in lists.items()) if ids}
+    return {key: ids for key, ids in ((k, [i for i in json.loads(v) if i not in kept]) for k, v in lists.items())
+            if ids}
 
 
 def quiet(limit, release=False):

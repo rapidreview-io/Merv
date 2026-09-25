@@ -58,6 +58,21 @@ const py = (body, input) => {
   return JSON.parse(r.stdout);
 };
 
+test('the drain waits on Pi turns, launches and machines, never on those Fleet rents for workflow steps', () => {
+  const seen = py(
+    `queries = []
+def main_read(query, *params, write=False):
+    queries.append(query)
+    return {'turns': '[]', 'launches': '["flt_pi"]', 'kept': '[["sbx_w", "rln_w"], [null, null]]'}
+def sbx(**env):
+    return '["sbx_w", "sbx_p"]' if 'sandboxes' in env['MERV_Q'] else '["rln_w"]'
+vm.main_read, vm.sbx = main_read, sbx
+print(json.dumps([vm.busy(), queries]))`,
+  );
+  assert.deepEqual(seen[0], { launches: ['flt_pi'], machines: ['sbx_p'] });
+  assert.match(seen[1][0], /NOT \(data_json::jsonb#>>'\{owner,kind\}' = 'workflow'\)/);
+});
+
 test('changed paths pick the source lane, and both sides agree on gates and the lease', () => {
   assert.equal(classify([], []), 'none');
   assert.equal(classify(['packages/pi/src/worker.ts', 'package-lock.json'], []), 'worker');

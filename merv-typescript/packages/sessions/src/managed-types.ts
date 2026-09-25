@@ -16,6 +16,8 @@ export type ManagedRunnerValidator = {
   admits(allocationId: string, epoch: number, tx: Transaction): Promise<boolean>;
   /** Whether its last look rented machines for this project's automatic work. */
   serves?(projectId: string): boolean;
+  /** A machine no longer current because a release retired its image, not for any fault. */
+  retired?(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
 };
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];

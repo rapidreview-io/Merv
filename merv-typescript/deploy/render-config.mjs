@@ -142,6 +142,13 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
             'MERV_FLEET_RUNTIME_*',
           )
         : fleetRuntimes(json('MERV_FLEET_RUNTIMES'), 'MERV_FLEET_RUNTIMES');
+    // A workflow machine outlives a Main restart; should Main not return, its unrenewed lease is
+    // the bound on how long it runs on. Fleet renews a lease before it ends.
+    if (workflowEnabled)
+      runtimes = runtimes.map((profile) => ({
+        ...profile,
+        leaseSeconds: Math.min(profile.leaseSeconds ?? 900, 900),
+      }));
   }
   config.plugins.push(
     { id: 'sandboxes-tools', name: '@merv/sandboxes/tools' },
