@@ -626,6 +626,47 @@ test('progress bursts do not add durable writes; stop ends only the turn and fen
   assert.equal(f.reads, 0);
 });
 
+test('a turn ended early keeps the words it streamed, bounded like any message, as its answer', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation, 'What is known?'));
+  await f.pi.begin(bound.token, bound.input);
+  const say = (input: typeof bound.input, ...events: [string, string][]) =>
+    f.pi.progress(bound.token, {
+      ...input,
+      events: events.map(([type, text]) => ({ type, text })),
+    });
+  await say(bound.input, ['text', 'Two findings '], ['progress', 'Reading'], ['text', 'so far']);
+  const stopped = (await f.pi.stop(f.operator, conversation.id)).commands[0];
+  assert.deepEqual(
+    [stopped.status, stopped.error, stopped.messages.map(({ text }) => text)],
+    ['interrupted', 'cancelled', ['What is known?', 'Two findings so far']],
+  );
+  // Stopped before any words, a turn keeps only its question.
+  await f.send(conversation, 'And then?');
+  await f.pi.stop(f.operator, conversation.id);
+  // Any other ending keeps them too: here a restart, after which only State remembers them.
+  const long = await f.send(conversation, 'Everything?');
+  const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
+  const input = { ...bound.input, commandId: work!.command.id };
+  await f.pi.begin(bound.token, input);
+  await say(
+    input,
+    ...Array.from({ length: 16 }, (): [string, string] => ['text', 'x'.repeat(8192)]),
+  );
+  await f.restart();
+  const commands = (await f.pi.snapshot(f.operator, conversation.id)).commands;
+  assert.deepEqual(commands[0], stopped);
+  assert.deepEqual(
+    commands.slice(1).map(({ id, error, messages }) => [id, error, messages.length]),
+    [
+      [commands[1].id, 'cancelled', 1],
+      [long.id, 'service_unavailable', 2],
+    ],
+  );
+  assert.equal(commands[2].messages[1].text.length, 128_000);
+});
+
 test('revoking the person’s credential fails their turn, not the machine', async (t) => {
   const f = await fixture(t);
   const issued = await f.scope.issueActor(f.operator, { name: 'Revocable reader', role: 'reader' });

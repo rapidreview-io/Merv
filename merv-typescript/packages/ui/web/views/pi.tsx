@@ -63,8 +63,10 @@ const STAGE: Record<string, string> = {
   saving: 'Saving…',
 };
 const WAITS = ['queued', 'machine', 'agent', 'thinking'];
-/** Why a turn ended early, with the step after it. Stopping it yourself needs no sentence. */
+/** Under a turn that ended early, and any words it had written: why, with the step after it.
+ * Stopping it yourself needs only the word. */
 const STOPPED: Record<string, string> = {
+  cancelled: 'Stopped',
   worker_interrupted: 'The agent stopped unexpectedly. Ask again.',
   runtime_lost: 'The agent’s machine went away. Ask again.',
   runtime_refused: 'No machine could be started for the agent. Ask again later.',
@@ -485,11 +487,6 @@ function PiConversationPage() {
   const status = command?.status ?? (latest?.status === 'interrupted' ? 'interrupted' : 'ready');
   const active = inFlight(status);
   const blocked = refused || snapshot?.available === false;
-  const alert =
-    error ||
-    (latest?.error && latest.error !== 'cancelled'
-      ? (STOPPED[latest.error] ?? 'The agent stopped. Ask again.')
-      : '');
   const visible =
     response &&
     active &&
@@ -728,6 +725,11 @@ function PiConversationPage() {
                 )}
               </article>
             )),
+            item.status === 'interrupted' && (
+              <p className="pi-ended" key={`${item.id}-ended`}>
+                {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
+              </p>
+            ),
           ])}
           {visible && (visible.text || visible.progress) && (
             <article className="pi-message pi-message--assistant pi-message--transient">
@@ -753,9 +755,9 @@ function PiConversationPage() {
           )}
         </div>
       )}
-      {alert && (
+      {error && (
         <p className="pi-error" role="alert">
-          {alert}
+          {error}
         </p>
       )}
       {streamError && (
