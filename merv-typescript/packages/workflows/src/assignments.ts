@@ -40,6 +40,8 @@ const preview = z
           mediaType: text,
           hash,
           size: z.number().int().nonnegative().safe(),
+          // A large artifact's bytes live in object storage; an assignment may pin it too.
+          objectId: text.optional(),
           createdAt: text,
         })
         .strict(),
