@@ -229,6 +229,7 @@ function Projects({
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
   const receipt = useRef({ name: '', id: '' });
+  const box = useId();
   const query = search.trim().toLocaleLowerCase();
   const projects = account.projects
     .filter((project) => `${project.name}\n${project.id}`.toLocaleLowerCase().includes(query))
@@ -284,9 +285,10 @@ function Projects({
           <details className="identity-local" open={account.projects.length === 0}>
             <Summary>Create a project</Summary>
             <form onSubmit={create} className="identity-form">
-              <label>
+              <label htmlFor={box}>
                 New project
                 <input
+                  id={box}
                   className="input"
                   value={name}
                   maxLength={200}

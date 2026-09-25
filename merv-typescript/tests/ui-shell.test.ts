@@ -349,3 +349,22 @@ test('a new tab opens the project this account chose last, and choosing one keep
   assert.equal(document.querySelector('h1')!.textContent, 'Settings');
   assert.ok(!text().includes('Choose a project'));
 });
+
+test('the box that names a new project is named by its label, as every reader finds it', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setToken('fixture-token');
+  });
+  boot('Operator');
+  const user = { issuer: 'https://login.example/auth/v1', subject: 'user-1', createdAt: '' };
+  serve('/account', { body: { kind: 'user', user, projects: [] } });
+  setToken('fixture-token');
+  await open('/');
+  assert.ok(text().includes('Choose a project'), text().slice(0, 300));
+  const box = document.querySelector<HTMLInputElement>('.signin form input')!;
+  // Named explicitly: a label that only wraps its box is read as a bare textbox by some readers.
+  const name =
+    box.getAttribute('aria-label') ??
+    (box.id ? document.querySelector(`label[for="${box.id}"]`)?.textContent : undefined);
+  assert.equal(name, 'New project');
+});
