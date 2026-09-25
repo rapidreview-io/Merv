@@ -62,7 +62,7 @@ GATES = {  # name: (docker run flags, mount targets, command, expected gate, rep
                                        '/opt/merv/runner/smoke-supervisor.mjs', 'linux-isolation-probe-synthetic-ancestry', 1),
 }
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
-GATE_FACTS, GATE_FALSE = {'prestarted'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
+GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
          'status', 'guard', 'abandon', 'mint_canary', 'pins'}

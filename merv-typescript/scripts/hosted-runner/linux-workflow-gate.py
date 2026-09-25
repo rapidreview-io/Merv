@@ -129,16 +129,27 @@ settings = ['approval_policy="never"', 'web_search="disabled"', 'features.shell_
             'sandbox_workspace_write.network_access=true', 'model_provider="merv"',
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
-launch = subprocess.run(
-    ['/usr/bin/python3', '-c', "import sys; sys.path.insert(0, '/opt/merv/python'); "
-     'from merv_sandboxes.runtimes import assignment; sys.exit(assignment.main())',
-     '--', '/opt/merv/bin/codex', 'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral',
-     '--skip-git-repo-check', '--sandbox', 'workspace-write', '--json', '-C', str(work),
-     *[part for setting in settings for part in ('-c', setting)], '--model', 'gpt-6-luna', '-'],
-    cwd=work, input=b'Run the probe, then stop.', capture_output=True, timeout=120,
-    env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'MERV_AGENT_SESSION_TOKEN': session,
-         'MERV_MCP_URL': f'{base}/mcp'},
-)
+def codex(sandbox):
+    calls.clear(), outputs.clear(), holders.clear()
+    return subprocess.run(
+        ['/usr/bin/python3', '-c', "import sys; sys.path.insert(0, '/opt/merv/python'); "
+         'from merv_sandboxes.runtimes import assignment; sys.exit(assignment.main())',
+         '--', '/opt/merv/bin/codex', 'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral',
+         '--skip-git-repo-check', '--sandbox', sandbox, '--json', '-C', str(work),
+         *[part for setting in settings for part in ('-c', setting)], '--model', 'gpt-6-luna', '-'],
+        cwd=work, input=b'Run the probe, then stop.', capture_output=True, timeout=120,
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'MERV_AGENT_SESSION_TOKEN': session,
+             'MERV_MCP_URL': f'{base}/mcp'},
+    )
+
+
+launch = codex('workspace-write')
+# Codex's own sandbox needs unprivileged user namespaces, which some release hosts refuse (Ubuntu
+# 24.04's AppArmor restriction). There the gate proves all but that sandbox, says so, and the
+# sandbox is proved where it runs: a Fleet step on Cloudflare.
+sandboxed = 'No permissions to create a new namespace' not in ''.join(outputs)
+if not sandboxed:
+    launch = codex('danger-full-access')
 server.shutdown()
 server.server_close()
 thread.join(timeout=5)
@@ -147,7 +158,8 @@ codex_home = [p for p in Path('/home/assignment/.codex').rglob('*') if p.is_file
 assert launch.returncode == 0 and len(calls) >= 2, 'hosted Codex did not finish through the relay'
 assert all(c[:2] == ('POST', '/codex-model/responses') and set(c[2]) <= KEYS and c[3] <= TOOLS
            for c in calls), calls
-assert 'uid 12001 probe-done' in probe and 'readable ' not in probe and holders, probe
+assert 'uid 12001 probe-done' in probe, probe
+assert not sandboxed or ('readable ' not in probe and holders), probe
 assert 'network-on' in probe, probe
 assert not any(p.name == 'auth.json' or session.encode() in p.read_bytes() for p in codex_home)
 for secret in [enrollment.encode(), model_key.encode(), session.encode()]:
@@ -156,5 +168,6 @@ print(json.dumps({
     'gate': 'linux-workflow-dispatch', 'fixedSupervisor': True, 'bootstrapWithModelKeyRefused': True,
     'managedEnrollmentReached': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
     'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted({k for c in calls for k in c[2]}),
-    'noCredentialFileInCodexHome': True, 'sessionBearerUnreadableFromShell': True, 'shellNetworkOn': True,
+    'noCredentialFileInCodexHome': True, 'shellNetworkOn': True, 'codexSandboxOnHost': sandboxed,
+    **({'sessionBearerUnreadableFromShell': True} if sandboxed else {}),
 }))
