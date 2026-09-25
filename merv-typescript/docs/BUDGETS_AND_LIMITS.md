@@ -101,12 +101,14 @@ almost all real usage has.
 The machine runner sets `MERV_USAGE_FILE` in the launched process's environment, pointing
 at `usage.json` in that launch's private run directory, and removes any file left there
 before it starts the process. The convention is vendor-neutral: a profile's wrapper (or
-the process) writes the JSON shape above, and Merv parses no harness output. When the
+the process) writes the JSON shape above. Without the file, only a profile reads its own
+harness's output: the Codex profile takes the `turn.completed` usage of its `--json` stream
+from the launch's redacted log, which a launch stopped mid-turn does not have. When the
 launch is over, however it ended, the runner reads the file if it is a regular file of at
 most 4 KB in exactly that shape and sends it: with the release when the process ended
 first, and on its own when the server had already closed the session. The ledger records
 that the report was answered, so it is retried across restarts until then. A missing or
-malformed file sends nothing.
+malformed file sends nothing but what the profile read.
 
 ### Reading it
 

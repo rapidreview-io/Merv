@@ -102,10 +102,14 @@ The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.
 that launch's private run directory, cleared before the process starts. A profile's
 wrapper, or the process itself, may write one JSON object there:
 `{"inputTokens": 0, "outputTokens": 0, "costUsd": 0.0, "model": "name"}`, the last two
-optional and nothing else allowed. Merv parses no harness output, so a profile that writes
-nothing reports nothing. When the launch is over the runner sends a regular file of at
-most 4 KB in that shape: with its release when the process ended first, and on its own
-when the server had already closed the session, which is how a landed handoff ends. The
+optional and nothing else allowed. Without that file the runner asks the launch's profile
+what its harness printed: the Codex profile reads the `turn.completed` usage of its own
+`codex exec --json` stream from the redacted `stdout.log` (input tokens, cached ones
+included, output tokens and the profile's model, never a cost). A Codex launch stopped before
+its turn completed prints no usage and reports nothing, as does any other profile that
+writes nothing. When the launch is over the runner sends a regular file of at most 4 KB in
+that shape, or what the profile read: with its release when the process ended first, and on
+its own when the server had already closed the session, which is how a landed handoff ends. The
 ledger remembers that the report was answered, so it is retried across restarts and sent
 once. The figures are a self-report from whatever could write the file; see
 [usage and budgets](BUDGETS_AND_LIMITS.md).

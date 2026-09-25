@@ -438,6 +438,49 @@ test(
 );
 
 test(
+  'a Codex launch reports the tokens its own --json stream ended with, and its model',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t);
+    f.config.profiles = [
+      {
+        name: 'test-worker',
+        harness: 'codex',
+        executable,
+        isolatedLauncher: process.execPath,
+        model: 'gpt-6-sol',
+        enabled: true,
+        parallelism: 1,
+      },
+    ];
+    const releases: { usage?: unknown }[] = [];
+    const runner = f.make(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/release')) releases.push(JSON.parse(String(init?.body)));
+      return fetch(input, init);
+    });
+    await runner.start();
+    await f.enabled(true);
+    await until(
+      async () => (await f.sessions())[0]?.status === 'released',
+      runner,
+      'server release',
+    );
+    await f.enabled(false);
+    assert.deepEqual(releases.at(-1)?.usage, {
+      inputTokens: 833294,
+      outputTokens: 5454,
+      model: 'gpt-6-sol',
+    });
+    const read = await f.app.ctx.sessions.usage(f.source);
+    assert.deepEqual(
+      [read.totals.reportedSessions, read.totals.inputTokens, read.totals.outputTokens],
+      [1, 833294, 5454],
+    );
+  },
+);
+
+test(
   'managed one-assignment runner acknowledges completed handoff without a usage file',
   { timeout: 35_000 },
   async (t) => {

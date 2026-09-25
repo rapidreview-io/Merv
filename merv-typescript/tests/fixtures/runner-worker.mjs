@@ -65,6 +65,17 @@ writeFileSync(
 // A wrapper would write what the harness spent; this child stands in for one.
 const usage = process.argv.find((argument) => argument.startsWith('--usage='));
 if (usage) writeFileSync(process.env.MERV_USAGE_FILE, usage.slice('--usage='.length));
+// Launched as `codex exec --json`, it ends its stream the way a real one did (QA, 2026-09-25).
+if (process.argv.includes('--json'))
+  process.stdout.write(
+    [
+      '{"type":"thread.started","thread_id":"01a0d846-c9b1-7eb3-81d0-78470c983365"}',
+      '{"type":"turn.started"}',
+      'Codex prints a line that is not JSON',
+      '{"type":"turn.completed","usage":{"input_tokens":833294,"cached_input_tokens":746112,"cache_write_input_tokens":0,"output_tokens":5454,"reasoning_output_tokens":460}}',
+      '',
+    ].join('\n'),
+  );
 renameSync('worker-result.json.tmp', 'worker-result.json');
 
 if (process.argv.includes('--hold')) {

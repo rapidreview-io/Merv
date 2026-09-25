@@ -22,8 +22,8 @@ export interface ProcessLaunch {
 }
 /**
  * Where a launched process, or the wrapper a profile runs it under, may leave what the run
- * cost. The convention is vendor-neutral: Merv parses no harness output, and whoever can
- * write the file is trusted no further than a self-report.
+ * cost. The convention is vendor-neutral: only a profile reads its own harness's output (see
+ * harnessUsage), and whoever can write the file is trusted no further than a self-report.
  */
 export const usageFileVariable = 'MERV_USAGE_FILE';
 export const usageFile = (record: LaunchRecord) => join(record.runDirectory, 'usage.json');

@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
-import type { Session } from '@merv/sessions/types';
+import type { Session, SessionUsageReport } from '@merv/sessions/types';
 
 const text = z
   .string()
@@ -469,6 +469,43 @@ const sealed = (session: LaunchRequest['session']): boolean => {
   const workspace = effectiveWorkspace(session.execution.policy);
   return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
 };
+
+/**
+ * What a launch spent, read from its own output when the harness prints it there. `codex exec
+ * --json` ends its one turn with `turn.completed`, whose usage is the thread's running total
+ * (`input_tokens` includes cached input): a thread's last one counts and threads add up. A line
+ * that is not JSON or an event of another shape adds nothing, and a stream cut off before any
+ * turn completed reports nothing, because Codex prints no usage before a turn ends. The runner
+ * checks the result against the report's closed shape, as it does a usage file.
+ */
+export function harnessUsage(
+  profile: RunnerProfile,
+  output: string,
+): SessionUsageReport | undefined {
+  if (profile.harness !== 'codex') return;
+  const threads = new Map<unknown, number[]>();
+  let thread: unknown;
+  for (const line of output.split('\n')) {
+    if (!/"(thread\.started|turn\.completed)"/.test(line)) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'thread.started') thread = event.thread_id;
+      const { input_tokens, output_tokens } = event.type === 'turn.completed' ? event.usage : {};
+      const usage = [input_tokens, output_tokens];
+      if (usage.every((count) => Number.isSafeInteger(count) && count >= 0))
+        threads.set(thread, usage);
+    } catch {
+      // Not an event this reads.
+    }
+  }
+  if (!threads.size) return;
+  const sum = (index: number) => [...threads.values()].reduce((total, u) => total + u[index], 0);
+  return {
+    inputTokens: sum(0),
+    outputTokens: sum(1),
+    ...(profile.model && { model: profile.model }),
+  };
+}
 
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
 export function buildLaunch(
