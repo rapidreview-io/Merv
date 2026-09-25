@@ -334,9 +334,11 @@ from step 1 have to be done again.
   turn stall limit. Measured 2026-09-25 through the relay on 141k-token
   histories, the longest silence was 1.9 s on Luna, 2.8 s on Sol and 4.5 s on
   Astra (with a tool call and its reasoning replayed).
-- **Cost.** A turn can make 72 calls (the relay's `maxRequestsPerGrant`), each
-  up to 272k tokens in and 128k out: at most about $7 on Luna, $131 on Sol and
-  $657 on Astra. Nothing caps it. Each
+- **Cost.** A turn can make 72 calls on each machine it runs on (the relay's
+  `maxRequestsPerGrant`), each up to 272k tokens in and 128k out: at most about
+  $7 on Luna, $131 on Sol and $657 on Astra. A turn starts again on a fresh
+  machine only before it has shown a word or called a tool, so that adds at
+  most the one call it had begun. Nothing caps it. Each
   finished call writes one `pi_relay_usage` record to Main's stderr with the
   model and its input, cached, output and reasoning tokens, and nothing about
   the person. Spend by model for the last day:
@@ -362,9 +364,11 @@ from step 1 have to be done again.
 
 - Connections and grants are read when a service starts. Any onboarding, renewal
   or retirement therefore recreates Sandboxes control, pipelines-worker and Main.
-  Main's shutdown stops every Fleet allocation and interrupts every live Pi turn
-  in every project with `service_unavailable`. This is a design limitation, so
-  schedule the change for a quiet window.
+  Main's shutdown stops every Fleet allocation and interrupts, with
+  `service_unavailable`, every live Pi turn that has shown a word or called a
+  tool. A turn that has not waits, and starts on a fresh machine once Main is
+  back; so does one whose machine is lost, once. Schedule the change for a
+  quiet window all the same.
 - `render-config.mjs` runs on every start, and the restart policy is
   `unless-stopped`, so a bad env value crash-loops Main. The rollback in
   `release.mjs` restores only the image, not the env. Keep a backup of the env
@@ -373,7 +377,9 @@ from step 1 have to be done again.
   profile, and every allocation on it is then asked to stop. Roll it out
   drained. The hosted runtime is digest-pinned; `hosted-release.mjs` (run by
   `release.mjs`) builds it from committed sources and moves it together,
-  drained, gated and canaried, with automatic rollback: the image on every
+  drained, gated and canaried, with automatic rollback: its drain first ends
+  every idle Pi machine's idle clock, so Main releases it instead of the rollout
+  killing it (the next turn starts on the person's own pick). The image on every
   Cloudflare app that serves one of Main's machines (Standard, and Large once
   `MERV_FLEET_RUNTIMES` names it), the release and its Large copy in the
   catalog, and each machine's release id (Standard's also in

@@ -66,12 +66,17 @@ GATE_FACTS, GATE_FALSE = {'prestarted'}, {'actualProtectedWorkflow', 'cloudflare
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
          'status', 'guard', 'abandon', 'mint_canary', 'pins'}
-# One read-only row from Main's database; {s} is Main's schema.
+# One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
-const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();
-try{await c.query('BEGIN READ ONLY');const s=(process.env.MERV_TS_DB_SCHEMA??'merv_ts').replace(/[^a-z0-9_]/g,'');
+const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();const w=!!process.env.MERV_W;
+try{await c.query(w?'BEGIN':'BEGIN READ ONLY');const s=(process.env.MERV_TS_DB_SCHEMA??'merv_ts').replace(/[^a-z0-9_]/g,'');
 const r=await c.query(process.env.MERV_Q.replaceAll('{s}',s),JSON.parse(process.env.MERV_P));
-console.log(JSON.stringify(r.rows[0]));await c.query('ROLLBACK')}finally{await c.end()}'''
+console.log(JSON.stringify(r.rows[0]));await c.query(w?'COMMIT':'ROLLBACK')}finally{await c.end()}'''
+# Ends each idle Pi host's idle clock: Main releases its machine at its next pass, as at the idle
+# timeout, instead of a rollout killing it. A host that took a turn meanwhile keeps it.
+IDLE = ("WITH e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
+        "to_jsonb('1970-01-01T00:00:00.000Z'::text))::text WHERE status = 'live' AND "
+        "data_json::jsonb->>'idleSince' IS NOT NULL RETURNING 1) SELECT count(*)::int AS n FROM e")
 SBX = r'''import asyncio,json,os
 from sqlalchemy import text
 from merv_sandboxes.config import Settings
@@ -169,9 +174,10 @@ def healthy(name, tries, pause):
     raise RuntimeError('health_timeout: ' + name)
 
 
-def main_read(query, *params):
+def main_read(query, *params, write=False):
     return json.loads(run(['docker', 'exec', '-e', 'MERV_Q=' + query, '-e', 'MERV_P=' + json.dumps(params),
-                           '-w', '/app', MAIN, 'node', '--input-type=module', '-e', MAIN_READ]))
+                           *(['-e', 'MERV_W=1'] if write else []), '-w', '/app', MAIN, 'node',
+                           '--input-type=module', '-e', MAIN_READ]))
 
 
 def sbx(**env):
@@ -627,6 +633,9 @@ class Step:
         return {**result, 'changed': True, 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
 
     def drain(self, _):
+        """Releases idle Pi machines, best effort, then waits until nothing is in flight."""
+        with contextlib.suppress(RuntimeError):
+            main_read(IDLE, write=True)
         return quiet(self.plan['drainSeconds'])
 
     def native(self, arg):

@@ -117,6 +117,8 @@ const publicCommand = (record: PiCommandRecord): PiCommand => {
     resultHash: _result,
     canMove: _move,
     tools: _tools,
+    calledAt: _called,
+    retried: _retried,
     ...value
   } = record;
   return value;
@@ -1484,6 +1486,13 @@ export class PiService implements Pi, FleetOwner {
           message: `This exact call was already refused with ${refused}: change the input or answer the person`,
         },
       };
+    // Before its first call runs, so a turn that called a tool never starts again (again).
+    if (!command.calledAt)
+      await this.state.transaction(async (tx) => {
+        const current = (await this.bound(token, value, tx)).command;
+        current.calledAt ??= this.time();
+        await this.saveCommand(tx, current);
+      });
     // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
     const definition = (await this.tools.list()).find(({ name }) => name === value.name);
     let use: 'propose' | 'secret' | undefined;
@@ -1886,22 +1895,31 @@ export class PiService implements Pi, FleetOwner {
     this.unsent.add(conversation.id);
   }
   /** The host ends with any turn still on it, every slot is released, and a move it was starting
-   * is recorded as cancelled. */
+   * is recorded as cancelled. A host keeping a turn (`keep`) stays, with no machine, for settle. */
   private async end(
     tx: Transaction,
     host: PiHostRecord,
     reason: string,
     turnsEnd: PiInterruption = 'cancelled',
+    keep?: (turn: PiCommandRecord) => boolean,
   ): Promise<void> {
-    for (const turn of await this.turns(tx, host.id)) await this.interrupt(tx, turn, turnsEnd);
+    let kept = false;
+    for (const turn of await this.turns(tx, host.id))
+      if (keep?.(turn)) {
+        await this.saveCommand(tx, turn);
+        kept = true;
+      } else await this.interrupt(tx, turn, turnsEnd);
     if (host.next) await this.abandon(tx, host, 'cancelled');
     for (const role of roles) {
       const slot = host[role];
       if (slot && (await this.allocation(slot.allocationId, tx)))
         await this.fleet.cancelOwned(this, slot.allocationId, tx);
+      if (kept) host[role] = null;
     }
-    host.status = 'ended';
-    host.ended = { at: this.time(), reason };
+    if (!kept) {
+      host.status = 'ended';
+      host.ended = { at: this.time(), reason };
+    }
     await this.saveHost(tx, host);
   }
 
@@ -2036,7 +2054,8 @@ export class PiService implements Pi, FleetOwner {
       await this.requireConversation(this.conversationCaller(conversation, command), tx);
       await this.scope.requireDelegation(conversation.source, 'read', tx);
       return {
-        id: `${conversation.id}:${command.id}`,
+        // Per slot: a turn that starts again elsewhere is a new grant.
+        id: `${conversation.id}:${command.id}:${command.epoch}`,
         userId: conversation.userId,
         projectId: conversation.projectId,
         conversationId: conversation.id,
@@ -2155,21 +2174,15 @@ export class PiService implements Pi, FleetOwner {
     }
     if (host.current && gone(fact(host.current), now)) {
       if (dry) return true;
-      const reason = lost(fact(host.current));
-      if (host.next) await this.promote(tx, host, reason, fact(host.next)?.phase === 'queued');
-      else {
-        const { allocationId } = host.current;
-        for (const turn of turns.filter(({ runtimeId }) => runtimeId === allocationId))
-          await this.interrupt(tx, turn, reason);
-        host.current = null;
-      }
+      // During a move C's unclaimed turns follow N, as at a cut-over.
+      await this.lose(tx, turns, host.current, fact(host.current), !host.next);
+      if (host.next) await this.promote(tx, host, true, fact(host.next)?.phase === 'queued');
+      else host.current = null;
       changed = true;
     }
     if (host.draining && gone(fact(host.draining), now)) {
       if (dry) return true;
-      const reason = lost(fact(host.draining));
-      for (const turn of turns.filter(({ runtimeId }) => runtimeId === host.draining!.allocationId))
-        await this.interrupt(tx, turn, reason);
+      await this.lose(tx, turns, host.draining, fact(host.draining));
       host.draining = null;
       changed = true;
     }
@@ -2196,6 +2209,24 @@ export class PiService implements Pi, FleetOwner {
         await this.reassign(tx, turn, host[role]!, false);
         changed = true;
       }
+    }
+    // A turn no slot serves starts again (again): on C, rented when the host has none.
+    const unplaced = turns.filter(
+      (turn) => active.has(turn.status) && !roleOf(host, turn.runtimeId),
+    );
+    if (unplaced.length) {
+      if (dry) return true;
+      const fresh = !host.current;
+      if (fresh && renter) {
+        const { source } = await this.conversation(tx, unplaced[0].conversationId);
+        const machine = await this.starting(await this.person(tx, host.key), source, tx);
+        host.current = await this.rent(renter, host, machine, tx).catch(() => null);
+      }
+      const queued = fresh || fact(host.current)?.phase === 'queued';
+      for (const turn of unplaced)
+        if (host.current) await this.reassign(tx, turn, host.current, queued);
+        else await this.interrupt(tx, turn, 'runtime_lost');
+      changed = true;
     }
     const { current } = host;
     const newest = turns.at(-1);
@@ -2225,26 +2256,56 @@ export class PiService implements Pi, FleetOwner {
     await this.saveHost(tx, host);
     return true;
   }
-  /** N becomes C: at cut-over once proven ready (T4), or first when C is lost (T7, with the
-   * reason C's claimed turns end). C's unclaimed turns follow N; at cut-over its claimed turns
-   * finish on D while C drains, or C stops at once. */
+  /** The turns on a slot Fleet no longer runs, its unclaimed ones only with `unclaimed`. One whose
+   * machine was lost starts again if it may (again); every other ends, as a refused or stopped
+   * machine's do. */
+  private async lose(
+    tx: Transaction,
+    turns: PiCommandRecord[],
+    slot: PiSlot,
+    allocation: FleetAllocation | null,
+    unclaimed = true,
+  ) {
+    const reason = lost(allocation);
+    for (const turn of turns)
+      if (turn.runtimeId !== slot.allocationId || !(unclaimed || turn.workerId)) continue;
+      else if (reason === 'runtime_lost' && this.again(turn, true))
+        await this.saveCommand(tx, turn);
+      else await this.interrupt(tx, turn, reason);
+  }
+  /** A turn that has shown nothing, no word and no tool call, starts again on a fresh machine:
+   * once after its own machine is lost (`once`), and after every restart. Its claim is dropped,
+   * so its old worker can do nothing more with it; settle places it, and the caller saves it. */
+  private again(turn: PiCommandRecord, once: boolean): boolean {
+    const shown = turn.firstTextAt || turn.calledAt || turn.resultHash;
+    if (shown || turn.expiresAt <= this.time() || (once && turn.retried)) return false;
+    this.forget(turn);
+    const live = this.live.get(turn.conversationId);
+    if (live?.turn?.commandId === turn.id) delete live.turn;
+    if (once) turn.retried = true;
+    Object.assign(turn, { status: 'waiting', workerId: null });
+    for (const claimed of ['startedAt', 'tools', 'canMove'] as const) delete turn[claimed];
+    return true;
+  }
+  /** N becomes C: at cut-over once proven ready (T4), or first when C is lost (T7, its claimed
+   * turns already lost). C's unclaimed turns follow N; at cut-over its claimed turns finish on D
+   * while C drains, or C stops at once. */
   private async promote(
     tx: Transaction,
     host: PiHostRecord,
-    lostWith?: PiInterruption,
+    lostSlot = false,
     queued = false,
   ): Promise<void> {
     const old = host.current!;
     const { by, conversationId, readyBy: _, ...slot } = host.next!;
-    host.current = lostWith ? slot : { ...slot, readyAt: this.time() };
+    host.current = lostSlot ? slot : { ...slot, readyAt: this.time() };
     host.next = null;
     const turns = (await this.turns(tx, host.id)).filter(
       ({ runtimeId }) => runtimeId === old.allocationId,
     );
     for (const turn of turns)
       if (!turn.workerId) await this.reassign(tx, turn, host.current, queued);
-      else if (lostWith) await this.interrupt(tx, turn, lostWith);
-    if (!lostWith) {
+    if (!lostSlot) {
       if (turns.some(({ workerId }) => workerId)) host.draining = old;
       else await this.fleet.cancelOwned(this, old.allocationId, tx);
     }
@@ -2334,14 +2395,17 @@ export class PiService implements Pi, FleetOwner {
     this.closed = true;
     clearInterval(this.timer);
     await this.pending?.catch(() => undefined);
-    // A restart releases every machine; the next send starts one where the person left off.
+    // A restart releases every machine; the next send starts one where the person left off. A
+    // turn that has shown nothing waits: the next process starts it on a fresh machine.
     if (this.config.enabled) {
       await this.state.transaction(async (tx) => {
         const hosts = await tx.all<{ data_json: string }>(
           "SELECT data_json FROM pi_hosts WHERE status='live'",
         );
         for (const row of hosts)
-          await this.end(tx, decode<PiHostRecord>(row), 'restart', 'service_unavailable');
+          await this.end(tx, decode<PiHostRecord>(row), 'restart', 'service_unavailable', (turn) =>
+            this.again(turn, false),
+          );
       });
     }
     for (const dispose of this.disposers.reverse()) dispose();

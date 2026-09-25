@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { createService, type Caller, type MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { hostMigration, migration } from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
-import { openState } from './fixtures/state.js';
+import { openState, postgresUrl } from './fixtures/state.js';
 import { code, fixture, offers, type PiFixture } from './fixtures/pi.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 
@@ -388,10 +389,18 @@ test('a new machine that never proves ready fails the move, and the current one 
   assert.equal((await f.send(conversation)).runtimeId, bound.work.command.runtimeId);
 });
 
-test('when the current machine is lost during a move, its claimed turns end and the rest follow the new one', async (t) => {
+test('when the current machine is lost during a move, a turn that wrote ends and the rest follow the new one', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const a = await f.claimed(await f.send(await f.create()));
   await f.pi.begin(a.token, a.input);
+  await f.pi.progress(a.token, { ...a.input, events: [{ type: 'text', text: 'Partly' }] });
+  const quiet = await f.send(await f.create());
+  const { work } = await f.pi.next(a.token, { workerId: 'worker_1' });
+  await f.pi.begin(a.token, {
+    ...a.input,
+    conversationId: quiet.conversationId,
+    commandId: work!.command.id,
+  });
   await f.pi.setMachine(f.operator, { machine: 'large' });
   const b = await f.send(await f.create());
   const { next } = await f.host(b);
@@ -400,13 +409,124 @@ test('when the current machine is lost during a move, its claimed turns end and 
   await f.pi.tick();
   const ended = await command(f, a.work.command);
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
-  const followed = await command(f, b);
-  assert.deepEqual(
-    [followed.status, followed.runtimeId, followed.machine],
-    ['waiting', next!.allocationId, 'large'],
-  );
+  for (const turn of [quiet, b]) {
+    const followed = await command(f, turn);
+    assert.deepEqual(
+      [followed.status, followed.runtimeId, followed.machine],
+      ['waiting', next!.allocationId, 'large'],
+    );
+  }
   const host = await f.host(b);
   assert.deepEqual([host.current?.allocationId, host.next], [next!.allocationId, null]);
+});
+
+test('a turn whose machine a rollout takes before it shows anything waits for a fresh one, across the restart too, once', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const sent = await f.send(await f.create());
+  const placed = async (from: string) => {
+    const turn = await command(f, sent);
+    assert.deepEqual([turn.status, turn.error], ['waiting', null]);
+    assert.notEqual(turn.runtimeId, from);
+    assert.equal((await f.host(sent)).current?.allocationId, turn.runtimeId);
+    return turn;
+  };
+  // The rollout deletes the machine; Fleet saw it go while the turn was still Pi's to run.
+  await released(f, sent.runtimeId, { intent: 'run' });
+  await f.pi.tick();
+  const second = await placed(sent.runtimeId);
+  // Main is recreated at the switch: the turn waits through it for another fresh machine.
+  await f.restart();
+  const third = await placed(second.runtimeId);
+  assert.equal((await f.allocation(second.runtimeId)).intent, 'stop');
+  const bound = await f.claimed(third);
+  await f.pi.begin(bound.token, bound.input);
+  await released(f, third.runtimeId, { intent: 'run' });
+  await f.pi.tick();
+  const ended = await command(f, sent);
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
+});
+
+test('a lost machine’s turn that began starts again elsewhere; one that wrote or called a tool ends', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const sent = [];
+  for (let index = 0; index < 3; index++) sent.push(await f.send(await f.create()));
+  const token = await f.token(sent[0].runtimeId);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const [quiet, wrote, called] = sent.map(({ conversationId, id }) => ({
+    conversationId,
+    commandId: id,
+    workerId: 'worker_1',
+  }));
+  const { work } = await f.pi.next(token, { workerId: 'worker_1' });
+  for (const turn of [quiet, wrote, called]) {
+    if (turn !== quiet) await f.pi.next(token, { workerId: 'worker_1' });
+    await f.pi.begin(token, turn);
+  }
+  const grant = await f.pi.authorizeModel(work!.modelToken);
+  await f.pi.progress(token, { ...wrote, events: [{ type: 'text', text: 'Partly' }] });
+  await f.pi.tool(token, { ...called, name: 'project.get', input: {} });
+  await released(f, sent[0].runtimeId, { intent: 'run' });
+  await f.pi.tick();
+  for (const turn of [sent[1], sent[2]]) {
+    const ended = await command(f, turn);
+    assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
+  }
+  const moved = await command(f, sent[0]);
+  assert.deepEqual([moved.status, moved.error], ['waiting', null]);
+  assert.notEqual(moved.runtimeId, sent[0].runtimeId);
+  // Its old worker can do nothing more with it; a worker on the fresh machine answers it.
+  await assert.rejects(
+    f.pi.tool(token, { ...quiet, name: 'project.get', input: {} }),
+    code('pi_unauthorized'),
+  );
+  const again = await f.claimed(moved, 'worker_2');
+  assert.equal(again.work.command.id, sent[0].id);
+  await f.pi.begin(again.token, again.input);
+  // A new grant: the relay counts and binds this machine's calls afresh.
+  assert.notEqual((await f.pi.authorizeModel(again.work.modelToken)).id, grant.id);
+  await f.pi.complete(again.token, f.completion(again.input));
+  assert.equal((await command(f, sent[0])).status, 'completed');
+});
+
+test('the hosted drain releases idle machines through Main, and leaves one in use alone', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  await f.pi.warm(f.operator, { requestId: 'warm' });
+  const [idle] = await f.hosts();
+  const alice = await login(f, 'alice');
+  const project = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
+  const inOne = await f.scope.caller(alice, project.id);
+  const busy = await f.send(await f.create(inOne), 'hello', inOne);
+  // deploy/hosted-release-vm.py's own statement and runner, on this database.
+  const vm = new URL('../deploy/hosted-release-vm.py', import.meta.url).pathname;
+  const { IDLE, MAIN_READ } = JSON.parse(
+    execFileSync('python3', [
+      '-c',
+      `import importlib.util,json;s=importlib.util.spec_from_file_location('vm',${JSON.stringify(vm)});v=importlib.util.module_from_spec(s);s.loader.exec_module(v);print(json.dumps({'IDLE':v.IDLE,'MAIN_READ':v.MAIN_READ}))`,
+    ]).toString(),
+  );
+  const schema = await f.state.read((sql) =>
+    sql.get<{ s: string }>('SELECT current_schema() AS s'),
+  );
+  const env = {
+    MERV_DB_URL: postgresUrl,
+    MERV_TS_DB_SCHEMA: schema!.s,
+    MERV_Q: IDLE,
+    MERV_P: '[]',
+  };
+  const drain = (write: boolean) =>
+    JSON.parse(
+      execFileSync('node', ['--input-type=module', '-e', MAIN_READ], {
+        env: { ...process.env, ...env, ...(write && { MERV_W: '1' }) },
+        stdio: 'pipe',
+      }).toString(),
+    );
+  assert.throws(() => drain(false));
+  assert.deepEqual(drain(true), { n: 1 });
+  await f.pi.tick();
+  assert.equal((await f.host({ hostId: idle.id })).ended?.reason, 'idle');
+  assert.equal((await f.allocation(idle.current!.allocationId)).intent, 'stop');
+  assert.equal((await f.host(busy)).status, 'live');
 });
 
 test('an idle machine ends, with any move it was starting, and forgets where the agent moved it', async (t) => {

@@ -1280,7 +1280,7 @@ test('a restart releases every machine; the next send restores the full tree on 
   await assert.rejects(f.pi.next(first.token, { workerId: 'old_worker' }), code('pi_unauthorized'));
 });
 
-test('Fleet outcomes end a turn at once with their own reason; a missing row counts as lost', async (t) => {
+test('Fleet outcomes end a turn with their own reason; a missing row counts as lost', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
   const latest = async () => {
@@ -1301,13 +1301,15 @@ test('Fleet outcomes end a turn at once with their own reason; a missing row cou
   await f.pi.tick();
   // With its only machine gone the host ends; the next send starts another.
   assert.deepEqual(await latest(), { error: 'runtime_refused', state: 'none' });
+  // A lost machine's turn that has shown nothing starts again, once, on a fresh one.
   const deleted = (await f.send(conversation)).runtimeId;
   await f.state.transaction((tx) => tx.run('DELETE FROM fleet_allocations WHERE id=?', deleted));
   await f.pi.tick();
-  assert.deepEqual(await latest(), { error: 'runtime_lost', state: 'none' });
+  assert.deepEqual(await latest(), { error: null, state: 'starting' });
   // Fleet stops a failed machine itself; that is a lost runtime, not an operator's stop.
   const machine = { sandboxId: 'sbx_failed', state: 'failed', ready: false, launch: null };
-  await rewrite((await f.send(conversation)).runtimeId, { runtime: machine });
+  const { commands } = await f.pi.snapshot(f.operator, conversation.id);
+  await rewrite(commands.at(-1)!.runtimeId, { runtime: machine });
   await f.pi.tick();
   assert.deepEqual(await latest(), { error: 'runtime_lost', state: 'none' });
   const bound = await f.claimed(await f.send(conversation));

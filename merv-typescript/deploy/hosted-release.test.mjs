@@ -463,6 +463,28 @@ print(json.dumps(res))`,
   assert.equal(out.finished, false); // a finished run drops its lease
 });
 
+test('the drain releases idle Pi machines through Main first, best effort, then waits', () => {
+  const out = py(`calls=[];down=[]
+vm.quiet=lambda s:calls.append(['quiet',s]) or {'drained':True}
+def main_read(q,*p,write=False):
+    if down: raise RuntimeError('main_unreachable')
+    calls.append(['main',q==vm.IDLE,write])
+    return {'n':2}
+vm.main_read=main_read
+step=vm.Step(None,{'drainSeconds':900})
+res={'drained':step.drain({})}
+down.append(1)
+res['unreachable']=step.drain({})
+res['calls']=calls
+print(json.dumps(res))`);
+  assert.deepEqual(out.calls, [
+    ['main', true, true],
+    ['quiet', 900],
+    ['quiet', 900],
+  ]);
+  assert.deepEqual([out.drained, out.unreachable], [{ drained: true }, { drained: true }]);
+});
+
 test('the switch never waits for a drain and refuses while a Main release runs', () => {
   const out = py(
     `${scratch}env=t/'typescript.env';env.write_bytes(b'A=1\\nMERV_FLEET_RUNTIME_RELEASE_ID=rt1_${'a'.repeat(64)}\\n')

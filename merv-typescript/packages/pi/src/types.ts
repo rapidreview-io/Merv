@@ -96,6 +96,10 @@ export interface PiCommandRecord extends PiCommand {
   /** The native names this turn offers, fixed at its first serve: its relay grant names exactly
    * these, and its tool calls and outcomes only these. Absent until then. */
   tools?: string[];
+  /** Its first tool call, recorded before the call runs: from then it never starts again. */
+  calledAt?: string;
+  /** It started again once, on a fresh machine, after its own was lost. */
+  retried?: true;
 }
 export interface PiEvent {
   sequence: number;

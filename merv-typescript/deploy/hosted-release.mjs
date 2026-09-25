@@ -30,9 +30,10 @@
 //  4 push with a 30-minute registry credential minted by the local wrangler and piped over ssh
 //    stdin into docker login (tmpfs config, logged out after); pin the amd64 manifest digest.
 //  5 catalog: add the release to both Sandboxes services, keeping earlier releases.
-//  6 drain until no Pi turn or launch is in flight, deploy each live app from its template at HEAD
-//    with the new digest and the Sandboxes commit's bridge Worker, and switch Main's release ids as
-//    soon as Cloudflare runs the new image everywhere: until then Sandboxes refuses Pi launches.
+//  6 release idle Pi machines, drain until no Pi turn or launch is in flight, deploy each live app
+//    from its template at HEAD with the new digest and the Sandboxes commit's bridge Worker, and
+//    switch Main's release ids as soon as Cloudflare runs the new image everywhere: until then
+//    Sandboxes refuses Pi launches.
 //  7 verify each app natively (settled health, SSH off), then a canary: one real Pi turn on
 //    Standard as a root-only reader key, whose machine it then releases.
 // No run starts, and no open run is driven forward, unless a rollback could run from here: the
