@@ -871,6 +871,130 @@ test('a service task derives its base from prerequisites when it names no commit
     );
 });
 
+test('a research consolidation is delivered, and no contributor or directing authority reviews it', async (t) => {
+  const f = await fixture(t);
+  // Research's own capability, not a stand-in: the producer is the research service actor.
+  const { id: taskId } = await f.state.transaction(async (tx) => {
+    const task = await f.tasks.serviceTasks('research').create(
+      {
+        projectId: f.admin.projectId,
+        requestId: 'consolidation',
+        title: 'Cycle: consolidation',
+        goal: 'Integrate the accepted work main lacks and publish it.',
+        checks: ['Every experiment is kept, adapted or dropped.'],
+        dependsOn: [f.left.id, f.extra.id],
+      },
+      tx,
+    );
+    await f.code.publishOnAcceptance(f.admin, { unitId: task.id }, tx);
+    return task;
+  });
+  await f.bases.work(f.admin.projectId);
+  const identity = await f.scope.issueActor(f.admin, { name: 'Runner', role: 'operator' });
+  const runner = {
+    projectId: f.admin.projectId,
+    actorId: identity.actor.id,
+    credentialId: identity.credential.id,
+  };
+  await f.sessions.heartbeatRunner(runner, {
+    runnerId: 'runner',
+    machine: { hostname: 'runner', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const task = await f.tasks.get(f.admin, taskId);
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const session = await f.sessions.offer(runner, {
+    instanceId: taskId,
+    expectedRevision: task.workflow.revision,
+    runnerId: 'runner',
+    requestId: 'produce',
+    secret,
+  });
+  const base = (await f.state.transaction((tx) => f.code.basePin(f.admin, taskId, tx)))!.reference;
+  const workspace = {
+    repositoryId: 'repository',
+    workspaceId: taskId,
+    mode: 'persistent' as const,
+    branch: 'merv/consolidation',
+    baseOid: base,
+    headOid: base,
+    stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 1 },
+  };
+  await f.sessions.attach(runner, {
+    sessionId: session.id,
+    runnerId: 'runner',
+    hostRef: 'produce',
+    workspace,
+  });
+  const worker = await f.sessions.authenticate(secret);
+  f.captures.set('consolidated', {
+    ref: { kind: 'code-commit', commandId: 'consolidated' },
+    status: 'ready',
+    provenance: {
+      projectId: f.admin.projectId,
+      instanceId: taskId,
+      sessionId: session.id,
+      actorId: worker.actorId,
+      revision: task.workflow.revision,
+      workflow: { name: 'task', version: 6, state: 'in_progress' },
+      readOnly: false,
+    } as CodeCapture['provenance'],
+    workspace,
+    observedAt: 'now',
+    eventId: null,
+  });
+  const delivery = confirmedDelivery(
+    {
+      taskId,
+      expectedRevision: task.workflow.revision,
+      requestId: 'deliver',
+      commandId: 'consolidated',
+      artifactIds: [],
+    },
+    task.checks.length,
+  );
+  const submitted = await f.sessions.run(
+    await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+    (caller) => f.tasks.submitDelivery(caller, delivery),
+  );
+  assert.equal(submitted.workflow.state, 'in_review');
+  const review = await f.reviews.get(f.admin, submitted.reviewId!);
+  for (const actorId of [f.inputAuthor.actorId, runner.actorId, worker.actorId])
+    assert.ok(review.provenance?.excludedActorIds.includes(actorId));
+  // The authority that directed the delivery, and the author of integrated work, are refused.
+  for (const caller of [runner, f.inputAuthor])
+    await assert.rejects(f.reviews.start(caller, review.id), { code: 'review_independence' });
+  await f.sessions.release(runner, { sessionId: session.id, runnerId: 'runner' });
+  // A worker the same authority directs is refused too; one directed by anyone else is not.
+  const offerReview = (by: Caller, runnerId: string) =>
+    f.sessions.offer(by, {
+      instanceId: taskId,
+      expectedRevision: submitted.workflow.revision,
+      runnerId,
+      requestId: `review-${runnerId}`,
+      secret: `ms_${randomBytes(32).toString('base64url')}`,
+    });
+  await assert.rejects(offerReview(runner, 'runner'), { code: 'review_independence' });
+  const other = await f.scope.issueActor(f.admin, { name: 'Other runner', role: 'operator' });
+  const independent = {
+    projectId: f.admin.projectId,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  await f.sessions.heartbeatRunner(independent, {
+    runnerId: 'other',
+    machine: { hostname: 'other', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const leased = await offerReview(independent, 'other');
+  const claimed = await f.reviews.get(f.admin, review.id);
+  assert.deepEqual([claimed.status, claimed.reviewerId], ['started', leased.actorId]);
+});
+
 test('derivation ignores a system edge below a code-less success', async (t) => {
   const f = await fixture(t);
   await f.waiter();

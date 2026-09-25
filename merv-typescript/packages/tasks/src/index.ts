@@ -2335,17 +2335,9 @@ export class TaskService implements Tasks {
           {
             subjectId: row.id,
             subjectRevision: moved.revision,
-            ...(serviceOwned(current.version)
-              ? {
-                  provenanceOwner: (
-                    await this.scope.require(
-                      { projectId: caller.projectId, actorId: row.producer_id },
-                      'read',
-                      tx,
-                    )
-                  ).serviceOwner,
-                }
-              : {}),
+            // Whichever service created it, a service task is Git work, and only Code can name
+            // who wrote what it stands on.
+            ...(serviceOwned(current.version) ? { provenanceOwner: 'code' } : {}),
             producerId: caller.actorId,
             // A service owns the task but never directs a worker. Reviews retains the
             // authenticated runner source as the delivery's administrative authority.
