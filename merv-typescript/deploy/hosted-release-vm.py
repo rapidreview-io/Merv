@@ -6,9 +6,10 @@ and prints one JSON line. Results land in <run>/<step>.json, so an interrupted r
 One run at a time holds HOME/active from preflight to finish; release.mjs's Main job refuses to
 start while it exists. One driver at a time holds the run's lease: a running step keeps it fresh,
 and a lease unseen for LEASE seconds may be taken over. SIGHUP is ignored, so a dropped SSH
-session does not stop a step. From the Cloudflare deploy until finish a systemd timer runs
-`guard`: when the driver has gone silent it points Main at whichever release Cloudflare runs, so
-a lost laptop never leaves Pi refusing every launch.
+session does not stop a step. From the first deploy attempt until finish every step arms a systemd
+timer, unless it runs (a reboot drops it), that runs `guard`: when the driver has gone silent it
+points Main at whichever release Cloudflare runs, so a lost laptop never leaves Pi refusing every
+launch. `abandon` lets the driver close a run that can neither finish nor roll back.
 Never prints a secret: the registry credential and the canary token stay inside this process,
 and every backup of the env file or the Sandboxes catalog is root-private inside the run.
 """
@@ -60,7 +61,7 @@ LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
 STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
-         'status', 'guard', 'mint_canary'}
+         'status', 'guard', 'abandon', 'mint_canary'}
 # One read-only row from Main's database; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();
@@ -204,9 +205,25 @@ def guard_unit(directory):
     return 'merv-hosted-guard-' + directory.name
 
 
+def arm(directory, arg):
+    """From the first deploy attempt, the guard timer, unless it already runs. The first deploy never
+    goes ahead without it; any later step re-arms it as best it can."""
+    if not (arg.get('deployAttempted') or (read(directory / 'progress.json') or {}).get('deployAttempted')):
+        return
+    unit = guard_unit(directory)
+    if subprocess.run(['systemctl', 'is-active', '--quiet', unit + '.timer'], capture_output=True).returncode:
+        subprocess.run(['systemctl', 'stop', unit + '.timer'], capture_output=True)
+        try:
+            run(['systemd-run', '--collect', '--unit', unit, '--on-active=300', '--on-unit-active=120',
+                 sys.executable, Path(__file__).resolve(), 'guard', directory])
+        except RuntimeError:
+            if arg.get('deployAttempted'):
+                raise
+
+
 @contextlib.contextmanager
 def leased(directory, driver):
-    """One driver per run; the step refreshes the lease while it runs."""
+    """One driver per run; the step refreshes the lease while it runs, and a finished run drops it."""
     path, held = directory / 'lease.json', read(directory / 'lease.json') or {}
     age = time.time() - held.get('seen', 0)
     need(driver and (held.get('driver') in (None, driver) or age > LEASE),
@@ -226,7 +243,10 @@ def leased(directory, driver):
     finally:
         stop.set()
         thread.join()
-        beat()
+        if (directory / 'finish.json').exists():
+            path.unlink(missing_ok=True)
+        else:
+            beat()
 
 
 def env_value(raw, key):
@@ -478,7 +498,10 @@ class Step:
             del cred, arg['credential']
             probe = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', '--raw', target], env=env,
                                    capture_output=True, timeout=60)
-            need(probe.returncode and re.search(rb'not found|manifest unknown', probe.stderr, re.I), 'push tag exists')
+            need(probe.returncode, 'push tag exists')
+            need(re.search(rb'not found|manifest unknown', probe.stderr, re.I) and
+                 not re.search(rb'unauthorized|forbidden|denied', probe.stderr, re.I),
+                 'push tag probe failed :: ' + probe.stderr.decode(errors='replace')[-300:])
             run(['docker', 'tag', candidate, target])
             pushed = re.findall(r'digest: (sha256:[0-9a-f]{64})', run(['docker', 'push', target], env=env,
                                                                        timeout=1800).decode())
@@ -490,7 +513,8 @@ class Step:
                 [digest] = [m['digest'] for m in manifests if m.get('platform', {}).get('os') == 'linux'
                             and m['platform'].get('architecture') == 'amd64']
                 raw = inspect_raw(f'{repo}@{digest}')
-            need('sha256:' + sha(raw) == digest, 'registry manifest does not hash to its digest')
+            need(digest in {'sha256:' + sha(raw), 'sha256:' + sha(raw.removesuffix(b'\n'))},
+                 'registry manifest does not hash to its digest')
             return {'image': f'{repo}@{digest}', 'tag': target, 'index': candidate}
         finally:
             subprocess.run(['docker', 'logout', 'registry.cloudflare.com'], env=env, capture_output=True)
@@ -617,13 +641,9 @@ class Step:
         return result
 
     def note(self, arg):
-        """Records progress; the first deployAttempted arms the guard timer before it is recorded."""
+        """Records progress; step() arms the guard timer before a first deployAttempted is recorded."""
         path = self.run / 'progress.json'
         before = read(path) or {}
-        if arg.get('deployAttempted') and not before.get('deployAttempted'):
-            subprocess.run(['systemctl', 'stop', guard_unit(self.run) + '.timer'], capture_output=True)
-            run(['systemd-run', '--collect', '--unit', guard_unit(self.run), '--on-active=300',
-                 '--on-unit-active=120', sys.executable, Path(__file__).resolve(), 'guard', self.run])
         atomic(path, json.dumps({**before, **arg}).encode())
         return {**before, **arg}
 
@@ -659,16 +679,40 @@ class Step:
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:
             return {'guard': 'driver alive'}
-        live, catalog, current = native(), read(self.run / 'catalog.json'), self.plan['current']
-        targets = {current['image']: current['releaseId']}
-        if catalog:
-            targets[read(self.run / 'push.json')['image']] = catalog['releaseId']
-        target = targets.get(live['image'])
+        live = native()
+        target = self.releases().get(live['image'])
         if not target or live.get('rollout'):
             return {'guard': 'waiting for Cloudflare to settle'}
         result = self.switch({'releaseId': target})
         self.note({'guard': {'at': time.time(), 'releaseId': target}})
         return {'guard': 'switched' if result['changed'] else 'consistent', 'releaseId': target}
+
+    def releases(self):
+        """This run's releases by image: the previous one and, once catalogued, its own."""
+        current, catalog = self.plan['current'], read(self.run / 'catalog.json')
+        targets = {current['image']: current['releaseId']}
+        if catalog:
+            targets[read(self.run / 'push.json')['image']] = catalog['releaseId']
+        return targets
+
+    def abandon(self, _):
+        """Changes nothing: names the release production agrees on, so the driver may close the run
+        without finishing or rolling it back. Cloudflare runs one of this run's images with no rollout,
+        Main and the env file name its release, and both Sandboxes services' catalog holds it."""
+        live, main, file = native(), env_of(MAIN).get(KEY), env_value(ENV.read_bytes(), KEY)
+        target, catalog = self.releases().get(live['image']), json.loads(env_of(CONTROL)[CATALOG])
+        held = {sbx(MERV_RELEASE=json.dumps(r)) for r in catalog
+                if r['provider'] == PROVIDER and r['image_digest'] == live['image'].split('@')[-1]}
+        problems = [p for p in (
+            not target and f'Cloudflare runs {live["image"]}, neither release of this run',
+            live.get('rollout') and 'a Cloudflare rollout is in progress',
+            main != target and f'Main runs {main}',
+            file != target and f'the env file names {file}',
+            target not in held and 'the Sandboxes catalog lacks that release',
+            catalog != json.loads(env_of(PIPELINE)[CATALOG]) and 'the two Sandboxes services hold different catalogs',
+        ) if p]
+        need(not problems, 'production disagrees, so the run stays open: ' + '; '.join(problems))
+        return {'releaseId': target, 'image': live['image']}
 
     def mint_canary(self, _):
         """Once: a non-expiring reader key for the service pilot, minted inside Main and stored root-only."""
@@ -721,9 +765,11 @@ def step(name, directory, payload):
         if name not in ('preflight', 'mint_canary', 'finish'):
             need(owner() == directory.name, f'hosted run {directory.name} does not hold {HOME / "active"}')
         with leased(directory, driver) if name != 'mint_canary' else contextlib.nullcontext():
+            if name != 'finish':
+                arm(directory, arg)
             result = getattr(work, name)(arg)
-    if name in RECORDED and not arg.get('restore'):
-        atomic(directory / f'{name}.json', json.dumps(result).encode())
+            if name in RECORDED and not arg.get('restore'):
+                atomic(directory / f'{name}.json', json.dumps(result).encode())
     return result
 
 

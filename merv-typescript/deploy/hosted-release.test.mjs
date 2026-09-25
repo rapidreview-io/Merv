@@ -330,6 +330,8 @@ attempt('fresh lease',second)
 (r/'lease.json').write_text(json.dumps({'driver':'a','seen':time.time()-vm.LEASE-1}))
 attempt('silent lease',second)
 res['holder']=json.loads((r/'lease.json').read_text())['driver']
+with vm.leased(r,'b'): (r/'finish.json').write_text('{}')
+res['finished']=(r/'lease.json').exists()
 print(json.dumps(res))`,
   );
   assert.equal(out['same run'], 'ok');
@@ -338,6 +340,7 @@ print(json.dumps(res))`,
   assert.match(out['fresh lease'], /driven by another process/);
   assert.equal(out['silent lease'], 'ok');
   assert.equal(out.holder, 'b');
+  assert.equal(out.finished, false); // a finished run drops its lease
 });
 
 test('the switch never waits for a drain and refuses while a Main release runs', () => {
@@ -392,6 +395,94 @@ print(json.dumps(res))`,
   assert.equal(out.unknown.guard, 'waiting for Cloudflare to settle');
   assert.deepEqual(out.switched, [`rt1_${'b'.repeat(64)}`]);
   assert.equal(out.progress.guard.releaseId, `rt1_${'b'.repeat(64)}`);
+});
+
+test('every step from the first deploy attempt re-arms the guard timer unless it runs', () => {
+  const out = py(
+    `${scratch}calls,timer=[],{'active':False}
+class Done:
+    def __init__(self,code): self.returncode=code
+def systemctl(c,**k):
+    calls.append(c[1]);return Done(0 if timer['active'] else 3)
+def run(c,**k):
+    calls.append(c[0]);timer['active']=True
+vm.subprocess.run,vm.run=systemctl,run
+def arm(arg):
+    calls.clear();vm.arm(r,arg);return calls[:]
+res={'before':arm({}),'first':arm({'deployAttempted':True})}
+(r/'progress.json').write_text(json.dumps({'deployAttempted':True}))
+res['armed']=arm({})
+timer['active']=False  # a host reboot drops the transient timer
+res['rebooted']=arm({})
+def broken(c,**k): raise RuntimeError('command_failed: systemd-run')
+vm.run,timer['active']=broken,False
+res['later']=arm({})
+try: arm({'deployAttempted':True})
+except RuntimeError as e: res['deploy']=str(e)
+print(json.dumps(res))`,
+  );
+  const armed = ['is-active', 'stop', 'systemd-run'];
+  assert.deepEqual(out.before, []);
+  assert.deepEqual(out.first, armed);
+  assert.deepEqual(out.armed, ['is-active']);
+  assert.deepEqual(out.rebooted, armed);
+  // A later step, a rollback's included, goes on without the timer; a first deploy never does.
+  assert.deepEqual(out.later, ['is-active', 'stop']);
+  assert.match(out.deploy, /systemd-run/);
+});
+
+test('abandon names the release production agrees on, or says what disagrees', () => {
+  const [old, next] = [`rt1_${'a'.repeat(64)}`, `rt1_${'b'.repeat(64)}`];
+  const out = py(
+    `${scratch}old,new='${old}','${next}'
+(r/'catalog.json').write_text(json.dumps({'releaseId':new}))
+(r/'push.json').write_text(json.dumps({'image':'reg@sha256:new'}))
+vm.ENV=t/'typescript.env'
+live={'native':{'image':'reg@sha256:new','rollout':None},'main':new,
+      'catalog':[{'provider':'cloudflare-fleet','image_digest':'sha256:new'}]}
+vm.native=lambda:live['native']
+vm.env_of=lambda n:{vm.KEY:live['main']} if n==vm.MAIN else {vm.CATALOG:json.dumps(live['catalog'])}
+vm.sbx=lambda **e:{'sha256:new':new,'sha256:old':old}[json.loads(e['MERV_RELEASE'])['image_digest']]
+step=vm.Step(r,{'current':{'image':'reg@sha256:old','releaseId':old}})
+def attempt():
+    vm.ENV.write_text(f'A=1\\n{vm.KEY}={new}\\n')
+    try: return step.abandon({})
+    except RuntimeError as e: return str(e)
+res={'agreed':attempt()}
+live['main']=old;res['main']=attempt()
+live['main'],live['catalog']=new,[];res['catalog']=attempt()
+live['native']={'image':'reg@sha256:other','rollout':'r1'};res['other']=attempt()
+print(json.dumps(res))`,
+  );
+  assert.deepEqual(out.agreed, { releaseId: next, image: 'reg@sha256:new' });
+  assert.equal(out.main, `production disagrees, so the run stays open: Main runs ${old}`);
+  assert.match(out.catalog, /: the Sandboxes catalog lacks that release$/);
+  assert.match(out.other, /neither release of this run; a Cloudflare rollout is in progress; Main/);
+});
+
+test('the push refuses an unreadable tag probe and pins a manifest despite a trailing newline', () => {
+  const out = py(
+    `${scratch}import hashlib
+manifest=b'{"schemaVersion":2}';digest='sha256:'+hashlib.sha256(manifest).hexdigest()
+(r/'build.json').write_text(json.dumps({'candidate':digest}))
+mkdtemp=tempfile.mkdtemp;vm.tempfile.mkdtemp=lambda **k:mkdtemp()  # no /run here
+probe={'stderr':b'ERROR: manifest unknown'}
+class Done:
+    def __init__(self): self.returncode,self.stderr=1,probe['stderr']
+vm.subprocess.run=lambda c,**k:Done()
+def run(c,**k):
+    return {'push':f'latest: digest: {digest} size: 1\\n'.encode(),'buildx':manifest+b'\\n'}.get(c[1],b'')
+vm.run=run
+step=vm.Step(r,{'current':{'image':'reg/x@sha256:old'}})
+push=lambda:step.push({'credential':{'username':'u','password':'p'}})
+res={'pushed':push()['image']==f'reg/x@{digest}'}
+probe['stderr']=b'ERROR: unauthorized: authentication required; manifest unknown'
+try: push()
+except RuntimeError as e: res['unauthorized']=str(e)
+print(json.dumps(res))`,
+  );
+  assert.equal(out.pushed, true);
+  assert.match(out.unauthorized, /^push tag probe failed :: ERROR: unauthorized/);
 });
 
 test('pi-connect-project.py holds the hosted host lock and refuses while a hosted run is open', () => {
