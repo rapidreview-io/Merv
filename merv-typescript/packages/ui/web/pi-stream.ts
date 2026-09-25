@@ -4,7 +4,6 @@ export interface PiConversation {
   id: string;
   title: string;
   activeCommandId: string | null;
-  runtimeId: string | null;
   updatedAt: string;
 }
 export interface PiCommand {

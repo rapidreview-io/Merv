@@ -28,8 +28,6 @@ interface Conversation {
   userId: string;
   title: string;
   revision: number;
-  epoch: number;
-  runtimeId: string | null;
   activeCommandId: string | null;
   checkpoint: null;
   previousCheckpoint: null;
@@ -42,8 +40,6 @@ const conversation = (id = 'conversation_1'): Conversation => ({
   userId: 'user_1',
   title: 'New conversation',
   revision: 1,
-  epoch: 0,
-  runtimeId: null,
   activeCommandId: null,
   checkpoint: null,
   previousCheckpoint: null,
@@ -63,16 +59,49 @@ const command = (id: string, status: string, messages: { role: string; text: str
   expiresAt: '2026-09-20T01:00:00Z',
   completedAt: null,
 });
+const standard = {
+  key: 'standard',
+  label: 'Standard',
+  vcpu: 0.5,
+  memoryGiB: 4,
+  diskGB: 8,
+  maxHourlyUsd: 0.074,
+};
+const large = {
+  key: 'large',
+  label: 'Large',
+  vcpu: 2,
+  memoryGiB: 8,
+  diskGB: 16,
+  maxHourlyUsd: 0.22,
+};
+/** The person's machine here, as PiHostView reads it; `none` has no machine yet. */
+const host = (state: 'none' | 'starting' | 'ready' = 'ready', extra: object = {}) => ({
+  machine: state === 'none' ? null : standard,
+  preferred: 'standard',
+  catalog: [
+    { ...standard, available: true },
+    { ...large, available: true },
+  ],
+  state,
+  idleEndsAt: null,
+  shared: { conversations: 1, projects: 1 },
+  moving: null,
+  lastMove: null,
+  ...extra,
+});
 const snapshot = (
   item: Conversation,
   commands: ReturnType<typeof command>[] = [],
   sequence = 0,
   tail: PiEvent[] = [],
   available = true,
+  machine: ReturnType<typeof host> = host(),
 ) => ({
   available,
   conversation: item,
   commands,
+  host: machine,
   streamId: 'stream_1',
   sequence,
   tail,
@@ -172,7 +201,7 @@ test('opening an empty Agent warms one conversation, and the first message goes 
   const warmed: Record<string, unknown>[] = [];
   serve('/tools/pi.warm', (_count, input) => {
     warmed.push(input);
-    state = staged(snapshot({ ...conversation(), runtimeId: 'runtime_1' }), 'machine');
+    state = staged(snapshot(conversation(), [], 0, [], true, host('starting')), 'machine');
     return { body: { result: state } };
   });
   const sent: Record<string, unknown>[] = [];
@@ -259,17 +288,14 @@ test('a question typed right after New conversation is kept and sent into it', a
   assert.equal(sent[1].text, 'Asked at once?');
 });
 
-test('a question sent while the first warm-up waits out a release goes to the conversation it opened', async (t) => {
+test('a question sent while the first warm-up is under way goes to the conversation it opens', async (t) => {
   t.after(cleanup);
   setProject('p1');
   boot(() => snapshot(conversation()));
   const warmed: unknown[] = [];
   serve('/tools/pi.warm', (_count, input) => {
     warmed.push(input.requestId);
-    return {
-      status: 409,
-      body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
-    };
+    return { body: { result: snapshot(conversation()) } };
   });
   const created: unknown[] = [];
   serve('/tools/pi.create', (_count, input) => {
@@ -277,11 +303,19 @@ test('a question sent while the first warm-up waits out a release goes to the co
     return { body: { result: conversation() } };
   });
   serve('/tools/pi.send', { body: { result: command('command_1', 'waiting') } });
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  const withStream = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.warm')) await held;
+    return withStream(input, init);
+  }) as typeof fetch;
   await open();
-  await settle(10);
   await write('What is known?');
   await click('Send');
-  // The same request: pi.create answers the conversation that warm-up opened, not a second one.
+  answer();
+  await settle(10);
+  // The same request: pi.create answers the conversation that warm-up opens, not a second one.
   assert.deepEqual(created, [warmed[0]]);
 });
 
@@ -310,7 +344,7 @@ test('sending explicitly uses one command ID, stopping replaces canonical status
   serve('/tools/pi.send', (_count, input) => {
     sent.push(input);
     state = snapshot(
-      { ...conversation(), activeCommandId: input.commandId as string, runtimeId: 'runtime_1' },
+      { ...conversation(), activeCommandId: input.commandId as string },
       [
         command(input.commandId as string, 'working', [
           { role: 'user', text: input.text as string },
@@ -322,7 +356,7 @@ test('sending explicitly uses one command ID, stopping replaces canonical status
   });
   serve('/tools/pi.stop', () => {
     state = snapshot(
-      { ...conversation(), runtimeId: 'runtime_1' },
+      conversation(),
       [
         command(sent[0].commandId as string, 'interrupted', [
           { role: 'user', text: 'What is known?' },
@@ -342,10 +376,6 @@ test('sending explicitly uses one command ID, stopping replaces canonical status
   assert.match(text(), /What is known\?/);
   // The cursor is back where the next question is written.
   assert.equal(document.activeElement?.id, 'pi-draft');
-  assert.equal(
-    document.querySelector<HTMLAnchorElement>('a[href="/fleet/runtime_1"]')?.textContent,
-    'Fleet details',
-  );
   await click('Stop');
   assert.match(text(), /Stopped/);
   assert.equal(requests.filter((request) => request.includes('/tools/pi.stop')).length, 1);
@@ -617,16 +647,16 @@ test('a turn that ended early says why in a sentence, and stopping it yourself s
   assert.doesNotMatch(text(), /cancelled/);
 });
 
-test('a project that cannot run the agent says so calmly and never reads Ready', async (t) => {
+test('an agent that cannot start machines says so calmly and never reads Ready', async (t) => {
   t.after(cleanup);
   setProject('p1');
   boot(
-    () => snapshot(conversation(), [], 0, [], false),
+    () => snapshot(conversation(), [], 0, [], false, host('none')),
     () => [conversation()],
   );
   await open();
-  assert.match(text(), /Agent isn’t set up for this project yet/);
-  assert.doesNotMatch(text(), /Ready/);
+  assert.match(text(), /Agent isn’t available right now/);
+  assert.doesNotMatch(text(), /Ready|Starts on/);
   assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
   // Nothing is warmed where no machine can start.
   assert.equal(
@@ -644,7 +674,7 @@ test('a project that cannot run the agent says so calmly and never reads Ready',
   await open();
   await write('Hello');
   await click('Send');
-  assert.match(text(), /Agent isn’t set up for this project yet/);
+  assert.match(text(), /Agent isn’t available right now/);
   assert.doesNotMatch(text(), /sandbox_not_connected/);
   assert.equal(document.querySelector<HTMLTextAreaElement>('#pi-draft')?.disabled, true);
 });
@@ -686,133 +716,89 @@ test('a rotated stream reconnects at once and silently; a busy one waits quietly
   assert.match(text(), /Ready/);
 });
 
-test('a send refused while the previous agent finishes is asked again with the same command', async (t) => {
+test('the machine warms where the page opens or a question begins with none, and only there', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  let state: ReturnType<typeof snapshot> = staged(
-    snapshot({ ...conversation(), runtimeId: 'runtime_1' }),
-    'agent',
-  );
-  boot(
-    () => state,
-    () => [conversation()],
-  );
-  const sent: string[] = [];
-  serve('/tools/pi.send', (attempt, input) => {
-    sent.push(input.commandId as string);
-    if (attempt === 1)
-      return {
-        status: 409,
-        body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
-      };
-    state = snapshot(
-      { ...conversation(), activeCommandId: sent[0], runtimeId: 'runtime_2' },
-      [command(sent[0], 'starting', [{ role: 'user', text: 'Again' }])],
-      1,
-    );
-    return { body: { result: state.commands[0] } };
-  });
-  await open();
-  await write('Again');
-  await click('Send');
-  assert.match(text(), /Finishing the previous agent…/);
-  assert.doesNotMatch(text(), /pi_runtime_releasing|·/);
-  assert.ok(document.querySelector('.pi-bar .pi-state-dot--active'));
-  await settle(3100);
-  assert.deepEqual(sent, [sent[0], sent[0]]);
-  assert.match(text(), /Preparing a machine/);
-});
-
-test('a machine warms as the page opens and in a new conversation, but a switch waits for a question', async (t) => {
-  t.after(cleanup);
-  setProject('p1');
+  let machine: 'none' | 'starting' = 'none';
+  const first = conversation();
   const second = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
-  const known = (id: string) => (id === second.id ? second : conversation(id));
-  let current = 'conversation_1';
-  boot(
-    () => snapshot(known(current)),
-    () => [conversation(), second],
+  let current = first;
+  const stream = boot(
+    () => snapshot(current, [], 0, [], true, host(machine)),
+    () => [first, second],
   );
-  serve('/tools/pi.create', { body: { result: conversation('conversation_3') } });
-  const warmed: Record<string, unknown>[] = [];
-  serve('/tools/pi.warm', (attempt, input) => {
-    warmed.push(input);
-    if (attempt === 1 || attempt === 3)
-      return {
-        status: 409,
-        body: { error: { code: 'pi_runtime_releasing', message: 'pi_runtime_releasing' } },
-      };
-    const item = { ...known(input.conversationId as string), runtimeId: 'runtime_1' };
-    return { body: { result: staged(snapshot(item), 'machine') } };
+  const warmed: unknown[] = [];
+  serve('/tools/pi.warm', (_count, input) => {
+    warmed.push(input.conversationId);
+    machine = 'starting';
+    const id = input.conversationId as string;
+    return { body: { result: snapshot(conversation(id), [], 0, [], true, host(machine)) } };
   });
-  const ids = () => warmed.map((input) => input.conversationId);
+  let started = 0;
+  let answer = () => {};
+  const held = new Promise<void>((resolve) => (answer = resolve));
+  const withStream = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith('/tools/pi.warm')) {
+      started++;
+      await held;
+    }
+    return withStream(input, init);
+  }) as typeof fetch;
   const area = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
   const focus = () =>
     act(async () => {
       area().blur();
       area().focus();
     });
-  const choose = async (index: number) => {
+  // Newest first, after New conversation.
+  const go = async (item: Conversation) => {
+    current = item;
     await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
     await act(async () =>
-      document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[index].click(),
+      document
+        .querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+        [item === second ? 1 : 2].click(),
     );
     await settle(10);
   };
   await open();
   await settle(10);
-  // The agent released elsewhere is waited for without a word, and nothing is held up.
-  assert.deepEqual(ids(), ['conversation_1']);
-  assert.doesNotMatch(text(), /Finishing|still finishing|releasing/);
-  assert.ok(!document.querySelector('[role="alert"]'));
+  // Opening the page starts the machine before anything is begun there.
+  assert.equal(started, 1);
+  // A question begun while it starts asks nothing more.
+  await focus();
   assert.equal(area().readOnly, false);
+  answer();
+  await settle(10);
+  assert.equal(started, 1);
+  assert.deepEqual(warmed, ['conversation_1']);
+  assert.match(text(), /Runs on Standard/);
+  // Every conversation here shares it: opening another, or asking there, starts nothing.
+  await go(second);
   await focus();
-  assert.equal(warmed.length, 1);
-  await settle(3100);
-  assert.equal(warmed[1].requestId, warmed[0].requestId);
-  assert.match(text(), /Starting a machine/);
-  // Looking at another conversation and coming back leaves the warm machine where it is.
-  current = 'conversation_2';
-  await choose(1);
-  current = 'conversation_1';
-  await choose(2);
-  assert.deepEqual(ids(), ['conversation_1', 'conversation_1']);
-  // A question begun there warms it, and a conversation the person has left is not retried.
-  current = 'conversation_2';
-  await choose(1);
+  assert.deepEqual(warmed, ['conversation_1']);
+  // A machine that stops while the page stands open stays stopped while the person only looks.
+  machine = 'none';
+  await act(async () => stream.push('snapshot', snapshot(second, [], 1, [], true, host('none'))));
+  await settle(10);
+  assert.match(text(), /Starts on Standard/);
+  await go(first);
+  assert.match(text(), /Starts on Standard/);
+  assert.deepEqual(warmed, ['conversation_1']);
+  // Beginning a question starts it again.
   await focus();
-  current = 'conversation_1';
-  await choose(2);
-  await settle(3100);
-  assert.deepEqual(ids(), ['conversation_1', 'conversation_1', 'conversation_2']);
-  current = 'conversation_2';
-  await choose(1);
-  await focus();
-  await focus();
-  current = 'conversation_3';
-  await choose(0);
-  assert.deepEqual(ids(), [
-    'conversation_1',
-    'conversation_1',
-    'conversation_2',
-    'conversation_2',
-    'conversation_3',
-  ]);
-  assert.deepEqual(
-    requests
-      .filter((request) => request.endsWith('/events'))
-      .map((request) => request.slice(8, 22)),
-    ['1', '2', '1', '2', '1', '2', '3'].map((n) => `conversation_${n}`),
-  );
+  await settle(10);
+  assert.deepEqual(warmed, ['conversation_1', 'conversation_1']);
 });
 
-test('opening Agent goes to the conversation whose machine is warm, and warms nothing', async (t) => {
+test('opening Agent goes to the newest conversation, and leaves a running machine alone', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  const warm = { ...conversation('conversation_2'), runtimeId: 'runtime_1' };
+  const newest = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
   boot(
-    () => snapshot(warm),
-    () => [conversation(), warm],
+    () => snapshot(newest),
+    () => [newest, conversation()],
   );
   await open();
   assert.deepEqual(
@@ -852,7 +838,7 @@ test('a warm-up that answers late leaves the page where the person went', async 
 test('the bar and the transcript say what the turn waits on, counting the seconds of each wait', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  const active = { ...conversation(), activeCommandId: 'command_1', runtimeId: 'runtime_1' };
+  const active = { ...conversation(), activeCommandId: 'command_1' };
   const asked = [{ role: 'user', text: 'Hello' }];
   let sequence = 0;
   const stream = boot(
@@ -895,7 +881,7 @@ test('the bar and the transcript say what the turn waits on, counting the second
   await push('agent', 'starting');
   assert.match(bar(), /^Loading the agent · 0 s/);
   await push('tool', 'working', 'Reading a file');
-  assert.match(bar(), /^Reading a file(Fleet details)?$/);
+  assert.match(bar(), /^Reading a file$/);
   await push('thinking');
   assert.match(bar(), /^Thinking · 0 s/);
   const partial: PiEvent = {
@@ -937,13 +923,12 @@ test('a wait counts its seconds by the server’s clock, however far this one is
   t.after(cleanup);
   setProject('p1');
   // The server's clock runs a minute ahead; by it, the machine began starting six seconds ago.
-  const warm = { ...conversation(), runtimeId: 'runtime_1' };
   boot(
     () => ({
-      ...staged(snapshot(warm), 'machine', 6000 - 60_000),
+      ...staged(snapshot(conversation()), 'machine', 6000 - 60_000),
       now: new Date(Date.now() + 60_000).toISOString(),
     }),
-    () => [warm],
+    () => [conversation()],
   );
   await open();
   assert.match(
@@ -991,6 +976,230 @@ test('the transcript follows new text until the reader scrolls up, and reads ans
   await delta(2);
   await settle(10);
   assert.equal(list.scrollTop, 100);
+});
+
+const note = () => document.querySelector<HTMLButtonElement>('.pi-machine-button')!;
+const picker = () => [
+  ...document.querySelectorAll<HTMLButtonElement>('.pi-machine [role^="menuitem"]'),
+];
+const press = (name: string) =>
+  act(async () => {
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: name, bubbles: true }));
+  });
+
+test('the bar names the machine every conversation here shares, and its picker says who may choose', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const shared = host('ready', {
+    shared: { conversations: 3, projects: 1 },
+    catalog: [
+      { ...standard, available: true },
+      { ...large, available: false, reason: 'Needs write access and Sandboxes here' },
+    ],
+  });
+  const stream = boot(
+    () => snapshot(conversation(), [], 0, [], true, shared),
+    () => [conversation()],
+  );
+  const facts = () =>
+    document.getElementById(
+      document.querySelector('.pi-machine [role="menu"]')!.getAttribute('aria-describedby')!,
+    )?.textContent;
+  await open();
+  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  assert.equal(note().getAttribute('aria-haspopup'), 'menu');
+  await act(async () => note().click());
+  assert.equal(
+    facts(),
+    'Shared by your 3 conversations here. Stops 10 minutes after the last answer in any of them. Up to $0.07/h.',
+  );
+  assert.deepEqual(
+    picker().map((item) => [item.textContent, item.getAttribute('aria-checked')]),
+    [
+      ['Standard½ vCPU · 4 GiB · 8 GB', 'true'],
+      ['LargeNeeds write access and Sandboxes here', 'false'],
+      ['Stop machine', null],
+    ],
+  );
+  assert.equal(picker()[1].getAttribute('aria-disabled'), 'true');
+  // Operated as the conversation menu is, and a machine the person may not choose does nothing.
+  assert.equal(document.activeElement, picker()[0]);
+  await press('ArrowDown');
+  assert.equal(document.activeElement, picker()[1]);
+  await act(async () => picker()[1].click());
+  await press('Escape');
+  assert.equal(picker().length, 0);
+  assert.equal(document.activeElement, note());
+  // Picking the machine it already runs on only shuts the menu.
+  await act(async () => note().click());
+  await act(async () => picker()[0].click());
+  assert.equal(picker().length, 0);
+  assert.ok(!requests.some((request) => request.includes('pi.machine')));
+  // A machine keyed to the person alone is shared across their projects, and says so.
+  const everywhere = { ...shared, shared: { conversations: 4, projects: 2 } };
+  await act(async () =>
+    stream.push('snapshot', snapshot(conversation(), [], 1, [], true, everywhere)),
+  );
+  await act(async () => note().click());
+  assert.match(facts()!, /^Shared by your 4 conversations in 2 projects\. /);
+});
+
+test('picking Large counts the move while the machine still serves, and a failure says where it stays', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const state = staged(snapshot(conversation()), 'ready');
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  const picked: unknown[] = [];
+  serve('/tools/pi.machine.set', (_count, input) => {
+    picked.push(input);
+    const since = new Date(Date.now() - 8000).toISOString();
+    return { body: { result: host('ready', { moving: { to: 'large', by: 'person', since } }) } };
+  });
+  await open();
+  await act(async () => note().click());
+  await act(async () => picker()[1].click());
+  assert.deepEqual(picked, [{ machine: 'large' }]);
+  assert.equal(document.activeElement, note());
+  assert.equal(note().textContent, 'Moving to a Large machine · 8 s');
+  // The conversation is not waiting on the move: the machine it runs on still answers.
+  const moving = host('ready', {
+    moving: { to: 'large', by: 'person', since: new Date().toISOString() },
+  });
+  await act(async () =>
+    stream.push('snapshot', staged(snapshot(conversation(), [], 1, [], true, moving), 'moving')),
+  );
+  assert.match(
+    document.querySelector('.pi-bar [role="status"]')?.textContent ?? '',
+    /^Agent ready$/,
+  );
+  assert.match(note().textContent!, /^Moving to a Large machine · \d+ s$/);
+  // Picking the machine it runs on while the move is under way calls the move off.
+  await act(async () => note().click());
+  assert.equal(picker()[1].getAttribute('aria-checked'), 'true');
+  await act(async () => picker()[0].click());
+  assert.deepEqual(picked, [{ machine: 'large' }, { machine: 'standard' }]);
+  let sequence = 2;
+  const show = (view: ReturnType<typeof host>, stage?: string) => {
+    const next = snapshot(conversation(), [], sequence++, [], true, view);
+    return act(async () => stream.push('snapshot', stage ? staged(next, stage) : next));
+  };
+  const since = new Date().toISOString();
+  // With the machine it ran on gone mid-move, the conversation waits on the one starting, and
+  // the machine can still be stopped.
+  await show(host('none', { moving: { to: 'large', by: 'person', since } }), 'moving');
+  assert.match(
+    document.querySelector('.pi-bar [role="status"]')?.textContent ?? '',
+    /^Starting a machine · \d+ s$/,
+  );
+  await act(async () => note().click());
+  assert.equal(picker().at(-1)?.textContent, 'Stop machine');
+  await press('Escape');
+  const failure = (ago: number, extra: object = {}) => ({
+    at: new Date(Date.now() - ago).toISOString(),
+    by: 'agent',
+    from: 'standard',
+    to: 'large',
+    outcome: 'failed',
+    reason: 'no free machine',
+    ...extra,
+  });
+  await show(host('ready', { lastMove: failure(60_000) }));
+  assert.equal(note().textContent, 'Couldn’t start Large: no free machine. Still on Standard.');
+  // With no machine left it is on nothing, and a deadline's rollover is no news.
+  const runs = 'Runs on Standard · ½ vCPU · 4 GiB';
+  await show(host('none', { lastMove: failure(60_000) }));
+  assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
+  await show(host('ready', { lastMove: failure(60_000, { by: 'deadline', to: 'standard' }) }));
+  assert.equal(note().textContent, runs);
+  await show(host('ready', { moving: { to: 'standard', by: 'deadline', since } }));
+  assert.equal(note().textContent, runs);
+  // A failure is news for as long as a machine's idle wait, even on a page left alone.
+  await show(host('ready', { lastMove: failure(600_000 - 400) }));
+  assert.match(note().textContent!, /^Couldn’t start Large/);
+  await settle(1200);
+  assert.equal(note().textContent, runs);
+});
+
+test('stopping the machine asks first, then stops it for every conversation here', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(
+    () => snapshot(conversation()),
+    () => [conversation()],
+  );
+  let stopped = 0;
+  serve('/tools/pi.machine.stop', () =>
+    ++stopped === 1
+      ? { status: 409, body: { error: { code: 'pi_busy', message: 'A move is under way' } } }
+      : { body: { result: host('none') } },
+  );
+  await open();
+  await act(async () => note().click());
+  assert.match(
+    text(),
+    /Shared by your conversations here\. Stops 10 minutes after the last answer in any of them\./,
+  );
+  await act(async () => picker()[2].click());
+  assert.equal(stopped, 0);
+  assert.match(text(), /Answers still running here stop too./);
+  assert.deepEqual(
+    picker().map((item) => item.textContent),
+    ['Stop machine', 'Cancel'],
+  );
+  assert.equal(document.activeElement, picker()[0]);
+  await act(async () => picker()[1].click());
+  assert.equal(picker().length, 3);
+  const confirm = async () => {
+    await act(async () => picker()[2].click());
+    await act(async () => picker()[0].click());
+    await settle(10);
+  };
+  // A refusal says why, and the machine stands as it was.
+  await confirm();
+  assert.equal(stopped, 1);
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'A move is under way');
+  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  await act(async () => note().click());
+  await confirm();
+  assert.equal(stopped, 2);
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
+  // With no machine there is nothing to stop.
+  await act(async () => note().click());
+  assert.deepEqual(
+    picker().map((item) => item.firstChild?.textContent),
+    ['Standard', 'Large'],
+  );
+});
+
+test('the transcript marks where the machine changed between two turns', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const turn = (id: string, machine?: string) => ({
+    ...command(id, 'completed', [{ role: 'user', text: id }]),
+    ...(machine ? { machine } : {}),
+  });
+  boot(
+    () =>
+      snapshot(conversation(), [
+        turn('before'),
+        turn('first', 'standard'),
+        turn('second', 'standard'),
+        turn('third', 'large'),
+      ]),
+    () => [conversation()],
+  );
+  await open();
+  const dividers = [...document.querySelectorAll('.pi-divider')];
+  assert.deepEqual(
+    dividers.map((line) => line.textContent),
+    ['Moved to Large'],
+  );
+  assert.equal(dividers[0].previousElementSibling?.textContent, 'Yousecond');
+  assert.equal(dividers[0].nextElementSibling?.textContent, 'Youthird');
 });
 
 test('unavailable Agent is inert, including SSE and list', async (t) => {
