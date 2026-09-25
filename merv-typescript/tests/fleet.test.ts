@@ -794,6 +794,35 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   await host.close();
 });
 
+test('a person’s machines stop renting once today’s compute is spent; another person’s still rent', async (t) => {
+  const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2 });
+  f.unregister();
+  const payers = new Map([
+    ['a', 'person_a'],
+    ['b', 'person_b'],
+  ]);
+  f.fleet.registerOwner('workflow', {
+    ...f.owner,
+    payer: async (_source, ownerId) => payers.get(ownerId.split('_')[0]!) ?? null,
+  });
+  // One dollar an hour for the one machine this Fleet rents.
+  f.runtimes.describe = async () => ({
+    key: 'standard',
+    vcpu: 1,
+    memoryGiB: 4,
+    diskGB: 8,
+    maxHourlyUsd: 1,
+  });
+  const ask = (id: string) =>
+    f.fleet.request(f.caller, { requestId: id, owner: { kind: 'workflow', id } });
+  assert.equal((await ask('a_1')).person, 'person_a');
+  f.advance(2 * 3_600_000);
+  await assert.rejects(ask('a_2'), { code: 'fleet_compute_cap', status: 429 });
+  assert.equal((await ask('b_1')).person, 'person_b');
+  // An owner that names nobody is not counted, nor held back.
+  assert.equal((await ask('c_1')).person, undefined);
+});
+
 test('missing owner releases an untouched allocation without renting a machine', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('unowned'));

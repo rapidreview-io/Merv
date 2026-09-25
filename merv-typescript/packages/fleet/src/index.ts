@@ -52,6 +52,8 @@ export const fleetConfig = z
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
     allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
     hostProjectId: token.optional(),
+    /** What one person's machines may cost in a UTC day, at their offers' prices. */
+    dailyUsdPerPerson: z.number().positive().max(100_000).optional(),
   })
   .strict();
 type Row = { data_json: string };
@@ -140,6 +142,25 @@ export class FleetService implements Fleet {
   }
   private limit(projectId: string): number {
     return this.config.projectLimits[projectId] ?? this.config.projectLimit;
+  }
+  /**
+   * What a person's machines have cost today (UTC) at their offers' hourly prices, each from its
+   * request to its release (or now). Time in the queue counts, so it errs high.
+   */
+  private async spentToday(person: string, sql: Sql): Promise<number> {
+    const now = this.clock();
+    const day = now - (now % 86_400_000);
+    let usd = 0;
+    for (const a of await this.all(sql)) {
+      if (a.person !== person) continue;
+      const from = Math.max(day, Date.parse(a.createdAt));
+      const to = a.phase === 'released' ? Date.parse(a.updatedAt) : now;
+      if (to <= from) continue;
+      const key = this.runtimes?.profiles.find((p) => p.id === a.profileId)?.key;
+      const offer = key ? await this.describe(a.rentedIn ?? a.projectId, key) : null;
+      usd += ((to - from) / 3_600_000) * (offer?.maxHourlyUsd ?? 0);
+    }
+    return usd;
   }
   /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
   private stale(a: FleetAllocation): boolean {
@@ -320,6 +341,14 @@ export class FleetService implements Fleet {
         (p) => !input.profile || p.key === input.profile,
       );
       check(profile, 'fleet_profile_unavailable', 'That machine is not offered', 409);
+      const person = (await owner.payer?.(source, input.owner.id, tx)) ?? undefined;
+      if (person && this.config.dailyUsdPerPerson !== undefined)
+        check(
+          (await this.spentToday(person, tx)) < this.config.dailyUsdPerPerson,
+          'fleet_compute_cap',
+          "Today's compute is used up",
+          429,
+        );
       const a: FleetAllocation = {
         id: newId('flt'),
         projectId: caller.projectId,
@@ -328,6 +357,7 @@ export class FleetService implements Fleet {
         requestId: input.requestId,
         ...(place !== caller.projectId && { rentedIn: place }),
         ...(input.seconds && { seconds: input.seconds }),
+        ...(person && { person }),
         profileId: profile.id,
         epoch: 1,
         phase: 'queued',

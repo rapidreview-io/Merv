@@ -144,6 +144,18 @@ export class FleetWorkflowAdapter implements FleetOwner {
       !!(await this.director(a.source, tx))
     );
   }
+  /** A step's machine is for the person who directs it; a review director's, for its voucher.
+   * Keyed as Pi keys a person, so one day's compute counts both. */
+  async payer(source: DelegationSource, _ownerId: string, tx: Transaction): Promise<string | null> {
+    const who = source.kind === 'service' ? source.vouchedBy : source;
+    if (who.kind === 'human') return digest({ issuer: who.issuer, subject: who.subject });
+    const actor = await this.scope.requireDelegation(who, 'read', tx).catch(() => null);
+    return digest(
+      actor?.user
+        ? { issuer: actor.user.issuer, subject: actor.user.subject }
+        : { projectId: who.projectId, actorId: who.actorId },
+    );
+  }
   /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
    * machines: a person while they may write, the review director while it may review. */
   private director(source: DelegationSource, tx?: Transaction) {

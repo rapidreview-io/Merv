@@ -993,6 +993,10 @@ export class PiService implements Pi, FleetOwner {
     const slot = role && host![role];
     return slot && slot.epoch === Number(epoch) ? { host: host!, role: role!, slot } : null;
   }
+  /** A host's machines are for its person, whose day's compute they count toward. */
+  async payer(_source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null> {
+    return (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null;
+  }
   /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {
     if (allocation.owner.kind === 'pi-host' && this.renting.has(allocation.owner.id)) return true;

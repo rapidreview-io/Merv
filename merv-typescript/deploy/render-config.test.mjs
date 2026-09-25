@@ -215,6 +215,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     projectLimit: 5,
     projectLimits: {},
     allocationTimeoutSeconds: 86_400,
+    dailyUsdPerPerson: 20,
   });
   assert.deepEqual(config.plugins.find((p) => p.id === 'sessions').config, {
     managedSecretEnv: 'MANAGED_SECRET',
@@ -260,6 +261,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     projectLimit: 2,
     projectLimits: {},
     allocationTimeoutSeconds: 86_400,
+    dailyUsdPerPerson: 20,
   });
   assert.equal(run({ ...workflow, MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS: '1800' }).status, 0);
   config = JSON.parse(readFileSync(output));

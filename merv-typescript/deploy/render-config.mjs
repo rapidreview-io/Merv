@@ -218,6 +218,8 @@ if (fleetEnabled) {
           86_400,
         ),
         ...(host !== undefined && { hostProjectId: host }),
+        // Founder ruling 2026-09-25: $20 of machines per person per day, Agent machines included.
+        dailyUsdPerPerson: integer('MERV_FLEET_DAILY_USD_PER_PERSON', 20, 1, 100_000),
       },
     },
   );

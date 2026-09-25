@@ -22,6 +22,8 @@ export interface FleetAllocation {
   /** The request's own machine time, when it set one. */
   seconds?: number;
   profileId: string;
+  /** Who the machine is for, as Pi and Fleet key a person: what its day's compute counts toward. */
+  person?: string;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
   phase: FleetPhase;
@@ -71,6 +73,8 @@ export interface FleetConfig {
   /** MERV_FLEET_HOST_PROJECT_ID: the connected project an owner that rents in the host rents
    * through. Limits, events and listing stay with the project the work is for. */
   hostProjectId?: string;
+  /** What one person's machines may cost in a UTC day, at their offers' prices. */
+  dailyUsdPerPerson?: number;
 }
 /** Trusted server adapter, never an agent-supplied command or harness implementation.
  * Workflow and chat own authority, enrollment and completion. Fleet owns machines only.
@@ -83,6 +87,9 @@ export interface FleetOwner {
   /** Its launched machines outlive a Main restart: closing leaves them running, and the owner
    * registering again after the restart takes them back. Pi's end with the process. */
   keepsRunning?: true;
+  /** Who a machine for this source and owner id is for, keyed as Pi keys a person (a digest of
+   * their sign-in); null when nobody's daily compute should count it. */
+  payer?(source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null>;
   /** Read-only transactional check; false fences new authority and starts cleanup. */
   valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
   /** Stable bytes for this allocation/epoch across retries, never persisted by Fleet. */
