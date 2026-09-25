@@ -1382,6 +1382,8 @@ test(
     await f.fleet.tick();
     f.runtimes.release('sbx_1');
     await f.fleet.tick();
+    // The person switches to Astra between the turns; the history comes along.
+    await f.pi.setModel(f.operator, { id: conversation.id, model: 'gpt-6-astra' });
     const second = await runTurn('Continue from the saved conversation');
     assert.notEqual(second.runtimeId, first.runtimeId);
     snapshot = await f.pi.snapshot(f.operator, conversation.id);
@@ -1390,6 +1392,17 @@ test(
     assert.equal(modelRequests, 3);
     assert.match(JSON.stringify(requests[2].input), /Read this project/);
     assert.match(JSON.stringify(requests[2].input), /Project verified/);
+    // Each call runs, and tells the agent it runs, on its turn's model at the catalog's effort.
+    assert.deepEqual(
+      requests.map(({ model, reasoning, include }) => [model, reasoning, include]),
+      [
+        ['gpt-6-luna', { effort: 'none' }, undefined],
+        ['gpt-6-luna', { effort: 'none' }, undefined],
+        ['gpt-6-astra', { effort: 'low' }, ['reasoning.encrypted_content']],
+      ],
+    );
+    assert.match(JSON.stringify(requests[0].input), /Model: you are GPT-6 Luna \(gpt-6-luna\)/);
+    assert.match(JSON.stringify(requests[2].input), /Model: you are GPT-6 Astra \(gpt-6-astra\)/);
     assert.equal(f.mutations, 0);
   },
 );
