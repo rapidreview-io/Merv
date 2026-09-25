@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
-import { isRemoteTool } from '../packages/api/src/registry.js';
+import { describeTool, isRemoteTool } from '../packages/api/src/registry.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
@@ -294,7 +294,9 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     );
     // A tool the relay would refuse is dropped from every turn: none may be.
     assert.deepEqual(
-      offered.filter((tool) => !piTool(tool)).map(({ name }) => name),
+      offered
+        .filter((tool) => !piTool(describeTool(tool), tool.conversation))
+        .map(({ name }) => name),
       [],
     );
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);

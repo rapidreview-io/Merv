@@ -39,7 +39,6 @@ import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
 import { piTool } from './relay-schema.js';
-import { conversationUse, isRemoteTool } from '@merv/api/registry';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -1218,8 +1217,14 @@ export class PiService implements Pi, FleetOwner {
       const caller = this.conversationCaller(conversation, command);
       // Every tool the person may use here, read-only for a reader, whose every other call a
       // handler would refuse.
-      const described = (await this.tools.list(caller)).flatMap((definition) => {
-        const tool = !('kind' in definition) && piTool(definition);
+      const uses = new Map(
+        (await this.tools.list()).map((tool) => [
+          tool.name,
+          'kind' in tool ? undefined : tool.conversation,
+        ]),
+      );
+      const described = (await this.tools.describe(caller)).flatMap((description) => {
+        const tool = piTool(description, uses.get(description.name));
         return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
       });
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
@@ -1474,7 +1479,7 @@ export class PiService implements Pi, FleetOwner {
     // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
     const definition = (await this.tools.list()).find(({ name }) => name === value.name);
     let use: 'propose' | 'secret' | undefined;
-    if (definition && !isRemoteTool(definition) && definition.conversation) {
+    if (definition && !('kind' in definition) && definition.conversation) {
       const parsed = await definition.inputSchema.safeParseAsync(value.input);
       if (!parsed.success)
         return {
@@ -1484,7 +1489,10 @@ export class PiService implements Pi, FleetOwner {
             details: parsed.error.issues.map(({ path, message }) => ({ path, message })),
           },
         };
-      const found = conversationUse(definition, parsed.data);
+      const found =
+        typeof definition.conversation === 'function'
+          ? definition.conversation(parsed.data)
+          : definition.conversation;
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
     const key = `${conversation.id}:${command.id}`;
