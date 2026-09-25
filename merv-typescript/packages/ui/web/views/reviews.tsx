@@ -32,6 +32,9 @@ export interface Review {
   subjectId: string;
   subjectRevision: number;
   claimable?: boolean;
+  /** The reader is the project's owner, who may decide it as owner. */
+  overridable?: true;
+  override?: true;
   artifactIds: string[];
   criteria: string[];
   formatVersion: 2;
@@ -358,6 +361,7 @@ export function ReviewDetail() {
               : r.verdict
                 ? 'reviewed'
                 : 'claimed'}
+          {r.override && ' as owner'}
         </>
       }
       act={
@@ -516,14 +520,17 @@ function Controls({
         onDone={onDone}
       />
     );
-  if (start?.status === 'ready')
+  // What the default leaves to an independent reviewer, the project's owner may still decide.
+  const own = start?.status !== 'ready' && review.overridable;
+  const verb = own ? 'Decide as owner' : 'Claim review';
+  if (start?.status === 'ready' || own)
     return (
       <Primary
-        label={claim.retry ? 'Retry same request' : claim.busy ? 'Claiming…' : 'Claim review'}
+        label={claim.retry ? 'Retry same request' : claim.busy ? 'Claiming…' : verb}
         error={claim.error}
         code={claim.code}
         disabled={claim.busy}
-        onClick={() => void claim.submit({ reviewId: review.id })}
+        onClick={() => void claim.submit({ reviewId: review.id, ...(own && { override: true }) })}
       />
     );
   // An unclaimed review is held back by whatever refuses its claim.

@@ -137,20 +137,10 @@ export class ReflectionService implements Reflections {
     private limits = REFLECTION_LIMITS,
   ) {
     this.initialize = async () => {
-      await state.migrate('reflections', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-      ]);
+      await state.migrate(
+        'reflections',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
       try {
         for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
@@ -501,8 +491,9 @@ export class ReflectionService implements Reflections {
       }
     } else if (reviewing) {
       check(wave.review_id, 'stale_review', 'Reflection review is missing', 409);
-      await this.independent(caller, wave, tx);
       const review = await this.reviews.get(caller, wave.review_id, tx);
+      // An owner's override lifts this too; Reviews holds the claim to the owner who took it.
+      if (!review.override) await this.independent(caller, wave, tx);
       check(
         review.subjectRevision === snapshot.revision,
         'stale_review',

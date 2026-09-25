@@ -9,6 +9,7 @@ import {
   inTransaction,
   newId,
   now,
+  type Actor,
   type Artifacts,
   type Caller,
   type ReviewInput,
@@ -186,6 +187,7 @@ interface ReviewRow {
   reviewer_id: string | null;
   claim_id: string | null;
   claim_generation: number;
+  owner_override: boolean;
   recovery_json: string | null;
   verdict: ReviewRequest['verdict'];
   return_to: string | null;
@@ -216,6 +218,7 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
   reviewerId: row.reviewer_id,
   claimId: row.claim_id,
   claimGeneration: row.claim_generation,
+  ...(row.owner_override ? { override: true } : {}),
   recovery: row.recovery_json ? JSON.parse(row.recovery_json) : null,
   verdict: row.verdict,
   ...(row.return_to == null ? {} : { returnTo: row.return_to }),
@@ -225,6 +228,17 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
   evidence: JSON.parse(row.evidence_json),
   createdAt: row.created_at,
 });
+
+/**
+ * The project's owner acting as themself: an operator's member actor, signed in, on their own key
+ * or reading through their own agent's conversation. Never a worker, and never a machine actor.
+ */
+const projectOwner = (caller: Caller, actor: Actor) =>
+  actor.role === 'operator' &&
+  !!actor.user &&
+  !actor.sessionId &&
+  !caller.session &&
+  !caller.managed;
 
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
@@ -240,48 +254,10 @@ export class ReviewService implements Reviews {
     private artifacts: Artifacts,
   ) {
     this.initialize = async () => {
-      await state.migrate('reviews', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-        {
-          version: 4,
-          sql: postgresMigrations[4],
-        },
-        {
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        {
-          version: 6,
-          sql: postgresMigrations[6],
-        },
-        {
-          version: 7,
-          sql: postgresMigrations[7],
-        },
-        {
-          version: 8,
-          sql: postgresMigrations[8],
-        },
-        {
-          version: 9,
-          sql: postgresMigrations[9],
-        },
-        {
-          version: 10,
-          sql: postgresMigrations[10],
-        },
-      ]);
+      await state.migrate(
+        'reviews',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
     };
   }
 
@@ -339,6 +315,7 @@ export class ReviewService implements Reviews {
 
   private async independent(
     caller: Caller,
+    actor: Actor,
     review: ReviewRequest,
     tx: Transaction,
   ): Promise<boolean> {
@@ -356,6 +333,9 @@ export class ReviewService implements Reviews {
         409,
       );
     }
+    // The owner's override lifts the exclusions below, and only for that person: an agent's
+    // conversation proposes it, and the person's own Run takes it.
+    if (review.override) return projectOwner(caller, actor) && !caller.conversation;
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&
@@ -777,12 +757,10 @@ export class ReviewService implements Reviews {
     const reader = await this.scope.require(caller, 'read', transaction);
     const read = async (sql: Sql) => {
       const review = hydrate(await this.row(sql, caller, reviewId));
-      if (
-        reader.role === 'operator' &&
-        !reader.sessionId &&
-        review.provenance &&
-        review.status === 'requested'
-      ) {
+      if (review.status !== 'requested' || reader.role !== 'operator' || reader.sessionId)
+        return review;
+      if (projectOwner(caller, reader)) review.overridable = true;
+      if (review.provenance) {
         for (const actor of await this.scope.actors(caller))
           if (
             !actor.sessionId &&
@@ -790,11 +768,8 @@ export class ReviewService implements Reviews {
             (await this.scope.eligible(caller.projectId, actor.id, 'review', transaction))
           )
             return review;
-        return {
-          ...review,
-          waiting:
-            'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.',
-        };
+        review.waiting =
+          'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.';
       }
       return review;
     };
@@ -826,16 +801,21 @@ export class ReviewService implements Reviews {
     caller: Caller,
     reviewId: string,
     transaction?: Transaction,
+    override = false,
   ): Promise<ReviewRequest> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'review', tx);
+      const actor = await this.scope.require(caller, 'review', tx);
       const row = await this.row(tx, caller, reviewId);
       const current = hydrate(row);
+      // The override is taken with the claim; a retried claim keeps the one it has.
+      if (override && row.status === 'requested') current.override = true;
       check(
-        await this.independent(caller, current, tx),
+        await this.independent(caller, actor, current, tx),
         'review_independence',
-        'A producer, contributor or directing authority cannot review their own work',
+        current.override
+          ? 'Only the project owner, acting as themself, may decide a review as owner'
+          : 'A producer, contributor or directing authority cannot review their own work',
         403,
       );
       check(
@@ -846,14 +826,19 @@ export class ReviewService implements Reviews {
         409,
       );
       if (row.status === 'started') await this.requireLiveClaim(row, tx);
-      return hydrate(row);
+      return current;
     });
   }
 
-  async start(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
+  async start(
+    caller: Caller,
+    reviewId: string,
+    transaction?: Transaction,
+    override = false,
+  ): Promise<ReviewRequest> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const current = await this.checkStart(caller, reviewId, tx);
+      const current = await this.checkStart(caller, reviewId, tx, override);
       if (current.status === 'started') return current;
       // The owning domain may refuse a claim that its rules could never let finish.
       for (const owner of [...this.owners.values()])
@@ -861,7 +846,8 @@ export class ReviewService implements Reviews {
           await owner.claim(caller, current, tx);
       const claimId = newId('claim');
       const changed = await tx.run(
-        "UPDATE reviews SET status = 'started', reviewer_id = ?, claim_id=?, claim_generation=claim_generation+1 WHERE id = ? AND status = 'requested'",
+        // Only an override names the column, so an ordinary claim writes what it always has.
+        `UPDATE reviews SET status = 'started', reviewer_id = ?, claim_id=?, claim_generation=claim_generation+1${current.override ? ', owner_override=true' : ''} WHERE id = ? AND status = 'requested'`,
         caller.actorId,
         claimId,
         reviewId,
@@ -875,6 +861,7 @@ export class ReviewService implements Reviews {
       await recorded(this.state, tx, caller, 'review.started', reviewId, {
         claimId,
         claimGeneration: current.claimGeneration + 1,
+        ...(current.override && { override: true }),
       });
       return hydrate(await this.row(tx, caller, reviewId));
     });
@@ -893,7 +880,7 @@ export class ReviewService implements Reviews {
       input = plain(input);
     }
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'review', tx);
+      const actor = await this.scope.require(caller, 'review', tx);
       const row = await this.row(tx, caller, reviewId);
       check(
         row.status === 'started',
@@ -903,7 +890,7 @@ export class ReviewService implements Reviews {
       );
       const current = hydrate(row);
       check(
-        row.reviewer_id === caller.actorId && (await this.independent(caller, current, tx)),
+        row.reviewer_id === caller.actorId && (await this.independent(caller, actor, current, tx)),
         'review_independence',
         'Only the independent reviewer who claimed this review may submit',
         403,
@@ -961,6 +948,7 @@ export class ReviewService implements Reviews {
           ...(returnTo === undefined ? {} : { returnTo }),
           subjectId: current.subjectId,
           subjectRevision: current.subjectRevision,
+          ...(current.override && { override: true }),
         });
         return hydrate(await this.row(tx, caller, input.reviewId));
       });
@@ -1014,7 +1002,7 @@ export class ReviewService implements Reviews {
       },
     });
     await tx.run(
-      "UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,recovery_json=? WHERE id=? AND claim_id=?",
+      `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=? AND claim_id=?`,
       JSON.stringify({
         eventId: event.id,
         previousActorId: input.actorId,
@@ -1095,7 +1083,7 @@ export class ReviewService implements Reviews {
         reason,
       };
       await tx.run(
-        "UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,recovery_json=? WHERE id=?",
+        `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=?`,
         JSON.stringify(recovery),
         row.id,
       );

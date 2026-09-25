@@ -190,5 +190,62 @@ test('a Git task review nobody interactive can pass offers no claim, and says wh
   await mount(page());
   await settle(10);
   assert.ok(!text().includes('Claim review'));
+  assert.ok(!text().includes('Decide as owner'), 'only the owner is offered the override');
   assert.ok(text().includes(refusal));
+});
+
+test('an owner the default leaves out decides the review as owner, with one control', async (t) => {
+  t.after(async () => await unmount());
+  const refusal = 'A producer, contributor or directing authority cannot review their own work';
+  const claims: unknown[] = [];
+  const requested = { ...claimed, status: 'requested', reviewerId: null, claimId: null };
+  serve('/tools/review.get', { body: { result: { ...requested, overridable: true } } });
+  serve('/tools/workflow.status_and_next', {
+    body: {
+      result: {
+        ...desk('task', 'in_review'),
+        actions: [
+          {
+            action: 'start_review',
+            tool: 'review.start',
+            status: 'blocked',
+            arguments: {},
+            blockers: [{ code: 'review_independence', message: refusal }],
+            instruction: '',
+          },
+        ],
+      },
+    },
+  });
+  serve('/tools/review.start', (_, body) => {
+    claims.push(body);
+    return { body: { result: { ...claimed, override: true } } };
+  });
+  await mount(page());
+  await settle(10);
+  assert.deepEqual(
+    [...document.querySelectorAll('button')].map((button) => button.textContent),
+    ['Decide as owner'],
+  );
+  assert.ok(!text().includes(refusal));
+  await click('Decide as owner');
+  assert.deepEqual(claims, [{ reviewId: 'review_1', override: true }]);
+});
+
+test('a verdict the owner gave as owner says so where it says who gave it', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/review.get', {
+    body: {
+      result: {
+        ...claimed,
+        status: 'submitted',
+        verdict: 'pass',
+        synopsis: 'Done.',
+        override: true,
+      },
+    },
+  });
+  await mount(page());
+  await settle(10);
+  assert.match(text(), /reviewed( by \S+)? as owner/);
 });

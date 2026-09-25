@@ -273,40 +273,10 @@ export class TaskService implements Tasks {
     private limits = TASK_LIMITS,
   ) {
     this.initialize = async () => {
-      await state.migrate('tasks', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-        {
-          version: 4,
-          sql: postgresMigrations[4],
-        },
-        {
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        {
-          version: 6,
-          sql: postgresMigrations[6],
-        },
-        {
-          version: 7,
-          sql: postgresMigrations[7],
-        },
-        {
-          version: 8,
-          sql: postgresMigrations[8],
-        },
-      ]);
+      await state.migrate(
+        'tasks',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
       try {
         for (const definition of [
           TASK_WORKFLOW,
@@ -330,10 +300,11 @@ export class TaskService implements Tasks {
               review.projectId,
             )),
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
-          // Only the task's own current review has a pool of leased reviewers to shut out.
+          // Only the task's own current review has a pool of leased reviewers to shut out, and
+          // the owner deciding as owner may shut them out.
           claim: async (caller, review, tx) => {
             const row = await this.row(tx, caller, review.subjectId);
-            if (row.review_id === review.id)
+            if (row.review_id === review.id && !review.override)
               await this.leasedClaim(caller, await this.workflows.get(caller, row.id, tx), tx);
           },
         });
@@ -949,7 +920,9 @@ export class TaskService implements Tasks {
     // this is re-checked there, while guidance read with Code unloaded still answers.
     if (context.input && taskWorkspace(context.snapshot.version) !== 'none') {
       const headOid = await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
-      if (context.input.verdict === 'pass') await this.checkoutReviewer(context, review, headOid);
+      // The owner deciding as owner answers for having read the commit; its receipt still holds.
+      if (context.input.verdict === 'pass' && !review.override)
+        await this.checkoutReviewer(context, review, headOid);
     }
     if (context.input && context.transition) {
       const action = await this.reviewAction(
@@ -1853,9 +1826,7 @@ export class TaskService implements Tasks {
         );
       } else {
         check(
-          review.status === 'started' &&
-            review.reviewerId === caller.actorId &&
-            review.producerId !== caller.actorId,
+          review.status === 'started' && review.reviewerId === caller.actorId,
           'review_independence',
           'Claim the review before using its assignment',
           403,

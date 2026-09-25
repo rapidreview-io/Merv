@@ -39,12 +39,14 @@ export const reviewToolsPlugin = {
         name: 'review.start',
         conversation: 'propose' as const,
         description:
-          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
-        inputSchema: z.object({ reviewId: z.string().min(1) }).strict(),
+          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor. override: true claims it as the project owner instead, where review.get says overridable: only that person, acting as themself, may, and the claim and its verdict are recorded as an override.',
+        inputSchema: z
+          .object({ reviewId: z.string().min(1), override: z.literal(true).optional() })
+          .strict(),
         handler: async (
           caller: Parameters<typeof ctx.reviews.start>[0],
-          input: { reviewId: string },
-        ) => await ctx.reviews.start(caller, input.reviewId),
+          input: { reviewId: string; override?: true },
+        ) => await ctx.reviews.start(caller, input.reviewId, undefined, input.override),
       },
       {
         name: 'review.submit',

@@ -1469,6 +1469,10 @@ export interface ReviewRequest {
   requiredCriteria?: number[];
   /** Whether the reader of this answer may claim it now. Present on reads, not on writes. */
   claimable?: boolean;
+  /** Claimed by the project's owner as owner, past the independence rule; its reviewer is that person. */
+  override?: true;
+  /** The reader is the project's owner and may decide it as owner now. Present on reads only. */
+  overridable?: true;
   criteria: string[];
   formatVersion: 2;
   snapshotHash: string;
@@ -1564,7 +1568,13 @@ export interface Reviews {
   ): Promise<void>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   list(caller: Caller): Promise<ReviewRequest[]>;
-  start(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
+  /** `override` claims it as the project's owner: only that person, acting as themself, may. */
+  start(
+    caller: Caller,
+    reviewId: string,
+    tx?: Transaction,
+    override?: boolean,
+  ): Promise<ReviewRequest>;
   checkStart(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   checkSubmit(
     caller: Caller,

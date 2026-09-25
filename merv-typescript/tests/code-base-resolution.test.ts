@@ -1012,6 +1012,60 @@ test('a research consolidation is delivered, and no contributor or directing aut
   assert.deepEqual([claimed.status, claimed.reviewerId], ['started', leased.actorId]);
 });
 
+test('the owner, whom every consolidation excludes, decides it as owner without a leased checkout, and its commit is still checked', async (t) => {
+  const f = await fixture(t, true);
+  // In production the founder directs every worker, so the certificate names the founder.
+  await f.producingSession(f.left.id, f.inputAuthor.actorId, f.admin.actorId);
+  const taskId = await consolidation(f, [f.left.id, f.extra.id]);
+  await f.bases.work(f.admin.projectId);
+  const { runner, session, base, submitted } = await deliver(f, taskId);
+  await f.sessions.release(runner, { sessionId: session.id, runnerId: 'runner' });
+  // The runner's upload of the delivered head, in place of the journal a real one writes.
+  await f.state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES ('uploaded',?,'fixture','uploaded','upload','hash','{}','completed',?,'now','now',?)",
+      f.admin.projectId,
+      JSON.stringify({ head: base }),
+      taskId,
+    ),
+  );
+  const reviewId = submitted.reviewId!;
+  const review = await f.reviews.get(f.admin, reviewId);
+  assert.ok(review.provenance?.excludedActorIds.includes(f.admin.actorId));
+  assert.equal(review.overridable, true);
+  await assert.rejects(f.reviews.start(f.admin, reviewId), { code: 'review_independence' });
+  // As owner the claim is not a leased worker's, and neither is the pass.
+  const claimed = await f.reviews.start(f.admin, reviewId, undefined, true);
+  assert.deepEqual([claimed.reviewerId, claimed.override], [f.admin.actorId, true]);
+  const pass = (requestId: string) => ({
+    reviewId,
+    claimId: claimed.claimId!,
+    verdict: 'pass' as const,
+    notes: 'The owner read the consolidated commit.',
+    ...reviewedFindings(claimed),
+    expectedRevision: submitted.workflow.revision,
+    requestId,
+  });
+  // The commit its delivery sealed must still be the one under review.
+  const capture = f.captures.get('consolidated')!;
+  f.captures.set('consolidated', {
+    ...capture,
+    workspace: { ...capture.workspace!, headOid: f.c },
+  });
+  await assert.rejects(f.tasks.submitReview(f.admin, pass('moved') as never), {
+    code: 'task_commit_provenance',
+  });
+  f.captures.set('consolidated', capture);
+  const done = await f.tasks.submitReview(f.admin, pass('pass') as never);
+  assert.equal(done.workflow.state, 'done');
+  const accepted = (await f.code.unit(f.admin, taskId)).acceptance!;
+  assert.deepEqual(
+    [accepted.acceptedBy, accepted.reviewRef, accepted.reviewAttached],
+    [f.admin.actorId, reviewId, false],
+  );
+  assert.equal((await f.reviews.get(f.admin, reviewId)).override, true);
+});
+
 test('a consolidation whose merge with main clashes is resolved, reviewed and delivered', async (t) => {
   const f = await fixture(t);
   // Main moved since A was built, onto the same line A changed; no unit accepted main.

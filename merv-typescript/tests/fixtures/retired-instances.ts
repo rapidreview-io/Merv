@@ -403,6 +403,20 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     await client.query(
       "DELETE FROM component_migrations WHERE component='reflections' AND version=3",
     );
+    // So did reviews@11 (the owner override): version 1's check and version 7's claim guard return.
+    await client.query(`ALTER TABLE reviews DROP COLUMN owner_override CASCADE;
+ALTER TABLE reviews ADD CHECK(reviewer_id IS NULL OR reviewer_id != producer_id);
+CREATE OR REPLACE FUNCTION reviews_contributors_claim_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.reviewer_id IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(NEW.excluded_actor_ids,'[]')::jsonb) AS excluded(value) WHERE value=NEW.reviewer_id) THEN
+    RAISE EXCEPTION USING MESSAGE = 'A contributor cannot review their submission', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
+FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();
+DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)

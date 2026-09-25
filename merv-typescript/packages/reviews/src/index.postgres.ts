@@ -159,4 +159,28 @@ BEGIN
     RAISE EXCEPTION USING MESSAGE = 'Format 1 reviews remain', ERRCODE = '23514';
   END IF;
 END $check$;`,
+  // The project's owner may claim a review as owner past the producer and contributor exclusions,
+  // which keep binding every other claim. Version 1's unnamed check is found by what it says.
+  11: `ALTER TABLE reviews ADD COLUMN owner_override BOOLEAN NOT NULL DEFAULT false;
+DO $drop$
+DECLARE name TEXT;
+BEGIN
+  FOR name IN SELECT conname FROM pg_constraint WHERE conrelid='reviews'::regclass AND contype='c'
+    AND pg_get_constraintdef(oid) LIKE '%reviewer_id <> producer_id%' LOOP
+    EXECUTE format('ALTER TABLE reviews DROP CONSTRAINT %I', name);
+  END LOOP;
+END $drop$;
+ALTER TABLE reviews ADD CONSTRAINT reviews_reviewer_check CHECK(CASE WHEN owner_override
+  THEN reviewer_id IS NOT NULL ELSE reviewer_id IS NULL OR reviewer_id <> producer_id END);
+CREATE OR REPLACE FUNCTION reviews_contributors_claim_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NOT NEW.owner_override AND NEW.reviewer_id IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(NEW.excluded_actor_ids,'[]')::jsonb) AS excluded(value) WHERE value=NEW.reviewer_id) THEN
+    RAISE EXCEPTION USING MESSAGE = 'A contributor cannot review their submission', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+DROP TRIGGER reviews_contributors_claim ON reviews;
+CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id, owner_override ON reviews
+FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();`,
 };

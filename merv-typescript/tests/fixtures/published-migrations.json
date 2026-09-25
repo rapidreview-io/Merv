@@ -353,6 +353,12 @@
       "published": true
     },
     {
+      "component": "reviews",
+      "version": 11,
+      "hash": "150cc60f6af1c6431b84099ac1b70e5da0d46590277a137e9bd08c92d30ff3a5",
+      "published": false
+    },
+    {
       "component": "scope",
       "version": 1,
       "hash": "65a9502fab93561cae7f780875db3561be701b2f5f0d21cf08f1acd7e0d2c95b",
