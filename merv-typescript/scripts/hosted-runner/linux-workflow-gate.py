@@ -51,7 +51,11 @@ class Main(http.server.BaseHTTPRequestHandler):
         answered = [i['output'] for i in body.get('input', []) if i.get('type') == 'function_call_output']
         if answered:
             outputs.extend(answered)
-            holders.update(p for p in os.listdir('/proc') if p.isdigit() and session.encode() in environ(p))
+            # The bearer is there to find: its own uid, outside Codex's sandbox, reads it.
+            holders.update(subprocess.run(
+                ['/usr/bin/grep', '-lsaFf', '-', *map(str, Path('/proc').glob('[0-9]*/environ'))],
+                input=session.encode(), capture_output=True, user=12001, group=12001, extra_groups=[],
+            ).stdout.split())
         item = ({'type': 'message', 'role': 'assistant', 'id': 'msg_gate',
                  'content': [{'type': 'output_text', 'text': 'done'}]} if answered else
                 {'type': 'function_call', 'name': 'exec_command', 'call_id': 'probe',
@@ -115,9 +119,13 @@ finally:
 # Codex as the hosted profile launches it, through the fixed assignment launcher and identity drop.
 work = Path('/workspace/assignments') / secrets.token_hex(32)
 work.mkdir(mode=0o700)
+# The hosted profile's own settings (runner/src/profiles.ts), but for Merv's MCP server.
 settings = ['approval_policy="never"', 'web_search="disabled"', 'features.shell_tool=true',
-            'features.multi_agent=false', 'shell_environment_policy.inherit="none"',
-            'shell_environment_policy.set={"PATH"="/usr/bin:/bin"}',
+            'features.multi_agent=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
+            'shell_environment_policy.inherit="none"', 'shell_environment_policy.ignore_default_excludes=false',
+            'shell_environment_policy.experimental_use_profile=false',
+            'shell_environment_policy.set={"PATH"="/usr/bin:/bin","HOME"="/home/assignment",'
+            '"USER"="assignment","TMPDIR"="/tmp","LANG"="C.UTF-8"}',
             'sandbox_workspace_write.network_access=true', 'model_provider="merv"',
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
