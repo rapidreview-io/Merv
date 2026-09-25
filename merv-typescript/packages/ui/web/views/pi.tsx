@@ -159,22 +159,22 @@ function Machine({
   const [menu, setMenu] = useState<false | 'pick' | 'stop'>(false);
   const box = useRef<HTMLDivElement>(null);
   useMenu(box, menu, () => setMenu(false));
-  const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
-  if (!on) return null;
-  const chosen = host.moving?.to ?? on.key;
-  const move = host.lastMove;
-  // A move that failed is news for as long as a machine's idle wait.
+  // A deadline's rollover onto the same machine is no news to the person.
+  const moving = host.moving?.by === 'deadline' ? null : host.moving;
+  const move = host.lastMove?.by === 'deadline' ? null : host.lastMove;
+  // A move that failed, while a machine still serves, is news for as long as its idle wait.
   const failed =
-    host.machine &&
-    !host.moving &&
+    !!host.machine &&
     move?.outcome === 'failed' &&
     Date.now() + skew - Date.parse(move.at) < 600_000;
+  useNow(failed ? 1000 : 0);
+  const on = host.machine ?? host.catalog.find((machine) => machine.key === host.preferred);
+  if (!on) return null;
+  const chosen = moving?.to ?? on.key;
   const { conversations, projects } = host.shared;
-  const shared = conversations > 1;
   const facts = [
-    shared &&
-      `Shared by your ${conversations} conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
-    `Stops 10 minutes after the last answer${shared ? ' in any of them' : ''}.`,
+    `Shared by your ${conversations > 1 ? `${conversations} ` : ''}conversations ${projects > 1 ? `in ${projects} projects` : 'here'}.`,
+    'Stops 10 minutes after the last answer in any of them.',
     `Up to $${on.maxHourlyUsd.toFixed(2)}/h.`,
   ];
   const close = (then = () => {}) => {
@@ -188,7 +188,7 @@ function Machine({
           ['Stop machine', () => close(stop), ' pi-menu-item--danger'],
           ['Cancel', () => setMenu('pick')],
         ]
-      : host.state === 'none'
+      : host.state === 'none' && !host.moving
         ? []
         : [['Stop machine', () => setMenu('stop')]];
   return (
@@ -201,10 +201,10 @@ function Machine({
         onClick={() => setMenu((value) => (value ? false : 'pick'))}
       >
         <span aria-live="polite">
-          {host.moving ? (
+          {moving ? (
             <>
-              Moving to a {label(host, host.moving.to)} machine
-              <Seconds since={host.moving.since} skew={skew} />
+              Moving to a {label(host, moving.to)} machine
+              <Seconds since={moving.since} skew={skew} />
             </>
           ) : failed ? (
             `Couldn’t start ${label(host, move.to)}${move.reason ? `: ${move.reason}` : ''}. Still on ${on.label}.`
@@ -225,9 +225,7 @@ function Machine({
           aria-describedby="pi-machine-facts"
         >
           <p className="pi-menu-note" id="pi-machine-facts" role="none">
-            {menu === 'stop'
-              ? 'Answers still running here stop too.'
-              : facts.filter(Boolean).join(' ')}
+            {menu === 'stop' ? 'Answers still running here stop too.' : facts.join(' ')}
           </p>
           {menu === 'pick' &&
             host.catalog.map((machine) => (
@@ -294,6 +292,8 @@ function PiConversationPage() {
   // How far the server's clock ran ahead of this one when the latest snapshot arrived.
   const skew = useRef(0);
   const selection = useRef<string | null>(null);
+  // The page's first conversation warms at once; another only once a question is begun in it.
+  const eager = useRef(true);
   const warming = useRef(false);
   const scope = useRef({
     epoch: scopeVersion(),
@@ -353,8 +353,8 @@ function PiConversationPage() {
     setConversations((items) => [item, ...items.filter((other) => other.id !== item.id)]);
     choose(item.id);
   };
-  /** Starts the person's machine here when there is none, as a conversation opens or a question
-   * is begun; a machine that stopped while the page stood open stays stopped until then. */
+  /** Starts the person's machine here when there is none, as the page opens or a question is
+   * begun; merely looking at a conversation, after the machine stopped, starts nothing. */
   const warmUp = () => {
     const id = selection.current;
     const current = canonical.current;
@@ -466,7 +466,9 @@ function PiConversationPage() {
       .then(() => {
         if (!alive()) return;
         void connect();
-        warmUp();
+        // New conversation hands the composer the cursor, which begins a question there too.
+        if (eager.current || document.activeElement === composer.current) warmUp();
+        eager.current = false;
       });
     return () => {
       stopped = true;
@@ -497,10 +499,13 @@ function PiConversationPage() {
   const stage = snapshot?.stage;
   const host = snapshot?.host;
   // Words streamed after the stage was read say the answer is being written before it does. A
-  // move leaves the machine it runs on serving, and the machine's own note counts the move.
+  // move leaves the machine it runs on serving, and the machine's own note counts the move; with
+  // that machine gone, the conversation waits on the one starting.
   const step =
     stage?.name === 'moving'
-      ? 'ready'
+      ? host?.machine
+        ? 'ready'
+        : 'machine'
       : stage?.name === 'thinking' && snapshot && (visible?.written ?? 0) > snapshot.sequence
         ? 'writing'
         : (stage?.name ?? '');

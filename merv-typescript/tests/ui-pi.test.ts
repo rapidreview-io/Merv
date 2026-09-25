@@ -716,15 +716,16 @@ test('a rotated stream reconnects at once and silently; a busy one waits quietly
   assert.match(text(), /Ready/);
 });
 
-test('the machine warms where a conversation opens or a question begins with none, and only there', async (t) => {
+test('the machine warms where the page opens or a question begins with none, and only there', async (t) => {
   t.after(cleanup);
   setProject('p1');
   let machine: 'none' | 'starting' = 'none';
-  let current = 'conversation_1';
+  const first = conversation();
   const second = { ...conversation('conversation_2'), updatedAt: '2026-09-21T00:00:00Z' };
+  let current = first;
   const stream = boot(
-    () => snapshot(conversation(current), [], 0, [], true, host(machine)),
-    () => [conversation(), second],
+    () => snapshot(current, [], 0, [], true, host(machine)),
+    () => [first, second],
   );
   const warmed: unknown[] = [];
   serve('/tools/pi.warm', (_count, input) => {
@@ -733,11 +734,15 @@ test('the machine warms where a conversation opens or a question begins with non
     const id = input.conversationId as string;
     return { body: { result: snapshot(conversation(id), [], 0, [], true, host(machine)) } };
   });
+  let started = 0;
   let answer = () => {};
   const held = new Promise<void>((resolve) => (answer = resolve));
   const withStream = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).endsWith('/tools/pi.warm')) await held;
+    if (String(input).endsWith('/tools/pi.warm')) {
+      started++;
+      await held;
+    }
     return withStream(input, init);
   }) as typeof fetch;
   const area = () => document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
@@ -746,33 +751,45 @@ test('the machine warms where a conversation opens or a question begins with non
       area().blur();
       area().focus();
     });
+  // Newest first, after New conversation.
+  const go = async (item: Conversation) => {
+    current = item;
+    await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
+    await act(async () =>
+      document
+        .querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+        [item === second ? 1 : 2].click(),
+    );
+    await settle(10);
+  };
   await open();
   await settle(10);
-  // Opening the page starts the machine, and a question begun while it does asks nothing more.
+  // Opening the page starts the machine before anything is begun there.
+  assert.equal(started, 1);
+  // A question begun while it starts asks nothing more.
   await focus();
   assert.equal(area().readOnly, false);
   answer();
   await settle(10);
+  assert.equal(started, 1);
   assert.deepEqual(warmed, ['conversation_1']);
   assert.match(text(), /Runs on Standard/);
   // Every conversation here shares it: opening another, or asking there, starts nothing.
-  current = second.id;
-  await act(async () => document.querySelector<HTMLButtonElement>('.pi-switch-button')!.click());
-  await act(async () =>
-    document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1].click(),
-  );
-  await settle(10);
+  await go(second);
   await focus();
   assert.deepEqual(warmed, ['conversation_1']);
-  // A machine that stops while the page stands open stays stopped until a question is begun.
+  // A machine that stops while the page stands open stays stopped while the person only looks.
   machine = 'none';
   await act(async () => stream.push('snapshot', snapshot(second, [], 1, [], true, host('none'))));
   await settle(10);
   assert.match(text(), /Starts on Standard/);
+  await go(first);
+  assert.match(text(), /Starts on Standard/);
   assert.deepEqual(warmed, ['conversation_1']);
+  // Beginning a question starts it again.
   await focus();
   await settle(10);
-  assert.deepEqual(warmed, ['conversation_1', 'conversation_2']);
+  assert.deepEqual(warmed, ['conversation_1', 'conversation_1']);
 });
 
 test('opening Agent goes to the newest conversation, and leaves a running machine alone', async (t) => {
@@ -980,17 +997,20 @@ test('the bar names the machine every conversation here shares, and its picker s
       { ...large, available: false, reason: 'Needs write access and Sandboxes here' },
     ],
   });
-  boot(
+  const stream = boot(
     () => snapshot(conversation(), [], 0, [], true, shared),
     () => [conversation()],
   );
+  const facts = () =>
+    document.getElementById(
+      document.querySelector('.pi-machine [role="menu"]')!.getAttribute('aria-describedby')!,
+    )?.textContent;
   await open();
   assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
   assert.equal(note().getAttribute('aria-haspopup'), 'menu');
   await act(async () => note().click());
-  const menu = document.querySelector('.pi-machine [role="menu"]')!;
   assert.equal(
-    document.getElementById(menu.getAttribute('aria-describedby')!)?.textContent,
+    facts(),
     'Shared by your 3 conversations here. Stops 10 minutes after the last answer in any of them. Up to $0.07/h.',
   );
   assert.deepEqual(
@@ -1007,16 +1027,27 @@ test('the bar names the machine every conversation here shares, and its picker s
   await press('ArrowDown');
   assert.equal(document.activeElement, picker()[1]);
   await act(async () => picker()[1].click());
-  assert.ok(!requests.some((request) => request.includes('pi.machine')));
   await press('Escape');
   assert.equal(picker().length, 0);
   assert.equal(document.activeElement, note());
+  // Picking the machine it already runs on only shuts the menu.
+  await act(async () => note().click());
+  await act(async () => picker()[0].click());
+  assert.equal(picker().length, 0);
+  assert.ok(!requests.some((request) => request.includes('pi.machine')));
+  // A machine keyed to the person alone is shared across their projects, and says so.
+  const everywhere = { ...shared, shared: { conversations: 4, projects: 2 } };
+  await act(async () =>
+    stream.push('snapshot', snapshot(conversation(), [], 1, [], true, everywhere)),
+  );
+  await act(async () => note().click());
+  assert.match(facts()!, /^Shared by your 4 conversations in 2 projects\. /);
 });
 
 test('picking Large counts the move while the machine still serves, and a failure says where it stays', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  let state = staged(snapshot(conversation()), 'ready');
+  const state = staged(snapshot(conversation()), 'ready');
   const stream = boot(
     () => state,
     () => [conversation()],
@@ -1050,25 +1081,46 @@ test('picking Large counts the move while the machine still serves, and a failur
   assert.equal(picker()[1].getAttribute('aria-checked'), 'true');
   await act(async () => picker()[0].click());
   assert.deepEqual(picked, [{ machine: 'large' }, { machine: 'standard' }]);
-  const failed = (ago: number) =>
-    host('ready', {
-      lastMove: {
-        at: new Date(Date.now() - ago).toISOString(),
-        by: 'agent',
-        from: 'standard',
-        to: 'large',
-        outcome: 'failed',
-        reason: 'no free machine',
-      },
-    });
-  state = snapshot(conversation(), [], 2, [], true, failed(60_000));
-  await act(async () => stream.push('snapshot', state));
-  assert.equal(note().textContent, 'Couldn’t start Large: no free machine. Still on Standard.');
-  // A failure older than a machine's idle wait is no longer news.
-  await act(async () =>
-    stream.push('snapshot', snapshot(conversation(), [], 3, [], true, failed(11 * 60_000))),
+  let sequence = 2;
+  const show = (view: ReturnType<typeof host>, stage?: string) => {
+    const next = snapshot(conversation(), [], sequence++, [], true, view);
+    return act(async () => stream.push('snapshot', stage ? staged(next, stage) : next));
+  };
+  const since = new Date().toISOString();
+  // With the machine it ran on gone mid-move, the conversation waits on the one starting, and
+  // the machine can still be stopped.
+  await show(host('none', { moving: { to: 'large', by: 'person', since } }), 'moving');
+  assert.match(
+    document.querySelector('.pi-bar [role="status"]')?.textContent ?? '',
+    /^Starting a machine · \d+ s$/,
   );
-  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  await act(async () => note().click());
+  assert.equal(picker().at(-1)?.textContent, 'Stop machine');
+  await press('Escape');
+  const failure = (ago: number, extra: object = {}) => ({
+    at: new Date(Date.now() - ago).toISOString(),
+    by: 'agent',
+    from: 'standard',
+    to: 'large',
+    outcome: 'failed',
+    reason: 'no free machine',
+    ...extra,
+  });
+  await show(host('ready', { lastMove: failure(60_000) }));
+  assert.equal(note().textContent, 'Couldn’t start Large: no free machine. Still on Standard.');
+  // With no machine left it is on nothing, and a deadline's rollover is no news.
+  const runs = 'Runs on Standard · ½ vCPU · 4 GiB';
+  await show(host('none', { lastMove: failure(60_000) }));
+  assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
+  await show(host('ready', { lastMove: failure(60_000, { by: 'deadline', to: 'standard' }) }));
+  assert.equal(note().textContent, runs);
+  await show(host('ready', { moving: { to: 'standard', by: 'deadline', since } }));
+  assert.equal(note().textContent, runs);
+  // A failure is news for as long as a machine's idle wait, even on a page left alone.
+  await show(host('ready', { lastMove: failure(600_000 - 400) }));
+  assert.match(note().textContent!, /^Couldn’t start Large/);
+  await settle(1200);
+  assert.equal(note().textContent, runs);
 });
 
 test('stopping the machine asks first, then stops it for every conversation here', async (t) => {
@@ -1079,12 +1131,17 @@ test('stopping the machine asks first, then stops it for every conversation here
     () => [conversation()],
   );
   let stopped = 0;
-  serve('/tools/pi.machine.stop', () => {
-    stopped++;
-    return { body: { result: host('none') } };
-  });
+  serve('/tools/pi.machine.stop', () =>
+    ++stopped === 1
+      ? { status: 409, body: { error: { code: 'pi_busy', message: 'A move is under way' } } }
+      : { body: { result: host('none') } },
+  );
   await open();
   await act(async () => note().click());
+  assert.match(
+    text(),
+    /Shared by your conversations here\. Stops 10 minutes after the last answer in any of them\./,
+  );
   await act(async () => picker()[2].click());
   assert.equal(stopped, 0);
   assert.match(text(), /Answers still running here stop too./);
@@ -1095,10 +1152,20 @@ test('stopping the machine asks first, then stops it for every conversation here
   assert.equal(document.activeElement, picker()[0]);
   await act(async () => picker()[1].click());
   assert.equal(picker().length, 3);
-  await act(async () => picker()[2].click());
-  await act(async () => picker()[0].click());
-  await settle(10);
+  const confirm = async () => {
+    await act(async () => picker()[2].click());
+    await act(async () => picker()[0].click());
+    await settle(10);
+  };
+  // A refusal says why, and the machine stands as it was.
+  await confirm();
   assert.equal(stopped, 1);
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, 'A move is under way');
+  assert.equal(note().textContent, 'Runs on Standard · ½ vCPU · 4 GiB');
+  await act(async () => note().click());
+  await confirm();
+  assert.equal(stopped, 2);
+  assert.equal(document.querySelector('[role="alert"]'), null);
   assert.equal(note().textContent, 'Starts on Standard · ½ vCPU · 4 GiB');
   // With no machine there is nothing to stop.
   await act(async () => note().click());
