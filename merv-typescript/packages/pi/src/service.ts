@@ -168,8 +168,9 @@ export class PiService implements Pi, FleetOwner {
   /** Memory only, keyed like progressAt: each claimed turn's refused calls, by the digest of name
    * and input, with the code each was refused with. */
   private readonly refusals = new Map<string, Map<string, string>>();
-  /** Owner ids Fleet is admitting now: valid() accepts a slot before its host records it. */
-  private readonly renting = new Set<string>();
+  /** Owner ids Fleet is admitting now, with their person: valid() and payer() answer for a slot
+   * before its host records it. */
+  private readonly renting = new Map<string, string>();
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
    * announcement only makes an open page read again. */
   private readonly unsent = new Set<string>();
@@ -907,7 +908,7 @@ export class PiService implements Pi, FleetOwner {
   ): Promise<PiSlot> {
     const epoch = ++host.epoch;
     const id = `${host.id}:${epoch}`;
-    this.renting.add(id);
+    this.renting.set(id, host.userId);
     try {
       const allocation = await this.fleet.request(
         renter,
@@ -996,7 +997,7 @@ export class PiService implements Pi, FleetOwner {
   }
   /** A host's machines are for its person, whose day's compute they count toward. */
   async payer(_source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null> {
-    return (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null;
+    return this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null;
   }
   /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
   async valid(allocation: FleetAllocation, tx: Transaction): Promise<boolean> {

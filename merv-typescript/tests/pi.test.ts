@@ -1389,6 +1389,8 @@ test('warming rents the person’s machine once, for the latest empty conversati
   const [allocation] = await f.fleet.list(f.hostCaller);
   const [host] = await f.hosts();
   assert.deepEqual(allocation.owner, { kind: 'pi-host', id: `${host.id}:1` });
+  // The first machine is rented before its host is saved, and still counts toward its person's day.
+  assert.equal(allocation.person, host.userId);
   for (const input of [
     { requestId: 'warm_3' },
     { requestId: 'warm_4', conversationId: warmed.conversation.id },
