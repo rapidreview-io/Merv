@@ -457,11 +457,10 @@ test('a new director lets in-flight work finish under its own source, and direct
   assert.deepEqual(f.allocations[1]?.source, f.served[0]!.source);
 });
 
-test('Fleet serves each project whose admin chose it, as that admin, within the total and per-person caps', async (t) => {
+test('Fleet serves each project whose admin chose it, as that admin, within its machines', async (t) => {
   const f = await fixture(t, {
     people: [`${issuer} founder`, `${issuer} colleague`],
     maxAgents: 5,
-    maxAgentsPerPerson: 3,
   });
   const second = await f.project(f.founder, 'Second');
   const theirs = await f.project(await f.login('colleague'), 'Colleague');
@@ -482,14 +481,14 @@ test('Fleet serves each project whose admin chose it, as that admin, within the 
   f.demand(targets('outsider', 1), outsider.id);
   f.demand(targets('machine', 1), machine.project.id);
   await f.adapter.reconcile();
-  // The founder's two projects share three machines; the colleague has the other two of five.
+  // Five machines in all, taken in the order the projects are served.
   const first = f.caller.projectId;
   assert.deepEqual(f.open(), [
     [first, 'first_0:0'],
     [first, 'first_1:0'],
     [second.id, 'second_0:0'],
+    [second.id, 'second_1:0'],
     [theirs.id, 'theirs_0:0'],
-    [theirs.id, 'theirs_1:0'],
   ]);
   for (const a of f.allocations)
     assert.deepEqual(a.source, f.served.find((row) => row.projectId === a.projectId)!.source);
@@ -502,7 +501,7 @@ test('Fleet serves each project whose admin chose it, as that admin, within the 
   ]);
 
   // Halted, the first project is no longer served: its launched machine runs on and still
-  // counts, its unlaunched one is cancelled, and the room goes to the founder's other project.
+  // counts, its unlaunched one is cancelled, and the room goes to the next work waiting.
   Object.assign(f.allocations[0]!, {
     phase: 'starting',
     runtime: { launch: { deliveryState: 'launched' } },
@@ -520,12 +519,12 @@ test('Fleet serves each project whose admin chose it, as that admin, within the 
   assert.deepEqual(f.open(), [
     [first, 'first_0:0'],
     [second.id, 'second_0:0'],
+    [second.id, 'second_1:0'],
     [theirs.id, 'theirs_0:0'],
     [theirs.id, 'theirs_1:0'],
-    [second.id, 'second_1:0'],
   ]);
 
-  await f.restart({ people: ['*'], maxAgents: 10, maxAgentsPerPerson: 3 });
+  await f.restart({ people: ['*'], maxAgents: 10 });
   await f.adapter.reconcile();
   assert.deepEqual(f.open().slice(5), [
     [theirs.id, 'theirs_2:0'],
@@ -575,8 +574,8 @@ test('a director who can no longer write directs nothing, and a failing project 
   assert.equal(f.serves(f.caller.projectId), false);
 });
 
-test('the review director takes only what the admin’s own hand may not, within that admin’s machines', async (t) => {
-  const f = await fixture(t, { maxAgents: 5, maxAgentsPerPerson: 2 });
+test('the review director takes only what the admin’s own hand may not, within Fleet’s machines', async (t) => {
+  const f = await fixture(t, { maxAgents: 2 });
   f.demand(targets('shared', 1));
   f.demand([...targets('shared', 1), ...targets('review', 3)], `review:${f.caller.projectId}`);
   await f.adapter.reconcile();
@@ -777,7 +776,6 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     baseUrl: 'https://merv.example.test',
     pollIntervalMs: 60_000,
     maxAgents: workers,
-    maxAgentsPerPerson: workers,
   });
   t.after(async () => {
     await adapter.close();

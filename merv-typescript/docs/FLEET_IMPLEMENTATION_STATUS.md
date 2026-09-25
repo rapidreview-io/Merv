@@ -257,7 +257,7 @@ smoke passed, alongside 27 focused provider/launch tests.
   It serves every project whose admin turned dispatch on without choosing own
   machines, acting as the admin who chose last, while that admin can write and
   is listed in `MERV_FLEET_WORKFLOW_PEOPLE` (or it is `["*"]`). Machines are
-  capped in total and per person across projects, and projects without their
+  capped in total across projects, and projects without their
   own connection rent through the host project. Reviews that admin may not
   direct (their own and Pi's deliveries, and Code-provenance reviews) go to a
   second director: the project's credential-free `fleet-review` service actor, a
@@ -283,9 +283,8 @@ claims, one lost launch reply recovered without another create or launch,
 provider-confirmed cleanup, and a coexisting external runner. All five workflow
 tests passed, as did TypeScript typecheck. The provider remains a test double in
 this integration; this is not the three-VM Cloudflare acceptance. Deployment
-supports `MERV_FLEET_WORKFLOW_MAX_AGENTS` (10 by default) and
-`MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON` (5); the single-project source
-credential of the pilot is retired.
+supports `MERV_FLEET_WORKFLOW_MAX_AGENTS` (10 by default); the single-project
+source credential of the pilot is retired.
 
 Ten Fleet PostgreSQL tests passed, including global/project capacity contention,
 lost-reply recovery, source revocation, cancellation during bootstrap, drain and

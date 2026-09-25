@@ -270,7 +270,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
     maxAgents: 10,
-    maxAgentsPerPerson: 5,
     dailyTokensPerPerson: 20_000_000,
   });
   assert.ok(!readFileSync(output, 'utf8').includes(workflow.MODEL_KEY));
@@ -283,15 +282,12 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const everyone = {
     MERV_FLEET_WORKFLOW_PEOPLE: '["*"]',
     MERV_FLEET_WORKFLOW_MAX_AGENTS: '64',
-    MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '2',
   };
   assert.equal(run({ ...workflow, ...retired, ...everyone }).status, 0);
   assert.ok(!readFileSync(output, 'utf8').includes(retired.WORKFLOW_SOURCE));
   config = JSON.parse(readFileSync(output));
-  const { people, maxAgents, maxAgentsPerPerson } = config.plugins.find(
-    (p) => p.id === 'fleet-workflow',
-  ).config;
-  assert.deepEqual([people, maxAgents, maxAgentsPerPerson], [['*'], 64, 2]);
+  const { people, maxAgents } = config.plugins.find((p) => p.id === 'fleet-workflow').config;
+  assert.deepEqual([people, maxAgents], [['*'], 64]);
   assert.notEqual(run({ ...workflow, MERV_FLEET_WORKFLOW_DAILY_TOKENS_PER_PERSON: '0' }).status, 0);
   for (const broken of [
     { MERV_FLEET_ENABLED: 'true' },
@@ -312,8 +308,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     { ...workflow, MODEL_KEY: undefined },
     { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '0' },
     { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS: '65' },
-    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '0' },
-    { ...workflow, MERV_FLEET_WORKFLOW_MAX_AGENTS_PER_PERSON: '65' },
   ]) {
     assert.notEqual(run(broken).status, 0);
   }
