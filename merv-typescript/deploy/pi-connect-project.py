@@ -1,4 +1,4 @@
-"""Connect one Merv project to hosted Pi: its own Sandboxes namespace, consumer grant and connection.
+"""Connect one Merv project to Sandboxes, and set up the Pi host project that rents every Pi machine.
 
 Run on the production host as root, in a quiet window, one phase after the other:
   python3 pi-connect-project.py sandboxes <projectId> [--rehome]
@@ -8,6 +8,17 @@ Run on the production host as root, in a quiet window, one phase after the other
 recreates Sandboxes control and pipelines-worker. The second adds the connection and the grant variable to
 Main's env and recreates Main. Each recreate stops live work, so both phases refuse unless Main and
 Sandboxes are drained. --rehome moves a project off the shared fleet-cloudflare-canary namespace.
+
+The Pi host is set up once, by these phases around the two above run for <hostId>:
+  python3 pi-connect-project.py host
+  python3 pi-connect-project.py large <hostId> --release <standard rt1_> --application <uuid> < bridge.json
+  python3 pi-connect-project.py machines <hostId>
+`host` creates the host project in Main's database with its reader key, and no member. `large` adds the
+cloudflare-fleet-large provider (the Large Cloudflare app, whose bridge_url, bridge_token and
+cloudflare_api_token come as JSON on stdin), its copy of the Standard release, and the host namespace's
+limits, then recreates Sandboxes. `machines` writes the host, the machine catalog and the host's Fleet
+limit into Main's env and dry-runs both the running image's render and this directory's, without
+recreating Main: the release that reads them does. Run it from that release's deploy directory.
 Never prints a secret. Every mutation follows a root-private backup and is undone on failure; the backups
 hold secrets, so shred ROOT once the connection is verified and recorded. See deploy/PI_OPERATIONS.md.
 """
@@ -19,16 +30,24 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 if not __debug__:
     sys.exit('every guard here is an assert: run without -O')
 _, PHASE, PROJECT, *FLAGS = sys.argv + [''] * (3 - len(sys.argv))
 REHOME = FLAGS == ['--rehome']
-assert PHASE in ('sandboxes', 'main') and FLAGS in ([], ['--rehome']), __doc__
-assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PROJECT), 'invalid_project_id'
-ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect') / PROJECT
+OPTIONS = dict(zip(FLAGS[::2], FLAGS[1::2]))
+assert (PHASE in ('sandboxes', 'main') and FLAGS in ([], ['--rehome'])
+        or PHASE == 'host' and PROJECT == '' and not FLAGS
+        or PHASE == 'large' and len(FLAGS) == 4 and sorted(OPTIONS) == ['--application', '--release']
+        or PHASE == 'machines' and not FLAGS), __doc__
+assert PHASE == 'host' or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PROJECT), 'invalid_project_id'
+# The host phase has no project yet; '_host' can never be a project id.
+HOST_ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect/_host')
+ROOT = HOST_ROOT if PHASE == 'host' else HOST_ROOT.parent / PROJECT
 ENV = Path('/etc/merv/typescript.env')
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 SUFFIX = hashlib.sha256(PROJECT.encode()).hexdigest()[:20]
@@ -37,6 +56,14 @@ TOKEN_ENV = 'MERV_PI_PROJECT_' + SUFFIX.upper()
 CANARY, PROVIDER = 'fleet-cloudflare-canary', 'cloudflare-fleet'
 # Merv's Sandboxes account and the member every merv-pi-* namespace belongs to.
 ACCOUNT, MEMBER = 'acct_c330sof3z6zju9zw', 'member_w6rb4wzgs4revzh7'
+# The Large Pi machine: the second Cloudflare app (wrangler env large) and its bridge credential variable.
+LARGE, LARGE_CREDENTIAL_ENV, LARGE_SHAPE = 'cloudflare-fleet-large', 'FLEET_CLOUDFLARE_BRIDGE_LARGE', 'standard-3'
+# standard-3's hourly price in merv_sandboxes/providers/cloudflare.py: a lower cap on the host refuses Large.
+LARGE_RATE = Decimal('0.220032')
+# Every Pi machine runs in the host namespace: at most 50 at once, a day each, none dearer than Large.
+HOST_LIMIT_ID = 'pi-host-' + SUFFIX
+HOST_LIMIT = {'scope': 'namespace', 'target': NAMESPACE, 'max_concurrent': 50, 'max_lifetime_seconds': 86400,
+              'max_hourly_price': {'currency': 'USD', 'amount': '0.23'}}
 
 SBX_DRAIN = r'''import asyncio,json
 from sqlalchemy import text
@@ -89,6 +116,34 @@ async def main():
         await c.stop()
 asyncio.run(main())'''
 
+# Release IDs as Sandboxes derives them from catalog entries.
+SBX_RELEASES = r'''import json,sys
+from merv_sandboxes.runtimes.releases import RuntimeRelease
+print(json.dumps([RuntimeRelease(**{**r,'arguments':tuple(r.get('arguments',()))}).release_id for r in json.load(sys.stdin)]))'''
+
+# The account's resource limits, after setting one when asked; with `check`, also how the namespace
+# resolves that provider, its offers, and the release IDs the running control loaded.
+SBX_LIMITS = r'''import asyncio,json,sys
+from merv_sandboxes.config import Settings
+from merv_sandboxes.runtime import Container
+from merv_sandboxes.resource_limits import ResourceLimit,ResourceLimitService
+async def main():
+    v=json.load(sys.stdin)
+    c=Container(Settings.load())
+    try:
+        limits=ResourceLimitService(c.db,c.clock)
+        if v.get('set'):
+            await limits.set(v['account'],v['id'],ResourceLimit(**v['set']))
+        out={'limits':json.loads(json.dumps(await limits.list(v['account']),default=str))}
+        if v.get('check'):
+            out['resolved']=(await c.providers.resolve(v['namespace'],v['check'])).source
+            out['offers']=[o.offer_id for o in await c.providers.offers(v['namespace'],provider=v['check'],refresh=True)]
+            out['releases']=[r.release_id for r in c.settings.runtime_releases]
+        print(json.dumps(out))
+    finally:
+        await c.stop()
+asyncio.run(main())'''
+
 MAIN_DRAIN = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});
 await c.connect();
@@ -111,6 +166,23 @@ const me=await get('/v1/auth/me');
 const identity=me.status===200?await me.json():{};
 const launch=await get('/v1/runtime/launches/rln_'+'0'.repeat(32));
 console.log(JSON.stringify({me:me.status,role:identity.role,namespace:identity.namespace,launch:launch.status}));'''
+
+# In Main's database: the Pi host project, with a reader key that only rents machines. Its setup operator
+# cannot retire itself, so a second one that lapses in five minutes, and is never kept, retires it.
+HOST_CREATE = r'''import { PostgresState } from '@merv/state';
+import { ProjectScope } from '@merv/scope';
+const state=await PostgresState.open({connectionString:process.env.MERV_DB_URL,schema:process.env.MERV_TS_DB_SCHEMA??'merv_ts'});
+try{
+const scope=new ProjectScope(state);
+await scope.initialize();
+const setup=await scope.bootstrap({projectName:'Pi host',actorName:'Pi host setup'});
+const as=(i)=>({actorId:i.actor.id,projectId:setup.project.id,credentialId:i.credential.id});
+const host=await scope.issueActor(as(setup),{name:'Pi host',role:'reader',expiresAt:null});
+const closer=await scope.issueActor(as(setup),{name:'Pi host setup',role:'operator',expiresAt:new Date(Date.now()+300000).toISOString()});
+await scope.revokeActor(as(closer),setup.actor.id);
+const actor=await scope.authenticate(host.token);
+console.log(JSON.stringify({projectId:actor.projectId,actorId:actor.id,role:actor.role,credentialId:host.credential.id,token:host.token}));
+}finally{await state.close();}'''
 
 
 def sha(raw):
@@ -188,19 +260,50 @@ def others(values):
     return [c for c in connections if c['projectId'] != PROJECT]
 
 
-def sandboxes():
-    assert not ROOT.exists(), 'pi_connect_root_exists'
-    ROOT.mkdir(mode=0o700, parents=True)
+def sandbox_catalog(prefix):
+    """The Compose catalog Sandboxes control and pipelines-worker both run, backed up, and their one image."""
     labels = inspect(CONTROL)['Config']['Labels']
     catalog_path, project = Path(labels['com.docker.compose.project.config_files']), labels['com.docker.compose.project']
     assert catalog_path.is_file(), ('catalog_unexpected', str(catalog_path))
-    env_raw, catalog_raw = ENV.read_bytes(), catalog_path.read_bytes()
-    save('before-env.private', env_raw)
-    save('before-catalog.private.json', catalog_raw)
+    catalog_raw = catalog_path.read_bytes()
+    save(prefix + 'before-catalog.private.json', catalog_raw)
     image = inspect(CONTROL)['Image']
     for name in (CONTROL, PIPELINE):
         state = inspect(name)
         assert state['Image'] == image and state['State']['Running'], ('sandbox_image_drift', name)
+    return catalog_path, project, catalog_raw, image
+
+
+def apply_catalog(prefix, catalog_path, project, catalog_raw, image, catalog, keys, verify):
+    """Recreate both services on `catalog`, prove they run its `keys`, then verify(); else restore both."""
+    candidate = (json.dumps(catalog, indent=2) + '\n').encode()
+    save(prefix + 'candidate-catalog.private.json', candidate)
+    mode = os.stat(catalog_path).st_mode & 0o777
+    up = ['docker', 'compose', '-p', project, '-f', str(catalog_path), 'up', '-d', '--no-deps', 'control', 'pipelines-worker']
+    atomic(catalog_path, candidate, mode)
+    try:
+        run(up, timeout=180)
+        healthy(CONTROL, 90, 2)
+        for name, service in ((CONTROL, 'control'), (PIPELINE, 'pipelines-worker')):
+            state = inspect(name)
+            assert state['Image'] == image and state['State']['Running'], ('sandbox_not_running', name)
+            actual = dict(item.split('=', 1) for item in state['Config']['Env'])
+            expected = catalog['services'][service]['environment']
+            for key in keys:
+                assert json.loads(actual[key]) == json.loads(expected[key]), ('env_mismatch', name, key)
+        return verify()
+    except BaseException:
+        atomic(catalog_path, catalog_raw, mode)
+        run(up, timeout=180)
+        raise
+
+
+def sandboxes():
+    assert not ROOT.exists(), 'pi_connect_root_exists'
+    ROOT.mkdir(mode=0o700, parents=True)
+    env_raw = ENV.read_bytes()
+    save('before-env.private', env_raw)
+    catalog_path, project, catalog_raw, image = sandbox_catalog('')
     existing = drains()
     names = sorted(set(existing + [NAMESPACE]))
     others(env_values(env_raw))
@@ -225,28 +328,13 @@ def sandboxes():
     assert NAMESPACE in json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_DRAIN]))['namespaces']
     for settings, allowed in zip(services, grants):
         settings['SANDBOXES_RUNTIME_LAUNCH_GRANTS'] = json.dumps(allowed + [issued['tokenId']])
-    candidate = (json.dumps(catalog, indent=2) + '\n').encode()
-    save('candidate-catalog.private.json', candidate)
-    mode = os.stat(catalog_path).st_mode & 0o777
-    up = ['docker', 'compose', '-p', project, '-f', str(catalog_path), 'up', '-d', '--no-deps', 'control', 'pipelines-worker']
-    atomic(catalog_path, candidate, mode)
-    try:
-        run(up, timeout=180)
-        healthy(CONTROL, 90, 2)
-        for name, service in ((CONTROL, 'control'), (PIPELINE, 'pipelines-worker')):
-            state = inspect(name)
-            assert state['Image'] == image and state['State']['Running'], ('sandbox_not_running', name)
-            actual = dict(item.split('=', 1) for item in state['Config']['Env'])
-            expected = catalog['services'][service]['environment']
-            for key in ('SANDBOXES_PROVIDERS', 'SANDBOXES_RUNTIME_LAUNCH_GRANTS'):
-                assert json.loads(actual[key]) == json.loads(expected[key]), ('env_mismatch', name, key)
+
+    def verify():
         check = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_RESOLVE], json.dumps(names + [CANARY]).encode()))
         assert all(v == 'host' for v in check['resolved'].values()), ('resolve_failed', check['resolved'])
         assert issued['tokenId'] in check['grantAllowed'], 'grant_not_allowlisted'
-    except BaseException:
-        atomic(catalog_path, catalog_raw, mode)
-        run(up, timeout=180)
-        raise
+    apply_catalog('', catalog_path, project, catalog_raw, image, catalog,
+                  ('SANDBOXES_PROVIDERS', 'SANDBOXES_RUNTIME_LAUNCH_GRANTS'), verify)
     expires = datetime.fromisoformat(issued['expiresAt'])
     receipt = {'phase': 'sandboxes-done', 'projectId': PROJECT, 'namespace': NAMESPACE, 'tokenId': issued['tokenId'],
                'expiresAt': issued['expiresAt'], 'renewBy': (expires - timedelta(days=7)).isoformat(),
@@ -254,6 +342,13 @@ def sandboxes():
                'catalogSha256After': sha(catalog_path.read_bytes()), 'at': now()}
     record('sandboxes.receipt.json', receipt)
     print(json.dumps(receipt))
+
+
+def dry_render(compose_env, directory, mounts=()):
+    """Main's image renders the env file in a throwaway container; `mounts` put another renderer in place."""
+    run(['docker', 'compose', '-f', 'compose.yml', 'run', '--rm', '--no-deps', '-T', *mounts, '--entrypoint', 'node',
+         'control', '/app/deploy/render-config.mjs', '/tmp/pi-connect-render.json'], env=compose_env, cwd=directory,
+        timeout=120)
 
 
 def main_phase():
@@ -277,8 +372,7 @@ def main_phase():
     atomic(ENV, candidate.encode())
     try:
         # The image's own render refuses a bad env before Main is recreated on it.
-        run(['docker', 'compose', '-f', 'compose.yml', 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'control',
-             '/app/deploy/render-config.mjs', '/tmp/pi-connect-render.json'], env=compose_env, cwd=directory, timeout=120)
+        dry_render(compose_env, directory)
         run(up, env=compose_env, cwd=directory, timeout=180)
         healthy(MAIN, 60, 4)
         state = inspect(MAIN)
@@ -301,7 +395,148 @@ def main_phase():
     print(json.dumps(receipt))
 
 
+def host():
+    assert not ROOT.exists(), 'pi_host_root_exists'
+    assert 'MERV_PI_HOST_PROJECT_ID' not in env_values(ENV.read_bytes()), 'pi_host_configured'
+    state = inspect(MAIN)
+    assert state['State']['Running'], 'main_not_running'
+    ROOT.mkdir(mode=0o700, parents=True)
+    record('host.intent.json', {'image': state['Image'], 'at': now()})
+    created_raw = run(['docker', 'exec', '-i', '-w', '/app', MAIN, 'node', '--input-type=module', '-e', HOST_CREATE])
+    save('host.private.json', created_raw)
+    created = json.loads(created_raw)
+    assert created['role'] == 'reader' and re.fullmatch(r'[A-Za-z0-9_-]{1,200}', created['projectId']), 'host_unexpected'
+    receipt = {'phase': 'host-done', 'projectId': created['projectId'], 'actorId': created['actorId'],
+               'credentialId': created['credentialId'], 'image': state['Image'], 'at': now()}
+    record('host.receipt.json', receipt)
+    print(json.dumps(receipt))
+
+
+def large():
+    assert json.loads((HOST_ROOT / 'host.receipt.json').read_bytes())['projectId'] == PROJECT, 'not_the_pi_host'
+    assert (ROOT / 'main.receipt.json').is_file() and not (ROOT / 'large.receipt.json').exists(), 'phase_order'
+    release, application = OPTIONS['--release'], OPTIONS['--application']
+    assert re.fullmatch(r'rt1_[0-9a-f]{64}', release), 'invalid_release'
+    assert re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', application), 'invalid_application'
+    # The Large bridge's URL and token, and a native verification token that covers the Large app.
+    raw = sys.stdin.read(16385)
+    assert len(raw) <= 16384, 'credential_too_large'
+    credential = json.loads(raw)
+    assert set(credential) == {'bridge_url', 'bridge_token', 'cloudflare_api_token'} and all(
+        isinstance(v, str) and v and v.strip() == v for v in credential.values()), 'credential_unexpected'
+    assert re.fullmatch(r'https://[a-z0-9.-]+', credential['bridge_url']), 'bridge_url_unexpected'
+    health = urllib.request.Request(credential['bridge_url'] + '/health',
+                                    headers={'authorization': 'Bearer ' + credential['bridge_token']})
+    with urllib.request.urlopen(health, timeout=15) as response:
+        assert json.load(response).get('shape') == LARGE_SHAPE, 'bridge_not_large'
+    drains()
+    limits = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_LIMITS],
+                            json.dumps({'account': ACCOUNT}).encode()))['limits']
+    # Limits and provider controls name the plugin, `cloudflare`, never the app: every cap on the host
+    # namespace's Cloudflare machines binds Large too, so one below Large's price makes Large unrentable.
+    caps = [l for l in limits if l['id'] != HOST_LIMIT_ID and l['provider'] in (None, 'cloudflare')
+            and l['source'] in (None, 'host')
+            and (l['scope'], l['target']) in {('account', ACCOUNT), ('member', MEMBER), ('namespace', NAMESPACE)}]
+    cheap = [l['id'] for l in caps if l['max_hourly_price'] and (
+        l['max_hourly_price']['currency'] != 'USD' or Decimal(l['max_hourly_price']['amount']) < LARGE_RATE)]
+    assert not cheap, ('price_cap_refuses_large', cheap)
+    catalog_path, project, catalog_raw, image = sandbox_catalog('large-')
+    catalog = json.loads(catalog_raw)
+    services = [catalog['services'][s]['environment'] for s in ('control', 'pipelines-worker')]
+    releases = json.loads(services[0]['SANDBOXES_RUNTIME_RELEASES'])
+    ids = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_RELEASES], json.dumps(releases).encode()))
+    standard = [r for r, i in zip(releases, ids) if i == release and r['provider'] == PROVIDER]
+    assert len(standard) == 1, 'standard_release_not_in_catalog'
+    # The same image, executable and arguments, sold by the Large app: only the provider differs.
+    copy = dict(standard[0], provider=LARGE)
+    [large_id] = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_RELEASES], json.dumps([copy]).encode()))
+    assert large_id not in ids, 'large_release_exists'
+    for settings in services:
+        assert json.loads(settings['SANDBOXES_RUNTIME_RELEASES']) == releases, 'release_catalogs_differ'
+        assert LARGE_CREDENTIAL_ENV not in settings, 'large_credential_exists'
+        providers = json.loads(settings['SANDBOXES_PROVIDERS'])
+        assert all(p['name'] != LARGE for p in providers), 'large_provider_exists'
+        [fleet] = [p for p in providers if p['name'] == PROVIDER]
+        providers.append({'name': LARGE, 'plugin': 'cloudflare', 'credential': 'env:' + LARGE_CREDENTIAL_ENV,
+                          'access': 'tunnel', 'namespaces': [NAMESPACE],
+                          'settings': {'shapes': LARGE_SHAPE, 'account_id': fleet['settings']['account_id'],
+                                       'application_id': application}})
+        settings['SANDBOXES_PROVIDERS'] = json.dumps(providers)
+        settings['SANDBOXES_RUNTIME_RELEASES'] = json.dumps(releases + [copy])
+        settings[LARGE_CREDENTIAL_ENV] = json.dumps(credential)
+
+    def verify():
+        check = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_LIMITS],
+                               json.dumps({'account': ACCOUNT, 'namespace': NAMESPACE, 'check': LARGE}).encode()))
+        assert check['resolved'] == 'host' and LARGE_SHAPE + ':cloudflare' in check['offers'], 'large_not_offered'
+        assert {release, large_id} <= set(check['releases']), 'release_not_loaded'
+        # Last, so a failure before it leaves the limits as they were.
+        after = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_LIMITS], json.dumps(
+            {'account': ACCOUNT, 'id': HOST_LIMIT_ID, 'set': HOST_LIMIT}).encode()))['limits']
+        assert [l['max_concurrent'] for l in after if l['id'] == HOST_LIMIT_ID] == [HOST_LIMIT['max_concurrent']]
+    apply_catalog('large-', catalog_path, project, catalog_raw, image, catalog,
+                  ('SANDBOXES_PROVIDERS', 'SANDBOXES_RUNTIME_RELEASES', LARGE_CREDENTIAL_ENV), verify)
+    receipt = {'phase': 'large-done', 'projectId': PROJECT, 'namespace': NAMESPACE, 'provider': LARGE,
+               'applicationId': application, 'standardReleaseId': release, 'largeReleaseId': large_id,
+               'hostLimit': HOST_LIMIT_ID,
+               # The most machines every concurrency cap on the host namespace lets it hold at once.
+               'hostConcurrency': min([l['max_concurrent'] for l in caps if l['max_concurrent'] is not None]
+                                      + [HOST_LIMIT['max_concurrent']]),
+               'image': image, 'catalogSha256Before': sha(catalog_raw),
+               'catalogSha256After': sha(catalog_path.read_bytes()), 'at': now()}
+    record('large.receipt.json', receipt)
+    print(json.dumps(receipt))
+
+
+def machines():
+    host = json.loads((HOST_ROOT / 'host.private.json').read_bytes())
+    large = json.loads((ROOT / 'large.receipt.json').read_bytes())
+    assert host['projectId'] == PROJECT == large['projectId'], 'not_the_pi_host'
+    assert not (ROOT / 'machines.receipt.json').exists(), 'phase_order'
+    here = Path(__file__).resolve().parent
+    renderer = [here / name for name in ('render-config.mjs', 'schema.mjs')]
+    assert all(path.is_file() for path in renderer), 'run_from_the_release_deploy_directory'
+    state = inspect(MAIN)
+    image, directory = state['Image'], state['Config']['Labels']['com.docker.compose.project.working_dir']
+    env_raw = ENV.read_bytes()
+    values = env_values(env_raw)
+    connected = [c['projectId'] for c in json.loads(values['MERV_SANDBOXES_CONNECTIONS'])]
+    assert values.get('MERV_PI_ENABLED') == 'true' and PROJECT in connected, 'host_not_connected'
+    lease = int(values['MERV_FLEET_RUNTIME_LEASE_SECONDS'])
+    catalog = [
+        {'key': 'standard', 'label': 'Standard', 'slots': 3, 'provider': values['MERV_FLEET_RUNTIME_PROVIDER'],
+         'offerId': values['MERV_FLEET_RUNTIME_OFFER_ID'], 'releaseId': large['standardReleaseId'], 'leaseSeconds': lease},
+        {'key': 'large', 'label': 'Large', 'slots': 4, 'agent': True, 'provider': LARGE,
+         'offerId': LARGE_SHAPE + ':cloudflare', 'releaseId': large['largeReleaseId'], 'leaseSeconds': lease},
+    ]
+    compact = lambda value: "'" + json.dumps(value, separators=(',', ':')) + "'"
+    # The MERV_FLEET_RUNTIME_* lines stay, so the image this replaces still renders if it comes back.
+    put = {'MERV_FLEET_RUNTIMES': compact(catalog), 'MERV_FLEET_PROJECT_LIMITS': compact({PROJECT: 50}),
+           # A host moves to a fresh machine 15 minutes before its allocation's deadline.
+           'MERV_FLEET_ALLOCATION_TIMEOUT_SECONDS': '86400',
+           'MERV_PI_HOST_PROJECT_ID': PROJECT, 'MERV_PI_HOST_KEY_ENV': 'MERV_PI_HOST_KEY',
+           'MERV_PI_HOST_KEY': host['token'], 'MERV_PI_RUNTIME_KEY': 'project', 'MERV_PI_AGENT_MOVES': 'true'}
+    kept = [line for line in env_raw.decode().splitlines() if line.split('=', 1)[0] not in put]
+    candidate = ('\n'.join(kept + [key + '=' + value for key, value in put.items()]) + '\n').encode()
+    save('before-machines-env.private', env_raw)
+    save('candidate-machines-env.private', candidate)
+    compose_env = dict(os.environ, MERV_TS_IMAGE=image)
+    atomic(ENV, candidate)
+    try:
+        # The running image still renders it, and so does this release's renderer mounted over it.
+        dry_render(compose_env, directory)
+        dry_render(compose_env, directory, [flag for path in renderer
+                                            for flag in ('-v', '%s:/app/deploy/%s:ro' % (path, path.name))])
+    except BaseException:
+        atomic(ENV, env_raw)
+        raise
+    receipt = {'phase': 'machines-done', 'projectId': PROJECT, 'machines': [m['key'] for m in catalog],
+               'image': image, 'envSha256Before': sha(env_raw), 'envSha256After': sha(ENV.read_bytes()), 'at': now()}
+    record('machines.receipt.json', receipt)
+    print(json.dumps(receipt))
+
+
 if __name__ == '__main__':
     assert os.geteuid() == 0
     os.umask(0o077)
-    {'sandboxes': sandboxes, 'main': main_phase}[PHASE]()
+    {'host': host, 'sandboxes': sandboxes, 'main': main_phase, 'large': large, 'machines': machines}[PHASE]()
