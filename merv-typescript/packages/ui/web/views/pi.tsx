@@ -843,18 +843,19 @@ function PiConversationPage() {
                 {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
               </p>
             ),
-            // The latest calls the agent proposed stay under their turn until it proposes again.
-            ...(item === proposing
-              ? item.proposals!.map((proposal) => (
-                  <Proposal
-                    key={proposal.id}
-                    proposal={proposal}
-                    secret={secrets[proposal.id]}
-                    disabled={active || busy || !!running}
-                    run={() => void run(item.id, proposal)}
-                  />
-                ))
-              : []),
+            // The latest calls the agent proposed stay under their turn until it proposes again,
+            // and a secret this page holds stays in its card while the page is open.
+            ...(item.proposals ?? [])
+              .filter((proposal) => item === proposing || proposal.id in secrets)
+              .map((proposal) => (
+                <Proposal
+                  key={proposal.id}
+                  proposal={proposal}
+                  secret={secrets[proposal.id]}
+                  disabled={active || busy || !!running}
+                  run={() => void run(item.id, proposal)}
+                />
+              )),
           ])}
           {visible && (visible.text || visible.progress) && (
             <article className="pi-message pi-message--assistant pi-message--transient">

@@ -1538,6 +1538,27 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
   await act(async () => buttons()[0].click());
   await settle(10);
   assert.equal(sent[1].text, 'fleet.halt was refused: Actor lacks admin permission');
+  // A later turn proposes the next step: the secret stays in its card under its own turn, and
+  // the calls it held that are not secret give way.
+  const revoke = { id: 'pip_revoke', name: 'actor.revoke_token', input: {}, at: 'later' };
+  state = snapshot(conversation(), [
+    turn('completed', {
+      pip_download: { at: 'now', ok: true },
+      pip_halt: { at: 'now', ok: false, code: 'forbidden' },
+    }),
+    command('c2', 'completed', [{ role: 'assistant', text: 'Downloaded.' }]),
+    {
+      ...command('c3', 'completed', [{ role: 'assistant', text: 'Revoke the old one?' }]),
+      proposals: [revoke],
+    },
+  ]);
+  await act(async () => stream.push('snapshot', state));
+  assert.deepEqual(
+    cards().map((card) => card.querySelector('code')!.textContent),
+    ['artifact.read', 'actor.revoke_token'],
+  );
+  assert.equal(cards()[0].querySelector('a')!.href, 'https://files.example/art_1?sig=abc');
+  assert.equal(buttons()[0].textContent, 'Ran');
 });
 
 test('unavailable Agent is inert, including SSE and list', async (t) => {
