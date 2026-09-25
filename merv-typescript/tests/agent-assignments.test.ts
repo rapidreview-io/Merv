@@ -33,8 +33,8 @@ test('one agent can produce successive tasks and review other work, but cannot r
     requestId: 'register',
     secret: token,
   });
-  const createTask = async (requestId: string) =>
-    await app.ctx.tasks.create(owner, {
+  const createTask = async (requestId: string, by = owner) =>
+    await app.ctx.tasks.create(by, {
       title: requestId,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -87,14 +87,17 @@ test('one agent can produce successive tasks and review other work, but cannot r
   changingCaller.session!.id = callerA.session!.id;
   assert.deepEqual(await outputs, [], 'Previous execution output is not automatically authorized');
   await app.ctx.sessions.releaseAgentAssignment(token, b.id);
-  // Another producer submits separate work. The same agent may now become a reviewer.
-  const independent = await createTask('independent');
-  const otherProof = await app.ctx.artifacts.create(owner, {
+  // Another producer submits separate work. The same agent may now become a reviewer; had its
+  // own source delivered it, the agent would be that source's hand and could not.
+  const issued = await app.ctx.scope.issueActor(owner, { name: 'Other', role: 'producer' });
+  const other: Caller = { ...owner, actorId: issued.actor.id, credentialId: issued.credential.id };
+  const independent = await createTask('independent', other);
+  const otherProof = await app.ctx.artifacts.create(other, {
     title: 'Other proof',
     content: 'Independently observed 2 + 3 = 5.',
   });
   const reviewTask = await app.ctx.tasks.submitDelivery(
-    owner,
+    other,
     confirmedDelivery({
       taskId: independent.id,
       expectedRevision: 0,

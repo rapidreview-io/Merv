@@ -1,5 +1,5 @@
-import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
-import { createService, idPattern, plain, receipted } from '@merv/contracts';
+import { excludedFromReview, directsIndependently, canonical, visible } from '@merv/contracts';
+import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -359,8 +359,7 @@ export class ReviewService implements Reviews {
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&
-      (!review.provenance ||
-        !excludedFromReview(review, (await this.scope.authorityActor(caller, tx)).id))
+      directsIndependently(review, (await this.scope.authorityActor(caller, tx)).id)
     );
   }
 
@@ -753,17 +752,16 @@ export class ReviewService implements Reviews {
       reviews.some((review) => review.status === 'requested') &&
       !!caller.actorId &&
       (await this.scope.eligible(caller.projectId, caller.actorId, 'review', tx));
-    const authorityId =
-      reviewer && reviews.some((review) => review.provenance && review.status === 'requested')
-        ? (await this.scope.authorityActor(caller, tx)).id
-        : caller.actorId;
+    const authorityId = reviewer
+      ? (await this.scope.authorityActor(caller, tx)).id
+      : caller.actorId;
     return reviews.map((review) => ({
       ...review,
       claimable:
         reviewer &&
         review.status === 'requested' &&
         !excludedFromReview(review, caller.actorId) &&
-        (!review.provenance || !excludedFromReview(review, authorityId)),
+        directsIndependently(review, authorityId),
     }));
   }
 

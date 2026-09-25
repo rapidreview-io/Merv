@@ -16,6 +16,7 @@ import {
   receipted,
   recorded,
   releasedLease,
+  requireDirecting,
   reviewHistory,
   visible,
   type Artifacts,
@@ -446,6 +447,7 @@ export class TaskService implements Tasks {
       'Review is already claimed or no longer current',
       409,
     );
+    requireDirecting(review, caller.actorId);
     if (taskWorkspace(snapshot.version) !== 'none')
       await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');

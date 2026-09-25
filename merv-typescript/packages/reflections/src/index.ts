@@ -1,5 +1,6 @@
-import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
-import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
+import { requireDirecting, excludedFromReview, releasedLease, visible } from '@merv/contracts';
+import { mapAsync, someAsync, everyAsync, checkReceipt, grant, reference } from '@merv/contracts';
+import { target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -467,13 +468,15 @@ export class ReflectionService implements Reflections {
       if (!delegated) {
         if (review.status === 'requested') await this.reviews.checkStart(caller, review.id, tx);
         else await this.reviews.checkSubmit(caller, review.id, undefined, tx);
-      } else
+      } else {
         check(
           review.status === 'requested',
           'review_unavailable',
           'Review already has an owner',
           409,
         );
+        requireDirecting(review, caller.actorId);
+      }
     } else {
       check(snapshot.state !== 'approved', 'reflection_complete', 'Reflection has ended', 409);
       check(

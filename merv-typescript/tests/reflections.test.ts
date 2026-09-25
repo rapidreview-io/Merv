@@ -843,7 +843,8 @@ test('leased lens calls use exact execution evidence, retain context through rel
   }
   wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
   const reviewToken = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
+  // The owner wrote the synthesis, so the review worker is directed by someone else.
+  await f.app.ctx.sessions.registerAgent(await f.actor('Lead', 'operator'), {
     name: 'Review agent',
     runnerId: 'external',
     requestId: 'review-agent',

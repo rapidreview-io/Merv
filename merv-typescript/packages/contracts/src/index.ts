@@ -653,6 +653,27 @@ export const excludedFromReview = (
   review.producerId === actorId ||
   (review.excludedActorIds ?? []).includes(actorId) ||
   (review.provenance?.excludedActorIds ?? []).includes(actorId);
+/**
+ * Whether a worker this authority directs may review. The producer never directs its own
+ * reviewer, with or without provenance; owner-certified contributors direct none either. Two
+ * workers one authority directs are different actors, so either may review the other's work.
+ */
+export const directsIndependently = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
+  authorityId: string,
+) =>
+  review.provenance ? !excludedFromReview(review, authorityId) : review.producerId !== authorityId;
+/** The lease source a review worker would speak for, refused where it may not direct one. */
+export const requireDirecting = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
+  authorityId: string,
+) =>
+  check(
+    directsIndependently(review, authorityId),
+    'review_independence',
+    'A producer or contributor cannot direct the reviewer of its own work',
+    403,
+  );
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
