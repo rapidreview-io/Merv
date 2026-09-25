@@ -43,8 +43,9 @@ if (!role) {
   const path = '/run/merv-isolation/' + 'b'.repeat(64) + '.json';
   const other = createServer().listen(0, '127.0.0.1');
   await new Promise((resolve) => other.once('listening', resolve));
-  const guard = () => child('/opt/merv/runner/supervisor.mjs', ['guardian', ledger, launchId]);
-  const refused = guard();
+  const guard = (options) =>
+    child('/opt/merv/runner/supervisor.mjs', ['guardian', ledger, launchId], options);
+  const refused = guard({ stdio: 'ignore' });
   assert.notEqual(await exited(refused), 0, 'another loopback listener must refuse the launch');
   assert.equal(existsSync(path), false);
   other.close();
