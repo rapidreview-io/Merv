@@ -9,6 +9,7 @@ import {
   type PiRelayFailureRecord,
   type PiRelayGrant,
 } from '../packages/pi/src/relay.js';
+import { moveTool, type PiMoveContext } from '../packages/pi/src/moves.js';
 
 const token = `pir_${'a'.repeat(43)}`;
 const request = {
@@ -352,7 +353,7 @@ test('revalidates after asynchronous admission before accessing provider', async
   assert.equal(f.upstreamCalls.length, 0);
 });
 
-test('bounds concurrent users globally and prevents reused grant IDs from changing identity', async (t) => {
+test('bounds concurrent calls globally and prevents reused grant IDs from changing identity', async (t) => {
   let release!: (value: string) => void;
   const key = new Promise<string>((resolve) => {
     release = resolve;
@@ -368,6 +369,94 @@ test('bounds concurrent users globally and prevents reused grant IDs from changi
   await (await first).text();
   f.updateGrant({ ...grant(), id: 'grant-1', userId: 'changed-user' });
   assert.equal((await send(f)).status, 403);
+});
+
+test("admits one call per conversation, so a person's conversations on one machine run at once", async (t) => {
+  let release!: (value: string) => void;
+  const key = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const f = await fixture({ providerKey: () => key });
+  t.after(() => f.close());
+  const first = send(f);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await send(f)).status, 429, 'the same conversation waits its turn');
+  f.updateGrant({ ...grant(), id: 'grant-2', conversationId: 'conversation-2' });
+  const second = send(f);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  release('private-provider-key');
+  assert.equal((await first).status, 200);
+  assert.equal((await second).status, 200);
+});
+
+test('holds 200 calls at once by default and refuses the 201st', async (t) => {
+  let release!: (value: string) => void;
+  const key = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  const f = await fixture({
+    providerKey: () => key,
+    authority: {
+      async authorize() {
+        calls += 1;
+        return { ...grant(), id: `grant-${calls}`, conversationId: `conversation-${calls}` };
+      },
+      async validate() {},
+    },
+  });
+  t.after(() => f.close());
+  const held = Array.from({ length: 200 }, () => send(f));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((await send(f)).status, 429);
+  release('private-provider-key');
+  assert.deepEqual(
+    new Set((await Promise.all(held)).map((response) => response.status)),
+    new Set([200]),
+  );
+});
+
+test('declares switch_machine only under a grant from a turn that offered it', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const offered = moveTool({
+    now: Date.now(),
+    enabled: true,
+    host: { next: null, draining: null } as PiMoveContext['host'],
+    person: {
+      key: 'user-1:project-1',
+      preferred: 'standard',
+      sticky: null,
+      choseAt: null,
+      moves: [],
+    },
+    conversationId: 'conversation-1',
+    current: {
+      key: 'standard',
+      label: 'Standard',
+      vcpu: 0.5,
+      memoryGiB: 4,
+      diskGB: 8,
+      maxHourlyUsd: 0.074,
+    },
+    targets: [
+      { key: 'large', label: 'Large', vcpu: 2, memoryGiB: 8, diskGB: 16, maxHourlyUsd: 0.22 },
+    ],
+  })!;
+  const payload = {
+    ...request,
+    tools: [
+      {
+        type: 'function',
+        name: 'switch_machine',
+        description: offered.description,
+        parameters: offered.inputSchema,
+      },
+    ],
+  };
+  assert.equal((await send(f, payload)).status, 400);
+  f.updateGrant({ ...grant(), toolNames: ['read_notes', 'switch_machine'] });
+  assert.equal((await send(f, payload)).status, 200);
 });
 
 test('reclaims expired grant counters without evicting live grants', async (t) => {
