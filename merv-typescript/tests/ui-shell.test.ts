@@ -7,6 +7,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 // The credential is read as api.ts is evaluated, so it is stored before anything loads.
@@ -126,6 +128,69 @@ test('the account menu is operated as the menu it says it is', async (t) => {
   await click('Operator');
   await key('Tab');
   assert.equal(account.getAttribute('aria-expanded'), 'false', 'leaving it shuts it');
+});
+
+test('with no theme chosen the page follows the system while it is open, and records no choice', async () => {
+  // The system's scheme, as the page may listen to it either way a media query offers.
+  const listeners = new Set<() => void>();
+  const system = {
+    matches: false,
+    onchange: null as (() => void) | null,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+  };
+  const page = new JSDOM(
+    readFileSync(new URL('../packages/ui/web/index.html', import.meta.url), 'utf8'),
+    {
+      url: 'http://localhost/ui/',
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        window.matchMedia = (() => system) as never;
+      },
+    },
+  );
+  const turn = (dark: boolean) => {
+    system.matches = dark;
+    system.onchange?.();
+    for (const listener of listeners) listener();
+  };
+  const theme = () => page.window.document.documentElement.dataset.theme;
+  assert.equal(theme(), 'light');
+  turn(true);
+  assert.equal(theme(), 'dark', 'the system turned dark after the page loaded');
+  assert.equal(page.window.localStorage.getItem('merv:theme'), null, 'following is not choosing');
+  // A choice made on the page is kept whatever the system does next.
+  page.window.localStorage.setItem('merv:theme', 'light');
+  page.window.document.documentElement.dataset.theme = 'light';
+  turn(false);
+  turn(true);
+  assert.equal(theme(), 'light');
+  page.window.close();
+});
+
+test('the account menu says the theme the page wears, and choosing one records it', async (t) => {
+  t.after(async () => {
+    await unmount();
+    delete document.documentElement.dataset.theme;
+    localStorage.removeItem('merv:theme');
+  });
+  boot('Operator');
+  await open('/paper');
+  // The system turns dark after the rail was drawn, and the page follows it.
+  await act(async () => {
+    document.documentElement.dataset.theme = 'dark';
+  });
+  await click('Operator');
+  assert.equal(
+    document.querySelector('.account-menu [role="menuitem"]')!.textContent,
+    'Theme · dark',
+  );
+  await click('Theme');
+  assert.equal(document.documentElement.dataset.theme, 'light');
+  assert.equal(localStorage.getItem('merv:theme'), 'light');
+  assert.equal(
+    document.querySelector('.account-menu [role="menuitem"]')!.textContent,
+    'Theme · light',
+  );
 });
 
 test('a name that is not the role keeps the role beneath it', async (t) => {
