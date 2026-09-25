@@ -146,6 +146,19 @@ test('a gate passes only when every report line passes', () => {
   assert.equal(passed(probe({ cloudflareEvidence: true }), isolation), false);
   assert.equal(passed(probe({ report: { ok: false } }), isolation), false);
   assert.equal(passed('', isolation), false);
+  // Where the host refuses Codex's own sandbox the report says so; it may not claim the sandbox's check.
+  const workflow = (extra) =>
+    JSON.stringify({ gate: 'linux-workflow-dispatch', codexCalledOnlyTheRelay: true, ...extra });
+  const dispatch = 'linux-workflow-gate.py';
+  assert.equal(passed(workflow({ codexSandboxOnHost: false }), dispatch), true);
+  assert.equal(
+    passed(
+      workflow({ codexSandboxOnHost: true, sessionBearerUnreadableFromShell: true }),
+      dispatch,
+    ),
+    true,
+  );
+  assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
 });
 
 test('release ids match the live Sandboxes catalog and require a digest', () => {
