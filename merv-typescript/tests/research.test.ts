@@ -1270,6 +1270,20 @@ const advanced = async (f: Awaited<ReturnType<typeof fixture>>, id: string) =>
     )
   ).map((row) => JSON.parse(row.data_json));
 
+test('the advance that injects consolidation needs no next-wave choice, even when the plan continues', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const { record } = await reflected(f, planned());
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [accepted.id] });
+  const moved = await f.research.advance(f.owner, {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    requestId: f.id(),
+  });
+  assert.equal(moved.workflow.state, 'consolidating');
+  assert.equal(moved.integrations.length, 1);
+});
+
 test('completing a cycle with nextWave create opens the approved plan as work and the next cycle', async (t) => {
   const f = await fixture(t);
   const carried = await f.app.ctx.tasks.create(f.owner, {

@@ -330,9 +330,10 @@ export class ResearchService implements Research {
                   const choice = parse(nextWaveChoiceSchema, input ?? {});
                   if (choice.nextWave) return [];
                   // Without Git's answer a preflight reads the cycle as completing: the choice
-                  // is asked whenever the plan continues, and honoured only when it completes.
+                  // is asked whenever the plan continues, and honoured only when it completes. The
+                  // transition carries that answer, so an advance that injects is not asked.
                   const record = await this.get(caller, snapshot.id, tx);
-                  return (await this.continuing(caller, record, tx, [], 'complete'))
+                  return (await this.continuing(caller, record, tx, [], choice.move ?? 'complete'))
                     ? ['nextWave']
                     : [];
                 },
