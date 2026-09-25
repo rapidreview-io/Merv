@@ -13,12 +13,20 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodTypeAny } from 'zod';
 import type {} from 'cordis';
 
+export type ConversationUse = 'never' | 'propose' | 'secret';
 /** A tool whose handler receives the input its schema parsed. */
 export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   name: string;
   description: string;
   inputSchema: S;
   readOnly?: boolean;
+  /** How an agent conversation may use this tool (everything a conversation reads reaches the
+   * model provider). Omitted: the agent runs it as its person. 'propose': the agent only proposes
+   * the exact call, which runs as the person when they press Run. 'secret': as 'propose', and its
+   * result (a bearer secret or signed URL) is shown only to the person. 'never': not offered (only
+   * a leased worker may run it). A function of the parsed input returns 'propose' | 'secret' |
+   * undefined for tools where only some uses need the person. */
+  conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
 }
 /** Public tool metadata, including the native project-selection envelope. */

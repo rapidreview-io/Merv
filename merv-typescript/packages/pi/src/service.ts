@@ -391,6 +391,12 @@ export class PiService implements Pi, FleetOwner {
       'Workers cannot control conversations',
       403,
     );
+    check(
+      caller.projectId !== this.config.host?.projectId,
+      'pi_forbidden',
+      'Agent conversations are not available in the Pi host project',
+      403,
+    );
     const actor = await this.scope.require(caller, 'read', tx);
     return digest(
       actor.user

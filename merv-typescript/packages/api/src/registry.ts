@@ -5,6 +5,8 @@ import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
   RemoteToolDefinition,
+  ConversationUse,
+  ToolDefinition,
   ToolCatalog,
   ToolDescription,
   ToolInvocation,
@@ -17,6 +19,26 @@ export type { ToolDescription } from './types.js';
 export function isRemoteTool(tool: AnyToolDefinition): tool is RemoteToolDefinition {
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
 }
+
+/** How a conversation may use a tool with this parsed input (ToolDefinition.conversation);
+ * undefined runs it as the person. A remote tool is never offered to a conversation at all. */
+export function conversationUse(
+  tool: AnyToolDefinition,
+  input: unknown,
+): ConversationUse | undefined {
+  if (isRemoteTool(tool)) return undefined;
+  const use = tool.conversation;
+  return typeof use === 'function' ? use(input) : use;
+}
+/** A result holding a bearer credential: a string `token` at any depth (deeper than 24 counts). */
+const holdsToken = (value: unknown, depth = 0): boolean =>
+  value !== null &&
+  typeof value === 'object' &&
+  (depth > 24 ||
+    Object.entries(value).some(
+      ([key, entry]) =>
+        (key === 'token' && typeof entry === 'string') || holdsToken(entry, depth + 1),
+    ));
 
 /** Canonical public metadata; project selection is a transport envelope, not handler input. */
 export function describeTool(tool: AnyToolDefinition): ToolDescription {
@@ -358,7 +380,8 @@ export class ToolRegistry implements Tools {
   ): Promise<void> {
     this.fenceConversation(registration);
     if (
-      !this.reads(entry) ||
+      !this.conversable(entry) ||
+      conversationUse(entry.definition, input) !== undefined ||
       !(await this.conversationDecision(
         registration,
         registration.provider.allowsTool(caller, entry.name),
@@ -404,6 +427,10 @@ export class ToolRegistry implements Tools {
     // handlers may be instrumented, but mutating their definition must not change policy.
     return !entry.remote && entry.description.annotations?.readOnlyHint === true;
   }
+  /** A native tool an agent conversation is offered: any but those only a leased worker runs. */
+  private conversable(entry: Entry): boolean {
+    return !entry.remote && (entry.definition as ToolDefinition).conversation !== 'never';
+  }
 
   private async visible(caller?: Caller): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
@@ -416,7 +443,7 @@ export class ToolRegistry implements Tools {
       [...this.entries.values()],
       async (entry) =>
         (!conversation ||
-          (this.reads(entry) &&
+          (this.conversable(entry) &&
             (await this.conversationDecision(
               conversation,
               conversation.provider.allowsTool(caller!, entry.name),
@@ -468,12 +495,8 @@ export class ToolRegistry implements Tools {
     const conversation = caller.conversation ? this.conversationPolicy() : undefined;
     const entry = this.entries.get(name);
     if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
-    if (conversation && !this.reads(entry))
-      throw new MervError(
-        'tool_forbidden',
-        'Conversations may only invoke native read-only tools',
-        403,
-      );
+    if (conversation && !this.conversable(entry))
+      throw new MervError('tool_forbidden', 'This tool is not offered to conversations', 403);
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
@@ -526,6 +549,12 @@ export class ToolRegistry implements Tools {
           };
           const result =
             this.readScope && this.reads(entry) ? await this.readScope(run) : await run();
+          if (conversation && holdsToken(result))
+            throw new MervError(
+              'tool_result_secret',
+              'This result carries a credential and is never returned to a conversation',
+              403,
+            );
           // Read handlers can wait for external storage while their PostgreSQL snapshot
           // retains old permissions. Reauthorize after releasing that snapshot, before
           // handing any bytes or signed URL to the caller. Mutations keep their own

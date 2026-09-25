@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   check,
   digest,
+  eventSource,
   inTransaction,
   MervError,
   newId,
@@ -218,7 +219,13 @@ export class FleetService implements Fleet {
       return structuredClone(allocation);
     });
   }
-  private async save(tx: Transaction, a: FleetAllocation, before: FleetAllocation): Promise<void> {
+  /** `caller` is who changed it, when not the allocation's source or Fleet itself. */
+  private async save(
+    tx: Transaction,
+    a: FleetAllocation,
+    before: FleetAllocation,
+    caller?: Caller,
+  ): Promise<void> {
     if (digest(a) === digest(before)) return;
     const moved = a.phase !== before.phase || a.intent !== before.intent;
     if (moved) a.updatedAt = this.time();
@@ -231,10 +238,15 @@ export class FleetService implements Fleet {
     if (moved)
       await this.state.appendEvent(tx, {
         projectId: a.projectId,
-        actorId: a.source.actorId,
+        actorId: caller?.actorId ?? a.source.actorId,
         type: 'fleet.changed',
         subjectId: a.id,
-        data: { phase: a.phase, intent: a.intent, owner: a.owner },
+        data: {
+          phase: a.phase,
+          intent: a.intent,
+          owner: a.owner,
+          ...(caller ? eventSource(caller) : {}),
+        },
       });
   }
   async request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation> {
@@ -365,7 +377,7 @@ export class FleetService implements Fleet {
       const before = structuredClone(a);
       if (a.phase !== 'released' && a.intent !== 'stop') a.intent = intent;
       if (a.phase === 'queued' && a.intent !== 'run') a.phase = 'released';
-      await this.save(tx, a, before);
+      await this.save(tx, a, before, caller);
       this.kick();
       return a;
     });

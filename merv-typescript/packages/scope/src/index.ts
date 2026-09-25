@@ -301,7 +301,8 @@ export class ProjectScope implements Scope {
       'A worker session cannot delegate another session',
       403,
     );
-    check(!caller.conversation, 'nested_session', 'A conversation cannot delegate', 403);
+    // A conversation acts with exactly its person's authority: the source it was given.
+    if (caller.conversation) return (await this.authorize(caller, 'read', tx)).source!;
     await this.require(caller, 'read', tx);
     const base = { actorId: caller.actorId, projectId: caller.projectId };
     if (caller.human) {
@@ -709,9 +710,9 @@ export class ProjectScope implements Scope {
       let source: DelegationSource | undefined;
       if (caller.conversation) {
         check(
-          permission === 'read' && !row.session_id,
+          !row.session_id,
           'conversation_forbidden',
-          'Conversations only read as their original source actor',
+          'Conversations act only as their original source actor',
           403,
         );
         if (!('transactionId' in sql))
@@ -727,7 +728,8 @@ export class ProjectScope implements Scope {
           'Conversation source does not match this caller',
           403,
         );
-        const original = await this.requireDelegation(source, 'read', sql as Transaction);
+        // The person's live role, and a key's own limits, decide every permission.
+        const original = await this.requireDelegation(source, permission, sql as Transaction);
         check(
           !original.sessionId && original.id === row.id && original.projectId === row.project_id,
           'conversation_forbidden',
@@ -973,8 +975,7 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      await this.require(caller, 'admin', tx);
-      this.legacyAdministration(caller);
+      await this.administer(caller, tx);
       const result = await this.issue(
         tx,
         caller.projectId,
@@ -987,7 +988,7 @@ export class ProjectScope implements Scope {
         actorId: caller.actorId,
         type: 'actor.created',
         subjectId: result.actor.id,
-        data: { name: result.actor.name, role: result.actor.role },
+        data: { name: result.actor.name, role: result.actor.role, ...eventSource(caller) },
       });
       return result;
     });
@@ -995,9 +996,9 @@ export class ProjectScope implements Scope {
   async actorCredentials(caller: Caller, actorId = caller.actorId): Promise<ActorCredential[]> {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
-      await this.require(caller, actorId === caller.actorId ? 'read' : 'admin', tx);
       // A read of one's own metadata is not administration; a session or key holds none.
-      if (actorId !== caller.actorId) this.legacyAdministration(caller);
+      if (actorId === caller.actorId) await this.require(caller, 'read', tx);
+      else await this.administer(caller, tx);
       await this.actorRow(tx, caller.projectId, actorId);
       return (
         await tx.all<CredentialRow>(
@@ -1015,14 +1016,13 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      await this.require(caller, 'admin', tx);
-      this.legacyAdministration(caller);
+      const { credentialId } = await this.administer(caller, tx);
       const target = await this.actorRow(tx, caller.projectId, input.actorId);
       this.machineActor(target);
       check(target.active, 'actor_revoked', 'Cannot issue credentials for an inactive actor', 409);
       const current =
-        target.id === caller.actorId && caller.credentialId !== undefined
-          ? await this.credentialRow(tx, caller.projectId, caller.credentialId)
+        target.id === caller.actorId && credentialId !== undefined
+          ? await this.credentialRow(tx, caller.projectId, credentialId)
           : undefined;
       const time = this.time();
       const expiresAt = expiry(
@@ -1036,7 +1036,7 @@ export class ProjectScope implements Scope {
         actorId: caller.actorId,
         type: 'actor.credential_issued',
         subjectId: issued.credential.id,
-        data: { actorId: target.id, expiresAt },
+        data: { actorId: target.id, expiresAt, ...eventSource(caller) },
       });
       return issued;
     });
@@ -1048,11 +1048,10 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      await this.require(caller, 'admin', tx);
-      this.legacyAdministration(caller);
+      const { credentialId } = await this.administer(caller, tx);
       const previous = await this.credentialRow(tx, caller.projectId, input.credentialId);
       check(
-        previous.id !== caller.credentialId,
+        previous.id !== credentialId,
         'self_rotation',
         'Cannot atomically rotate the credential authenticating this call. Use actor.issue_token, verify the new token, then revoke the old credential.',
         409,
@@ -1074,10 +1073,10 @@ export class ProjectScope implements Scope {
       // A self-rotation extends neither the credential it replaces nor the one making the call.
       if (target.id === caller.actorId) {
         this.selfExpiry(expiresAt, previous.expires_at);
-        if (caller.credentialId !== undefined)
+        if (credentialId !== undefined)
           this.selfExpiry(
             expiresAt,
-            (await this.credentialRow(tx, caller.projectId, caller.credentialId)).expires_at,
+            (await this.credentialRow(tx, caller.projectId, credentialId)).expires_at,
           );
       }
       const result = await tx.run(
@@ -1093,7 +1092,7 @@ export class ProjectScope implements Scope {
         actorId: caller.actorId,
         type: 'actor.credential_rotated',
         subjectId: issued.credential.id,
-        data: { actorId: target.id, previousId: previous.id, expiresAt },
+        data: { actorId: target.id, previousId: previous.id, expiresAt, ...eventSource(caller) },
       });
       return issued;
     });
@@ -1101,13 +1100,11 @@ export class ProjectScope implements Scope {
   async revokeCredential(caller: Caller, credentialId: string): Promise<void> {
     caller = structuredClone(caller);
     await this.state.transaction(async (tx) => {
-      await this.require(caller, 'admin', tx);
-      this.legacyAdministration(caller);
+      const { credentialId: own } = await this.administer(caller, tx);
       const target = await this.credentialRow(tx, caller.projectId, credentialId);
       this.machineActor(await this.actorRow(tx, caller.projectId, target.actor_id));
       check(
-        target.actor_id !== caller.actorId ||
-          (caller.credentialId !== undefined && target.id !== caller.credentialId),
+        target.actor_id !== caller.actorId || (own !== undefined && target.id !== own),
         'self_revoke',
         'Cannot revoke the credential authenticating this call; verify another credential first',
       );
@@ -1123,7 +1120,7 @@ export class ProjectScope implements Scope {
         actorId: caller.actorId,
         type: 'actor.credential_revoked',
         subjectId: target.id,
-        data: { actorId: target.actor_id, revokedAt: time },
+        data: { actorId: target.actor_id, revokedAt: time, ...eventSource(caller) },
       });
     });
   }
@@ -1150,13 +1147,26 @@ export class ProjectScope implements Scope {
       403,
     );
   }
-  private legacyAdministration(caller: Caller): void {
+  /** Admin authority over independent actors and their credentials, which a user key or a worker
+   * session never holds, nor a conversation started with a key. Returns the credential the call
+   * rests on (a conversation's source credential), which the self-revoke and self-rotate checks
+   * name. */
+  private async administer(caller: Caller, tx: Transaction): Promise<{ credentialId?: string }> {
+    const { source } = await this.authorize(caller, 'admin', tx);
+    const via = caller.conversation ? source : undefined;
     check(
-      caller.key === undefined && caller.session === undefined,
+      caller.key === undefined && caller.session === undefined && via?.kind !== 'key',
       'forbidden',
       'User keys and worker sessions cannot administer independent actor credentials or actors',
       403,
     );
+    return {
+      credentialId: via
+        ? via.kind === 'actor'
+          ? via.credentialId
+          : undefined
+        : caller.credentialId,
+    };
   }
   private async credentialRow(
     sql: Sql,
@@ -1192,8 +1202,7 @@ export class ProjectScope implements Scope {
   async revokeActor(caller: Caller, actorId: string): Promise<void> {
     caller = structuredClone(caller);
     await this.state.transaction(async (tx) => {
-      await this.require(caller, 'admin', tx);
-      this.legacyAdministration(caller);
+      await this.administer(caller, tx);
       this.machineActor(await this.actorRow(tx, caller.projectId, actorId));
       check(
         actorId !== caller.actorId,
@@ -1212,7 +1221,7 @@ export class ProjectScope implements Scope {
         actorId: caller.actorId,
         type: 'actor.revoked',
         subjectId: actorId,
-        data: {},
+        data: { ...eventSource(caller) },
       });
     });
   }

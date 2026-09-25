@@ -755,7 +755,15 @@ export function eventSource(caller: Caller): Data {
       ? {
           source: { kind: 'user-key', keyId: caller.key.id, membershipId: caller.key.membershipId },
         }
-      : {};
+      : caller.conversation
+        ? {
+            source: {
+              kind: 'conversation',
+              conversationId: caller.conversation.id,
+              commandId: caller.conversation.commandId,
+            },
+          }
+        : {};
 }
 export interface Actor {
   /** Credentialless service owning this actor, when present. */
