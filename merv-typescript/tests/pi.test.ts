@@ -650,9 +650,13 @@ test('a turn ended early keeps the words it streamed, bounded like any message, 
   const { work } = await f.pi.next(bound.token, { workerId: 'worker_1' });
   const input = { ...bound.input, commandId: work!.command.id };
   await f.pi.begin(bound.token, input);
+  const smile = '\u{1F600}';
   await say(
     input,
-    ...Array.from({ length: 16 }, (): [string, string] => ['text', 'x'.repeat(8192)]),
+    ...Array.from({ length: 16 }, (_, i): [string, string] => [
+      'text',
+      i < 15 ? 'x'.repeat(8191) : smile.repeat(4096),
+    ]),
   );
   await f.restart();
   const commands = (await f.pi.snapshot(f.operator, conversation.id)).commands;
@@ -664,7 +668,12 @@ test('a turn ended early keeps the words it streamed, bounded like any message, 
       [long.id, 'service_unavailable', 2],
     ],
   );
-  assert.equal(commands[2].messages[1].text.length, 128_000);
+  // The cap falls inside a character: its half becomes U+FFFD, so Postgres still reads the row.
+  assert.equal(commands[2].messages[1].text, `${'x'.repeat(8191 * 15)}${smile.repeat(2567)}\uFFFD`);
+  const statuses = await f.state.read((sql) =>
+    sql.all<{ status: string }>("SELECT data_json::jsonb->>'status' AS status FROM pi_commands"),
+  );
+  assert.equal(statuses.filter(({ status }) => status === 'interrupted').length, 3);
 });
 
 test('revoking the person’s credential fails their turn, not the machine', async (t) => {

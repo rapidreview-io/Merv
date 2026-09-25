@@ -1427,10 +1427,13 @@ export class PiService implements Pi, FleetOwner {
       const live = this.live.get(conversation.id);
       const kept = live?.streamed?.commandId === command.id ? live.streamed.text : '';
       const added = value.events.map((event) => (event.type === 'text' ? event.text : '')).join('');
-      this.live.set(conversation.id, {
-        ...live,
-        streamed: { commandId: command.id, text: (kept + added).slice(0, messageChars) },
-      });
+      const joined = kept + added;
+      // A cut inside a character would leave half of it, which Postgres refuses as JSON.
+      const text =
+        joined.length < messageChars
+          ? joined
+          : joined.slice(0, messageChars).replace(/[\uD800-\uDBFF]$/, '\uFFFD');
+      this.live.set(conversation.id, { ...live, streamed: { commandId: command.id, text } });
       this.report(conversation.id, command.id, 'writing');
     }
     return { accepted: true };
