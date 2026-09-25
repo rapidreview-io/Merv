@@ -8,6 +8,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
+import { isRemoteTool } from '../packages/api/src/registry.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
+import { piTool } from '../packages/pi/src/relay-schema.js';
+import { piModelToolName } from '../packages/pi/src/tool-names.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -277,6 +281,27 @@ test('application stop disposes Cordis and the state store after API shutdown re
   } finally {
     await originalStop();
     await app.ctx.fiber.dispose();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test('every tool reaches an agent conversation as the relay accepts it, under its own model name', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const offered = (await app.ctx.tools.list()).filter(
+      (tool): tool is ToolDefinition =>
+        !isRemoteTool(tool) && tool.conversation !== 'never' && !tool.name.startsWith('pi.'),
+    );
+    // A tool the relay would refuse is dropped from every turn: none may be.
+    assert.deepEqual(
+      offered.filter((tool) => !piTool(tool)).map(({ name }) => name),
+      [],
+    );
+    const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
+    assert.equal(new Set(models).size, models.length);
+    assert.ok(models.length <= 128, `${models.length} tools`);
+  } finally {
+    await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
 });

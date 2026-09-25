@@ -69,8 +69,11 @@ export interface PiCommandRecord extends PiCommand {
   inputHash: string;
   workerId: string | null;
   resultHash: string | null;
-  /** switch_machine was offered with this turn's work: its grant and result may use it. */
+  /** switch_machine was offered with this turn's claim: a claim served again offers it again. */
   canMove?: true;
+  /** The native names this turn offers, fixed at its first serve: its relay grant names exactly
+   * these, and its tool calls and outcomes only these. Absent until then. */
+  tools?: string[];
 }
 export interface PiEvent {
   sequence: number;
@@ -280,8 +283,10 @@ export interface PiWork {
   model: string;
   modelBaseUrl: string;
   modelToken: string;
-  /** Native names; machine.switch (model name switch_machine) only when offered this turn. */
-  tools: { name: string; description: string; inputSchema: Data }[];
+  /** Native names, which the worker calls by piModelToolName (machine.switch, only when offered
+   * this turn, is switch_machine). readOnly false marks a write: tried once, run in order, its
+   * result always shown whole. Absent (an older Main) is a read. */
+  tools: { name: string; description: string; inputSchema: Data; readOnly?: boolean }[];
   /** At most 4 lines of at most 300 characters the worker appends to this turn's system prompt,
    * e.g. the machine it runs on and a move that failed. */
   notes: string[];

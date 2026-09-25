@@ -483,11 +483,18 @@ test('a recoverable tool error reaches the model as a tool result', async () => 
   assert.equal(lost.modelRequests.length, 1);
 });
 
-test('a response with more tool calls than a turn allows ends before another model request', async () => {
+test('call 65 is refused before it runs, the next request carries tool_choice none, and the answer completes', async () => {
   const app = await fixture({ toolCall: true, calls: 65 });
   await app.run();
-  assert.deepEqual(app.failures, ['cmd_1']);
-  assert.equal(app.modelRequests.length, 1);
+  assert.deepEqual(app.failures, []);
+  assert.equal(app.toolRequests, 64);
+  assert.deepEqual(
+    app.modelRequests.map((request) => request.tool_choice),
+    [undefined, 'none'],
+  );
+  assert.match(JSON.stringify(app.modelRequests[1].input), /used its 64 tool calls: answer now/);
+  assert.equal(app.completions[0].outcomes.length, 64);
+  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
 });
 
 test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
@@ -1023,7 +1030,10 @@ function slotServer(
       const reply = handlers.next(bodies('next').length, body);
       return reply instanceof Response ? reply : json(reply);
     }
-    if (route === 'tool') return json({ result: handlers.tool?.(body) ?? { title: 'Project' } });
+    if (route === 'tool') {
+      const result = await handlers.tool?.(body);
+      return result instanceof Response ? result : json({ result: result ?? { title: 'Project' } });
+    }
     return json(accepted[route]);
   };
   return {
@@ -1150,7 +1160,7 @@ test('an assignment for another slot or with oversized notes is failed and never
     assignment('a', { hostId: 'pih_2' }),
     assignment('a', { runtimeId: 'flt_other' }),
     assignment('a', { epoch: 2 }),
-    { ...assignment('a'), notes: ['1', '2', '3', '4', '5'] },
+    { ...assignment('a'), notes: ['1', '2', '3', '4', '5', '6', '7', '8', '9'] },
     { ...assignment('a'), notes: ['x'.repeat(301)] },
   ]) {
     const server = slotServer(3, {
@@ -1168,19 +1178,19 @@ test('an assignment for another slot or with oversized notes is failed and never
   }
 });
 
-test('switch_machine is offered as machine.switch and sends only its machine and reason', async () => {
-  const described = (name: string) => ({
+test('any offered tool is exposed under its model name, and any object input is forwarded', async () => {
+  const described = (name: string, readOnly?: boolean) => ({
     name,
     description: name,
-    inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+    ...(readOnly === undefined ? {} : { readOnly }),
   });
-  const tools = ['project.get', 'task.list', 'artifact.list', 'artifact.get', 'artifact.read'];
   const reason = 'Out of memory loading the dataset';
-  const switchCall = (id: number, input: object) => ({
+  const calling = (id: number, name: string, input: object) => ({
     ...call,
     id: `fc_${id}`,
     call_id: `call_${id}`,
-    name: 'switch_machine',
+    name,
     arguments: JSON.stringify(input),
   });
   const requests: Record<string, unknown>[] = [];
@@ -1193,17 +1203,10 @@ test('switch_machine is offered as machine.switch and sends only its machine and
             ? {
                 ...assignment('a'),
                 tools: [
-                  ...tools.map(described),
-                  // Open to other fields, so the worker's own check is what refuses them.
-                  {
-                    name: 'machine.switch',
-                    description: 'Move to a bigger machine',
-                    inputSchema: {
-                      type: 'object',
-                      properties: { machine: { type: 'string' }, reason: { type: 'string' } },
-                      required: ['machine', 'reason'],
-                    },
-                  },
+                  described('paper.cite', false),
+                  described('workflow.status_and_next', true),
+                  described('feed.unknown_to_the_worker'),
+                  described('machine.switch'),
                 ],
               }
             : null,
@@ -1214,42 +1217,86 @@ test('switch_machine is offered as machine.switch and sends only its machine and
       return new Response(
         requests.length === 1
           ? sse([
-              switchCall(1, { machine: 'large', reason, projectId: 'proj_2' }),
-              switchCall(2, { machine: 'large', reason }),
+              calling(1, 'switch_machine', { machine: 'large', reason, projectId: 'proj_2' }),
+              calling(2, 'paper_cite', { url: 'https://arxiv.org/abs/1', nested: { a: [1] } }),
             ])
-          : sse([message('Moving to Large')], 'Moving to Large'),
+          : sse([message('Done')], 'Done'),
       );
     },
-    tool: () => ({ status: 'starting' }),
+    tool: (body) => ({ ran: body.name }),
   });
   await server.run();
   assert.deepEqual(
     (requests[0].tools as { name: string }[]).map((tool) => tool.name),
+    ['paper_cite', 'workflow_status_and_next', 'feed_unknown_to_the_worker', 'switch_machine'],
+  );
+  // Main checks every call as the person; the worker forwards what the model sent.
+  assert.deepEqual(
+    server.bodies('tool').map(({ name, input }) => ({ name, input })),
     [
-      'project_get',
-      'task_list',
-      'artifact_list',
-      'artifact_get',
-      'artifact_read',
-      'switch_machine',
+      { name: 'machine.switch', input: { machine: 'large', reason, projectId: 'proj_2' } },
+      { name: 'paper.cite', input: { url: 'https://arxiv.org/abs/1', nested: { a: [1] } } },
     ],
   );
-  assert.deepEqual(server.bodies('tool'), [
-    {
-      workerId: 'worker_1',
-      conversationId: 'conv_a',
-      commandId: 'cmd_a',
-      name: 'machine.switch',
-      input: { machine: 'large', reason },
+  assert.deepEqual(
+    server.bodies('complete')[0].outcomes.map(({ name }: { name: string }) => name),
+    ['machine.switch', 'paper.cite'],
+  );
+});
+
+test('a write is posted once, even after a 503, and a read is retried; writes in one reply run in order', async () => {
+  const tools = [
+    { ...tool, name: 'task.create', readOnly: false },
+    { ...tool, name: 'feed.post', readOnly: false },
+    { ...tool, name: 'task.get', readOnly: true },
+  ];
+  const calling = (id: number, name: string) => ({
+    ...call,
+    id: `fc_${id}`,
+    call_id: `call_${id}`,
+    name,
+  });
+  let failed = 0;
+  const log: string[] = [];
+  let models = 0;
+  const server = slotServer(3, {
+    next(count) {
+      if (server.bodies('complete').length) server.controller.abort();
+      return { work: count === 1 ? { ...assignment('a'), tools } : null };
     },
-  ]);
-  assert.match(JSON.stringify(requests[1].input), /Tool arguments are not allowed/);
-  assert.deepEqual(server.bodies('complete')[0].outcomes, [
-    {
-      callId: 'call_2',
-      name: 'machine.switch',
-      input: { machine: 'large', reason },
-      output: { status: 'starting' },
+    model() {
+      models++;
+      return new Response(
+        models === 1
+          ? sse([calling(1, 'task_create'), calling(2, 'feed_post'), calling(3, 'task_get')])
+          : sse([message('Done')], 'Done'),
+      );
     },
-  ]);
+    async tool(body) {
+      const name = String(body.name);
+      log.push(`start ${name}`);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      log.push(`end ${name}`);
+      return name !== 'feed.post' && failed++ < 2
+        ? json({ error: { code: 'unavailable', message: 'Busy' } }, 503)
+        : { ran: name };
+    },
+  });
+  await server.run();
+  const posted = server.bodies('tool').map(({ name }) => name);
+  assert.equal(posted.filter((name) => name === 'task.create').length, 1);
+  assert.equal(posted.filter((name) => name === 'task.get').length, 2);
+  // The reply's calls run one at a time, in order, as it holds writes.
+  assert.deepEqual(
+    log,
+    ['task.create', 'feed.post', 'task.get', 'task.get'].flatMap((name) => [
+      `start ${name}`,
+      `end ${name}`,
+    ]),
+  );
+  assert.deepEqual(
+    server.bodies('complete')[0].outcomes.map(({ name }: { name: string }) => name),
+    ['feed.post', 'task.get'],
+  );
+  assert.equal(server.bodies('fail').length, 0);
 });

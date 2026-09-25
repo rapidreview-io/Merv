@@ -172,7 +172,7 @@ export class PiModelRelay {
       totalTimeoutMs: limit(config.totalTimeoutMs, turnCeilingMs),
       idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
       maxConcurrent: limit(config.maxConcurrent, 200),
-      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 32),
+      maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 72),
       maxGrantEntries: limit(config.maxGrantEntries, 4096),
     };
   }

@@ -159,7 +159,7 @@ export class FakeRuntimes implements SandboxRuntimes {
  * project with an operator. Tests tick Fleet and Pi themselves. */
 export async function fixture(
   t: TestContext,
-  options: { baseUrl?: string; startTime?: number; pi?: PiConfig } = {},
+  options: { baseUrl?: string; startTime?: number; pi?: PiConfig; machines?: number } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-pi-service-'));
   const state = await openState(directory);
@@ -232,7 +232,12 @@ export async function fixture(
       state,
       scope,
       runtimes,
-      { enabled: true, globalLimit: 8, projectLimit: 8, allocationTimeoutSeconds: 3600 },
+      {
+        enabled: true,
+        globalLimit: options.machines ?? 8,
+        projectLimit: options.machines ?? 8,
+        allocationTimeoutSeconds: 3600,
+      },
       clock,
     ),
   );
@@ -323,6 +328,24 @@ export async function fixture(
     checkpoint,
     checkpointHash: sha(checkpoint),
   });
+  /** `caller`'s new conversation, with a turn a worker has claimed and begun on its person's
+   * host, which may already run. */
+  async function begun(caller: Caller, text = 'hello') {
+    const conversation = await create(caller);
+    const command = await send(conversation, text, caller);
+    const credential = await token(command.runtimeId);
+    await fleet.tick();
+    await fleet.tick();
+    const { work } = await pi.next(credential, { workerId: 'worker_1' });
+    assert.ok(work);
+    const input = {
+      conversationId: conversation.id,
+      commandId: work.command.id,
+      workerId: 'worker_1',
+    };
+    assert.deepEqual(await pi.begin(credential, input), { apply: true });
+    return { conversation, token: credential, work, input };
+  }
   /** Begins and completes a claimed turn. */
   const finish = async (bound: Awaited<ReturnType<typeof claimed>>, tree?: string) => {
     await pi.begin(bound.token, bound.input);
@@ -346,6 +369,7 @@ export async function fixture(
     hosts,
     person,
     claimed,
+    begun,
     completion,
     finish,
     get pi() {

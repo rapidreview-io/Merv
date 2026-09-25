@@ -6,6 +6,7 @@ import { hostMigration, migration } from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
 import { openState } from './fixtures/state.js';
 import { code, fixture, offers, type PiFixture } from './fixtures/pi.js';
+import { piModelToolName } from '../packages/pi/src/tool-names.js';
 
 const login = (f: PiFixture, subject: string) =>
   f.scope.acceptVerifiedIdentity({
@@ -608,9 +609,12 @@ test('the agent moves up without asking where its person may, within capacity, a
     assert.ok(turn.work.tools.some(({ name }) => name === 'machine.switch'));
     await f.pi.begin(turn.token, turn.input);
   }
-  assert.ok(
-    (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.includes('switch_machine'),
+  // The grant names exactly the tools the turn was offered, switch_machine among them.
+  assert.deepEqual(
+    (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.sort(),
+    bound.work.tools.map(({ name }) => piModelToolName(name)).sort(),
   );
+  assert.ok(bound.work.tools.some(({ name }) => name === 'machine.switch'));
   const call = (turn: typeof bound, machine: string) =>
     f.pi.tool(turn.token, {
       ...turn.input,

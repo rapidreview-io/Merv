@@ -37,6 +37,7 @@ import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piTitle } from './relay.js';
+import { piTool } from './relay-schema.js';
 import { piModelToolName } from './tool-names.js';
 import type {
   Pi,
@@ -73,22 +74,6 @@ const active = new Set(['waiting', 'starting', 'working', 'saving']);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
-const constraints: Record<string, z.ZodTypeAny> = {
-  'project.get': z.object({}).strict(),
-  'task.list': z.object({}).strict(),
-  'artifact.list': z.object({}).strict(),
-  'artifact.get': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
-  'artifact.read': z.object({ artifactId: z.string().min(1).max(200) }).strict(),
-};
-export const piReadTools = Object.freeze(Object.keys(constraints));
-const phrases: Record<string, string> = {
-  'project.get': 'Reading the project',
-  'task.list': 'Listing tasks',
-  'artifact.list': 'Listing files',
-  'artifact.get': 'Reading a file',
-  'artifact.read': 'Reading a file',
-  'machine.switch': 'Moving to a bigger machine',
-};
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
 /** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
@@ -128,6 +113,7 @@ const publicCommand = (record: PiCommandRecord): PiCommand => {
     workerId: _worker,
     resultHash: _result,
     canMove: _move,
+    tools: _tools,
     ...value
   } = record;
   return value;
@@ -228,20 +214,11 @@ export class PiService implements Pi, FleetOwner {
       }),
     );
     this.disposers.push(
+      // Every native tool but Pi's own, run as the person: Scope applies their live role, and each
+      // tool's own registration says what only the person may run (ToolDefinition.conversation).
       this.tools.registerConversationPolicy({
-        allowsTool: async (caller, name) => {
-          await this.scope.require(caller, 'read');
-          return Object.hasOwn(constraints, name);
-        },
-        validate: async (caller, name, input) => {
-          await this.scope.require(caller, 'read');
-          check(
-            Object.hasOwn(constraints, name) && constraints[name].safeParse(input).success,
-            'pi_tool_forbidden',
-            'Conversation tool or arguments are not allowed',
-            403,
-          );
-        },
+        allowsTool: async (_caller, name) => !name.startsWith('pi.'),
+        validate: async () => {},
       }),
     );
     await this.tick();
@@ -1066,17 +1043,18 @@ export class PiService implements Pi, FleetOwner {
       'Conversation command is no longer active',
       409,
     );
-    if (person)
-      await this.scope.requireDelegation(conversation.source, 'read', tx).catch((error) => {
-        if (error instanceof MervError && [401, 403].includes(error.status))
-          throw new MervError(
-            'pi_authority_stale',
-            'Conversation authority is no longer active',
-            403,
-          );
-        throw error;
-      });
-    return { conversation, command };
+    const actor = person
+      ? await this.scope.requireDelegation(conversation.source, 'read', tx).catch((error) => {
+          if (error instanceof MervError && [401, 403].includes(error.status))
+            throw new MervError(
+              'pi_authority_stale',
+              'Conversation authority is no longer active',
+              403,
+            );
+          throw error;
+        })
+      : undefined;
+    return { conversation, command, actor };
   }
 
   async next(token: string, input: unknown, holdMs = 0): Promise<PiNextReply> {
@@ -1124,23 +1102,29 @@ export class PiService implements Pi, FleetOwner {
         checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
       }
       const turn = { conversationId: conversation.id, commandId: command.id, workerId };
-      await this.read((tx) => this.bound(token, turn, tx));
+      const { actor } = await this.read((tx) => this.bound(token, turn, tx));
       const caller = this.conversationCaller(conversation, command);
-      const tools = (await this.tools.describe(caller)).map((tool) => {
-        const artifact = tool.name === 'artifact.get' || tool.name === 'artifact.read';
-        const inputSchema: Data = {
-          type: 'object',
-          properties: artifact
-            ? { artifactId: { type: 'string', minLength: 1, maxLength: 200 } }
-            : {},
-          required: artifact ? ['artifactId'] : [],
-          additionalProperties: false,
-        };
-        const description =
-          tool.name === 'artifact.read'
-            ? 'Read immutable artifact content in this project. Only inline reads are available; no download URLs. Long content is truncated.'
-            : (tool.description ?? tool.name);
-        return { name: tool.name, description, inputSchema };
+      // Every tool the person may use here, read-only for a reader, whose every other call a
+      // handler would refuse.
+      const described = (await this.tools.list(caller)).flatMap((definition) => {
+        const tool = !('kind' in definition) && piTool(definition);
+        return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
+      });
+      // The offered list is fixed for the turn: a claim served again keeps it, and the model
+      // grant names exactly it. switch_machine comes first, so no native tool's model name takes
+      // its place.
+      const tools = await this.state.transaction(async (tx) => {
+        const current = (await this.bound(token, turn, tx)).command;
+        if (!current.tools) {
+          const names = new Set<string>();
+          current.tools = [...(offered ? [offered] : []), ...described]
+            .filter(
+              ({ name }) => !names.has(piModelToolName(name)) && names.add(piModelToolName(name)),
+            )
+            .map(({ name }) => name);
+          await this.saveCommand(tx, current);
+        }
+        return current.tools;
       });
       this.streams.changed(conversation.id, command.id);
       return {
@@ -1149,7 +1133,9 @@ export class PiService implements Pi, FleetOwner {
         model: this.config.model,
         modelBaseUrl: `${new URL(this.config.baseUrl!).origin}/pi-model`,
         modelToken: this.modelToken(command),
-        tools: offered ? [...tools, offered] : tools,
+        tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
+          tools.includes(name),
+        ),
         notes,
       };
     } catch {
@@ -1367,19 +1353,38 @@ export class PiService implements Pi, FleetOwner {
       'Conversation turn is not working',
       409,
     );
+    check(
+      command.tools?.includes(value.name),
+      'pi_tool_forbidden',
+      'This tool was not offered in this turn',
+      403,
+    );
     const key = `${conversation.id}:${command.id}`;
     this.progressAt.set(key, this.clock());
-    this.report(conversation.id, command.id, 'tool', phrases[value.name]);
+    this.report(
+      conversation.id,
+      command.id,
+      'tool',
+      value.name === 'machine.switch' ? 'Moving to a bigger machine' : `Using ${value.name}`,
+    );
     const result = await (
       value.name === 'machine.switch'
         ? this.switchMachine(conversation, command, value.input)
         : this.tools.call(value.name, this.conversationCaller(conversation, command), value.input)
     )
-      .catch((error: unknown) => {
-        // A wrong ID or input is the model's to correct; authority failures still end the call.
-        if (error instanceof MervError && [400, 404].includes(error.status))
-          return { error: { code: error.code, message: error.message } };
-        throw error;
+      .catch(async (error: unknown) => {
+        // A turn that ended, or whose person lost access here, ends with its call; any other
+        // refusal, the person's role included, is the model's to explain.
+        await this.read((tx) => this.bound(token, value, tx));
+        return error instanceof MervError
+          ? {
+              error: {
+                code: error.code,
+                message: error.message,
+                ...(error.details === undefined ? {} : { details: error.details }),
+              },
+            }
+          : { error: { code: 'tool_failed', message: 'The tool failed unexpectedly' } };
       })
       .finally(() => {
         this.progressAt.set(key, this.clock());
@@ -1420,12 +1425,6 @@ export class PiService implements Pi, FleetOwner {
     command: PiCommandRecord,
     input: unknown,
   ): Promise<PiSwitchMachineResult> {
-    check(
-      command.canMove,
-      'pi_tool_forbidden',
-      'Conversation tool or arguments are not allowed',
-      403,
-    );
     // The agent's reason stays in the turn's outcome; nothing it wrote reaches a record.
     const value = switchMachineInput.safeParse(input);
     check(value.success, 'invalid_input', 'Name a machine and say why in 10 to 300 characters');
@@ -1562,13 +1561,13 @@ export class PiService implements Pi, FleetOwner {
         'pi_result_invalid',
         'Worker results must contain assistant messages',
       );
-      // switch_machine counts only in a turn it was offered to.
+      // An outcome names a tool this turn was offered; switch_machine keeps its own input.
       check(
-        value.outcomes.every((outcome) =>
-          outcome.name === 'machine.switch'
-            ? command.canMove && switchMachineInput.safeParse(outcome.input).success
-            : Object.hasOwn(constraints, outcome.name) &&
-              constraints[outcome.name].safeParse(outcome.input).success,
+        value.outcomes.every(
+          (outcome) =>
+            command.tools?.includes(outcome.name) &&
+            (outcome.name !== 'machine.switch' ||
+              switchMachineInput.safeParse(outcome.input).success),
         ),
         'pi_result_invalid',
         'Turn result contains an unsupported tool',
@@ -1811,10 +1810,8 @@ export class PiService implements Pi, FleetOwner {
         epoch: command.epoch,
         expiresAt: command.expiresAt,
         model: this.config.model,
-        // Only the tools this turn was offered.
-        toolNames: [...piReadTools, ...(command.canMove ? ['machine.switch'] : [])].map(
-          piModelToolName,
-        ),
+        // Only the tools this turn was offered, the same for every call of the turn.
+        toolNames: (command.tools ?? []).map(piModelToolName),
       };
     });
   }

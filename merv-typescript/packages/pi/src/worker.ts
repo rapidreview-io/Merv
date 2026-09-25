@@ -28,14 +28,6 @@ import type {
   PiWork,
 } from './types.js';
 
-const allowedTools = new Set([
-  'project.get',
-  'task.list',
-  'artifact.list',
-  'artifact.get',
-  'artifact.read',
-  'machine.switch',
-]);
 const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
 // A /next reply carries a checkpoint of up to 2 MB, escaped again as a JSON string.
 const MAX_RESPONSE_BYTES = 4_500_000;
@@ -47,6 +39,9 @@ const NEXT_TIMEOUT_MS = 30_000;
 // streaming turn makes at most about ten a second, however fast its words come.
 const FLUSH_MS = 100;
 const TOOL_OUTPUT_BYTES = 64_000;
+/** Tool calls one answer may make; the next is refused before it runs, and the model is told to
+ * answer with what it has. */
+const TOOL_CALLS = 64;
 // No output cap is sent: the model's own maximum ends an answer. The history a turn restores, and
 // its checkpoint, hold what the model's window leaves beside that answer (executeTurn), never more
 // than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items (of 512).
@@ -118,12 +113,15 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     work.modelBaseUrl !== `${new URL(bootstrap.baseUrl).origin}/pi-model` ||
     !/^pir_[A-Za-z0-9_-]{43}$/.test(work.modelToken) ||
     !Array.isArray(work.notes) ||
-    work.notes.length > 4 ||
+    work.notes.length > 8 ||
     work.notes.some((note) => typeof note !== 'string' || note.length > 300) ||
+    !Array.isArray(work.tools) ||
+    work.tools.length > 128 ||
     new Set(work.tools.map((tool) => tool.name)).size !== work.tools.length ||
     work.tools.some(
       (tool) =>
-        !allowedTools.has(tool.name) ||
+        typeof tool.name !== 'string' ||
+        !['boolean', 'undefined'].includes(typeof tool.readOnly) ||
         typeof tool.description !== 'string' ||
         !tool.inputSchema ||
         typeof tool.inputSchema !== 'object' ||
@@ -132,23 +130,6 @@ function validateWork(work: PiWork, bootstrap: PiBootstrap): void {
     )
   )
     throw new Error('Invalid worker assignment');
-}
-
-function allowedInput(name: string, input: Record<string, unknown>): boolean {
-  if (name === 'machine.switch')
-    return (
-      Object.keys(input).sort().join(',') === 'machine,reason' &&
-      typeof input.machine === 'string' &&
-      typeof input.reason === 'string'
-    );
-  if (name === 'artifact.get' || name === 'artifact.read')
-    return (
-      Object.keys(input).length === 1 &&
-      typeof input.artifactId === 'string' &&
-      input.artifactId.length > 0 &&
-      input.artifactId.length <= 200
-    );
-  return Object.keys(input).length === 0;
 }
 
 /** Runs up to `bootstrap.slots` turns at once, of any of the host's conversations, until the slot
@@ -182,8 +163,11 @@ export async function runPiWorker(
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
+      // A tool call runs as long as its tool does: only the turn's own signal bounds it.
       signal: AbortSignal.any([
-        AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000),
+        ...(path === 'tool'
+          ? []
+          : [AbortSignal.timeout(path === 'next' ? NEXT_TIMEOUT_MS : 10_000)]),
         ...(signal ? [signal] : []),
       ]),
     });
@@ -420,6 +404,7 @@ async function executeTurn(
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
   let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
+  let calls = 0;
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
   // When the oldest word not yet sent was written, the timer that sends it, and whether anything
@@ -495,34 +480,29 @@ async function executeTurn(
     if (events.at(-1)?.text.length === 8192 || events.length >= 32) flush();
     else soon();
   };
+  // Main offers each tool and checks every call as the person; a write (readOnly false) is posted
+  // once and runs in order with the reply's other calls.
   const tools: ToolDefinition[] = work.tools.map((tool) => ({
     name: piModelToolName(tool.name),
     label: tool.name,
     description: tool.description,
-    parameters: Type.Unsafe<Record<string, unknown>>({
-      ...(tool.inputSchema as Record<string, unknown>),
-      required: Array.isArray((tool.inputSchema as Record<string, unknown>).required)
-        ? ((tool.inputSchema as Record<string, unknown>).required as string[]).filter(
-            (name) => name !== 'projectId',
-          )
-        : undefined,
-    }),
+    parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
+    ...(tool.readOnly === false && { executionMode: 'sequential' as const }),
     async execute(callId, input, toolSignal) {
       if (signal.aborted || failure) throw new Error('Turn cancelled');
-      if (
-        !input ||
-        typeof input !== 'object' ||
-        Array.isArray(input) ||
-        !allowedInput(tool.name, input as Record<string, unknown>)
-      )
-        throw new Error('Tool arguments are not allowed');
+      if (!input || typeof input !== 'object' || Array.isArray(input))
+        throw new Error('Tool arguments must be an object');
+      if (++calls > TOOL_CALLS)
+        throw new Error(
+          `This answer has used its ${TOOL_CALLS} tool calls: answer now with what you have, and say what is left`,
+        );
       let output: { result: unknown };
       try {
         output = await request<{ result: unknown }>(
           'tool',
           { ...ids, name: tool.name, input },
           toolSignal ? AbortSignal.any([signal, toolSignal]) : signal,
-          3,
+          tool.readOnly === false ? 1 : 3,
         );
         if (!Object.hasOwn(output ?? {}, 'result')) throw new Error('Invalid tool response');
       } catch (error) {
@@ -537,7 +517,7 @@ async function executeTurn(
       }
       if (signal.aborted || failure) throw new Error('Turn cancelled');
       const canonicalCallId = callId.split('|')[0];
-      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId) || outcomes.length >= 64) {
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(canonicalCallId)) {
         failure = new Error('Invalid tool result');
         session.abort().catch(() => {});
         throw failure;
@@ -596,7 +576,8 @@ async function executeTurn(
     streamOpenAIResponses(model, context, {
       signal: options?.signal,
       reasoning: options?.reasoning,
-      toolChoice: options?.toolChoice,
+      // From the last call on, the model answers instead of asking for another.
+      toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
       apiKey: work.modelToken,
       fetch: relayFetch,
       env: {},

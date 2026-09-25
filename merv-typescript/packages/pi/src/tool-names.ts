@@ -1,13 +1,4 @@
-const names: Readonly<Record<string, string>> = Object.freeze({
-  'project.get': 'project_get',
-  'task.list': 'task_list',
-  'artifact.list': 'artifact_list',
-  'artifact.get': 'artifact_get',
-  'artifact.read': 'artifact_read',
-  'machine.switch': 'switch_machine',
-});
-
-export function piModelToolName(nativeName: string): string {
-  if (!Object.hasOwn(names, nativeName)) throw new Error('Unsupported Pi tool');
-  return names[nativeName];
-}
+/** A native tool's name as the model calls it: its dots become underscores, and the agent's own
+ * machine.switch is switch_machine. */
+export const piModelToolName = (nativeName: string): string =>
+  nativeName === 'machine.switch' ? 'switch_machine' : nativeName.replaceAll('.', '_');

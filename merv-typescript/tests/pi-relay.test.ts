@@ -613,6 +613,45 @@ test('streamed frames reuse a recent authority read, and a turn fits dozens of m
   assert.equal(validations, 60, 'three admission checks per call, none per frame');
 });
 
+test('a turn offers up to 128 tools, whose fields may be named url, in 72 model calls', async (t) => {
+  const names = (count: number) => Array.from({ length: count }, (_, index) => `tool_${index}`);
+  const tools = (count: number) =>
+    names(count).map((name) => ({
+      type: 'function',
+      name,
+      // Only a URL is refused in a description or schema; "metadata:" is not "data:".
+      description: 'Reads the record metadata: its title and the url it cites.',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: 'metadata: the cited address' } },
+        required: ['url'],
+      },
+    }));
+  const f = await fixture();
+  t.after(() => f.close());
+  f.updateGrant({ ...grant(), toolNames: names(128) });
+  assert.equal((await send(f, { ...request, tools: tools(128) })).status, 200);
+  assert.equal((await send(f, { ...request, tools: tools(129) })).status, 400);
+  // A schema keyword named url is still refused, and so is a URL anywhere in a schema.
+  for (const parameters of [
+    { type: 'object', url: 'x' },
+    { type: 'object', properties: { url: { type: 'string', default: 'https://evil.example' } } },
+    { type: 'object', properties: { src: { type: 'string', description: 'see data:x' } } },
+  ])
+    assert.equal(
+      (await send(f, { ...request, tools: [{ type: 'function', name: 'tool_0', parameters }] }))
+        .status,
+      400,
+      JSON.stringify(parameters),
+    );
+  f.updateGrant({ ...grant(), toolNames: names(129) });
+  assert.equal((await send(f)).status, 401);
+  const counted = await fixture();
+  t.after(() => counted.close());
+  for (let call = 0; call < 72; call++) assert.equal((await send(counted)).status, 200);
+  assert.equal((await send(counted)).status, 429);
+});
+
 test('stalled downstream writes abort upstream at the idle deadline', async (t) => {
   let upstreamSignal!: AbortSignal;
   const f = await fixture({
