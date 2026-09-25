@@ -3,6 +3,7 @@
 Run on the production host as root, in a quiet window, one phase after the other:
   python3 pi-connect-project.py sandboxes <projectId> [--rehome]
   python3 pi-connect-project.py main <projectId> [--rehome]
+  python3 pi-connect-project.py ml --ceiling 10000
 (these two also run as `python3 - <phase> <projectId> < pi-connect-project.py`; `large` reads its
 bridge from stdin and `machines` finds the renderer beside this file, so both run from a file). The
 first phase creates the namespace and a 30-day consumer grant, scopes cloudflare-fleet to every
@@ -43,22 +44,26 @@ from pathlib import Path
 if not __debug__:
     sys.exit('every guard here is an assert: run without -O')
 _, PHASE, PROJECT, *FLAGS = sys.argv + [''] * (3 - len(sys.argv))
+if PHASE == 'ml':
+    PROJECT, FLAGS = '', [PROJECT, *FLAGS] if PROJECT else FLAGS
 REHOME = FLAGS == ['--rehome']
 OPTIONS = dict(zip(FLAGS[::2], FLAGS[1::2]))
 assert (PHASE in ('sandboxes', 'main') and FLAGS in ([], ['--rehome'])
         or PHASE == 'host' and PROJECT == '' and not FLAGS
+        or PHASE == 'ml' and PROJECT == '' and len(FLAGS) == 2 and list(OPTIONS) == ['--ceiling']
+        and re.fullmatch(r'[1-9][0-9]*', OPTIONS['--ceiling'])
         or PHASE == 'large' and len(FLAGS) == 4 and sorted(OPTIONS) == ['--application', '--release']
         or PHASE == 'machines' and not FLAGS), __doc__
-assert PHASE == 'host' or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PROJECT), 'invalid_project_id'
+assert PHASE in ('host', 'ml') or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', PROJECT), 'invalid_project_id'
 # The host phase has no project yet; '_host' can never be a project id.
 HOST_ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect/_host')
-ROOT = HOST_ROOT if PHASE == 'host' else HOST_ROOT.parent / PROJECT
+ROOT = HOST_ROOT if PHASE == 'host' else HOST_ROOT.parent / ('_ml' if PHASE == 'ml' else PROJECT)
 ENV = Path('/etc/merv/typescript.env')
 HOSTED = Path('/var/lib/merv-fleet-pilot/hosted-release')  # deploy/hosted-release-vm.py's lock and open-run marker
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 SUFFIX = hashlib.sha256(PROJECT.encode()).hexdigest()[:20]
-NAMESPACE = 'merv-pi-' + SUFFIX
-TOKEN_ENV = 'MERV_PI_PROJECT_' + SUFFIX.upper()
+NAMESPACE = 'merv-ml' if PHASE == 'ml' else 'merv-pi-' + SUFFIX
+TOKEN_ENV = 'MERV_SANDBOXES_ML_TOKEN' if PHASE == 'ml' else 'MERV_PI_PROJECT_' + SUFFIX.upper()
 CANARY, PROVIDER = 'fleet-cloudflare-canary', 'cloudflare-fleet'
 # Merv's Sandboxes account and the member every merv-pi-* namespace belongs to.
 ACCOUNT, MEMBER = 'acct_c330sof3z6zju9zw', 'member_w6rb4wzgs4revzh7'
@@ -100,6 +105,60 @@ async def main():
         principal=await c.tokens.authenticate(issued.secret,namespace=v['namespace'])
         assert principal.token_id==issued.token_id and principal.namespace==v['namespace']
         print(json.dumps({'tokenId':issued.token_id,'token':issued.secret,'expiresAt':issued.expires_at.isoformat()}))
+    finally:
+        await c.stop()
+asyncio.run(main())'''
+
+SBX_ML = r'''import asyncio,hashlib,json,sys
+from decimal import Decimal
+from urllib.parse import urlsplit
+from sqlalchemy import func,select
+from merv_sandboxes.billing import Policy
+from merv_sandboxes.config import Settings
+from merv_sandboxes.db.schema import api_tokens,infra_members,infra_namespaces,users
+from merv_sandboxes.resource_limits import ResourceLimit,ResourceLimitService
+from merv_sandboxes.runtime import Container
+from merv_sandboxes.storage.models import ObjectUploadRequest
+async def main():
+    ceiling=Decimal(sys.stdin.read())
+    c=Container(Settings.load())
+    try:
+        assert c.settings.hatchet_token, 'workflows_not_configured'
+        async with c.db.connect() as conn:
+            assert not await conn.scalar(select(infra_namespaces.c.name).where(infra_namespaces.c.name=='merv-ml')), 'ml_namespace_exists'
+            assert not await conn.scalar(select(users.c.id).where(users.c.namespace=='merv-ml')), 'ml_user_exists'
+            assert not await conn.scalar(select(api_tokens.c.id).where(api_tokens.c.namespace=='merv-ml')), 'ml_grant_exists'
+        ns=await c.accounts.ensure_native_namespace('merv-ml')
+        account,member=ns['account_id'],ns['default_member_id']
+        async with c.db.connect() as conn:
+            assert await conn.scalar(select(func.count()).select_from(infra_members).where(infra_members.c.account_id==account))==1, 'ml_account_not_fresh'
+        billing=c.registry.billing
+        await billing.set_policy(account,'merv-ml-monthly',Policy(scope='account',target=account,window='month',cap=ceiling))
+        await billing.set_policy(account,'merv-ml-project',Policy(scope='member_default',target=account,window='month',cap=Decimal('50')))
+        await billing.set_policy(account,'native-monthly:merv-ml',Policy(scope='namespace',target='merv-ml',window='month',cap=ceiling))
+        await ResourceLimitService(c.db,c.clock).set(account,'merv-ml-machines',ResourceLimit(scope='account',target=account,max_concurrent=20,max_lifetime_seconds=86400))
+        issued=await c.tokens.create(namespace='merv-ml',role='consumer',account_id=account,member_id=member,application_id='merv-ml',open_subjects=True,label='Merv ML')
+        origin=None
+        if c.objects.enabled:
+            probe=await c.objects.begin_upload(namespace='merv-ml',request=ObjectUploadRequest(name='ml-origin-probe',sha256=hashlib.sha256(b'x').hexdigest(),size_bytes=1))
+            try:
+                url=urlsplit(probe.parts[0].url)
+                assert url.scheme=='https' and url.netloc, 'ml_storage_origin_invalid'
+                origin=url.scheme+'://'+url.netloc
+            finally:
+                await c.objects.delete(namespace='merv-ml',object_id=probe.object.id)
+        print(json.dumps({'accountId':account,'memberId':member,'tokenId':issued.token_id,'token':issued.secret,'storageOrigin':origin}))
+    finally:
+        await c.stop()
+asyncio.run(main())'''
+
+SBX_ML_RESOLVE = r'''import asyncio,json
+from merv_sandboxes.config import Settings
+from merv_sandboxes.runtime import Container
+async def main():
+    c=Container(Settings.load())
+    try:
+        print(json.dumps({name:(await c.providers.resolve('merv-ml',name)).source for name in ('lambda','thunder_compute')}))
     finally:
         await c.stop()
 asyncio.run(main())'''
@@ -274,7 +333,7 @@ def drains():
     main = json.loads(run(['docker', 'exec', '-i', '-e', 'MERV_CONNECT_PROJECT=' + PROJECT, '-w', '/app', MAIN,
                            'node', '--input-type=module', '-e', MAIN_DRAIN]))
     assert all(v == 0 for v in sbx['drain'].values()), ('sandboxes_not_drained', sbx['drain'])
-    assert main == {'fleet': 0, 'commands': 0, 'project': 1}, ('main_not_drained_or_project_unknown', main)
+    assert main['fleet'] == main['commands'] == 0 and (PHASE == 'ml' or main['project'] == 1), ('main_not_drained_or_project_unknown', main)
     return sbx['namespaces']
 
 
@@ -387,6 +446,56 @@ def sandboxes():
                'fleetNamespaces': len(fleet['namespaces']), 'image': image, 'catalogSha256Before': sha(catalog_raw),
                'catalogSha256After': sha(catalog_path.read_bytes()), 'at': now()}
     record('sandboxes.receipt.json', receipt)
+    print(json.dumps(receipt))
+
+
+def ml():
+    assert not ROOT.exists(), 'ml_setup_already_started'
+    env_raw = ENV.read_bytes()
+    values = env_values(env_raw)
+    assert TOKEN_ENV not in values, 'ml_grant_already_configured'
+    ROOT.mkdir(mode=0o700, parents=True)
+    save('before-env.private', env_raw)
+    drains()
+    catalog_path, project, catalog_raw, image = sandbox_catalog('')
+    catalog = json.loads(catalog_raw)
+    services = [catalog['services'][name]['environment'] for name in ('control', 'pipelines-worker')]
+    for settings in services:
+        providers = json.loads(settings['SANDBOXES_PROVIDERS'])
+        for name in ('lambda', 'thunder_compute'):
+            [provider] = [p for p in providers if p['name'] == name]
+            assert isinstance(provider.get('namespaces'), list), ('ml_provider_not_explicit', name)
+            assert NAMESPACE not in provider['namespaces'], ('ml_provider_already_configured', name)
+            provider['namespaces'].append(NAMESPACE)
+        settings['SANDBOXES_PROVIDERS'] = json.dumps(providers)
+    issued = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_ML],
+                            OPTIONS['--ceiling'].encode()))
+
+    def verify():
+        resolved = json.loads(run(['docker', 'exec', '-i', CONTROL, 'python', '-c', SBX_ML_RESOLVE]))
+        assert resolved == {'lambda': 'host', 'thunder_compute': 'host'}, ('ml_provider_unavailable', resolved)
+    apply_catalog('', catalog_path, project, catalog_raw, image, catalog, ('SANDBOXES_PROVIDERS',), verify)
+    put = {'MERV_SANDBOXES_ML_NAMESPACE': NAMESPACE, TOKEN_ENV: issued['token'],
+           'MERV_SANDBOXES_ML_SINCE': now()}
+    if issued['storageOrigin']:
+        put['MERV_SANDBOXES_ML_STORAGE_ORIGIN'] = issued['storageOrigin']
+    candidate = ('\n'.join(env_raw.decode().splitlines() + [key + '=' + value for key, value in put.items()]) + '\n').encode()
+    save('candidate-env.private', candidate)
+    state = inspect(MAIN)
+    compose_env = dict(os.environ, MERV_TS_IMAGE=state['Image'])
+    atomic(ENV, candidate)
+    try:
+        dry_render(compose_env, state['Config']['Labels']['com.docker.compose.project.working_dir'])
+    except BaseException:
+        atomic(ENV, env_raw)
+        raise
+    receipt = {'phase': 'ml-done', 'namespace': NAMESPACE, 'accountId': issued['accountId'],
+               'memberId': issued['memberId'], 'tokenId': issued['tokenId'],
+               'ceilingUsd': OPTIONS['--ceiling'], 'objectStore': bool(issued['storageOrigin']),
+               'image': image, 'catalogSha256Before': sha(catalog_raw),
+               'catalogSha256After': sha(catalog_path.read_bytes()), 'envSha256Before': sha(env_raw),
+               'envSha256After': sha(candidate), 'at': now()}
+    record('ml.receipt.json', receipt)
     print(json.dumps(receipt))
 
 
@@ -597,4 +706,4 @@ if __name__ == '__main__':
     assert os.geteuid() == 0
     os.umask(0o077)
     with exclusive():
-        {'host': host, 'sandboxes': sandboxes, 'main': main_phase, 'large': large, 'machines': machines}[PHASE]()
+        {'host': host, 'sandboxes': sandboxes, 'main': main_phase, 'large': large, 'machines': machines, 'ml': ml}[PHASE]()

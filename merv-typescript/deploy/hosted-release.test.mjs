@@ -876,6 +876,33 @@ print(json.dumps(res))`,
   assert.match(out.open, /^hosted_run_open/);
 });
 
+test('ml phase parses a ceiling without a project and refuses an existing grant', () => {
+  const connect = new URL('pi-connect-project.py', import.meta.url).pathname;
+  const out = py(
+    `import pathlib,tempfile
+def load(argv):
+    sys.argv=['pi-connect-project.py',*argv]
+    spec=importlib.util.spec_from_file_location('connect',${JSON.stringify(connect)})
+    m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+    return m
+m=load(['ml','--ceiling','10000'])
+t=pathlib.Path(tempfile.mkdtemp());m.ROOT=t/'_ml';m.ENV=t/'env'
+m.ENV.write_text('MERV_SANDBOXES_ML_TOKEN=already-set\\n')
+try: m.ml()
+except AssertionError as e: existing=str(e)
+try: load(['ml'])
+except AssertionError as e: missing='invalid' if 'ml' in str(e) else 'wrong'
+print(json.dumps({'project':m.PROJECT,'root':m.ROOT.name,'ceiling':m.OPTIONS['--ceiling'],
+                  'existing':existing,'missing':missing,'rootCreated':m.ROOT.exists(),
+                  'policies':all(x in m.SBX_ML for x in ('merv-ml-monthly','merv-ml-project','native-monthly:merv-ml','open_subjects=True')),
+                  'literalGrant':'sbxt_' in m.SBX_ML}))`,
+  );
+  assert.deepEqual(out, {
+    project: '', root: '_ml', ceiling: '10000', existing: 'ml_grant_already_configured',
+    missing: 'invalid', rootCreated: false, policies: true, literalGrant: false,
+  });
+});
+
 test('the Pi host phases refuse a Standard release another release has since replaced', () => {
   const connect = new URL('pi-connect-project.py', import.meta.url).pathname;
   const env = (legacy) =>

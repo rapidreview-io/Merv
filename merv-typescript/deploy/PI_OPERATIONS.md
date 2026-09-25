@@ -25,6 +25,27 @@ their agents, may run on Large. Every project connected for Pi on 2026-09-24
 keeps its connection, so all of its writers may. To keep a project on
 Standard only, retire its connection (see below).
 
+## ML allowance
+
+After the Sandboxes image with open application subjects is running, run once in
+a drained window from the live release's deploy directory:
+
+```sh
+sudo python3 pi-connect-project.py ml --ceiling 10000
+```
+
+The phase creates the `merv-ml` account, a $10,000 per UTC month account limit,
+a $50 monthly member default for each new project, a 20-machine concurrency
+limit and a one-day machine lifetime. It allows the Lambda and Thunder Compute
+providers in that namespace, keeps the consumer grant in Main's private env,
+and records when new projects become entitled. The next Main release reads that
+configuration. The phase does not recreate Main.
+
+To raise one project, find its member through the `merv-ml` application subject
+binding and write a monthly USD member policy for that member in Sandboxes.
+Only the account administrator can do so. Revoke the `Merv ML` consumer grant in
+Sandboxes to stop new rentals; existing workflows run to their deadlines.
+
 ## Owner actions and deadlines
 
 - **By 2026-09-30, the founder:** replace the dedicated Cloudflare native
