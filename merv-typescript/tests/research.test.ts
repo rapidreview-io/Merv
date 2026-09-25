@@ -1128,6 +1128,32 @@ test('a wave that cannot finish is abandoned by its owner, which lifts the pause
   assert.notEqual(reflecting.reflectionId, wave.id);
 });
 
+test('the reference lookup names a research cycle and its reflection', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  const record = await f.advance(await f.advance(await f.create()));
+  const wave = record.reflectionId!;
+  const results = await f.app.ctx.knowledge.resolve(f.owner, [
+    record.id,
+    wave,
+    `research:${record.id}`,
+    `reflection:${wave}`,
+    `reflection:${record.id}`,
+    'published-reflection:latest',
+  ]);
+  assert.deepEqual(
+    results.map(({ status, kind, label, state }) => [status, kind, label, state]),
+    [
+      ['resolved', 'research', 'Research loop', 'reflecting'],
+      ['resolved', 'reflection', 'Research loop: reflection', 'reflecting'],
+      ['resolved', 'research', 'Research loop', 'reflecting'],
+      ['resolved', 'reflection', 'Research loop: reflection', 'reflecting'],
+      ['missing', 'reflection', undefined, undefined],
+      ['unsupported', null, undefined, undefined],
+    ],
+  );
+});
+
 test('a version-3 wave keeps its lenses, its path to approval and its lack of an ending', async (t) => {
   const f = await fixture(t);
   const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'legacy' });
