@@ -75,7 +75,8 @@ export const piConfig = z
     /** MERV_PI_RUNTIME_KEY: one host per person per project (the ruling), or per person. */
     runtimeKey: z.enum(['project', 'person']).default('project'),
     /** The operator's Pi host project (MERV_PI_HOST_PROJECT_ID), whose service key rents every
-     * host slot; credentialEnv names the variable holding it. Required when enabled. */
+     * host slot; credentialEnv names the variable holding it. Required when enabled (refined
+     * below). */
     host: z
       .object({
         projectId: id,
@@ -106,7 +107,11 @@ export const piConfig = z
     /** MERV_PI_AGENT_MOVES: offer switch_machine at all. */
     agentMoves: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .refine((config) => !config.enabled || config.host, {
+    message: 'Enabled Pi needs its host project',
+    path: ['host'],
+  });
 export type PiConfig = z.input<typeof piConfig>;
 export type PiMachineConfig = z.output<typeof piConfig>['machines'][number];
 
@@ -159,5 +164,6 @@ export const hostMigration = {
   UPDATE pi_conversations SET data_json = ((data_json::jsonb - 'epoch' - 'runtimeId' - 'runtimeEpoch'
     - 'runtimeExpiresAt' - 'idleSince') || '{"activeCommandId":null}'::jsonb)::text;
   DROP INDEX pi_one_runtime_per_user;
-  ALTER TABLE pi_conversations DROP COLUMN runtime_id;`,
+  ALTER TABLE pi_conversations DROP COLUMN runtime_id;
+  CREATE INDEX pi_conversations_by_user ON pi_conversations(user_id);`,
 };

@@ -481,7 +481,7 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
   await reader.cancel();
 });
 
-test('relay disconnect aborts the injected upstream and releases per-user admission', async (t) => {
+test('relay disconnect aborts the injected upstream and releases the conversation’s admission', async (t) => {
   const f = fixture(t);
   const expiresAt = new Date(Date.now() + 60_000).toISOString();
   const entered = deferred<void>();
@@ -550,6 +550,6 @@ test('relay disconnect aborts the injected upstream and releases per-user admiss
   assert.equal(aborted, true, 'client socket close must abort provider fetch');
   assert.equal(cancelled, true, 'client socket close must cancel upstream reader');
   const second = await within(send());
-  assert.equal(second.status, 200, 'user admission must be released after disconnect');
+  assert.equal(second.status, 200, 'admission must be released after disconnect');
   await second.body!.cancel();
 });

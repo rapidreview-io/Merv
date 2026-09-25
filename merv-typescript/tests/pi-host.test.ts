@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService, type Caller, type MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { moveTool } from '../packages/pi/src/moves.js';
 import { hostMigration, migration } from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
 import { openState } from './fixtures/state.js';
@@ -121,6 +120,29 @@ test('keyed per person, two projects’ turns run at once on one machine, and lo
   await f.fleet.tick();
   assert.equal((await f.allocation(a.runtimeId)).intent, 'run');
   assert.deepEqual(await f.fleet.list(inTwo), []);
+});
+
+test('each change of the machine reaches every open page that shares it, and only those', async (t) => {
+  const f = await fixture(t);
+  const alice = await login(f, 'alice');
+  const one = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
+  const two = await f.scope.createProject(alice, { name: 'Two', requestId: 'two' });
+  const inOne = await f.scope.caller(alice, one.id);
+  const [a, b] = [await f.create(inOne), await f.create(inOne)];
+  const elsewhere = await f.create(await f.scope.caller(alice, two.id));
+  const heard = new Set<string>();
+  for (const { id } of [b, elsewhere]) f.pi.streams.subscribe(id, () => heard.add(id));
+  for (const change of [
+    () => f.pi.warm(inOne, { requestId: 'warm', conversationId: a.id }),
+    () => f.pi.setMachine(inOne, { machine: 'large' }),
+    () => f.pi.stopMachine(inOne),
+  ]) {
+    heard.clear();
+    await change();
+    assert.deepEqual([...heard], [b.id]);
+  }
+  // The popover's idle wait is the configured one.
+  assert.equal((await f.pi.snapshot(inOne, b.id)).host.idleSeconds, 5);
 });
 
 test('a machine runs as many turns at once as its slots; the next one waits for a free slot', async (t) => {
@@ -368,7 +390,8 @@ test('an idle machine ends, with any move it was starting, and forgets where the
   assert.equal((await f.host({ hostId: host.id })).ended?.reason, 'idle');
   for (const slot of [host.current!, host.next!])
     assert.equal((await f.allocation(slot.allocationId)).intent, 'stop');
-  assert.equal((await f.person(host.key))?.sticky, null);
+  const after = (await f.person(host.key))!;
+  assert.deepEqual([after.sticky, after.moves.at(-1)?.outcome], [null, 'cancelled']);
 });
 
 test('stopping the machine ends every turn on it and releases every slot', async (t) => {
@@ -378,7 +401,12 @@ test('stopping the machine ends every turn on it and releases every slot', async
   const b = await f.send(await f.create());
   await f.pi.setMachine(f.operator, { machine: 'large' });
   const host = await f.host(b);
-  assert.equal((await f.pi.stopMachine(f.operator)).state, 'none');
+  // The move it was starting counts as cancelled, as every move counts for the agent's rules.
+  const view = await f.pi.stopMachine(f.operator);
+  assert.deepEqual(
+    [view.state, view.moving, view.lastMove?.outcome, view.lastMove?.by],
+    ['none', null, 'cancelled', 'person'],
+  );
   for (const sent of [a.work.command, b]) {
     const ended = await command(f, sent);
     assert.deepEqual([ended.status, ended.error], ['interrupted', 'cancelled']);
@@ -446,19 +474,19 @@ test('only a person who could rent sandboxes in the project may choose a larger 
     ...offers.large,
     label: 'Large',
     available: false,
-    reason: 'Needs write access in this project',
+    reason: 'needs write access in this project',
   });
   await assert.rejects(
     f.pi.setMachine(readOnly, { machine: 'large' }),
     (error: MervError) =>
       error.code === 'pi_machine_unavailable' &&
-      error.message === 'Needs write access in this project',
+      error.message === 'Large needs write access in this project',
   );
   const chat = await f.create();
   assert.equal((await large(f.operator, chat.id))?.available, true);
   const unconnected = (projectId: string) => projectId !== f.operator.projectId;
   f.runtimes.connected = unconnected;
-  assert.equal((await large(f.operator, chat.id))?.reason, 'Needs Sandboxes in this project');
+  assert.equal((await large(f.operator, chat.id))?.reason, 'needs Sandboxes in this project');
   // A pick that is no longer allowed starts the machine on the default.
   f.runtimes.connected = () => true;
   await f.pi.setMachine(f.operator, { machine: 'large' });
@@ -498,78 +526,62 @@ test('switch_machine is never offered, granted or accepted where its person coul
   assert.equal((await f.host(bound.work.command)).next, null);
 });
 
-/** The agent move rules offer switch_machine for an upgrade nothing forbids. */
-const agentRules =
-  moveTool({
-    now: Date.now(),
-    enabled: true,
-    host: { next: null, draining: null } as PiHostRecord,
-    person: { key: 'k', preferred: 'standard', sticky: null, choseAt: null, moves: [] },
-    conversationId: 'c',
-    current: { ...offers.standard!, label: 'Standard' },
-    targets: [{ ...offers.large!, label: 'Large' }],
-  }) !== null;
-
-test(
-  'the agent moves up without asking where its person may, within capacity, and the move sticks',
-  { skip: !agentRules && 'Needs the agent move rules' },
-  async (t) => {
-    const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
-    const refused = await f.claimed(await f.send(await f.create()));
-    const sent = await f.send(await f.create());
-    const { work } = await f.pi.next(refused.token, { workerId: 'worker_1' });
-    const bound = {
-      token: refused.token,
-      work: work!,
-      input: { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_1' },
-    };
-    for (const turn of [refused, bound]) {
-      assert.ok(turn.work.tools.some(({ name }) => name === 'machine.switch'));
-      await f.pi.begin(turn.token, turn.input);
-    }
-    assert.ok(
-      (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.includes('switch_machine'),
-    );
-    const call = (turn: typeof bound, machine: string) =>
-      f.pi.tool(turn.token, {
-        ...turn.input,
-        name: 'machine.switch',
-        input: { machine, reason: 'The build ran out of memory' },
-      });
-    const free = f.fleet.free;
-    f.fleet.free = async () => 2;
-    assert.deepEqual(await call(refused, 'large'), { error: { code: 'machine_unavailable' } });
-    f.fleet.free = free;
-    assert.deepEqual(await call(bound, 'standard'), { status: 'already' });
-    assert.deepEqual(await call(bound, 'large'), { status: 'starting' });
-    const host = await f.host(sent);
-    assert.deepEqual(
-      [host.next?.machine, host.next?.by, host.next?.conversationId],
-      ['large', 'agent', sent.conversationId],
-    );
-    assert.deepEqual(await call(bound, 'large'), { error: { code: 'move_in_progress' } });
-    const result = f.completion(bound.input);
-    result.outcomes = [
-      {
-        callId: 'move_1',
-        name: 'machine.switch',
-        input: { machine: 'large', reason: 'The build ran out of memory' },
-        output: { status: 'starting' },
-      },
-    ];
-    assert.deepEqual(await f.pi.complete(bound.token, result), { saved: true });
-    await cutOver(f, host);
-    const person = (await f.person(host.key))!;
-    assert.equal(person.sticky, 'large');
-    assert.deepEqual(
-      person.moves.map(({ by, outcome, reason }) => [by, outcome, reason]),
-      [
-        ['agent', 'failed', 'no free machine'],
-        ['agent', 'moved', 'The build ran out of memory'],
-      ],
-    );
-  },
-);
+test('the agent moves up without asking where its person may, within capacity, and the move sticks', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const refused = await f.claimed(await f.send(await f.create()));
+  const sent = await f.send(await f.create());
+  const { work } = await f.pi.next(refused.token, { workerId: 'worker_1' });
+  const bound = {
+    token: refused.token,
+    work: work!,
+    input: { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_1' },
+  };
+  for (const turn of [refused, bound]) {
+    assert.ok(turn.work.tools.some(({ name }) => name === 'machine.switch'));
+    await f.pi.begin(turn.token, turn.input);
+  }
+  assert.ok(
+    (await f.pi.authorizeModel(bound.work.modelToken)).toolNames.includes('switch_machine'),
+  );
+  const call = (turn: typeof bound, machine: string) =>
+    f.pi.tool(turn.token, {
+      ...turn.input,
+      name: 'machine.switch',
+      input: { machine, reason: 'The build ran out of memory' },
+    });
+  const free = f.fleet.free;
+  f.fleet.free = async () => 2;
+  assert.deepEqual(await call(refused, 'large'), { error: { code: 'machine_unavailable' } });
+  f.fleet.free = free;
+  assert.deepEqual(await call(bound, 'standard'), { status: 'already' });
+  assert.deepEqual(await call(bound, 'large'), { status: 'starting' });
+  const host = await f.host(sent);
+  assert.deepEqual(
+    [host.next?.machine, host.next?.by, host.next?.conversationId],
+    ['large', 'agent', sent.conversationId],
+  );
+  assert.deepEqual(await call(bound, 'large'), { error: { code: 'move_in_progress' } });
+  const result = f.completion(bound.input);
+  result.outcomes = [
+    {
+      callId: 'move_1',
+      name: 'machine.switch',
+      input: { machine: 'large', reason: 'The build ran out of memory' },
+      output: { status: 'starting' },
+    },
+  ];
+  assert.deepEqual(await f.pi.complete(bound.token, result), { saved: true });
+  await cutOver(f, host);
+  const person = (await f.person(host.key))!;
+  assert.equal(person.sticky, 'large');
+  assert.deepEqual(
+    person.moves.map(({ by, outcome, reason }) => [by, outcome, reason]),
+    [
+      ['agent', 'failed', 'no free machine'],
+      ['agent', 'moved', undefined],
+    ],
+  );
+});
 
 test('pi@2 ends turns begun on a conversation’s machine, and the pi@1 image refuses the migrated ledger', async (t) => {
   const state = await openState();

@@ -108,7 +108,7 @@ export function moveTool(context: PiMoveContext): PiWork['tools'][number] | null
 
 /** The lines a turn's PiWork.notes carry: its machine, a move under way, and a move that did not
  * happen within the hour. Deadline rollovers (same machine) say nothing. A failed move's reason is
- * the service's phrase, never the agent's. */
+ * a PiMoveFailure, the service's own phrase: no model or person text reaches a system prompt. */
 export function moveNotes({ now, host, person, current, targets }: PiMoveContext): string[] {
   const label = (key: string) =>
     [current, ...targets].find((machine) => machine.key === key)?.label ?? key;

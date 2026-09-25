@@ -55,13 +55,6 @@ function context(
       key: 'user-1:project-1',
       userId: 'user-1',
       status: 'live',
-      source: {
-        kind: 'actor',
-        actorId: 'pi-host',
-        projectId: 'host',
-        credentialId: 'c',
-        expiresAt: null,
-      },
       epoch: 1,
       revision: 1,
       current: slot('standard'),
@@ -141,7 +134,6 @@ test('one move at a time: a move under way or a machine still draining refuses a
   const next = {
     ...slot('large'),
     by: 'agent' as const,
-    reason: 'out of memory',
     conversationId: 'conversation-1',
     readyBy: ago(-2),
   };
@@ -258,7 +250,6 @@ test('notes tell a turn its machine, a move under way, and a recent move that di
   const next = {
     ...slot('large'),
     by: 'person' as const,
-    reason: '',
     conversationId: null,
     readyBy: ago(-2),
   };
@@ -275,6 +266,7 @@ test('notes tell a turn its machine, a move under way, and a recent move that di
     moveNotes(context({}, { moves: [move(20), lapsed] })).at(-1),
     'The move to Large failed; still on Standard.',
   );
-  const long = moveNotes(context({}, { moves: [move(5, { reason: 'x'.repeat(400) })] }));
+  // Whatever a stored record holds, a note stays within what the worker accepts.
+  const long = moveNotes(context({}, { moves: [move(5, { reason: 'x'.repeat(400) as never })] }));
   assert.ok(long.every((note) => note.length <= 300));
 });

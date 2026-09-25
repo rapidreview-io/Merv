@@ -137,7 +137,11 @@ export interface PiMachineOption extends PiMachine {
 }
 /** PiService.machineChoice: whether a person, and so their agent, may run on a machine here. */
 export type PiMachineChoice = { allowed: true } | { allowed: false; reason: string };
-/** One move, kept in PiPersonRecord.moves for 24 hours. */
+/** Why a move failed, in the service's own words: it reaches later turns' system prompts and the
+ * person's page, so it is never text a model or a person wrote. */
+export type PiMoveFailure = 'no free machine' | 'not ready in time' | 'the machine stopped';
+/** One move, kept in PiPersonRecord.moves for 24 hours, stamped at its outcome. The agent's own
+ * reason stays in its turn's switch_machine outcome. */
 export interface PiMove {
   at: string;
   by: PiMoveBy;
@@ -145,8 +149,8 @@ export interface PiMove {
   from: string;
   to: string;
   outcome: 'moved' | 'failed' | 'cancelled';
-  /** The agent's stated reason, or why the move failed. */
-  reason?: string;
+  /** Only on a failed move. */
+  reason?: PiMoveFailure;
   /** The conversation whose agent asked; absent for the person and deadlines. */
   conversationId?: string;
 }
@@ -170,7 +174,6 @@ export interface PiSlot {
 /** A slot being started to move to; it serves nothing until cut-over (T4). */
 export interface PiNextSlot extends PiSlot {
   by: PiMoveBy;
-  reason: string;
   conversationId: string | null;
   /** T6 gives up on the slot at this time (requested + 180 s). */
   readyBy: string;
@@ -184,8 +187,6 @@ export interface PiHostRecord {
   key: string;
   userId: string;
   status: 'live' | 'ended';
-  /** The Pi host service identity that rents every slot in the host project; never the person. */
-  source: DelegationSource;
   /** Raised for every slot requested. */
   epoch: number;
   revision: number;
@@ -225,10 +226,13 @@ export interface PiHostView {
   state: 'none' | 'starting' | 'ready';
   /** When an idle host stops; null while a turn runs or with no host. */
   idleEndsAt: string | null;
+  /** How long a host stays up after the last turn in any of its conversations
+   * (config.idleTimeoutSeconds). */
+  idleSeconds: number;
   /** How many of this person's conversations, in how many projects, share the machine. */
   shared: { conversations: number; projects: number };
   moving: { to: string; by: PiMoveBy; since: string } | null;
-  /** The latest move in PiPersonRecord.moves, for Undo and the failure line. */
+  /** The latest move in PiPersonRecord.moves, for the failure line. */
   lastMove: PiMove | null;
 }
 
@@ -248,17 +252,6 @@ export interface PiBootstrap {
   /** Turns this worker runs at once: config.machines[].slots. */
   slots: number;
   /** `piw_${allocationId}.${HMAC([hostId, allocationId, epoch])}` */
-  workerToken: string;
-  expiresAt: string;
-}
-/** @deprecated The per-conversation bootstrap; G2 and G4 delete it with the v1 paths. */
-export interface PiBootstrapV1 {
-  kind: 'pi';
-  baseUrl: string;
-  projectId: string;
-  conversationId: string;
-  runtimeId: string;
-  epoch: number;
   workerToken: string;
   expiresAt: string;
 }

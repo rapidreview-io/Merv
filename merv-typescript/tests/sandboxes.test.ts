@@ -693,12 +693,16 @@ test('a deployment composes the sandboxes plugins only when the service is named
   };
   assert.equal(run(hosted), 0);
   const config = (name: string) => rendered().find((entry) => entry.name === name)?.config;
+  // Sandboxes accepts the catalog exactly as rendered: a profile per machine, the default first.
+  process.env.MERV_SANDBOXES_URL = named.MERV_SANDBOXES_URL;
+  t.after(() => delete process.env.MERV_SANDBOXES_URL);
   assert.deepEqual(
-    (config('@merv/sandboxes') as { runtimes: { key: string }[] }).runtimes.map((p) => p.key),
+    new SandboxService(config('@merv/sandboxes') as never).runtimes?.profiles.map((p) => p.key),
     ['standard', 'large'],
   );
   assert.deepEqual(fleetConfig.parse(config('@merv/fleet')).projectLimits, { project_host: 50 });
   const pi = piConfig.parse(config('@merv/pi'));
+  assert.throws(() => piConfig.parse({ ...pi, host: undefined }), /host project/);
   assert.equal(pi.runtimeKey, 'project');
   assert.deepEqual(pi.host, { projectId: 'project_host', credentialEnv: 'MERV_PI_HOST_KEY' });
   assert.deepEqual(

@@ -54,6 +54,7 @@ import type {
   PiMessage,
   PiMove,
   PiMoveBy,
+  PiMoveFailure,
   PiNextReply,
   PiNextSlot,
   PiPersonRecord,
@@ -182,9 +183,9 @@ export class PiService implements Pi, FleetOwner {
     this.config = parse(piConfig, config);
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
-      !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl && this.config.host),
+      !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
       'pi_configuration',
-      'Enabled Pi needs a private signing secret, an API URL and a host project',
+      'Enabled Pi needs a private signing secret and an API URL',
       503,
     );
     if (this.config.baseUrl) {
@@ -311,6 +312,8 @@ export class PiService implements Pi, FleetOwner {
     );
     return row ? decode(row) : null;
   }
+  /** Every conversation sharing the host reads it from its own snapshot, so each open page of
+   * them re-reads once the transaction commits (announce). */
   private async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
     host.revision++;
     await tx.run(
@@ -321,6 +324,16 @@ export class PiService implements Pi, FleetOwner {
       host.createdAt,
       JSON.stringify(host),
     );
+    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.unsent.add(id);
+  }
+  /** The person's conversations that share the host `key`. */
+  private async sharing(sql: Sql, userId: string, key: string) {
+    return (
+      await sql.all<{ id: string; project_id: string }>(
+        'SELECT id,project_id FROM pi_conversations WHERE user_id=?',
+        userId,
+      )
+    ).filter(({ project_id }) => this.key(userId, project_id) === key);
   }
   /** The host's turns that have not ended, oldest first. */
   private async turns(sql: Sql, hostId: string): Promise<PiCommandRecord[]> {
@@ -349,8 +362,13 @@ export class PiService implements Pi, FleetOwner {
       JSON.stringify(person),
     );
   }
-  private record(person: PiPersonRecord, move: Omit<PiMove, 'at'>): void {
+  /** A move, stamped at its outcome, joins the person's last day of moves; an agent's cut-over
+   * also makes its machine where a new host starts (`sticky`). */
+  private async record(tx: Transaction, key: string, move: Omit<PiMove, 'at'>): Promise<void> {
+    const person = await this.person(tx, key);
     person.moves.push({ at: this.time(), ...move });
+    if (move.by === 'agent' && move.outcome === 'moved') person.sticky = move.to;
+    await this.savePerson(tx, person);
   }
   private async user(caller: Caller, tx: Transaction): Promise<string> {
     check(
@@ -498,14 +516,14 @@ export class PiService implements Pi, FleetOwner {
   ): Promise<PiMachineChoice> {
     if (machine === this.config.machines[0].key) return { allowed: true };
     if (!this.config.machines.some(({ key }) => key === machine))
-      return { allowed: false, reason: 'Not offered' };
+      return { allowed: false, reason: 'not offered' };
     if (!this.fleet.connected(source.projectId))
-      return { allowed: false, reason: 'Needs Sandboxes in this project' };
+      return { allowed: false, reason: 'needs Sandboxes in this project' };
     try {
       await this.scope.requireDelegation(source, 'write', tx);
     } catch (error) {
       if (error instanceof MervError && [401, 403].includes(error.status))
-        return { allowed: false, reason: 'Needs write access in this project' };
+        return { allowed: false, reason: 'needs write access in this project' };
       throw error;
     }
     return { allowed: true };
@@ -560,13 +578,7 @@ export class PiService implements Pi, FleetOwner {
     const catalog = await this.catalog(source, tx);
     const live = host && !this.idleOver(host) ? host : null;
     const shown = live?.current && catalog.find(({ key }) => key === live.current!.machine);
-    const perProject = this.config.runtimeKey === 'project';
-    const shared = await tx.get<{ conversations: number; projects: number }>(
-      `SELECT COUNT(*)::integer AS conversations,COUNT(DISTINCT project_id)::integer AS projects
-        FROM pi_conversations WHERE user_id=?${perProject ? ' AND project_id=?' : ''}`,
-      userId,
-      ...(perProject ? [projectId] : []),
-    );
+    const shared = await this.sharing(tx, userId, this.key(userId, projectId));
     return {
       machine: shown ? (({ available: _a, reason: _r, ...machine }) => machine)(shown) : null,
       preferred: await this.starting(person, source, tx),
@@ -575,7 +587,11 @@ export class PiService implements Pi, FleetOwner {
       idleEndsAt: live?.idleSince
         ? new Date(Date.parse(live.idleSince) + this.config.idleTimeoutSeconds * 1000).toISOString()
         : null,
-      shared: shared ?? { conversations: 0, projects: 0 },
+      idleSeconds: this.config.idleTimeoutSeconds,
+      shared: {
+        conversations: shared.length,
+        projects: new Set(shared.map(({ project_id }) => project_id)).size,
+      },
       moving: live?.next
         ? { to: live.next.machine, by: live.next.by, since: this.movingSince(live.next) }
         : null,
@@ -637,8 +653,8 @@ export class PiService implements Pi, FleetOwner {
     this.live.set(id, { ...this.live.get(id), turn });
     this.show(id, turn);
   }
-  /** Open pages re-read the turns a committed transaction ended or moved (and `ids`), and Fleet
-   * reconciles now, not at its tick. */
+  /** Open pages re-read what a committed transaction changed: the turns it ended or moved, every
+   * conversation of a host it saved, and `ids`. Fleet reconciles now, not at its tick. */
   private announce(...ids: string[]): void {
     for (const id of [...this.unsent, ...ids]) this.streams.changed(id);
     this.unsent.clear();
@@ -729,6 +745,7 @@ export class PiService implements Pi, FleetOwner {
       return { command: publicCommand(command), hostId: host.id };
     });
     this.streams.changed(id, command.id);
+    this.announce();
     if (hostId) this.streams.wake(hostId);
     return command;
   }
@@ -750,12 +767,12 @@ export class PiService implements Pi, FleetOwner {
       (await this.create(caller, { requestId: value.requestId })).id;
     if (!this.fleet.connected(this.hostProject)) return this.snapshot(caller, id);
     const renter = await this.hostCaller();
-    const fresh = await this.state.transaction(async (tx) => {
+    await this.state.transaction(async (tx) => {
       const conversation = await this.owned(caller, id, tx);
       const source = await this.scope.delegationSource(caller, tx);
-      return (await this.ensure(renter, conversation, source, tx, true)).fresh;
+      await this.ensure(renter, conversation, source, tx, true);
     });
-    if (fresh) this.streams.changed(id);
+    this.announce();
     return this.snapshot(caller, id);
   }
   /** T1: the person's live host here, with a current slot for new turns: one is rented when it
@@ -766,13 +783,13 @@ export class PiService implements Pi, FleetOwner {
     source: DelegationSource,
     tx: Transaction,
     warm = false,
-  ): Promise<{ host: PiHostRecord; queued: boolean; fresh: boolean }> {
+  ): Promise<{ host: PiHostRecord; queued: boolean }> {
     const key = this.key(userId, projectId);
     let host = await this.liveHost(tx, key);
     if (host) await this.settle(tx, host, renter);
     if (host?.status === 'live' && host.current) {
       const allocation = await this.allocation(host.current.allocationId, tx);
-      return { host, queued: allocation?.phase === 'queued', fresh: false };
+      return { host, queued: allocation?.phase === 'queued' };
     }
     const machine = await this.starting(await this.person(tx, key), source, tx);
     if (host?.status !== 'live')
@@ -781,7 +798,6 @@ export class PiService implements Pi, FleetOwner {
         key,
         userId,
         status: 'live',
-        source: await this.scope.delegationSource(renter, tx),
         epoch: 0,
         revision: 0,
         current: null,
@@ -795,17 +811,12 @@ export class PiService implements Pi, FleetOwner {
     // Unused, a warmed host ends after the idle timeout like any other.
     if (warm && !(await this.turns(tx, host.id)).length) host.idleSince = this.time();
     await this.saveHost(tx, host);
-    return { host, queued: true, fresh: true };
+    return { host, queued: true };
   }
   /** The Pi host identity (config.host.credentialEnv) rents every slot in the host project, so a
-   * person's project needs no Sandboxes of its own. It only rents: turns read as the person. */
+   * person's project needs no Sandboxes of its own. It only rents: turns read as the person. With
+   * the host project unconnected, Fleet refuses a rental as sandbox_not_connected. */
   private async hostCaller(): Promise<Caller> {
-    check(
-      this.fleet.connected(this.hostProject),
-      'pi_unavailable',
-      'Agent machines are unavailable right now',
-      503,
-    );
     if (this.renter) return this.renter;
     const token = process.env[this.config.host!.credentialEnv];
     check(token, 'pi_configuration', 'The Pi host credential is unavailable', 503);
@@ -1311,11 +1322,12 @@ export class PiService implements Pi, FleetOwner {
       'Conversation tool or arguments are not allowed',
       403,
     );
+    // The agent's reason stays in the turn's outcome; nothing it wrote reaches a record.
     const value = switchMachineInput.safeParse(input);
     check(value.success, 'invalid_input', 'Name a machine and say why in 10 to 300 characters');
-    const { machine, reason } = value.data;
+    const { machine } = value.data;
     const renter = await this.hostCaller();
-    return this.state.transaction(async (tx) => {
+    const result = await this.state.transaction(async (tx): Promise<PiSwitchMachineResult> => {
       const host = await this.host(tx, command.hostId!);
       check(host?.status === 'live' && host.current, 'pi_command_stale', 'The machine ended', 409);
       if (host.current.machine === machine) return { status: 'already' };
@@ -1324,17 +1336,13 @@ export class PiService implements Pi, FleetOwner {
         ? moveRefusal(context, machine)
         : { code: 'machine_unavailable' as const };
       if (refusal) return { error: refusal };
-      const { person } = context!;
-      const started = await this.move(tx, renter, host, person, machine, 'agent', reason, {
-        conversationId: conversation.id,
-      });
-      if (!started) {
-        await this.savePerson(tx, person);
+      if (!(await this.move(tx, renter, host, machine, 'agent', conversation.id)))
         return { error: { code: 'machine_unavailable' } };
-      }
       await this.saveHost(tx, host);
       return { status: 'starting' };
     });
+    this.announce();
+    return result;
   }
 
   async progress(token: string, input: unknown): Promise<{ accepted: true }> {
@@ -1546,7 +1554,8 @@ export class PiService implements Pi, FleetOwner {
     await this.saveConversation(tx, conversation);
     this.unsent.add(conversation.id);
   }
-  /** The host ends with any turn still on it, and every slot is released. */
+  /** The host ends with any turn still on it, every slot is released, and a move it was starting
+   * is recorded as cancelled. */
   private async end(
     tx: Transaction,
     host: PiHostRecord,
@@ -1554,6 +1563,7 @@ export class PiService implements Pi, FleetOwner {
     turnsEnd: PiInterruption = 'cancelled',
   ): Promise<void> {
     for (const turn of await this.turns(tx, host.id)) await this.interrupt(tx, turn, turnsEnd);
+    if (host.next) await this.abandon(tx, host, 'cancelled');
     for (const role of roles) {
       const slot = host[role];
       if (slot && (await this.allocation(slot.allocationId, tx)))
@@ -1602,35 +1612,26 @@ export class PiService implements Pi, FleetOwner {
       check(
         option?.available,
         'pi_machine_unavailable',
-        option?.reason ?? 'This machine is not offered',
+        option ? `${option.label} ${option.reason}` : 'That machine is not offered',
         403,
       );
       const key = this.key(userId, caller.projectId);
-      const person = await this.person(tx, key);
-      Object.assign(person, { preferred: machine, sticky: null, choseAt: this.time() });
       const found = await this.liveHost(tx, key);
       if (found) await this.settle(tx, found, renter);
+      const person = await this.person(tx, key);
+      Object.assign(person, { preferred: machine, sticky: null, choseAt: this.time() });
+      await this.savePerson(tx, person);
       const host = found?.status === 'live' ? found : null;
       const { current, next } = host ?? {};
       if (host && current && next && current.machine === machine && next.machine !== machine) {
-        await this.fleet.cancelOwned(this, next.allocationId, tx);
-        this.record(person, {
-          by: next.by,
-          from: current.machine,
-          to: next.machine,
-          outcome: 'cancelled',
-          ...(next.conversationId && { conversationId: next.conversationId }),
-        });
-        host.next = null;
+        await this.abandon(tx, host, 'cancelled');
         await this.saveHost(tx, host);
       } else if (host && current && current.machine !== machine && next?.machine !== machine) {
-        if (await this.move(tx, renter, host, person, machine, 'person', ''))
-          await this.saveHost(tx, host);
+        if (await this.move(tx, renter, host, machine, 'person')) await this.saveHost(tx, host);
       }
-      await this.savePerson(tx, person);
       return this.hostView(tx, host, { userId, projectId: caller.projectId }, source);
     });
-    this.fleet.kick();
+    this.announce();
     return view;
   }
 
@@ -1785,24 +1786,16 @@ export class PiService implements Pi, FleetOwner {
     const { next } = host;
     if (next && (gone(fact(next), now) || next.readyBy <= now)) {
       if (dry) return true;
-      const allocation = fact(next);
-      if (allocation) await this.fleet.cancelOwned(this, allocation.id, tx);
-      const person = await this.person(tx, host.key);
-      this.record(person, {
-        by: next.by,
-        from: host.current?.machine ?? next.machine,
-        to: next.machine,
-        outcome: 'failed',
-        reason:
-          allocation?.error === 'runtime_refused'
-            ? 'no free machine'
-            : next.readyBy <= now
-              ? 'not ready in time'
-              : 'the machine stopped',
-        ...(next.conversationId && { conversationId: next.conversationId }),
-      });
-      await this.savePerson(tx, person);
-      host.next = null;
+      await this.abandon(
+        tx,
+        host,
+        'failed',
+        fact(next)?.error === 'runtime_refused'
+          ? 'no free machine'
+          : next.readyBy <= now
+            ? 'not ready in time'
+            : 'the machine stopped',
+      );
       changed = true;
     }
     if (host.current && gone(fact(host.current), now)) {
@@ -1867,7 +1860,7 @@ export class PiService implements Pi, FleetOwner {
       const to = (await this.machineChoice(source, current.machine, tx)).allowed
         ? current.machine
         : this.config.machines[0].key;
-      const rolled = await this.move(tx, renter, host, null, to, 'deadline', '');
+      const rolled = await this.move(tx, renter, host, to, 'deadline');
       changed ||= rolled;
     }
     if (!host.current && !host.next && !host.draining) {
@@ -1890,7 +1883,7 @@ export class PiService implements Pi, FleetOwner {
     queued = false,
   ): Promise<void> {
     const old = host.current!;
-    const { by, reason, conversationId, readyBy: _, ...slot } = host.next!;
+    const { by, conversationId, readyBy: _, ...slot } = host.next!;
     host.current = lostWith ? slot : { ...slot, readyAt: this.time() };
     host.next = null;
     const turns = (await this.turns(tx, host.id)).filter(
@@ -1903,17 +1896,34 @@ export class PiService implements Pi, FleetOwner {
       if (turns.some(({ workerId }) => workerId)) host.draining = old;
       else await this.fleet.cancelOwned(this, old.allocationId, tx);
     }
-    const person = await this.person(tx, host.key);
-    this.record(person, {
+    await this.record(tx, host.key, {
       by,
       from: old.machine,
       to: slot.machine,
       outcome: 'moved',
-      ...(reason && { reason }),
       ...(conversationId && { conversationId }),
     });
-    if (by === 'agent') person.sticky = slot.machine;
-    await this.savePerson(tx, person);
+  }
+  /** N's move ends without a cut-over: its machine is released, and the move is recorded, as the
+   * agent's rules count every move whatever its outcome. */
+  private async abandon(
+    tx: Transaction,
+    host: PiHostRecord,
+    outcome: 'failed' | 'cancelled',
+    reason?: PiMoveFailure,
+  ): Promise<void> {
+    const next = host.next!;
+    if (await this.allocation(next.allocationId, tx))
+      await this.fleet.cancelOwned(this, next.allocationId, tx);
+    await this.record(tx, host.key, {
+      by: next.by,
+      from: host.current?.machine ?? next.machine,
+      to: next.machine,
+      outcome,
+      ...(reason && { reason }),
+      ...(next.conversationId && { conversationId: next.conversationId }),
+    });
+    host.next = null;
   }
   /** An unclaimed turn moves to another slot: a new model credential, and a turn's time there. */
   private async reassign(
@@ -1931,17 +1941,15 @@ export class PiService implements Pi, FleetOwner {
     await this.saveCommand(tx, turn);
     this.unsent.add(turn.conversationId);
   }
-  /** T2: starts `to` as the next slot while C keeps serving. False, recorded as a failed move for
-   * the person or agent, when Fleet has no room for a second machine. */
+  /** T2: starts `to` as the next slot while C keeps serving. False, recorded as a failed move,
+   * when Fleet has no room for a second machine. */
   private async move(
     tx: Transaction,
     renter: Caller,
     host: PiHostRecord,
-    person: PiPersonRecord | null,
     to: string,
     by: PiMoveBy,
-    reason: string,
-    { conversationId }: { conversationId?: string } = {},
+    conversationId?: string,
   ): Promise<boolean> {
     check(
       host.current && !host.next && !host.draining,
@@ -1950,21 +1958,19 @@ export class PiService implements Pi, FleetOwner {
       409,
     );
     if ((await this.fleet.free(this.hostProject, tx)) < moveRoom) {
-      if (person)
-        this.record(person, {
-          by,
-          from: host.current.machine,
-          to,
-          outcome: 'failed',
-          reason: 'no free machine',
-          ...(conversationId && { conversationId }),
-        });
+      await this.record(tx, host.key, {
+        by,
+        from: host.current.machine,
+        to,
+        outcome: 'failed',
+        reason: 'no free machine',
+        ...(conversationId && { conversationId }),
+      });
       return false;
     }
     host.next = {
       ...(await this.rent(renter, host, to, tx)),
       by,
-      reason,
       conversationId: conversationId ?? null,
       readyBy: new Date(this.clock() + readyMs).toISOString(),
     };

@@ -17,7 +17,7 @@ export const piPlugin = {
     const parsed = piConfig.parse(config);
     check(
       !parsed.enabled ||
-        (process.env[parsed.modelApiKeyEnv] && process.env[parsed.host?.credentialEnv ?? '']),
+        (process.env[parsed.modelApiKeyEnv] && process.env[parsed.host!.credentialEnv]),
       'pi_configuration',
       'Pi model or host credentials are unavailable',
       503,
