@@ -239,6 +239,11 @@ export interface Code
     caller: Caller,
     input: import('@merv/contracts').CodeTransportInput,
   ): Promise<{ verified: boolean }>;
+  source(
+    projectId: string,
+    instanceId: string,
+    commandId: string,
+  ): Promise<{ bytes: Uint8Array; sha256: string }>;
   /** Domain-only hook; no HTTP or MCP route can create an independent-review verdict. */
   recordPublicationReview(
     caller: Caller,

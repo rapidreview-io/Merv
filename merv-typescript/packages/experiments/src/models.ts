@@ -110,6 +110,16 @@ export interface Experiment {
   submissions: ExperimentSubmission[];
   reviewId: string | null;
   conclusion: string | null;
+  compute?: {
+    key: string;
+    runId: string;
+    attemptIndex: number;
+    state: string;
+    cost: unknown;
+    result?: unknown;
+    reason?: string;
+    commit?: string;
+  }[];
 }
 export interface ExperimentExhibit {
   experimentId: string;

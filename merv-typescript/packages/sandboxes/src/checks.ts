@@ -75,6 +75,12 @@ const quoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 const decode = (value: unknown) =>
   typeof value === 'string' ? Buffer.from(value, 'base64').toString('utf8') : '';
 
+export const wrapped = (command: string, timeoutSeconds: number): string[] => [
+  `timeout ${timeoutSeconds} sh -c ${quoted(command)} >out.log 2>&1; code=$?`,
+  `printf '{"exit":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$(wc -c <out.log | tr -d ' ')" "$(head -c 8000 out.log | base64 | tr -d '\\n')" "$(tail -c 8000 out.log | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
+  'exit 0',
+];
+
 /**
  * The script the machine runs. The operator's command is wrapped, never trusted to report
  * itself: the wrapper always exits 0 once it has written a result, so a verdict lives in
@@ -103,10 +109,81 @@ export function checkScript(
     'rm -f src.tgz',
     // The command's own clock, so an overrun is a written result — exit 124 — and therefore
     // a verdict, while the job's timeout can only mean setup outran its separate allowance.
-    `timeout ${timeoutSeconds} sh -c ${quoted(command)} >out.log 2>&1; code=$?`,
-    `printf '{"exit":%s,"bytes":%s,"head64":"%s","tail64":"%s"}' "$code" "$(wc -c <out.log | tr -d ' ')" "$(head -c 8000 out.log | base64 | tr -d '\\n')" "$(tail -c 8000 out.log | base64 | tr -d '\\n')" > "$SBX_RESULT_PATH"`,
-    'exit 0',
+    ...wrapped(command, timeoutSeconds),
   ].join('\n');
+}
+
+export async function ship(
+  client: SandboxClient,
+  entry: SandboxConnection,
+  key: string,
+  source: { bytes: Uint8Array; sha256: string },
+  expiresIn: number,
+): Promise<string> {
+  const begun = record(
+    await client.write(entry, 'POST', '/v1/storage/objects', {
+      name: `${key.replaceAll(':', '/')}.tar.gz`,
+      sha256: source.sha256,
+      size_bytes: source.bytes.byteLength,
+      content_type: 'application/gzip',
+      idempotency_key: key,
+      // The source outlives the machine that reads it by exactly the lease, and no longer:
+      // release deletes it, and this retention is only what covers a crash before that.
+      expires_in_seconds: expiresIn,
+    }),
+  );
+  const objectId = required(record(begun.object).id, 'The object store returned no object id');
+  // The same key after a crash replays onto the object the first attempt made, and the
+  // store answers about that object rather than about a fresh upload: no parts at all once
+  // the bytes are there, and only the parts still owed when some of them are. Resuming is
+  // the whole reason the step is idempotent, so its answer is read, not refused.
+  const state = text(record(begun.object).state);
+  if (state !== 'available' && state !== 'completing') {
+    const parts = Array.isArray(begun.parts) ? begun.parts.map(record) : [];
+    const stored = Array.isArray(begun.completed_parts) ? begun.completed_parts.length : 0;
+    const partSize = Number(begun.part_size);
+    // Paging the rest of a part list needs a query string, which this plugin's route
+    // allowlist does not admit. A source this design accepts always fits one page, so a
+    // list that still does not cover the object is infrastructure's trouble and is said
+    // plainly rather than worked around.
+    check(
+      parts.length + stored === Number(begun.part_count),
+      'sandbox_unavailable',
+      'The object store offered a part list this transfer cannot complete in one page',
+      502,
+    );
+    for (const part of parts) {
+      const number = Number(part.part_number);
+      const size = Number(part.size_bytes);
+      // Where a part sits is its own number times the part size, never a running total: a
+      // resumed list skips what is already stored, and accumulating would send part 2's
+      // URL the bytes of part 1.
+      const from = (number - 1) * partSize;
+      check(
+        Number.isSafeInteger(number) &&
+          number >= 1 &&
+          Number.isSafeInteger(partSize) &&
+          partSize > 0 &&
+          Number.isSafeInteger(size) &&
+          size > 0 &&
+          from + size <= source.bytes.byteLength,
+        'sandbox_unavailable',
+        'The object store described a part outside the source',
+        502,
+      );
+      await client.upload(
+        required(part.url, 'The object store returned a part without a URL'),
+        Object.fromEntries(
+          Object.entries(record(part.headers)).map(([key, value]) => [key, String(value)]),
+        ),
+        source.bytes.subarray(from, from + size),
+      );
+    }
+  }
+  // Only the backend can complete: multipart ETags are not the file's hash, so the part
+  // answers are nothing Merv could hand back as proof of what it sent.
+  await client.write(entry, 'POST', `${object(objectId)}/complete`, {});
+  return objectId;
 }
 
 export class SandboxCheckRunner implements SandboxChecks {
@@ -117,69 +194,13 @@ export class SandboxCheckRunner implements SandboxChecks {
 
   async start(projectId: string, spec: SandboxCheckSpec): Promise<SandboxCheckHandle> {
     const entry = this.connectionFor(projectId);
-    const begun = record(
-      await this.client.write(entry, 'POST', '/v1/storage/objects', {
-        name: `${spec.idempotencyKey.replaceAll(':', '/')}.tar.gz`,
-        sha256: spec.source.sha256,
-        size_bytes: spec.source.bytes.byteLength,
-        content_type: 'application/gzip',
-        idempotency_key: spec.idempotencyKey,
-        // The source outlives the machine that reads it by exactly the lease, and no longer:
-        // release deletes it, and this retention is only what covers a crash before that.
-        expires_in_seconds: spec.leaseSeconds,
-      }),
+    const objectId = await ship(
+      this.client,
+      entry,
+      spec.idempotencyKey,
+      spec.source,
+      spec.leaseSeconds,
     );
-    const objectId = required(record(begun.object).id, 'The object store returned no object id');
-    // The same key after a crash replays onto the object the first attempt made, and the
-    // store answers about that object rather than about a fresh upload: no parts at all once
-    // the bytes are there, and only the parts still owed when some of them are. Resuming is
-    // the whole reason the step is idempotent, so its answer is read, not refused.
-    const state = text(record(begun.object).state);
-    if (state !== 'available' && state !== 'completing') {
-      const parts = Array.isArray(begun.parts) ? begun.parts.map(record) : [];
-      const stored = Array.isArray(begun.completed_parts) ? begun.completed_parts.length : 0;
-      const partSize = Number(begun.part_size);
-      // Paging the rest of a part list needs a query string, which this plugin's route
-      // allowlist does not admit. A source this design accepts always fits one page, so a
-      // list that still does not cover the object is infrastructure's trouble and is said
-      // plainly rather than worked around.
-      check(
-        parts.length + stored === Number(begun.part_count),
-        'sandbox_unavailable',
-        'The object store offered a part list this transfer cannot complete in one page',
-        502,
-      );
-      for (const part of parts) {
-        const number = Number(part.part_number);
-        const size = Number(part.size_bytes);
-        // Where a part sits is its own number times the part size, never a running total: a
-        // resumed list skips what is already stored, and accumulating would send part 2's
-        // URL the bytes of part 1.
-        const from = (number - 1) * partSize;
-        check(
-          Number.isSafeInteger(number) &&
-            number >= 1 &&
-            Number.isSafeInteger(partSize) &&
-            partSize > 0 &&
-            Number.isSafeInteger(size) &&
-            size > 0 &&
-            from + size <= spec.source.bytes.byteLength,
-          'sandbox_unavailable',
-          'The object store described a part outside the source',
-          502,
-        );
-        await this.client.upload(
-          required(part.url, 'The object store returned a part without a URL'),
-          Object.fromEntries(
-            Object.entries(record(part.headers)).map(([key, value]) => [key, String(value)]),
-          ),
-          spec.source.bytes.subarray(from, from + size),
-        );
-      }
-    }
-    // Only the backend can complete: multipart ETags are not the file's hash, so the part
-    // answers are nothing Merv could hand back as proof of what it sent.
-    await this.client.write(entry, 'POST', `${object(objectId)}/complete`, {});
     const sandbox = record(
       await this.client.write(entry, 'POST', '/v1/sandboxes', {
         provider: spec.provider,

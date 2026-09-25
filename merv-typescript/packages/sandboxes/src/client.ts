@@ -208,7 +208,12 @@ export class SandboxClient {
 
   async #prove(connection: SandboxConnection): Promise<string> {
     const secret = this.#credential(connection);
-    const key = JSON.stringify([connection.projectId, connection.namespace, connection.tokenEnv]);
+    const key = JSON.stringify([
+      connection.projectId,
+      connection.namespace,
+      connection.tokenEnv,
+      connection.subject,
+    ]);
     const fingerprint = createHash('sha256').update(secret).digest('hex');
     if (this.#consumers.get(key) !== fingerprint) {
       const identity = (await this.#send(connection, secret, 'GET', '/v1/auth/me')) as Record<
@@ -262,6 +267,7 @@ export class SandboxClient {
         headers: {
           authorization: `Bearer ${secret}`,
           'x-sandbox-namespace': connection.namespace,
+          ...(connection.subject ? { 'x-sandbox-subject': connection.subject } : {}),
           accept: 'application/json',
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },

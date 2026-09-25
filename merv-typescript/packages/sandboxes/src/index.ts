@@ -26,7 +26,9 @@ import type {
   SandboxRow,
   SandboxTarget,
   SandboxRuntimes,
+  SandboxCompute,
 } from './types.js';
+import { SandboxComputeAdapter } from './compute.js';
 
 export type {
   Sandboxes,
@@ -78,6 +80,15 @@ const configuration = z
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
     storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
+    ml: z
+      .object({
+        namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
+        tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+        since: z.string().datetime({ offset: true }),
+        storageOrigins: z.array(z.string().url()).max(1),
+      })
+      .strict()
+      .optional(),
     runtimes: z
       .array(
         z
@@ -159,6 +170,7 @@ export class SandboxService implements Sandboxes {
    */
   readonly checks?: SandboxChecks;
   readonly runtimes?: SandboxRuntimes;
+  readonly compute?: SandboxCompute;
 
   constructor(config: SandboxesConfig) {
     const parsed = configuration.safeParse(config);
@@ -170,6 +182,27 @@ export class SandboxService implements Sandboxes {
       parsed.data.timeoutMs,
       parsed.data.storageOrigins,
     );
+    if (parsed.data.ml) {
+      const adapter = new SandboxComputeAdapter(
+        this.#client.origin,
+        parsed.data.timeoutMs,
+        parsed.data.refreshMs,
+        parsed.data.ml,
+      );
+      this.compute = {
+        since: adapter.since,
+        offers: (projectId) => this.#run(projectId, (id) => adapter.offers(id)),
+        allowance: (projectId) => this.#run(projectId, (id) => adapter.allowance(id)),
+        submit: (projectId, spec) =>
+          this.#run({ projectId, spec }, ({ projectId, spec }) => adapter.submit(projectId, spec)),
+        get: (projectId, runId) =>
+          this.#run({ projectId, runId }, ({ projectId, runId }) => adapter.get(projectId, runId)),
+        cancel: (projectId, runId) =>
+          this.#run({ projectId, runId }, ({ projectId, runId }) =>
+            adapter.cancel(projectId, runId),
+          ),
+      };
+    }
     if (parsed.data.storageOrigins.length) {
       const runner = new SandboxCheckRunner(this.#client, (projectId) =>
         this.#connectionFor(projectId),

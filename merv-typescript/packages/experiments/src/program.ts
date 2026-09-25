@@ -52,15 +52,20 @@ const workspaces: Record<number, 'none' | 'git'> = {
   6: 'git',
   7: 'git',
   8: 'git',
+  9: 'none',
+  10: 'git',
+  11: 'git',
+  12: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-const referencedBase = (version: number) => version === 7 || derivedBase(version);
+const base = (version: number) => (version > 8 ? version - 4 : version);
+const referencedBase = (version: number) => base(version) === 7 || derivedBase(version);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-export const derivedBase = (version: number) => version === 8;
+export const derivedBase = (version: number) => base(version) === 8;
 const CODE_DRIVER = 'code.v2';
 export const programVersion = (workspace?: string, baseTaskId?: string, hosted = false): number =>
-  workspace !== 'git' ? 5 : baseTaskId !== undefined ? 7 : hosted ? 8 : 6;
+  workspace !== 'git' ? 9 : baseTaskId !== undefined ? 11 : hosted ? 12 : 10;
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
  * Every registered version submits a design with a feasibility statement, and its review cannot
@@ -983,6 +988,7 @@ export class ExperimentProgram {
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
+        ...(version > 8 ? [grant('compute.offers', {})] : []),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
@@ -1015,6 +1021,12 @@ export class ExperimentProgram {
                 })),
               ),
               ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
+              ...(version > 8 && state === 'running'
+                ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
+                : []),
+              ...(version === 12 && state === 'running'
+                ? [grant('code.commit', {}), grant('code.operation', {})]
+                : []),
             ]),
       ],
     };

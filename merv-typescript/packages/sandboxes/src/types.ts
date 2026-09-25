@@ -8,6 +8,7 @@ export interface SandboxConnection {
   namespace: string;
   /** Environment variable holding that project's `sbxt_` consumer grant. */
   tokenEnv: string;
+  subject?: string;
 }
 
 export interface SandboxesConfig {
@@ -24,6 +25,7 @@ export interface SandboxesConfig {
    * Without it there are no checks at all: `Sandboxes.checks` is undefined.
    */
   storageOrigins?: string[];
+  ml?: { namespace: string; tokenEnv: string; since: string; storageOrigins: string[] };
   /** Operator-selected protected runtime profiles by key, the default first (MERV_FLEET_RUNTIMES).
    * Absence disables the server-only capability. */
   runtimes?: (SandboxRuntimeProfile & { key: string })[];
@@ -180,6 +182,32 @@ export interface SandboxChecks {
   release(projectId: string, handle: SandboxCheckHandle): Promise<void>;
 }
 
+export interface SandboxComputeSpec {
+  experimentId: string;
+  idempotencyKey: string;
+  provider: string;
+  offerId: string;
+  command: string;
+  minutes: number;
+  maxUsd: number;
+  source?: { bytes: Uint8Array; sha256: string };
+}
+export interface SandboxComputeRun {
+  id: string;
+  state: string;
+  reason: string | null;
+  cost: { amount: string; currency: string } | null;
+  result: { exit: number; bytes: number; head: string; tail: string } | null;
+}
+export interface SandboxCompute {
+  readonly since: string;
+  offers(projectId: string): Promise<Json>;
+  allowance(projectId: string): Promise<Json>;
+  submit(projectId: string, spec: SandboxComputeSpec): Promise<string>;
+  get(projectId: string, runId: string): Promise<SandboxComputeRun>;
+  cancel(projectId: string, runId: string): Promise<void>;
+}
+
 /**
  * One sidebar row derived from a manifest row. Data only: the browser renders `view`,
  * and `spec`/`record` are the manifest's own collection and record specifications.
@@ -226,6 +254,7 @@ export interface Sandboxes {
   readonly checks?: SandboxChecks;
   /** Present only when deployment configured a fixed protected runtime profile. */
   readonly runtimes?: SandboxRuntimes;
+  readonly compute?: SandboxCompute;
 }
 
 declare module 'cordis' {

@@ -62,6 +62,32 @@ const pi = {
   PI_HOST_KEY: 'h'.repeat(43),
 };
 
+test('ML config renders only a valid consumer grant, switch-on time, and optional storage origin', (t) => {
+  const { run, plugin } = renderer(t);
+  assert.equal(run(connected).status, 0);
+  assert.equal(plugin('sandboxes').config.ml, undefined);
+  const ml = {
+    ...connected,
+    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
+    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_ml',
+    MERV_SANDBOXES_ML_SINCE: '2026-09-25T12:00:00+00:00',
+    MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'https://objects.example',
+  };
+  assert.equal(run(ml).status, 0);
+  assert.deepEqual(plugin('sandboxes').config.ml, {
+    namespace: 'merv-ml',
+    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
+    since: ml.MERV_SANDBOXES_ML_SINCE,
+    storageOrigins: ['https://objects.example'],
+  });
+  for (const invalid of [
+    { MERV_SANDBOXES_ML_TOKEN: 'bad' },
+    { MERV_SANDBOXES_ML_SINCE: 'yesterday' },
+    { MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'http://objects.example' },
+  ])
+    assert.notEqual(run({ ...ml, ...invalid }).status, 0);
+});
+
 /** render-config.mjs beside a fixture default.json, run with `env` plus the given variables. */
 function renderer(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'merv-render-config-')));

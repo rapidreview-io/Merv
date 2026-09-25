@@ -121,9 +121,32 @@ let connections = [];
 // The machines Fleet rents, the default first. MERV_FLEET_RUNTIMES replaces the single-profile
 // MERV_FLEET_RUNTIME_* variables, which then only let an image older than the catalog render.
 let runtimes = [];
+let ml;
 if (process.env.MERV_SANDBOXES_URL !== undefined) {
   httpsOrigin('MERV_SANDBOXES_URL');
   connections = sandboxConnections();
+  if (process.env.MERV_SANDBOXES_ML_NAMESPACE !== undefined) {
+    const namespace = process.env.MERV_SANDBOXES_ML_NAMESPACE;
+    if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(namespace))
+      throw new Error('Invalid MERV_SANDBOXES_ML_NAMESPACE');
+    if (!/^sbxt_[A-Za-z0-9_-]{4,512}$/.test(process.env.MERV_SANDBOXES_ML_TOKEN ?? ''))
+      throw new Error('Missing or invalid MERV_SANDBOXES_ML_TOKEN');
+    const since = process.env.MERV_SANDBOXES_ML_SINCE;
+    if (
+      !since ||
+      !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(since) ||
+      Number.isNaN(Date.parse(since))
+    )
+      throw new Error('Invalid MERV_SANDBOXES_ML_SINCE');
+    ml = {
+      namespace,
+      tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
+      since,
+      storageOrigins: process.env.MERV_SANDBOXES_ML_STORAGE_ORIGIN
+        ? [httpsOrigin('MERV_SANDBOXES_ML_STORAGE_ORIGIN')]
+        : [],
+    };
+  }
   if (fleetEnabled) {
     runtimes =
       process.env.MERV_FLEET_RUNTIMES === undefined
@@ -160,6 +183,7 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
       config: {
         urlEnv: 'MERV_SANDBOXES_URL',
         connections,
+        ...(ml ? { ml } : {}),
         ...(runtimes.length
           ? { runtimes: runtimes.map(({ label, slots, agent, ...profile }) => profile) }
           : {}),

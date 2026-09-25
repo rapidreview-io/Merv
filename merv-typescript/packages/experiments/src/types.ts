@@ -6,6 +6,8 @@ import type {
   Transaction,
 } from '@merv/contracts';
 import type {} from 'cordis';
+import type { SandboxCompute } from '@merv/sandboxes/types';
+import type { ComputeInput } from './compute.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -18,6 +20,11 @@ import type {
 export type * from './models.js';
 
 export interface Experiments {
+  bindCompute(adapter: SandboxCompute): () => void;
+  computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
+  computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;
+  computeCancel(caller: Caller, experimentId: string, runId: string): Promise<unknown>;
+  computeTick(): Promise<void>;
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;

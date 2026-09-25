@@ -46,6 +46,7 @@ import { prepareRepository } from './repository-setup.js';
 import { CodeTransportService } from './transport.js';
 import type { Code } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
+import { archiveCommit } from './base-check.js';
 import { ResearchCodeWriters as CodeWriterService } from './writers.js';
 
 /** Where Code keeps repositories. Without it the server keeps none and nothing is hosted. */
@@ -65,6 +66,52 @@ export interface CodeStoreOptions {
 
 /** One Code capability; immutable proposals and machine commands retain separate records. */
 export class CodeService extends CodeCommandService implements Code {
+  async source(
+    projectId: string,
+    instanceId: string,
+    commandId: string,
+  ): Promise<{ bytes: Uint8Array; sha256: string }> {
+    const row = await this.storage.read((sql) =>
+      sql.get<{ command_json: string; receipt_json: string | null; status: string }>(
+        'SELECT command_json,receipt_json,status FROM code_commands WHERE id=? AND project_id=?',
+        commandId,
+        projectId,
+      ),
+    );
+    const command = row && JSON.parse(row.command_json);
+    const receipt = row?.receipt_json && JSON.parse(row.receipt_json);
+    check(
+      command?.instanceId === instanceId &&
+        row?.status === 'succeeded' &&
+        typeof receipt?.headOid === 'string' &&
+        typeof receipt?.treeOid === 'string',
+      'code_source_unavailable',
+      'A succeeded commit for this experiment is required',
+      409,
+    );
+    const store = this.requireStore();
+    check(
+      await store.contains(projectId, receipt.headOid),
+      'code_source_unavailable',
+      'The committed source is not in Code’s repository',
+      409,
+    );
+    const env = store.repositories.environment(projectId);
+    const tree = (
+      await store.repositories.git.ok(['rev-parse', '--verify', `${receipt.headOid}^{tree}`], {
+        env,
+      })
+    )
+      .toString()
+      .trim();
+    check(
+      tree === receipt.treeOid,
+      'code_source_unavailable',
+      'The commit tree differs from its receipt',
+      409,
+    );
+    return await archiveCommit(store.repositories.git, env, receipt.headOid);
+  }
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;

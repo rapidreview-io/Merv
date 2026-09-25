@@ -167,4 +167,14 @@ BEGIN
   END IF;
 END $check$;
 `,
+  5: `
+CREATE TABLE experiment_compute_runs (
+ project_id TEXT NOT NULL,experiment_id TEXT NOT NULL,attempt_index BIGINT NOT NULL,
+ key TEXT NOT NULL,input_hash TEXT NOT NULL,input_json TEXT NOT NULL,run_id TEXT,
+ state TEXT NOT NULL,cost TEXT,result TEXT,created_by TEXT NOT NULL,
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+ PRIMARY KEY(experiment_id,attempt_index,key)
+);
+CREATE INDEX experiment_compute_runs_project_state ON experiment_compute_runs(project_id,state);
+`,
 };

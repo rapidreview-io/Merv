@@ -26,6 +26,8 @@ import {
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
+import type { SandboxCompute } from '@merv/sandboxes/types';
+import { ExperimentCompute, type ComputeInput } from './compute.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -146,12 +148,14 @@ type ExperimentCode = Pick<
   | 'hosted'
   | 'reserveWriter'
   | 'writerStatus'
+  | 'source'
 >;
 
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService implements Experiments {
   private closed = false;
   private codeBinding?: symbol;
+  private compute?: ExperimentCompute;
   private releaseReviewOwner?: () => void;
   private program!: ExperimentProgram;
   /** Complete storage migrations before publishing this service. */
@@ -217,6 +221,33 @@ export class ExperimentService implements Experiments {
       this.codeBinding = undefined;
       this.code = undefined;
     };
+  }
+  bindCompute(adapter: SandboxCompute): () => void {
+    this.open();
+    this.compute?.close();
+    const service = new ExperimentCompute(this.state, this.scope, adapter, () => this.code);
+    this.compute = service;
+    return () => {
+      if (this.compute === service) {
+        service.close();
+        this.compute = undefined;
+      }
+    };
+  }
+  async computeOffers(caller: Caller): Promise<Data> {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return (await this.compute.offers(caller)) as Data;
+  }
+  async computeRun(caller: Caller, input: ComputeInput) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return await this.compute.run(caller, input);
+  }
+  async computeCancel(caller: Caller, experimentId: string, runId: string) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return await this.compute.cancel(caller, experimentId, runId);
+  }
+  async computeTick(): Promise<void> {
+    await this.compute?.tick();
   }
   private open(): void {
     check(!this.closed, 'experiments_unavailable', 'Experiments is unavailable', 503);
@@ -301,6 +332,9 @@ export class ExperimentService implements Experiments {
         submissions,
         reviewId: row.review_id,
         conclusion: row.conclusion,
+        ...(this.compute
+          ? { compute: await this.compute.rows(caller.projectId, id, attempt.index, tx) }
+          : {}),
       };
     });
   }
@@ -1474,6 +1508,8 @@ export class ExperimentService implements Experiments {
     this.closed = true;
     this.codeBinding = undefined;
     this.code = undefined;
+    this.compute?.close();
+    this.compute = undefined;
     this.withdrawReviewOwner();
     this.program.dispose();
   }
@@ -1498,6 +1534,9 @@ export const experimentsPlugin = {
     );
     ctx.inject(['codeResearch'], (ctx) => {
       ctx.effect(() => experiments.bindCode(ctx.codeResearch));
+    });
+    ctx.inject(['sandboxes'], (ctx) => {
+      if (ctx.sandboxes.compute) ctx.effect(() => experiments.bindCompute(ctx.sandboxes.compute!));
     });
     ctx.effect(function* () {
       yield () => experiments.close();
