@@ -431,23 +431,30 @@ async function executeTurn(
       });
     sending = pending;
   };
+  // The end of at most `room` code units of text from index, never inside a surrogate pair: Main
+  // refuses an event holding half an emoji.
+  const cut = (text: string, index: number, room: number) => {
+    const end = Math.min(index + room, text.length);
+    const code = text.charCodeAt(end - 1);
+    return end < text.length && code >= 0xd800 && code <= 0xdbff ? end - 1 : end;
+  };
   const enqueue = (type: ProgressEvent['type'], text: string) => {
     if (failure || signal.aborted) return;
     for (let index = 0; index < text.length;) {
       const last = events.at(-1);
-      if (last?.type === type && last.text.length < 8192) {
-        const length = Math.min(8192 - last.text.length, text.length - index);
-        last.text += text.slice(index, index + length);
-        index += length;
+      const end = last?.type === type ? cut(text, index, 8192 - last.text.length) : index;
+      if (last && end > index) {
+        last.text += text.slice(index, end);
+        index = end;
       } else {
         if (events.length >= 64) {
           failure = new Error('Progress buffer full');
           session.abort().catch(() => {});
           return;
         }
-        const length = Math.min(8192, text.length - index);
-        events.push({ type, text: text.slice(index, index + length) });
-        index += length;
+        const next = cut(text, index, 8192);
+        events.push({ type, text: text.slice(index, next) });
+        index = next;
       }
     }
     if (events.at(-1)?.text.length === 8192 || events.length >= 32) flush();

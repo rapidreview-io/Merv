@@ -125,7 +125,11 @@ for (const upstreamStatus of [
     const failures: string[] = [];
     const completions: PiCompletion[] = [];
     const progress: Array<{ type: string; text: string }> = [];
-    const burstDeltas = Array.from({ length: 160 }, (_, index) => `[${index}]`);
+    // The first delta puts an emoji across the 8192-unit event boundary.
+    const burstDeltas = [
+      `${'x'.repeat(8191)}\u{1F600}`,
+      ...Array.from({ length: 160 }, (_, index) => `[${index}]`),
+    ];
     const burstText = burstDeltas.join('');
     const oversizeDeltas = Array.from({ length: 80 }, () => 'x'.repeat(8192));
     const grantExpiresAt = expiresAt();
@@ -321,6 +325,14 @@ for (const upstreamStatus of [
     if (upstreamStatus === 'revoked' || upstreamStatus === 'cancelled')
       assert.ok(progress.length > 0);
     assert.ok(progress.every((event) => event.text.length <= 8192));
+    assert.ok(
+      progress.every(
+        (event) =>
+          !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+            event.text,
+          ),
+      ),
+    );
     assert.equal(
       toolInvocations,
       upstreamStatus === 'reasoning' ? 2 : upstreamStatus === 'tool' ? 1 : 0,
