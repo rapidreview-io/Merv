@@ -802,10 +802,27 @@ function PiConversationPage() {
             disabled={blocked}
             onFocus={warmUp}
             onChange={(event) => setDraft(event.target.value)}
+            enterKeyHint="send"
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void send();
+              // Enter sends; ⌘/Ctrl+Enter starts a new line, as do Shift+ and Option+Enter natively.
+              // Enter that picks an input-method candidate (229 in Safari) is the method's own.
+              const { key, keyCode, metaKey, ctrlKey, shiftKey, altKey, nativeEvent } = event;
+              if (
+                key !== 'Enter' ||
+                shiftKey ||
+                altKey ||
+                nativeEvent.isComposing ||
+                keyCode === 229
+              )
+                return;
+              event.preventDefault();
+              const area = event.currentTarget;
+              if (!(metaKey || ctrlKey)) void send();
+              // Typed as input, so it can be undone and React sees the box change; where the
+              // deprecated command is gone, put in by hand and announced as input.
+              else if (!area.readOnly && !document.execCommand?.('insertText', false, '\n')) {
+                area.setRangeText('\n', area.selectionStart, area.selectionEnd, 'end');
+                area.dispatchEvent(new Event('input', { bubbles: true }));
               }
             }}
           />

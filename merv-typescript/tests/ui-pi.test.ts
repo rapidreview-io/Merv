@@ -289,6 +289,62 @@ test('a question typed right after New conversation is kept and sent into it', a
   assert.equal(sent[1].text, 'Asked at once?');
 });
 
+test('Enter sends, and ⌘/Ctrl+Enter starts a new line where the cursor is', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  boot(() => snapshot(conversation()));
+  serve('/tools/pi.warm', { body: { result: snapshot(conversation()) } });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await settle(10);
+  const area = document.querySelector<HTMLTextAreaElement>('#pi-draft')!;
+  // Whether the page kept the key from the browser; a key it lets through does its native thing.
+  const press = async (init: KeyboardEventInit) => {
+    let kept = false;
+    await act(async () => {
+      kept = !area.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+    });
+    await settle(10);
+    return kept;
+  };
+  assert.equal(area.getAttribute('enterkeyhint'), 'send');
+  // A new line the person deletes again is gone from what is sent.
+  await write('ab');
+  area.setSelectionRange(1, 1);
+  assert.equal(await press({ metaKey: true }), true);
+  assert.equal(area.value, 'a\nb');
+  await write('ab');
+  assert.equal(await press({}), true);
+  assert.equal(sent.at(-1)?.text, 'ab');
+  await write('ab');
+  area.setSelectionRange(1, 1);
+  for (const init of [{ metaKey: true }, { ctrlKey: true }]) assert.equal(await press(init), true);
+  assert.equal(area.value, 'a\n\nb');
+  assert.equal(area.selectionStart, 3);
+  for (const init of [
+    { shiftKey: true },
+    { altKey: true },
+    { isComposing: true },
+    { keyCode: 229 },
+  ])
+    assert.equal(await press(init), false);
+  assert.equal(sent.length, 1);
+  assert.equal(await press({}), true);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].text, 'a\n\nb');
+});
+
 test('a question sent while the first warm-up is under way goes to the conversation it opens', async (t) => {
   t.after(cleanup);
   setProject('p1');
