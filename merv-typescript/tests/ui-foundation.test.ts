@@ -194,8 +194,8 @@ test('a search or a chip that empties the reader’s own rows does not say they 
   assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing matches');
 });
 
-test('a published list whose rows have all ended flags none of them for attention', async (t) => {
-  t.after(async () => await unmount());
+/** Fleet's published row, as its manifest declares it: ended allocations are not live work. */
+const fleetRow = () => {
   const live = ['queued', 'running'];
   const spec = {
     noun: { singular: 'agent', plural: 'agents' },
@@ -203,10 +203,13 @@ test('a published list whose rows have all ended flags none of them for attentio
     title: 'title',
     states: { field: 'phase', open: live, live },
     attention: { field: 'attention' },
-    columns: [{ type: 'state', label: 'Status', field: 'phase' }],
+    columns: [
+      { type: 'name', label: 'Agent', field: 'title' },
+      { type: 'state', label: 'Status', field: 'phase' },
+    ],
     empty: { title: 'No agents allocated' },
   };
-  const row = {
+  return {
     id: 'fleet',
     label: 'Fleet',
     group: 'operations',
@@ -216,10 +219,10 @@ test('a published list whose rows have all ended flags none of them for attentio
     status: {},
     readable: true,
   };
-  const attention = 'Waiting for the runtime service';
-  serve('/tools/ui.read', {
-    body: { result: [{ id: 'flt_1', title: 'pi agent', phase: 'released', attention }] },
-  });
+};
+const fleetPage = async (rows: Record<string, unknown>[]) => {
+  const row = fleetRow();
+  serve('/tools/ui.read', { body: { result: rows } });
   await mount(
     createElement(
       MemoryRouter,
@@ -235,9 +238,28 @@ test('a published list whose rows have all ended flags none of them for attentio
     ),
   );
   await settle(20);
+};
+
+test('a published list whose rows have all ended flags none of them for attention', async (t) => {
+  t.after(async () => await unmount());
+  const attention = 'Waiting for the runtime service';
+  await fleetPage([{ id: 'flt_1', title: 'pi agent', phase: 'released', attention }]);
+  await click('released');
   assert.equal(document.querySelectorAll('.rows > .row').length, 1);
   for (const gone of ['attention', attention, 'Nothing matches'])
     assert.ok(!text().includes(gone), `“${gone}” is on the page: ${text()}`);
+});
+
+test('a published list opens on its live work, and what has ended is one chip away', async (t) => {
+  t.after(async () => await unmount());
+  await fleetPage(
+    ['flt_1', 'flt_2', 'flt_3'].map((id) => ({ id, title: 'Hosted agent', phase: 'released' })),
+  );
+  // Nothing is live, so nothing is listed: ended allocations are the list's history.
+  assert.equal(document.querySelectorAll('.rows > .row').length, 0, text());
+  assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing open');
+  await click('released');
+  assert.equal(document.querySelectorAll('.rows > .row').length, 3);
 });
 
 test('every state a record stands in has a tone, and a review gate never reads as stopped', () => {

@@ -90,6 +90,8 @@ export interface ListShape<T> {
   ids?(item: T): (string | null | undefined)[];
   /** A narrowing the page holds itself — its tabs — which the rows and the chips obey too. */
   also?(item: T): boolean;
+  /** Where what has ended is only history: the list opens on its open work even with none. */
+  history?: boolean;
 }
 
 /** Everything a filtered list holds between renders, and how a control changes it. */
@@ -141,7 +143,7 @@ export function useListFilter<T extends { id: string }>(
   const also = (item: T) => !shape.also || shape.also(item);
   const states = stateOf ? stateCounts(held, stateOf, shape.isOpen, within.filter(also)) : [];
   // A list opens on its open work wherever it holds any, whatever is narrowed later.
-  const open = !!stateOf && held.some((item) => shape.isOpen?.(stateOf(item)));
+  const open = !!stateOf && (!!shape.history || held.some((item) => shape.isOpen?.(stateOf(item))));
   const state = chosen ?? (open ? OPEN : '');
   const holds = (item: T) =>
     !state || !stateOf
@@ -452,7 +454,11 @@ export function ListPage<T extends { id: string }>({
   // Filtered to nothing has a screen per cause, and each sentence is said only where it
   // is true: a search or a chip that emptied a list holding the reader's rows did not
   // make them anyone else's. The way out of either is the one control.
-  const nothing = filter.unowned ? 'Nothing here is yours' : 'Nothing matches';
+  const nothing = filter.unowned
+    ? 'Nothing here is yours'
+    : filter.state === OPEN && !filter.query
+      ? 'Nothing open'
+      : 'Nothing matches';
   const lines = line ? rows.map((item) => line(item)) : [];
   const mixed = mixesKinds(lines);
   return (
