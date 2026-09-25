@@ -510,6 +510,7 @@ step=vm.Step(r,{})
 both={'cloudflare-fleet':'${NEW}','cloudflare-fleet-large':'${NEW_L}'}
 res={'result':step.switch({'releaseId':'${NEW}','releases':both})['changed'],'env':env.read_text()}
 res['again']=step.switch({'releaseId':'${NEW}','releases':both})
+res['partial']=step.switch({'releases':{'cloudflare-fleet':'${OLD}'}})['changed'];res['kept']=env.read_text()
 take[0]=False
 try: step.switch({'releases':{'cloudflare-fleet':'${OLD}','cloudflare-fleet-large':'${OLD_L}'}})
 except RuntimeError as e: res['refused']=str(e)
@@ -521,8 +522,11 @@ print(json.dumps(res))`,
   assert.equal(out.result, true);
   assert.equal(out.env, `MERV_FLEET_RUNTIME_RELEASE_ID=${NEW}\n${line(NEW, NEW_L)}\n`);
   assert.deepEqual(out.again, { changed: false });
+  // A machine the switch leaves out keeps the release Main runs.
+  assert.equal(out.partial, true);
+  assert.equal(out.kept, `MERV_FLEET_RUNTIME_RELEASE_ID=${OLD}\n${line(OLD, NEW_L)}\n`);
   assert.match(out.refused, /Main did not take the release/);
-  assert.equal(out.restored, out.env);
+  assert.equal(out.restored, out.kept);
 });
 
 test('the guard points each machine at the release its app runs once the driver falls silent', () => {
@@ -536,15 +540,27 @@ apps['cloudflare-fleet-large']['image']='reg@sha256:old'  # Large not deployed y
 res['silent']=step.guard({})
 apps['cloudflare-fleet']['image']='reg@sha256:other'
 res['unknown']=step.guard({})
-res['switched']=switched;res['progress']=json.loads((r/'progress.json').read_text())
+res['progress']=json.loads((r/'progress.json').read_text())
+# Sandboxes cannot read Large (its provider disabled): Standard's machine still follows its app.
+apps['cloudflare-fleet']['image']='reg@sha256:old'
+def unreadable(p='cloudflare-fleet'):
+    if p=='cloudflare-fleet-large': raise RuntimeError('cloudflare-fleet-large is not an enabled Sandboxes provider')
+    return apps[p]
+vm.native=unreadable;res['unread']=step.guard({});res['switched']=switched
 print(json.dumps(res))`,
   );
   assert.deepEqual(out.alive, { guard: 'driver alive' });
   assert.equal(out.silent.guard, 'switched');
   assert.equal(out.unknown.guard, 'waiting for Cloudflare to settle');
   const each = { 'cloudflare-fleet': NEW, 'cloudflare-fleet-large': OLD_L };
-  assert.deepEqual(out.switched, [each]);
   assert.deepEqual(out.progress.guard.releases, each);
+  // The switch keeps the release Main runs for the machine it leaves out.
+  assert.deepEqual(out.switched, [each, { 'cloudflare-fleet': OLD }]);
+  assert.deepEqual(out.unread, {
+    guard: 'switched',
+    releases: { 'cloudflare-fleet': OLD },
+    unread: ['cloudflare-fleet-large'],
+  });
 });
 
 test('from the first deploy attempt every step keeps the open run an enabled guard timer', () => {

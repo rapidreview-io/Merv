@@ -36,11 +36,12 @@
 // No run starts, and no open run is driven forward, unless a rollback could run from here: the
 // deployed Sandboxes commit's bridge Worker is in the checkout and wrangler is signed in. A failure
 // after 5 rolls back automatically, in the same order (previous digest and Worker on every app,
-// previous release ids), and checks that with a canary. A real run detaches from the terminal and
-// keeps the Mac awake; a later run, or release.mjs, finishes an open run first, rolling it back if
-// the pipeline changed meanwhile. A host out of reach is waited out for 10 minutes, and while this
-// Mac is silent mid-deploy a host timer, which a reboot keeps, points Main at whatever Cloudflare
-// runs. Exit: 0 released, abandoned or nothing to do; 1 failed with production unchanged or rolled
+// previous release ids for each machine whose app then runs it; one whose app Sandboxes cannot read
+// keeps its release, and the run stays open), and checks that with a canary. A real run detaches
+// from the terminal and keeps the Mac awake; a later run, or release.mjs, finishes an open run
+// first, rolling it back if the pipeline changed meanwhile. A host out of reach is waited out for
+// 10 minutes, and while this Mac is silent mid-deploy a host timer, which a reboot keeps, points
+// Main at whatever Cloudflare runs. Exit: 0 released, abandoned or nothing to do; 1 failed with production unchanged or rolled
 // back; 2 refused; 3 a run is left open; 4 closed, but the release left live failed its canary.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -606,12 +607,13 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
           throw new Error(`wrangler deploy of ${provider} exited ${r.status}; log ${path}.log`);
       }
     };
-    // Cloudflare's own view of each live app in turn, polled at most 60 times: `landed` once it
-    // runs the image (Main may name its release at once), otherwise settled, twice in a row at one
-    // version; `raise` over the app's version at preflight. Resolves to the apps' versions.
-    const poll = async (landed, image, raise) => {
+    // Cloudflare's own view of each live app in turn (or of `which`), polled at most 60 times:
+    // `landed` once it runs the image (Main may name its release at once), otherwise settled, twice
+    // in a row at one version; `raise` over the app's version at preflight. Resolves to the apps'
+    // versions.
+    const poll = async (landed, image, raise, which = providers) => {
       const versions = [];
-      for (const provider of providers) {
+      for (const provider of which) {
         const [app] = templates[provider].containers;
         const minVersion = apps[provider].version + raise;
         const expect = { image, minVersion, name: app.name, maxInstances: app.max_instances };
@@ -630,7 +632,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       }
       return versions;
     };
-    const landed = (image, raise = 0) => poll(true, image, raise);
+    const landed = (image, raise = 0, which) => poll(true, image, raise, which);
     const settle = (image, raise = 0) => poll(false, image, raise);
     // Closes the run on a live release no canary has passed: it becomes the live pins either way,
     // but one whose canary fails is marked unverified, and the next run canaries it again.
@@ -762,13 +764,26 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       try {
         const steps = rollbackSteps(onHost(run, 'status').progress ?? {}, previous);
         if (steps.length) onHost(run, 'note', { rollback: failure.slice(0, 1000) });
+        const [back, stuck] = [[], []]; // the apps on the previous image, and those not
         for (const [step, value] of steps) {
           if (step === 'catalog') onHost(run, 'catalog', { restore: true });
           else if (step === 'deploy') {
             deploy(value, providers);
-            await landed(value.image);
-          } else if (step === 'switch') onHost(run, 'switch', value);
-          else if (step === 'settle') await settle(value);
+            // Each app on its own: one that cannot be read, or never takes the image, keeps its
+            // machine's release, and every other machine still goes back.
+            for (const provider of providers)
+              await landed(value.image, 0, [provider]).then(
+                () => back.push(provider),
+                (error) => stuck.push(`${provider}: ${error.message}`),
+              );
+          } else if (step === 'switch') {
+            if (!stuck.length) onHost(run, 'switch', value);
+            else if (back.length) {
+              const releases = Object.fromEntries(back.map((p) => [p, value.releases[p]]));
+              onHost(run, 'switch', { releases }); // the host keeps the other machines' releases
+            }
+            if (stuck.length) throw new Error(`${stuck.join('; ')}; its machine keeps its release`);
+          } else if (step === 'settle') await settle(value);
           else {
             try {
               onHost(run, 'canary', { releaseId: value });

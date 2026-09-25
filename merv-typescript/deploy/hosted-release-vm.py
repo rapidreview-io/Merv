@@ -630,9 +630,11 @@ class Step:
 
     def switch(self, arg):
         """Points each of Main's machines at its app's release ({provider: releaseId}; a releaseId alone
-        is Standard's) and recreates Main on its own image; restores the env on failure. It never
-        waits for a drain: by now Cloudflare runs the release and Main must name it."""
-        releases = arg.get('releases') or {PROVIDER: arg['releaseId']}
+        is Standard's; a machine left out keeps the release Main runs) and recreates Main on its own
+        image; restores the env on failure. It never waits for a drain: by now Cloudflare runs the
+        release and Main must name it."""
+        named = arg['releases'] if 'releases' in arg else {PROVIDER: arg['releaseId']}
+        releases = {**machines(env_of(MAIN)), **named}
         need(all(re.fullmatch(r'rt1_[0-9a-f]{64}', r or '') for r in releases.values()), 'invalid release id')
         raw = ENV.read_bytes()
         want = with_releases(raw, releases)
@@ -738,21 +740,26 @@ class Step:
 
     def guard(self, _):
         """Systemd timer from the Cloudflare deploy until finish. When the driver has been silent for
-        LEASE seconds, points each of Main's machines at the release its app settled on; the run
-        stays open for the next hosted-release.mjs to canary or roll back."""
+        LEASE seconds, points each of Main's machines at the release its app settled on; a machine
+        whose app Sandboxes cannot read keeps its release. The run stays open for the next
+        hosted-release.mjs to canary or roll back."""
         if (self.run / 'finish.json').exists() or owner() != self.run.name:
             subprocess.run(['systemctl', 'disable', '--now', GUARD.name + '.timer'], capture_output=True)
             return {'guard': 'closed'}
         lease = read(self.run / 'lease.json') or {}
         if time.time() - lease.get('seen', 0) < LEASE:
             return {'guard': 'driver alive'}
-        live, known = {p: native(p) for p in self.apps()}, self.releases()
+        apps, live, known = self.apps(), {}, self.releases()
+        for provider in apps:
+            with contextlib.suppress(Exception):
+                live[provider] = native(provider)
         if any(n.get('rollout') or n['image'] not in known for n in live.values()):
             return {'guard': 'waiting for Cloudflare to settle'}
         target = {p: known[n['image']][p] for p, n in live.items()}
         result = self.switch({'releases': target})
         self.note({'guard': {'at': time.time(), 'releases': target}})
-        return {'guard': 'switched' if result['changed'] else 'consistent', 'releases': target}
+        return {'guard': 'switched' if result['changed'] else 'consistent', 'releases': target,
+                'unread': [p for p in apps if p not in live]}
 
     def apps(self):
         """The providers whose apps serve Main's machines, as preflight read them."""

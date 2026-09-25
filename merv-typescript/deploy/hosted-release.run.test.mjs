@@ -141,11 +141,18 @@ if (step === 'catalog') {
 }
 if (step === 'drain') out({ drained: true });
 if (step === 'note') { R.progress = { ...R.progress, ...arg }; out(R.progress); }
-if (step === 'native') out(apps()[arg.provider ?? CF]);
+// unread: {provider: reads left before Sandboxes can no longer read that app}.
+if (step === 'native') {
+  const left = sim.unread?.[arg.provider];
+  if (left !== undefined && (sim.unread[arg.provider] = left - 1) < 0) err(arg.provider + ' is not an enabled Sandboxes provider');
+  out(apps()[arg.provider ?? CF]);
+}
 if (step === 'switch') {
-  if (fail && arg.releaseId !== previous.releaseId) err(fail);
-  const changed = sim.main !== arg.releaseId; sim.main = arg.releaseId;
-  if (sim.machines) sim.machines = { ...arg.releases };
+  // A machine the switch leaves out keeps the release Main runs.
+  const releases = { ...machines(), ...(arg.releases ?? { [CF]: arg.releaseId }) };
+  if (fail && releases[CF] !== previous.releaseId) err(fail);
+  const changed = sim.main !== releases[CF]; sim.main = releases[CF];
+  if (sim.machines) sim.machines = releases;
   out({ changed });
 }
 if (step === 'canary') {
@@ -695,4 +702,20 @@ test('after the cutover --abandon needs both apps on one release and closes on b
   assert.equal(closed.status, 0, closed.out);
   assert.equal(closed.sim.active, null);
   assert.deepEqual(closed.sim.state.current.releases, { [CF]: NEXT_ID, [LARGE]: NEXT_L });
+});
+
+test('a Large app Sandboxes stops reading after the switch leaves only its own machine behind', () => {
+  // Large reads twice (the stale check, then landing), and never again from settle on.
+  const r = simulate('unread', { ...TWO, unread: { [LARGE]: 2 } });
+  assert.equal(r.status, 3, r.out);
+  assert.match(
+    r.out,
+    /ROLLBACK INCOMPLETE: cloudflare-fleet-large: native: cloudflare-fleet-large is not an enabled Sandboxes provider; its machine keeps its release/,
+  );
+  assert.deepEqual([r.sim.native.image, r.sim.others[LARGE].image], [LIVE.image, LIVE.image]);
+  // Standard, everyone's default, names the image its app runs again; Large keeps its release.
+  assert.deepEqual(r.sim.machines, { [CF]: LIVE.releaseId, [LARGE]: NEXT_L });
+  assert.equal(r.sim.main, LIVE.releaseId);
+  assert.notEqual(r.sim.active, null);
+  assert.match(r.ledger, /\| ROLLBACK FAILED \| native: .*; its machine keeps its release \|/);
 });
