@@ -621,8 +621,9 @@ class Step:
         path = self.run / 'progress.json'
         before = read(path) or {}
         if arg.get('deployAttempted') and not before.get('deployAttempted'):
-            run(['systemd-run', '--unit', guard_unit(self.run), '--on-active=300', '--on-unit-active=120',
-                 sys.executable, Path(__file__).resolve(), 'guard', self.run])
+            subprocess.run(['systemctl', 'stop', guard_unit(self.run) + '.timer'], capture_output=True)
+            run(['systemd-run', '--collect', '--unit', guard_unit(self.run), '--on-active=300',
+                 '--on-unit-active=120', sys.executable, Path(__file__).resolve(), 'guard', self.run])
         atomic(path, json.dumps({**before, **arg}).encode())
         return {**before, **arg}
 
