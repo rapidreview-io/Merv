@@ -111,9 +111,6 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
   return (
     <section className="stack" aria-label="Fleet source credential">
       <h2>Fleet source credential</h2>
-      <p className="muted">
-        Create a temporary operator identity for this project’s Fleet workflow.
-      </p>
       {secret && (
         <section className="card stack creation" aria-label="New Fleet source credential">
           <h3>Copy this credential now</h3>
