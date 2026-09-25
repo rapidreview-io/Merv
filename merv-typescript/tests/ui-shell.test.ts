@@ -368,3 +368,26 @@ test('the box that names a new project is named by its label, as every reader fi
     (box.id ? document.querySelector(`label[for="${box.id}"]`)?.textContent : undefined);
   assert.equal(name, 'New project');
 });
+
+test('an address this app moved elsewhere opens there, whether or not a plugin registers its row', async (t) => {
+  t.after(async () => await unmount());
+  boot('Operator');
+  await open('/connections');
+  assert.equal(document.querySelector('h1')!.textContent, 'Settings');
+  assert.equal(
+    document.querySelector('.settings nav [aria-current="page"]')!.textContent,
+    'Connections',
+  );
+  assert.ok(!text().includes('Page not found'));
+  await unmount();
+  boot('Operator', { rows: [...rows, row('connections', 'connections', 'system', 40, 'Conn')] });
+  await open('/connections');
+  assert.equal(
+    document.querySelector('.settings nav [aria-current="page"]')!.textContent,
+    'Connections',
+  );
+  await unmount();
+  boot('Operator');
+  await open('/knowledge');
+  assert.equal(document.querySelector('h1')!.textContent, 'Paper');
+});

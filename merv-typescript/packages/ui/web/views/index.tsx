@@ -1,5 +1,4 @@
 import type { ComponentType } from 'react';
-import { Navigate } from 'react-router-dom';
 import { EmptyState } from '../components';
 import type { Row, ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
@@ -22,22 +21,26 @@ export interface ViewProps {
   shell: ShellData;
 }
 
-/** A row whose page this wave retired: its work is elsewhere, so the route goes there. */
-const moved = (to: string) => () => <Navigate to={to} replace />;
+/**
+ * Places this app retired, and where their work is now. The shell answers each address itself,
+ * so it goes there whether or not a plugin still registers the row.
+ */
+export const MOVED: Record<string, string> = {
+  // Who may open the project, and what it is connected to, are settings.
+  people: '/settings/members',
+  connections: '/settings/connections',
+  knowledge: '/paper',
+};
 
 const views: Record<string, ComponentType<ViewProps>> = {
   tasks: TasksView,
   reviews: ReviewsView,
   artifacts: ArtifactsView,
   feed: FeedView,
-  // Who may open the project, and what it is connected to, are settings.
-  people: moved('/settings/members'),
-  connections: moved('/settings/connections'),
   settings: SettingsView,
   sessions: SessionsView,
   code: CodeView,
   experiments: ExperimentsView,
-  knowledge: moved('/paper'),
   paper: PaperView,
   pi: PiView,
   research: ResearchView,

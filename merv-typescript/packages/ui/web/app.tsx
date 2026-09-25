@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
 import { dormantOwner, humanizeGroup } from './navigation';
-import { VIEW_KINDS, viewFor } from './views';
+import { MOVED, VIEW_KINDS, viewFor } from './views';
 import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
 import { WorkView } from './views/work';
@@ -94,6 +94,10 @@ function Workspace() {
               <Route path="/now" element={<OverviewView shell={shell.data} />} />
               {/* The wave of work is the shell's own page: no one plugin owns it. */}
               <Route path="/work" element={<WorkView shell={shell.data} />} />
+              {/* Before the rows: the first of two equal routes is the one that answers. */}
+              {Object.entries(MOVED).map(([from, to]) => (
+                <Route key={from} path={`/${from}/*`} element={<Navigate to={to} replace />} />
+              ))}
               {rows.map((row) => {
                 const View = viewFor(row.view.kind);
                 return (
