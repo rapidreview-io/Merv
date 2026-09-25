@@ -1471,7 +1471,7 @@ export interface ReviewRequest {
   claimable?: boolean;
   /** Claimed by the project's owner as owner, past the independence rule; its reviewer is that person. */
   override?: true;
-  /** The reader is the project's owner and may decide it as owner now. Present on reads only. */
+  /** On reads: the reader is the signed-in owner, or their agent, and may decide it as owner. */
   overridable?: true;
   criteria: string[];
   formatVersion: 2;
@@ -1568,7 +1568,7 @@ export interface Reviews {
   ): Promise<void>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   list(caller: Caller): Promise<ReviewRequest[]>;
-  /** `override` claims it as the project's owner: only that person, acting as themself, may. */
+  /** `override` claims it as the project's owner: only that person, signed in, may. */
   start(
     caller: Caller,
     reviewId: string,

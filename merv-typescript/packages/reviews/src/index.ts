@@ -1,4 +1,10 @@
-import { excludedFromReview, directsIndependently, canonical, visible } from '@merv/contracts';
+import {
+  excludedFromReview,
+  directsIndependently,
+  canonical,
+  visible,
+  sourceCaller,
+} from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -230,15 +236,11 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
 });
 
 /**
- * The project's owner acting as themself: an operator's member actor, signed in, on their own key
- * or reading through their own agent's conversation. Never a worker, and never a machine actor.
+ * The project's owner as the signed-in person: an operator's member actor with human authority.
+ * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
  */
 const projectOwner = (caller: Caller, actor: Actor) =>
-  actor.role === 'operator' &&
-  !!actor.user &&
-  !actor.sessionId &&
-  !caller.session &&
-  !caller.managed;
+  actor.role === 'operator' && !!actor.user && !!caller.human && !caller.key && !caller.session;
 
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
@@ -335,7 +337,7 @@ export class ReviewService implements Reviews {
     }
     // The owner's override lifts the exclusions below, and only for that person: an agent's
     // conversation proposes it, and the person's own Run takes it.
-    if (review.override) return projectOwner(caller, actor) && !caller.conversation;
+    if (review.override) return projectOwner(caller, actor);
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&
@@ -755,11 +757,15 @@ export class ReviewService implements Reviews {
   async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
     caller = structuredClone(caller);
     const reader = await this.scope.require(caller, 'read', transaction);
+    // The person's own agent reads it as the person, to propose what only the person's Run takes.
+    const person = caller.conversation
+      ? sourceCaller(await this.scope.delegationSource(caller, transaction))
+      : caller;
     const read = async (sql: Sql) => {
       const review = hydrate(await this.row(sql, caller, reviewId));
       if (review.status !== 'requested' || reader.role !== 'operator' || reader.sessionId)
         return review;
-      if (projectOwner(caller, reader)) review.overridable = true;
+      if (projectOwner(person, reader)) review.overridable = true;
       if (review.provenance) {
         for (const actor of await this.scope.actors(caller))
           if (
