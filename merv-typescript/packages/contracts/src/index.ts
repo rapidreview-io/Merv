@@ -984,10 +984,19 @@ export interface Artifacts {
   authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
+  /** With offset or length, `content` is that part of the content, in characters, and `offset`
+   * and `total` say where it starts and how long the whole is. */
   read(
     caller: Caller,
     artifactId: string,
-  ): Promise<{ artifact: Artifact; content: string; encoding: 'utf8' | 'base64' }>;
+    range?: { offset?: number; length?: number },
+  ): Promise<{
+    artifact: Artifact;
+    content: string;
+    encoding: 'utf8' | 'base64';
+    offset?: number;
+    total?: number;
+  }>;
   list(caller: Caller): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {

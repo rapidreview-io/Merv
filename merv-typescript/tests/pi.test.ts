@@ -5,6 +5,7 @@ import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
 import {
   check,
+  MervError,
   recorded,
   type Caller,
   type HumanPrincipal,
@@ -660,60 +661,117 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
 test('recoverable tool failures and oversized results come back to the model as results', async (t) => {
   const f = await fixture(t);
   const content = 'line "quoted"\n'.repeat(12_000);
-  t.after(
-    f.tools.register({
-      name: 'artifact.read',
-      description: 'Read artifact',
-      readOnly: true,
-      inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
-      handler: async (_caller, input: { artifactId: string }) => {
-        check(input.artifactId.startsWith('art_b'), 'not_found', 'Artifact not found', 404);
-        return input.artifactId === 'art_big'
-          ? { artifact: { id: 'art_big' }, content, encoding: 'utf8' }
-          : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10_000), encoding: 'base64' };
-      },
-    }),
-  );
-  t.after(
-    f.tools.register({
-      name: 'artifact.list',
-      description: 'List artifacts',
-      readOnly: true,
-      inputSchema: z.object({}).strict(),
-      handler: async () =>
-        Array.from({ length: 1000 }, (_, index) => ({
-          id: `art_${index}`,
-          title: 'Meeting notes',
-        })),
-    }),
-  );
+  const register = (name: string, handler: (input: Record<string, unknown>) => unknown) =>
+    t.after(
+      f.tools.register({
+        name,
+        description: name,
+        readOnly: true,
+        inputSchema: z.record(z.unknown()),
+        handler: (_caller: Caller, input: Record<string, unknown>) => handler(input),
+      }),
+    );
+  register('artifact.read', ({ artifactId }) => {
+    check(String(artifactId).startsWith('art_b'), 'not_found', 'Artifact not found', 404);
+    return artifactId === 'art_big'
+      ? {
+          artifact: { id: 'art_big' },
+          content: content.slice(100),
+          encoding: 'utf8',
+          offset: 100,
+          total: content.length,
+        }
+      : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10), encoding: 'base64' };
+  });
+  const tasks = (count: number, goal?: string) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `task_${index}`,
+      title: `T${index}`,
+      status: 'open',
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, count - index)).toISOString(),
+      ...(goal && { goal }),
+      deliverables: [{ text: 'd'.repeat(500) }],
+    }));
+  register('task.list', ({ count, goal }) => ({ tasks: tasks(Number(count), goal as string) }));
+  register('project.records', () => ({ note: 'x'.repeat(100_000) }));
+  register('refused.forbidden', () => {
+    throw new MervError('forbidden', 'Actor lacks write permission', 403, { need: 'write' });
+  });
+  register('refused.conflict', () => {
+    throw new MervError('task_conflict', 'Task changed; reread it', 409);
+  });
+  register('refused.crash', () => {
+    throw new Error('private stack details');
+  });
   const conversation = await f.create();
   const { token, input } = await f.claimed(await f.send(conversation));
   await f.pi.begin(token, input);
-  const read = (artifactId: string) =>
-    f.pi.tool(token, { ...input, name: 'artifact.read', input: { artifactId } });
-  assert.deepEqual(await read('art_missing'), {
+  const call = (name: string, value: object = {}) =>
+    f.pi.tool(token, { ...input, name, input: value });
+  const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+  assert.deepEqual(await call('artifact.read', { artifactId: 'art_missing' }), {
     error: { code: 'not_found', message: 'Artifact not found' },
   });
-  // A result stays a small part of the worker model's 32,000-token context.
-  const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
-  const result = (await read('art_big')) as { content: string; truncated: string };
-  assert.ok(bytes(result) <= 24_000);
-  assert.ok(result.content.length > 15_000 && content.startsWith(result.content));
-  assert.equal(
-    result.truncated,
-    `Only the first ${result.content.length} of ${content.length} characters are shown`,
-  );
-  assert.deepEqual(await read('art_bin'), {
-    error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
-  });
-  const list = (await f.pi.tool(token, { ...input, name: 'artifact.list', input: {} })) as {
-    items: { id: string }[];
-    truncated: string;
+  // A long text keeps its start and says where to read on.
+  const text = (await call('artifact.read', { artifactId: 'art_big' })) as {
+    content: string;
+    note: string;
   };
-  assert.ok(bytes(list) <= 24_000 && list.items.length > 500);
-  assert.equal(list.items.at(-1)!.id, `art_${list.items.length - 1}`);
-  assert.equal(list.truncated, `Only the first ${list.items.length} of 1000 items are shown`);
+  assert.ok(bytes(text) <= 32_000 && text.content.length > 20_000);
+  assert.ok(content.slice(100).startsWith(text.content));
+  const end = 100 + text.content.length;
+  assert.equal(
+    text.note,
+    `Characters 100–${end} of ${content.length} are shown; read on with offset ${end}`,
+  );
+  // Bytes are never shown.
+  assert.deepEqual(await call('artifact.read', { artifactId: 'art_bin' }), {
+    artifact: { id: 'art_bin' },
+    encoding: 'base64',
+    note: 'Binary content (30 bytes) is not shown',
+  });
+  // 340 records come back as an index of every one; more than that fits keeps the newest.
+  const listed = (await call('task.list', { count: 340 })) as {
+    index: { tasks: { id: string; goal: string; deliverables?: unknown }[] };
+    note: string;
+  };
+  assert.equal(listed.note, 'Shown as an index: read one record with its get tool');
+  assert.deepEqual(
+    listed.index.tasks.map(({ id }) => id),
+    tasks(340).map(({ id }) => id),
+  );
+  assert.equal(listed.index.tasks[0].deliverables, undefined);
+  const clipped = (await call('task.list', { count: 60, goal: 'y'.repeat(400) })) as typeof listed;
+  assert.equal(clipped.index.tasks[0].goal, `${'y'.repeat(300)}…`);
+  const newest = (await call('task.list', { count: 2000 })) as typeof listed;
+  const shown = newest.index.tasks.length;
+  assert.ok(bytes(newest) <= 32_000 && shown > 100 && shown < 2000);
+  assert.deepEqual(newest.index.tasks[0].id, 'task_0');
+  assert.equal(
+    newest.note,
+    `Shown as an index: read one record with its get tool. tasks: ${shown} of 2000 shown, newest`,
+  );
+  const partial = (await call('project.records')) as { partial: string; truncated: string };
+  assert.ok(bytes(partial) <= 32_000 && partial.partial.startsWith('{"note":"xxx'));
+  assert.match(partial.truncated, /^Only the first \d+ of 100011 bytes are shown$/);
+  // A refusal of any kind is the model's to explain, and the turn goes on.
+  assert.deepEqual(await call('refused.forbidden'), {
+    error: {
+      code: 'forbidden',
+      message: 'Actor lacks write permission',
+      details: { need: 'write' },
+    },
+  });
+  assert.deepEqual(await call('refused.conflict'), {
+    error: { code: 'task_conflict', message: 'Task changed; reread it' },
+  });
+  assert.deepEqual(await call('refused.crash'), {
+    error: { code: 'tool_failed', message: 'The tool failed unexpectedly' },
+  });
+  assert.equal((await f.pi.snapshot(f.operator, conversation.id)).commands[0].status, 'working');
+  // Once the turn stops, a failing call ends with it.
+  await f.pi.stop(f.operator, conversation.id);
+  await assert.rejects(call('refused.conflict'), code('pi_command_stale'));
 });
 
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {

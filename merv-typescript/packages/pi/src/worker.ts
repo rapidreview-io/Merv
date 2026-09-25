@@ -38,13 +38,16 @@ const NEXT_TIMEOUT_MS = 30_000;
 // Streamed words reach Main this soon after the first one not yet sent, one request at a time: a
 // streaming turn makes at most about ten a second, however fast its words come.
 const FLUSH_MS = 100;
-const TOOL_OUTPUT_BYTES = 64_000;
+// What a turn's tools return, at most: every result counts, and only reads are cut once it is
+// spent (a write's receipt always arrives whole).
+const TOOL_OUTPUT_BYTES = 128_000;
 /** Tool calls one answer may make; the next is refused before it runs, and the model is told to
  * answer with what it has. */
 const TOOL_CALLS = 64;
 // No output cap is sent: the model's own maximum ends an answer. The history a turn restores, and
-// its checkpoint, hold what the model's window leaves beside that answer (executeTurn), never more
-// than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items (of 512).
+// its checkpoint, hold what the model's window leaves beside that answer, its instructions, tools
+// and tool results (executeTurn), never more than HISTORY_BYTES (half a checkpoint) in
+// HISTORY_ITEMS relay items (of 512).
 const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
@@ -81,6 +84,9 @@ export interface WorkerOptions {
   pollIntervalMs?: number;
 }
 
+/** The instructions of a Main that sends none. */
+const LEGACY =
+  'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.';
 /** A turn's notes (its machine, a failed move) follow the fixed prompt for that turn only. */
 const resources = (notes: string[]): ResourceLoader => ({
   getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
@@ -88,8 +94,7 @@ const resources = (notes: string[]): ResourceLoader => ({
   getPrompts: () => ({ prompts: [], diagnostics: [] }),
   getThemes: () => ({ themes: [], diagnostics: [] }),
   getAgentsFiles: () => ({ agentsFiles: [] }),
-  getSystemPrompt: () =>
-    'You are a read-only assistant. Only use the explicitly provided tools. Never propose running commands or modifying data.',
+  getSystemPrompt: () => LEGACY,
   getSystemPromptSource: () => undefined,
   getAppendSystemPrompt: () => notes,
   getAppendSystemPromptSources: () => [],
@@ -355,10 +360,14 @@ async function executeTurn(
   // History fills the window but for the model's longest answer (at most half of it), at 3 bytes a
   // token, a margin under prose's 4 characters that leaves room for the turn's prompt and tools:
   // gpt-6-luna keeps 432 KB, about 144,000 tokens.
-  const history = Math.min(
-    HISTORY_BYTES,
-    3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)),
-  );
+  // The window holds the model's longest answer (at most half of it) and, at 3 bytes a token, a
+  // margin under prose's 4 characters: what every call carries (instructions, notes, tools), the
+  // turn's tool results and the history it restores. gpt-6-luna gives about 115 KB to tool
+  // results and 231 KB to history beside 86 KB of instructions and tools.
+  const fixed = Buffer.byteLength(JSON.stringify([LEGACY, work.notes, work.tools]));
+  const room = Math.max(0, 3 * (contextWindow - Math.min(maxTokens, contextWindow / 2)) - fixed);
+  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, Math.floor(room / 3));
+  const history = Math.min(HISTORY_BYTES, room - toolBytes);
   const entries = checkpoint && recent(checkpoint.entries, checkpoint.leafId, history);
   const restored = checkpoint ? [checkpoint.header, ...entries!] : undefined;
   const manager = SessionManager.inMemory(
@@ -403,7 +412,6 @@ async function executeTurn(
   });
   const events: ProgressEvent[] = [];
   const outcomes: PiToolOutcome[] = [];
-  let toolBytes = Math.min(TOOL_OUTPUT_BYTES, contextWindow);
   let calls = 0;
   let failure: Error | null = null;
   let sending: Promise<void> | null = null;
@@ -524,11 +532,9 @@ async function executeTurn(
       }
       const text = JSON.stringify(output.result) ?? 'null';
       const size = Buffer.byteLength(text);
-      const kept = Buffer.from(text).subarray(0, toolBytes).toString();
-      const shown =
-        size <= toolBytes
-          ? text
-          : `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]`;
+      const cut = tool.readOnly !== false && size > toolBytes;
+      const kept = cut ? Buffer.from(text).subarray(0, toolBytes).toString() : text;
+      const shown = cut ? `${kept}\n[${size - toolBytes} bytes omitted: tool output limit]` : text;
       toolBytes = Math.max(0, toolBytes - size);
       outcomes.push({
         callId: canonicalCallId,
@@ -668,7 +674,7 @@ async function executeTurn(
  * even its last step does, each long text keeps its start and end. It always ends at `leafId`. */
 function recent(entries: Entries, leafId: string | null, bytes: number): Entries {
   const byId = new Map(entries.map((entry) => [entry.id, entry as Entry]));
-  const branch: Entry[] = [];
+  let branch: Entry[] = [];
   for (let entry = byId.get(leafId ?? ''); entry; entry = byId.get(entry.parentId ?? ''))
     branch.unshift(entry);
   const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
@@ -676,6 +682,10 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     0,
     branch.findLastIndex((entry) => entry.message?.role === 'user'),
   );
+  // Before any exchange is left out, what earlier answers read and wrote is: tool results keep
+  // their start and end, and long call arguments only their size.
+  const clipped = size(branch) > bytes;
+  if (clipped) branch = branch.map((entry, index) => (index < asked ? brief(entry) : entry));
   // Newest first: the oldest whole exchange that fits, and the oldest step of the newest one that
   // fits beside its prompt and note.
   const beside = bytes - size(branch[asked] ?? null) - 200;
@@ -689,7 +699,7 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     else if (message?.role === 'assistant' && total <= beside && items < HISTORY_ITEMS)
       step = index;
   }
-  if (start === 0) return entries;
+  if (start === 0) return clipped ? relinked(branch) : entries;
   let kept = branch.slice(start);
   if (!kept.length) {
     const last = branch.findLastIndex((entry) => entry.message?.role === 'assistant');
@@ -702,7 +712,25 @@ function recent(entries: Entries, leafId: string | null, bytes: number): Entries
     for (let room = bytes / 2; size(kept) > bytes && room >= 1; room /= 2)
       kept = newest.map((entry) => shorten(entry, room));
   }
-  return kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
+  return relinked(kept);
+}
+const relinked = (kept: Entry[]): Entries =>
+  kept.map((entry, index) => ({ ...entry, parentId: index ? kept[index - 1].id : null }));
+/** An earlier step as later turns need it: its tool result's texts at most 2,000 characters, and
+ * each call's arguments over 2,000 bytes as their size. */
+function brief(entry: Entry): Entry {
+  const { message } = entry;
+  if (message?.role === 'toolResult') return shorten(entry, 2000);
+  if (message?.role !== 'assistant' || typeof message.content === 'string') return entry;
+  const content = message.content.map((part) => {
+    const bytes = Buffer.byteLength(
+      JSON.stringify((part as { arguments?: unknown }).arguments ?? null),
+    );
+    return (part as { type?: unknown }).type === 'toolCall' && bytes > 2000
+      ? { ...part, arguments: { omitted: bytes } }
+      : part;
+  });
+  return { ...entry, message: { ...message, content } };
 }
 
 type Entries = WorkerCheckpoint['entries'];

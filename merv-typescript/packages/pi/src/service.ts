@@ -79,9 +79,118 @@ const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
-/** A quarter of the worker model's 32,000-token window, which replays each result in later turns.
- * UTF-8 bytes track tokens better than characters and stay inside the relay's string limit. */
-const resultBytes = 24_000;
+/** One result as the model is shown it, about 10,000 tokens: later turns replay it (the worker
+ * clips older results first). UTF-8 bytes track tokens better than characters. */
+const resultBytes = 32_000;
+const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value ?? null));
+/** The largest `make(n)`, n from `whole` down, that fits resultBytes. */
+const within = <T>(whole: number, make: (n: number) => T): T => {
+  let shown = whole;
+  for (let bytes = size(make(shown)); bytes > resultBytes && shown > 0; bytes = size(make(shown)))
+    shown = Math.min(shown - 1, Math.floor((shown * (resultBytes - 200)) / bytes));
+  return make(shown);
+};
+/** Objects inside arrays keep only their scalar fields, their strings clipped to 300 characters:
+ * every record's id, title and status in a list far too long to show whole. */
+const index = (value: unknown, listed = false): unknown =>
+  Array.isArray(value)
+    ? value.map((item) => index(item, true))
+    : value && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.entries(value).flatMap(([key, item]) =>
+            !listed
+              ? [[key, index(item)]]
+              : item && typeof item === 'object'
+                ? []
+                : [
+                    [
+                      key,
+                      typeof item === 'string' && item.length > 300
+                        ? `${item.slice(0, 300)}…`
+                        : item,
+                    ],
+                  ],
+          ),
+        )
+      : value;
+/** Each array of `value`, top-level or a field of it, keeping at most `count` of its items: those
+ * created last, else its last; `cut` collects what each left out. */
+const newest = (value: unknown, count: number, cut: string[], name = 'items'): unknown => {
+  if (Array.isArray(value)) {
+    if (value.length <= count) return value;
+    const at = (item: unknown) => (item as { createdAt?: unknown })?.createdAt;
+    const dated = value.every((item) => typeof at(item) === 'string');
+    const kept = new Set(
+      (dated
+        ? [...value.keys()].sort((a, b) => String(at(value[b])).localeCompare(String(at(value[a]))))
+        : [...value.keys()].reverse()
+      ).slice(0, count),
+    );
+    cut.push(`${name}: ${count} of ${value.length} shown, newest`);
+    return value.filter((_item, key) => kept.has(key));
+  }
+  return value && typeof value === 'object' && name === 'items'
+    ? Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, newest(item, count, cut, key)]),
+      )
+    : value;
+};
+/** A tool's result as the model is shown it: whole when it fits resultBytes, otherwise by the
+ * first of these that fits, each saying how to read the rest. A write's receipt goes the same way:
+ * it still says the write succeeded, and keeps its ids. */
+function fit(name: string, result: unknown): unknown {
+  const read =
+    name === 'artifact.read' && typeof (result as { content?: unknown })?.content === 'string'
+      ? (result as { content: string; encoding?: string; offset?: number; total?: number })
+      : null;
+  // Base64 is never shown: it is bytes the model cannot read.
+  if (read?.encoding === 'base64') {
+    const { content, ...rest } = read;
+    return {
+      ...rest,
+      note: `Binary content (${Buffer.byteLength(content, 'base64')} bytes) is not shown`,
+    };
+  }
+  if (size(result) <= resultBytes) return result;
+  if (read) {
+    const start = read.offset ?? 0;
+    return within(read.content.length, (count) => {
+      // Never half a character.
+      const end = /[\uD800-\uDBFF]/.test(read.content[count - 1] ?? '') ? count - 1 : count;
+      return {
+        ...read,
+        content: read.content.slice(0, end),
+        note: `Characters ${start}–${start + end} of ${read.total ?? read.content.length} are shown; read on with offset ${start + end}`,
+      };
+    });
+  }
+  const note = 'Shown as an index: read one record with its get tool';
+  const listed = index(result);
+  if (size(listed) < size(result)) {
+    if (size({ index: listed, note }) <= resultBytes) return { index: listed, note };
+    const longest = Math.max(
+      ...[listed, ...Object.values(listed ?? {})].map((part) =>
+        Array.isArray(part) ? part.length : 0,
+      ),
+    );
+    const shown = within(longest, (count) => {
+      const cut: string[] = [];
+      const kept = newest(listed, count, cut);
+      return { index: kept, note: [note, ...cut].join('. ') };
+    });
+    if (size(shown) <= resultBytes) return shown;
+  }
+  const json = JSON.stringify(result);
+  const bytes = Buffer.byteLength(json);
+  const partial = Buffer.from(json)
+    .subarray(0, resultBytes - 200)
+    .toString()
+    .replace(/\uFFFD$/, '');
+  return {
+    partial,
+    truncated: `Only the first ${Buffer.byteLength(partial)} of ${bytes} bytes are shown`,
+  };
+}
 /** A next slot proves ready within this, or the move fails and the current one serves on (T6). */
 const readyMs = 180_000;
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
@@ -1415,33 +1524,7 @@ export class PiService implements Pi, FleetOwner {
         this.progressAt.set(key, this.clock());
         this.report(conversation.id, command.id, 'thinking');
       });
-    const size = (part: unknown) => Buffer.byteLength(JSON.stringify(part ?? null));
-    let bytes = size(result);
-    if (bytes <= resultBytes) return result;
-    // Text and lists keep their start; anything else is only an error the model can explain.
-    const read =
-      value.name === 'artifact.read' && (result as { encoding?: unknown }).encoding === 'utf8';
-    const whole = read
-      ? (result as { content: string }).content
-      : Array.isArray(result)
-        ? result
-        : null;
-    if (!whole)
-      return {
-        error: { code: 'tool_result_too_large', message: 'The result is too large to show' },
-      };
-    const part = (shown: number) =>
-      read
-        ? { ...(result as object), content: whole.slice(0, shown) }
-        : { items: whole.slice(0, shown) };
-    let shown = whole.length;
-    for (const budget = resultBytes - 200; bytes > budget && shown > 0; bytes = size(part(shown)))
-      shown = Math.floor((shown * budget) / bytes);
-    const unit = read ? 'characters' : 'items';
-    return {
-      ...part(shown),
-      truncated: `Only the first ${shown} of ${whole.length} ${unit} are shown`,
-    };
+    return fit(value.name, result);
   }
   /** A call only its person may run: kept on the turn for their page, where Run runs it as them
    * (run). At most 16 an answer. */

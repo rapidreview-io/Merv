@@ -498,9 +498,12 @@ test('call 65 is refused before it runs, the next request carries tool_choice no
 });
 
 test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
+  // A third of what the window leaves beside the longest answer and the turn's instructions and
+  // tools, at most 128,000: 3 × (272,000 − 128,000) − 272 bytes for gpt-6-luna, and
+  // 3 × (32,000 − 16,000) − 272 for a model the worker does not know.
   for (const [model, budget] of [
-    ['gpt-6-luna', 64_000],
-    ['unknown-model', 32_000],
+    ['gpt-6-luna', 128_000],
+    ['unknown-model', 15_909],
   ] as const) {
     const toolResult = { content: 'x'.repeat(150_000) };
     const app = await fixture({ toolCall: true, toolResult, model });
@@ -511,6 +514,153 @@ test('oversized tool output is cut to the turn budget before it reaches the rela
     assert.equal(String(output.text).length, budget);
     assert.match(JSON.stringify(app.modelRequests[1].input), /bytes omitted: tool output limit/);
   }
+});
+
+test('a write receipt arrives whole after reads have spent the turn budget', async () => {
+  const tools = [
+    { ...tool, name: 'project.records', readOnly: true },
+    { ...tool, name: 'task.create', readOnly: false },
+  ];
+  const calling = (id: number, name: string) => ({
+    ...call,
+    id: `fc_${id}`,
+    call_id: `call_${id}`,
+    name,
+  });
+  const requests: Record<string, unknown>[] = [];
+  const receipt = { id: 'task_1', note: 'r'.repeat(5_000) };
+  const server = slotServer(3, {
+    next(count) {
+      if (server.bodies('complete').length) server.controller.abort();
+      return { work: count === 1 ? { ...assignment('a'), model: 'unknown-model', tools } : null };
+    },
+    model(_name, body) {
+      requests.push(body);
+      const reply = [calling(1, 'project_records'), calling(2, 'task_create')][requests.length - 1];
+      return new Response(reply ? sse([reply]) : sse([message('Done')], 'Done'));
+    },
+    tool: (body) => (body.name === 'task.create' ? receipt : { records: 'x'.repeat(40_000) }),
+  });
+  await server.run();
+  const [read, write] = server.bodies('complete')[0].outcomes as { output: object }[];
+  assert.equal((read.output as { truncated?: boolean }).truncated, true);
+  assert.deepEqual(write.output, receipt);
+  assert.ok(JSON.stringify(requests[2].input).includes(receipt.note));
+});
+
+/** A checkpoint of `steps`, each a message, one after another. */
+function tree(steps: object[]) {
+  const at = new Date().toISOString();
+  const content = JSON.stringify({
+    version: 1,
+    header: { type: 'session', version: 3, id: 'session_steps', cwd: '/pi-worker', timestamp: at },
+    entries: steps.map((message, index) => ({
+      type: 'message',
+      id: `step_${index}`,
+      parentId: index ? `step_${index - 1}` : null,
+      timestamp: at,
+      message,
+    })),
+    leafId: `step_${steps.length - 1}`,
+  });
+  return { content, hash: digest(content) };
+}
+const said = (content: object[], stopReason = 'stop') => ({
+  role: 'assistant',
+  content,
+  api: 'openai-responses',
+  provider: 'openai',
+  model: 'unknown-model',
+  usage: {
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 2,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  },
+  stopReason,
+  timestamp: 2,
+});
+
+test('older tool results and arguments are clipped before the first exchange is dropped', async () => {
+  const checkpoint = tree([
+    { role: 'user', content: 'Remember the budget is 5k', timestamp: 1 },
+    said([{ type: 'text', text: 'Noted: 5k.' }]),
+    { role: 'user', content: 'Read the records', timestamp: 1 },
+    said(
+      [
+        {
+          type: 'toolCall',
+          id: 'call_1',
+          name: 'project_get',
+          arguments: { note: 'a'.repeat(9_000) },
+        },
+      ],
+      'toolUse',
+    ),
+    {
+      role: 'toolResult',
+      toolCallId: 'call_1',
+      toolName: 'project_get',
+      content: [{ type: 'text', text: `Start ${'r'.repeat(40_000)} end` }],
+      isError: false,
+      timestamp: 3,
+    },
+    said([{ type: 'text', text: 'Read them.' }]),
+    { role: 'user', content: 'Thanks', timestamp: 1 },
+    said([{ type: 'text', text: 'Welcome.' }]),
+  ]);
+  const app = await fixture({ checkpoint, model: 'unknown-model' });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const sent = JSON.stringify(app.modelRequests[0].input);
+  assert.ok(sent.includes('Remember the budget is 5k') && sent.includes('Read them.'));
+  assert.ok(sent.includes('characters left out') && !sent.includes('r'.repeat(2_000)));
+  assert.ok(sent.includes('omitted') && !sent.includes('a'.repeat(2_000)));
+});
+
+test('one write argument over the history budget still completes, and the next turn restores', async () => {
+  const tools = [{ ...tool, name: 'artifact.create', readOnly: false }];
+  const huge = 'z'.repeat(40_000);
+  const requests: Record<string, unknown>[] = [];
+  let issued = 0;
+  const server = slotServer(3, {
+    next() {
+      const done = server.bodies('complete');
+      if (done.length === 2) server.controller.abort();
+      if (issued > done.length || issued === 2) return { work: null };
+      issued++;
+      const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
+      return {
+        work: {
+          ...assignment(`t${issued}`, { conversationId: 'conv_a' }),
+          model: 'unknown-model',
+          tools,
+          checkpoint: previous
+            ? { content: previous.checkpoint, hash: previous.checkpointHash }
+            : null,
+        },
+      };
+    },
+    model(_name, body) {
+      requests.push(body);
+      return new Response(
+        requests.length === 1
+          ? sse([
+              { ...call, name: 'artifact_create', arguments: JSON.stringify({ content: huge }) },
+            ])
+          : sse([message('Stored')], 'Stored'),
+      );
+    },
+    tool: () => ({ id: 'art_1' }),
+  });
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(server.bodies('complete').length, 2);
+  assert.ok(JSON.stringify(requests[1].input).includes(huge));
+  assert.ok(!JSON.stringify(requests[2].input).includes(huge));
+  assert.match(JSON.stringify(requests[2].input), /Question t1/);
 });
 
 test('no output cap is sent; an answer the model itself stops for length says so', async () => {
@@ -527,9 +677,10 @@ test('no output cap is sent; an answer the model itself stops for length says so
 });
 
 test('a long conversation keeps full-size answers and forgets only its oldest exchanges', async () => {
-  // Bytes bind the first conversation (gpt-6-luna's 432 KB); relay items bind the second.
+  // Bytes bind the first conversation (gpt-6-luna's 304 KB beside 128 KB of tool results); relay
+  // items bind the second.
   for (const [turns, filler, kept] of [
-    [10, 60_000, 7],
+    [10, 60_000, 5],
     [200, 0, 150],
   ]) {
     const at = new Date().toISOString();

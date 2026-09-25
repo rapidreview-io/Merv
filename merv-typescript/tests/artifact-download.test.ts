@@ -189,4 +189,20 @@ test('Disk advertises no direct download capability and retains ordinary inline 
     mediaType: 'text/plain',
   });
   assert.equal(again.hash, binary.hash);
+  // Any valid UTF-8 is text, whatever its type, and a long text is read in parts.
+  const data = await app.ctx.artifacts.create(caller, {
+    title: 'Rows',
+    content: Buffer.from('id,value\n1,é\n').toString('base64'),
+    encoding: 'base64',
+    mediaType: 'application/octet-stream',
+  });
+  assert.deepEqual(
+    await app.ctx.tools.call('artifact.read', caller, {
+      artifactId: data.id,
+      offset: 9,
+      length: 3,
+    }),
+    { artifact: data, content: '1,é', encoding: 'utf8', offset: 9, total: 13 },
+  );
+  assert.equal((await app.ctx.artifacts.read(caller, data.id)).content, 'id,value\n1,é\n');
 });
