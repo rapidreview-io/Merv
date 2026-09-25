@@ -75,6 +75,28 @@ export const reflectionToolsPlugin = {
           },
         ) => await ctx.reflections.submit(caller, input),
       },
+      {
+        name: 'reflection.end',
+        description:
+          'Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.',
+        inputSchema: z
+          .object({
+            reflectionId: id,
+            expectedRevision,
+            reason: z.string().trim().min(1).max(16000),
+            requestId,
+          })
+          .strict(),
+        handler: async (
+          caller: Caller,
+          input: {
+            reflectionId: string;
+            expectedRevision: number;
+            reason: string;
+            requestId: string;
+          },
+        ) => await ctx.reflections.end(caller, input),
+      },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
   },

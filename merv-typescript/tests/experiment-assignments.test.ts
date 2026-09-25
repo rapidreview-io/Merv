@@ -316,10 +316,10 @@ test('all four real assignments use distinct recipes; planning and execution wai
     'experiment.design_review',
   );
   assert.ok(
-    (await f.workflows.dispatchCandidates(f.source)).some(
+    !(await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
     ),
-    'The source may delegate independent review of its own previous work',
+    'The source never directs the review of a design it submitted itself',
   );
   const running = await f.verdict(pending, 'pass');
   assert.equal(running.workflow.state, 'running');
@@ -614,27 +614,28 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   );
 });
 
-test('review leases claim before freezing, recover exactly once, and preserve same-source independence', async (t) => {
+test('review leases claim before freezing, recover exactly once, and claim as the worker, not its source', async (t) => {
   const f = await fixture(t);
   const pending = (await f.design()).experiment;
-  const offered = await f.offer(pending);
+  const lead = await f.issue('operator');
+  const offered = await f.offer(pending, lead);
   const worker = await f.sessions.authenticate(offered.secret);
   const claimed = await f.reviews.get(worker, pending.reviewId!);
   assert.equal(offered.session.execution.references.claimId, claimed.claimId);
   assert.equal(claimed.reviewerId, worker.actorId);
   assert.equal(claimed.producerId, f.source.actorId);
-  assert.notEqual(worker.actorId, f.source.actorId);
+  assert.notEqual(worker.actorId, lead.actorId);
   assert.match(offered.session.assignment.context!.prompt, new RegExp(claimed.claimId!));
   await assert.rejects(
     async () =>
       await f.sessions.prepare(worker, 'artifact.create', { title: 'Forbidden', content: 'No' }),
     { code: 'execution_tool_forbidden' },
   );
-  await f.release(offered.session.id);
+  await f.release(offered.session.id, lead);
   const released = await f.reviews.get(f.source, pending.reviewId!);
   assert.equal(released.status, 'requested');
   assert.equal(released.snapshotHash, claimed.snapshotHash);
-  const next = await f.offer(pending);
+  const next = await f.offer(pending, lead);
   const replacement = await f.sessions.authenticate(next.secret);
   const current = await f.reviews.get(replacement, pending.reviewId!);
   assert.notEqual(current.claimId, claimed.claimId);
@@ -651,6 +652,7 @@ test('review leases claim before freezing, recover exactly once, and preserve sa
 test('context failure rolls back worker reservation and review claim; reload preserves only durable lease authority', async (t) => {
   const f = await fixture(t);
   const pending = (await f.design()).experiment;
+  const lead = await f.issue('operator');
   const before = await f.state.read(async (sql) => ({
     actors: await sql.all('SELECT id FROM actors'),
     leases: await sql.all('SELECT id FROM experiment_leases'),
@@ -659,7 +661,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   const read = t.mock.method(f.artifacts, 'read', () => {
     throw new Error('Injected recipe read failure');
   });
-  await assert.rejects(async () => await f.offer(pending), /Injected recipe read failure/);
+  await assert.rejects(async () => await f.offer(pending, lead), /Injected recipe read failure/);
   assert.deepEqual(
     await f.state.read(async (sql) => ({
       actors: await sql.all('SELECT id FROM actors'),
@@ -670,7 +672,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   );
   assert.equal((await f.reviews.get(f.source, pending.reviewId!)).status, 'requested');
   read.mock.restore();
-  const offered = await f.offer(pending);
+  const offered = await f.offer(pending, lead);
   const worker = await f.sessions.authenticate(offered.secret);
   const stale = await f.sessions.prepare(worker, 'experiment.get_state', {});
   const generation = offered.session.execution.registrationId;
@@ -688,7 +690,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
       f.sessions.run(stale, async (caller) => await f.experiments.get(caller, pending.id)),
     { code: 'execution_replaced' },
   );
-  await f.release(offered.session.id);
+  await f.release(offered.session.id, lead);
   assert.equal((await f.reviews.get(f.source, pending.reviewId!)).status, 'requested');
 });
 
@@ -738,12 +740,12 @@ test('new attempts reset the execution clock while execution repair retains its 
 
 test('revoking the source fences its live reviewer before recovery and an authorized successor keeps the same evidence', async (t) => {
   const f = await fixture(t);
-  const replacementSource = await f.issue('operator');
+  const [reviewSource, replacementSource] = [await f.issue('operator'), await f.issue('operator')];
   const pending = (await f.design()).experiment;
-  const offered = await f.offer(pending);
+  const offered = await f.offer(pending, reviewSource);
   const worker = await f.sessions.authenticate(offered.secret);
   const claim = await f.reviews.get(worker, pending.reviewId!);
-  await f.scope.revokeActor(replacementSource, f.source.actorId);
+  await f.scope.revokeActor(replacementSource, reviewSource.actorId);
   await assert.rejects(async () => await f.sessions.prepare(worker, 'review.submit', {}), {
     code: 'forbidden',
   });
@@ -1480,7 +1482,8 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
 test('an assigned reviewer updates the paper through its scoped verdict only', async (t) => {
   const f = await fixture(t);
   const pending = (await f.design()).experiment;
-  const offered = await f.offer(pending);
+  const lead = await f.issue('operator');
+  const offered = await f.offer(pending, lead);
   const worker = await f.sessions.authenticate(offered.secret);
   const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
   assert.match(offered.session.assignment.context!.prompt, /You are responsible for updating/);
@@ -1526,7 +1529,7 @@ test('an assigned reviewer updates the paper through its scoped verdict only', a
   assert.equal(document.current.updatedBy, worker.actorId);
   assert.equal(document.published?.publication.reviewId, review.id);
   assert.equal(document.current.sections[0].content, edit.documents[0].changes[0].content);
-  await f.release(offered.session.id);
+  await f.release(offered.session.id, lead);
 });
 
 test('A Git experiment created once Code keeps the project’s history names Code’s driver where it has a checkout, and its planner is no writer', async (t) => {

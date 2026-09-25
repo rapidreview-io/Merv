@@ -370,8 +370,8 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
     carriedOver: [{ workflowId: carried.id, reason: 'Still needed by the next cycle.' }],
     rejected: [{ title: 'Scale up first', reason: 'No evidence yet that the effect is real.' }],
   };
-  assert.equal(wave.workflow.version, 3);
-  assert.ok(wave.lenses.every((lens) => lens.workflow.version === 2));
+  assert.equal(wave.workflow.version, 4);
+  assert.ok(wave.lenses.every((lens) => lens.workflow.version === 3));
   const assignment = await f.app.ctx.workflows.assignment(f.owner, wave.id);
   assert.match(JSON.stringify(assignment), /version: 2/);
   assert.match(JSON.stringify(assignment), /deliverable is code in the project's repository/);
@@ -843,7 +843,8 @@ test('leased lens calls use exact execution evidence, retain context through rel
   }
   wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
   const reviewToken = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
+  // The owner wrote the synthesis, so the review worker is directed by someone else.
+  await f.app.ctx.sessions.registerAgent(await f.actor('Lead', 'operator'), {
     name: 'Review agent',
     runnerId: 'external',
     requestId: 'review-agent',

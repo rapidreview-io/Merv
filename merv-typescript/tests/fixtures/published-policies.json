@@ -191,6 +191,18 @@
       "fingerprint": "5d38181dfaf34fc21c045410cce40779ebf57be2ea9fb43141c245b617868e9d",
       "published": true,
       "retired": true
+    },
+    {
+      "name": "reflection",
+      "version": 4,
+      "fingerprint": "766d69c019cb28ebee7460cfb8e7256a7cb5cc64680f6ba1f72d60128c0e856c",
+      "published": false
+    },
+    {
+      "name": "reflection.lens",
+      "version": 3,
+      "fingerprint": "64bb5bb33f3760778b034926df8f25d8621cb572cf3e4352f2c9e73d2d943ef6",
+      "published": false
     }
   ],
   "policies": [
@@ -870,6 +882,34 @@
       "fingerprint": "da58b12310dc71799047a07bce39f4dbb7a06eedec59e9c175ca4cee6fbb1d48",
       "published": true,
       "retired": true
+    },
+    {
+      "workflow": "reflection",
+      "version": 4,
+      "state": "in_review",
+      "fingerprint": "765f26fc31dab023fbd7676c38ff38c7901c7ed318555ac0656f87a42389d1b6",
+      "published": false
+    },
+    {
+      "workflow": "reflection",
+      "version": 4,
+      "state": "reflecting",
+      "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
+      "published": false
+    },
+    {
+      "workflow": "reflection",
+      "version": 4,
+      "state": "synthesizing",
+      "fingerprint": "dec725959810b5c636b232643f33bd0f2408d60c7312107b77659c7e0a0b359f",
+      "published": false
+    },
+    {
+      "workflow": "reflection.lens",
+      "version": 3,
+      "state": "reflecting",
+      "fingerprint": "215ae15c87ea90885352b5223e4f8cb0c70bff57a5f60eeb7d51e4eadad50f8e",
+      "published": false
     }
   ],
   "recipes": [

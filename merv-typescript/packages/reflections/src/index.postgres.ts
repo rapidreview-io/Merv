@@ -102,4 +102,10 @@ ${withoutTriggers(
   'DELETE FROM reflections WHERE id IN (SELECT id FROM wf_retired_instances);',
 )}
 `,
+  // An abandoned wave is over without approval, so it no longer holds the project's one open wave.
+  3: `
+ALTER TABLE reflections ADD COLUMN abandoned TEXT;
+DROP INDEX reflection_open_project;
+CREATE UNIQUE INDEX reflection_open_project ON reflections(project_id) WHERE approved IS NULL AND abandoned IS NULL;
+`,
 };

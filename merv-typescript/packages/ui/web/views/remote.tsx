@@ -182,6 +182,7 @@ function CollectionList({ row }: ViewProps) {
     isOpen: spec.states && ((state) => spec.states!.open.includes(state)),
     labels,
     ids: (item) => [item.id],
+    history: true,
   });
   // What needs a person is one more word on the state line, never a control of its own.
   const flagged = items.filter(reason);

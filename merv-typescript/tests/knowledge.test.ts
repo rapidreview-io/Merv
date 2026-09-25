@@ -303,8 +303,8 @@ test('Scoped references distinguish missing, unsupported and unpublished without
       'missing',
       'missing',
       'unsupported',
-      'unpublished',
-      'unpublished',
+      'unsupported',
+      'unsupported',
       'unsupported',
       'missing',
       'missing',
@@ -315,7 +315,8 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   assert.equal(results[1]!.kind, 'task');
   assert.equal(results[2]!.kind, 'experiment');
   assert.equal(results[3]!.hash, (await f.artifacts.get(f.reader, task.briefId)).hash);
-  assert.equal(results[7]!.kind, null, 'a retired published-graph ref still parses, unsupported');
+  // Retired published-* refs still parse, and are unsupported.
+  for (const retired of results.slice(7, 10)) assert.equal(retired.kind, null);
   assert.ok(!JSON.stringify(results).includes(privateArtifact.title));
   assert.deepEqual(
     results.map((item) => item.ref),

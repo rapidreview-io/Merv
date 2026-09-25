@@ -148,10 +148,7 @@ export class KnowledgeService implements Knowledge {
         ['session_', 'session-final'],
         ['wf_', 'work-item'],
       ].find(([prefix]) => ref.startsWith(prefix))?.[1];
-      if (ref.startsWith('published-')) kind = ref;
     }
-    if (kind && ['published-reflection', 'published-lens'].includes(kind))
-      return { ref, status: 'unpublished', kind: kind as KnowledgeReferenceKind, id: null };
     const missing = (known: KnowledgeReferenceKind | null): KnowledgeReference => ({
       ref,
       status: 'missing',
@@ -164,10 +161,17 @@ export class KnowledgeService implements Knowledge {
     ): KnowledgeReference => ({ ref, status: 'resolved', kind: known, id, ...facts });
     if (!id || !knowledgeIdSchema.safeParse(id).success)
       return { ref, status: 'unsupported', kind: null, id: null };
-    if (kind === 'work-item') {
-      // A work item is whatever program its instance runs; only tasks and experiments resolve.
+    if (kind === 'work-item' || kind === 'reflection' || kind === 'research') {
+      // A work item is whatever program its instance runs; a wave and a cycle are named by it.
       const snapshot = await this.optional(async () => await this.workflows.get(caller, id, tx));
+      if (kind !== 'work-item' && snapshot?.workflow !== kind) return missing(kind);
       if (!snapshot) return missing(null);
+      if (snapshot.workflow === 'reflection' || snapshot.workflow === 'research')
+        return resolved(snapshot.workflow, {
+          label: String(snapshot.data.title ?? snapshot.data.name),
+          revision: snapshot.revision,
+          state: snapshot.state,
+        });
       if (snapshot.workflow !== 'task' && snapshot.workflow !== 'experiment')
         return { ref, status: 'unsupported', kind: null, id };
       kind = snapshot.workflow;

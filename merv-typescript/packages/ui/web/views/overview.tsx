@@ -313,14 +313,18 @@ export function standingOf(
       // A review names its subject through the lists the other blocks already read.
       const subject = subjects.get(review.subjectId);
       const held = review.reviewerId;
-      // Whether an unclaimed review is this viewer's move is the server's answer, not ours:
-      // it also holds the contributor exclusions, which this page never sees.
-      const mine = review.status === 'requested' ? !!review.claimable : held === me;
-      const standing = !held ? (mine ? 'open' : 'unclaimed') : held === me ? 'yours' : 'theirs';
       // Claiming is offered here only where the subject's own gate says this caller may.
       const start = gate
         .get(review.subjectId)
         ?.actions.find((action) => action.tool === 'review.start');
+      // Whether an unclaimed review is this viewer's move is the server's answer, not ours:
+      // the list holds the contributor exclusions, which this page never sees, and the gate
+      // the rest, such as a Git task's review, which only a leased reviewer may claim.
+      const mine =
+        review.status === 'requested'
+          ? !!review.claimable && start?.status !== 'blocked'
+          : held === me;
+      const standing = !held ? (mine ? 'open' : 'unclaimed') : held === me ? 'yours' : 'theirs';
       lines[mine ? 'yours' : 'agent'].push({
         id: review.id,
         kind: 'reviews',

@@ -9,7 +9,7 @@ import { RecordText } from '../markdown';
  */
 interface Reference {
   ref: string;
-  status: 'resolved' | 'missing' | 'unsupported' | 'unpublished';
+  status: 'resolved' | 'missing' | 'unsupported';
   label?: string;
   state?: string;
 }

@@ -300,9 +300,10 @@ async function fixture(t: TestContext, human = false) {
       dependsOn: inputs.map((item) => item.id),
       requestId: `waiter-${sequence}`,
     });
-  const record = () => f.state.read((sql) => bases.find(sql, f.admin.projectId, [a, c]));
-  const resolveCommit = async () => {
-    const base = (await record())!;
+  const record = (members = [a, c]) =>
+    f.state.read((sql) => bases.find(sql, f.admin.projectId, members));
+  const resolveCommit = async (members?: string[]) => {
+    const base = (await record(members))!;
     const [plannedLeft, plannedRight] = await f.state.read((sql) =>
       bases.inputs(sql, f.admin.projectId, base),
     );
@@ -335,8 +336,8 @@ async function fixture(t: TestContext, human = false) {
       requestId: `resolution-${taskId}`,
     });
   };
-  const acceptResolution = async (commit: string) => {
-    const taskId = (await record())!.resolutionTaskId!;
+  const acceptResolution = async (commit: string, members?: string[]) => {
+    const taskId = (await record(members))!.resolutionTaskId!;
     // The owner-review protocol is tested in task-git-workspace; here its committed terminal
     // state is the boundary and acceptUnit still checks and records the capture itself.
     await f.state.transaction((tx) =>
@@ -508,6 +509,11 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
   f.unbind();
   f.unbindReviews();
   await assert.rejects(f.reviews.start(f.admin, request.id), { code: 'review_independence' });
+  // What follows is the Reviews protocol alone: as the task's own review, only a leased worker
+  // could claim it.
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE tasks SET review_id=NULL WHERE id=?', taskId).then(() => undefined),
+  );
   const independent = {
     projectId: f.admin.projectId,
     actorId: (await f.scope.issueActor(f.admin, { name: 'Independent', role: 'reviewer' })).actor
@@ -871,6 +877,176 @@ test('a service task derives its base from prerequisites when it names no commit
     );
 });
 
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+/** Research's own capability, not a stand-in: the producer is the research service actor. */
+const consolidation = (f: Fixture, dependsOn: string[]) =>
+  f.state.transaction(async (tx) => {
+    const task = await f.tasks.serviceTasks('research').create(
+      {
+        projectId: f.admin.projectId,
+        requestId: 'consolidation',
+        title: 'Cycle: consolidation',
+        goal: 'Integrate the accepted work main lacks and publish it.',
+        checks: ['Every experiment is kept, adapted or dropped.'],
+        dependsOn,
+      },
+      tx,
+    );
+    await f.code.publishOnAcceptance(f.admin, { unitId: task.id }, tx);
+    return task.id;
+  });
+
+/** A runner leases the task, and its worker delivers the base the task was given. */
+async function deliver(f: Fixture, taskId: string) {
+  const identity = await f.scope.issueActor(f.admin, { name: 'Runner', role: 'operator' });
+  const runner = {
+    projectId: f.admin.projectId,
+    actorId: identity.actor.id,
+    credentialId: identity.credential.id,
+  };
+  await f.sessions.heartbeatRunner(runner, {
+    runnerId: 'runner',
+    machine: { hostname: 'runner', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const task = await f.tasks.get(f.admin, taskId);
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const session = await f.sessions.offer(runner, {
+    instanceId: taskId,
+    expectedRevision: task.workflow.revision,
+    runnerId: 'runner',
+    requestId: 'produce',
+    secret,
+  });
+  const base = (await f.state.transaction((tx) => f.code.basePin(f.admin, taskId, tx)))!.reference;
+  const workspace = {
+    repositoryId: 'repository',
+    workspaceId: taskId,
+    mode: 'persistent' as const,
+    branch: 'merv/consolidation',
+    baseOid: base,
+    headOid: base,
+    stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 1 },
+  };
+  await f.sessions.attach(runner, {
+    sessionId: session.id,
+    runnerId: 'runner',
+    hostRef: 'produce',
+    workspace,
+  });
+  const worker = await f.sessions.authenticate(secret);
+  f.captures.set('consolidated', {
+    ref: { kind: 'code-commit', commandId: 'consolidated' },
+    status: 'ready',
+    provenance: {
+      projectId: f.admin.projectId,
+      instanceId: taskId,
+      sessionId: session.id,
+      actorId: worker.actorId,
+      revision: task.workflow.revision,
+      workflow: { name: 'task', version: 6, state: 'in_progress' },
+      readOnly: false,
+    } as CodeCapture['provenance'],
+    workspace,
+    observedAt: 'now',
+    eventId: null,
+  });
+  const delivery = confirmedDelivery(
+    {
+      taskId,
+      expectedRevision: task.workflow.revision,
+      requestId: 'deliver',
+      commandId: 'consolidated',
+      artifactIds: [],
+    },
+    task.checks.length,
+  );
+  const submitted = await f.sessions.run(
+    await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+    (caller) => f.tasks.submitDelivery(caller, delivery),
+  );
+  return { runner, session, worker, base, submitted };
+}
+
+test('a research consolidation is delivered, and no contributor or directing authority reviews it', async (t) => {
+  const f = await fixture(t);
+  const taskId = await consolidation(f, [f.left.id, f.extra.id]);
+  await f.bases.work(f.admin.projectId);
+  const { runner, session, worker, submitted } = await deliver(f, taskId);
+  assert.equal(submitted.workflow.state, 'in_review');
+  const review = await f.reviews.get(f.admin, submitted.reviewId!);
+  for (const actorId of [f.inputAuthor.actorId, runner.actorId, worker.actorId])
+    assert.ok(review.provenance?.excludedActorIds.includes(actorId));
+  // The authority that directed the delivery, and the author of integrated work, are refused.
+  for (const caller of [runner, f.inputAuthor])
+    await assert.rejects(f.reviews.start(caller, review.id), { code: 'review_independence' });
+  await f.sessions.release(runner, { sessionId: session.id, runnerId: 'runner' });
+  // A worker the same authority directs is refused too; one directed by anyone else is not.
+  const offerReview = (by: Caller, runnerId: string) =>
+    f.sessions.offer(by, {
+      instanceId: taskId,
+      expectedRevision: submitted.workflow.revision,
+      runnerId,
+      requestId: `review-${runnerId}`,
+      secret: `ms_${randomBytes(32).toString('base64url')}`,
+    });
+  await assert.rejects(offerReview(runner, 'runner'), { code: 'review_independence' });
+  const other = await f.scope.issueActor(f.admin, { name: 'Other runner', role: 'operator' });
+  const independent = {
+    projectId: f.admin.projectId,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  await f.sessions.heartbeatRunner(independent, {
+    runnerId: 'other',
+    machine: { hostname: 'other', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const leased = await offerReview(independent, 'other');
+  const claimed = await f.reviews.get(f.admin, review.id);
+  assert.deepEqual([claimed.status, claimed.reviewerId], ['started', leased.actorId]);
+});
+
+test('a consolidation whose merge with main clashes is resolved, reviewed and delivered', async (t) => {
+  const f = await fixture(t);
+  // Main moved since A was built, onto the same line A changed; no unit accepted main.
+  const main = f.source.commit({ 'f.txt': 'M\n' });
+  f.source.git('push', f.repositories.paths(f.admin.projectId).repository, `${main}:refs/heads/m`);
+  const setMain = (oid: string) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE code_projects SET main_json=? WHERE project_id=?',
+        JSON.stringify({ oid, operationId: 'fixture', stored: true }),
+        f.admin.projectId,
+      ),
+    );
+  await setMain(main);
+  const taskId = await consolidation(f, [f.left.id]);
+  await f.bases.work(f.admin.projectId);
+  await f.code.reconcileAll();
+  const members = [f.a, main];
+  assert.equal((await f.record(members))?.state, 'awaiting_resolution');
+  const resolved = await f.resolveCommit(members);
+  await f.acceptResolution(resolved, members);
+  assert.equal((await f.record(members))?.result?.commit, resolved);
+  const { base, submitted } = await deliver(f, taskId);
+  assert.equal(base, resolved);
+  assert.equal(submitted.workflow.state, 'in_review');
+  // The resolution's certificate reads main from the lineage, not from where main is now.
+  const certificate = () =>
+    f.state.transaction(async (tx) =>
+      f.units.reviewProvenance(f.admin.projectId, (await f.record(members))!.resolutionTaskId!, tx),
+    );
+  const before = await certificate();
+  await setMain(f.d);
+  assert.deepEqual(await certificate(), before);
+});
+
 test('derivation ignores a system edge below a code-less success', async (t) => {
   const f = await fixture(t);
   await f.waiter();
@@ -980,6 +1156,23 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     capacity: 1,
     capabilities: ['code.v2'],
   });
+  // Each round's review is leased: only a leased worker may claim a Git task's review.
+  const reviewerIdentity = await f.scope.issueActor(f.admin, {
+    name: 'Independent review runner',
+    role: 'operator',
+  });
+  const reviewer = {
+    projectId: f.admin.projectId,
+    actorId: reviewerIdentity.actor.id,
+    credentialId: reviewerIdentity.credential.id,
+  };
+  await f.sessions.heartbeatRunner(reviewer, {
+    runnerId: 'round-reviewer',
+    machine: { hostname: 'rounds', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
   const ids: string[] = [];
   const submissions: string[] = [];
   for (let round = 1; round <= 3; round++) {
@@ -1058,7 +1251,17 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       (caller) => f.tasks.submitDelivery(caller, delivery),
     );
     submissions.push(submitted.deliveryCodeArtifactId!);
-    const review = await f.reviews.start(f.admin, submitted.reviewId!);
+    await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
+    const reviewSecret = `ms_${randomBytes(32).toString('base64url')}`;
+    const reviewSession = await f.sessions.offer(reviewer, {
+      instanceId: taskId,
+      expectedRevision: submitted.workflow.revision,
+      runnerId: 'round-reviewer',
+      requestId: `round-review-${round}`,
+      secret: reviewSecret,
+    });
+    const reviewWorker = await f.sessions.authenticate(reviewSecret);
+    const review = await f.reviews.get(reviewWorker, submitted.reviewId!);
     ids.push(review.id);
     const assessment = {
       ...reviewedFindings(review),
@@ -1076,9 +1279,12 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       })),
       requestId: `verdict-${round}`,
     };
-    const returned = await f.tasks.submitReview(f.admin, assessment);
+    const returned = await f.sessions.run(
+      await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
+      (caller) => f.tasks.submitReview(caller, assessment),
+    );
     assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
-    await f.sessions.release(runner, { sessionId: session.id, runnerId: 'round-runner' });
+    await f.sessions.release(reviewer, { sessionId: reviewSession.id, runnerId: 'round-reviewer' });
     await f.events.drain();
     if (round === 1) {
       // A waiter that arrives while the returned resolution is reworked joins the same task.

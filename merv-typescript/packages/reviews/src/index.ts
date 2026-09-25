@@ -1,5 +1,5 @@
-import { excludedFromReview, canonical, visible, recorded, mapAsync } from '@merv/contracts';
-import { createService, idPattern, plain, receipted } from '@merv/contracts';
+import { excludedFromReview, directsIndependently, canonical, visible } from '@merv/contracts';
+import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -359,8 +359,7 @@ export class ReviewService implements Reviews {
     // Existing evidence exclusions and owner-certified contributors share one identity rule.
     return (
       !excludedFromReview(review, caller.actorId) &&
-      (!review.provenance ||
-        !excludedFromReview(review, (await this.scope.authorityActor(caller, tx)).id))
+      directsIndependently(review, (await this.scope.authorityActor(caller, tx)).id)
     );
   }
 
@@ -376,19 +375,21 @@ export class ReviewService implements Reviews {
       'Review owner must be a plain object',
     );
     const descriptors = Object.getOwnPropertyDescriptors(owner);
+    const keys = ['id', 'owns', 'submit', ...(Object.hasOwn(owner, 'claim') ? ['claim'] : [])];
     check(
-      Reflect.ownKeys(owner).length === 3 &&
-        ['id', 'owns', 'submit'].every(
+      Reflect.ownKeys(owner).length === keys.length &&
+        keys.every(
           (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
         ),
       'invalid_review_owner',
-      'Review owner requires only id, owns and submit',
+      'Review owner requires only id, owns and submit, and may add claim',
     );
     check(
       typeof owner.id === 'string' &&
         idPattern.test(owner.id) &&
         typeof owner.owns === 'function' &&
-        typeof owner.submit === 'function',
+        typeof owner.submit === 'function' &&
+        (keys.length === 3 || typeof owner.claim === 'function'),
       'invalid_review_owner',
       'Review owner requires an identifier and callbacks',
     );
@@ -398,7 +399,12 @@ export class ReviewService implements Reviews {
       'Review owner is already registered',
       409,
     );
-    const registered = Object.freeze({ id: owner.id, owns: owner.owns, submit: owner.submit });
+    const registered = Object.freeze({
+      id: owner.id,
+      owns: owner.owns,
+      submit: owner.submit,
+      ...(owner.claim ? { claim: owner.claim } : {}),
+    });
     this.owners.set(registered.id, registered);
     this.ownerEpoch++;
     return () => {
@@ -753,17 +759,16 @@ export class ReviewService implements Reviews {
       reviews.some((review) => review.status === 'requested') &&
       !!caller.actorId &&
       (await this.scope.eligible(caller.projectId, caller.actorId, 'review', tx));
-    const authorityId =
-      reviewer && reviews.some((review) => review.provenance && review.status === 'requested')
-        ? (await this.scope.authorityActor(caller, tx)).id
-        : caller.actorId;
+    const authorityId = reviewer
+      ? (await this.scope.authorityActor(caller, tx)).id
+      : caller.actorId;
     return reviews.map((review) => ({
       ...review,
       claimable:
         reviewer &&
         review.status === 'requested' &&
         !excludedFromReview(review, caller.actorId) &&
-        (!review.provenance || !excludedFromReview(review, authorityId)),
+        directsIndependently(review, authorityId),
     }));
   }
 
@@ -850,6 +855,10 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       const current = await this.checkStart(caller, reviewId, tx);
       if (current.status === 'started') return current;
+      // The owning domain may refuse a claim that its rules could never let finish.
+      for (const owner of [...this.owners.values()])
+        if (owner.claim && (await owner.owns(freeze(current), tx)))
+          await owner.claim(caller, current, tx);
       const claimId = newId('claim');
       const changed = await tx.run(
         "UPDATE reviews SET status = 'started', reviewer_id = ?, claim_id=?, claim_generation=claim_generation+1 WHERE id = ? AND status = 'requested'",

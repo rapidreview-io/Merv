@@ -379,6 +379,15 @@ test('retiring the versions that can no longer start deletes their records and n
               if (table === 'research_cycles' && row.id === 'l-res6') row.predecessor_id = null;
               if (table === 'research_automation' && row.research_id === 'l-res6')
                 row.root_id = 'l-res6';
+              // reflections@3 adds a column after the retirement; jsonb orders keys by length.
+              if (table === 'reflections')
+                return JSON.stringify(
+                  Object.fromEntries(
+                    Object.entries({ ...row, abandoned: null }).sort(
+                      ([a], [b]) => a.length - b.length || (a < b ? -1 : 1),
+                    ),
+                  ),
+                );
               return JSON.stringify(row);
             })
             .filter((text) => !namesRetired(text))

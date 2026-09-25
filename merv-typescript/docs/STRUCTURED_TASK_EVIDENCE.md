@@ -114,13 +114,14 @@ building later work on the delivered commit.
   with `task_commit_unfetched`. Merv does not itself fetch or verify Git objects: the
   attachment is a source-authenticated runner report, and the review must run on the
   machine that holds the objects.
-- **Do not claim a Git task's review interactively.** Reviews admits `review.start`
-  from any eligible reviewer without asking Tasks. Such a reviewer may still return
-  or fail the task, but can never pass it, and once the review is claimed no review
-  worker can lease it (`review_unavailable`). The `start_review` guidance and the
-  reviewer assignment say so before the claim. If it has happened, the producer or
-  an admin replaces the review with `task.reissue_review`; the fresh review is
-  unclaimed, pins the same delivered commit, and can be leased.
+- **Only a leased review worker claims a Git task's review.** Tasks refuses
+  `review.start` of its current review from anyone else (`leased_review_required`),
+  because such a claim could never pass the task and would shut every review worker
+  out (`review_unavailable`). Once `review_rounds` is used up no worker is offered the
+  review, so a person may then claim it and fail the task. If that claim is still
+  held after an admin allows another round, the producer or an admin replaces the
+  review with `task.reissue_review`; the fresh review pins the same delivered commit
+  and can be leased.
 
 | Code                     | Meaning                                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------------ |
@@ -134,6 +135,7 @@ building later work on the delivered commit.
 | `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |
 | `task_commit_provenance` | The commit is not this worker's for this task revision, or no longer matches its delivery. |
 | `task_commit_unfetched`  | A `pass` not from the leased review attached at the delivered commit; reissue if claimed.  |
+| `leased_review_required` | A claim of the current review not from a review worker, before `review_rounds` is used up. |
 | `task_base_unavailable`  | A based task's prerequisite has not been accepted with a delivered commit.                 |
 
 With Code unloaded, Git task records stay readable (`deliveryCode` is stored data)

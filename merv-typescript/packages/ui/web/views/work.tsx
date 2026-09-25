@@ -10,7 +10,7 @@ import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
-import { RowDiagram } from '../process';
+import { Dependency, RowDiagram } from '../process';
 import { ArrowRightIcon } from '../icons';
 import { newest, useHome, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
@@ -409,32 +409,47 @@ export function WorkList({ shell }: { shell: ShellData }) {
 
 /** The gate's own code for a cycle whose problem, scope, goals and constraints are unwritten. */
 const UNDEFINED = 'research_definition_required';
-/** Whether a gate refuses any of its moves for want of that definition. */
-export const needsDefinition = (
-  moves: { status: string | null; blockers: { code: string }[] }[] | undefined,
-) =>
-  !!moves?.some(
-    (move) => move.status === 'blocked' && move.blockers.some((item) => item.code === UNDEFINED),
-  );
 
 /**
- * A cycle's one move, here and on its own page. A step the gate already refuses for
- * want of the definition is not offered as a button that can only fail: the
- * definition is written on the paper, so the move is the way there.
+ * A cycle's one move, here and on its own page, as the project's one read of every gate
+ * has it. A move the gate refuses is not offered as a button that can only fail: for want
+ * of the definition it is the way to the paper, where that is written, and otherwise it
+ * stands disabled over the records it waits on — unless the page already `listed` them.
+ * An answer the gate asks for, the approved plan's next wave or a fresh consolidation
+ * task, is a move of its own.
  */
 export function CycleMove({
   cycle,
   shell,
-  undefinedYet,
+  listed = false,
   onSaved,
 }: {
   cycle: ResearchRecord;
   shell: ShellData;
-  undefinedYet: boolean;
+  listed?: boolean;
   onSaved(): void;
 }) {
+  const home = useHome();
+  const read = home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id);
+  // A gate read at another revision is not this cycle's, and leaves the plain move.
+  const gate = read?.revision === cycle.workflow.revision ? read : undefined;
+  const advance = gate?.actions.find((action) => action.tool === 'research.advance');
+  const refused = (code: string) => !!advance?.blockers.some((item) => item.code === code);
   const paper = shell.rows.find((row) => row.view.kind === 'paper');
-  if (undefinedYet && paper)
+  const move = (label: string, choice: Record<string, unknown> = {}, disabled = false) => (
+    <ResearchCommand
+      key={label}
+      disabled={disabled}
+      tool="research.advance"
+      input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision, ...choice }}
+      label={label}
+      onSaved={() => {
+        onSaved();
+        refreshTools('ui.home');
+      }}
+    />
+  );
+  if (refused(UNDEFINED) && paper)
     return (
       <Link className="btn" to={paper.path}>
         Write the definition <ArrowRightIcon size={14} />
@@ -447,14 +462,8 @@ export function CycleMove({
           Automatic · cycle {cycle.automation.cycle} of {cycle.automation.maxCycles}
         </span>
         {cycle.automation.blocker && <span>{cycle.automation.blocker.message}</span>}
-        {cycle.automation.blocker?.code === 'research_definition_changed' && (
-          <ResearchCommand
-            tool="research.advance"
-            input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
-            label="Accept changed definition"
-            onSaved={onSaved}
-          />
-        )}
+        {cycle.automation.blocker?.code === 'research_definition_changed' &&
+          move('Accept changed definition')}
         <ResearchCommand
           tool="research.end"
           input={{
@@ -468,14 +477,24 @@ export function CycleMove({
         />
       </div>
     );
+  if (advance?.requiredInput.includes('nextWave'))
+    return (
+      <div className="cluster">
+        {move('Create next wave', { nextWave: 'create' })}
+        {move('Skip next wave', { nextWave: 'skip' })}
+      </div>
+    );
+  if (refused('integration_failed')) return move('Retry consolidation', { retryIntegration: true });
+  const blocked = advance?.status === 'blocked';
   return (
-    <ResearchCommand
-      disabled={!isOpen(cycle.workflow.state)}
-      tool="research.advance"
-      input={{ researchId: cycle.id, expectedRevision: cycle.workflow.revision }}
-      label="Start next step"
-      onSaved={onSaved}
-    />
+    <div className="stack">
+      {move('Start next step', {}, blocked || !isOpen(cycle.workflow.state))}
+      {blocked &&
+        !listed &&
+        gate!.dependencies
+          .filter((item) => !item.settled && !item.failed)
+          .map((item) => <Dependency key={item.id} item={item} />)}
+    </div>
   );
 }
 
@@ -496,8 +515,6 @@ function CycleHead({
     {},
     { every: 10000 },
   );
-  // The cycle's gate comes with the read the rail and Home already share.
-  const home = useHome();
   const all = newest(cycles.data ?? [], (cycle) => cycle.workflow.updatedAt);
   const cycle = all.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
   // With no cycle the page is its title: the absent switch already says there is none.
@@ -510,17 +527,7 @@ function CycleHead({
       actions={
         <div className="cluster">
           <StatusPill value={cycle.workflow.state} />
-          {writable && (
-            <CycleMove
-              cycle={cycle}
-              shell={shell}
-              undefinedYet={needsDefinition(
-                home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id)
-                  ?.actions,
-              )}
-              onSaved={cycles.reload}
-            />
-          )}
+          {writable && <CycleMove cycle={cycle} shell={shell} onSaved={cycles.reload} />}
         </div>
       }
       summary={

@@ -52,6 +52,28 @@ export const LENS_WORKFLOW: WorkflowDefinition = {
   terminal: ['complete'],
   edges: [{ from: 'reflecting', action: 'submit', to: 'complete' }],
 };
+/** A published definition never changes, so a version that can be ended is a new version. */
+const endable = (definition: WorkflowDefinition, live: string[]): WorkflowDefinition => ({
+  ...definition,
+  version: definition.version + 1,
+  states: [...definition.states, 'abandoned'],
+  terminal: [...definition.terminal, 'abandoned'],
+  edges: [
+    ...definition.edges,
+    ...live.map((from) => ({ from, action: 'abandon', to: 'abandoned' })),
+  ],
+});
+/**
+ * Version 4 is version 3 with an ending: a wave that cannot finish, for want of five lens
+ * authors say, is abandoned by its owner or an operator, which lifts the pause on new work.
+ * Its lenses are version 3, which the wave's ending ends with it.
+ */
+export const REFLECTION_WORKFLOW_ENDABLE = endable(REFLECTION_WORKFLOW, [
+  'reflecting',
+  'synthesizing',
+  'in_review',
+]);
+export const LENS_WORKFLOW_ENDABLE = endable(LENS_WORKFLOW, ['reflecting']);
 export const REFLECTION_CRITERIA = [
   'Research coverage is explained, including unfinished work and any new results observed during the wave; factual conclusions and claim changes cite exact evidence and preserve uncertainty.',
   'Five independently authored lens reports are reconciled, including disagreements, negative results and methodological limitations.',
@@ -109,7 +131,7 @@ const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage
 }));
 
 export const LENS_RECIPE = RECIPES.find((recipe) => recipe.name === 'reflection.lens')!;
-/** Synthesis and review for reflection@3, whose plans declare a workspace per item. */
+/** Synthesis and review for reflection@3 and @4, whose plans declare a workspace per item. */
 export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
   (recipe) => recipe.name !== 'reflection.lens',
 ).map((recipe) => ({

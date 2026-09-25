@@ -1066,6 +1066,123 @@ test('a research cycle that cannot reach an answer can be ended', async (t) => {
   );
 });
 
+test('a wave that cannot finish is abandoned by its owner, which lifts the pause and leaves its cycle to end', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  const record = await f.advance(await f.advance(await f.create()));
+  let wave = await f.app.ctx.reflections.get(f.owner, record.reflectionId!);
+  // One lens author is found; the other four never are.
+  const author = await f.issue('producer');
+  await f.app.ctx.reflections.submitLens(author, {
+    lensId: wave.lenses[0]!.id,
+    artifactId: (await f.artifact(author, 'evidence')).id,
+    expectedRevision: 0,
+    requestId: f.id(),
+  });
+  const task = () =>
+    f.app.ctx.tasks.create(f.owner, {
+      title: 'Next step',
+      goal: 'Start once the wave is over.',
+      checks: ['Recorded'],
+      requestId: 'next-step',
+    });
+  await assert.rejects(task(), { code: 'workflow_creation_paused' });
+  const guidance = await f.app.ctx.workflows.evaluate(f.owner, wave.id);
+  assert.ok(guidance.actions.some((action) => action.action === 'end'));
+  const ending = {
+    reflectionId: wave.id,
+    expectedRevision: wave.workflow.revision,
+    reason: 'Five independent lens authors cannot be found for this project.',
+    requestId: f.id(),
+  };
+  // Neither a lens author nor a worker ends a wave; its owner or an operator does.
+  await assert.rejects(f.app.ctx.reflections.end(author, ending), { code: 'forbidden' });
+  wave = await f.app.ctx.reflections.end(f.owner, ending);
+  assert.deepEqual(await f.app.ctx.reflections.end(f.owner, ending), wave);
+  assert.equal(wave.workflow.state, 'abandoned');
+  assert.deepEqual(
+    wave.lenses.map((lens) => lens.workflow.state),
+    ['complete', 'abandoned', 'abandoned', 'abandoned', 'abandoned'],
+  );
+  assert.ok((await task()).id);
+  // The cycle waits on a wave that will never be approved: it says so and offers its end.
+  const gate = await f.app.ctx.workflows.evaluate(f.owner, record.id);
+  assert.equal(gate.currentGate, 'dependency_failed');
+  assert.equal(gate.nextAction?.action, 'end');
+  await assert.rejects(f.advance(record), { code: 'dependency_failed' });
+  const ended = await f.research.end(f.owner, {
+    researchId: record.id,
+    expectedRevision: record.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Its reflection was abandoned.',
+    requestId: f.id(),
+  });
+  // A cycle that follows it reflects again on a fresh wave.
+  const next = await f.research.create(f.owner, {
+    name: 'Reflect again',
+    previousCycleId: ended.id,
+    requestId: f.id(),
+  });
+  const reflecting = await f.advance(await f.advance(next));
+  assert.equal(reflecting.workflow.state, 'reflecting');
+  assert.notEqual(reflecting.reflectionId, wave.id);
+});
+
+test('the reference lookup names a research cycle and its reflection', async (t) => {
+  const f = await fixture(t);
+  await f.definition();
+  const record = await f.advance(await f.advance(await f.create()));
+  const wave = record.reflectionId!;
+  const results = await f.app.ctx.knowledge.resolve(f.owner, [
+    record.id,
+    wave,
+    `research:${record.id}`,
+    `reflection:${wave}`,
+    `reflection:${record.id}`,
+    'published-reflection:latest',
+  ]);
+  assert.deepEqual(
+    results.map(({ status, kind, label, state }) => [status, kind, label, state]),
+    [
+      ['resolved', 'research', 'Research loop', 'reflecting'],
+      ['resolved', 'reflection', 'Research loop: reflection', 'reflecting'],
+      ['resolved', 'research', 'Research loop', 'reflecting'],
+      ['resolved', 'reflection', 'Research loop: reflection', 'reflecting'],
+      ['missing', 'reflection', undefined, undefined],
+      ['unsupported', null, undefined, undefined],
+    ],
+  );
+});
+
+test('a version-3 wave keeps its lenses, its path to approval and its lack of an ending', async (t) => {
+  const f = await fixture(t);
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'legacy' });
+  // As production holds it: a wave started before version 4, with version-2 lenses.
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('UPDATE wf_instances SET version=3 WHERE id=?', wave.id);
+    for (const lens of wave.lenses)
+      await tx.run('UPDATE wf_instances SET version=2 WHERE id=?', lens.id);
+  });
+  await assert.rejects(
+    f.app.ctx.reflections.end(f.owner, {
+      reflectionId: wave.id,
+      expectedRevision: 0,
+      reason: 'Version 3 has no ending.',
+      requestId: f.id(),
+    }),
+    { code: 'invalid_transition' },
+  );
+  const cycle = await f.research.create(f.owner, { name: 'Legacy', requestId: f.id() });
+  assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).workflow.version, 3);
+  const record = { ...cycle, reflectionId: wave.id };
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run('UPDATE research_cycles SET reflection_id=? WHERE id=?', wave.id, cycle.id),
+  );
+  const approved = await f.reflect(record);
+  assert.equal(approved.workflow.state, 'approved');
+  assert.equal(approved.workflow.version, 3);
+});
+
 const planned = (
   overrides: Partial<Extract<ChangeSpec, { version: 2 }>> = {},
 ): Extract<ChangeSpec, { version: 2 }> => ({

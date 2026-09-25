@@ -24,11 +24,11 @@ export type KnowledgeReferenceKind =
   | 'review'
   | 'code-proposal'
   | 'code-capture'
-  | 'published-reflection'
-  | 'published-lens';
+  | 'reflection'
+  | 'research';
 export interface KnowledgeReference {
   ref: string;
-  status: 'resolved' | 'missing' | 'unsupported' | 'unpublished' | 'unavailable';
+  status: 'resolved' | 'missing' | 'unsupported' | 'unavailable';
   kind: KnowledgeReferenceKind | null;
   id: string | null;
   label?: string;

@@ -62,11 +62,6 @@ export function GitHubAutomation({
         />
         {status.baseBranch && <span className="branch branch--ref">{status.baseBranch}</span>}
       </div>
-      {!status.automationConfigured && (
-        <p className="muted">
-          The server needs its GitHub App key before runners can fetch or publish code.
-        </p>
-      )}
       {status.canManage && (
         <>
           <label className="stack">
@@ -121,12 +116,6 @@ export function GitHubAutomation({
                 </div>
               )}
             </label>
-          )}
-          {mode !== 'off' && (
-            <p className="muted">
-              Merv uses this branch as the project’s main branch for new work and reviewed changes.
-              It can have any branch name.
-            </p>
           )}
           <div>
             <button

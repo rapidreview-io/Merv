@@ -8,7 +8,7 @@ import { WORK } from '../navigation';
 import { Gate, Relations } from '../process';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
-import { CycleMove, WorkList, needsDefinition } from './work';
+import { CycleMove, WorkList } from './work';
 
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
@@ -45,7 +45,7 @@ function CycleDetail({ row, shell }: ViewProps) {
               <CycleMove
                 cycle={record}
                 shell={shell}
-                undefinedYet={needsDefinition(process.data?.edges)}
+                listed
                 onSaved={() => {
                   cycle.reload();
                   process.reload();
