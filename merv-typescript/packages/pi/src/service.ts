@@ -161,6 +161,9 @@ export class PiService implements Pi, FleetOwner {
    * trusts a grant's: worker credentials, and turns /progress found their worker holding. */
   private readonly progressAt = new Map<string, number>();
   private readonly trusted = new Map<string, number>();
+  /** Memory only, keyed like progressAt: each claimed turn's refused calls, by the digest of name
+   * and input, with the code each was refused with. */
+  private readonly refusals = new Map<string, Map<string, string>>();
   /** Owner ids Fleet is admitting now: valid() accepts a slot before its host records it. */
   private readonly renting = new Set<string>();
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
@@ -933,6 +936,7 @@ export class PiService implements Pi, FleetOwner {
   private forget({ conversationId, id }: PiCommandRecord): void {
     const turn = `${conversationId}:${id}`;
     this.progressAt.delete(turn);
+    this.refusals.delete(turn);
     for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
   }
   /** The earliest of the slot's deadline, the source's expiry and `span` from now: none while
@@ -1470,6 +1474,16 @@ export class PiService implements Pi, FleetOwner {
       'This tool was not offered in this turn',
       403,
     );
+    const key = `${conversation.id}:${command.id}`;
+    const call = digest([value.name, value.input]);
+    const refused = this.refusals.get(key)?.get(call);
+    if (refused)
+      return {
+        error: {
+          code: 'already_refused',
+          message: `This exact call was already refused with ${refused}: change the input or answer the person`,
+        },
+      };
     // What only the person may run (ToolDefinition.conversation) is proposed to them instead.
     const definition = (await this.tools.list()).find(({ name }) => name === value.name);
     let use: 'propose' | 'secret' | undefined;
@@ -1489,7 +1503,6 @@ export class PiService implements Pi, FleetOwner {
           : definition.conversation;
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
-    const key = `${conversation.id}:${command.id}`;
     this.progressAt.set(key, this.clock());
     this.report(
       conversation.id,
@@ -1510,8 +1523,16 @@ export class PiService implements Pi, FleetOwner {
     )
       .catch(async (error: unknown) => {
         // A turn that ended, or whose person lost access here, ends with its call; any other
-        // refusal, the person's role included, is the model's to explain.
+        // refusal, the person's role included, is the model's to explain. A refusal the same
+        // call would meet again (a 4xx other than timeout, conflict or rate limit) is kept: the
+        // call is not run again in this turn.
         await this.read((tx) => this.bound(token, value, tx));
+        if (
+          error instanceof MervError &&
+          error.status < 500 &&
+          ![408, 409, 429].includes(error.status)
+        )
+          this.refusals.set(key, (this.refusals.get(key) ?? new Map()).set(call, error.code));
         return error instanceof MervError
           ? {
               error: {

@@ -859,6 +859,43 @@ test('recoverable tool failures and oversized results come back to the model as 
   await assert.rejects(call('refused.conflict'), code('pi_command_stale'));
 });
 
+test('a call already refused in the turn is not run again: the model is told to change it or answer', async (t) => {
+  const f = await fixture(t);
+  let runs = 0;
+  t.after(
+    f.tools.register({
+      name: 'experiment.create',
+      description: 'Create an experiment',
+      inputSchema: z.record(z.unknown()),
+      handler: (_caller: Caller, input: Record<string, unknown>) => {
+        runs++;
+        check(!input.baseTaskId, 'invalid_workspace', 'baseTaskId is only for workspace "git"');
+        check(!input.busy, 'experiment_conflict', 'Changed; reread it', 409);
+        return { id: 'exp_1' };
+      },
+    }),
+  );
+  const { token, input } = await f.claimed(await f.send(await f.create()));
+  await f.pi.begin(token, input);
+  const call = (value: object) =>
+    f.pi.tool(token, { ...input, name: 'experiment.create', input: value });
+  const refusal = { code: 'invalid_workspace', message: 'baseTaskId is only for workspace "git"' };
+  assert.deepEqual(await call({ baseTaskId: 'x', title: 'A' }), { error: refusal });
+  assert.deepEqual(await call({ title: 'A', baseTaskId: 'x' }), {
+    error: {
+      code: 'already_refused',
+      message:
+        'This exact call was already refused with invalid_workspace: change the input or answer the person',
+    },
+  });
+  assert.equal(runs, 1);
+  // Another input runs; a conflict may pass once reread, so it is never held back.
+  assert.deepEqual(await call({ title: 'A' }), { id: 'exp_1' });
+  await call({ busy: true });
+  await call({ busy: true });
+  assert.equal(runs, 4);
+});
+
 test('a finished turn whose tool outputs exceed the result limit keeps its answer', async (t) => {
   const f = await fixture(t);
   const conversation = await f.create();
