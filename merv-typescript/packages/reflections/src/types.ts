@@ -115,6 +115,12 @@ export interface ReflectionSubmit {
   expectedRevision: number;
   requestId: string;
 }
+export interface ReflectionEnd {
+  reflectionId: string;
+  expectedRevision: number;
+  reason: string;
+  requestId: string;
+}
 export interface Reflections {
   create(caller: Caller, input: ReflectionCreate, tx?: Transaction): Promise<Reflection>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<Reflection>;
@@ -126,6 +132,8 @@ export interface Reflections {
     tx?: Transaction,
   ): Promise<ReflectionLens>;
   submit(caller: Caller, input: ReflectionSubmit, tx?: Transaction): Promise<Reflection>;
+  /** The owner or an operator abandons an unfinished wave, its open lenses with it. */
+  end(caller: Caller, input: ReflectionEnd, tx?: Transaction): Promise<Reflection>;
   approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection>;
   /** The wave still open in the project, if any: only one reflects at a time. */
   open(caller: Caller, tx?: Transaction): Promise<string | undefined>;

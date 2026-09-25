@@ -395,6 +395,14 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version IN (7,8)",
     );
+    // reflections@3 (a wave can be abandoned) came after the retirement too.
+    await client.query('ALTER TABLE reflections DROP COLUMN abandoned');
+    await client.query(
+      'CREATE UNIQUE INDEX reflection_open_project ON reflections(project_id) WHERE approved IS NULL',
+    );
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='reflections' AND version=3",
+    );
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)

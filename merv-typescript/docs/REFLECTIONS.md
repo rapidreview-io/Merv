@@ -2,13 +2,13 @@
 
 Reflections is a peer domain program alongside Tasks and Experiments. Research coordinates the outer cycle; Reflections owns five independent lenses, synthesis, and independent review. It depends on State, Scope, Artifacts, Paper, Workflows, Reviews and Context Builder. It does not depend on Knowledge or Research.
 
-Waves use `reflection@3` and `reflection.lens@2`; earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
+New waves use `reflection@4` and `reflection.lens@3`, which are versions 3 and 2 with an ending; waves already on version 3 keep it and its lens@2 lenses, and cannot be ended. Earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
 
 ## Work during a wave
 
 An active reflection declares `blocksStarts: ['task', 'experiment']` in its durable workflow definition. Workflows checks this inside the creation transaction. New task/experiment creation is rejected with `workflow_creation_paused`; existing tasks, experiments, reviews and evidence uploads continue. Previously committed create requests can still replay. The five lens workflows are allowed to start.
 
-The pause is project-scoped and survives unloading Reflections or restarting the server because it follows the stored workflow state. Approval ends it in the same transaction. Returning a review to synthesis or fresh lenses keeps the pause active. There is no separate pause flag to clear.
+The pause is project-scoped and survives unloading Reflections or restarting the server because it follows the stored workflow state. Approval ends it in the same transaction, and so does `reflection.end`: the owner or an operator abandons a wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses are abandoned with it and an open review is withdrawn. A research cycle waiting on an abandoned wave reports `dependency_failed` and offers `research.end`; a cycle that follows it reflects on a fresh wave. Returning a review to synthesis or fresh lenses keeps the pause active. There is no separate pause flag to clear.
 
 The pause stays now that an approved plan can become work. That work is created after `approved`, which is terminal, so the pause never blocks it; and while the wave is open it keeps the project the plan was written about from moving under the reviewer. Lifting it would also need new definitions: a definition's fingerprint covers its name, version, initial state, states, terminal states, edges, `managed` and `blocksStarts`, so a changed `blocksStarts` needs new `reflection` and `reflection.lens` versions. The execution-policy fingerprint covers only the tool manifest, which is why instruction and recipe text can change without a new definition.
 
@@ -78,6 +78,7 @@ Synthesis and review use recipe 8, which describes version-2 plans and asks revi
 - `reflection.lens`: read one lens and its own output.
 - `reflection.submit_lens`: complete a lens.
 - `reflection.submit`: submit synthesis for review.
+- `reflection.end`: owner or operator: abandon an unfinished version-4 wave with a reason.
 - `review.submit`: pass or return synthesis/lenses through the existing review owner.
 
 Mutation replay, revision checks, independent review, lease recovery and immutable outputs are unchanged.

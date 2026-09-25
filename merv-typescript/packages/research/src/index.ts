@@ -237,6 +237,7 @@ export class ResearchService implements Research {
   private policy(): WorkflowPolicy {
     return {
       successStates: ['complete'],
+      dependencyFailureAction: 'end',
       describe: async (context) => {
         const record = await this.get(context.caller, context.snapshot.id, context.tx);
         const previous = record.previousCycleId
@@ -664,6 +665,13 @@ export class ResearchService implements Research {
         record.reflectionId,
         'research_child_missing',
         'The reflection workflow is missing',
+        409,
+      );
+      // An abandoned wave is never approved; the engine then offers this cycle's end.
+      check(
+        (await this.workflows.get(caller, record.reflectionId, tx)).state !== 'abandoned',
+        'dependency_failed',
+        `The reflection ${record.reflectionId} was abandoned. End this cycle with research.end; a cycle that follows it can reflect on the same work.`,
         409,
       );
       await this.use('reflections', checks, (service) =>

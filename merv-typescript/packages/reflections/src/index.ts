@@ -34,9 +34,11 @@ import {
   LENSES,
   LENS_RECIPE,
   LENS_WORKFLOW,
+  LENS_WORKFLOW_ENDABLE,
   WORKSPACE_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
+  REFLECTION_WORKFLOW_ENDABLE,
 } from './definitions.js';
 import type {
   ApprovedReflection,
@@ -45,6 +47,7 @@ import type {
   ReflectionCreate,
   ReflectionLens,
   ReflectionLensSubmit,
+  ReflectionEnd,
   Reflections,
   ReflectionSubmit,
 } from './types.js';
@@ -116,8 +119,8 @@ const configuration = z
 
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
-  private wave?: Awaited<ReturnType<Workflows['register']>>;
-  private lensWorkflow?: Awaited<ReturnType<Workflows['register']>>;
+  /** One per published version: an instance moves only through the version it began on. */
+  private handles = new Map<string, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<string, ContextRegistration>();
   private releaseOwner?: () => void;
   private closed = false;
@@ -143,12 +146,27 @@ export class ReflectionService implements Reflections {
           version: 2,
           sql: postgresMigrations[2],
         },
+        {
+          version: 3,
+          sql: postgresMigrations[3],
+        },
       ]);
       try {
         for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
-        this.lensWorkflow = await workflows.register(LENS_WORKFLOW, this.policy(true));
-        this.wave = await workflows.register(REFLECTION_WORKFLOW, this.policy(false));
+        for (const definition of [
+          LENS_WORKFLOW,
+          LENS_WORKFLOW_ENDABLE,
+          REFLECTION_WORKFLOW,
+          REFLECTION_WORKFLOW_ENDABLE,
+        ])
+          this.handles.set(
+            `${definition.name}@${definition.version}`,
+            await workflows.register(
+              definition,
+              this.policy(definition.name === LENS_WORKFLOW.name, definition.version),
+            ),
+          );
         this.releaseOwner = reviews.registerSubmitOwner({
           id: 'reflections',
           owns: async (review, tx) =>
@@ -169,8 +187,8 @@ export class ReflectionService implements Reflections {
     if (this.closed) return;
     this.closed = true;
     this.releaseOwner?.();
-    this.wave?.dispose();
-    this.lensWorkflow?.dispose();
+    for (const handle of this.handles.values()) handle.dispose();
+    this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
     this.contexts.clear();
   }
@@ -301,11 +319,11 @@ export class ReflectionService implements Reflections {
         );
         if (input.previousCycleDigestId)
           await this.artifacts.get(caller, input.previousCycleDigestId, tx);
-        const workflow = await this.wave!.start(
+        const workflow = await this.handle(REFLECTION_WORKFLOW_ENDABLE).start(
           caller,
           {
             workflow: 'reflection',
-            version: REFLECTION_WORKFLOW.version,
+            version: REFLECTION_WORKFLOW_ENDABLE.version,
             requestId: childRequest(caller, 'reflection', 'wave', input.requestId),
             // Later transitions pass no such key, so the wave keeps the digest it started with.
             data: {
@@ -337,13 +355,32 @@ export class ReflectionService implements Reflections {
       });
     });
   }
+  private handle({ name, version }: { name: string; version: number }) {
+    const handle = this.handles.get(`${name}@${version}`);
+    check(handle, 'reflection_unavailable', 'Reflection program is unavailable', 503);
+    return handle;
+  }
+  /** A transition through the handle of the version the instance began on. */
+  private async moved(
+    caller: Caller,
+    input: Parameters<ReturnType<ReflectionService['handle']>['transition']>[1],
+    tx: Transaction,
+  ) {
+    const { workflow: name, version } = await this.workflows.get(caller, input.instanceId, tx);
+    return await this.handle({ name, version }).transition(caller, input, tx);
+  }
   private async createLenses(caller: Caller, row: WaveRow, tx: Transaction): Promise<void> {
+    // Lenses pair with their wave: only an endable wave's lenses can be ended with it.
+    const endable =
+      (await this.workflows.get(caller, row.id, tx)).version ===
+      REFLECTION_WORKFLOW_ENDABLE.version;
+    const definition = endable ? LENS_WORKFLOW_ENDABLE : LENS_WORKFLOW;
     for (const lens of LENSES) {
-      const workflow = await this.lensWorkflow!.start(
+      const workflow = await this.handle(definition).start(
         caller,
         {
           workflow: 'reflection.lens',
-          version: LENS_WORKFLOW.version,
+          version: definition.version,
           requestId: `reflection:${row.id}:${row.attempt}:${lens.perspective}`,
           data: { reflectionId: row.id, attempt: row.attempt, perspective: lens.perspective },
         },
@@ -774,7 +811,9 @@ export class ReflectionService implements Reflections {
         }),
     };
   }
-  private policy(lens: boolean): WorkflowPolicy {
+  private policy(lens: boolean, version: number): WorkflowPolicy {
+    const endable =
+      (lens ? LENS_WORKFLOW_ENDABLE : REFLECTION_WORKFLOW_ENDABLE).version === version;
     const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({
       state,
       check: async (c: WorkflowCheckContext) => {
@@ -835,6 +874,41 @@ export class ReflectionService implements Reflections {
         };
       },
       actions: [
+        ...(endable
+          ? [
+              {
+                name: 'end',
+                states: lens ? ['reflecting'] : ['reflecting', 'synthesizing', 'in_review'],
+                transitions: ['abandon'],
+                suggested: false,
+                tool: 'reflection.end',
+                instruction: lens
+                  ? 'A lens ends only with its wave.'
+                  : 'Abandon this wave when it cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it and new tasks and experiments may start again. Requires a specific reason. This is terminal.',
+                ...(lens
+                  ? {}
+                  : {
+                      requiredInput: ['reason'],
+                      arguments: ({ snapshot }: WorkflowCheckContext) => ({
+                        reflectionId: snapshot.id,
+                        expectedRevision: snapshot.revision,
+                      }),
+                    }),
+                check: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
+                  if (lens) {
+                    const wave = (await this.lensRow(caller, snapshot.id, tx)).reflection_id;
+                    const { state } = await this.workflows.get(caller, wave, tx);
+                    check(
+                      state === 'abandoned',
+                      'reflection_open',
+                      'A lens ends only with its wave',
+                      409,
+                    );
+                  } else await this.ender(caller, await this.row(caller, snapshot.id, tx), tx);
+                },
+              },
+            ]
+          : []),
         ...(!lens
           ? [
               {
@@ -1067,7 +1141,7 @@ export class ReflectionService implements Reflections {
           'reflection_summary_required',
           'Lens report requires a nonempty Summary section',
         );
-        await this.lensWorkflow!.transition(
+        await this.moved(
           caller,
           {
             instanceId: lens.id,
@@ -1088,7 +1162,7 @@ export class ReflectionService implements Reflections {
         const children = await this.lensRows(wave, tx);
         if (children.length === 5 && children.every((child) => child.artifact)) {
           const parent = await this.workflows.get(caller, wave.id, tx);
-          await this.wave!.transition(
+          await this.moved(
             caller,
             {
               instanceId: wave.id,
@@ -1158,7 +1232,7 @@ export class ReflectionService implements Reflections {
           'All five lens submissions are required',
           409,
         );
-        const next = await this.wave!.transition(
+        const next = await this.moved(
           caller,
           {
             instanceId: wave.id,
@@ -1220,6 +1294,64 @@ export class ReflectionService implements Reflections {
       });
     });
   }
+  /** Only the owner or an operator ends a wave, and never a worker assigned to it. */
+  private async ender(caller: Caller, wave: WaveRow, tx: Transaction): Promise<void> {
+    const actor = await this.scope.require(caller, 'write', tx);
+    check(
+      !caller.session && (actor.id === wave.owner_id || actor.role === 'operator'),
+      'forbidden',
+      'Only the reflection owner or an operator may end it',
+      403,
+    );
+  }
+  async end(caller: Caller, input: ReflectionEnd, transaction?: Transaction): Promise<Reflection> {
+    ({ caller, input } = structuredClone({ caller, input }));
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      return await this.command(caller, 'end', input, tx, async () => {
+        check(
+          typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 16000,
+          'invalid_reason',
+          'A specific reason of 1–16000 characters is required to end a wave',
+        );
+        const wave = await this.row(caller, input.reflectionId, tx);
+        await this.moved(
+          caller,
+          {
+            instanceId: wave.id,
+            expectedRevision: input.expectedRevision,
+            action: 'abandon',
+            input: { reason: input.reason },
+            data: { reason: input.reason },
+            requestId: childRequest(caller, 'reflection', 'end', input.requestId),
+          },
+          tx,
+        );
+        for (const lens of await this.lensRows(wave, tx)) {
+          const snapshot = await this.workflows.get(caller, lens.id, tx);
+          if (snapshot.state === 'reflecting')
+            await this.moved(
+              caller,
+              {
+                instanceId: lens.id,
+                expectedRevision: snapshot.revision,
+                action: 'abandon',
+                requestId: childRequest(caller, 'reflection', `end-${lens.id}`, input.requestId),
+              },
+              tx,
+            );
+        }
+        await tx.run('UPDATE reflections SET abandoned=? WHERE id=?', now(), wave.id);
+        const review = wave.review_id && (await this.reviews.get(caller, wave.review_id, tx));
+        if (review && ['requested', 'started'].includes(review.status))
+          await this.reviews.supersede(caller, review.id, tx);
+        await recorded(this.state, tx, caller, 'reflection.abandoned', wave.id, {
+          reason: input.reason,
+        });
+        return await this.get(caller, wave.id, tx);
+      });
+    });
+  }
   private async submitReview(
     caller: Caller,
     input: ReviewApplication,
@@ -1262,7 +1394,7 @@ export class ReflectionService implements Reflections {
             ? 'restart_lenses'
             : 'revise_synthesis';
       // Domain checks were completed above; generic transition still performs revision CAS.
-      const next = await this.wave!.transition(
+      const next = await this.moved(
         caller,
         {
           instanceId: wave.id,
@@ -1339,7 +1471,7 @@ export class ReflectionService implements Reflections {
       await this.read(caller, tx);
       return (
         await tx.get<{ id: string }>(
-          'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL',
+          'SELECT id FROM reflections WHERE project_id=? AND approved IS NULL AND abandoned IS NULL',
           caller.projectId,
         )
       )?.id;
