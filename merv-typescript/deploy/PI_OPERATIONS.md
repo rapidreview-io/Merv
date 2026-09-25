@@ -377,9 +377,12 @@ from step 1 have to be done again.
   profile, and every allocation on it is then asked to stop. Roll it out
   drained. The hosted runtime is digest-pinned; `hosted-release.mjs` (run by
   `release.mjs`) builds it from committed sources and moves it together,
-  drained, gated and canaried, with automatic rollback: its drain first ends
-  every idle Pi machine's idle clock, so Main releases it instead of the rollout
-  killing it (the next turn starts on the person's own pick). The image on every
+  drained, gated and canaried, with automatic rollback: its drain ends the idle
+  clock of every idle Pi machine at each poll, so Main releases it instead of
+  the rollout killing it (the next turn starts on the person's own pick), and
+  waits until no Pi machine is up for 10 s. A turn sent after that, before the
+  rollout begins, can still start on the old image and lose its machine to it.
+  The image on every
   Cloudflare app that serves one of Main's machines (Standard, and Large once
   `MERV_FLEET_RUNTIMES` names it), the release and its Large copy in the
   catalog, and each machine's release id (Standard's also in

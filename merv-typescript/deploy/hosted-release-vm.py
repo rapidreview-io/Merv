@@ -76,7 +76,7 @@ console.log(JSON.stringify(r.rows[0]));await c.query(w?'COMMIT':'ROLLBACK')}fina
 # timeout, instead of a rollout killing it. A host that took a turn meanwhile keeps it.
 IDLE = ("WITH e AS (UPDATE {s}.pi_hosts SET data_json = jsonb_set(data_json::jsonb, '{idleSince}', "
         "to_jsonb('1970-01-01T00:00:00.000Z'::text))::text WHERE status = 'live' AND "
-        "data_json::jsonb->>'idleSince' IS NOT NULL RETURNING 1) SELECT count(*)::int AS n FROM e")
+        "data_json::jsonb->>'idleSince' IS NOT NULL) ")
 SBX = r'''import asyncio,json,os
 from sqlalchemy import text
 from merv_sandboxes.config import Settings
@@ -387,13 +387,17 @@ def rootfs(image):
         subprocess.run(['docker', 'rm', container], capture_output=True)
 
 
-def busy():
-    """Pi turns and launches in flight, by id; idle warm runtimes do not count."""
+def busy(release=False):
+    """Pi turns and launches in flight, by id; idle warm runtimes do not count. With `release` (the
+    drain) the same statement first releases idle Pi hosts (IDLE), and every Pi machine up for a
+    host, which a turn could still land on, counts until Main has released it."""
     agg = "coalesce((SELECT json_agg({}) FROM {} WHERE {}), '[]'::json)::text"
-    main = main_read('SELECT ' + agg.format("conversation_id || '/' || id", '{s}.pi_commands',
-                                            f"status IN {ACTIVE}") + ' AS turns, ' +
-                     agg.format('id', '{s}.fleet_allocations',
-                                "phase IN ('queued','provisioning','launching','starting')") + ' AS launches')
+    reads = {'turns': ("conversation_id || '/' || id", '{s}.pi_commands', f"status IN {ACTIVE}"),
+             'launches': ('id', '{s}.fleet_allocations', "phase IN ('queued','provisioning','launching','starting')"),
+             **({'warm': ('id', '{s}.fleet_allocations', "phase <> 'released' AND data_json::jsonb->>'intent' = "
+                          "'run' AND data_json::jsonb#>>'{owner,kind}' = 'pi-host'")} if release else {})}
+    main = main_read((IDLE if release else '') + 'SELECT ' +
+                     ', '.join(agg.format(*read) + ' AS ' + key for key, read in reads.items()), write=release)
     lists = {**main,
              'machines': sbx(MERV_Q='SELECT ' + agg.format('id', 'sandboxes', "provider LIKE 'cloudflare-fleet%' AND "
                                                                              "state IN ('provisioning','deleting')")),
@@ -402,11 +406,11 @@ def busy():
     return {key: ids for key, ids in ((k, json.loads(v)) for k, v in lists.items()) if ids}
 
 
-def quiet(limit):
+def quiet(limit, release=False):
     """Wait, bounded, until nothing is in flight for 10 s."""
     deadline, calm = time.monotonic() + limit, None
     while True:
-        now = busy()
+        now = busy(release)
         if now:
             calm = None
         elif calm is None:
@@ -633,10 +637,9 @@ class Step:
         return {**result, 'changed': True, 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
 
     def drain(self, _):
-        """Releases idle Pi machines, best effort, then waits until nothing is in flight."""
-        with contextlib.suppress(RuntimeError):
-            main_read(IDLE, write=True)
-        return quiet(self.plan['drainSeconds'])
+        """Waits until nothing is in flight and no Pi machine is up, releasing each idle one at every
+        poll: one whose turn ends, or that a page warms, while the drain waits goes too."""
+        return quiet(self.plan['drainSeconds'], release=True)
 
     def native(self, arg):
         return native(arg.get('provider', PROVIDER))

@@ -463,26 +463,34 @@ print(json.dumps(res))`,
   assert.equal(out.finished, false); // a finished run drops its lease
 });
 
-test('the drain releases idle Pi machines through Main first, best effort, then waits', () => {
-  const out = py(`calls=[];down=[]
-vm.quiet=lambda s:calls.append(['quiet',s]) or {'drained':True}
+test('the drain releases each Pi machine that goes idle while it waits, and ends only once none is up', () => {
+  // Alice's turn runs as the drain starts and ends at 5 s; a page warms a machine at 15 s. Main
+  // releases a machine at its first pass after the drain ended its host's idle clock.
+  const out = py(`import types
+clock=[0.0];hosts={'alice':{'turn':True,'idle':None,'up':True}};released=[]
+vm.time=types.SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda s:clock.__setitem__(0,clock[0]+s))
+vm.sbx=lambda **e:'[]'
 def main_read(q,*p,write=False):
-    if down: raise RuntimeError('main_unreachable')
-    calls.append(['main',q==vm.IDLE,write])
-    return {'n':2}
+    assert write==(vm.IDLE in q)
+    for h in hosts.values(): h['up']=h['up'] and h['idle']!=0
+    if clock[0]>=5 and hosts['alice']['turn']: hosts['alice'].update(turn=False,idle=clock[0])
+    if clock[0]>=15: hosts.setdefault('page',{'turn':False,'idle':clock[0],'up':True})
+    up=[k for k,h in hosts.items() if h['up']]
+    if write:
+        for k in up:
+            if hosts[k]['idle']: hosts[k]['idle']=0;released.append([k,clock[0]])
+    out={'turns':json.dumps([k for k,h in hosts.items() if h['turn']]),'launches':'[]'}
+    return {**out,'warm':json.dumps(up)} if 'AS warm' in q else out if 'turns' in q else {'n':0}
 vm.main_read=main_read
-step=vm.Step(None,{'drainSeconds':900})
-res={'drained':step.drain({})}
-down.append(1)
-res['unreachable']=step.drain({})
-res['calls']=calls
+res={'catalog':vm.busy(),'drained':vm.Step(None,{'drainSeconds':900}).drain({}),'at':clock[0]}
+res['up']=[k for k,h in hosts.items() if h['up'] and h['idle']!=0];res['released']=released
 print(json.dumps(res))`);
-  assert.deepEqual(out.calls, [
-    ['main', true, true],
-    ['quiet', 900],
-    ['quiet', 900],
+  assert.deepEqual(out.catalog, { turns: ['alice'] }); // the catalog's wait releases nothing
+  assert.deepEqual(out.released, [
+    ['alice', 5],
+    ['page', 15],
   ]);
-  assert.deepEqual([out.drained, out.unreachable], [{ drained: true }, { drained: true }]);
+  assert.deepEqual([out.drained, out.at, out.up], [{ drained: true }, 30, []]);
 });
 
 test('the switch never waits for a drain and refuses while a Main release runs', () => {

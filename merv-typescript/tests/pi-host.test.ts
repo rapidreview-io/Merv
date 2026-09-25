@@ -489,7 +489,7 @@ test('a lost machine’s turn that began starts again elsewhere; one that wrote 
   assert.equal((await command(f, sent[0])).status, 'completed');
 });
 
-test('the hosted drain releases idle machines through Main, and leaves one in use alone', async (t) => {
+test('the hosted drain releases each machine once it idles, and counts it until Main has', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   await f.pi.warm(f.operator, { requestId: 'warm' });
   const [idle] = await f.hosts();
@@ -497,36 +497,48 @@ test('the hosted drain releases idle machines through Main, and leaves one in us
   const project = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
   const inOne = await f.scope.caller(alice, project.id);
   const busy = await f.send(await f.create(inOne), 'hello', inOne);
-  // deploy/hosted-release-vm.py's own statement and runner, on this database.
-  const vm = new URL('../deploy/hosted-release-vm.py', import.meta.url).pathname;
-  const { IDLE, MAIN_READ } = JSON.parse(
-    execFileSync('python3', [
-      '-c',
-      `import importlib.util,json;s=importlib.util.spec_from_file_location('vm',${JSON.stringify(vm)});v=importlib.util.module_from_spec(s);s.loader.exec_module(v);print(json.dumps({'IDLE':v.IDLE,'MAIN_READ':v.MAIN_READ}))`,
-    ]).toString(),
-  );
-  const schema = await f.state.read((sql) =>
+  const bound = await f.claimed(busy);
+  const { s: schema } = (await f.state.read((sql) =>
     sql.get<{ s: string }>('SELECT current_schema() AS s'),
-  );
-  const env = {
-    MERV_DB_URL: postgresUrl,
-    MERV_TS_DB_SCHEMA: schema!.s,
-    MERV_Q: IDLE,
-    MERV_P: '[]',
-  };
-  const drain = (write: boolean) =>
+  ))!;
+  // One poll of deploy/hosted-release-vm.py's drain on this database, through its own runner.
+  const vm = new URL('../deploy/hosted-release-vm.py', import.meta.url).pathname;
+  const poll = () =>
     JSON.parse(
-      execFileSync('node', ['--input-type=module', '-e', MAIN_READ], {
-        env: { ...process.env, ...env, ...(write && { MERV_W: '1' }) },
-        stdio: 'pipe',
-      }).toString(),
-    );
-  assert.throws(() => drain(false));
-  assert.deepEqual(drain(true), { n: 1 });
+      execFileSync(
+        'python3',
+        [
+          '-c',
+          `import importlib.util,json,os,subprocess
+s=importlib.util.spec_from_file_location('vm',${JSON.stringify(vm)});vm=importlib.util.module_from_spec(s);s.loader.exec_module(vm)
+def main_read(q,*p,write=False):
+    env=dict(os.environ,MERV_Q=q,MERV_P=json.dumps(p),**({'MERV_W':'1'} if write else {}))
+    return json.loads(subprocess.run(['node','--input-type=module','-e',vm.MAIN_READ],env=env,capture_output=True,check=True).stdout)
+vm.main_read=main_read;vm.sbx=lambda **e:'[]'
+print(json.dumps(vm.busy(True)))`,
+        ],
+        { env: { ...process.env, MERV_DB_URL: postgresUrl, MERV_TS_DB_SCHEMA: schema } },
+      ).toString(),
+    ) as Record<string, string[]>;
+  const first = poll();
+  assert.deepEqual(first.turns, [`${busy.conversationId}/${busy.id}`]);
+  assert.deepEqual(first.warm.sort(), [idle.current!.allocationId, busy.runtimeId].sort());
   await f.pi.tick();
   assert.equal((await f.host({ hostId: idle.id })).ended?.reason, 'idle');
-  assert.equal((await f.allocation(idle.current!.allocationId)).intent, 'stop');
   assert.equal((await f.host(busy)).status, 'live');
+  // The turn ends while the drain waits: its machine goes too.
+  await f.finish(bound);
+  assert.deepEqual(poll().warm, [busy.runtimeId]);
+  await f.pi.tick();
+  assert.equal((await f.host(busy)).ended?.reason, 'idle');
+  // So does one a page warms meanwhile.
+  await f.pi.warm(inOne, { requestId: 'again' });
+  const [page] = await f.hosts();
+  assert.deepEqual(poll().warm, [page.current!.allocationId]);
+  await f.pi.tick();
+  assert.equal((await f.host({ hostId: page.id })).ended?.reason, 'idle');
+  await f.fleet.tick();
+  assert.deepEqual(poll(), {});
 });
 
 test('an idle machine ends, with any move it was starting, and forgets where the agent moved it', async (t) => {
