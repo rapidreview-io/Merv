@@ -26,6 +26,7 @@ import {
   type ReviewSubmit,
   type ReviewApplication,
   type ReviewSubmitOwner,
+  type RunningSection,
   type Scope,
   type Sql,
   type State,
@@ -33,6 +34,7 @@ import {
   type StoredEvent,
 } from '@merv/contracts';
 import { validateAssessment, evidenceFrom } from './findings.js';
+import { reviewSections } from './running.js';
 
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -801,6 +803,86 @@ export class ReviewService implements Reviews {
           ).map(hydrate),
         ),
     );
+  }
+
+  /**
+   * The Running sidebar's Review sections for these subjects, read inside the page's snapshot:
+   * one query over the project's reviews of them, then get() for the review that speaks for
+   * each, so waiting, the synopsis and the findings read as get() serves them to this caller.
+   */
+  async running(
+    caller: Caller,
+    subjectIds: readonly string[],
+    transaction?: Transaction,
+  ): Promise<RunningSection[]> {
+    caller = structuredClone(caller);
+    // A sidebar asks about its own key and the few it absorbed, and a machine's about none.
+    const subjects = [...new Set(subjectIds)]
+      .filter((id) => typeof id === 'string' && visible(id))
+      .slice(0, 64);
+    if (!subjects.length) return [];
+    await this.scope.require(caller, 'read', transaction);
+    const read = async (sql: Sql) => {
+      // The newest at the highest revision it pinned speaks for its subject, so an open
+      // re-review outranks the verdict it will replace.
+      const rows = await sql.all<
+        Pick<ReviewRow, 'id' | 'subject_id' | 'status' | 'verdict' | 'created_at'>
+      >(
+        `SELECT id, subject_id, status, verdict, created_at FROM reviews
+         WHERE project_id = ? AND subject_id IN (${subjects.map(() => '?').join(',')})
+         ORDER BY subject_revision DESC, created_at DESC, id DESC`,
+        caller.projectId,
+        ...subjects,
+      );
+      const sections = await mapAsync(subjects, async (subjectId) => {
+        const [newest, ...earlier] = rows.filter((row) => row.subject_id === subjectId);
+        if (!newest) return [];
+        const current = await this.get(caller, newest.id, transaction);
+        const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
+        return reviewSections({
+          current,
+          ...(claim ? { claim } : {}),
+          earlier: earlier.map((row) => ({
+            id: row.id,
+            status: row.status,
+            verdict: row.verdict,
+            createdAt: row.created_at,
+          })),
+        });
+      });
+      return sections.flat();
+    };
+    if (transaction) {
+      this.state.assertTransaction(transaction);
+      return await read(transaction);
+    }
+    return await this.state.read(read);
+  }
+
+  /**
+   * When the open claim was taken, from the event recorded with it (the one claimStartedAt
+   * finds), and whether a leased worker took it through its review lease.
+   */
+  private async claimOf(
+    sql: Sql,
+    review: ReviewRequest,
+  ): Promise<{ at: string; agent: boolean } | undefined> {
+    const events = await sql.all<{ data_json: string; created_at: string }>(
+      "SELECT data_json, created_at FROM events WHERE project_id=? AND subject_id=? AND type='review.started' ORDER BY id DESC",
+      review.projectId,
+      review.id,
+    );
+    for (const event of events) {
+      let data: { claimId?: unknown; source?: { kind?: unknown } } = {};
+      try {
+        data = JSON.parse(event.data_json) ?? {};
+      } catch {
+        continue;
+      }
+      if (data.claimId === review.claimId || review.claimId === `legacy:${review.id}`)
+        return { at: event.created_at, agent: data.source?.kind === 'session' };
+    }
+    return undefined;
   }
 
   async checkStart(

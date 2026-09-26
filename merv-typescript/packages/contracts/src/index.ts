@@ -1647,6 +1647,15 @@ export interface Reviews {
   ): Promise<ReviewRequest>;
   submit(caller: Caller, input: ReviewSubmit, tx?: Transaction): Promise<ReviewRequest>;
   supersede(caller: Caller, reviewId: string, tx?: Transaction): Promise<void>;
+  /**
+   * The Running sidebar's Review sections for each subject that has a review: how the current
+   * review stands, and its earlier rounds. Waiting stays operator-only, as get() keeps it.
+   */
+  running(
+    caller: Caller,
+    subjectIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<import('./running.js').RunningSection[]>;
 }
 export interface Task {
   id: string;
