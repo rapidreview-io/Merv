@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type { Caller, Json } from '@merv/contracts';
+import { keyId, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
 export const reflectionUiPlugin = {
@@ -19,6 +19,16 @@ export const reflectionUiPlugin = {
         status: async (caller: Caller) => ({ count: (await reflections.open(caller)) ? 1 : 0 }),
         read: async (caller: Caller) =>
           JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
+      }),
+    );
+    // The open wave heads the Running page's work lane with its lenses folded into it.
+    ctx.effect(() =>
+      ctx.ui.contribute({
+        owner: 'reflections',
+        kinds: ['work'],
+        lanes: ['work'],
+        nodes: async (read) => ({ nodes: await reflections.running(read.caller, read.include) }),
+        panel: async (read, key) => await reflections.runningPanel(read.caller, keyId(key)),
       }),
     );
   },

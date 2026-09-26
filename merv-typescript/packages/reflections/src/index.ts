@@ -1,6 +1,7 @@
 import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
+import { keyId, keyKind } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -16,9 +17,13 @@ import {
   type ContextBuilder,
   type ContextInput,
   type ContextRegistration,
+  type ProcessGraph,
   type ReviewApplication,
   type ReviewRequest,
   type Reviews,
+  type RunningKey,
+  type RunningNode,
+  type RunningPanelPart,
   type Scope,
   type State,
   type Transaction,
@@ -29,6 +34,7 @@ import {
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
 import { parseChangeSpec } from './change-spec.js';
+import { waveNode, wavePanel, type WaveFacts } from './running.js';
 import {
   CHANGE_SPEC_CRITERION,
   LENSES,
@@ -1475,6 +1481,79 @@ export class ReflectionService implements Reflections {
         )
       )?.id;
     });
+  }
+  async process(caller: Caller, id: string): Promise<ProcessGraph> {
+    caller = structuredClone(caller);
+    await this.state.transaction(async (tx) => await this.row(caller, id, tx));
+    return await this.workflows.process(caller, id);
+  }
+  /** What the Running page says of one wave: its record, every lease on it, its review limit. */
+  private async runningFacts(caller: Caller, id: string, tx: Transaction): Promise<WaveFacts> {
+    const wave = await this.get(caller, id, tx);
+    const ids = [wave.id, ...wave.lenses.map((lens) => lens.id)];
+    const leases = await tx.all<{
+      id: string;
+      instance_id: string;
+      revision: number;
+      released_at: string | null;
+    }>(
+      `SELECT id,instance_id,revision,released_at FROM reflection_leases WHERE project_id=? AND instance_id IN (${ids.map(() => '?').join(',')})`,
+      caller.projectId,
+      ...ids,
+    );
+    return {
+      wave,
+      leases: leases.map((lease) => ({
+        id: lease.id,
+        instanceId: lease.instance_id,
+        revision: Number(lease.revision),
+        releasedAt: lease.released_at,
+      })),
+      // The returns are counted from review, so only a wave in review can have used them up.
+      exhausted:
+        wave.workflow.state === 'in_review' &&
+        (await this.workflows.limitStatus(caller, id, 'review_returns', tx)).exhausted,
+    };
+  }
+  async running(
+    caller: Caller,
+    include: Iterable<RunningKey> = [],
+    transaction?: Transaction,
+  ): Promise<RunningNode[]> {
+    caller = structuredClone(caller);
+    // A mark may name the wave, or one of its lenses, which the wave draws.
+    const held = [...include].filter((key) => keyKind(key) === 'work').map(keyId);
+    const listed = held.map(() => '?').join(',');
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.read(caller, tx);
+      const waves = await tx.all<{ id: string }>(
+        `SELECT id FROM reflections WHERE project_id=? AND (approved IS NULL AND abandoned IS NULL${
+          held.length
+            ? ` OR id IN (${listed}) OR id IN (SELECT reflection_id FROM reflection_lenses WHERE project_id=? AND id IN (${listed}))`
+            : ''
+        }) ORDER BY _merv_rowid`,
+        caller.projectId,
+        ...(held.length ? [...held, caller.projectId, ...held] : []),
+      );
+      return await mapAsync(waves, async ({ id }) =>
+        waveNode(await this.runningFacts(caller, id, tx)),
+      );
+    });
+  }
+  async runningPanel(caller: Caller, id: string): Promise<RunningPanelPart | null> {
+    caller = structuredClone(caller);
+    const facts = await this.state.transaction(async (tx) => {
+      await this.read(caller, tx);
+      // Any other work key is another owner's, and a lens is drawn by its wave.
+      const wave = await tx.get<{ id: string }>(
+        'SELECT id FROM reflections WHERE id=? AND project_id=?',
+        id,
+        caller.projectId,
+      );
+      return wave ? await this.runningFacts(caller, id, tx) : null;
+    });
+    // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process.
+    return facts && wavePanel(facts, await this.workflows.process(caller, id));
   }
   async approved(
     caller: Caller,
