@@ -266,15 +266,16 @@ export interface Sandboxes {
   /**
    * The project's machines from memory, or null until the first read of them has answered.
    * Never reads the service: a read-only page must not wait on it inside its snapshot. The
-   * rows are refreshed on this service's timer while someone watches. Refused for a project
-   * without a sandbox connection.
+   * rows are refreshed on this service's timer while someone watches, and take the answer of
+   * `extend` or `release` at once. Refused for a project without a sandbox connection.
    */
   machines(projectId: string): SandboxMachines | null;
   /** One machine's record from memory, or null until a watched read of it has answered. */
   machine(projectId: string, id: string): Json | null;
   /**
    * Keeps the project's machines, and with `id` that machine's record, read for the next
-   * minute. It only marks demand: the reads happen later, on the service's own timer.
+   * minute. It only marks demand: the reads happen later, on the service's own timer. An `id`
+   * watched before the list has answered is read only if the list then holds it.
    */
   watch(projectId: string, id?: string): void;
   /** Fires after the published row set changes. */

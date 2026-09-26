@@ -1,4 +1,5 @@
 import {
+  check,
   clip,
   runningKey,
   runningKeyPattern,
@@ -37,8 +38,8 @@ const WHO = 'A producer or operator extends or releases it.';
 /** The check runner names its machines so (checks.ts); Code keeps and reclaims them itself. */
 const CHECK_MACHINE = 'merv-check-';
 const DRAWN = new Set(['provisioning', 'ready', 'unknown', 'deleting', 'failed']);
+/** The states the service leases a machine in, and so the ones a person may release it from. */
 const LEASED = new Set(['provisioning', 'ready', 'unknown']);
-const RELEASABLE = new Set(['provisioning', 'ready', 'unknown', 'failed']);
 /** The service's verdicts for a job in hand, in a person's words. */
 const WORKING = new Map([
   ['running', 'Running'],
@@ -315,6 +316,14 @@ export interface MachinePanelInput {
  */
 export function machinePanel(input: MachinePanelInput): RunningPanelPart | null {
   const row = input.machines?.rows.find((candidate) => object(candidate).id === input.id);
+  // Until the list has answered once, a machine it does not hold is not known to be absent:
+  // the sidebar is asked again rather than told the machine is not there.
+  check(
+    row || input.record || input.machines?.observedAt,
+    'sandbox_machines_pending',
+    'The machines have not been read yet',
+    503,
+  );
   if (!row && !input.record) return null;
   const record = object(input.record);
   const machine = machineOf({ ...object(row), ...record });
@@ -409,9 +418,10 @@ export function machinePanel(input: MachinePanelInput): RunningPanelPart | null 
 }
 
 /**
- * Extend lease on a ready machine and Release machine on any the service still holds, under
- * the tools' own write permission. A Code check machine is offered neither: releasing it fails
- * the check, and Code gives its machines back itself.
+ * Extend lease on a ready machine and Release machine on one the service still leases, under
+ * the tools' own write permission. A failed machine is offered neither: the service's own
+ * controls release only a machine it leases, and a failed one may never have been allocated.
+ * Nor is a Code check machine: releasing it fails the check, and Code gives it back itself.
  */
 function actionsOf(
   machine: Machine,
@@ -429,7 +439,7 @@ function actionsOf(
       input: { ...input, seconds: 3600 },
       allowed,
     });
-  if (!RELEASABLE.has(machine.state)) return actions;
+  if (!LEASED.has(machine.state)) return actions;
   const where = machine.provider ? ` at ${machine.provider}` : '';
   const stops = command
     ? `, and ${cut(command, 160)} stops with it`

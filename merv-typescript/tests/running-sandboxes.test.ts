@@ -158,8 +158,8 @@ function record(seed: Seed): Record<string, Json> {
   };
 }
 const recordOnly = ['created_at', 'endpoint', 'jobs', 'sessions'];
-const listRow = (seed: Seed) =>
-  Object.fromEntries(Object.entries(record(seed)).filter(([key]) => !recordOnly.includes(key)));
+const listRow = (value: Record<string, Json>) =>
+  Object.fromEntries(Object.entries(value).filter(([key]) => !recordOnly.includes(key)));
 const manifest = {
   version: 1,
   rows: [
@@ -182,13 +182,20 @@ const manifest = {
   ],
 };
 
-/** The service's stand-in: its list, its records and its renewal, and every path asked of it. */
+/**
+ * The service's stand-in: its list, its records, its renewal and its deletion, as
+ * scripts/fake-sandboxes.ts settles the two acts, and every path asked of it. A list read is
+ * answered as it stood when it arrived, and `held` keeps that answer back.
+ */
 async function service(t: TestContext) {
   const seen: string[] = [];
-  const control = { down: false };
+  const control: { down: boolean; held?: Promise<void> } = { down: false };
+  const changed = new Map<string, Record<string, Json>>();
+  const current = (seed: Seed) => ({ ...record(seed), ...changed.get(idOf(seed[0])) });
   const server = createServer(async (request, response) => {
     const path = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-    for await (const _ of request);
+    let text = '';
+    for await (const chunk of request) text += String(chunk);
     seen.push(`${request.method} ${path}`);
     const send = (status: number, body: unknown) => {
       response.writeHead(status, { 'content-type': 'application/json' });
@@ -196,13 +203,29 @@ async function service(t: TestContext) {
     };
     if (path === '/v1/auth/me') return send(200, { role: 'consumer', namespace: 'demo' });
     if (path === '/v1/ui/manifest') return send(200, manifest);
-    if (path === '/v1/sandboxes')
-      return control.down
-        ? send(503, { error: { code: 'unavailable', message: 'down' } })
-        : send(200, { sandboxes: seeds.map(listRow) });
+    if (path === '/v1/sandboxes') {
+      if (control.down) return send(503, { error: { code: 'unavailable', message: 'down' } });
+      const body = { sandboxes: seeds.map((seed) => listRow(current(seed))) };
+      await control.held;
+      return send(200, body);
+    }
     const seed = seeds.find(([name]) => path.startsWith(`/v1/sandboxes/${idOf(name)}`));
     if (!seed) return send(404, { error: { code: 'not_found', message: 'No such sandbox' } });
-    return send(200, record(seed));
+    const id = idOf(seed[0]);
+    const revision = Number(current(seed).revision) + 1;
+    if (request.method === 'POST') {
+      // The service renews to now + lease_seconds; it never adds to what is left.
+      const seconds = Number(JSON.parse(text).lease_seconds);
+      changed.set(id, {
+        ...changed.get(id),
+        revision,
+        lease_expires_at: at(seconds / 60),
+        lease_seconds: seconds,
+      });
+    }
+    if (request.method === 'DELETE')
+      changed.set(id, { ...changed.get(id), revision, state: 'deleting' });
+    return send(200, current(seed));
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -537,12 +560,131 @@ test("Extend lease and Release machine follow the tools' write permission, and R
   );
   assert.deepEqual((await panel(key, reader)).actions, [], 'a reader is offered nothing');
 
-  // Extend only while ready; Release while the service still holds the machine, a failed one too.
+  // Extend only while ready; Release while the service still leases the machine.
   assert.deepEqual(labels((await panel(keyOf('cinder-provision'))).actions), ['Release machine']);
-  assert.deepEqual(labels((await panel(keyOf('ember-retry'))).actions), ['Release machine']);
   assert.deepEqual(labels((await panel(keyOf('harbor-lost'))).actions), ['Release machine']);
+  // A failed provision may never have been allocated, and the service releases only what it
+  // leases: no guard says it deletes an 8× H100 that never was. Its red still names who acts.
+  const failed = await panel(keyOf('ember-retry'));
+  assert.deepEqual(failed.actions, []);
+  assert.equal(failed.header.attention?.who, WHO);
   // Releasing a check machine fails the check; Code gives it back itself.
   assert.deepEqual((await panel(checkKey)).actions, []);
+});
+
+test('a sidebar opened before the machines are read says they are not read yet, not Not found, and its record is read once they are', async (t) => {
+  frozen(t);
+  const remote = await service(t);
+  const { board, panel, ctx } = await composed(t);
+  const key = keyOf('aurora-sweep');
+  const before = remote.seen.length;
+  // A link to a sidebar reads the board and the sidebar together, before anything is known.
+  assert.equal((await board()).lanes.hardware.pending, true);
+  await assert.rejects(panel(key), { code: 'sandbox_machines_pending', status: 503 });
+  await assert.rejects(panel('sandbox:sbx_nowhere'), { code: 'sandbox_machines_pending' });
+  assert.equal(remote.seen.length, before, 'neither read asks the service anything');
+
+  // The list is read first, and the ids the sidebars asked for wait for it.
+  t.mock.timers.tick(1000);
+  await until(() => ctx.sandboxes.machines(projectId) !== null, 'the machines');
+  assert.equal(remote.records('sbx_aurora'), 0);
+  // The next pass reads the record the list holds, with no sidebar read in between, and never
+  // the id it does not hold.
+  t.mock.timers.tick(1000);
+  await until(() => ctx.sandboxes.machine(projectId, 'sbx_aurora') !== null, 'the record');
+  assert.equal(remote.records('sbx_nowhere'), 0);
+  assert.deepEqual(titles(await panel(key)), ['Now', 'Running', 'Used by', 'Machine']);
+  await assert.rejects(panel('sandbox:sbx_nowhere'), { code: 'running_not_found' });
+
+  // A tab hidden for more than a minute: the machines are forgotten, and the sidebar it comes
+  // back to waits for them again.
+  t.mock.timers.tick(60_000);
+  assert.equal(ctx.sandboxes.machines(projectId), null);
+  await assert.rejects(panel(key), { code: 'sandbox_machines_pending' });
+});
+
+test('after Extend lease the sidebar and the board read the answer at once, and the timer reads again on its next pass', async (t) => {
+  frozen(t);
+  const remote = await service(t);
+  const { board, panel, filled, ctx } = await composed(t);
+  await board();
+  t.mock.timers.tick(1000);
+  await filled();
+  const key = keyOf('dunes-eval');
+  await panel(key);
+  t.mock.timers.tick(1000);
+  await until(() => ctx.sandboxes.machine(projectId, 'sbx_dunes') !== null, 'the record');
+  const short = await panel(key, producer);
+  assert.deepEqual(minutes(rows(short, 'Now')[1]), {
+    label: 'Lease left',
+    value: [{ until: 6, of: 14400 }],
+    attention: true,
+  });
+
+  // A job runs with 6 minutes of lease left; Extend lease adds an hour to what is left.
+  const lists = remote.lists();
+  const records = remote.records('sbx_dunes');
+  await ctx.sandboxes.extend(producer, { id: 'sbx_dunes', seconds: 3600 });
+  const extended = await panel(key, producer);
+  assert.equal(extended.header.attention, undefined, 'the lease is no longer red');
+  assert.deepEqual(minutes(rows(extended, 'Now')[1]), {
+    label: 'Lease left',
+    value: [{ until: 66, of: 3960 }],
+  });
+  assert.equal(extended.sections[0].attention, undefined);
+  assert.deepEqual(labels(extended.actions), ['Extend lease', 'Release machine']);
+  assert.equal(nodeOf(await board(), key)!.attention, undefined, 'nor is the machine on the board');
+  // The extend read the record once itself; the timer reads both again a second later.
+  assert.equal(remote.records('sbx_dunes'), records + 1);
+  t.mock.timers.tick(1000);
+  await until(
+    () => remote.lists() === lists + 1 && remote.records('sbx_dunes') === records + 2,
+    'the reads after the act',
+  );
+});
+
+test('after Release machine the machine reads Releasing at once, and a list read already out when it landed is dropped', async (t) => {
+  frozen(t);
+  const remote = await service(t);
+  const { board, panel, filled, ctx } = await composed(t);
+  await board();
+  t.mock.timers.tick(1000);
+  await filled();
+  const key = keyOf('basalt-notebook');
+  await panel(key);
+  t.mock.timers.tick(1000);
+  await until(() => ctx.sandboxes.machine(projectId, 'sbx_basalt') !== null, 'the record');
+  assert.deepEqual(labels((await panel(key, producer)).actions), [
+    'Extend lease',
+    'Release machine',
+  ]);
+
+  // A list read goes out and its answer, the machine still idle, is held back.
+  let free = () => {};
+  const hold = () => (remote.control.held = new Promise<void>((resolve) => (free = resolve)));
+  hold();
+  const lists = remote.lists();
+  t.mock.timers.tick(4000);
+  await until(() => remote.lists() === lists + 1, 'a list read out');
+  const answer = await ctx.sandboxes.release(producer, { id: 'sbx_basalt' });
+  assert.equal((answer as { state?: string }).state, 'deleting');
+  // The idle answer lands after the release; the next read waits for it, and is held too.
+  const stale = free;
+  hold();
+  stale();
+  for (let pass = 0; remote.lists() < lists + 2; pass++) {
+    assert.ok(pass < 100, 'the next list read starts');
+    t.mock.timers.tick(1000);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const sidebar = await panel(key, producer);
+  assert.deepEqual(sidebar.header.says, ['Releasing']);
+  assert.deepEqual(sidebar.actions, [], 'nothing is offered twice');
+  assert.equal(sidebar.live, true);
+  const node = nodeOf(await board(), key)!;
+  assert.deepEqual(node.lines[0], ['Releasing']);
+  assert.equal(node.look, 'quiet');
+  free();
 });
 
 test("folded into a Code check, a machine adds its cost and size to the check's sidebar, without its lease or controls", async (t) => {

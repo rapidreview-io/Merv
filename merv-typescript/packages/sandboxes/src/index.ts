@@ -101,6 +101,14 @@ const changing = (row: Json) =>
 /** A failed read is retried at the fast cadence; an answer sets the cadence by what it holds. */
 const cadence = (cache: MachineCache) =>
   cache.failed || cache.rows.some(changing) ? MACHINES_CHANGING_MS : MACHINES_SETTLED_MS;
+/** A list row as an act's answer left it: the record's word on each field the row sends. */
+const answered = (row: Json, answer: Json): Json =>
+  Object.fromEntries(
+    Object.entries(row as Record<string, Json>).map(([name, value]) => [
+      name,
+      field(answer, name) === undefined ? value : (field(answer, name) as Json),
+    ]),
+  );
 /** The list answers an array, or one object holding it under the collection's plural noun. */
 function machineRows(value: Json): Json[] {
   const list = Array.isArray(value)
@@ -505,11 +513,9 @@ export class SandboxService implements Sandboxes {
       const left = Number.isNaN(expires)
         ? 0
         : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
-      return visible(
-        await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), {
-          lease_seconds: left + input.seconds,
-          expected_revision: record.revision,
-        }),
+      const body = { lease_seconds: left + input.seconds, expected_revision: record.revision };
+      return await this.#acting(caller.projectId, input.id, async () =>
+        visible(await this.#client.write(entry, 'POST', sandboxRoute(renewRoute, input.id), body)),
       );
     });
   }
@@ -522,9 +528,39 @@ export class SandboxService implements Sandboxes {
       // second call. Deleting an already-stopped sandbox deletes nothing twice, so the answer is
       // the record either way: releasing twice is the same as releasing once.
       await this.#record(entry, path);
-      await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
-      return visible(await this.#client.read(entry, path));
+      return await this.#acting(caller.projectId, input.id, async () => {
+        await this.#client.write(entry, 'DELETE', path, { confirm_retained: true });
+        return visible(await this.#client.read(entry, path));
+      });
     });
+  }
+
+  /**
+   * An act on one machine, and what the Running page's copy of it learns: the answer, the
+   * machine as it now reads, replaces the copy at once, so a sidebar never offers again what
+   * was just done, and the timer reads the rest on its next pass. It does so when the act
+   * failed too, since a write that timed out may still have landed.
+   */
+  async #acting(projectId: string, id: string, act: () => Promise<Json>): Promise<Json> {
+    let answer: Json | undefined;
+    try {
+      answer = await act();
+      return answer;
+    } finally {
+      this.#acted(projectId, id, answer);
+    }
+  }
+
+  #acted(projectId: string, id: string, answer?: Json): void {
+    const cache = this.#machines.get(projectId);
+    if (!cache) return;
+    const record = cache.records.get(id);
+    // Each read already out began before the act, so it is dropped when it answers.
+    cache.attemptedAt = 0;
+    if (record) record.attemptedAt = 0;
+    if (answer === undefined || field(answer, 'id') !== id) return;
+    cache.rows = cache.rows.map((row) => (field(row, 'id') === id ? answered(row, answer) : row));
+    if (record) record.value = answer;
   }
 
   async read(caller: Caller, rowId: string, params: Record<string, unknown> = {}): Promise<Json> {
@@ -578,13 +614,14 @@ export class SandboxService implements Sandboxes {
     const cache = this.#machines.get(projectId)!;
     cache.watchedAt = now;
     // Only a machine the list holds gets its record read, or one a page kept watching as it
-    // left the list: a caller never has this service read an id of its own choosing.
+    // left the list: a caller never has this service read an id of its own choosing. An id
+    // watched before the list first answers waits for it, and goes if the list does not hold it.
     if (id !== undefined) {
       const record = cache.records.get(id);
       if (record) record.watchedAt = now;
       else if (
         cache.records.size < MACHINE_RECORDS &&
-        cache.rows.some((row) => field(row, 'id') === id)
+        (cache.observedAt === null || cache.rows.some((row) => field(row, 'id') === id))
       )
         cache.records.set(id, { watchedAt: now, attemptedAt: 0, value: null });
     }
@@ -610,7 +647,11 @@ export class SandboxService implements Sandboxes {
       }
       for (const [id, record] of cache.records) {
         if (now - record.watchedAt >= MACHINES_DEMAND_MS) cache.records.delete(id);
-        else if (!record.reading && now - record.attemptedAt >= MACHINE_RECORD_MS) {
+        else if (
+          cache.observedAt !== null &&
+          !record.reading &&
+          now - record.attemptedAt >= MACHINE_RECORD_MS
+        ) {
           record.attemptedAt = now;
           record.reading = this.#readMachine(projectId, id, record).finally(
             () => (record.reading = undefined),
@@ -625,28 +666,35 @@ export class SandboxService implements Sandboxes {
   }
 
   async #readMachines(projectId: string, cache: MachineCache): Promise<void> {
-    try {
-      const rows = await this.#run(projectId, async (projectId) =>
-        machineRows(
-          visible(await this.#client.read(this.#connectionFor(projectId), machinesRoute)),
-        ),
-      );
-      Object.assign(cache, { observedAt: new Date().toISOString(), rows, failed: false });
-    } catch {
+    const attempt = cache.attemptedAt;
+    const rows = await this.#run(projectId, async (projectId) =>
+      machineRows(visible(await this.#client.read(this.#connectionFor(projectId), machinesRoute))),
+    ).catch(() => undefined);
+    // An act landed while this read was out, so what it read may be older than the act.
+    if (cache.attemptedAt !== attempt) return;
+    if (!rows) {
       // The last rows stand, marked old: a service that did not answer is not an empty project.
       cache.failed = true;
+      return;
     }
+    // The ids watched before the list first answered stay only where it holds them.
+    if (cache.observedAt === null)
+      for (const id of cache.records.keys())
+        if (!rows.some((row) => field(row, 'id') === id)) cache.records.delete(id);
+    Object.assign(cache, { observedAt: new Date().toISOString(), rows, failed: false });
   }
 
   async #readMachine(projectId: string, id: string, record: MachineRecord): Promise<void> {
+    const attempt = record.attemptedAt;
     try {
-      record.value = visible(
+      const value = visible(
         await this.#run(
           { projectId, id },
           async ({ projectId, id }) =>
             await this.#record(this.#connectionFor(projectId), sandboxRoute(sandboxRecord, id)),
         ),
       );
+      if (record.attemptedAt === attempt) record.value = value;
     } catch {
       // The last record stands; a hosted agent's machine is refused and never had one.
     }

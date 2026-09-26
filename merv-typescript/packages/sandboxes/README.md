@@ -5,14 +5,19 @@ manifest of rows — what each row holds, never how it looks — and this plugin
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
 calling project's own credentials. It owns no domain state and no Merv capability: its only
 Cordis dependency is none at all, and the thin `@merv/sandboxes/ui` adapter injects
-`sandboxes` and `ui` to mirror the rows into the sidebar registry.
+`sandboxes`, `ui` and `scope`. It mirrors the rows into the sidebar registry and draws the
+project's machines on the Running page; `scope` answers only whether the reader holds `write`, so
+Extend lease and Release machine are offered only to a caller the tools would let act.
 
 The public `@merv/sandboxes/types` contract defines `Context.sandboxes`, `Sandboxes`,
-`SandboxConnection`, `SandboxesConfig`, `SandboxRow`, `SandboxTarget`, `SandboxExtend` and
-`SandboxReadiness`. `rows()` returns the rows from the last accepted manifest, `status()` reports
-readiness only, `refresh()` reads every connection's manifest now, `read(caller, rowId, params)`
-proxies the collection or one record, `extend` and `release` change one named sandbox, and
-`subscribe(listener)` fires when the published row set changes.
+`SandboxConnection`, `SandboxesConfig`, `SandboxRow`, `SandboxTarget`, `SandboxExtend`,
+`SandboxReadiness` and `SandboxMachines`. `rows()` returns the rows from the last accepted
+manifest, `status()` reports readiness only, `refresh()` reads every connection's manifest now,
+`read(caller, rowId, params)` proxies the collection or one record, `extend` and `release` change
+one named sandbox, and `subscribe(listener)` fires when the published row set changes. For the
+Running page, `machines(projectId)` answers the project's machine list from memory, or null until
+it has been read once; `machine(projectId, id)` answers one machine's record from memory; and
+`watch(projectId, id?)` keeps them read for the next minute. None of the three calls the service.
 
 Configuration names environment variables and never carries a secret:
 
@@ -121,6 +126,15 @@ row, stops polling, and rejects new operations on captured service handles with 
 Shutdown waits for admitted operations to finish, including the follow-up read after a release.
 An active manifest refresh finishes its current connection without publishing or starting the
 next connection. Standalone service owners can await `close()` or the disposer from `start()`.
+
+The Running page's machines are the one other thing held, in memory only. One timer reads each
+watched project's `GET /v1/sandboxes` every 5 s while a machine or its job is changing and every
+30 s otherwise, and each watched record every 8 s; a project is forgotten a minute after its last
+watch. A record is read only for a machine the list holds, so a reader never has the service read
+an id of its own choosing; one watched before the list first answers waits for it. A failed read
+keeps the last rows and marks them failed. `extend` and `release` put their answer into that copy
+at once and have the timer read the list and the record again on its next pass; a read already
+out when the act landed is dropped.
 
 Run `npm run test:sandboxes` for the fixture regressions: manifest validation and dropped controls,
 row identity and view, proxied reads with the namespace header and stripped secrets, the refused
