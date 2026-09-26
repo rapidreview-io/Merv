@@ -33,20 +33,29 @@ export const webConfig = z
           .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
           .default('gpt-6-luna'),
         origin: origin.default('https://api.openai.com'),
-        // Nisa gives its grounded call 90 s.
-        timeoutMs: z.number().int().min(1000).max(180_000).default(90_000),
+        // Nisa gives its grounded call 90 s. The longest call (queue, Tavily and this) must end
+        // inside the 180 s a Codex worker waits on a tool (packages/runner/src/profiles.ts).
+        timeoutMs: z.number().int().min(1000).max(90_000).default(90_000),
       })
       .strict()
       .optional(),
-    timeoutMs: z.number().int().min(1000).max(120_000).default(30_000),
+    timeoutMs: z.number().int().min(1000).max(45_000).default(30_000),
     maxResponseBytes: z
       .number()
       .int()
       .min(1024)
       .max(32 * 1024 * 1024)
       .default(8 * 1024 * 1024),
-    maxInFlight: z.number().int().min(1).max(64).default(4),
+    maxInFlight: z.number().int().min(1).max(64).default(8),
+    /** Half of maxInFlight when unset. */
+    maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
+    /** How long a call past either in-flight limit waits for its turn before web_busy. */
+    queueMs: z.number().int().min(0).max(15_000).default(15_000),
     dailyCallsPerProject: z.number().int().min(1).max(100_000).default(200),
+    // Projects cost nothing to make, so each one's day bounds nothing alone: the deployment's
+    // day does, and its fallback searches, which spend a model's tokens, have a smaller one.
+    dailyCalls: z.number().int().min(1).max(1_000_000).default(1000),
+    fallbackDailyCalls: z.number().int().min(1).max(1_000_000).default(200),
   })
   .strict();
 export type WebSettings = z.infer<typeof webConfig>;

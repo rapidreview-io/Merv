@@ -15,6 +15,9 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { z } from 'zod';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { NisaService } from '../packages/nisa/src/index.js';
+import { nisaTools } from '../packages/nisa/src/tools.js';
+import type { NisaPaper } from '../packages/nisa/src/types.js';
 import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import type { WebSearch } from '../packages/web/src/types.js';
@@ -666,19 +669,35 @@ test('session metadata and tool preparation cannot adopt a replacement worker', 
   }
 });
 
-test('a leased worker lists and runs web search, an open read its policy never names', async (t) => {
+test('a leased worker lists and runs web and literature search, open reads its policy never names', async (t) => {
   const tavily = await provider(t, () => ({ body: tavilyResults(1) }));
+  const nisa = await provider(t, () => ({
+    body: { arxiv_id: '2303.08774', title: 'GPT-4 Technical Report', authors: 'OpenAI' },
+  }));
   const f = await fixture(t),
     { token } = await f.offer();
   const caller = await f.sessions.authenticate(token);
   const tools = new ToolRegistry(f.scope);
   t.after(() => tools.close());
-  const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
+  const web = new WebService(
+    { keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin },
+    { log: () => {} },
+  );
   for (const tool of webTools(web)) tools.register(tool);
+  const papers = new NisaService({ keyEnv: keyEnv(t, 'rr_sk_fixture'), origin: nisa.origin });
+  for (const tool of nisaTools(papers)) tools.register(tool);
   tools.registerSessionPolicy(f.sessions);
   assert.deepEqual(
     (await tools.describe(caller)).map(({ name }) => name),
-    ['web.extract', 'web.search'],
+    [
+      'nisa.excerpts',
+      'nisa.paper',
+      'nisa.related',
+      'nisa.search',
+      'nisa.semantic_search',
+      'web.extract',
+      'web.search',
+    ],
   );
   const result = (await tools.call('web.search', caller, { query: 'q' })) as WebSearch;
   assert.deepEqual(
@@ -686,6 +705,9 @@ test('a leased worker lists and runs web search, an open read its policy never n
     ['https://example.com/0'],
   );
   assert.equal(tavily.seen.length, 1);
+  const paper = (await tools.call('nisa.paper', caller, { arxiv_id: '2303.08774' })) as NisaPaper;
+  assert.equal(paper.identifier, 'arxiv:2303.08774');
+  assert.equal(nisa.seen.length, 1);
 });
 
 test('tool policy replacement fences real session invocations and cleanup releases original authority', async (t) => {

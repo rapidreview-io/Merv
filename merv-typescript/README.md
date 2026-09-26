@@ -516,16 +516,20 @@ These commands use an independent local MCP server with synthetic credentials. T
 
 ## Optional Nisa literature retrieval
 
-The Nisa-owned six-tool MCP integration is also implemented: search, paper,
-excerpts and Q&A ask/get/cancel through generic Mounts, with independent removal
-during an accepted Q&A operation. See [implementation, verification and deployment limits](docs/NISA_PLUGIN_IMPLEMENTATION.md).
-The older `@merv/nisa` REST adapter has been removed after verifying its replacement
-through local HTTP/MCP. See [configuration and migration](docs/NISA_PLUGIN.md).
-Production deployment and real-model verification remain open.
+`@merv/nisa` gives every agent Nisa's literature search as native reads:
+`nisa.search`, `nisa.semantic_search`, `nisa.paper`, `nisa.excerpts` and
+`nisa.related`, over Nisa's public `/api/sdk` routes with one deployment-wide
+`rr_sk_` key. Each paper comes back in the form `paper.cite` takes. The
+deployment composes it only where `MERV_NISA_API_KEY` is set; Q&A is deferred.
+See [what it calls, how to turn it on, and what is deferred](docs/NISA_PLUGIN.md).
+Internet search is the separate `@merv/web`, composed from its own keys
+([packages/web/README.md](packages/web/README.md)).
 
-With `MERV_NISA_CHECKOUT` and `MERV_NISA_PYTHON` set, `npm run test:nisa` (also
+The older Nisa-owned six-tool MCP integration through generic mounts is still
+implemented ([history and limits](docs/NISA_PLUGIN_IMPLEMENTATION.md)). With
+`MERV_NISA_CHECKOUT` and `MERV_NISA_PYTHON` set, `npm run test:nisa` (also
 `npm run test:nisa-mcp`) runs the actual Nisa API and MCP server through generic
-Mounts using synthetic identity, corpus and model providers. It is configured to check
+mounts using synthetic identity, corpus and model providers. It is configured to check
 catalog withdrawal and restoration in the explicit configuration with the browser layer, durable Q&A surviving unmount, and task/review/feed work plus
 the same sandbox connections during Nisa's absence. These commands fail if no
 prepared Nisa checkout is supplied; they do not silently skip verification.

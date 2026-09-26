@@ -475,7 +475,12 @@ test('web search is composed only from a Tavily key or a named fallback key, and
   assert.deepEqual(plugin('web'), {
     id: 'web',
     name: '@merv/web',
-    config: { keyEnv: 'MERV_TAVILY_API_KEY', maxInFlight: 4, dailyCallsPerProject: 200 },
+    config: {
+      keyEnv: 'MERV_TAVILY_API_KEY',
+      maxInFlight: 8,
+      dailyCallsPerProject: 200,
+      dailyCalls: 1000,
+    },
   });
   assert.equal(secrets(), false);
   // The fallback spends the key a variable names, Pi's here, which the render never copies.
@@ -490,6 +495,8 @@ test('web search is composed only from a Tavily key or a named fallback key, and
       MERV_WEB_FALLBACK_MODEL: 'gpt-6-sol',
       MERV_WEB_MAX_IN_FLIGHT: '2',
       MERV_WEB_DAILY_CALLS_PER_PROJECT: '50',
+      MERV_WEB_DAILY_CALLS: '400',
+      MERV_WEB_FALLBACK_DAILY_CALLS: '40',
     }).status,
     0,
   );
@@ -498,11 +505,14 @@ test('web search is composed only from a Tavily key or a named fallback key, and
     fallback: { keyEnv: 'PI_PROVIDER_KEY', model: 'gpt-6-sol' },
     maxInFlight: 2,
     dailyCallsPerProject: 50,
+    dailyCalls: 400,
+    fallbackDailyCalls: 40,
   });
   assert.equal(secrets(), false);
   // The fallback alone serves search.
   assert.equal(run(fallback).status, 0);
   assert.deepEqual(plugin('web').config.fallback, { keyEnv: 'PI_PROVIDER_KEY' });
+  assert.equal(plugin('web').config.fallbackDailyCalls, 200);
   // A refusal names the variable, never its value.
   for (const [broken, message] of [
     [{ MERV_TAVILY_API_KEY: 'sk-not-a-tavily-key' }, 'Missing or invalid MERV_TAVILY_API_KEY'],
@@ -515,10 +525,52 @@ test('web search is composed only from a Tavily key or a named fallback key, and
       'Invalid MERV_WEB_DAILY_CALLS_PER_PROJECT',
     ],
     [{ MERV_TAVILY_API_KEY: key, MERV_WEB_MAX_IN_FLIGHT: '65' }, 'Invalid MERV_WEB_MAX_IN_FLIGHT'],
+    [{ MERV_TAVILY_API_KEY: key, MERV_WEB_DAILY_CALLS: '0' }, 'Invalid MERV_WEB_DAILY_CALLS'],
+    [
+      { ...fallback, MERV_WEB_FALLBACK_DAILY_CALLS: 'many' },
+      'Invalid MERV_WEB_FALLBACK_DAILY_CALLS',
+    ],
   ]) {
     const result = run(broken);
     assert.notEqual(result.status, 0, message);
     assert.match(result.stderr, new RegExp(`Error: ${message}\\n`));
     assert.ok(!/sk-not-a-tavily-key|tvly-dev-fixture|fixture-provider-key/.test(result.stderr));
+  }
+});
+
+test('Nisa is composed only from its rr_sk_ key, and renders the variable name only', (t) => {
+  const { output, run, plugin } = renderer(t);
+  const key = `rr_sk_${'k'.repeat(43)}`;
+  for (const extra of [{}, { MERV_NISA_API_KEY: '' }]) {
+    assert.equal(run(extra).status, 0);
+    assert.equal(plugin('nisa'), undefined);
+    assert.equal(plugin('nisa-tools'), undefined);
+  }
+  assert.equal(run({ MERV_NISA_API_KEY: key }).status, 0);
+  assert.deepEqual(plugin('nisa-tools'), { id: 'nisa-tools', name: '@merv/nisa/tools' });
+  assert.deepEqual(plugin('nisa'), {
+    id: 'nisa',
+    name: '@merv/nisa',
+    config: { keyEnv: 'MERV_NISA_API_KEY' },
+  });
+  assert.equal(readFileSync(output, 'utf8').includes(key), false);
+  // Another Nisa, a staging one say, by its https origin only.
+  assert.equal(
+    run({ MERV_NISA_API_KEY: key, MERV_NISA_ORIGIN: 'https://nisa-staging.example' }).status,
+    0,
+  );
+  assert.equal(plugin('nisa').config.origin, 'https://nisa-staging.example');
+  for (const [broken, message] of [
+    [{ MERV_NISA_API_KEY: 'sk-not-a-nisa-key' }, 'Missing or invalid MERV_NISA_API_KEY'],
+    [{ MERV_NISA_API_KEY: `${key} ` }, 'Missing or invalid MERV_NISA_API_KEY'],
+    [
+      { MERV_NISA_API_KEY: key, MERV_NISA_ORIGIN: 'http://nisa.example' },
+      'Invalid MERV_NISA_ORIGIN',
+    ],
+  ]) {
+    const result = run(broken);
+    assert.notEqual(result.status, 0, message);
+    assert.match(result.stderr, new RegExp(`Error: ${message}\\n`));
+    assert.ok(!/sk-not-a-nisa-key|rr_sk_k/.test(result.stderr));
   }
 });

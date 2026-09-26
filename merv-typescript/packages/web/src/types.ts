@@ -19,10 +19,16 @@ export interface WebConfig {
   timeoutMs?: number;
   /** A larger answer is refused, whatever its Content-Length says. */
   maxResponseBytes?: number;
-  /** Calls this process has in flight at once; one more is refused with web_busy. */
+  /** Calls this process has in flight at once, and one project's share of them (half by
+   * default); a call past either waits up to queueMs for its turn, then is refused (web_busy). */
   maxInFlight?: number;
-  /** Calls one project may make per UTC day; the next is refused with web_budget_exhausted. */
+  maxInFlightPerProject?: number;
+  queueMs?: number;
+  /** Calls per UTC day: one project's, the deployment's, and the deployment's fallback searches;
+   * the next is refused with web_budget_exhausted. */
   dailyCallsPerProject?: number;
+  dailyCalls?: number;
+  fallbackDailyCalls?: number;
 }
 
 export type WebProvider = 'tavily' | 'openai_web_search';
@@ -65,6 +71,8 @@ export interface WebSearch {
   /** Each fix-up made to the input, and which provider answered when it was not Tavily. */
   normalization_note?: string;
   content_truncated?: true;
+  /** The characters of content this answer could hold: Nisa's 24,000, or fewer where the text
+   * would not fit an agent's view of one result. */
   content_budget_chars?: number;
 }
 export interface WebPage {
@@ -79,11 +87,25 @@ export interface WebPage {
   normalization_note?: string;
 }
 
+/** The one line logged per call that reached admission: never its query or address. */
+export interface WebCall {
+  event: 'web.call';
+  tool: 'web.search' | 'web.extract';
+  projectId: string;
+  actorId: string;
+  /** The providers asked, in order. */
+  providers: WebProvider[];
+  ms: number;
+  /** The refusal, when it failed. */
+  code?: string;
+}
+
 /**
  * Internet search as Nisa's agents do it: Tavily, then OpenAI's hosted web search when Tavily
- * cannot serve. Pages are read only through Tavily, never fetched from Merv's own network. Every
- * call is bounded in time and bytes, answers only the fields above, and counts against its
- * project's daily budget. Authorization belongs to the tools that call it: any reader may search.
+ * cannot serve. Pages are read only through Tavily, never fetched from Merv's own network, and a
+ * conversation reads only pages its own searches returned. Every call is bounded in time and
+ * bytes, answers only the fields above, and counts against its project's and the deployment's
+ * daily budgets. Authorization belongs to the tools that call it: any reader may search.
  */
 export interface Web {
   /** Whether a page can be read: only Tavily reads pages. */

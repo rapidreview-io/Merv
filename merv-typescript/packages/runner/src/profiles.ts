@@ -216,11 +216,23 @@ const PROJECT_READS = [
   'research.list',
   'research.get',
   'research.lineage',
-  // Internet search, where the deployment has a key: a name the server does not list is only
-  // absent from the worker's tools. Codex's own hosted web search stays disabled below.
-  'web.search',
-  'web.extract',
+  // Nisa's literature search, where the deployment has its key: a name the server does not list
+  // is only absent from the worker's tools. It reaches Nisa alone, never an address a worker
+  // chooses.
+  'nisa.search',
+  'nisa.semantic_search',
+  'nisa.paper',
+  'nisa.excerpts',
+  'nisa.related',
 ] as const;
+/**
+ * Merv's internet reads (@merv/web). Each call sends its query, or the address of a page to read,
+ * to an outside provider, and that is a way out of the machine: a worker whose shell has no
+ * network, or a sealed review, is not given them. Codex's own hosted web search stays disabled.
+ */
+const INTERNET_READS = ['web.search', 'web.extract'] as const;
+/** How Claude Code names a Merv tool: MCP names keep only letters, digits, _ and -. */
+const claudeTool = (name: string) => `mcp__merv__${name.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';
 export const mcpUrlVariable = 'MERV_MCP_URL';
@@ -296,6 +308,8 @@ function codexArgs(
     ...new Set([
       ...request.session.execution.policy.tools.map((tool) => tool.name),
       ...PROJECT_READS,
+      // Only where its shell commands already have the network (below).
+      ...(profile.hosted && !sealed(request.session) ? INTERNET_READS : []),
     ]),
   ];
   check(
@@ -380,7 +394,8 @@ function codexArgs(
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
   // A hosted machine holds no provider key and the server caps its step, so its shell commands
-  // may use the network. Web search stays disabled, and a sealed review stays read-only.
+  // may use the network, and it is given Merv's internet reads. Codex's own web search stays
+  // disabled, and a sealed review stays read-only and offline.
   config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
   config('sandbox_workspace_write.exclude_slash_tmp', 'true');
@@ -390,7 +405,9 @@ function codexArgs(
   config(
     'mcp_servers',
     // The handshake waits behind the server's writer queue under load; Codex's default 30 s failed every review launch.
-    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,enabled_tools=${JSON.stringify(tools)},tools=${toolApprovals}}}`,
+    // A call waits 60 s by default, and a web search can take 150 s (its turn, Tavily, then the
+    // fallback): a worker that gave up would leave Merv finishing, and paying for, the call.
+    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,enabled_tools=${JSON.stringify(tools)},tools=${toolApprovals}}}`,
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
@@ -423,7 +440,8 @@ function claudeArgs(
   url: string,
 ): string[] {
   const readOnly = request.session.execution.policy.readOnly;
-  const builtIn = sealed(request.session)
+  const offline = sealed(request.session);
+  const builtIn = offline
     ? ['Read', 'Glob', 'Grep']
     : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
   const servers = readOnly ? [] : (profile.servers ?? []);
@@ -460,6 +478,8 @@ function claudeArgs(
     builtIn.join(','),
     '--allowedTools',
     [...builtIn, 'mcp__merv', ...servers.map((server) => `mcp__${server.name}`)].join(','),
+    // A sealed review has no shell, so nothing else of it reaches the network.
+    ...(offline ? ['--disallowedTools', INTERNET_READS.map(claudeTool).join(',')] : []),
     '--dangerously-skip-permissions',
     '--model',
     profile.model ?? 'opus',

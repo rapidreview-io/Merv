@@ -357,8 +357,34 @@ if (process.env.MERV_TAVILY_API_KEY || webFallbackKeyEnv !== undefined) {
       config: {
         keyEnv: 'MERV_TAVILY_API_KEY',
         ...(fallback && { fallback }),
-        maxInFlight: integer('MERV_WEB_MAX_IN_FLIGHT', 4, 1, 64),
+        maxInFlight: integer('MERV_WEB_MAX_IN_FLIGHT', 8, 1, 64),
         dailyCallsPerProject: integer('MERV_WEB_DAILY_CALLS_PER_PROJECT', 200, 1, 100_000),
+        // Projects are free to make: the deployment's day is what bounds the spend.
+        dailyCalls: integer('MERV_WEB_DAILY_CALLS', 1000, 1, 1_000_000),
+        ...(fallback && {
+          fallbackDailyCalls: integer('MERV_WEB_FALLBACK_DAILY_CALLS', 200, 1, 1_000_000),
+        }),
+      },
+    },
+  );
+}
+// Nisa's literature search (nisa.*) for every agent, over Nisa's public API with the deployment's
+// one rr_sk_ key. Absent until the operator installs the key, like web search.
+const nisaKey = process.env.MERV_NISA_API_KEY;
+if (nisaKey) {
+  if (!/^rr_sk_[A-Za-z0-9_-]{32,128}$/.test(nisaKey)) {
+    throw new Error('Missing or invalid MERV_NISA_API_KEY');
+  }
+  config.plugins.push(
+    { id: 'nisa-tools', name: '@merv/nisa/tools' },
+    {
+      id: 'nisa',
+      name: '@merv/nisa',
+      config: {
+        keyEnv: 'MERV_NISA_API_KEY',
+        ...(process.env.MERV_NISA_ORIGIN !== undefined && {
+          origin: httpsOrigin('MERV_NISA_ORIGIN'),
+        }),
       },
     },
   );

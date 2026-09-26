@@ -1,122 +1,136 @@
-# Nisa through generic MCP Mounts
+# Nisa literature search
 
-Merv connects to Nisa's six-tool MCP server through `@merv/mounts`. Nisa owns
-its tool schemas, authentication, retrieval and durable Q&A operations. The
-Merv-specific two-tool REST adapter (`@merv/nisa`) was removed on 2026-09-14
-after repeating the cross-repository local integration test and Nisa MCP tests.
-Production deployment and real service/model verification remain open.
+Merv's agents search the literature through `@merv/nisa`, a native plugin that
+calls Nisa's public `/api/sdk` routes at `https://api.rapidreview.io` with one
+deployment-wide `rr_sk_` key: the routes the `nisa` CLI uses, already served by
+Nisa's main, so nothing needs deploying on Nisa's side. Internet search is a
+separate plugin, `@merv/web`, modelled on how Nisa's own agents search the web;
+the two are composed independently and both stay dormant until their keys are
+configured. The package README ([packages/nisa/README.md](../packages/nisa/README.md))
+has the full contract; this page is the overview and the activation runbook for
+both.
 
-## Configure the integration
+## What it calls
 
-Run a Nisa checkout containing `project/mcp` and the authenticated plugin API.
-The MCP listener defaults to `http://127.0.0.1:8091/mcp`; its backend must have
-`NISA_PLUGIN_ENABLED=1`. Consult `project/mcp/README.md` and
-`project/backend/plugin_api/README.md` in that Nisa checkout for server setup,
-persistent Q&A storage and model configuration.
+| Tool                   | Nisa route                                  | Answers                                                      |
+| ---------------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| `nisa.search`          | `POST /api/sdk/search` with `enrich: false` | papers matching keywords (BM25 and citations), with snippets |
+| `nisa.semantic_search` | `POST /api/sdk/semantic_search`             | papers whose abstracts are nearest a description             |
+| `nisa.paper`           | `GET /api/sdk/paper/{id}`                   | one paper's record and abstract                              |
+| `nisa.excerpts`        | `GET /api/sdk/paper/{id}/excerpts?q=&max=`  | passages inside one paper's full text                        |
+| `nisa.related`         | `GET /api/sdk/paper/{id}/related?n=`        | papers similar to one paper                                  |
 
-Add this entry alongside Merv's existing native providers. If Mounts already
-exists for Sandboxes, add the Nisa item to its `config.mounts` array; do not add
-a second Mounts provider.
+Every tool is a read of another service (`readOnly`, `openWorld`): it runs
+without holding a PostgreSQL snapshot, and every agent gets it with no grant or
+policy entry. Pi offers it to every turn, a reader's included, and runs it as
+the person; leased workers call it as an open read (Codex workers because the
+five names are in the runner's fixed project reads, Claude workers through
+`mcp__merv`); MCP clients list it. Input is validated here more strictly than
+Nisa validates it; each paper comes back with `identifier` (`arxiv:<id>`),
+`title`, `authors`, `year` and `url` (`https://arxiv.org/abs/<id>`), which is
+what `paper.cite` takes, and nothing Nisa sends beyond the allowlisted fields
+passes. Each answer is sized to what Pi shows the model of one result. Failures
+are `nisa_*` errors that repeat nothing Nisa wrote.
 
-```json
-{
-  "id": "mounts",
-  "name": "@merv/mounts",
-  "required": false,
-  "config": {
-    "mounts": [
-      {
-        "id": "nisa",
-        "url": "http://127.0.0.1:8091/mcp",
-        "tools": ["search", "paper", "excerpts", "qa.ask", "qa.get", "qa.cancel"],
-        "discovery": {
-          "projectId": "PROJECT_ID",
-          "actorId": "DISCOVERY_ACTOR_ID"
-        }
-      }
-    ]
-  }
-}
+## How this replaces the earlier designs
+
+- The first `@merv/nisa` (2026-09-13) was a two-tool REST adapter published as
+  a remote catalog: its tools needed Access grants and credential bindings, and
+  remote tools never reach Pi. It was removed on 2026-09-14. Its bounded HTTP
+  client is what this plugin ports; its catalog and grant model are not.
+- The generic route, Nisa's own six-tool MCP server attached through
+  `@merv/mounts` ([history](NISA_PLUGIN_IMPLEMENTATION.md)), still works for a
+  Nisa that runs the unmerged `codex/nisa-mcp-plugin` branch, and
+  `npm run test:nisa-mcp` still exercises it. It is not what production uses:
+  mounted tools (`_nisa.*`) need per-actor grants and are never offered to a
+  conversation, and that branch's backend is not deployed. Do not compose both
+  under the same agents: the native `nisa.*` tools are the supported ones.
+
+## What is deferred
+
+- **Q&A** (`qa.ask`, `qa.get`, `qa.cancel`). Nisa's main has no route for it:
+  `/api/chat/message` runs a whole agent turn with no idempotency, and
+  `/api/sdk/search` with `enrich: true` keeps its papers in one worker's memory
+  for five minutes. It needs the branch's `/api/plugin` backend deployed on
+  Nisa's side, and `qa.ask` is a paid, asynchronous write that execution
+  policies would have to name. Until then an agent answers from these reads
+  with its own model.
+- **PDF links** (`/api/sdk/paper/{id}/pdf`): agents read papers through Merv's
+  own paper tools.
+- **Per-person Nisa accounts.** One key means every agent's search is that one
+  Nisa account's, and a leaked key exposes that account's lists and chats.
+  Merv has no per-person secret bindings for it.
+
+## Turning on literature and internet search
+
+Production and staging each have their own `/etc/merv/typescript.env`
+(root-owned, 0600), read when Main's container is created. On each start
+`deploy/render-config.mjs` composes a plugin only when its variable is set, and
+checks each key's shape without ever copying it into the rendered config.
+Nothing here needs a database migration.
+
+Add to `/etc/merv/typescript.env` on **staging** first, then **production**,
+with real values only in that file (never on a command line, in a log or in
+this repository):
+
+```sh
+# @merv/nisa: the Nisa account's rr_sk_ key.
+MERV_NISA_API_KEY=CHANGE_ME
+# Optional: another Nisa, by its https origin (default https://api.rapidreview.io).
+# MERV_NISA_ORIGIN=https://api.rapidreview.io
+
+# @merv/web: Tavily's key (tvly-…), and/or the NAME of a variable holding an OpenAI key for
+# the fallback. Either one composes it.
+MERV_TAVILY_API_KEY=CHANGE_ME
+# MERV_WEB_FALLBACK_KEY_ENV=MERV_PI_MODEL_API_KEY
+# MERV_WEB_FALLBACK_MODEL=gpt-6-luna
+# Budgets per UTC day, and calls in flight:
+# MERV_WEB_DAILY_CALLS_PER_PROJECT=200
+# MERV_WEB_DAILY_CALLS=1000
+# MERV_WEB_FALLBACK_DAILY_CALLS=200
+# MERV_WEB_MAX_IN_FLIGHT=8
 ```
 
-Nisa authenticates discovery as well as calls. Give the discovery actor and
-every invoking actor explicit Access grants for the selected raw tool names and
-an exact upstream credential binding. Add entries to the Scope and Mounts
-providers rather than duplicating those plugins. Example entries for one actor:
+Either plugin may be turned on alone. How the change is picked up:
 
-```json
-{
-  "grant": {
-    "projectId": "PROJECT_ID",
-    "actorId": "ACTOR_ID",
-    "mountId": "nisa",
-    "tools": ["search", "paper", "excerpts", "qa.ask", "qa.get", "qa.cancel"]
-  },
-  "binding": {
-    "id": "nisa-actor",
-    "projectId": "PROJECT_ID",
-    "actorId": "ACTOR_ID",
-    "mountId": "nisa",
-    "secretRef": "env:NISA_ACTOR_KEY",
-    "headers": { "x-nisa-account-id": "VERIFIED_NISA_ACCOUNT_ID" }
-  }
-}
-```
+1. **The image must carry the packages.** An image built before `@merv/nisa`
+   and this version of `@merv/web` ignores the variables. Release one first
+   (`node deploy/release.mjs --host <alias> --public <origin>`); without the
+   variables it composes exactly what it did before.
+2. **The next release picks the variables up.** `release.mjs` backs up the env
+   file and runs `docker compose up -d` with the new image, which recreates Main
+   and rereads the file. To turn them on without a release, dry-run the render
+   and recreate Main on its current image, as the package READMEs'
+   "Turning it on" sections show; `docker restart` does not reread the file. A
+   recreate interrupts live Pi turns (see `deploy/PI_OPERATIONS.md`).
+3. **A bad value stops Main.** The render refuses a key of the wrong shape and
+   Main crash-loops, so dry-run the render with the running image before
+   recreating (the command is in both READMEs). To turn a plugin off, remove its
+   variables and recreate Main.
+4. **Check.** The ready line (`sudo docker logs merv-typescript-control-1 2>&1 |
+grep '"status":"ready"' | tail -n1`) lists `nisa`/`nisa-tools` and
+   `web`/`web-tools` as active, and the tools appear in a project's MCP tool list
+   and in a new Pi turn. Then run one `nisa.search`, one `nisa.paper`
+   (`2303.08774`), one `web.search` and one `web.extract` of a page that search
+   returned, with the real keys; no test here has called the real services.
+5. **Workers.** Codex workers see the `nisa.*` tools once their runner carries
+   the change that lists them (hosted runners: `deploy/hosted-release.mjs`, run
+   by `release.mjs`). `web.*` reach only hosted, unsealed Codex launches and
+   unsealed Claude launches, whose shells already have the network.
 
-Place `grant` in Scope's `config.grants` and `binding` in Mounts'
-`config.bindings`. Use that actor's Nisa credential in the referenced server
-environment variable. The optional account header asserts the verified Nisa
-identity; it cannot grant authority. Shared Merv–Nisa login is still a rollout
-step. Merv actor tokens are not Nisa tokens.
-
-## Migrate an older configuration
-
-1. Remove the plugin entry whose `name` is `@merv/nisa`.
-2. Configure the Nisa MCP mount above, retaining mount ID `nisa` if desired.
-3. Configure authenticated discovery and review each actor's grants/binding.
-   Existing search/paper grants do not grant excerpts or Q&A automatically.
-4. Rediscover the tool catalog and update callers for Nisa's published schemas
-   and `_<mountId>.<toolName>` naming. Old `mount__nisa__*` names are no longer supported.
-   With the same mount ID, names `_nisa.search` and `_nisa.paper`
-   are published in the new underscore/dot format; their argument/result contracts are not assumed identical to the
-   removed REST adapter. Mounts forwards Nisa's MCP results without the old
-   Merv-specific REST translation.
-5. Replace any `app.ctx.nisa` lifecycle controls with the mount controls below.
-
-```ts
-await app.ctx.mounts.setEnabled('nisa', false);
-await app.ctx.mounts.setEnabled('nisa', true);
-```
-
-Disabling removes the six local tools and drains admitted transport calls.
-Accepted research remains owned by Nisa, and reconnecting can retrieve the same
-result without rerunning it. Use `qa.cancel` for explicit operation cancellation.
-Account/quota inspection and collection tools are not exposed.
+Before turning web search on, read its [privacy](../packages/web/README.md#privacy)
+and [cost](../packages/web/README.md#cost-controls) sections: queries leave
+Merv for Tavily (and OpenAI through the fallback), and its budgets live in
+memory.
 
 ## Verify locally
 
-From `merv-typescript`, with Nisa's MCP dependencies installed and Python backend
-dependencies available:
-
 ```sh
-MERV_NISA_CHECKOUT=/absolute/Nisa-checkout \
-MERV_NISA_PYTHON=/absolute/python-with-Nisa-dependencies \
-npm run test:nisa-mcp
+export MERV_TEST_POSTGRES_URL=postgres://merv@127.0.0.1:55432/merv
+node --import tsx --test tests/nisa.test.ts tests/web.test.ts tests/open-world-reads.test.ts
+node --test deploy/render-config.test.mjs
 ```
 
-`npm run test:nisa` runs the same scenario. Both commands require the checkout
-and fail if it is missing. The optional test in `npm test` skips explicitly
-unless `MERV_NISA_CHECKOUT` is provided; include it to verify the full stack.
-
-The scenario starts the actual Nisa API/operation service and MCP server with
-synthetic identity, corpus and model providers. It checks six-tool discovery,
-search/paper/excerpts, Q&A, account isolation, quota denial, cancellation and
-33 → 27 → 33 tools in the explicit configuration with the browser layer during mount removal/restoration. Native task/review/feed
-work and the same sandbox fixture connection continue; the accepted question
-returns the same answer and does not run twice.
-
-This proves local integration, not deployment or real-model success. The retired
-REST live harness is no longer used. Historical Step 7 reports and Fable review
-records remain preserved, with their original scope and outcomes. See
-[implementation and limits](NISA_PLUGIN_IMPLEMENTATION.md) and
-[verification history](../verification/README.md).
+The Nisa tests run against a loopback fake built from Nisa main 3489d7d's
+`sdk_routes.py`; whether production runs that code, and enforces its keys, is
+unverified until the checks in step 4.

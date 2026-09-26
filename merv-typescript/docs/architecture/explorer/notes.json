@@ -18,8 +18,8 @@
       "id": "mounts",
       "label": "Integrations",
       "caption": "Remote tools, compute & search",
-      "members": ["mounts", "sandboxes", "web"],
-      "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Web searches the internet through Tavily, with OpenAI's hosted web search as its fallback. Each integration owns its upstream credentials; availability is not proof of remote health."
+      "members": ["mounts", "sandboxes", "web", "nisa"],
+      "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Web searches the internet through Tavily, with OpenAI's hosted web search as its fallback, and Nisa searches the literature through RapidReview's paper index. Each integration owns its upstream credentials; availability is not proof of remote health."
     },
     {
       "id": "research",
@@ -96,6 +96,10 @@
     "sandboxes": {
       "label": "Sandboxes",
       "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies."
+    },
+    "nisa": {
+      "label": "Nisa",
+      "purpose": "Searches the scholarly literature for every agent through Nisa's public API: keyword and semantic search, one paper's record, passages inside its full text, and similar papers, each named the way paper.cite takes it. Its tools are open-world reads with one deployment-wide key. Composed only where that key is configured; it has no injected Cordis dependencies."
     },
     "web": {
       "label": "Web",

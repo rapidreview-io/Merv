@@ -8,6 +8,11 @@ import type { WebExtractInput, WebPage, WebResult, WebSearch, WebSearchInput } f
 export const MAX_RESULT_CHARS = 6_000;
 export const MAX_TOTAL_CHARS = 24_000;
 export const MAX_EXTRACT_CHARS = 20_000;
+/** What Pi shows the model of one result, at most (packages/pi/src/fit.ts), less room for the
+ * envelope a transport adds. Nisa's caps count characters; an answer within them that escapes
+ * or takes several bytes a character would pass this and reach the model cut, or as an index. */
+export const MAX_ANSWER_BYTES = 28_000;
+export const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 /** Tavily refuses a longer query. */
 const MAX_QUERY_CHARS = 400;
 const TIME_RANGES: Record<string, string> = {
@@ -127,10 +132,15 @@ export const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+/** The first `max` characters, never half of one. */
+const cut = (value: string, max: number) =>
+  value.length <= max
+    ? value
+    : value.slice(0, /[\uD800-\uDBFF]/.test(value[max - 1] ?? '') ? max - 1 : max);
 /** Text as a provider sent it, without control characters other than line breaks and tabs. */
 const text = (value: unknown, max: number): string =>
   typeof value === 'string'
-    ? value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').slice(0, max)
+    ? cut(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), max)
     : '';
 /** An http(s) address a person may follow, or undefined. */
 export function webUrl(value: unknown): string | undefined {
@@ -150,13 +160,32 @@ export function webUrl(value: unknown): string | undefined {
 const score = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 1000) / 1000 : 0;
 
-/** Tavily's results within Nisa's caps: 6,000 characters each and 24,000 in all. */
+/**
+ * The fullest `make(chars)`, chars from `whole` down, whose JSON fits MAX_ANSWER_BYTES: UTF-8
+ * bytes are what an agent is shown, so text that escapes or takes several bytes a character
+ * is cut sooner than Nisa's character caps alone would cut it.
+ */
+export function sized<T>(whole: number, make: (chars: number) => T): { value: T; chars: number } {
+  const fits = (value: T) => jsonBytes(value) <= MAX_ANSWER_BYTES;
+  const full = make(whole);
+  if (fits(full)) return { value: full, chars: whole };
+  let [low, high] = [0, whole - 1];
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(make(middle))) low = middle;
+    else high = middle - 1;
+  }
+  return { value: make(low), chars: low };
+}
+
+/** Tavily's results within Nisa's caps: 6,000 characters each and `total` (24,000) in all. */
 export function tavilyResults(
   results: unknown[],
   max: number,
+  total = MAX_TOTAL_CHARS,
 ): { results: WebResult[]; truncated: boolean } {
   const kept: WebResult[] = [];
-  let remaining = MAX_TOTAL_CHARS;
+  let remaining = total;
   let truncated = false;
   for (const entry of results) {
     const result = record(entry);
@@ -166,7 +195,7 @@ export function tavilyResults(
     const limit = Math.min(MAX_RESULT_CHARS, Math.max(0, remaining));
     if (content.length > limit) {
       const suffix = '\n... [truncated]';
-      content = limit >= suffix.length ? content.slice(0, limit - suffix.length) + suffix : '';
+      content = limit >= suffix.length ? cut(content, limit - suffix.length) + suffix : '';
       truncated = true;
     }
     remaining -= content.length;
@@ -212,17 +241,16 @@ export function openaiAnswer(response: Record<string, unknown>): {
   return { answer: text(texts.join(''), Number.MAX_SAFE_INTEGER).trim(), sources };
 }
 
-/** The fallback's result: its answer (at most 24,000 characters) and its sources as results. */
+/** The fallback's result: its answer (at most `total`, 24,000, characters) and its sources as
+ * results. */
 export function fallbackSearch(
-  query: string,
   max: number,
   response: Record<string, unknown>,
+  total = MAX_TOTAL_CHARS,
 ): Pick<WebSearch, 'answer' | 'results' | 'result_count'> {
   const { answer: whole, sources } = openaiAnswer(response);
   const answer =
-    whole.length > MAX_TOTAL_CHARS
-      ? whole.slice(0, MAX_TOTAL_CHARS) + '\n... [OpenAI web answer truncated]'
-      : whole;
+    whole.length > total ? cut(whole, total) + '\n... [OpenAI web answer truncated]' : whole;
   const results = sources.slice(0, max).map((source, index) => ({
     ...source,
     content: '',
@@ -298,12 +326,13 @@ function section(content: string, start: string, end: string): string {
   return content.slice(Math.max(0, from - 200), Math.min(content.length, to + end.length + 200));
 }
 
-/** The page's text, cut to its section when both markers are given, and always capped: a
- * marker that misses must not put the whole page into the model's context. */
+/** The page's text, cut to its section when both markers are given, and always capped at `limit`
+ * (20,000) characters: a marker that misses must not put the whole page into the model's context. */
 export function pageText(
   raw: unknown,
   start: string,
   end: string,
+  limit = MAX_EXTRACT_CHARS,
 ): { content: string; section: boolean } {
   let content = text(raw, Number.MAX_SAFE_INTEGER);
   let applied = false;
@@ -312,8 +341,8 @@ export function pageText(
     applied = from >= 0 && content.indexOf(end, from + start.length) >= 0;
     content = section(content, start, end);
   }
-  if (content.length > MAX_EXTRACT_CHARS)
-    content = `${content.slice(0, MAX_EXTRACT_CHARS)}\n\n... [truncated at 20,000 characters]`;
+  if (content.length > limit)
+    content = `${cut(content, limit)}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters]`;
   return { content, section: applied };
 }
 

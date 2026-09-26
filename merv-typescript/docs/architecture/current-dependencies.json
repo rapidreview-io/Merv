@@ -1,16 +1,16 @@
 {
   "snapshot": "2026-09-26",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 65,
-  "serviceProviders": 29,
-  "toolAdapters": 17,
+  "pluginCount": 67,
+  "serviceProviders": 30,
+  "toolAdapters": 18,
   "uiAdapters": 16,
   "apiAdapters": 3,
   "defaultEntries": 49,
   "apiEntries": 36,
-  "serverPlugins": 64,
+  "serverPlugins": 66,
   "machinePlugins": 1,
-  "directDependencyCount": 175,
+  "directDependencyCount": 177,
   "optionalDependencyCount": 16,
   "directConsumers": {
     "api": 5,
@@ -27,6 +27,7 @@
     "identity": 1,
     "knowledge": 3,
     "mounts": 1,
+    "nisa": 1,
     "paper": 5,
     "pi": 3,
     "reflections": 3,
@@ -38,7 +39,7 @@
     "sessions": 5,
     "state": 19,
     "tasks": 4,
-    "tools": 23,
+    "tools": 24,
     "ui": 16,
     "web": 1,
     "workflows": 8
@@ -458,6 +459,31 @@
       ],
       "optional": [],
       "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-nisa",
+      "source": "packages/nisa/src/index.ts",
+      "provides": [
+        "nisa"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-nisa-tools",
+      "source": "packages/nisa/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "nisa",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
       "runtime": "server",
       "defaultConfiguration": false
     },

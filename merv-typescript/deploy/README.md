@@ -120,6 +120,16 @@ The rehearsal is not a final migration while the legacy application still accept
 
 This sequence deliberately uses a bounded maintenance window instead of an incremental migration system. Do not promise its duration until the rehearsal's measured transfer/import times are known. The public pause, final capture and routing changes require their separate final authorization; none was performed by the isolated rehearsal.
 
+## Optional search plugins
+
+Literature search (`@merv/nisa`) and internet search (`@merv/web`) ship in the
+image but are composed only when their keys are in `/etc/merv/typescript.env`:
+`MERV_NISA_API_KEY` for Nisa, and `MERV_TAVILY_API_KEY` or
+`MERV_WEB_FALLBACK_KEY_ENV` for web search, with the optional variables listed
+in `typescript.env.example`. The next release, or a recreate of Main on its
+current image, picks them up; a restart does not. The runbook for staging and
+production is in [docs/NISA_PLUGIN.md](../docs/NISA_PLUGIN.md#turning-on-literature-and-internet-search).
+
 ## Rollback
 
 1. Enter the agreed Merv maintenance state, stop new TypeScript writes, then deliberately restart the preserved Python control container if rollback is approved. Restore the prior **Merv routing** on Caddy and validate/reload it; leave the sandbox host block untouched. Confirm the legacy container answers through its old upstream. Preserve all new TypeScript writes; they are not automatically reflected in Python.

@@ -281,8 +281,19 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.deepEqual(enabled.slice(0, 3), ['task.get', 'task.checkpoint', '_nisa.search']);
   for (const read of ['project.records', 'paper.read', 'experiment.get_state', 'feed.list'])
     assert.ok(enabled.includes(read), read);
-  // Internet search reaches a Codex worker as Merv's own read, never as Codex's hosted search.
-  for (const read of ['web.search', 'web.extract']) assert.ok(enabled.includes(read), read);
+  // Nisa's literature search reaches every Codex worker as Merv's own reads; the internet does
+  // not reach one whose shell has no network, and Codex's hosted search is off for all.
+  for (const read of [
+    'nisa.search',
+    'nisa.semantic_search',
+    'nisa.paper',
+    'nisa.excerpts',
+    'nisa.related',
+  ])
+    assert.ok(enabled.includes(read), read);
+  for (const read of ['web.search', 'web.extract']) assert.ok(!enabled.includes(read), read);
+  // Codex stops waiting on a tool after 60 s by default: a web search may take longer.
+  assert.match(settings.mcp_servers, /,tool_timeout_sec=180,/);
   assert.match(settings.mcp_servers, /"task.checkpoint"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /"project.records"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /url="http:\/\/127.0.0.1:8080\/mcp"/);
@@ -313,16 +324,30 @@ test('a hosted Codex profile calls the model through Main with its session beare
     settings['model_providers.merv'],
     '{"name"="Merv","base_url"="http://127.0.0.1:8080/codex-model","env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}',
   );
-  // Its shell commands may use the network; hosted web search stays off.
+  // Its shell commands may use the network, and so it is given Merv's internet reads; hosted web
+  // search stays off.
   assert.equal(settings['sandbox_workspace_write.network_access'], 'true');
   assert.equal(config(plain.args)['sandbox_workspace_write.network_access'], 'false');
   assert.equal(settings.web_search, '"disabled"');
+  const enabled = (args: string[]) =>
+    JSON.parse(/enabled_tools=(\[[^\]]*\])/.exec(config(args).mcp_servers)![1]!) as string[];
+  assert.deepEqual(
+    enabled(spec.args).filter((name) => !enabled(plain.args).includes(name)),
+    ['web.search', 'web.extract'],
+  );
+  assert.deepEqual(
+    config(spec.args).mcp_servers.replace(
+      /,"web\.(?:search|extract)"(?:=\{approval_mode="approve"\})?/g,
+      '',
+    ),
+    config(plain.args).mcp_servers,
+  );
   // Everything else is byte-identical, and the machine's environment gains no key.
-  const varies = /^(model_provider|sandbox_workspace_write\.network_access)/;
+  const varies = /^(model_provider|sandbox_workspace_write\.network_access|mcp_servers)/;
   const rest = (args: string[]) =>
     args.filter((arg, at) => !varies.test(arg) && !varies.test(args[at + 1] ?? ''));
   assert.deepEqual(rest(spec.args), rest(plain.args));
-  assert.equal(rest(plain.args).length, plain.args.length - 2);
+  assert.equal(rest(plain.args).length, plain.args.length - 4);
   assert.deepEqual(spec.env, plain.env);
   assert.equal(JSON.stringify(spec.args).includes(secret), false);
   // A sealed review stays on the offline read-only sandbox.
@@ -336,6 +361,8 @@ test('a hosted Codex profile calls the model through Main with its session beare
   });
   const review = buildLaunch(hosted, sealed, safeEnv).args;
   assert.equal(review[review.indexOf('--sandbox') + 1], 'read-only');
+  for (const read of ['web.search', 'web.extract']) assert.ok(!enabled(review).includes(read));
+  assert.ok(enabled(review).includes('nisa.search'));
 });
 
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
@@ -501,6 +528,12 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
     safeEnv,
   );
   assert.equal(codeReviewer.args[codeReviewer.args.indexOf('--tools') + 1], 'Read,Glob,Grep');
+  // It has no shell, and Merv's internet reads are withheld too, by Claude Code's own names.
+  assert.equal(
+    codeReviewer.args[codeReviewer.args.indexOf('--disallowedTools') + 1],
+    'mcp__merv__web_search,mcp__merv__web_extract',
+  );
+  for (const launch of [spec, reviewer]) assert.ok(!launch.args.includes('--disallowedTools'));
   // A checkout that is thrown away afterwards is free to compute in.
   const ephemeral = buildLaunch(
     claude,

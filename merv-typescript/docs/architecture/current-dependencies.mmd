@@ -28,6 +28,8 @@ flowchart BT
     merv_knowledge_ui["merv-knowledge-ui"]
     mounts["mounts"]
     merv_mounts_ui["merv-mounts-ui"]
+    nisa["nisa"]
+    merv_nisa_tools["merv-nisa-tools"]
     paper["paper"]
     merv_paper_tools["merv-paper-tools"]
     merv_paper_ui["merv-paper-ui"]
@@ -148,6 +150,8 @@ flowchart BT
   mounts --> scope
   merv_mounts_ui --> mounts
   merv_mounts_ui --> ui
+  merv_nisa_tools --> nisa
+  merv_nisa_tools --> tools
   paper --> state
   paper --> scope
   paper --> artifacts
