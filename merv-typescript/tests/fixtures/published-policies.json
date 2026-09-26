@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26.",
   "definitions": [
     {
       "name": "consolidation",
@@ -1683,55 +1683,55 @@
       "type": "experiment.design",
       "version": 10,
       "hash": "533e169ac26fe9d1c65fe0c7a0710be30106fb48d79457eae46a652a96a0c023",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.design_review",
       "version": 10,
       "hash": "56e05e472a1d46049cc04ce47bba2eafb7285d7e16cc462bd58d3321d99e71cd",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.execute",
       "version": 10,
       "hash": "2eba1bee71a06ff94abeeee319d4ce24b6bbb9a4a4bc1026f8b117db2aad0e02",
-      "published": false
+      "published": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 10,
       "hash": "088b8ad6265ecb2dadff4dbffb2508fd5cd08311fe0b6ff393230a34d33d079f",
-      "published": false
+      "published": true
     },
     {
       "type": "task.work",
       "version": 3,
       "hash": "a3c17552937eab768151f6fdfaa43f9771bdd18d18aed14d3d1c4faced825622",
-      "published": false
+      "published": true
     },
     {
       "type": "task.review",
       "version": 4,
       "hash": "21bcacc932c96575c8770e2173367e9466e8aa6cc6b6504b12927db0cecb4a33",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.lens",
       "version": 9,
       "hash": "1b5b65248ddb28415adcef36d8700347666b1d19c421fe2b987ba525bf3247d9",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
       "version": 9,
       "hash": "1df11b562cf08c00f3fc16e0a1b370e01e7ded31d2ee3c1f4402d40f211222dc",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.review",
       "version": 9,
       "hash": "ce269d116693b68e4a34d1419a871de8015fbfd46ef8c792f8924439be13cbb0",
-      "published": false
+      "published": true
     }
   ]
 }
