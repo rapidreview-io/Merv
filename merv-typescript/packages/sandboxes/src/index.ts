@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import {
   check,
   digest,
@@ -10,6 +11,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';
 import { parseManifest } from './manifest.js';
+import { machinesRoute } from './running.js';
 import { SandboxCheckRunner } from './checks.js';
 import { runtimeOffer, SandboxRuntimeRunner } from './runtimes.js';
 import type {
@@ -22,6 +24,7 @@ import type {
   SandboxConnection,
   SandboxesConfig,
   SandboxExtend,
+  SandboxMachines,
   SandboxReadiness,
   SandboxRow,
   SandboxTarget,
@@ -41,6 +44,7 @@ export type {
   SandboxConnection,
   SandboxesConfig,
   SandboxExtend,
+  SandboxMachines,
   SandboxReadiness,
   SandboxRow,
   SandboxTarget,
@@ -58,6 +62,55 @@ export { sandboxTools } from './manifest.js';
 /** The service's own lifecycle routes, the only ones a tool ever calls. */
 const sandboxRecord = '/v1/sandboxes/{id}';
 const renewRoute = '/v1/sandboxes/{id}/renew';
+
+/**
+ * The machines cache's clocks. The list is read every 5 s while a machine or its job is
+ * changing and every 30 s otherwise; a watched record every 8 s. A project stops being read
+ * a minute after the last page that watched it, and the one timer checks all of it each second.
+ */
+const MACHINES_CHANGING_MS = 5000;
+const MACHINES_SETTLED_MS = 30_000;
+const MACHINE_RECORD_MS = 8000;
+const MACHINES_DEMAND_MS = 60_000;
+const MACHINES_TICK_MS = 1000;
+/** Records read per project at once: the panels open on it, never an arbitrary set of ids. */
+const MACHINE_RECORDS = 16;
+const changingStates = new Set(['provisioning', 'deleting', 'unknown']);
+const changingJobs = new Set(['running', 'starting']);
+interface MachineRecord {
+  watchedAt: number;
+  attemptedAt: number;
+  reading?: Promise<void>;
+  value: Json | null;
+}
+interface MachineCache {
+  watchedAt: number;
+  attemptedAt: number;
+  reading?: Promise<void>;
+  observedAt: string | null;
+  rows: Json[];
+  failed: boolean;
+  records: Map<string, MachineRecord>;
+}
+const field = (value: Json, name: string): unknown =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value[name] : undefined;
+/** A machine or its job is on the move, so its row will say something new within seconds. */
+const changing = (row: Json) =>
+  changingStates.has(String(field(row, 'state'))) ||
+  changingJobs.has(String(field(field(row, 'activity') as Json, 'verdict')));
+/** A failed read is retried at the fast cadence; an answer sets the cadence by what it holds. */
+const cadence = (cache: MachineCache) =>
+  cache.failed || cache.rows.some(changing) ? MACHINES_CHANGING_MS : MACHINES_SETTLED_MS;
+/** The list answers an array, or one object holding it under the collection's plural noun. */
+function machineRows(value: Json): Json[] {
+  const list = Array.isArray(value)
+    ? value
+    : value !== null && typeof value === 'object'
+      ? Object.values(value).find(Array.isArray)
+      : undefined;
+  check(list, 'sandbox_unavailable', 'merv-sandboxes answered no machine list', 502);
+  return list.filter((row) => typeof field(row, 'id') === 'string');
+}
 
 const connection = z
   .object({
@@ -147,7 +200,9 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
  * Rows a service outside this process publishes. The manifest says what each row holds; this
  * registers those rows and proxies their reads with the caller's own project credentials.
  * Nothing is stored: the last accepted manifest is the whole state, and it survives an
- * unreachable service so the row degrades instead of disappearing.
+ * unreachable service so the row degrades instead of disappearing. The one other thing held,
+ * in memory only, is what the Running page draws: each watched project's machines and the
+ * records its open panels ask for, read on this service's own timer, never inside a request.
  */
 export class SandboxService implements Sandboxes {
   readonly #client: SandboxClient;
@@ -165,6 +220,10 @@ export class SandboxService implements Sandboxes {
   #closing?: Promise<void>;
   readonly #running = new Set<Promise<unknown>>();
   readonly #offers = new Map<string, { at: number; value?: Json; reading?: Promise<Json> }>();
+  readonly #machines = new Map<string, MachineCache>();
+  #machinesTimer?: ReturnType<typeof setInterval>;
+  /** The machines timer never inherits a caller's database scope: the first watch is a read's. */
+  readonly #detached = AsyncResource.bind((fn: () => void) => fn());
   /**
    * Present only where the deployment named the bucket origins a check's source may be
    * uploaded to, so a project check is opt-in per deployment rather than per request.
@@ -322,6 +381,9 @@ export class SandboxService implements Sandboxes {
     this.#closed = true;
     clearInterval(this.#timer);
     this.#timer = undefined;
+    clearInterval(this.#machinesTimer);
+    this.#machinesTimer = undefined;
+    this.#machines.clear();
     this.#listeners.clear();
     this.#reachable = false;
     this.#detail = 'The sandboxes service is closed';
@@ -482,6 +544,112 @@ export class SandboxService implements Sandboxes {
         ? { ...record, console_origin: this.#client.origin }
         : record;
     });
+  }
+
+  machines(projectId: string): SandboxMachines | null {
+    this.#connectionFor(projectId);
+    const cache = this.#machines.get(projectId);
+    if (!cache || (cache.observedAt === null && !cache.failed)) return null;
+    return {
+      observedAt: cache.observedAt,
+      rows: cache.rows,
+      failed: cache.failed,
+      freshForMs: 2 * cadence(cache),
+    };
+  }
+
+  machine(projectId: string, id: string): Json | null {
+    this.#connectionFor(projectId);
+    return this.#machines.get(projectId)?.records.get(id)?.value ?? null;
+  }
+
+  watch(projectId: string, id?: string): void {
+    if (this.#closed || !this.#connections.some((entry) => entry.projectId === projectId)) return;
+    const now = Date.now();
+    if (!this.#machines.has(projectId))
+      this.#machines.set(projectId, {
+        watchedAt: now,
+        attemptedAt: 0,
+        observedAt: null,
+        rows: [],
+        failed: false,
+        records: new Map(),
+      });
+    const cache = this.#machines.get(projectId)!;
+    cache.watchedAt = now;
+    // Only a machine the list holds gets its record read, or one a page kept watching as it
+    // left the list: a caller never has this service read an id of its own choosing.
+    if (id !== undefined) {
+      const record = cache.records.get(id);
+      if (record) record.watchedAt = now;
+      else if (
+        cache.records.size < MACHINE_RECORDS &&
+        cache.rows.some((row) => field(row, 'id') === id)
+      )
+        cache.records.set(id, { watchedAt: now, attemptedAt: 0, value: null });
+    }
+    if (!this.#machinesTimer)
+      this.#detached(
+        () => (this.#machinesTimer = setInterval(() => this.#tick(), MACHINES_TICK_MS).unref()),
+      );
+  }
+
+  /** One pass of the machines timer: forget what nobody watches, and start the reads now due. */
+  #tick(): void {
+    const now = Date.now();
+    for (const [projectId, cache] of this.#machines) {
+      if (now - cache.watchedAt >= MACHINES_DEMAND_MS) {
+        this.#machines.delete(projectId);
+        continue;
+      }
+      if (!cache.reading && now - cache.attemptedAt >= cadence(cache)) {
+        cache.attemptedAt = now;
+        cache.reading = this.#readMachines(projectId, cache).finally(
+          () => (cache.reading = undefined),
+        );
+      }
+      for (const [id, record] of cache.records) {
+        if (now - record.watchedAt >= MACHINES_DEMAND_MS) cache.records.delete(id);
+        else if (!record.reading && now - record.attemptedAt >= MACHINE_RECORD_MS) {
+          record.attemptedAt = now;
+          record.reading = this.#readMachine(projectId, id, record).finally(
+            () => (record.reading = undefined),
+          );
+        }
+      }
+    }
+    if (!this.#machines.size) {
+      clearInterval(this.#machinesTimer);
+      this.#machinesTimer = undefined;
+    }
+  }
+
+  async #readMachines(projectId: string, cache: MachineCache): Promise<void> {
+    try {
+      const rows = await this.#run(projectId, async (projectId) =>
+        machineRows(
+          visible(await this.#client.read(this.#connectionFor(projectId), machinesRoute)),
+        ),
+      );
+      Object.assign(cache, { observedAt: new Date().toISOString(), rows, failed: false });
+    } catch {
+      // The last rows stand, marked old: a service that did not answer is not an empty project.
+      cache.failed = true;
+    }
+  }
+
+  async #readMachine(projectId: string, id: string, record: MachineRecord): Promise<void> {
+    try {
+      record.value = visible(
+        await this.#run(
+          { projectId, id },
+          async ({ projectId, id }) =>
+            await this.#record(this.#connectionFor(projectId), sandboxRoute(sandboxRecord, id)),
+        ),
+      );
+    } catch {
+      // The last record stands; a hosted agent's machine is refused and never had one.
+    }
   }
 }
 

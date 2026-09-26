@@ -237,6 +237,20 @@ export interface SandboxReadiness {
   detail?: string;
 }
 
+/**
+ * A project's machines as this service's own timer last read them: the visible rows of
+ * GET /v1/sandboxes, so no hosted agent's machine and nothing named like a credential.
+ */
+export interface SandboxMachines {
+  /** When the rows were read; null while no read has succeeded. */
+  observedAt: string | null;
+  rows: Json[];
+  /** The last refresh failed, so the rows are the ones read before it. */
+  failed: boolean;
+  /** How long a read stays current: twice the cadence the rows are refreshed at now. */
+  freshForMs: number;
+}
+
 export interface Sandboxes {
   /** Rows from the last accepted manifest, already named and routed for the UI registry. */
   rows(): SandboxRow[];
@@ -249,6 +263,20 @@ export interface Sandboxes {
   extend(caller: Caller, input: SandboxExtend): Promise<Json>;
   /** Ask the provider to delete one sandbox, then answer the record as it now reads. */
   release(caller: Caller, input: SandboxTarget): Promise<Json>;
+  /**
+   * The project's machines from memory, or null until the first read of them has answered.
+   * Never reads the service: a read-only page must not wait on it inside its snapshot. The
+   * rows are refreshed on this service's timer while someone watches. Refused for a project
+   * without a sandbox connection.
+   */
+  machines(projectId: string): SandboxMachines | null;
+  /** One machine's record from memory, or null until a watched read of it has answered. */
+  machine(projectId: string, id: string): Json | null;
+  /**
+   * Keeps the project's machines, and with `id` that machine's record, read for the next
+   * minute. It only marks demand: the reads happen later, on the service's own timer.
+   */
+  watch(projectId: string, id?: string): void;
   /** Fires after the published row set changes. */
   subscribe(listener: () => void): () => void;
   /** Present only where the deployment named the bucket origins a source may be uploaded to. */

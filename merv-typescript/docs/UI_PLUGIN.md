@@ -58,7 +58,7 @@ These two are a person's monitor: no agent conversation is offered them, and bot
 
 ## Running contributions
 
-The Running page draws everything in flight from contributions that the owning plugins register in their existing ui adapters. No adapter injects anything new: `ctx.ui` carries the registry.
+The Running page draws everything in flight from contributions that the owning plugins register in their existing ui adapters. `ctx.ui` carries the registry, so an adapter injects nothing new for it; Sandboxes' adapter alone also injects `scope`, the one boundary rule already allows, to offer Extend lease and Release machine only to a caller the tools would let act.
 
 ```ts
 ctx.effect(() =>
