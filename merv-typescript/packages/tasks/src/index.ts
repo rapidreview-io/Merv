@@ -1810,6 +1810,12 @@ export class TaskService implements Tasks {
     tx: Transaction,
     allowUnclaimedReview = false,
   ): Promise<{ row: TaskRow; workflow: WorkflowSnapshot; review?: ReviewRequest }> {
+    check(
+      input.purpose !== 'work' || !caller.conversation,
+      'conversation_task_producer_forbidden',
+      'Agent conversations direct tasks; a worker must produce the work',
+      403,
+    );
     await this.scope.require(caller, input.purpose === 'review' ? 'review' : 'write', tx);
     check(
       input.purpose === 'review' || input.purpose === 'work',
@@ -1970,6 +1976,12 @@ export class TaskService implements Tasks {
       }
     | undefined
   > {
+    check(
+      !caller.conversation,
+      'conversation_task_producer_forbidden',
+      'Agent conversations direct tasks; a worker must submit the delivery',
+      403,
+    );
     await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller, current.id);
     check(
@@ -2263,6 +2275,12 @@ export class TaskService implements Tasks {
   async submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task> {
     caller = structuredClone(caller);
     input = plain<TaskDelivery>(input);
+    check(
+      !caller.conversation,
+      'conversation_task_producer_forbidden',
+      'Agent conversations direct tasks; a worker must submit the delivery',
+      403,
+    );
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(tx, caller, input.requestId, 'submit_delivery', input, async () => {

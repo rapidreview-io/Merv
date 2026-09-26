@@ -24,13 +24,14 @@ async function fixture(limits?: { reviewRounds: number }) {
     scope = await createService(new ProjectScope(state));
   const credentials = await scope.bootstrap({ projectName: 'Test', actorName: 'Operator' });
   const operator: Caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
-  const issue = async (
-    name: string,
-    role: 'producer' | 'reviewer' | 'reader',
-  ): Promise<Caller> => ({
-    actorId: (await scope.issueActor(operator, { name, role })).actor.id,
-    projectId: operator.projectId,
-  });
+  const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
+    const issued = await scope.issueActor(operator, { name, role });
+    return {
+      actorId: issued.actor.id,
+      projectId: operator.projectId,
+      credentialId: issued.credential.id,
+    };
+  };
   const producer = await issue('Producer', 'producer'),
     reviewer = await issue('Reviewer', 'reviewer'),
     reviewer2 = await issue('Other reviewer', 'reviewer'),
@@ -89,6 +90,70 @@ async function fixture(limits?: { reviewRounds: number }) {
 }
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
+
+test('an Agent conversation directs a task while producer work stays available to Fleet', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const source = await f.scope.delegationSource(f.producer);
+  t.after(f.scope.registerConversationAuthority({ require: async () => source }));
+  const chat: Caller = {
+    actorId: f.producer.actorId,
+    projectId: f.producer.projectId,
+    conversation: {
+      id: 'conversation_1',
+      epoch: 1,
+      commandId: 'command_1',
+      runtimeId: 'runtime_1',
+    },
+  };
+  const task = await f.tasks.create(chat, {
+    title: 'Directed work',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.'],
+    requestId: 'chat-task',
+  });
+  assert.equal((await f.tasks.get(chat, task.id)).id, task.id);
+  assert.ok(
+    (await f.workflows.dispatchCandidates(f.producer)).some((item) => item.instanceId === task.id),
+  );
+  const note = await f.artifacts.create(chat, {
+    title: 'Conversation note',
+    content: 'Plan the checks.',
+  });
+  assert.equal(note.createdBy, chat.actorId);
+  for (const operation of [
+    () =>
+      f.tasks.context(chat, {
+        taskId: task.id,
+        purpose: 'work',
+        expectedRevision: 0,
+        requestId: 'chat-context',
+      }),
+    () =>
+      f.tasks.checkpoint(chat, {
+        taskId: task.id,
+        purpose: 'work',
+        expectedRevision: 0,
+        notes: 'Starting',
+        requestId: 'chat-checkpoint',
+      }),
+    () =>
+      f.tasks.submitDelivery(
+        chat,
+        confirmedDelivery({
+          taskId: task.id,
+          expectedRevision: 0,
+          artifactIds: [note.id],
+          requestId: 'chat-delivery',
+        }),
+      ),
+  ])
+    await assert.rejects(operation, code('conversation_task_producer_forbidden'));
+  assert.equal((await f.tasks.get(chat, task.id)).workflow.state, 'in_progress');
+  assert.ok(
+    (await f.workflows.dispatchCandidates(f.producer)).some((item) => item.instanceId === task.id),
+  );
+});
 
 test('task reads, context and failure keep their original caller and inputs', async (t) => {
   const f = await fixture();
