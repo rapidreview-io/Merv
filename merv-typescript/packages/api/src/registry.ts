@@ -65,7 +65,7 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
         },
       },
     },
-    annotations: { readOnlyHint: tool.readOnly ?? false, openWorldHint: false },
+    annotations: { readOnlyHint: tool.readOnly ?? false, openWorldHint: tool.openWorld ?? false },
   };
 }
 
@@ -427,6 +427,11 @@ export class ToolRegistry implements Tools {
     // handlers may be instrumented, but mutating their definition must not change policy.
     return !entry.remote && entry.description.annotations?.readOnlyHint === true;
   }
+  /** A read that runs on a snapshot: every one but a call to a service outside Merv, which
+   *  would hold a reader connection for as long as that service takes to answer. */
+  private snapshotted(entry: Entry): boolean {
+    return this.reads(entry) && entry.description.annotations?.openWorldHint !== true;
+  }
   /** A native tool an agent conversation is offered: any but those only a leased worker runs. */
   private conversable(entry: Entry): boolean {
     return !entry.remote && (entry.definition as ToolDefinition).conversation !== 'never';
@@ -548,7 +553,7 @@ export class ToolRegistry implements Tools {
             return await entry.definition.handler(activeCaller, parsed);
           };
           const result =
-            this.readScope && this.reads(entry) ? await this.readScope(run) : await run();
+            this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
           if (conversation && holdsToken(result))
             throw new MervError(
               'tool_result_secret',
@@ -556,7 +561,8 @@ export class ToolRegistry implements Tools {
               403,
             );
           // Read handlers can wait for external storage while their PostgreSQL snapshot
-          // retains old permissions. Reauthorize after releasing that snapshot, before
+          // retains old permissions, and permissions can change while an open-world read
+          // waits on another service. Reauthorize after releasing that snapshot, before
           // handing any bytes or signed URL to the caller. Mutations keep their own
           // transactional authorization and may legitimately end their worker session.
           if (this.reads(entry)) {

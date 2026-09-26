@@ -26,7 +26,8 @@ export const toolsPlugin = {
   inject: ['scope'],
   apply(ctx: Context) {
     ctx.effect(function* () {
-      // Read-only tools run in a snapshot scope when a state store is present.
+      // Read-only tools run in a snapshot scope when a state store is present, except those
+      // that call a service outside Merv (ToolDefinition.openWorld).
       const tools = new ToolRegistry(ctx.scope, ctx.scope.toolPolicy, snapshotIn(ctx));
       yield () => tools.close();
       // The group disposes the service and drains consumers before closing its resource.
