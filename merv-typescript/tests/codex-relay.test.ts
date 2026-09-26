@@ -58,6 +58,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   let live = true;
   const upstream: { body: Record<string, any>; authorization: string }[] = [];
   let hold: Promise<void> | undefined;
+  let afterCompleted: Promise<void> | undefined;
   const logs: string[] = [];
   const write = process.stderr.write;
   process.stderr.write = ((chunk: string) => logs.push(String(chunk)) > 0) as never;
@@ -78,13 +79,19 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
           authorization: new Headers(init!.headers).get('authorization')!,
         });
         const held = hold;
+        const finish = afterCompleted;
         return new Response(
           new ReadableStream({
             async start(controller) {
               controller.enqueue(new TextEncoder().encode('event: response.created\ndata: {}\n\n'));
               await held;
               controller.enqueue(new TextEncoder().encode(completed(80, 30)));
-              controller.close();
+              await finish;
+              try {
+                controller.close();
+              } catch {
+                /* The client may have closed after completion. */
+              }
             },
           }),
           { headers: { 'content-type': 'text/event-stream' } },
@@ -127,6 +134,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
     spent,
     revoke: () => void (live = false),
     hold: (until: Promise<void>) => void (hold = until),
+    afterCompleted: (until: Promise<void>) => void (afterCompleted = until),
   };
 }
 
@@ -141,6 +149,33 @@ test('what Codex sends passes with the binding’s model and effort and the rela
     reasoning: { summary: 'auto', effort: 'medium' },
     max_output_tokens: 65_536,
   });
+  assert.doesNotMatch(f.logs.join(''), /"event":"codex_relay_failure"/);
+});
+
+test('closing after response.completed settles usage without a relay failure', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  f.afterCompleted(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const cut = new AbortController();
+  const response = await f.call(codex, undefined, cut.signal);
+  const reader = response.body!.getReader();
+  let body = '';
+  while (!body.includes('response.completed')) {
+    const next = await reader.read();
+    assert.equal(next.done, false);
+    body += new TextDecoder().decode(next.value);
+  }
+  cut.abort();
+  release();
+  const deadline = Date.now() + 5000;
+  while ((await f.spent()) !== 110 && Date.now() < deadline)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await f.spent(), 110);
+  assert.doesNotMatch(f.logs.join(''), /"event":"codex_relay_failure"/);
 });
 
 test('only Codex-shaped calls pass: no stored, background or chained response, and no hosted tool', async (t) => {

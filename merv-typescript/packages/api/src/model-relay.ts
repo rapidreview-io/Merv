@@ -182,7 +182,10 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         if (!req.complete) req.destroy();
       }
     };
-    const disconnected = () => abort(499, 'disconnected');
+    // Node emits close for a normally ended response too.
+    const disconnected = () => {
+      if (!res.writableEnded) abort(499, 'disconnected');
+    };
     req.once('aborted', disconnected);
     res.once('close', disconnected);
     this.active.add(controller);
@@ -195,6 +198,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
     let admittedAt = 0;
     let phase: ModelRelayFailure['phase'] = 'request';
     let upstreamHttpStatus: number | undefined;
+    let completed = false;
     try {
       const authority = this.config.authority;
       let grant: G;
@@ -356,6 +360,11 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
           )
             keep(data);
           if (
+            /^event:\s*response\.completed\s*$/im.test(content) ||
+            /^\{\s*"type"\s*:\s*"response\.completed"/.test(data)
+          )
+            completed = true;
+          if (
             /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
             /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
           )
@@ -379,7 +388,8 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
     } catch (error) {
       const failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
-      if (admitted)
+      // A Codex client can close after the terminal frame. Usage was already settled in keep().
+      if (admitted && !(failure.code === 'disconnected' && completed))
         report(this.config.onFailure, {
           event: `${this.config.name}_relay_failure` as const,
           phase,
