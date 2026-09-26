@@ -33,13 +33,21 @@ export const titleOf = (a: FleetAllocation): string => titles[a.owner.kind] ?? '
 export const statusOf = (a: FleetAllocation): string =>
   a.phase !== 'released'
     ? { run: words[a.phase] ?? a.phase, drain: 'finishing', stop: 'stopping' }[a.intent]
-    : a.error === 'runtime_refused'
+    : a.error === 'runtime_refused' || a.error === 'wallet_refused'
       ? 'refused'
       : 'stopped';
-/** Retries back off to a minute; only a live request failing that long needs a person. */
+/** Fleet keeps a launched machine, and its worker admission, while its lease lasts. */
+const kept = (a: FleetAllocation) =>
+  !!a.runtime && (a.phase === 'starting' || a.phase === 'running');
+/**
+ * Retries back off to a minute; only a live request failing that long needs a person. A
+ * machine Fleet still keeps is working: then only the service is not answering about it.
+ */
 export const failing = (a: FleetAllocation): string | null =>
   a.phase !== 'released' && a.intent !== 'stop' && a.error && a.failures >= 5
-    ? `${a.runtime ? 'This machine is not answering' : 'No machine yet'}: the sandbox service keeps failing`
+    ? kept(a)
+      ? 'The sandbox service is not answering about this machine'
+      : `${a.runtime ? 'This machine is not answering' : 'No machine yet'}: the sandbox service keeps failing`
     : null;
 
 /** On its way: no machine yet, or one not yet taking work. */
@@ -53,23 +61,34 @@ const who = "An operator checks the project's sandbox connection";
 const open = (a: FleetAllocation) => a.phase !== 'released';
 const failures = (n: number): RunningPhrase => [{ count: n }, n === 1 ? ' failure' : ' failures'];
 
+/** What refused a request before any machine existed; without a connection Fleet asks nobody. */
+const refusal = (a: FleetAllocation): string | null =>
+  a.error === 'wallet_refused'
+    ? 'Refused · spending limit · '
+    : a.error !== 'runtime_refused'
+      ? null
+      : a.createAttempted === false
+        ? 'Refused · no sandbox connection · '
+        : 'Refused by the sandbox service · ';
+
 /** The status word, then how long it has stood, or how often the service has failed it. */
 function standing(a: FleetAllocation): RunningPhrase {
   const status = statusOf(a);
   const said = `${status.charAt(0).toUpperCase()}${status.slice(1)} · `;
-  if (!open(a)) return [said, { ago: a.updatedAt }];
+  if (!open(a)) return [refusal(a) ?? said, { ago: a.updatedAt }];
   return a.failures > 0 && a.intent !== 'stop'
     ? [said, ...failures(a.failures)]
     : [said, { since: a.updatedAt }];
 }
 
-/** A request the service keeps failing, or one it refused before any machine existed. */
+/**
+ * A request the service keeps failing. While Fleet keeps its machine working, that is said in
+ * ink. A refusal is not red: the next request for the same work may already be running.
+ */
 function attention(a: FleetAllocation): RunningAttention | undefined {
   const failure = failing(a);
-  if (failure) return { says: [failure], who };
-  if (!open(a) && (a.error === 'runtime_refused' || a.error === 'wallet_refused'))
-    return { says: ['Refused by the sandbox service'], who };
-  return undefined;
+  if (!failure) return undefined;
+  return kept(a) ? { says: [failure], quiet: true } : { says: [failure], who };
 }
 
 /** The step a workflow rented for: its owner id is `<instanceId>:<revision>`. */
@@ -90,7 +109,8 @@ export function fleetNode(a: FleetAllocation): RunningNode {
     key: runningKey('fleet', a.id),
     lane: 'sessions',
     title: titleOf(a),
-    lines: [standing(a), ['on a Fleet VM']],
+    // Only a machine the service made is a VM; before that there is only the request.
+    lines: a.runtime ? [standing(a), ['on a Fleet VM']] : [standing(a)],
     look: STARTING.has(status) ? 'dashed' : ENDING.has(status) ? 'quiet' : 'solid',
     ...(STARTING.has(status) ? { dot: 'starting' as const } : {}),
     ...(need ? { attention: need } : {}),
@@ -107,6 +127,7 @@ export function fleetNode(a: FleetAllocation): RunningNode {
 export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPanelPart {
   const status = statusOf(a);
   const need = attention(a);
+  const red = need?.quiet ? undefined : need;
   const rows: RunningFact[] = [];
   if (!(absorbedBy && status === 'running'))
     rows.push({ label: 'Status', value: [{ state: status }] });
@@ -115,7 +136,8 @@ export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPane
       label: a.phase === 'queued' ? 'Gives up' : 'Time remaining',
       value: [{ until: a.deadlineAt }],
     });
-  if (need) rows.push({ label: 'Needs you', value: need.says, attention: true });
+  if (need?.quiet) rows.push({ label: 'Sandbox service', value: ['not answering'] });
+  else if (need) rows.push({ label: 'Needs you', value: need.says, attention: true });
   if (open(a) && a.failures > 0) rows.push({ label: 'Retries', value: failures(a.failures) });
   if (a.runtime && TROUBLE.has(a.runtime.state))
     rows.push({ label: 'Provider', value: [{ state: a.runtime.state }] });
@@ -126,7 +148,7 @@ export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPane
       place: 'machine',
       kind: 'facts',
       rows,
-      ...(need ? { attention: true } : {}),
+      ...(red ? { attention: true } : {}),
     },
   ];
   // Once a session holds the machine, the session's own work is the truth.
@@ -143,7 +165,7 @@ export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPane
       kind: 'Fleet machine',
       title: titleOf(a),
       says: standing(a),
-      ...(need ? { attention: need } : {}),
+      ...(red ? { attention: red } : {}),
     },
     sections,
     actions: [],

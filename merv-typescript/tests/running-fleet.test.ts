@@ -22,6 +22,8 @@ class Runtimes implements SandboxRuntimes {
   readonly profiles = [{ key: 'standard', id: 'standard-profile', leaseSeconds: 600 }];
   ready = false;
   error?: Error;
+  /** When the provider ends a new machine, unless Fleet renews it. */
+  leaseExpiresAt = '2099-01-01T00:00:00Z';
   private readonly machines = new Map<string, SandboxRuntimeHandle>();
   /** One machine per create key, as the service keeps it. */
   private readonly created = new Map<string, string>();
@@ -44,7 +46,7 @@ class Runtimes implements SandboxRuntimes {
       state: this.ready ? 'ready' : 'provisioning',
       ready: this.ready,
       deleted: false,
-      leaseExpiresAt: '2099-01-01T00:00:00Z',
+      leaseExpiresAt: this.leaseExpiresAt,
       revision: 1,
       launch: null,
     });
@@ -242,7 +244,8 @@ test('each open allocation is a machine in the sessions lane, rented for its ste
       key: `fleet:${waiting.id}`,
       lane: 'sessions',
       title: 'Workflow agent',
-      lines: [['Waiting · ', await since(waiting.id)], ['on a Fleet VM']],
+      // No machine is made while it waits for a slot, so none is named.
+      lines: [['Waiting · ', await since(waiting.id)]],
       look: 'dashed',
       dot: 'starting',
       links: [{ to: 'work:task_2', verb: 'rented for', waiting: true }],
@@ -295,7 +298,10 @@ test('a request the sandbox service keeps failing counts its failures, then need
   }
   const board = await f.board();
   const red = { says: ['No machine yet: the sandbox service keeps failing'], who: WHO };
-  assert.deepEqual(sessionsLane(board.lanes.sessions.nodes)[0].attention, red);
+  const [card] = sessionsLane(board.lanes.sessions.nodes);
+  assert.deepEqual(card.attention, red);
+  // The service never made a machine, so the card names none under its red sentence.
+  assert.deepEqual(card.lines, [['Retrying · ', { count: 5 }, ' failures']]);
   assert.equal(board.lanes.sessions.needsYou, 1);
 
   const a = await f.fleet.inspect(f.caller, failing.id);
@@ -334,7 +340,7 @@ test('a request the sandbox service keeps failing counts its failures, then need
   );
 });
 
-test('a sidebar holds the Fleet machine and what it was rented for, gives up while it waits, and says when the service refused it', async (t) => {
+test('a sidebar holds the Fleet machine and what it was rented for, gives up while it waits, and says in ink that the service refused it', async (t) => {
   const f = await fixture(t);
   const waiting = await f.request('workflow', 'task_1:3');
   // Not yet given a slot, it waits in the queue and gives up at its deadline.
@@ -374,31 +380,179 @@ test('a sidebar holds the Fleet machine and what it was rented for, gives up whi
     aliases: [],
   });
 
-  // Refused before any machine existed: released at once, off the board, red where it is open.
+  // Refused before any machine existed: released at once, off the board, said where it is open.
   f.runtimes.error = new MervError('sandbox_forbidden', 'The grant has expired', 403);
   await f.fleet.tick();
   const refused = await f.fleet.inspect(f.caller, waiting.id);
   assert.deepEqual([refused.phase, refused.error], ['released', 'runtime_refused']);
   assert.deepEqual(sessionsLane((await f.board()).lanes.sessions.nodes), []);
   const closed = await f.panel(`fleet:${waiting.id}`);
-  const red = { says: ['Refused by the sandbox service'], who: WHO };
   assert.deepEqual(closed.header, {
     kind: 'Fleet machine',
     title: 'Workflow agent',
-    says: ['Refused · ', { ago: refused.updatedAt }],
-    attention: red,
+    says: ['Refused by the sandbox service · ', { ago: refused.updatedAt }],
   });
   assert.deepEqual(
-    closed.sections.map(({ title }) => title),
-    ['Fleet machine', 'Rented for'],
+    closed.sections.map(({ title, attention }) => [title, !!attention]),
+    [
+      ['Rented for', false],
+      ['Fleet machine', false],
+    ],
   );
-  assert.deepEqual(closed.sections[0].kind === 'facts' && closed.sections[0].rows, [
+  assert.deepEqual(closed.sections[1].kind === 'facts' && closed.sections[1].rows, [
     { label: 'Status', value: [{ state: 'refused' }] },
-    { label: 'Needs you', value: red.says, attention: true },
     { label: 'Requested', value: [{ ago: refused.createdAt }] },
   ]);
   assert.equal(closed.live, false);
   assert.deepEqual(closed.actions, []);
+});
+
+test('a refusal says what refused it, one word for it on the Fleet page too, and never turns red', async (t) => {
+  const f = await fixture(t);
+  // Over the sandbox service's spending limit: the service refused the first create.
+  f.runtimes.error = new MervError('sandbox_budget_exceeded', 'The budget is spent', 403);
+  const spent = await f.request('workflow', 'task_1:1');
+  await f.fleet.tick();
+  // The project's connection went away after the request: Fleet refuses it without asking.
+  f.runtimes.error = undefined;
+  const unconnected = await f.request('workflow', 'task_2:1');
+  f.runtimes.connected = () => false;
+  await f.fleet.tick();
+  const [a, b] = [
+    await f.fleet.inspect(f.caller, spent.id),
+    await f.fleet.inspect(f.caller, unconnected.id),
+  ];
+  assert.deepEqual(
+    [a, b].map(({ phase, error, createAttempted }) => [phase, error, createAttempted]),
+    [
+      ['released', 'wallet_refused', true],
+      ['released', 'runtime_refused', false],
+    ],
+  );
+  // A day later, when the work may long have run elsewhere, still nobody is called for.
+  f.advance(86_400_000);
+  const heads = await Promise.all([a, b].map(async ({ id }) => await f.panel(`fleet:${id}`)));
+  assert.deepEqual(
+    heads.map(({ header }) => header),
+    [
+      {
+        kind: 'Fleet machine',
+        title: 'Workflow agent',
+        says: ['Refused · spending limit · ', { ago: a.updatedAt }],
+      },
+      {
+        kind: 'Fleet machine',
+        title: 'Workflow agent',
+        says: ['Refused · no sandbox connection · ', { ago: b.updatedAt }],
+      },
+    ],
+  );
+  for (const panel of heads) {
+    assert.deepEqual(
+      panel.sections.map(({ attention }) => !!attention),
+      [false, false],
+    );
+    const facts = panel.sections.find(({ title }) => title === 'Fleet machine')!;
+    assert.deepEqual(facts.kind === 'facts' && facts.rows[0], {
+      label: 'Status',
+      value: [{ state: 'refused' }],
+    });
+  }
+  const rows = (await f.ui.read(f.caller, 'fleet')) as Record<string, string | null>[];
+  assert.deepEqual(
+    rows.map((row) => [row.status, row.attention]),
+    [
+      ['refused', null],
+      ['refused', null],
+    ],
+  );
+});
+
+test('a running machine the service stops answering about is said in ink while Fleet keeps it, and red once its lease has passed', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.ready = true;
+  f.runtimes.leaseExpiresAt = '2026-09-22T00:30:00.000Z';
+  const machine = await f.request('workflow', 'task_run:2');
+  for (let tick = 0; tick < 3; tick++) await f.fleet.tick();
+  const key = `fleet:${machine.id}`;
+  f.runtimes.error = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  for (let tick = 0; tick < 5; tick++) {
+    f.advance(60_000);
+    await f.fleet.tick();
+  }
+  const a = await f.fleet.inspect(f.caller, machine.id);
+  assert.deepEqual([a.phase, a.failures, a.error], ['running', 5, 'runtime_unavailable']);
+  const quiet = { says: ['The sandbox service is not answering about this machine'], quiet: true };
+  const node = async () =>
+    sessionsLane((await f.board()).lanes.sessions.nodes).find((n) => n.key === key)!;
+  assert.deepEqual((await node()).attention, quiet);
+  assert.deepEqual((await node()).lines, [
+    ['Running · ', { count: 5 }, ' failures'],
+    ['on a Fleet VM'],
+  ]);
+  assert.equal((await f.board()).lanes.sessions.needsYou, 0);
+  const panel = await f.panel(key);
+  assert.deepEqual(panel.header, {
+    kind: 'Fleet machine',
+    title: 'Workflow agent',
+    says: ['Running · ', { count: 5 }, ' failures'],
+  });
+  const facts = panel.sections.find(({ title }) => title === 'Fleet machine')!;
+  assert.equal(facts.attention, undefined);
+  assert.deepEqual(facts.kind === 'facts' && facts.rows, [
+    { label: 'Status', value: [{ state: 'running' }] },
+    { label: 'Time remaining', value: [{ until: a.deadlineAt }] },
+    { label: 'Sandbox service', value: ['not answering'] },
+    { label: 'Retries', value: [{ count: 5 }, ' failures'] },
+    { label: 'Requested', value: [{ ago: a.createdAt }] },
+  ]);
+  const page = async () =>
+    ((await f.ui.read(f.caller, 'fleet')) as Record<string, string | null>[])[0].attention;
+  assert.equal(
+    await page(),
+    "The sandbox service is not answering about this machine. Check the project's sandbox connection.",
+  );
+
+  // The session bound to it takes that line in ink, and nobody is counted as needed.
+  const dispose = f.ui.contribute({
+    owner: 'sessions',
+    kinds: ['session'],
+    lanes: ['sessions'],
+    nodes: async () => ({
+      nodes: [
+        {
+          key: 'session:1',
+          lane: 'sessions',
+          title: 'Producer',
+          lines: [['Last call'], ['on a Fleet VM']],
+          look: 'solid',
+          dot: 'moving',
+          aliases: [key],
+        },
+      ],
+    }),
+  });
+  t.after(dispose);
+  const bound = async () => {
+    const board = await f.board();
+    return [board.lanes.sessions.nodes.map(({ key }) => key), board.lanes.sessions.needsYou];
+  };
+  const session = async () =>
+    (await f.board()).lanes.sessions.nodes.find((n) => n.key === 'session:1')!;
+  assert.deepEqual(await bound(), [['session:1'], 0]);
+  assert.deepEqual((await session()).attention, quiet);
+
+  // Past its lease the machine is gone as far as Fleet knows: now a person is needed.
+  f.advance(30 * 60_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, machine.id)).phase, 'uncertain');
+  const red = {
+    says: ['This machine is not answering: the sandbox service keeps failing'],
+    who: WHO,
+  };
+  assert.deepEqual((await session()).attention, red);
+  assert.deepEqual(await bound(), [['session:1'], 1]);
+  assert.match((await page())!, /^This machine is not answering:/);
 });
 
 test('a session that binds the machine absorbs its node, and the Fleet machine section follows the session sidebar without controls', async (t) => {
