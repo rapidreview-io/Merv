@@ -1676,8 +1676,13 @@ export class PiService implements Pi, FleetOwner {
     turn: PiTurnInput & { name: string; input: Record<string, unknown> },
     use: 'propose' | 'secret',
   ): Promise<unknown> {
-    const proposal = await this.state.transaction(async (tx) => {
+    const result = await this.state.transaction(async (tx) => {
       const { command } = await this.bound(token, turn, tx);
+      const identity = digest([turn.name, turn.input, use]);
+      const existing = command.proposals?.find(
+        (item) => digest([item.name, item.input, item.secret ? 'secret' : 'propose']) === identity,
+      );
+      if (existing) return { proposal: existing, created: false };
       if ((command.proposals?.length ?? 0) >= 16) return null;
       const proposal: PiProposal = {
         id: newId('pip'),
@@ -1688,18 +1693,18 @@ export class PiService implements Pi, FleetOwner {
       };
       (command.proposals ??= []).push(proposal);
       await this.saveCommand(tx, command);
-      return proposal;
+      return { proposal, created: true };
     });
-    if (!proposal)
+    if (!result)
       return {
         error: {
           code: 'too_many_proposals',
           message: 'This answer has proposed 16 calls: say what is left',
         },
       };
-    this.streams.changed(turn.conversationId, turn.commandId);
+    if (result.created) this.streams.changed(turn.conversationId, turn.commandId);
     return {
-      proposed: { id: proposal.id, name: proposal.name },
+      proposed: { id: result.proposal.id, name: result.proposal.name },
       note: 'The person sees this exact call with a Run button; it runs as them only if they press it.',
     };
   }

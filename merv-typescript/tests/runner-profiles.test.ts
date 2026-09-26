@@ -14,7 +14,8 @@ import {
 import { MachineRunner } from '@merv/runner';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import { mainAgentGuide, type WorkflowWorkspacePolicy } from '@merv/contracts';
+import { piInstructions } from '../packages/pi/src/prompt.js';
 import type { Session } from '@merv/sessions/types';
 import {
   buildLaunch,
@@ -481,6 +482,24 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   assert.throws(() => buildLaunch(command, request(true), safeEnv), {
     code: 'unsupported_read_only',
   });
+});
+
+test('source-notation verification reaches producer and reviewer launches and Pi guidance', () => {
+  const producer = request();
+  const reviewer = request(true);
+  reviewer.session.role = 'reviewer';
+  reviewer.session.assignment.role = 'reviewer';
+  for (const profile of [codex, claude]) {
+    for (const assignment of [producer, reviewer]) {
+      const prompt = buildLaunch(profile, assignment, safeEnv).stdin;
+      assert.match(prompt, /Text extraction can lose superscripts and symbols/);
+      assert.match(prompt, /nearby prose or derivation/);
+      assert.match(prompt, /reviewers must independently verify pivotal claims before passing/);
+      assert.ok(prompt.indexOf('Text extraction can lose') < prompt.indexOf('Frozen assignment:'));
+    }
+  }
+  assert.ok(piInstructions.includes(mainAgentGuide));
+  assert.match(piInstructions, /Text extraction can lose superscripts and symbols/);
 });
 
 test('Claude Code runs headless on the Merv server alone, reads its bearer from the environment, and keeps only read tools on a read-only lease', () => {

@@ -558,6 +558,61 @@ test('a role change ends the running turn, the next offers the new role’s tool
   );
 });
 
+test('an exact repeated proposal in one turn keeps one Run action and one mutation', async (t) => {
+  const f = await fixture(t);
+  let mutations = 0;
+  t.after(
+    f.tools.register({
+      name: 'probe.decision',
+      description: 'A proposed decision',
+      conversation: 'propose',
+      inputSchema: z.object({ action: z.string(), requestId: z.string() }).strict(),
+      handler: () => ({ mutations: ++mutations }),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const propose = (input: Record<string, string>) =>
+    f.pi.tool(turn.token, { ...turn.input, name: 'probe.decision', input });
+  const [first, raced] = (await Promise.all([
+    propose({ action: 'abandon', requestId: 'one' }),
+    propose({ requestId: 'one', action: 'abandon' }),
+  ])) as [{ proposed: { id: string } }, { proposed: { id: string } }];
+  assert.deepEqual(raced, first);
+  const writes = countWrites(f.state);
+  const beforeRepeat = writes();
+  const repeated = await propose({ requestId: 'one', action: 'abandon' });
+  assert.deepEqual(repeated, first);
+  assert.equal(writes(), beforeRepeat, 'the repeated proposal makes no durable write');
+  const concurrent = await Promise.all([
+    propose({ action: 'abandon', requestId: 'one' }),
+    propose({ action: 'abandon', requestId: 'one' }),
+  ]);
+  assert.deepEqual(concurrent, [first, first]);
+  const changed = (await propose({ action: 'abandon', requestId: 'two' })) as {
+    proposed: { id: string };
+  };
+  assert.notEqual(changed.proposed.id, first.proposed.id);
+  const command = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
+  assert.deepEqual(
+    command.proposals?.map(({ id }) => id),
+    [first.proposed.id, changed.proposed.id],
+  );
+  assert.equal(mutations, 0);
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const run = (proposalId: string) =>
+    f.pi.run(human, {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      proposalId,
+    });
+  assert.deepEqual(await run(first.proposed.id), { result: { mutations: 1 } });
+  await assert.rejects(run(first.proposed.id), code('pi_proposal_ran'));
+  assert.equal(mutations, 1);
+  assert.deepEqual(await run(changed.proposed.id), { result: { mutations: 2 } });
+});
+
 test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
   const f = await fixture(t);
   const runs = probes(f, t);
@@ -583,11 +638,15 @@ test('the hand-off: the agent proposes, the person runs it once as themselves, a
   const ids: string[] = [];
   for (let index = 0; index < 16; index++)
     ids.push(
-      ((await agent(index ? 'probe.signed' : 'probe.secret')) as { proposed: { id: string } })
-        .proposed.id,
+      (
+        (await agent(
+          index ? 'probe.signed' : 'probe.secret',
+          index ? { note: `${index}` } : {},
+        )) as { proposed: { id: string } }
+      ).proposed.id,
     );
   assert.deepEqual(
-    ((await agent('probe.signed')) as { error: { code: string } }).error.code,
+    ((await agent('probe.signed', { note: 'overflow' })) as { error: { code: string } }).error.code,
     'too_many_proposals',
   );
   assert.equal(
