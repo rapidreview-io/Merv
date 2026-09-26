@@ -286,6 +286,8 @@ class PoisonedOffer extends Error {
   constructor(
     readonly candidate: Target,
     readonly cause: unknown,
+    /** A server fault: skipped for this lease only, never held against the work. */
+    readonly transient = false,
   ) {
     super('Offer could not be built');
   }
@@ -1503,7 +1505,7 @@ export class SessionDispatch {
         if (!(error instanceof PoisonedOffer)) throw error;
         skipped.add(targetKey(error.candidate));
         poison = error.cause;
-        await this.poisoned(preparedCaller, error.candidate, error.cause);
+        if (!error.transient) await this.poisoned(preparedCaller, error.candidate, error.cause);
       }
     }
   }
@@ -1652,7 +1654,12 @@ export class SessionDispatch {
                 message: String((error as Error)?.message ?? error).slice(0, 300),
               })}\n`,
             );
-            throw error;
+            // One target's server fault must not keep every machine from the work behind it.
+            throw new PoisonedOffer(
+              { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
+              error,
+              true,
+            );
           }
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
