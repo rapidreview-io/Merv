@@ -8,6 +8,8 @@ import {
   folded,
   excludedFromReview,
   inTransaction,
+  keyId,
+  keyKind,
   mapAsync,
   MervError,
   newId,
@@ -32,6 +34,8 @@ import {
   type ReviewRequest,
   type Reviews,
   type Role,
+  type RunningNode,
+  type RunningPanelPart,
   type Scope,
   type ServiceTaskCreator,
   type Sql,
@@ -75,6 +79,7 @@ import {
   validateConfirmations,
 } from './evidence.js';
 import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
+import { taskNode, taskPanel, type TaskStanding } from './running.js';
 
 export type {
   Task,
@@ -167,6 +172,8 @@ const derivedBase = (version: number) => version === 5 || version === 10 || serv
 /** Only the internal service binding may create these tasks; their producer has no credential. */
 const serviceOwned = (version: number) =>
   version === TASK_WORKFLOW_SERVICE.version || version === 11;
+/** Where review_rounds counts from: a service task counts its deliveries, any other its returns. */
+const roundsFrom = (version: number) => (serviceOwned(version) ? 'in_progress' : 'in_review');
 /** The same graph as version 2; only the execution policies registered beside it differ. */
 export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
 export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
@@ -221,6 +228,15 @@ interface TaskRow {
   type_version: number;
   context_inputs: string;
   evidence_version: 2;
+}
+/** A task as the Running page's work lane reads it, with where its workflow stands. */
+interface RunningTaskRow {
+  id: string;
+  title: string;
+  review_id: string | null;
+  version: number;
+  state: string;
+  revision: number;
 }
 interface TaskLeaseRow {
   id: string;
@@ -645,7 +661,7 @@ export class TaskService implements Tasks {
       limits: [
         {
           name: 'review_rounds',
-          from: serviceOwned(version) ? 'in_progress' : 'in_review',
+          from: roundsFrom(version),
           actions: serviceOwned(version) ? ['submit_delivery', 'mark_failed'] : ['revise'],
           max: this.limits.reviewRounds,
         },
@@ -1961,6 +1977,131 @@ export class TaskService implements Tasks {
   /** The records; guidance is per reader and per moment, so task.get carries it. */
   async list(caller: Caller): Promise<TaskRecord[]> {
     return await this.records(caller);
+  }
+
+  /**
+   * Every task still in flight, and each ended one another owner holds on the board, read in
+   * one snapshot that refuses writes. Guidance is never evaluated here: it is per reader, where
+   * a card says the same to everyone, and it would cost an evaluation per task on every poll.
+   */
+  async running(caller: Caller, include: Iterable<string> = []): Promise<RunningNode[]> {
+    caller = structuredClone(caller);
+    const held = [...new Set([...include].filter((key) => keyKind(key) === 'work').map(keyId))];
+    const kept = held.length ? ` OR t.id IN (${held.map(() => '?').join(',')})` : '';
+    return await this.state.snapshot(
+      async () =>
+        await this.state.transaction(async (tx) => {
+          await this.scope.require(caller, 'read', tx);
+          const rows = await tx.all<RunningTaskRow>(
+            `SELECT t.id,t.title,t.review_id,w.version,w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.project_id=? AND (w.state NOT IN ('done','failed')${kept}) ORDER BY t.created_at,t.id`,
+            caller.projectId,
+            ...held,
+          );
+          const leases = await this.liveLeases(caller, tx);
+          const blocked = new Set(
+            (await this.workflows.blockers(caller, undefined, tx)).map(
+              (blocker) => blocker.instanceId,
+            ),
+          );
+          return await mapAsync(rows, async (row) =>
+            taskNode(
+              await this.standing(
+                caller,
+                row,
+                (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
+                leases,
+                blocked.has(row.id),
+                tx,
+              ),
+            ),
+          );
+        }),
+    );
+  }
+
+  /** A task's Running sidebar, whatever its state, so an open sidebar outlives the card. */
+  async runningPanel(caller: Caller, taskId: string): Promise<RunningPanelPart | null> {
+    caller = structuredClone(caller);
+    return await this.state.snapshot(async () => {
+      const read = await this.state.transaction(async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        const row = await tx.get<TaskRow>(
+          'SELECT * FROM tasks WHERE id=? AND project_id=?',
+          taskId,
+          caller.projectId,
+        );
+        if (!row) return null;
+        const record = await this.projectRecord(caller, row, tx);
+        const { version, state, revision } = record.workflow;
+        const standing = await this.standing(
+          caller,
+          { id: row.id, title: row.title, review_id: row.review_id, version, state, revision },
+          record.dependencies,
+          await this.liveLeases(caller, tx, taskId),
+          (await this.workflows.blockers(caller, taskId, tx)).length > 0,
+          tx,
+        );
+        const brief = await this.artifacts.get(caller, record.briefId, tx).catch((error) => {
+          if (error instanceof MervError && error.status === 404) return null;
+          throw error;
+        });
+        return { record, standing, brief };
+      });
+      if (!read) return null;
+      // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
+      return taskPanel(read.standing, read.record, await this.process(caller, taskId), read.brief);
+    });
+  }
+
+  /** The purpose of each live lease, by task and the revision it was offered for. */
+  private async liveLeases(
+    caller: Caller,
+    tx: Transaction,
+    taskId?: string,
+  ): Promise<Map<string, 'work' | 'review'>> {
+    const rows = await tx.all<Pick<TaskLeaseRow, 'task_id' | 'revision' | 'purpose'>>(
+      'SELECT task_id,revision,purpose FROM task_leases WHERE project_id=? AND (CAST(? AS TEXT) IS NULL OR task_id=?) AND released_at IS NULL',
+      caller.projectId,
+      taskId ?? null,
+      taskId ?? null,
+    );
+    return new Map(rows.map((row) => [`${row.task_id}@${row.revision}`, row.purpose]));
+  }
+
+  private async standing(
+    caller: Caller,
+    row: RunningTaskRow,
+    dependencies: TaskStanding['dependencies'],
+    leases: Awaited<ReturnType<TaskService['liveLeases']>>,
+    blocked: boolean,
+    tx: Transaction,
+  ): Promise<TaskStanding> {
+    // Only the limit leaving the current state stops anything, as the gate reads it.
+    const rounds =
+      row.state === roundsFrom(row.version)
+        ? await this.workflows.limitStatus(caller, row.id, 'review_rounds', tx)
+        : null;
+    const review =
+      row.state === 'in_review' && row.review_id
+        ? await this.reviews.get(caller, row.review_id, tx)
+        : null;
+    return {
+      id: row.id,
+      title: row.title,
+      state: row.state,
+      // A lease of an earlier revision holds nothing the task still is.
+      lease: leases.get(`${row.id}@${row.revision}`) ?? null,
+      review: review && {
+        id: review.id,
+        status: review.status,
+        reviewerId: review.reviewerId,
+        createdAt: review.createdAt,
+        ...(review.waiting ? { waiting: review.waiting } : {}),
+      },
+      dependencies,
+      roundsUsed: !!rounds?.exhausted,
+      blocked,
+    };
   }
 
   /** With a proposed delivery, answers the commit and confirmations it checked, for reuse. */
