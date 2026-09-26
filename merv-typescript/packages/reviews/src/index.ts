@@ -34,7 +34,7 @@ import {
   type StoredEvent,
 } from '@merv/contracts';
 import { validateAssessment, evidenceFrom } from './findings.js';
-import { reviewSections } from './running.js';
+import { EARLIER, reviewSections } from './running.js';
 
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -359,21 +359,22 @@ export class ReviewService implements Reviews {
       'Review owner must be a plain object',
     );
     const descriptors = Object.getOwnPropertyDescriptors(owner);
-    const keys = ['id', 'owns', 'submit', ...(Object.hasOwn(owner, 'claim') ? ['claim'] : [])];
+    const optional = (['claim', 'gates'] as const).filter((key) => Object.hasOwn(owner, key));
+    const keys = ['id', 'owns', 'submit', ...optional];
     check(
       Reflect.ownKeys(owner).length === keys.length &&
         keys.every(
           (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
         ),
       'invalid_review_owner',
-      'Review owner requires only id, owns and submit, and may add claim',
+      'Review owner requires only id, owns and submit, and may add claim and gates',
     );
     check(
       typeof owner.id === 'string' &&
         idPattern.test(owner.id) &&
         typeof owner.owns === 'function' &&
         typeof owner.submit === 'function' &&
-        (keys.length === 3 || typeof owner.claim === 'function'),
+        optional.every((key) => typeof owner[key] === 'function'),
       'invalid_review_owner',
       'Review owner requires an identifier and callbacks',
     );
@@ -388,6 +389,7 @@ export class ReviewService implements Reviews {
       owns: owner.owns,
       submit: owner.submit,
       ...(owner.claim ? { claim: owner.claim } : {}),
+      ...(owner.gates ? { gates: owner.gates } : {}),
     });
     this.owners.set(registered.id, registered);
     this.ownerEpoch++;
@@ -834,19 +836,27 @@ export class ReviewService implements Reviews {
         caller.projectId,
         ...subjects,
       );
-      const sections = await mapAsync(subjects, async (subjectId) => {
-        const [newest, ...earlier] = rows.filter((row) => row.subject_id === subjectId);
-        if (!newest) return [];
-        const current = await this.get(caller, newest.id, transaction);
+      const rounds = subjects
+        .map((subjectId) => rows.filter((row) => row.subject_id === subjectId))
+        .filter((mine) => mine.length > 0);
+      const gates = await this.gatesOf(
+        rounds.flatMap((mine) => mine.slice(0, EARLIER + 1).map((row) => row.id)),
+        sql,
+      );
+      const gated = (id: string) => (gates.has(id) ? { gate: gates.get(id)! } : {});
+      const sections = await mapAsync(rounds, async ([newest, ...earlier]) => {
+        const current = await this.get(caller, newest!.id, transaction);
         const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
         return reviewSections({
           current,
+          ...gated(current.id),
           ...(claim ? { claim } : {}),
           earlier: earlier.map((row) => ({
             id: row.id,
             status: row.status,
             verdict: row.verdict,
             createdAt: row.created_at,
+            ...gated(row.id),
           })),
         });
       });
@@ -857,6 +867,28 @@ export class ReviewService implements Reviews {
       return await read(transaction);
     }
     return await this.state.read(read);
+  }
+
+  /**
+   * The gate each of these reviews was read at, named by the domain that owns it where its
+   * records are reviewed at more than one. The first owner to name a review names it.
+   */
+  private async gatesOf(reviewIds: readonly string[], sql: Sql): Promise<Map<string, string>> {
+    const gates = new Map<string, string>();
+    if (!reviewIds.length) return gates;
+    for (const owner of [...this.owners.values()]) {
+      if (!owner.gates) continue;
+      const named: unknown = await owner.gates(Object.freeze([...reviewIds]), sql);
+      if (!named || typeof named !== 'object') continue;
+      for (const id of reviewIds) {
+        const gate: unknown = Object.hasOwn(named, id)
+          ? (named as Record<string, unknown>)[id]
+          : null;
+        if (!gates.has(id) && typeof gate === 'string' && gate.length <= 40 && visible(gate))
+          gates.set(id, gate);
+      }
+    }
+    return gates;
   }
 
   /**

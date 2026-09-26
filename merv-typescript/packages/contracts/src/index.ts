@@ -1606,6 +1606,11 @@ export interface ReviewSubmitOwner {
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
   /** Refuses a claim of an owned review that the owner's rules could never let finish. */
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
+  /**
+   * The gate each owned review among these was read at ('Design', 'Results'), for a domain
+   * whose records are reviewed at more than one. Read-only; ids it does not own are left out.
+   */
+  gates?(reviewIds: readonly string[], sql: Sql): Promise<Readonly<Record<string, string>>>;
 }
 export interface Reviews {
   provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };

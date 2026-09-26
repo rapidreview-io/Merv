@@ -85,6 +85,8 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
+/** The gate a submission's review reads, as the verdict page names it. */
+const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** The evidence, figures and exhibit a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
@@ -204,6 +206,19 @@ export class ExperimentService implements Experiments {
               review.projectId,
             )),
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+          // An experiment is reviewed twice, so each review is named by the gate it read.
+          gates: async (reviewIds, sql) => {
+            if (!reviewIds.length) return {};
+            const rows = await sql.all<{ review_id: string; stage: string }>(
+              `SELECT review_id, stage FROM experiment_submissions WHERE review_id IN (${reviewIds.map(() => '?').join(',')})`,
+              ...reviewIds,
+            );
+            return Object.fromEntries(
+              rows.flatMap((row) =>
+                Object.hasOwn(GATE, row.stage) ? [[row.review_id, GATE[row.stage]!]] : [],
+              ),
+            );
+          },
         });
       } catch (error) {
         this.program.dispose();

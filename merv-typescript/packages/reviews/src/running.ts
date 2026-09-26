@@ -9,19 +9,22 @@ import type {
 /**
  * One subject's reviews as the Running sidebar reads them. Reviews owns the claim, the
  * independence rule and the verdict, so a task, an experiment and a reflection wave all say
- * how their review stands in these words; the subject's own ladder draws the gate.
+ * how their review stands in these words. The domain names the gate a review was read at,
+ * where it has more than one (an experiment's Design and Results).
  */
 export interface ReviewRounds {
   /** The review that speaks for the subject now, as get() serves it to this reader. */
   current: ReviewRequest;
+  /** The gate it is read at, where the owning domain reviews its records at more than one. */
+  gate?: string;
   /** When the open claim was taken, and whether a leased agent took it. Only while started. */
   claim?: { at: string; agent: boolean };
-  /** The subject's other reviews, newest first. */
-  earlier: Pick<ReviewRequest, 'id' | 'status' | 'verdict' | 'createdAt'>[];
+  /** The subject's other reviews, newest first, each with its gate where it has one. */
+  earlier: (Pick<ReviewRequest, 'id' | 'status' | 'verdict' | 'createdAt'> & { gate?: string })[];
 }
 
 /** The newest earlier rounds listed; the count beside the heading holds them all. */
-const EARLIER = 50;
+export const EARLIER = 50;
 
 const route = (reviewId: string) => `/reviews/${encodeURIComponent(reviewId)}`;
 
@@ -44,24 +47,32 @@ function firstSentence(text: string | null | undefined, limit = 140): string | n
   return first.length > limit ? `${first.slice(0, limit - 1)}…` : first;
 }
 
+/** After a gate the clause runs on in lower case, as 'Design · with Ada' reads. */
+const after = (gate: string | undefined, word: string) =>
+  gate ? word.charAt(0).toLowerCase() + word.slice(1) : word;
+
 /**
- * Nobody has it, somebody has it, or the word it came back with. A claim is its reviewer,
- * whom the shell names for an operator; where no name can be shown, a claim an agent took
- * with its review lease reads as an agent's, and any other as claimed.
+ * Nobody has it, somebody has it, or the word it came back with, opened by the gate it is
+ * read at. A claim is its reviewer, whom the shell names for an operator; where no name can
+ * be shown, a claim an agent took with its review lease reads as an agent's, and any other
+ * as claimed.
  */
-function standing({ current, claim }: ReviewRounds): RunningPhrase {
-  if (current.status === 'requested') return ['Unclaimed'];
-  if (current.status === 'started')
-    return current.reviewerId
-      ? [
-          {
-            actor: current.reviewerId,
-            prefix: 'With ',
-            unnamed: claim?.agent ? 'With an agent' : 'Claimed',
-          },
-        ]
-      : ['Claimed'];
-  return [{ state: current.verdict ?? current.status }];
+function standing({ current, gate, claim }: ReviewRounds): RunningPhrase {
+  const clause: RunningPhrase =
+    current.status === 'requested'
+      ? [after(gate, 'Unclaimed')]
+      : current.status === 'started'
+        ? current.reviewerId
+          ? [
+              {
+                actor: current.reviewerId,
+                prefix: after(gate, 'With '),
+                unnamed: after(gate, claim?.agent ? 'With an agent' : 'Claimed'),
+              },
+            ]
+          : [after(gate, 'Claimed')]
+        : [{ state: current.verdict ?? current.status }];
+  return gate ? [`${gate} · `, ...clause] : clause;
 }
 
 /** What a verdict let through or held back, as a pass built on waivers must still say. */
@@ -82,26 +93,18 @@ function exceptions(findings: ReviewRequest['findings']): RunningPhrase {
 
 /**
  * The Review section, and Earlier rounds once the work has been sent back or reissued. The
- * way to the verdict page ends the standing; claiming it stays on that page, where its guard is.
+ * way to the verdict page is a row of its own, a link that stands alone; claiming the review
+ * stays on that page, where its guard is.
  */
 export function reviewSections(rounds: ReviewRounds): RunningSection[] {
   const { current, claim, earlier } = rounds;
-  const rows: RunningFact[] = [
-    {
-      label: 'Standing',
-      value: [
-        ...standing(rounds),
-        ' · ',
-        { link: { route: route(current.id) }, text: 'Open the review' },
-      ],
-    },
-  ];
-  // get() says this to operators alone.
+  const rows: RunningFact[] = [{ label: 'Standing', value: standing(rounds) }];
+  // get() says this to operators alone. The work's own card carries the red and whose move
+  // it is; this row says why, in ink.
   if (current.waiting)
     rows.push({
       label: 'No reviewer',
-      value: ['Every eligible reviewer contributed to this work · An operator provides one'],
-      attention: true,
+      value: ['Every eligible reviewer contributed to this work'],
     });
   rows.push({ label: 'Requested', value: [{ ago: current.createdAt }] });
   if (current.status === 'started' && claim)
@@ -112,26 +115,26 @@ export function reviewSections(rounds: ReviewRounds): RunningSection[] {
     const checks = exceptions(current.findings);
     if (checks.length) rows.push({ label: 'Checks', value: checks });
   }
-  const sections: RunningSection[] = [
-    {
-      title: 'Review',
-      place: 'review',
-      kind: 'facts',
-      rows,
-      ...(current.waiting ? { attention: true } : {}),
-    },
-  ];
+  rows.push({
+    label: 'Verdict page',
+    value: [{ link: { route: route(current.id) }, text: 'Open the review' }],
+  });
+  const sections: RunningSection[] = [{ title: 'Review', place: 'review', kind: 'facts', rows }];
   if (earlier.length)
     sections.push({
       title: 'Earlier rounds',
       place: 'review',
       kind: 'links',
       aside: [{ count: earlier.length }],
-      rows: earlier.slice(0, EARLIER).map((review): RunningLinkRow => ({
-        to: { route: route(review.id) },
-        name: ROUND[review.verdict ?? review.status],
-        says: [{ ago: review.createdAt }],
-      })),
+      // One line per round: the gate it was read at, the word it came back with, and when.
+      rows: earlier.slice(0, EARLIER).map((review): RunningLinkRow => {
+        const word = ROUND[review.verdict ?? review.status];
+        return {
+          to: { route: route(review.id) },
+          name: review.gate && word ? `${review.gate} · ${after(review.gate, word)}` : word,
+          says: [{ ago: review.createdAt }],
+        };
+      }),
     });
   return sections;
 }

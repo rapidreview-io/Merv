@@ -14,8 +14,10 @@ import {
   type Task,
   type TaskReview,
 } from '@merv/contracts';
+import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
 import type { RunningRead } from '@merv/ui';
 import { reviewSections } from '@merv/reviews/running';
+import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -174,8 +176,9 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
     [{ title: 'Review', place: 'review', kind: 'facts' }],
   );
   assert.deepEqual(facts(unclaimed[0]), {
-    Standing: ['Unclaimed', ' · ', open(requested.id)],
+    Standing: ['Unclaimed'],
     Requested: [{ ago: requested.createdAt }],
+    'Verdict page': [open(requested.id)],
   });
   assert.equal(unclaimed[0].attention, undefined);
 
@@ -187,30 +190,39 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
   assert.ok(started);
   for (const caller of [f.operator, f.reader.caller])
     assert.deepEqual(facts((await f.sections(caller, first.id))[0]), {
-      Standing: [
-        { actor: reviewer.caller.actorId, prefix: 'With ', unnamed: 'Claimed' },
-        ' · ',
-        open(requested.id),
-      ],
+      Standing: [{ actor: reviewer.caller.actorId, prefix: 'With ', unnamed: 'Claimed' }],
       Requested: [{ ago: requested.createdAt }],
       'Claimed for': [{ since: started.createdAt }],
+      'Verdict page': [open(requested.id)],
     });
 
   // The verdict that sent the work back stays while the producer is on it again.
   const returned = await f.app.ctx.tasks.submitReview(reviewer.caller, f.sendBack(claimed, first));
   assert.equal(returned.workflow.state, 'in_progress');
-  assert.deepEqual(facts((await f.sections(f.operator, first.id))[0]), {
-    Standing: [{ state: 'needs_changes' }, ' · ', open(requested.id)],
+  const decided = (await f.sections(f.operator, first.id))[0];
+  assert.deepEqual(facts(decided), {
+    Standing: [{ state: 'needs_changes' }],
     Requested: [{ ago: requested.createdAt }],
     Verdict: ['Negative inputs produce the wrong sign.'],
     Checks: [{ count: 1, of: 2 }, ' not met'],
+    'Verdict page': [open(requested.id)],
   });
+  // The way to the review stands alone, as the last row's whole value, so the shell draws it
+  // at the size of a control; no other value carries a link.
+  assert.ok(decided.kind === 'facts');
+  assert.deepEqual(decided.rows.at(-1), { label: 'Verdict page', value: [open(requested.id)] });
+  assert.ok(
+    decided.rows
+      .slice(0, -1)
+      .every(({ value }) => value.every((part) => typeof part === 'string' || !('link' in part))),
+  );
 
   // Each new delivery is a new round; the ones before it are one line each, newest first.
   const second = await f.deliver(returned);
   const again = await f.app.ctx.reviews.get(f.operator, second.reviewId!);
   const reread = await f.sections(f.operator, first.id);
-  assert.deepEqual(facts(titled(reread, 'Review')).Standing, ['Unclaimed', ' · ', open(again.id)]);
+  assert.deepEqual(facts(titled(reread, 'Review')).Standing, ['Unclaimed']);
+  assert.deepEqual(facts(titled(reread, 'Review'))['Verdict page'], [open(again.id)]);
   assert.deepEqual(titled(reread, 'Earlier rounds'), {
     title: 'Earlier rounds',
     place: 'review',
@@ -229,11 +241,7 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
     await f.app.ctx.tasks.submitReview(reviewer.caller, f.sendBack(reclaimed, second)),
   );
   const latest = await f.sections(f.operator, first.id);
-  assert.deepEqual(facts(titled(latest, 'Review')).Standing, [
-    'Unclaimed',
-    ' · ',
-    open(third.reviewId!),
-  ]);
+  assert.deepEqual(facts(titled(latest, 'Review'))['Verdict page'], [open(third.reviewId!)]);
   const earlier = titled(latest, 'Earlier rounds');
   assert.ok(earlier?.kind === 'links');
   assert.deepEqual(
@@ -248,7 +256,7 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
   assert.deepEqual(await f.sections(f.operator, subject.id, 'nothing'), latest);
 });
 
-test('why nobody can take a review is said to an operator alone, and another project reads nothing of it', async (t) => {
+test('why nobody can take a review is said to an operator alone, in ink, and another project reads nothing of it', async (t) => {
   const f = await fixture(t);
   const proof = await f.app.ctx.artifacts.create(f.producer.caller, {
     title: 'Proof',
@@ -278,21 +286,39 @@ test('why nobody can take a review is said to an operator alone, and another pro
     requestId: 'certified',
   });
 
+  // The work's own card carries the red and whose move it is; the section says why, in ink,
+  // and keeps its place in the panel rather than sorting to the top.
   const [held] = await f.sections(f.operator, 'subject');
-  assert.equal(held.attention, true);
+  assert.equal(held.attention, undefined);
   assert.ok(held.kind === 'facts');
   assert.deepEqual(held.rows, [
-    { label: 'Standing', value: ['Unclaimed', ' · ', open(review.id)] },
-    {
-      label: 'No reviewer',
-      value: ['Every eligible reviewer contributed to this work · An operator provides one'],
-      attention: true,
-    },
+    { label: 'Standing', value: ['Unclaimed'] },
+    { label: 'No reviewer', value: ['Every eligible reviewer contributed to this work'] },
     { label: 'Requested', value: [{ ago: review.createdAt }] },
+    { label: 'Verdict page', value: [open(review.id)] },
   ]);
   const [read] = await f.sections(f.reader.caller, 'subject');
   assert.equal(read.attention, undefined);
-  assert.deepEqual(Object.keys(facts(read)), ['Standing', 'Requested']);
+  assert.deepEqual(Object.keys(facts(read)), ['Standing', 'Requested', 'Verdict page']);
+
+  // A domain names a gate only in words; anything else it answers leaves the standing bare.
+  let named: unknown = { [review.id]: ' ', elsewhere: 'Design' };
+  t.after(
+    f.app.ctx.reviews.registerSubmitOwner({
+      id: 'gated',
+      owns: async () => false,
+      submit: async () => null,
+      gates: async () => named as Record<string, string>,
+    }),
+  );
+  assert.deepEqual(facts((await f.sections(f.operator, 'subject'))[0]).Standing, ['Unclaimed']);
+  named = Object.assign(Object.create({ [review.id]: 'Design' }), {});
+  assert.deepEqual(facts((await f.sections(f.operator, 'subject'))[0]).Standing, ['Unclaimed']);
+  named = { [review.id]: 'Design' };
+  assert.deepEqual(facts((await f.sections(f.operator, 'subject'))[0]).Standing, [
+    'Design · ',
+    'unclaimed',
+  ]);
 
   const elsewhere = await f.app.ctx.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Op' });
   assert.deepEqual(
@@ -304,6 +330,130 @@ test('why nobody can take a review is said to an operator alone, and another pro
     [],
   );
   assert.deepEqual(await f.sections(f.operator), []);
+});
+
+test('an experiment names the gate each review read, in the standing and in every earlier round', async (t) => {
+  const f = await fixture(t);
+  const reviewer = await f.issue('reviewer');
+  const plan =
+    '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change should improve validation accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.';
+  const report =
+    '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
+  let sequence = 0;
+  const request = () => `experiment-${++sequence}`;
+  let experiment = await f.app.ctx.experiments.create(f.operator, {
+    name: 'ablate-retrieval-depth',
+    intent: 'Does retrieval depth change held-out accuracy?',
+    requestId: request(),
+  });
+  const attach = async (role: ExperimentAttach['role'], path: string, content: string) => {
+    const artifact = await f.app.ctx.artifacts.create(f.operator, {
+      title: role,
+      content,
+      mediaType: path.endsWith('.md') ? 'text/markdown' : 'application/json',
+    });
+    await f.app.ctx.experiments.attach(f.operator, {
+      experimentId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      attemptIndex: experiment.attempt.index,
+      artifactId: artifact.id,
+      role,
+      path,
+      requestId: request(),
+    });
+    experiment = await f.app.ctx.experiments.get(f.operator, experiment.id);
+  };
+  const submit = async (transition: 'submit_design' | 'submit_results') => {
+    experiment = await f.app.ctx.experiments.transition(f.operator, {
+      experimentId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      transition,
+      requestId: request(),
+    });
+    return experiment.reviewId!;
+  };
+  const design = async () => {
+    await attach('feasibility', 'feasibility.json', feasibilityStatement());
+    await attach('plan', 'design/plan.md', plan);
+    return await submit('submit_design');
+  };
+  const judge = async (reviewId: string, verdict: 'pass' | 'needs_changes') => {
+    const review = await f.app.ctx.reviews.start(reviewer.caller, reviewId);
+    experiment = (await f.app.ctx.reviews.apply(reviewer.caller, {
+      reviewId: review.id,
+      claimId: review.claimId!,
+      expectedRevision: experiment.workflow.revision,
+      verdict,
+      notes: 'Independently checked the retained design.',
+      synopsis: 'The design has been independently assessed.',
+      findings: review.criteria.map((_, index) => ({
+        criterionNumber: index + 1,
+        status: verdict === 'pass' ? 'met' : 'not_met',
+        evidenceIds: citedEvidence(experiment, review, index + 1),
+        notes: 'I inspected the retained evidence for this criterion.',
+      })),
+      requestId: request(),
+    })) as Experiment;
+  };
+  const read = async () => {
+    const sections = await f.sections(f.operator, experiment.id);
+    const earlier = titled(sections, 'Earlier rounds');
+    return {
+      standing: facts(titled(sections, 'Review')).Standing,
+      earlier: earlier?.kind === 'links' ? earlier.rows.map(({ name }) => name) : [],
+    };
+  };
+
+  const first = await design();
+  assert.deepEqual(await read(), { standing: ['Design · ', 'unclaimed'], earlier: [] });
+  await judge(first, 'needs_changes');
+  assert.equal(experiment.workflow.state, 'planned');
+  await judge(await design(), 'pass');
+  assert.equal(experiment.workflow.state, 'running');
+  // A monitor reads that the design passed, not that the experiment did.
+  assert.deepEqual(await read(), {
+    standing: ['Design · ', { state: 'pass' }],
+    earlier: ['Design · needs changes'],
+  });
+
+  await attach('result', 'result.json', '{"accuracy":0.5}');
+  await attach('report', 'report.md', report);
+  await submit('submit_results');
+  assert.deepEqual(await read(), {
+    standing: ['Results · ', 'unclaimed'],
+    earlier: ['Design · pass', 'Design · needs changes'],
+  });
+  // A task is reviewed at one gate, so it names none.
+  const task = await f.deliver(await f.task());
+  assert.deepEqual(facts((await f.sections(f.operator, task.id))[0]).Standing, ['Unclaimed']);
+
+  // The gate is read inside ui.running_panel's snapshot as well, for a reader too.
+  t.after(
+    f.app.ctx.ui.contribute({
+      owner: 'probe',
+      kinds: ['work'],
+      panel: async () => ({
+        header: { kind: 'Experiment', title: 'Probe', says: [] },
+        sections: [],
+        actions: [],
+        live: false,
+      }),
+    }),
+  );
+  const response = await fetch(`${f.app.ctx.api.url}/tools/ui.running_panel`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${f.reader.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ key: `work:${experiment.id}` }),
+  });
+  assert.equal(response.status, 200);
+  const { sections } = ((await response.json()) as { result: RunningPanel }).result;
+  assert.deepEqual(facts(titled(sections, 'Review')).Standing, ['Results · ', 'unclaimed']);
+  const rounds = titled(sections, 'Earlier rounds');
+  assert.ok(rounds?.kind === 'links');
+  assert.deepEqual(
+    rounds.rows.map(({ name }) => name),
+    ['Design · pass', 'Design · needs changes'],
+  );
 });
 
 test('an agent that took the review with its lease reads as an agent, and the sidebar carries the section inside the tool snapshot', async (t) => {
@@ -329,8 +479,6 @@ test('an agent that took the review with its lease reads as an agent, and the si
   const standing = facts((await f.sections(f.operator, delivered.id))[0]);
   assert.deepEqual(standing.Standing, [
     { actor: agent.actorId, prefix: 'With ', unnamed: 'With an agent' },
-    ' · ',
-    open(delivered.reviewId!),
   ]);
   assert.deepEqual(standing['Claimed for'], [{ since: claim.createdAt }]);
 
@@ -422,10 +570,11 @@ test('a pass on waivers says so, notes stand in for a missing synopsis, and a su
     ],
   });
   assert.deepEqual(facts(review), {
-    Standing: [{ state: 'pass' }, ' · ', open('review_current')],
+    Standing: [{ state: 'pass' }],
     Requested: [{ ago: base.createdAt }],
     Verdict: ['Both waivers are recorded with their reasons.'],
     Checks: [{ count: 2, of: 3 }, ' waived'],
+    'Verdict page': [open('review_current')],
   });
   assert.ok(earlier.kind === 'links');
   assert.equal(earlier.rows[0].name, 'Superseded');
@@ -435,11 +584,79 @@ test('a pass on waivers says so, notes stand in for a missing synopsis, and a su
     earlier: [],
   });
   assert.deepEqual(facts(claimed), {
-    Standing: [
-      { actor: 'actor_reviewer', prefix: 'With ', unnamed: 'Claimed' },
-      ' · ',
-      open('review_current'),
-    ],
+    Standing: [{ actor: 'actor_reviewer', prefix: 'With ', unnamed: 'Claimed' }],
     Requested: [{ ago: base.createdAt }],
+    'Verdict page': [open('review_current')],
   });
+});
+
+test('a gate opens the standing and every earlier round, and the clause after it runs on in lower case', () => {
+  const current = {
+    id: 'review_results',
+    projectId: 'project_1',
+    subjectId: 'wf_1',
+    subjectRevision: 4,
+    producerId: 'actor_producer',
+    artifactIds: ['art_1'],
+    criteria: ['One'],
+    snapshotHash: 'hash',
+    status: 'requested',
+    reviewerId: null,
+    claimId: null,
+    claimGeneration: 0,
+    recovery: null,
+    verdict: null,
+    notes: null,
+    synopsis: null,
+    findings: [],
+    evidence: {},
+    createdAt: '2026-09-25T10:00:00.000Z',
+  } as unknown as ReviewRequest;
+  const standing = (rounds: Omit<Parameters<typeof reviewSections>[0], 'earlier'>) =>
+    facts(reviewSections({ ...rounds, earlier: [] })[0]).Standing;
+  assert.deepEqual(standing({ current, gate: 'Results' }), ['Results · ', 'unclaimed']);
+  const started = { ...current, status: 'started', reviewerId: 'actor_reviewer' } as ReviewRequest;
+  assert.deepEqual(
+    standing({ current: started, gate: 'Results', claim: { at: current.createdAt, agent: true } }),
+    ['Results · ', { actor: 'actor_reviewer', prefix: 'with ', unnamed: 'with an agent' }],
+  );
+  assert.deepEqual(standing({ current: { ...started, reviewerId: null }, gate: 'Design' }), [
+    'Design · ',
+    'claimed',
+  ]);
+  assert.deepEqual(
+    standing({ current: { ...current, status: 'submitted', verdict: 'fail' }, gate: 'Design' }),
+    ['Design · ', { state: 'fail' }],
+  );
+  const [, earlier] = reviewSections({
+    current,
+    gate: 'Results',
+    earlier: [
+      {
+        id: 'review_b',
+        status: 'submitted',
+        verdict: 'pass',
+        createdAt: current.createdAt,
+        gate: 'Design',
+      },
+      {
+        id: 'review_a',
+        status: 'superseded',
+        verdict: null,
+        createdAt: current.createdAt,
+        gate: 'Design',
+      },
+      {
+        id: 'review_0',
+        status: 'submitted',
+        verdict: 'needs_changes',
+        createdAt: current.createdAt,
+      },
+    ],
+  });
+  assert.ok(earlier?.kind === 'links');
+  assert.deepEqual(
+    earlier.rows.map(({ name }) => name),
+    ['Design · pass', 'Design · superseded', 'Needs changes'],
+  );
 });
