@@ -395,7 +395,7 @@ test('a lease quiet past the idle notice needs a person, and so does one whose m
   assert.equal(machine.attention, true, 'the section that says why comes first');
   assert.equal(panel.sections[0].title, 'Machine');
   assert.deepEqual(facts(panel, 'Machine').Presence, ['offline · last seen ', { ago: seen }]);
-  assert.ok(facts(panel, 'Lease')['Lapses in'], 'a lease nothing renews says when it lapses');
+  assert.ok(facts(panel, 'Lease')['Lapses'], 'a lease nothing renews says when it lapses');
 
   // Its row on the work it is on says what its node says.
   const [rows] = await f.sessions.runningWork(f.reader, [session.instanceId]);
@@ -664,7 +664,7 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
   assert.ok(stream.items.slice(1).every((item) => 'call' in item && item.state === 'succeeded'));
 
   assert.deepEqual(facts(panel, 'Lease'), {
-    'Ends in': [{ until: session.hardDeadline }],
+    Ends: [{ until: session.hardDeadline }],
   });
   const work = section(panel, 'Work')!;
   assert.deepEqual(work.kind === 'links' && work.rows, [
@@ -745,8 +745,8 @@ test('a short stream carries the lease’s own moments, and a lease is offered o
   let panel = await f.panel(f.owner, `session:${leased.id}`);
   assert.deepEqual(panel.header.says, ['Offered ', { since: offeredAt }, ' · Producer']);
   assert.deepEqual(facts(panel, 'Lease'), {
-    'Ends in': [{ until: leased.hardDeadline }],
-    'Lapses in': [{ until: leased.expiresAt }],
+    Ends: [{ until: leased.hardDeadline }],
+    Lapses: [{ until: leased.expiresAt }],
   });
   f.advance(2000);
   const worker = await f.sessions.authenticate(input.secret);

@@ -606,7 +606,7 @@ test('a session that binds the machine absorbs its node, and the Fleet machine s
                 title: 'Lease',
                 place: 'activity',
                 kind: 'facts',
-                rows: [{ label: 'Ends in', value: [{ until: '2026-09-22T04:00:00Z' }] }],
+                rows: [{ label: 'Ends', value: [{ until: '2026-09-22T04:00:00Z' }] }],
               },
             ],
             actions: [

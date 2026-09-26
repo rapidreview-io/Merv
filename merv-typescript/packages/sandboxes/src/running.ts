@@ -18,6 +18,10 @@ import {
 } from '@merv/contracts';
 import type { SandboxMachines, SandboxRow } from './types.js';
 
+/** Whole gigabytes read as a count ('1,440'); a fraction keeps one decimal ('7.5'). */
+const gigabytes = (gb: number) =>
+  Number.isInteger(gb) ? gb.toLocaleString('en-US') : gb.toFixed(1);
+
 /**
  * The Running page's sandboxes: what each machine is, what it is doing, what it costs, and
  * when it needs a person, read from the rows and records SandboxService holds in memory.
@@ -217,7 +221,7 @@ function attentionOf(machine: Machine, now: number): RunningAttention | undefine
   if (!leaseEnding(machine, now)) return undefined;
   return Date.parse(machine.lease!) <= now
     ? { says: ['Lease ended ', { ago: machine.lease! }], who: WHO }
-    : { says: ['Lease ends in ', { until: machine.lease! }], who: WHO };
+    : { says: ['Lease ', { until: machine.lease! }], who: WHO };
 }
 
 /** Machines in flight: stopped ones never, failed ones for an hour after they failed. */
@@ -349,7 +353,7 @@ export function machinePanel(input: MachinePanelInput): RunningPanelPart | null 
   else if (machine.rate) now.push({ label: 'Rate', value: [{ money: null, rate: machine.rate }] });
   if (!absorbed && machine.lease && LEASED.has(machine.state))
     now.push({
-      label: 'Lease left',
+      label: 'Lease',
       value: [
         { until: machine.lease, ...(machine.leaseSeconds ? { of: machine.leaseSeconds } : {}) },
       ],
@@ -375,7 +379,7 @@ export function machinePanel(input: MachinePanelInput): RunningPanelPart | null 
     machine.memoryMb === undefined
       ? undefined
       : machine.memoryMb >= 1024
-        ? `${(machine.memoryMb / 1024).toFixed(1)} GB`
+        ? `${gigabytes(machine.memoryMb / 1024)} GB`
         : `${machine.memoryMb} MiB`;
   const size = [
     machine.gpus > 0 ? `${machine.gpus}× ${machine.gpu ?? 'GPU'}` : undefined,

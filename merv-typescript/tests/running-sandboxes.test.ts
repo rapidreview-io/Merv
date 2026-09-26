@@ -402,7 +402,7 @@ test("red is a person's move: failed within the hour, connection lost, a running
   await filled();
   const answer = await board();
   assert.deepEqual(minutes(nodeOf(answer, keyOf('dunes-eval'))!.attention), {
-    says: ['Lease ends in ', { until: 6 }],
+    says: ['Lease ', { until: 6 }],
     who: WHO,
   });
   assert.deepEqual(minutes(nodeOf(answer, keyOf('ember-retry'))!.attention), {
@@ -475,10 +475,10 @@ test('a sidebar reads cost, lease and size at once, and what runs and what holds
   const aurora = record(seeds[0]);
   assert.deepEqual(minutes(rows(first, 'Now')), [
     { label: 'Cost so far', value: [{ money: aurora.cost_so_far, rate: aurora.hourly_price }] },
-    { label: 'Lease left', value: [{ until: 160, of: 14400 }] },
+    { label: 'Lease', value: [{ until: 160, of: 14400 }] },
   ]);
   assert.deepEqual(rows(first, 'Machine'), [
-    { label: 'Size', value: ['8× H100 · 96 vCPU · 1440.0 GB'] },
+    { label: 'Size', value: ['8× H100 · 96 vCPU · 1,440 GB'] },
     { label: 'Provider', value: ['runpod · us-east-1'] },
   ]);
   assert.equal(first.route, '/sandboxes/sbx_aurora');
@@ -508,7 +508,7 @@ test('a sidebar reads cost, lease and size at once, and what runs and what holds
 
   // A running job under a short lease: the lease is why the sidebar is red, and it reads first.
   const dunes = await panel(keyOf('dunes-eval'));
-  assert.equal(dunes.header.attention?.says[0], 'Lease ends in ');
+  assert.equal(dunes.header.attention?.says[0], 'Lease ');
   assert.equal(dunes.sections[0].title, 'Now');
   assert.equal(dunes.sections[0].attention, true);
   assert.equal(rows(dunes, 'Now')[1].attention, true);
@@ -616,7 +616,7 @@ test('after Extend lease the sidebar and the board read the answer at once, and 
   await until(() => ctx.sandboxes.machine(projectId, 'sbx_dunes') !== null, 'the record');
   const short = await panel(key, producer);
   assert.deepEqual(minutes(rows(short, 'Now')[1]), {
-    label: 'Lease left',
+    label: 'Lease',
     value: [{ until: 6, of: 14400 }],
     attention: true,
   });
@@ -628,7 +628,7 @@ test('after Extend lease the sidebar and the board read the answer at once, and 
   const extended = await panel(key, producer);
   assert.equal(extended.header.attention, undefined, 'the lease is no longer red');
   assert.deepEqual(minutes(rows(extended, 'Now')[1]), {
-    label: 'Lease left',
+    label: 'Lease',
     value: [{ until: 66, of: 3960 }],
   });
   assert.equal(extended.sections[0].attention, undefined);
@@ -857,7 +857,7 @@ test("the shipped fake's machines read the way the design draws them", async (t)
   assert.deepEqual(face('aurora'), ['8× H100', 'Running ', null]);
   assert.deepEqual(face('basalt'), ['A100', 'Idle ', null]);
   assert.deepEqual(face('cinder'), ['4× H100', 'Provisioning ', null]);
-  assert.deepEqual(face('dunes'), ['2× L40S', 'Running ', 'Lease ends in ']);
+  assert.deepEqual(face('dunes'), ['2× L40S', 'Running ', 'Lease ']);
   assert.deepEqual(face('ember'), ['8× H100', 'Failed', 'Failed ']);
   assert.equal(nodeOf(answer, 'sandbox:sbx_flint'), undefined);
   assert.equal(answer.lanes.hardware.needsYou, 2);

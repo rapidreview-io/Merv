@@ -617,9 +617,9 @@ export class SessionRunning {
       // When it must end, and, while nothing renews it, when it lapses and returns the work.
       const terms: RunningFact[] = live
         ? [
-            { label: 'Ends in', value: [{ until: row.hard_deadline }] },
+            { label: 'Ends', value: [{ until: row.hard_deadline }] },
             ...(row.status === 'offered' || silent
-              ? [{ label: 'Lapses in', value: [{ until: row.expires_at }] }]
+              ? [{ label: 'Lapses', value: [{ until: row.expires_at }] }]
               : []),
           ]
         : [
