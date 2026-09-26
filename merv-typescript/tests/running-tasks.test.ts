@@ -329,6 +329,32 @@ test('a waiting task is dashed with its edge, and turns red with who ends the wa
   ]);
 });
 
+test('a task that ended with a failed prerequisite still lists it, without the red', async (t) => {
+  const f = await fixture(t);
+  const source = await f.create('Collect source archive');
+  const waiting = await f.create('Rebuild citation index', { dependsOn: [source.id] });
+  await f.markFailed(source);
+  // The producer ends it, as the red sentence asks, and nobody has a move left.
+  await f.markFailed(waiting);
+  const panel = await f.panel(waiting);
+  assert.deepEqual(panel.header, {
+    kind: 'Task',
+    title: 'Rebuild citation index',
+    says: [{ state: 'failed' }],
+  });
+  assert.equal(panel.sections[0]?.title, 'Progress');
+  const waits = panel.sections.find(({ title }) => title === 'Waits on');
+  assert.equal(waits?.attention, undefined);
+  assert.deepEqual(waits?.kind === 'links' && waits.rows, [
+    {
+      to: { key: `work:${source.id}`, route: `/tasks/${source.id}` },
+      kind: 'Task',
+      name: 'Collect source archive',
+      says: [{ state: 'failed' }],
+    },
+  ]);
+});
+
 test('used review rounds turn a task red, naming the independent reviewer or an operator', async (t) => {
   const f = await fixture(t);
   const task = await f.create('Rebuild citation index');
@@ -362,6 +388,19 @@ test('used review rounds turn a task red, naming the independent reviewer or an 
     ],
   );
   assert.equal(checks.aside?.[0], 'Delivered ');
+
+  // An independent reviewer takes the review by hand, which is the move the red asked for, so
+  // the card says who has it and needs nobody.
+  await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
+  const taken = await f.board();
+  const claimed = taken.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
+  assert.equal(claimed?.attention, undefined);
+  assert.deepEqual(claimed?.lines, [
+    ['In review · ', { actor: f.reviewer.caller.actorId, prefix: 'with ', unnamed: 'claimed' }],
+  ]);
+  assert.equal(claimed?.rank, 1);
+  assert.equal(taken.lanes.work.needsYou, 0);
+  assert.equal((await f.panel(task)).header.attention, undefined);
 });
 
 test('a task another plugin holds back reads Waiting on a dashed card, never Ready', async (t) => {
@@ -579,6 +618,12 @@ test('a task that needs a person says so in the order that decides it', () => {
     })?.says,
     ['Every review round is used'],
   );
+  // A review claimed by hand has taken the move; one a leased worker holds has not.
+  const started = { ...task.review!, status: 'started' as const, reviewerId: 'actor_2' };
+  assert.equal(attention({ review: started, roundsUsed: true }), undefined);
+  assert.deepEqual(attention({ review: started, roundsUsed: true, lease: 'review' })?.says, [
+    'Every review round is used',
+  ]);
   assert.deepEqual(attention({ state: 'suspended', review: null }), {
     says: ['Suspended'],
     who: 'A signed-in operator allows another review round',

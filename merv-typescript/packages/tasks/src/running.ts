@@ -78,6 +78,12 @@ function holding(task: TaskStanding): Holding {
   return task.blocked ? { at: 'waiting' } : { at: 'ready' };
 }
 
+/** A failed prerequisite needs a person only while the task is being worked on. */
+const failedPrerequisite = (task: TaskStanding) =>
+  task.state === 'in_progress'
+    ? task.dependencies.find((dependency) => dependency.failed)
+    : undefined;
+
 /** What needs a person, strongest first, and who ends the wait. */
 function need(task: TaskStanding): RunningAttention | undefined {
   if (ended(task.state)) return undefined;
@@ -85,17 +91,16 @@ function need(task: TaskStanding): RunningAttention | undefined {
     route: `/reviews/${encodeURIComponent(task.review.id)}`,
     text: 'Open the review',
   };
-  const failed =
-    task.state === 'in_progress'
-      ? task.dependencies.find((dependency) => dependency.failed)
-      : undefined;
+  const failed = failedPrerequisite(task);
   if (failed)
     return {
       says: [short(failed.name), ' failed'],
       who: 'The producer ends this task, or its cycle replans it',
     };
-  // A producer can never review its own work, so the hand review is an independent one.
-  if (task.roundsUsed)
+  // A producer can never review its own work, so the hand review is an independent one. Once
+  // a reviewer has claimed it by hand the move is made, and the card says who has it.
+  const byHand = task.review?.status === 'started' && task.lease === null;
+  if (task.roundsUsed && !byHand)
     return {
       says: ['Every review round is used'],
       who: 'An independent reviewer reviews it by hand, or an operator allows another round',
@@ -222,6 +227,12 @@ export function taskPanel(
   const attention = need(task);
   const named = (row: RunningLinkRow): RunningLinkRow => ({ ...row, name: short(row.name) });
   const { waitsOn, unblocks } = dependencyRows(record.dependencies, record.dependents);
+  // A failed prerequisite is why the task needs a person, but only while it is worked on: the
+  // row still says failed after that, without the red.
+  const failing = !!failedPrerequisite(task);
+  const waits = waitsOn.map(({ attention: red, ...row }) =>
+    named(failing && red ? { ...row, attention: red } : row),
+  );
   // A delivery's claims belong to it: once a review sends the work back they are withdrawn.
   const claimed = task.state === 'in_review' || task.state === 'done';
   const claims = new Map(
@@ -237,15 +248,14 @@ export function taskPanel(
     .at(-1);
   const sections: RunningSection[] = [
     { title: 'Progress', place: 'progress', kind: 'ladder', graph },
-    ...(waitsOn.length
+    ...(waits.length
       ? [
           {
             title: 'Waits on',
             place: 'relations' as const,
             kind: 'links' as const,
-            rows: waitsOn.map(named),
-            // A failed prerequisite is why the task needs a person.
-            ...(waitsOn.some((row) => row.attention) ? { attention: true } : {}),
+            rows: waits,
+            ...(waits.some((row) => row.attention) ? { attention: true } : {}),
           },
         ]
       : []),
