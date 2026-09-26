@@ -195,6 +195,8 @@ async function composed(t: TestContext) {
   const ctx = new Context();
   const ui = new UiRegistry();
   ctx.provide('ui', ui);
+  // The adapter asks scope only whether a Running reader may extend or release a machine.
+  ctx.provide('scope', { require: async () => undefined } as never);
   const fiber = ctx.plugin(sandboxesPlugin, configuration);
   ctx.plugin(sandboxesUiPlugin);
   t.after(() => ctx.fiber.dispose());
