@@ -1,16 +1,16 @@
 {
   "snapshot": "2026-09-26",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 63,
-  "serviceProviders": 28,
-  "toolAdapters": 16,
+  "pluginCount": 65,
+  "serviceProviders": 29,
+  "toolAdapters": 17,
   "uiAdapters": 16,
   "apiAdapters": 3,
   "defaultEntries": 49,
   "apiEntries": 36,
-  "serverPlugins": 62,
+  "serverPlugins": 64,
   "machinePlugins": 1,
-  "directDependencyCount": 173,
+  "directDependencyCount": 175,
   "optionalDependencyCount": 16,
   "directConsumers": {
     "api": 5,
@@ -38,8 +38,9 @@
     "sessions": 5,
     "state": 19,
     "tasks": 4,
-    "tools": 22,
+    "tools": 23,
     "ui": 16,
+    "web": 1,
     "workflows": 8
   },
   "plugins": [
@@ -938,6 +939,31 @@
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-web",
+      "source": "packages/web/src/index.ts",
+      "provides": [
+        "web"
+      ],
+      "requires": [],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-web-tools",
+      "source": "packages/web/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "web",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": false
     },
     {
       "plugin": "merv-workflow-tools",

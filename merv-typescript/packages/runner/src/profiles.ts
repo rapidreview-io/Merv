@@ -216,6 +216,10 @@ const PROJECT_READS = [
   'research.list',
   'research.get',
   'research.lineage',
+  // Internet search, where the deployment has a key: a name the server does not list is only
+  // absent from the worker's tools. Codex's own hosted web search stays disabled below.
+  'web.search',
+  'web.extract',
 ] as const;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';

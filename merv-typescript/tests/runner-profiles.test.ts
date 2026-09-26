@@ -281,6 +281,8 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.deepEqual(enabled.slice(0, 3), ['task.get', 'task.checkpoint', '_nisa.search']);
   for (const read of ['project.records', 'paper.read', 'experiment.get_state', 'feed.list'])
     assert.ok(enabled.includes(read), read);
+  // Internet search reaches a Codex worker as Merv's own read, never as Codex's hosted search.
+  for (const read of ['web.search', 'web.extract']) assert.ok(enabled.includes(read), read);
   assert.match(settings.mcp_servers, /"task.checkpoint"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /"project.records"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /url="http:\/\/127.0.0.1:8080\/mcp"/);

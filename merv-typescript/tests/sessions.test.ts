@@ -15,7 +15,11 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { z } from 'zod';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { WebService } from '../packages/web/src/index.js';
+import { webTools } from '../packages/web/src/tools.js';
+import type { WebSearch } from '../packages/web/src/types.js';
 import { openState } from './fixtures/state.js';
+import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext, legacySchema = false) {
@@ -660,6 +664,28 @@ test('session metadata and tool preparation cannot adopt a replacement worker', 
       await assert.rejects(pending, { code: 'forbidden' });
     });
   }
+});
+
+test('a leased worker lists and runs web search, an open read its policy never names', async (t) => {
+  const tavily = await provider(t, () => ({ body: tavilyResults(1) }));
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const caller = await f.sessions.authenticate(token);
+  const tools = new ToolRegistry(f.scope);
+  t.after(() => tools.close());
+  const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
+  for (const tool of webTools(web)) tools.register(tool);
+  tools.registerSessionPolicy(f.sessions);
+  assert.deepEqual(
+    (await tools.describe(caller)).map(({ name }) => name),
+    ['web.extract', 'web.search'],
+  );
+  const result = (await tools.call('web.search', caller, { query: 'q' })) as WebSearch;
+  assert.deepEqual(
+    result.results.map(({ url }) => url),
+    ['https://example.com/0'],
+  );
+  assert.equal(tavily.seen.length, 1);
 });
 
 test('tool policy replacement fences real session invocations and cleanup releases original authority', async (t) => {

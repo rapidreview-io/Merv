@@ -60,6 +60,8 @@ flowchart BT
     tasks["tasks"]
     tools["tools"]
     ui["ui"]
+    web["web"]
+    merv_web_tools["merv-web-tools"]
     merv_workflow_tools["merv-workflow-tools"]
     workflows["workflows"]
   end
@@ -235,6 +237,8 @@ flowchart BT
   tools --> scope
   ui --> api
   ui --> tools
+  merv_web_tools --> web
+  merv_web_tools --> tools
   merv_workflow_tools --> workflows
   merv_workflow_tools --> tools
   workflows --> state

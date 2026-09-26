@@ -455,3 +455,70 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     assert.ok(!result.stderr.includes('h'.repeat(42)));
   }
 });
+
+test('web search is composed only from a Tavily key or a named fallback key, and renders names only', (t) => {
+  const { output, run, plugin } = renderer(t);
+  const key = 'tvly-dev-fixtureKey123';
+  const provider = 'fixture-provider-key';
+  const secrets = () => {
+    const rendered = readFileSync(output, 'utf8');
+    return rendered.includes(key) || rendered.includes(provider);
+  };
+  // No key, or an empty one, composes nothing.
+  for (const extra of [{}, { MERV_TAVILY_API_KEY: '' }]) {
+    assert.equal(run(extra).status, 0);
+    assert.equal(plugin('web'), undefined);
+    assert.equal(plugin('web-tools'), undefined);
+  }
+  assert.equal(run({ MERV_TAVILY_API_KEY: key }).status, 0);
+  assert.deepEqual(plugin('web-tools'), { id: 'web-tools', name: '@merv/web/tools' });
+  assert.deepEqual(plugin('web'), {
+    id: 'web',
+    name: '@merv/web',
+    config: { keyEnv: 'MERV_TAVILY_API_KEY', maxInFlight: 4, dailyCallsPerProject: 200 },
+  });
+  assert.equal(secrets(), false);
+  // The fallback spends the key a variable names, Pi's here, which the render never copies.
+  const fallback = {
+    MERV_WEB_FALLBACK_KEY_ENV: 'PI_PROVIDER_KEY',
+    PI_PROVIDER_KEY: provider,
+  };
+  assert.equal(
+    run({
+      MERV_TAVILY_API_KEY: key,
+      ...fallback,
+      MERV_WEB_FALLBACK_MODEL: 'gpt-6-sol',
+      MERV_WEB_MAX_IN_FLIGHT: '2',
+      MERV_WEB_DAILY_CALLS_PER_PROJECT: '50',
+    }).status,
+    0,
+  );
+  assert.deepEqual(plugin('web').config, {
+    keyEnv: 'MERV_TAVILY_API_KEY',
+    fallback: { keyEnv: 'PI_PROVIDER_KEY', model: 'gpt-6-sol' },
+    maxInFlight: 2,
+    dailyCallsPerProject: 50,
+  });
+  assert.equal(secrets(), false);
+  // The fallback alone serves search.
+  assert.equal(run(fallback).status, 0);
+  assert.deepEqual(plugin('web').config.fallback, { keyEnv: 'PI_PROVIDER_KEY' });
+  // A refusal names the variable, never its value.
+  for (const [broken, message] of [
+    [{ MERV_TAVILY_API_KEY: 'sk-not-a-tavily-key' }, 'Missing or invalid MERV_TAVILY_API_KEY'],
+    [{ MERV_TAVILY_API_KEY: `${key} ` }, 'Missing or invalid MERV_TAVILY_API_KEY'],
+    [{ MERV_WEB_FALLBACK_KEY_ENV: 'PI_PROVIDER_KEY' }, 'Web search fallback key is unavailable'],
+    [{ MERV_WEB_FALLBACK_KEY_ENV: 'PI PROVIDER KEY' }, 'Invalid MERV_WEB_FALLBACK_KEY_ENV'],
+    [{ ...fallback, MERV_WEB_FALLBACK_MODEL: 'gpt 6' }, 'Invalid MERV_WEB_FALLBACK_MODEL'],
+    [
+      { MERV_TAVILY_API_KEY: key, MERV_WEB_DAILY_CALLS_PER_PROJECT: '0' },
+      'Invalid MERV_WEB_DAILY_CALLS_PER_PROJECT',
+    ],
+    [{ MERV_TAVILY_API_KEY: key, MERV_WEB_MAX_IN_FLIGHT: '65' }, 'Invalid MERV_WEB_MAX_IN_FLIGHT'],
+  ]) {
+    const result = run(broken);
+    assert.notEqual(result.status, 0, message);
+    assert.match(result.stderr, new RegExp(`Error: ${message}\\n`));
+    assert.ok(!/sk-not-a-tavily-key|tvly-dev-fixture|fixture-provider-key/.test(result.stderr));
+  }
+});

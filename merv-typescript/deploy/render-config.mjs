@@ -329,6 +329,40 @@ if (piEnabled) {
     },
   );
 }
+// Internet search for every agent, as Nisa's agents search: Tavily, then OpenAI's hosted web
+// search when Tavily refuses. Absent until the operator installs a key, so a deployment without
+// one composes exactly the plugins it composed before.
+const webFallbackKeyEnv = process.env.MERV_WEB_FALLBACK_KEY_ENV;
+if (process.env.MERV_TAVILY_API_KEY || webFallbackKeyEnv !== undefined) {
+  const tavily = process.env.MERV_TAVILY_API_KEY;
+  if (tavily !== undefined && tavily !== '' && !/^tvly-[A-Za-z0-9_-]{8,256}$/.test(tavily)) {
+    throw new Error('Missing or invalid MERV_TAVILY_API_KEY');
+  }
+  let fallback;
+  if (webFallbackKeyEnv !== undefined) {
+    // Only a name: MERV_PI_MODEL_API_KEY spends Pi's key, or name one of the fallback's own.
+    const keyEnv = envName('MERV_WEB_FALLBACK_KEY_ENV');
+    if (!process.env[keyEnv]?.trim()) throw new Error('Web search fallback key is unavailable');
+    const model = process.env.MERV_WEB_FALLBACK_MODEL;
+    if (model !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(model)) {
+      throw new Error('Invalid MERV_WEB_FALLBACK_MODEL');
+    }
+    fallback = { keyEnv, ...(model !== undefined && { model }) };
+  }
+  config.plugins.push(
+    { id: 'web-tools', name: '@merv/web/tools' },
+    {
+      id: 'web',
+      name: '@merv/web',
+      config: {
+        keyEnv: 'MERV_TAVILY_API_KEY',
+        ...(fallback && { fallback }),
+        maxInFlight: integer('MERV_WEB_MAX_IN_FLIGHT', 4, 1, 64),
+        dailyCallsPerProject: integer('MERV_WEB_DAILY_CALLS_PER_PROJECT', 200, 1, 100_000),
+      },
+    },
+  );
+}
 const legacySourceId = process.env.MERV_TS_LEGACY_SOURCE_ID;
 if (legacySourceId !== undefined) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {

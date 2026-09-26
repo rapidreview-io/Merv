@@ -17,9 +17,9 @@
     {
       "id": "mounts",
       "label": "Integrations",
-      "caption": "Remote tools & compute",
-      "members": ["mounts", "sandboxes"],
-      "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Each integration owns its upstream credentials; availability is not proof of remote health."
+      "caption": "Remote tools, compute & search",
+      "members": ["mounts", "sandboxes", "web"],
+      "description": "External Mounts connects independent MCP servers to the local tool registry. Sandboxes connects directly to the remote compute service over HTTP, publishing its views and lease controls. Web searches the internet through Tavily, with OpenAI's hosted web search as its fallback. Each integration owns its upstream credentials; availability is not proof of remote health."
     },
     {
       "id": "research",
@@ -96,6 +96,10 @@
     "sandboxes": {
       "label": "Sandboxes",
       "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies."
+    },
+    "web": {
+      "label": "Web",
+      "purpose": "Searches the internet and reads pages for every agent, as Nisa's agents do: Tavily first, OpenAI's hosted web search when Tavily refuses its key. Pages are read only through Tavily, never from Merv's network. Its tools are open-world reads, and it counts each project's calls per day in memory. Composed only where a key is configured; it has no injected Cordis dependencies."
     },
     "tasks": {
       "label": "Tasks",

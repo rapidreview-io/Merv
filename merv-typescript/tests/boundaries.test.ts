@@ -15,6 +15,7 @@ import { statePlugin } from '@merv/state';
 import { sandboxesPlugin } from '@merv/sandboxes';
 import { tasksPlugin } from '@merv/tasks';
 import { toolsPlugin } from '@merv/api';
+import { webPlugin } from '@merv/web';
 import { workflowsPlugin } from '@merv/workflows';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
@@ -94,6 +95,8 @@ const capabilities: Record<string, readonly string[]> = {
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // A proxy for rows a service outside this process publishes: no Merv capability at all.
   sandboxes: [],
+  // Internet search through outside providers; its budgets live in memory.
+  web: [],
   // Machines on demand through Sandboxes; the workflow adapter adds Sessions only when installed.
   fleet: ['state', 'scope', 'sandboxes'],
   fleetWorkflow: ['fleet', 'sessions', 'scope', 'api', 'state'],
@@ -749,6 +752,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'scope',
       'sessions',
       'tasks',
+      'web',
       'workflows',
     ],
     ui: [
@@ -893,15 +897,18 @@ test('each service boots with only its declared dependency closure and without A
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const credentialEnv = 'MERV_BOUNDARY_RUNNER_CREDENTIAL';
   const sandboxUrlEnv = 'MERV_BOUNDARY_SANDBOX_URL';
+  const webKeyEnv = 'MERV_BOUNDARY_WEB_KEY';
   const previousCredential = process.env[credentialEnv];
   const previousSandboxUrl = process.env[sandboxUrlEnv];
   process.env[credentialEnv] = 'synthetic-boundary-source';
   process.env[sandboxUrlEnv] = 'http://127.0.0.1:1';
+  process.env[webKeyEnv] = 'tvly-synthetic';
   t.after(() => {
     if (previousCredential === undefined) delete process.env[credentialEnv];
     else process.env[credentialEnv] = previousCredential;
     if (previousSandboxUrl === undefined) delete process.env[sandboxUrlEnv];
     else process.env[sandboxUrlEnv] = previousSandboxUrl;
+    delete process.env[webKeyEnv];
   });
   const plugins: Record<string, { plugin: any; config?: any }> = {
     domainEvents: { plugin: domainEventsPlugin },
@@ -925,6 +932,7 @@ test('each service boots with only its declared dependency closure and without A
     tools: { plugin: toolsPlugin },
     fleet: { plugin: fleetPlugin, config: {} },
     pi: { plugin: piPlugin, config: {} },
+    web: { plugin: webPlugin, config: { keyEnv: webKeyEnv, origin: 'http://127.0.0.1:1' } },
     sessions: { plugin: sessionsPlugin },
     code: { plugin: codePlugin },
     runner: {
