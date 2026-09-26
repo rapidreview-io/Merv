@@ -253,3 +253,80 @@ test('one derivation serves an experiment instance and a reflection instance', a
     assert.ok(graph.edges.every((item) => !item.traversals.length));
   }
 });
+
+test('without checks the graph is the record alone: no program callback runs and no edge carries a status', async (t) => {
+  const f = await fixture(t);
+  const author = await f.actor('Author');
+  const calls: string[] = [];
+  const rule = (name: string, states: string[], transitions: string[]) => ({
+    name,
+    states,
+    transitions,
+    tool: `audit.${name}`,
+    instruction: `Take ${name}.`,
+    requiresDependencies: name === 'submit',
+    suggested: name !== 'abandon',
+    arguments: () => (calls.push(`arguments ${name}`), {}),
+    check: () => void calls.push(`check ${name}`),
+  });
+  await f.app.ctx.workflows.register(definition, {
+    successStates: ['approved'],
+    describe: () => (calls.push('describe'), { label: 'Audit', references: [] }),
+    limits: [{ name: 'returns', from: 'in_review', actions: ['return'], max: 1 }],
+    actions: [
+      rule('submit', ['drafting'], ['submit']),
+      rule('abandon', ['drafting'], ['abandon']),
+      rule('verdict', ['in_review'], ['approve', 'return']),
+    ],
+  });
+  const first = await f.app.ctx.workflows.start(author, { workflow: 'audit', requestId: 'first' });
+  const waiting = await f.app.ctx.workflows.start(author, {
+    workflow: 'audit',
+    requestId: 'waiting',
+    dependsOn: [first.id],
+  });
+  const unchecked = async (instanceId: string) => {
+    calls.length = 0;
+    const graph = await f.app.ctx.workflows.process(author, instanceId, { checks: false });
+    assert.deepEqual(calls, [], 'no program callback runs');
+    return graph;
+  };
+  const drawn = (graph: ProcessGraph) => ({
+    ...graph,
+    nodes: graph.nodes.map((node) => ({ ...node, blockers: [] })),
+    edges: graph.edges.map((edge) => ({ ...edge, status: null, tool: null, blockers: [] })),
+  });
+
+  const pending = await unchecked(waiting.id);
+  assert.equal(pending.currentGate, 'dependencies_pending');
+  assert.deepEqual(
+    pending.nodes.find((node) => node.current)?.blockers.map((blocker) => blocker.code),
+    ['dependencies_pending'],
+  );
+  assert.ok(pending.edges.every((edge) => edge.status === null && edge.tool === null));
+  const checked = await f.process(author, waiting.id);
+  assert.ok(calls.length > 0, 'the checked graph asks the program');
+  assert.equal(checked.currentGate, pending.currentGate);
+  assert.deepEqual(drawn(pending), drawn(checked), 'where the work stands reads the same');
+
+  const move = async (action: string, revision: number) =>
+    await f.app.ctx.workflows.transition(author, {
+      instanceId: first.id,
+      expectedRevision: revision,
+      action,
+      requestId: `${action}-${revision}`,
+    });
+  await move('submit', 0);
+  await move('return', 1);
+  await move('submit', 2);
+  const spent = await unchecked(first.id);
+  assert.deepEqual(
+    [
+      spent.state,
+      spent.currentGate,
+      spent.nodes.find((node) => node.state === 'drafting')?.entries,
+    ],
+    ['in_review', 'loop_limit_reached', 1],
+    'every return used is read from the record, without asking the program',
+  );
+});

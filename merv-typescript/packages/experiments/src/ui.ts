@@ -39,6 +39,17 @@ export const experimentsUiPlugin = {
         status: async (caller) => ({ count: (await experiments.occupancy(caller)).active }),
       }),
     );
+    // On the Running page: open experiments in the work lane, their live GPU runs in the
+    // hardware lane, and the sidebar of either.
+    ctx.effect(() =>
+      ctx.ui.contribute({
+        owner: 'experiments',
+        kinds: ['work', 'compute'],
+        lanes: ['work', 'hardware'],
+        nodes: async (read) => ({ nodes: await experiments.running(read.caller, read.include) }),
+        panel: async (read, key) => await experiments.runningPanel(read.caller, key),
+      }),
+    );
   },
 };
 export default experimentsUiPlugin;

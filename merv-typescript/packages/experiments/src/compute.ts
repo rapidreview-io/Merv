@@ -41,6 +41,61 @@ const publicRow = (row: ComputeRow) => ({
   ...(JSON.parse(row.input_json).commandId ? { commit: JSON.parse(row.input_json).commandId } : {}),
 });
 
+/**
+ * A run as a monitor reads it, beside the record's own shape. It never carries the command,
+ * which an agent wrote and may hold a secret. `digest` is the service's idempotency key, so
+ * it names the run from submit to its end, while `runId` is still null.
+ */
+export interface ComputeRunning {
+  digest: string;
+  experimentId: string;
+  attemptIndex: number;
+  key: string;
+  state: string;
+  createdAt: string;
+  updatedAt: string;
+  minutes: number | null;
+  maxUsd: number | null;
+  cost: { amount: string; currency: string } | null;
+  exit: number | null;
+  reason: string | null;
+}
+const object = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+/** A stored JSON object, or nothing: one odd row must not blank a page that lists many. */
+const stored = (text: string | null): Record<string, unknown> => {
+  try {
+    return object(text ? JSON.parse(text) : null);
+  } catch {
+    return {};
+  }
+};
+const runningRow = (row: ComputeRow): ComputeRunning => {
+  const input = stored(row.input_json),
+    cost = stored(row.cost),
+    outcome = stored(row.result),
+    result = object(outcome.result);
+  return {
+    digest: digest([row.project_id, row.experiment_id, row.attempt_index, row.key]),
+    experimentId: row.experiment_id,
+    attemptIndex: row.attempt_index,
+    key: row.key,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    minutes: typeof input.minutes === 'number' ? input.minutes : null,
+    maxUsd: typeof input.maxUsd === 'number' ? input.maxUsd : null,
+    cost:
+      typeof cost.amount === 'string' && typeof cost.currency === 'string'
+        ? { amount: cost.amount, currency: cost.currency }
+        : null,
+    exit: Number.isInteger(result.exit) ? (result.exit as number) : null,
+    reason: typeof outcome.reason === 'string' ? outcome.reason : null,
+  };
+};
+
 export class ExperimentCompute {
   private timer?: ReturnType<typeof setInterval>;
   private pending?: Promise<void>;
@@ -89,6 +144,51 @@ export class ExperimentCompute {
         attemptIndex,
       )
     ).map(publicRow);
+  }
+  /** The project's runs that hold or seek a machine, oldest first. */
+  async inFlight(projectId: string, tx: Transaction): Promise<ComputeRunning[]> {
+    return (
+      await tx.all<ComputeRow>(
+        `SELECT * FROM experiment_compute_runs WHERE project_id=? AND state IN (${live}) ORDER BY created_at,key`,
+        projectId,
+      )
+    ).map(runningRow);
+  }
+  /** One experiment's runs a monitor still cares about: live ones, and the current attempt's. */
+  async recent(
+    projectId: string,
+    experimentId: string,
+    attemptIndex: number,
+    tx: Transaction,
+  ): Promise<ComputeRunning[]> {
+    return (
+      await tx.all<ComputeRow>(
+        `SELECT * FROM experiment_compute_runs WHERE project_id=? AND experiment_id=?
+         AND (attempt_index=? OR state IN (${live})) ORDER BY created_at,key`,
+        projectId,
+        experimentId,
+        attemptIndex,
+      )
+    ).map(runningRow);
+  }
+  /** The run a digest names, at any state, so an open sidebar outlives the run's node. */
+  async find(projectId: string, wanted: string, tx: Transaction): Promise<ComputeRunning | null> {
+    const keys = await tx.all<Pick<ComputeRow, 'experiment_id' | 'attempt_index' | 'key'>>(
+      'SELECT experiment_id,attempt_index,key FROM experiment_compute_runs WHERE project_id=?',
+      projectId,
+    );
+    const match = keys.find(
+      (row) => digest([projectId, row.experiment_id, row.attempt_index, row.key]) === wanted,
+    );
+    const row =
+      match &&
+      (await tx.get<ComputeRow>(
+        'SELECT * FROM experiment_compute_runs WHERE experiment_id=? AND attempt_index=? AND key=?',
+        match.experiment_id,
+        match.attempt_index,
+        match.key,
+      ));
+    return row ? runningRow(row) : null;
   }
   private async currentWorker(
     caller: Caller,

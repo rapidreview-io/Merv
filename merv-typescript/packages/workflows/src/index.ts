@@ -312,12 +312,21 @@ export class WorkflowsService implements Workflows {
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
   }
 
-  /** Computed from records on every read, in one snapshot; a stored copy could only drift. */
-  async process(caller: Caller, instanceId: string): Promise<ProcessGraph> {
+  /**
+   * Computed from records on every read, in one snapshot; a stored copy could only drift.
+   * With `checks: false` no program callback runs: the edges out of the current state carry
+   * no status, and the gate is what the record says by itself. A view that draws only where
+   * the work stands reads it so, because an action's check may read a submission's bytes.
+   */
+  async process(
+    caller: Caller,
+    instanceId: string,
+    { checks = true }: { checks?: boolean } = {},
+  ): Promise<ProcessGraph> {
     this.assertOpen();
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
-      const decision = await this.evaluate(caller, instanceId, {}, tx);
+      const decision = await this.decide(caller, instanceId, {}, tx, checks);
       const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
       check(registration, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
       const { dependencies, dependents } = await this.dependencies(caller, instanceId, tx);
@@ -352,49 +361,63 @@ export class WorkflowsService implements Workflows {
         'Action is required',
       );
     const input = query.input === undefined ? undefined : this.data(query.input);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await inTransaction(
+      this.state,
+      transaction,
+      async (tx) => await this.decide(caller, instanceId, { ...query, input }, tx, true),
+    );
+  }
+
+  private async decide(
+    caller: Caller,
+    instanceId: string,
+    query: WorkflowEvaluationInput,
+    tx: Transaction,
+    checks: boolean,
+  ): Promise<WorkflowDecision> {
+    const { input } = query;
+    await this.scope.require(caller, 'read', tx);
+    const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
+    if (input && Object.hasOwn(input, 'expectedRevision'))
+      check(
+        input.expectedRevision === snapshot.revision,
+        'revision_conflict',
+        'Workflow changed; refresh guidance before acting',
+        409,
+      );
+    const installed = this.registrations.get(`${snapshot.workflow}@${snapshot.version}`);
+    const stored = await tx.get<{ definition_json: string }>(
+      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
+      snapshot.workflow,
+      snapshot.version,
+    );
+    check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+    const result = await decision(
+      installed?.definition ?? JSON.parse(stored.definition_json),
+      installed?.policy,
+      readContext({
+        caller,
+        snapshot,
+        tx,
+        dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
+      }),
+      query,
+      (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
+      await limitStatuses(tx, installed?.policy, snapshot),
+      await readBlockers(tx, caller.projectId, snapshot.id),
+      checks,
+    );
+    if (installed) {
+      await this.checkContext(
+        { caller, snapshot, tx },
+        'Guidance callbacks must not change the workflow instance',
+      );
+      this.requireActive(installed);
+    } else {
       await this.scope.require(caller, 'read', tx);
-      const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
-      if (input && Object.hasOwn(input, 'expectedRevision'))
-        check(
-          input.expectedRevision === snapshot.revision,
-          'revision_conflict',
-          'Workflow changed; refresh guidance before acting',
-          409,
-        );
-      const installed = this.registrations.get(`${snapshot.workflow}@${snapshot.version}`);
-      const stored = await tx.get<{ definition_json: string }>(
-        'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
-        snapshot.workflow,
-        snapshot.version,
-      );
-      check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-      const result = await decision(
-        installed?.definition ?? JSON.parse(stored.definition_json),
-        installed?.policy,
-        readContext({
-          caller,
-          snapshot,
-          tx,
-          dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
-        }),
-        { ...query, input },
-        (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
-        await limitStatuses(tx, installed?.policy, snapshot),
-        await readBlockers(tx, caller.projectId, snapshot.id),
-      );
-      if (installed) {
-        await this.checkContext(
-          { caller, snapshot, tx },
-          'Guidance callbacks must not change the workflow instance',
-        );
-        this.requireActive(installed);
-      } else {
-        await this.scope.require(caller, 'read', tx);
-        this.assertOpen();
-      }
-      return result;
-    });
+      this.assertOpen();
+    }
+    return result;
   }
 
   async assignment(

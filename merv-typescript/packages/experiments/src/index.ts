@@ -6,6 +6,8 @@ import {
   check,
   digest,
   inTransaction,
+  keyId,
+  keyKind,
   MervError,
   newId,
   now,
@@ -18,6 +20,8 @@ import {
   type ProcessGraph,
   type ReviewApplication,
   type Reviews,
+  type RunningNode,
+  type RunningPanelPart,
   type Scope,
   type State,
   type Transaction,
@@ -27,7 +31,15 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
-import { ExperimentCompute } from './compute.js';
+import { ExperimentCompute, type ComputeRunning } from './compute.js';
+import {
+  computeNode,
+  computePanel,
+  experimentNode,
+  experimentPanel,
+  liveRun,
+  type ExperimentStanding,
+} from './running.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -85,6 +97,19 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
+/** One experiment's row for the Running page: its place, its attempt and the lease on it now. */
+interface StandingRow {
+  id: string;
+  name: string;
+  review_id: string | null;
+  state: string;
+  revision: number;
+  updated_at: string;
+  previous_index: number | null;
+  feedback_review_ids: string;
+  lease_id: string | null;
+  released_at: string | null;
+}
 /** The evidence, figures and exhibit a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
@@ -263,6 +288,137 @@ export class ExperimentService implements Experiments {
     this.open();
     caller = structuredClone(caller);
     return await this.workflows.process(caller, id);
+  }
+  /**
+   * The Running page's cards: every experiment on its way to a result, any other one a key in
+   * `include` names or a live GPU run still holds, and those runs. Read without evaluating a
+   * gate, because a submission's checks read the bytes it would submit.
+   */
+  async running(caller: Caller, include: ReadonlySet<string> = new Set()): Promise<RunningNode[]> {
+    this.open();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, undefined, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const runs = (await this.compute?.inFlight(caller.projectId, tx)) ?? [];
+      const held = [
+        ...new Set([
+          ...[...include].filter((key) => keyKind(key) === 'work').map(keyId),
+          ...runs.map((run) => run.experimentId),
+        ]),
+      ];
+      const ended = TERMINAL.map(() => '?').join(','),
+        kept = held.map(() => '?').join(',') || 'NULL';
+      const rows = await this.standingRows(
+        caller,
+        tx,
+        `(w.state NOT IN (${ended}) OR e.id IN (${kept}))`,
+        ...TERMINAL,
+        ...held,
+      );
+      const nodes: RunningNode[] = [];
+      for (const row of rows)
+        nodes.push(experimentNode(await this.standing(caller, row, runs, tx)));
+      return [...nodes, ...runs.map(computeNode)];
+    });
+  }
+  /**
+   * The Running sidebar of `work:<experimentId>` or `compute:<digest>`, for any state, so an
+   * open sidebar outlives the card. Null for a key that is not one of this project's.
+   */
+  async runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null> {
+    this.open();
+    caller = structuredClone(caller);
+    const kind = keyKind(key),
+      id = keyId(key);
+    if (kind === 'compute')
+      return await inTransaction(this.state, undefined, async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        const run = await this.compute?.find(caller.projectId, id, tx);
+        if (!run) return null;
+        const { name } = await this.row(caller, run.experimentId, tx);
+        return computePanel(run, name);
+      });
+    if (kind !== 'work') return null;
+    const read = await inTransaction(this.state, undefined, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const [row] = await this.standingRows(caller, tx, 'e.id=?', id);
+      if (!row) return null;
+      const experiment = await this.get(caller, id, tx);
+      const runs =
+        (await this.compute?.recent(caller.projectId, id, experiment.attempt.index, tx)) ?? [];
+      return { standing: await this.standing(caller, row, runs, tx), experiment, runs };
+    });
+    if (!read) return null;
+    // The ladder is where the record stands, so no action's check runs to draw it.
+    const graph = await this.workflows.process(caller, id, { checks: false });
+    return experimentPanel({ ...read, graph });
+  }
+  private async standingRows(
+    caller: Caller,
+    tx: Transaction,
+    where: string,
+    ...params: (string | number)[]
+  ): Promise<StandingRow[]> {
+    return await tx.all<StandingRow>(
+      `SELECT e.id,e.name,e.review_id,w.state,w.revision,w.updated_at,
+        a.previous_index,a.feedback_review_ids,l.id AS lease_id,
+        (SELECT MAX(r.released_at) FROM experiment_leases r
+         WHERE r.project_id=e.project_id AND r.experiment_id=e.id) AS released_at
+       FROM experiments e JOIN wf_instances w ON w.id=e.id
+       JOIN experiment_attempts a ON a.experiment_id=e.id AND a.attempt_index=e.attempt_index
+       LEFT JOIN experiment_leases l ON l.project_id=e.project_id AND l.experiment_id=e.id
+        AND l.revision=w.revision AND l.released_at IS NULL
+       WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
+      caller.projectId,
+      ...params,
+    );
+  }
+  /** One card's facts, read without evaluating a gate; a review state's only in one. */
+  private async standing(
+    caller: Caller,
+    row: StandingRow,
+    runs: ComputeRunning[],
+    tx: Transaction,
+  ): Promise<ExperimentStanding> {
+    const ended = terminal.has(row.state);
+    const review = reviewing(row.state) && row.review_id;
+    let exhausted = false;
+    if (reviewing(row.state))
+      try {
+        exhausted = (
+          await this.workflows.limitStatus(
+            caller,
+            row.id,
+            row.state === 'design_review' ? 'design_rounds' : 'result_rounds',
+            tx,
+          )
+        ).exhausted;
+      } catch (error) {
+        if (!(error instanceof MervError && error.status === 404)) throw error;
+      }
+    return {
+      id: row.id,
+      name: row.name,
+      state: row.state,
+      updatedAt: row.updated_at,
+      idleSince:
+        row.released_at && row.released_at > row.updated_at ? row.released_at : row.updated_at,
+      again:
+        row.previous_index !== null || (JSON.parse(row.feedback_review_ids) as string[]).length > 0,
+      lease: row.lease_id
+        ? {
+            started: (await this.workflows.workStarts(caller, row.id, tx)).some(
+              (start) => start.revision === row.revision,
+            ),
+          }
+        : null,
+      dependencies: ended
+        ? []
+        : (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
+      review: review ? await this.reviews.get(caller, review, tx) : null,
+      exhausted,
+      computing: runs.some((run) => run.experimentId === row.id && liveRun(run)),
+    };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
     const row = await tx.get<ExperimentRow>(
