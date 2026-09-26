@@ -1,7 +1,11 @@
 import type {
   Artifact,
   Caller,
+  ProcessGraph,
   ReviewRequest,
+  RunningKey,
+  RunningNode,
+  RunningPanelPart,
   Transaction,
   WorkflowSnapshot,
 } from '@merv/contracts';
@@ -137,6 +141,16 @@ export interface Reflections {
   approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection>;
   /** The wave still open in the project, if any: only one reflects at a time. */
   open(caller: Caller, tx?: Transaction): Promise<string | undefined>;
+  /** The wave's workflow drawn with its place in it, as Tasks.process draws a task's. */
+  process(caller: Caller, id: string): Promise<ProcessGraph>;
+  /**
+   * The waves on the Running page: the open one, and any other that `include` names, by its
+   * key or one of its lenses' keys, because another owner holds it there. Each is one node
+   * that absorbs its current lenses.
+   */
+  running(caller: Caller, include?: Iterable<RunningKey>, tx?: Transaction): Promise<RunningNode[]>;
+  /** A wave's Running sidebar, or null for an id that is not a wave, such as one of its lenses. */
+  runningPanel(caller: Caller, id: string): Promise<RunningPanelPart | null>;
   close(): void;
 }
 declare module 'cordis' {
