@@ -19,6 +19,11 @@ import type {
   CodeUnitAcceptInput,
   Data,
   DelegationSource,
+  RunningMark,
+  RunningNode,
+  RunningPanelPart,
+  RunningSection,
+  RunningSummary,
   SessionWorkspace,
   Transaction,
   WorkflowDispatchAdmission,
@@ -219,6 +224,27 @@ export interface CodeRepositoryControls {
     input: import('@merv/contracts').CodeMirrorRetryInput,
   ): Promise<import('@merv/contracts').CodeMirrorStatus>;
 }
+/**
+ * Code's part of the Running page. Each is one read inside the page's snapshot, and none
+ * writes; the words are the person moves the Code page itself says.
+ */
+export interface CodeRunning {
+  /**
+   * Work a person owes a move to, as marks on its key: the blockers Code publishes whose next
+   * move is an operator's or an administrator's. Done work is held for its publication alone,
+   * the newest first and only so many; the summary counts the rest.
+   */
+  runningHolds(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary | null }>;
+  /**
+   * The machines project checks hold, and any a check could not give back, as hardware
+   * nodes `check:<baseKey>`.
+   */
+  runningChecks(caller: Caller): Promise<RunningNode[]>;
+  /** The sidebar of `check:<baseKey>`; null for any other key. */
+  runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;
+  /** The Code section of each `work:<id>` key that has a unit; nothing for the rest. */
+  runningCode(caller: Caller, keys: readonly string[]): Promise<RunningSection[]>;
+}
 export interface Code
   extends
     CodeCommands,
@@ -227,7 +253,8 @@ export interface Code
     CodeUnits,
     CodeWriters,
     CodeRepositoryControls,
-    CodePublicationApi {
+    CodePublicationApi,
+    CodeRunning {
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;

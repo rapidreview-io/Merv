@@ -80,6 +80,87 @@ const RECLAIM_ATTEMPTS = 5;
 /** Only these two say a machine may still be Merv's; anything else is a handle to give back. */
 const IN_FLIGHT = "check_state IN ('queued','running')";
 const now = () => new Date().toISOString();
+/**
+ * The blocker a check writes when it stops asking for its machine back and lets go of the
+ * handle. It is the one trace left of a machine that is still rented, so it names it.
+ */
+const UNRECLAIMED = 'code_check_unreclaimed: sandbox ';
+const unreclaimedBlocker = (sandboxId: string | null, reason: string) =>
+  `${UNRECLAIMED}${sandboxId ?? 'unnamed'} could not be given back (${reason})`;
+/** The machine such a blocker names; null for any other blocker. */
+function unreclaimedOf(blocker: string | null): { sandboxId: string | null } | null {
+  if (!blocker?.startsWith(UNRECLAIMED)) return null;
+  const named = blocker.slice(UNRECLAIMED.length).split(' ', 1)[0];
+  return { sandboxId: named && named !== 'unnamed' ? named : null };
+}
+
+/**
+ * Whether a check still owns its machine: its base is running and healthy, the check is
+ * queued or running, and the handle, if there is one yet, belongs to the base's own epoch.
+ * A machine whose check lost that epoch, or whose base stopped, is a machine to give back.
+ */
+const ours = (row: BaseRow, handle: CheckHandle | null) =>
+  row.state === 'running' &&
+  row.health === 'healthy' &&
+  ['queued', 'running'].includes(row.check_state) &&
+  (!handle || handle.epoch === Number(row.execution_epoch));
+
+/**
+ * Where the machine of one base's project check stands, for the Running page. Nothing else
+ * leaves the handle: no object, digest or job, only the machine's own id, which is how the
+ * sandbox it runs on is known by its owner.
+ */
+export interface CodeCheckStanding {
+  key: string;
+  /** The accepted commits the base joins; the units that accepted them are what it checks. */
+  members: string[];
+  /**
+   * `starting` until the machine is up, `running` while the command has it, `returning`
+   * while a machine no check owns any more is given back; null once none is Merv's.
+   */
+  phase: 'starting' | 'running' | 'returning' | null;
+  checkState: CodeBaseCheckState;
+  /** The base's state, or quarantined: where a check that stopped without a verdict stopped. */
+  base: CodeBaseState | 'quarantined';
+  sandboxId: string | null;
+  /** How many times in a row the service refused to take the machine back. */
+  releaseAttempts: number;
+  /**
+   * A machine Code stopped asking the service to take back, and let go of: still rented,
+   * and nobody's to give back now but a person's. Read from the base's blocker, for as long
+   * as that names it; null otherwise.
+   */
+  unreclaimed: { sandboxId: string | null } | null;
+  /** When the check must have its verdict: the hand-off, plus its timeout and slack. */
+  deadline: string | null;
+}
+
+function standing(row: BaseRow): CodeCheckStanding {
+  let handle: CheckHandle | null = null;
+  try {
+    handle = row.check_job_json ? (JSON.parse(row.check_job_json) as CheckHandle) : null;
+  } catch {
+    // A handle nobody can read names no machine; advanceChecks stops that check itself.
+  }
+  const mine = ours(row, handle);
+  return {
+    key: row.base_key,
+    members: JSON.parse(row.members_json) as string[],
+    phase: mine
+      ? handle?.sandboxId && handle.ready
+        ? 'running'
+        : 'starting'
+      : handle
+        ? 'returning'
+        : null,
+    checkState: row.check_state,
+    base: row.health === 'quarantined' ? 'quarantined' : row.state,
+    sandboxId: handle?.sandboxId ?? null,
+    releaseAttempts: handle?.releaseAttempts ?? 0,
+    unreclaimed: unreclaimedOf(row.blocker),
+    deadline: row.deadline,
+  };
+}
 
 interface CodeBaseHooks {
   /** A record reached an end, so the units that wait on it may have a base, or a new reason. */
@@ -785,6 +866,35 @@ export class CodeBaseService {
   }
 
   /**
+   * The checks that hold a machine or are about to: the rows advanceChecks steps, less a
+   * check that lost its base before it rented anything, which holds nothing; and every base
+   * whose blocker still names a machine it could not give back. A pure read.
+   */
+  async checking(sql: Sql, projectId: string): Promise<CodeCheckStanding[]> {
+    const rows = await sql.all<BaseRow>(
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL OR blocker LIKE ?) ORDER BY base_key`,
+      projectId,
+      `${UNRECLAIMED}%`,
+    );
+    return rows.map(standing).filter((check) => check.phase !== null || check.unreclaimed);
+  }
+
+  /** One base's check, in flight or long over; null for a set nobody asked for. */
+  async checkOf(sql: Sql, projectId: string, key: string): Promise<CodeCheckStanding | null> {
+    const row = await this.row(sql, projectId, key);
+    return row ? standing(row) : null;
+  }
+
+  /**
+   * The command the project's checks run. A command this server cannot read stops its base
+   * on the next step; a reader is only told nothing about it.
+   */
+  async checkCommand(sql: Sql, projectId: string): Promise<string | null> {
+    const spec = await this.checkSpec(sql, projectId).catch(() => null);
+    return spec?.command ?? null;
+  }
+
+  /**
    * Hand a merged base to its check instead of sealing it, and say whether that happened.
    * The check takes a reservation of its own under the same operation and epoch: capacity is
    * counted in unsettled rows, so holding the merge's slot through a rented machine's work
@@ -859,11 +969,7 @@ export class CodeBaseService {
       // stop every project ordered after it from merging, on this tick and on every tick.
       try {
         const handle = row.check_job_json ? (JSON.parse(row.check_job_json) as CheckHandle) : null;
-        const mine =
-          row.state === 'running' &&
-          row.health === 'healthy' &&
-          ['queued', 'running'].includes(row.check_state) &&
-          (!handle || handle.epoch === base.executionEpoch);
+        const mine = ours(row, handle);
         // A machine whose check lost its epoch to an operator or a deadline, or whose base
         // stopped running, is nobody's: it goes back before anything else, because nothing
         // will ever read its answer and it is still being paid for.
@@ -910,7 +1016,7 @@ export class CodeBaseService {
         );
         return;
       }
-      refused = `code_check_unreclaimed: sandbox ${handle.sandboxId ?? 'unnamed'} could not be given back (${reason})`;
+      refused = unreclaimedBlocker(handle.sandboxId, reason);
     }
     await this.state.transaction(async (tx) => {
       // The reservation of an epoch nobody will finish goes back with the machine. Without

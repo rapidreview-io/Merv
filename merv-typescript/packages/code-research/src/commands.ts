@@ -19,6 +19,7 @@ import {
   type CodeCommitInput,
   type Data,
   type Scope,
+  type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
@@ -43,6 +44,8 @@ const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const terminal = (status: Row['status']) =>
   status === 'succeeded' || status === 'failed' || status === 'cancelled';
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
+/** How many of a project's newest commits the Running page looks through for one unit's. */
+const RECENT_COMMITS = 200;
 
 // Share the bounded, descriptor-safe JSON parser used by the other service inputs.
 const parse = <T>(schema: z.ZodType<T>, input: unknown): T =>
@@ -184,6 +187,25 @@ export class CodeCommandService implements CodeCommands {
         )
       ).map((row) => this.decode(row));
     });
+  }
+  /**
+   * The newest commit that succeeded for one unit of work, whose stats say where its work has
+   * got to since its base. A pure read for the Running page, asked on every poll of an open
+   * sidebar. The unit is named only inside the command, where no index reaches, so only the
+   * project's newest commits are read: a unit whose last one is further back than those is
+   * told without its stats, rather than every command the project ran being decoded.
+   */
+  async newestReceipt(
+    sql: Sql,
+    projectId: string,
+    instanceId: string,
+  ): Promise<CodeCommandRecord | null> {
+    const row = await sql.get<Row>(
+      `SELECT * FROM (SELECT * FROM code_commands WHERE project_id=? AND status='succeeded' ORDER BY _merv_rowid DESC LIMIT ${RECENT_COMMITS}) recent WHERE (command_json::jsonb ->> 'instanceId')=? ORDER BY _merv_rowid DESC LIMIT 1`,
+      projectId,
+      instanceId,
+    );
+    return row ? this.decode(row) : null;
   }
   async operation(caller: Caller, commandId: string): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);
