@@ -10,7 +10,7 @@
   "apiEntries": 36,
   "serverPlugins": 62,
   "machinePlugins": 1,
-  "directDependencyCount": 172,
+  "directDependencyCount": 173,
   "optionalDependencyCount": 16,
   "directConsumers": {
     "api": 5,
@@ -34,7 +34,7 @@
     "reviews": 7,
     "runner": 0,
     "sandboxes": 5,
-    "scope": 23,
+    "scope": 24,
     "sessions": 5,
     "state": 19,
     "tasks": 4,
@@ -745,7 +745,8 @@
       "provides": [],
       "requires": [
         "sandboxes",
-        "ui"
+        "ui",
+        "scope"
       ],
       "optional": [],
       "kind": "ui",
