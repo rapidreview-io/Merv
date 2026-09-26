@@ -35,6 +35,7 @@ import { ExperimentCompute, type ComputeRunning } from './compute.js';
 import {
   computeNode,
   computePanel,
+  enteredAgain,
   experimentNode,
   experimentPanel,
   liveRun,
@@ -97,7 +98,9 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
-/** One experiment's row for the Running page: its place, its attempt and the lease on it now. */
+/** Where an agent designs or runs the experiment, rather than a reviewer reading it. */
+const working = new Set(['planned', 'running']);
+/** One experiment's row for the Running page: its place and the lease on it now. */
 interface StandingRow {
   id: string;
   name: string;
@@ -105,10 +108,15 @@ interface StandingRow {
   state: string;
   revision: number;
   updated_at: string;
-  previous_index: number | null;
-  feedback_review_ids: string;
   lease_id: string | null;
-  released_at: string | null;
+}
+/** What one board read knows beside an experiment's own row. */
+interface StandingContext {
+  runs: ComputeRunning[];
+  /** When the last lease on unheld work ended at its current revision, by experiment. */
+  released: Map<string, string>;
+  /** Experiments another plugin published a blocker on. */
+  blocked: ReadonlySet<string>;
 }
 /** The evidence, figures and exhibit a design or results submission pins. */
 interface Submission {
@@ -315,9 +323,16 @@ export class ExperimentService implements Experiments {
         ...TERMINAL,
         ...held,
       );
+      const context: StandingContext = {
+        runs,
+        released: await this.releases(caller, rows, tx),
+        blocked: new Set(
+          (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
+        ),
+      };
       const nodes: RunningNode[] = [];
       for (const row of rows)
-        nodes.push(experimentNode(await this.standing(caller, row, runs, tx)));
+        nodes.push(experimentNode(await this.standing(caller, row, context, tx)));
       return [...nodes, ...runs.map(computeNode)];
     });
   }
@@ -346,7 +361,14 @@ export class ExperimentService implements Experiments {
       const experiment = await this.get(caller, id, tx);
       const runs =
         (await this.compute?.recent(caller.projectId, id, experiment.attempt.index, tx)) ?? [];
-      return { standing: await this.standing(caller, row, runs, tx), experiment, runs };
+      const context: StandingContext = {
+        runs,
+        released: await this.releases(caller, [row], tx),
+        blocked: new Set(
+          (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
+        ),
+      };
+      return { standing: await this.standing(caller, row, context, tx), experiment, runs };
     });
     if (!read) return null;
     // The ladder is where the record stands, so no action's check runs to draw it.
@@ -360,12 +382,8 @@ export class ExperimentService implements Experiments {
     ...params: (string | number)[]
   ): Promise<StandingRow[]> {
     return await tx.all<StandingRow>(
-      `SELECT e.id,e.name,e.review_id,w.state,w.revision,w.updated_at,
-        a.previous_index,a.feedback_review_ids,l.id AS lease_id,
-        (SELECT MAX(r.released_at) FROM experiment_leases r
-         WHERE r.project_id=e.project_id AND r.experiment_id=e.id) AS released_at
+      `SELECT e.id,e.name,e.review_id,w.state,w.revision,w.updated_at,l.id AS lease_id
        FROM experiments e JOIN wf_instances w ON w.id=e.id
-       JOIN experiment_attempts a ON a.experiment_id=e.id AND a.attempt_index=e.attempt_index
        LEFT JOIN experiment_leases l ON l.project_id=e.project_id AND l.experiment_id=e.id
         AND l.revision=w.revision AND l.released_at IS NULL
        WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
@@ -373,11 +391,33 @@ export class ExperimentService implements Experiments {
       ...params,
     );
   }
+  /**
+   * When the last lease on each unheld experiment ended at its current revision. Only a live
+   * lease is indexed, so this is one read for the whole board, and only for work an agent
+   * would hold and nobody does.
+   */
+  private async releases(
+    caller: Caller,
+    rows: StandingRow[],
+    tx: Transaction,
+  ): Promise<Map<string, string>> {
+    const unheld = rows.filter((row) => !row.lease_id && working.has(row.state));
+    if (!unheld.length) return new Map();
+    const ended = await tx.all<{ experiment_id: string; released_at: string }>(
+      `SELECT experiment_id,MAX(released_at) AS released_at FROM experiment_leases
+       WHERE project_id=? AND released_at IS NOT NULL
+       AND (${unheld.map(() => '(experiment_id=? AND revision=?)').join(' OR ')})
+       GROUP BY experiment_id`,
+      caller.projectId,
+      ...unheld.flatMap((row) => [row.id, row.revision]),
+    );
+    return new Map(ended.map((row) => [row.experiment_id, row.released_at]));
+  }
   /** One card's facts, read without evaluating a gate; a review state's only in one. */
   private async standing(
     caller: Caller,
     row: StandingRow,
-    runs: ComputeRunning[],
+    context: StandingContext,
     tx: Transaction,
   ): Promise<ExperimentStanding> {
     const ended = terminal.has(row.state);
@@ -396,15 +436,18 @@ export class ExperimentService implements Experiments {
       } catch (error) {
         if (!(error instanceof MervError && error.status === 404)) throw error;
       }
+    const released = context.released.get(row.id);
     return {
       id: row.id,
       name: row.name,
       state: row.state,
       updatedAt: row.updated_at,
-      idleSince:
-        row.released_at && row.released_at > row.updated_at ? row.released_at : row.updated_at,
+      idleSince: released && released > row.updated_at ? released : row.updated_at,
+      // A new attempt is not a return by itself, so the record's own arrivals say it.
       again:
-        row.previous_index !== null || (JSON.parse(row.feedback_review_ids) as string[]).length > 0,
+        working.has(row.state) &&
+        enteredAgain(await this.workflows.history(caller, row.id, tx), row.state),
+      blocked: context.blocked.has(row.id),
       lease: row.lease_id
         ? {
             started: (await this.workflows.workStarts(caller, row.id, tx)).some(
@@ -417,7 +460,7 @@ export class ExperimentService implements Experiments {
         : (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
       review: review ? await this.reviews.get(caller, review, tx) : null,
       exhausted,
-      computing: runs.some((run) => run.experimentId === row.id && liveRun(run)),
+      computing: context.runs.some((run) => run.experimentId === row.id && liveRun(run)),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {

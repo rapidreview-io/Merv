@@ -59,7 +59,20 @@ export interface ComputeRunning {
   cost: { amount: string; currency: string } | null;
   exit: number | null;
   reason: string | null;
+  /**
+   * Past the time by which the service must have ended it, and the tick has not heard from
+   * it since: its row is out of date, which says nothing about the run being alive.
+   */
+  overdue: boolean;
 }
+/**
+ * The service ends a run's whole workflow 600 s after its job's minutes and takes 60 s more
+ * to capture it (sandboxes/src/compute.ts), and the tick submits it and hears it end within
+ * a pass either side.
+ */
+const OVERRUN_MS = (600 + 60 + 2 * 60) * 1000;
+/** Three passes of the tick with nothing written; a run it hears from keeps its row current. */
+const UNHEARD_MS = 3 * 60_000;
 const object = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -93,6 +106,12 @@ const runningRow = (row: ComputeRow): ComputeRunning => {
         : null,
     exit: Number.isInteger(result.exit) ? (result.exit as number) : null,
     reason: typeof outcome.reason === 'string' ? outcome.reason : null,
+    // A submitting run has not reached the service, so nothing there ends it.
+    overdue:
+      (row.state === 'running' || row.state === 'cancelling') &&
+      typeof input.minutes === 'number' &&
+      Date.now() - Date.parse(row.created_at) > input.minutes * 60_000 + OVERRUN_MS &&
+      Date.now() - Date.parse(row.updated_at) > UNHEARD_MS,
   };
 };
 
@@ -171,8 +190,13 @@ export class ExperimentCompute {
       )
     ).map(runningRow);
   }
-  /** The run a digest names, at any state, so an open sidebar outlives the run's node. */
+  /**
+   * The run a digest names, at any state, so an open sidebar outlives the run's node. A live
+   * run is one of at most two on the state index; only a finished one is looked for among all.
+   */
   async find(projectId: string, wanted: string, tx: Transaction): Promise<ComputeRunning | null> {
+    const flying = (await this.inFlight(projectId, tx)).find((run) => run.digest === wanted);
+    if (flying) return flying;
     const keys = await tx.all<Pick<ComputeRow, 'experiment_id' | 'attempt_index' | 'key'>>(
       'SELECT experiment_id,attempt_index,key FROM experiment_compute_runs WHERE project_id=?',
       projectId,

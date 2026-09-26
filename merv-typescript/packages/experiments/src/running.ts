@@ -14,9 +14,11 @@ import {
   type RunningPhrase,
   type RunningSection,
   type WorkflowDependency,
+  type WorkflowHistoryEntry,
 } from '@merv/contracts';
 import type { ComputeRunning } from './compute.js';
 import type { Experiment } from './models.js';
+import { EXPERIMENT_WORKFLOW } from './program.js';
 
 /**
  * What the Running page shows of experiments: one work card per experiment on its way to a
@@ -33,8 +35,10 @@ export interface ExperimentStanding {
   updatedAt: string;
   /** Since when nobody has held it: the later of its last move and its last lease ending. */
   idleSince: string;
-  /** A review sent it back once already, or it was re-planned. */
+  /** It has been in this state before: a review sent it back, or its run was retried. */
   again: boolean;
+  /** Another plugin published why it cannot go on, so no agent is offered it. */
+  blocked: boolean;
   /** A lease holds it at this revision, and whether its worker has begun. */
   lease: { started: boolean } | null;
   dependencies: WorkflowDependency[];
@@ -63,8 +67,10 @@ const RUN: Record<string, string> = {
   cancelling: 'releasing',
 };
 const LIVE = new Set(Object.keys(RUN));
-/** The run still holds or seeks a machine. */
-export const liveRun = (run: ComputeRunning) => LIVE.has(run.state);
+/** The run still holds or seeks a machine, as far as anyone has heard. */
+export const liveRun = (run: ComputeRunning) => LIVE.has(run.state) && !run.overdue;
+/** A run the service must have ended by now, which the tick has not heard end. */
+const UNHEARD: RunningAttention = { says: ['Past its time cap · not heard from'], quiet: true };
 const ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'];
 const EVIDENCE_ROWS = 20;
 const RUN_ROWS = 4;
@@ -92,6 +98,22 @@ const roleOrder = (role: string) => {
 };
 const timed = (phrase: RunningPhrase) =>
   phrase.some((part) => typeof part === 'object' && ('since' in part || 'ago' in part));
+
+/**
+ * Whether the record has been in `state` before, counted the way its ladder counts entries:
+ * crossings of a definition edge into it, so the initial state begins with none. A new
+ * attempt is not a return by itself: a design sent back and then approved runs once.
+ */
+export function enteredAgain(history: readonly WorkflowHistoryEntry[], state: string): boolean {
+  const arrivals = history.filter(
+    (row) =>
+      row.toState === state &&
+      EXPERIMENT_WORKFLOW.edges.some(
+        (edge) => edge.action === row.action && edge.from === row.fromState && edge.to === state,
+      ),
+  ).length;
+  return arrivals > (state === EXPERIMENT_WORKFLOW.initial ? 0 : 1);
+}
 
 function face(standing: ExperimentStanding): {
   line: RunningPhrase;
@@ -142,6 +164,12 @@ function face(standing: ExperimentStanding): {
       look: 'solid',
       rank: 1,
     };
+  // Nothing is offered work whose prerequisite failed: the card's red says why it stopped.
+  if (standing.dependencies.some((item) => item.failed))
+    return { line: [work], look: 'solid', rank: 2 };
+  // Another plugin holds it back, so no agent comes for it; a person's move there is that
+  // plugin's own mark on the board.
+  if (standing.blocked) return { line: ['Waiting'], look: 'dashed', rank: 3 };
   return {
     line: ['Waiting for an agent · ', { since: standing.idleSince }],
     look: 'dashed',
@@ -216,30 +244,49 @@ const runLine = (run: ComputeRunning): RunningPhrase =>
       : run.state === 'cancelling'
         ? ['Releasing']
         : runState(run);
-/** What the run holds against its cap. The service enforces the cap itself. */
-const reserved = (run: ComputeRunning): RunningPhrase => [
-  { money: money(run.cost), of: dollars(run.maxUsd) },
-];
+/**
+ * What the run holds against its cap, one phrase for its card, its row and its sidebar: what
+ * the service reserved once it says, else the cap alone. The service enforces the cap itself.
+ */
+function spend(run: ComputeRunning): { label: string; value: RunningPhrase } | null {
+  const cost = money(run.cost),
+    cap = dollars(run.maxUsd);
+  if (cost) return { label: 'Reserved', value: [{ money: cost, of: cap }] };
+  return cap ? { label: 'Cost cap', value: [{ money: cap }] } : null;
+}
+const spent = (run: ComputeRunning): RunningPhrase => {
+  const held = spend(run);
+  return held ? [`${held.label} `, ...held.value] : [];
+};
 const runName = (run: ComputeRunning) => (visible(run.key) ? clip(run.key, 200) : undefined);
 
 /**
  * A GPU run that holds or seeks a machine. It is never red: the service ends a run at its
- * time and money caps by itself, so nothing here waits on a person.
+ * time and money caps by itself, so nothing here waits on a person. Once the service must
+ * have ended it and the tick has not heard from it since, the card stops saying it is alive.
  */
 export function computeNode(run: ComputeRunning): RunningNode {
   const name = runName(run);
+  const cost = spent(run);
   return {
     key: runningKey('compute', run.digest),
     lane: 'hardware',
     title: 'GPU run',
     ...(name ? { name } : {}),
-    lines: [runLine(run), ['Reserved ', ...reserved(run)]],
-    look: run.state === 'cancelling' ? 'quiet' : run.state === 'submitting' ? 'dashed' : 'solid',
-    ...(run.state === 'running'
-      ? { dot: 'live' as const }
-      : run.state === 'submitting'
-        ? { dot: 'starting' as const }
-        : {}),
+    lines: [runLine(run), ...(cost.length ? [cost] : [])],
+    look:
+      run.overdue || run.state === 'cancelling'
+        ? 'quiet'
+        : run.state === 'submitting'
+          ? 'dashed'
+          : 'solid',
+    ...(run.overdue
+      ? { attention: UNHEARD }
+      : run.state === 'running'
+        ? { dot: 'live' as const }
+        : run.state === 'submitting'
+          ? { dot: 'starting' as const }
+          : {}),
     links: [{ to: runningKey('work', run.experimentId), verb: 'runs for' }],
   };
 }
@@ -312,13 +359,13 @@ export function experimentPanel(input: {
             place: 'content' as const,
             kind: 'table' as const,
             aside: count(shown.length, listed.length),
-            columns: ['Run', 'State', 'Time', 'Reserved'],
+            columns: ['Run', 'State', 'Time', 'Cost'],
             rows: shown.map((run) => ({
               cells: [
                 [run.key],
-                runState(run),
+                [...runState(run), ...(run.overdue ? [' · not heard from'] : [])],
                 LIVE.has(run.state) ? [{ since: run.createdAt }] : [{ ago: run.updatedAt }],
-                reserved(run),
+                spent(run),
               ],
               ...(LIVE.has(run.state) ? { to: { key: runningKey('compute', run.digest) } } : {}),
             })),
@@ -360,7 +407,7 @@ export function experimentPanel(input: {
     sections,
     actions: [],
     route: workKey(standing.id).route,
-    live: !!standing.lease || live.length > 0,
+    live: !!standing.lease || live.some(liveRun),
   };
 }
 
@@ -370,25 +417,25 @@ export function experimentPanel(input: {
  * the run at its caps, and the experiment's agent is the one that cancels it.
  */
 export function computePanel(run: ComputeRunning, experiment: string): RunningPanelPart {
-  const cap = dollars(run.maxUsd);
-  const cost = money(run.cost);
+  const held = spend(run);
   const facts = [
     { label: 'Experiment', value: [{ link: workKey(run.experimentId), text: experiment }] },
     { label: 'State', value: runState(run) },
     { label: 'Requested', value: [{ ago: run.createdAt }] },
     ...(LIVE.has(run.state) ? [] : [{ label: 'Ended', value: [{ ago: run.updatedAt }] }]),
     ...(run.minutes !== null ? [{ label: 'Time cap', value: [span(run.minutes)] }] : []),
-    ...(cost
-      ? [{ label: 'Reserved', value: [{ money: cost, of: cap }] }]
-      : cap
-        ? [{ label: 'Cost cap', value: [{ money: cap }] }]
-        : []),
+    ...(held ? [held] : []),
   ];
   return {
-    header: { kind: 'GPU run', title: runName(run) ?? 'GPU run', says: runLine(run) },
+    header: {
+      kind: 'GPU run',
+      title: runName(run) ?? 'GPU run',
+      says: runLine(run),
+      ...(run.overdue ? { attention: UNHEARD } : {}),
+    },
     sections: [{ title: 'Run', place: 'activity', kind: 'facts', rows: facts }],
     actions: [],
     route: workKey(run.experimentId).route,
-    live: LIVE.has(run.state),
+    live: liveRun(run),
   };
 }
