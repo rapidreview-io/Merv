@@ -1,17 +1,10 @@
 import type { Context } from 'cordis';
 import { check, type Json, type UiCollectionSpec, type UiRecordSpec } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import type { FleetAllocation, FleetPhase } from './types.js';
+import { failing, fleetRunning, statusOf, titleOf } from './running.js';
+import type { FleetAllocation } from './types.js';
 
-/** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
-const words: Partial<Record<FleetPhase, string>> = {
-  queued: 'waiting',
-  provisioning: 'starting',
-  uncertain: 'retrying',
-};
 const live = ['waiting', 'starting', 'running', 'retrying', 'finishing', 'stopping'];
-/** A Pi host is one person's agent machine in one project, shared by their conversations. */
-const titles: Record<string, string> = { 'pi-host': 'Agent machine', workflow: 'Workflow agent' };
 const collection: UiCollectionSpec = {
   noun: { singular: 'agent', plural: 'agents' },
   read: '/v1/fleet',
@@ -67,24 +60,17 @@ const record: UiRecordSpec = {
 };
 const present = (a: FleetAllocation): Json => {
   const open = a.phase !== 'released';
+  const failure = failing(a);
   return {
     id: a.id,
-    title: titles[a.owner.kind] ?? 'Hosted agent',
+    title: titleOf(a),
     owner: a.owner,
-    status: open
-      ? { run: words[a.phase] ?? a.phase, drain: 'finishing', stop: 'stopping' }[a.intent]
-      : a.error === 'runtime_refused'
-        ? 'refused'
-        : 'stopped',
+    status: statusOf(a),
     intent: open ? a.intent : null,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     deadlineAt: open ? a.deadlineAt : null,
-    // Retries back off to a minute; only a live request failing that long needs a person.
-    attention:
-      open && a.intent !== 'stop' && a.error && a.failures >= 5
-        ? `${a.runtime ? 'This machine is not answering' : 'No machine yet'}: the sandbox service keeps failing. Check the project's sandbox connection.`
-        : null,
+    attention: failure && `${failure}. Check the project's sandbox connection.`,
     runtime: a.runtime ? { sandboxId: a.runtime.sandboxId, state: a.runtime.state } : null,
   };
 };
@@ -125,6 +111,8 @@ export const fleetUiPlugin = {
         },
       }),
     );
+    // The Running page draws each open machine until a session binds it.
+    ctx.effect(() => ctx.ui.contribute(fleetRunning(ctx.fleet)));
   },
 };
 export default fleetUiPlugin;
