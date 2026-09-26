@@ -502,8 +502,13 @@ export class ApiServer {
     return await this.scope.acceptVerifiedIdentity(verified);
   }
 
-  private async call(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
-    const operation = this.tools.invoke(name, caller, input);
+  private async call(
+    name: string,
+    caller: Caller,
+    input: unknown,
+    agent = false,
+  ): Promise<ToolInvocation> {
+    const operation = this.tools.invoke(name, caller, input, agent);
     this.calls.add(operation);
     try {
       return await operation;
@@ -1069,7 +1074,8 @@ export class ApiServer {
           ),
         );
         await this.scope.require(caller, 'read');
-        return { tools: await this.tools.describe(caller) };
+        // An agent over MCP is offered what a Pi conversation is; Merv's pages call /tools.
+        return { tools: await this.tools.describe(caller, true) };
       });
       instance.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
@@ -1082,7 +1088,7 @@ export class ApiServer {
               request.params._meta?.['merv/projectId'],
             ),
           );
-          const result = await this.call(request.params.name, call.caller, call.input);
+          const result = await this.call(request.params.name, call.caller, call.input, true);
           return result.format === 'mcp'
             ? (result.value as CallToolResult)
             : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };

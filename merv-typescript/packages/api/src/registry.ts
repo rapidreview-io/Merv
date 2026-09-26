@@ -436,17 +436,25 @@ export class ToolRegistry implements Tools {
   private conversable(entry: Entry): boolean {
     return !entry.remote && (entry.definition as ToolDefinition).conversation !== 'never';
   }
+  /** What a person's own agent over MCP is offered, as a Pi conversation is: any native tool but
+   *  those only a leased worker or Merv's own pages run, and a reader's reads alone. A mounted
+   *  tool keeps its Access grant. */
+  private offered(entry: Entry, reader: boolean): boolean {
+    return !!entry.remote || (this.conversable(entry) && (!reader || this.reads(entry)));
+  }
 
-  private async visible(caller?: Caller): Promise<Entry[]> {
+  private async visible(caller?: Caller, agent = false): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
     if (caller) this.requireConversationCaller(caller);
     const conversation = caller?.conversation ? this.conversationPolicy() : undefined;
-    if (caller) await this.scope.require(caller, 'read');
+    const actor = caller ? await this.scope.require(caller, 'read') : undefined;
+    const reader = actor?.role === 'reader';
     if (conversation) this.fenceConversation(conversation);
     const session = caller?.session ? this.sessionPolicy() : undefined;
     const visible = await filterAsync(
       [...this.entries.values()],
       async (entry) =>
+        (!agent || this.offered(entry, reader)) &&
         (!conversation ||
           (this.conversable(entry) &&
             (await this.conversationDecision(
@@ -471,10 +479,12 @@ export class ToolRegistry implements Tools {
     return visible;
   }
 
-  async describe(caller?: Caller): Promise<ToolDescription[]> {
+  /** agent: the caller is a person's own agent over MCP (never a leased worker), offered what a
+   *  conversation is. */
+  async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
     if (caller?.managed)
       throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
-    return (await this.visible(caller))
+    return (await this.visible(caller, agent && !caller?.session))
       .map((entry) => structuredClone(entry.description))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -491,7 +501,13 @@ export class ToolRegistry implements Tools {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation> {
+  /** agent: as for describe; such a caller cannot run what no conversation is offered. */
+  async invoke(
+    name: string,
+    caller: Caller,
+    input: unknown,
+    agent = false,
+  ): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
     this.requireConversationCaller(caller);
@@ -506,7 +522,12 @@ export class ToolRegistry implements Tools {
     // Admission owns the entire operation, including asynchronous authentication and parsing.
     const operation = Promise.resolve().then(async () => {
       // A session caller is authorized by its admission in prepare, below.
-      if (!caller.session) await this.scope.require(caller, 'read');
+      if (!caller.session) {
+        await this.scope.require(caller, 'read');
+        // A reader's writes are refused by their own permission check, as over /tools.
+        if (agent && !this.offered(entry, false))
+          throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
+      }
       if (conversation) this.fenceConversation(conversation);
       if (entry.remote) {
         if (!this.access)

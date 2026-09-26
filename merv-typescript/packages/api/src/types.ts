@@ -29,8 +29,8 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   /** How an agent conversation may use this tool (everything a conversation reads reaches the
    * model provider). Omitted: the agent runs it as its person. 'propose': the agent only proposes
    * the exact call, which runs as the person when they press Run. 'secret': as 'propose', and its
-   * result (a bearer secret or signed URL) is shown only to the person. 'never': not offered (only
-   * a leased worker may run it). A function of the parsed input returns 'propose' | 'secret' |
+   * result (a bearer secret or signed URL) is shown only to the person. 'never': offered to no person's
+   * agent, in a conversation or over MCP (only a leased worker or Merv's own pages run it). A function of the parsed input returns 'propose' | 'secret' |
    * undefined for tools where only some uses need the person. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
@@ -198,12 +198,13 @@ export interface Api {
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
-  /** Detached public descriptions. Transports must supply the authenticated caller. */
-  describe(caller?: Caller): Promise<ToolDescription[]>;
+  /** Detached public descriptions. Transports must supply the authenticated caller. agent: the
+   *  caller is a person's own agent over MCP, offered only what a Pi conversation is. */
+  describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
   /** Omitting caller is trusted in-process inspection; transports must always supply it. */
   list(caller?: Caller): Promise<AnyToolDefinition[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
-  invoke(name: string, caller: Caller, input: unknown): Promise<ToolInvocation>;
+  invoke(name: string, caller: Caller, input: unknown, agent?: boolean): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;

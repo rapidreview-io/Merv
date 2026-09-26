@@ -9,6 +9,10 @@ cannot administer these independent actor credentials.
 
 ## Public tools
 
+These run from Merv's own pages and `POST /tools`: a person's agent over MCP, like a Pi
+conversation, is not offered any of them but `actor.whoami` and `actor.list`, and cannot call
+them (`tool_forbidden`).
+
 | Tool                 | Purpose                                                                                                                    |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `actor.create`       | Create an actor and its first token. Operators may set a future `expiresAt`; null or omission leaves it unbounded.         |

@@ -12,7 +12,7 @@ export const artifactToolsPlugin = {
       inputSchema: S,
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
-      conversation?: (input: z.infer<S>) => 'secret' | 'propose' | undefined,
+      conversation?: 'never' | ((input: z.infer<S>) => 'secret' | 'propose' | undefined),
     ) =>
       ctx.effect(() =>
         ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
@@ -83,6 +83,7 @@ export const artifactToolsPlugin = {
       z.object({}).strict(),
       async () => ({ available: ctx.artifacts.largeUploadAvailable }),
       true,
+      'never',
     );
     register(
       'artifact.read',

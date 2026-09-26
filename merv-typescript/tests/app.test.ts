@@ -45,7 +45,7 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 94);
+    assert.equal(catalog.length, 85);
     for (const name of ['session.dispatch', 'session.halt', 'session.observe'])
       assert.ok(
         catalog.some((tool) => tool.name === name),
@@ -53,6 +53,7 @@ test('assembled Cordis application completes MCP task review across two full res
       );
     for (const name of ['paper.begin_update', 'paper.publish', 'paper.cancel'])
       assert.ok(!catalog.some((tool) => tool.name === name));
+    // Credentials are managed from Merv's own pages: an agent over MCP is not offered them.
     for (const name of [
       'actor.credentials',
       'actor.issue_token',
@@ -60,8 +61,8 @@ test('assembled Cordis application completes MCP task review across two full res
       'actor.revoke_token',
     ])
       assert.ok(
-        catalog.some((tool) => tool.name === name),
-        `${name} must be discoverable`,
+        !catalog.some((tool) => tool.name === name),
+        `${name} must not be offered to an agent`,
       );
     assert.deepEqual(
       catalog.filter((tool) => tool.name.startsWith('workflow.')).map((tool) => tool.name),

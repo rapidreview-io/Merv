@@ -22,8 +22,8 @@ function identity(c: {
 }): Caller {
   return { actorId: c.actor.id, projectId: c.actor.projectId, credentialId: c.credential.id };
 }
-const decode = (result: Awaited<ReturnType<Client['callTool']>>) =>
-  JSON.parse((result.content as { text: string }[])[0].text);
+const decode = (result: unknown) =>
+  JSON.parse((result as { content: { text: string }[] }).content[0].text);
 
 async function connect(url: string, token: string) {
   const client = new Client({ name: 'credential-lifecycle', version: '1' });
@@ -33,6 +33,26 @@ async function connect(url: string, token: string) {
     }),
   );
   return client;
+}
+/** Credentials are managed from Merv's own pages (POST /tools): a person's agent over MCP is not
+ *  offered them. Answers in the shape an MCP call returns, for decode. */
+function page(url: string, token: string) {
+  return {
+    callTool: async ({ name, arguments: input }: { name: string; arguments: object }) => {
+      const response = await fetch(`${url}/tools/${name}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const body = (await response.json()) as { result?: unknown; error?: unknown };
+      return response.ok
+        ? { isError: undefined, content: [{ type: 'text', text: JSON.stringify(body.result) }] }
+        : {
+            isError: true,
+            content: [{ type: 'text', text: JSON.stringify({ error: body.error }) }],
+          };
+    },
+  };
 }
 
 test('HTTP/MCP rotation replaces authority while task and actor identity stay durable', async (t) => {
@@ -59,8 +79,15 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
   await app.ctx.workflows.begin(identity(producer), { instanceId: task.id, expectedRevision: 0 });
   const adminClient = await connect(app.ctx.api.url!, operator.token);
   clients.push(adminClient);
+  const refused = await adminClient.callTool({
+    name: 'actor.credentials',
+    arguments: { actorId: producer.actor.id },
+  });
+  assert.equal(refused.isError, true);
+  assert.equal(decode(refused).error.code, 'tool_forbidden');
+  const adminPage = page(app.ctx.api.url!, operator.token);
   const metadata = decode(
-    await adminClient.callTool({
+    await adminPage.callTool({
       name: 'actor.credentials',
       arguments: { actorId: producer.actor.id },
     }),
@@ -68,7 +95,7 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
   assert.equal(metadata[0].id, producer.credential.id);
   assert.equal(metadata[0].kind, 'actor');
   assert.ok(!JSON.stringify(metadata).includes(producer.token));
-  const rotationResult = await adminClient.callTool({
+  const rotationResult = await adminPage.callTool({
     name: 'actor.rotate_token',
     arguments: { credentialId: producer.credential.id },
   });
@@ -335,20 +362,21 @@ test('operator self-rotation stages a replacement before invalidating the authen
   });
   const client = await connect(app.ctx.api.url!, operator.token);
   clients.push(client);
-  const unsafe = await client.callTool({
+  const clientPage = page(app.ctx.api.url!, operator.token);
+  const unsafe = await clientPage.callTool({
     name: 'actor.rotate_token',
     arguments: { credentialId: operator.credential.id },
   });
   assert.equal(unsafe.isError, true);
   assert.equal(decode(unsafe).error.code, 'self_rotation');
   for (const expiresAt of [null, new Date(Date.parse(deadline) + 1000).toISOString()]) {
-    const extended = await client.callTool({
+    const extended = await clientPage.callTool({
       name: 'actor.issue_token',
       arguments: { actorId: operator.actor.id, expiresAt },
     });
     assert.equal(extended.isError, true);
   }
-  const issued = await client.callTool({
+  const issued = await clientPage.callTool({
     name: 'actor.issue_token',
     arguments: { actorId: operator.actor.id },
   });
@@ -370,7 +398,7 @@ test('operator self-rotation stages a replacement before invalidating the authen
   );
   assert.equal(
     (
-      await next.callTool({
+      await page(app.ctx.api.url!, replacement.token).callTool({
         name: 'actor.revoke_token',
         arguments: { credentialId: operator.credential.id },
       })
@@ -382,7 +410,7 @@ test('operator self-rotation stages a replacement before invalidating the authen
     decode(await next.callTool({ name: 'actor.whoami', arguments: {} })).id,
     operator.actor.id,
   );
-  const selfRevoke = await next.callTool({
+  const selfRevoke = await page(app.ctx.api.url!, replacement.token).callTool({
     name: 'actor.revoke_token',
     arguments: { credentialId: replacement.credential.id },
   });
