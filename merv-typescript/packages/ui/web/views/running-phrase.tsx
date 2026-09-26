@@ -26,9 +26,10 @@ export interface RunningReading {
   nameOf(id: string): string | undefined;
   /**
    * Opens a key's sidebar. Inside an open sidebar the key is swapped for another in place,
-   * so the page's history keeps one entry for it.
+   * so the page's history keeps one entry for it. A route sent with the key is where the
+   * link goes instead when no owner answers for the key.
    */
-  open(key: string): void;
+  open(key: string, route?: string): void;
 }
 export const Reading = createContext<RunningReading>({
   now: clockOf(0),
@@ -106,9 +107,10 @@ export const ticks = (value: RunningValue) =>
   typeof value === 'object' && ('ago' in value || 'since' in value || 'until' in value);
 
 /**
- * Where a link goes. A key opens that thing's sidebar whether or not it is on the board;
- * a route is a page of this app, and an href opens outside it. The glyph that ends it is
- * the shell's, so no owner writes an arrow.
+ * Where a link goes. A key opens that thing's sidebar whether or not it is on the board,
+ * and follows the route it carries where no owner answers for it; a route is a page of
+ * this app, and an href opens outside it. The glyph that ends it is the shell's, so no
+ * owner writes an arrow.
  */
 export function Target({
   to,
@@ -125,7 +127,7 @@ export function Target({
       <button
         type="button"
         className={cx('running-target', className)}
-        onClick={() => open(to.key)}
+        onClick={() => open(to.key, to.route)}
       >
         {children}
         <ArrowRightIcon size={12} />

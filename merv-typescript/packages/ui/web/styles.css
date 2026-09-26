@@ -4807,6 +4807,13 @@ del.cut {
   margin-top: 2px;
   font-size: var(--text-sm);
 }
+/* What a lane needs of a person has a line of its own under the heading, so it is never
+   cut to make room for the lane's other words; who ends the wait and the way there follow. */
+.running-lane-attn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
+}
 /* A card is the object here, so it keeps its frame: what a line ends at and what the
    pointer picks up. Its ground covers any line passing behind it. */
 .running-node,
@@ -4903,7 +4910,8 @@ del.cut {
 .running-line.running-attn {
   color: var(--refutes);
 }
-.running-look--quiet :is(.running-title, .running-line) {
+/* An ending card steps back, except for the line that says what a person must do. */
+.running-look--quiet :is(.running-title, .running-line):where(:not(.running-attn)) {
   color: var(--faint);
 }
 /* Green only where something is live, and it breathes only while a call is in flight;

@@ -18,7 +18,7 @@ import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { ProcessDiagram, diagramOfGraph } from '../process';
-import { Phrase, Reading, Target, silent, ticks, valueText } from './running-phrase';
+import { Phrase, Reading, Target, phraseText, silent, ticks, valueText } from './running-phrase';
 
 /**
  * The sidebar of whatever is in hand on the Running page. Its owner wrote every word of it
@@ -368,22 +368,25 @@ function Section({ section: sent }: { section: RunningSection }) {
 
 /**
  * The line under the title: how the thing stands, or — where it needs a person — what
- * needs one, in the refusal's colour, then who ends the wait and the way to the move. Only
- * the words go to a screen reader's live region; the clocks that end the line tick outside
- * it, so a person is told once when the standing changes and never every second.
+ * needs one, in the refusal's colour, then who ends the wait and the way to the move. A
+ * screen reader's live region holds every word of it and none of its clocks, wherever they
+ * stand in the line, so a person is told once when the standing changes and never every
+ * second.
  */
 function Standing({ says, attention }: { says: RunningPhrase; attention?: RunningAttention }) {
+  const reading = useContext(Reading);
   const said = attention?.says ?? says;
-  const cut = said.findIndex(ticks);
-  const [still, ticking] = cut < 0 ? [said, []] : [said.slice(0, cut), said.slice(cut)];
   return (
     <>
       <p className={cx('running-says', attention && !attention.quiet && 'running-attn')}>
-        <span role="status">
-          <Phrase value={still} in="cell" />
-        </span>
-        <Phrase value={ticking} in="cell" />
+        <Phrase value={said} in="cell" />
       </p>
+      <span className="sr-only" role="status">
+        {phraseText(
+          said.filter((value) => !ticks(value)),
+          reading,
+        )}
+      </span>
       {attention?.who && <p className="running-who">{attention.who}</p>}
       {attention?.to && (
         <Target to={attention.to} className="hit running-move">
@@ -404,6 +407,7 @@ export function RunningSidebar({
   attention,
   moving,
   onClose,
+  onMissing,
   nameOf,
   open,
 }: {
@@ -412,8 +416,10 @@ export function RunningSidebar({
   /** The board draws this thing live, so its sidebar is read at the live pace from the start. */
   moving?: boolean;
   onClose(): void;
+  /** Where no owner answers for the key, the page the link that opened it named instead. */
+  onMissing?(): void;
   nameOf(id: string): string | undefined;
-  open(key: string): void;
+  open(key: string, route?: string): void;
 }) {
   const [every, setEvery] = useState(moving ? 4000 : 10_000);
   const panel = useTool<RunningPanel>('ui.running_panel', { key: target }, { every });
@@ -427,6 +433,11 @@ export function RunningSidebar({
   const head = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const loaded = !!data;
+  const missing = !data && panel.error?.code === 'running_not_found';
+  useEffect(() => {
+    if (missing) onMissing?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missing]);
   // The cursor goes to the name of what opened, once it has one; where the sidebar stands
   // under the board rather than beside it, its head is brought into view as well.
   useEffect(() => {
@@ -450,7 +461,7 @@ export function RunningSidebar({
     return (
       <div className="running-sidebar">
         <div className="running-panel-top">{close}</div>
-        <LoadState {...panel} />
+        {missing && onMissing ? <LoadState loading /> : <LoadState {...panel} />}
       </div>
     );
   const standing = data.header.attention ?? attention;

@@ -388,16 +388,26 @@ export function useTool<T>(
   const [tick, setTick] = useState(0);
   const latest = useRef(key);
   latest.current = key;
+  // The cadence is read as each wait is set, so a page that changes it is not read again at
+  // once: the wait is set again, counted from the last answer.
+  const every = useRef(options.every);
+  every.current = options.every;
+  const rearm = useRef<() => void>();
   useEffect(() => {
     if (!key || !name) return;
     let cancelled = false;
     let asked = false;
+    let reading = false;
+    let last = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let waiting = false;
     const hidden = () => document.visibilityState === 'hidden';
     const schedule = () => {
+      clearTimeout(timer);
+      waiting = false;
+      if (!every.current) return;
       if (hidden()) waiting = true;
-      else timer = setTimeout(() => void refresh(), options.every);
+      else timer = setTimeout(() => void refresh(), Math.max(0, last + every.current - Date.now()));
     };
     const resume = () => {
       if (!waiting || hidden()) return;
@@ -408,6 +418,7 @@ export function useTool<T>(
       // A reload asks again; every other read joins one already in flight.
       const fresh = tick > 0 && !asked;
       asked = true;
+      reading = true;
       try {
         const data = await shared<T>(key, name, input, fresh);
         const loadedAt = new Date().toISOString();
@@ -423,11 +434,16 @@ export function useTool<T>(
           }));
       } finally {
         // Wait for a response before polling again, including on slow remote storage.
-        if (!cancelled && options.every) schedule();
+        reading = false;
+        last = Date.now();
+        if (!cancelled) schedule();
       }
     };
+    rearm.current = () => {
+      if (!cancelled && !reading) schedule();
+    };
     void refresh();
-    if (options.every) document.addEventListener('visibilitychange', resume);
+    document.addEventListener('visibilitychange', resume);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -435,7 +451,8 @@ export function useTool<T>(
     };
     // The serialized key captures the input object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick, options.every]);
+  }, [key, tick]);
+  useEffect(() => rearm.current?.(), [options.every]);
   useEffect(() => {
     if (!key) return;
     const bump = () => setTick((n) => n + 1);

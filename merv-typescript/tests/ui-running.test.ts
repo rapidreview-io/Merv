@@ -136,6 +136,16 @@ const button = (label: string, within: ParentNode = document) =>
     (item) => item.textContent?.trim() === label,
   );
 const reads = (tool: string) => requests.filter((line) => line === `POST /tools/${tool}`).length;
+/** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
+const styled = () => {
+  const sheet = document.createElement('style');
+  sheet.textContent = readFileSync(
+    new URL('../packages/ui/web/styles.css', import.meta.url),
+    'utf8',
+  );
+  document.head.appendChild(sheet);
+  return () => sheet.remove();
+};
 
 test('three bands say what each holds, and what needs a person is counted beside it in red', async (t) => {
   t.after(unmount);
@@ -158,6 +168,49 @@ test('three bands say what each holds, and what needs a person is counted beside
   const pause = button('Pause dispatch')!;
   assert.ok(pause && !pause.classList.contains('btn--primary'));
   assert.ok(text().includes('Dispatch on · 2 machines live'));
+});
+
+test('what a lane needs of a person has its own line, never cut, with who ends the wait and the way there', async (t) => {
+  t.after(unmount);
+  t.after(styled());
+  drawn();
+  const given = board();
+  given.lanes.sessions.summaries[0]!.attention = {
+    says: ['3 ready, not taken for ', { since: new Date(Date.now() - 720_000).toISOString() }],
+    who: 'An operator checks dispatch and machines',
+    to: { route: '/sessions', text: 'Open sessions' },
+  };
+  answers(given);
+  await mount(page());
+  const line = $('[data-lane="sessions"] .running-lane-attn')!;
+  assert.ok(line, 'the red clause stands under the heading');
+  assert.equal(line.closest('.running-summary'), null, 'not squeezed into the heading’s line');
+  const red = line.querySelector<HTMLElement>('.running-attn')!;
+  assert.equal(red.textContent, '3 ready, not taken for 12m');
+  for (const item of [line, red]) {
+    assert.notEqual(getComputedStyle(item).whiteSpace, 'nowrap');
+    assert.notEqual(getComputedStyle(item).textOverflow, 'ellipsis');
+  }
+  assert.ok(line.textContent!.includes('An operator checks dispatch and machines'));
+  assert.equal(line.querySelector('a.running-target')!.getAttribute('href'), '/sessions');
+});
+
+test('a change of cadence waits from the last answer, and never reads the board again at once', async (t) => {
+  t.after(unmount);
+  drawn();
+  const given = board();
+  given.lanes.hardware.pending = true;
+  answers(given);
+  await mount(page());
+  await settle(50);
+  assert.equal(reads('ui.running'), 1, 'the first answer set the cadence; it asked nothing more');
+  // The same for a sidebar whose owner says it is live where the board drew no dot.
+  await press(card('sandbox:sbx_h100'));
+  await settle(50);
+  assert.deepEqual(asked, ['sandbox:sbx_h100']);
+  // The pending lane's cadence of 2 s, set after the first answer, still reads it again.
+  await settle(2100);
+  assert.ok(reads('ui.running') >= 2, `the board was read ${reads('ui.running')} times`);
 });
 
 test('a lane whose source has never answered reads a dash and grey cells, and the board asks again soon', async (t) => {
@@ -200,6 +253,31 @@ test('without the room to draw, each band is a list and every relation is said i
     'rented for Draft section 3.2',
   ])
     assert.ok(text().includes(said), `${said} is not on the page: ${text().slice(0, 600)}`);
+});
+
+test('a row’s relations are part of its name, and a prerequisite already settled is not waited on', async (t) => {
+  t.after(unmount);
+  listed();
+  const given = board();
+  given.edges.push({
+    from: 'work:wf_draft',
+    to: 'work:wf_index',
+    verb: 'waits on',
+    waiting: false,
+  });
+  answers(given);
+  await mount(page());
+  const named = (key: string) => card(key).getAttribute('aria-label')!;
+  assert.match(named('session:session_index'), /, works on Rebuild citation index$/);
+  assert.match(named('check:base_7a1e'), /, checks Sensitivity table$/);
+  // Every word said under a row is in the name it is heard by.
+  for (const row of all('.running-row'))
+    for (const said of row.querySelectorAll('.running-relations > span'))
+      assert.ok(row.getAttribute('aria-label')!.includes(said.textContent!), said.textContent!);
+  const draft = card('work:wf_draft');
+  assert.ok(draft.textContent!.includes('waits on Ablate retrieval depth'));
+  assert.ok(!draft.textContent!.includes('waits on Rebuild citation index'));
+  assert.ok(!named('work:wf_draft').includes('waits on Rebuild citation index'));
 });
 
 test('measured, the cards stand on the drawing, and the lines between bands wait for a card in hand', async (t) => {
@@ -302,6 +380,33 @@ test('a key that is not on the board still opens its sidebar; one nobody answers
   assert.ok($('.running-close'), 'the sidebar can still be closed');
 });
 
+test('a link whose key nobody answers for goes to the page it carries, in place of a dead end', async (t) => {
+  t.after(unmount);
+  drawn();
+  const now = Date.now();
+  const task = taskPanel(now);
+  const unblocks = task.sections.find((section) => section.title === 'Unblocks')!;
+  if (unblocks.kind === 'links')
+    unblocks.rows.push({
+      to: { key: 'work:wf_cycle', route: '/research/wf_cycle' },
+      kind: 'Research',
+      name: 'Citation coverage study',
+      says: [{ state: 'running' }],
+    });
+  answers(board(now), { 'work:wf_index': task });
+  await mount(page());
+  await press(card('work:wf_index'));
+  const jump = all('.running-jump').find((item) =>
+    item.textContent?.includes('Citation coverage study'),
+  )!;
+  await press(jump);
+  await settle(0);
+  assert.deepEqual(asked, ['work:wf_index', 'work:wf_cycle'], 'its owner is asked first');
+  assert.equal(where, '/research/wf_cycle');
+  assert.equal(how, 'REPLACE', 'the key nobody answers for is not left in history');
+  assert.ok(!text().includes('Not found'), text().slice(0, 400));
+});
+
 test('Escape inside a guard only cancels it; outside, it closes the sidebar and hands the cursor back', async (t) => {
   t.after(unmount);
   drawn();
@@ -371,6 +476,23 @@ test('red is only what a person has to do: a card, a row, a line — and never a
   assert.ok(text().includes('$16.74 · $32.40/h'));
 });
 
+test('an ending card steps back in faint ink, except for the red line saying what a person must do', async (t) => {
+  t.after(unmount);
+  t.after(styled());
+  for (const draw of [() => drawn(), listed]) {
+    draw();
+    answers();
+    await mount(page());
+    const held = card('work:wf_table');
+    assert.ok(held.classList.contains('running-look--quiet'));
+    const red = held.querySelector<HTMLElement>('.running-line.running-attn')!;
+    assert.equal(getComputedStyle(red).color, 'var(--refutes)');
+    const done = held.querySelector<HTMLElement>('.running-line--second')!;
+    assert.equal(getComputedStyle(done).color, 'var(--faint)');
+    await unmount();
+  }
+});
+
 test('a held card’s sidebar borrows the board’s mark: the sentence, who ends the wait, and the way to the move', async (t) => {
   t.after(unmount);
   drawn();
@@ -387,17 +509,38 @@ test('a held card’s sidebar borrows the board’s mark: the sentence, who ends
   assert.ok(move.querySelector('svg'), 'the shell ends the link with its own arrow');
 });
 
-test('the live region holds the words of the standing; its clock ticks outside it', async (t) => {
+test('the live region holds every word of the standing and none of its clocks', async (t) => {
   t.after(unmount);
   drawn();
-  answers();
+  const now = Date.now();
+  answers(board(now), {
+    'session:session_index': {
+      ...sessionPanel(now),
+      key: 'session:session_index',
+      header: {
+        kind: 'Agent',
+        title: 'Rebuild citation index',
+        says: [
+          { state: 'active' },
+          ' for ',
+          { since: new Date(now - 90_000).toISOString() },
+          ' · on mac-studio',
+        ],
+      },
+    },
+  });
   await mount(page());
   await press(card('session:session_ablate'));
   const says = $('.running-says')!;
   assert.match(says.textContent!, /^Quiet 34m$/);
-  assert.equal(says.querySelector('[role="status"]')!.textContent, 'Quiet ');
-  assert.equal(says.querySelector('[role="status"] time'), null);
+  const status = () => $('.running-panel-head [role="status"]')!;
+  assert.equal(status().textContent, 'Quiet');
+  assert.equal(status().querySelector('time'), null);
   assert.ok(text().includes('An operator halts the lease.'));
+  // Words after a clock are the standing too: a new machine is told, the ticking is not.
+  await press(card('session:session_index'));
+  assert.match($('.running-says')!.textContent!, /^active for 1m · on mac-studio$/);
+  assert.equal(status().textContent, 'active for · on mac-studio');
 });
 
 test('Halt lease names its consequence first, sends its input as written, and a halt of nothing keeps the guard open', async (t) => {

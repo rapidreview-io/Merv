@@ -6,9 +6,8 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   RunningBoard,
   RunningKey,
@@ -32,7 +31,7 @@ import {
   type RunningLayout,
 } from './running-layout';
 import { Act, RunningSidebar } from './running-panel';
-import { Phrase, Reading, phraseText, type RunningReading } from './running-phrase';
+import { Phrase, Reading, Target, phraseText, type RunningReading } from './running-phrase';
 
 /**
  * Running: everything in flight, in three bands — the work, the agent sessions on it, and
@@ -131,8 +130,8 @@ function BandTitle({ lane, name }: { lane: RunningLane; name: RunningLaneName })
 
 /**
  * A band's heading line: its name and count, the lane's own line — for Sessions, how
- * dispatch stands, with its one control — and, under it, one line where a part of the lane
- * did not load or its source has gone stale.
+ * dispatch stands, with its one control — and, under it, a line for what the lane needs of
+ * a person, and one where a part of the lane did not load or its source has gone stale.
  */
 function BandHead({ lane, name, now }: { lane: RunningLane; name: RunningLaneName; now: Clock }) {
   return (
@@ -144,17 +143,24 @@ function BandHead({ lane, name, now }: { lane: RunningLane; name: RunningLaneNam
             <span className="muted">
               <Phrase value={summary.says} />
             </span>
-            {summary.attention && (
-              <span className={cx(!summary.attention.quiet && 'running-attn')}>
-                <Phrase value={summary.attention.says} />
-              </span>
-            )}
             {summary.actions.map((action) => (
               <Act key={`${action.tool}:${action.label}`} action={action} />
             ))}
           </span>
         ))}
       </div>
+      {lane.summaries.map(
+        ({ attention, owner }, index) =>
+          attention && (
+            <p className="running-note running-lane-attn" key={`${owner ?? ''}${index}`}>
+              <span className={cx(!attention.quiet && 'running-attn')}>
+                <Phrase value={attention.says} />
+              </span>
+              {attention.who && <span className="muted">{attention.who}</span>}
+              {attention.to && <Target to={attention.to}>{attention.to.text}</Target>}
+            </p>
+          ),
+      )}
       {lane.failed.length > 0 && (
         <p className="error-message running-note" role="status">
           Could not load everything.
@@ -205,7 +211,10 @@ function Face({ node, kinds, now }: { node: RunningNode; kinds: boolean; now: Cl
   );
 }
 
-/** A card as the one control it is: it opens this thing's sidebar. */
+/**
+ * A card as the one control it is: it opens this thing's sidebar. Where its relations are
+ * said in words under its face, they are part of its name too.
+ */
 function Card({
   node,
   kinds,
@@ -215,9 +224,9 @@ function Card({
   box,
   className,
   reading,
+  relations = [],
   onSelect,
   onHover,
-  children,
 }: {
   node: RunningNode;
   kinds: boolean;
@@ -227,9 +236,9 @@ function Card({
   box?: RunningBox & { top: number };
   className: string;
   reading: Omit<RunningReading, 'open'>;
+  relations?: string[];
   onSelect(key: RunningKey): void;
   onHover(key: RunningKey | null): void;
-  children?: ReactNode;
 }) {
   return (
     <button
@@ -244,7 +253,7 @@ function Card({
       data-key={node.key}
       aria-pressed={selected}
       aria-controls="running-panel"
-      aria-label={nodeName(node, reading)}
+      aria-label={[nodeName(node, reading), ...relations].join(', ')}
       title={node.name && node.name !== node.title ? node.name : undefined}
       style={
         box
@@ -263,7 +272,13 @@ function Card({
       onBlur={() => onHover(null)}
     >
       <Face node={node} kinds={kinds} now={now} />
-      {children}
+      {relations.length > 0 && (
+        <span className="running-relations">
+          {relations.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
+        </span>
+      )}
     </button>
   );
 }
@@ -325,33 +340,29 @@ function Links({
   );
 }
 
-/** What a card relates to, in words, where there is no room to draw the line. */
-function Relations({
-  node,
-  board,
-  titles,
-}: {
-  node: RunningNode;
-  board: RunningBoard;
-  titles: ReadonlyMap<RunningKey, string>;
-}) {
-  const said = board.edges
-    .filter((edge) => edge.from === node.key && titles.has(edge.to))
+/**
+ * What a card relates to, in words, where there is no room to draw the line. A settled
+ * prerequisite is history, and the card no longer waits on it.
+ */
+const relationsOf = (
+  node: RunningNode,
+  board: RunningBoard,
+  titles: ReadonlyMap<RunningKey, string>,
+) =>
+  board.edges
+    .filter(
+      (edge) =>
+        edge.from === node.key && titles.has(edge.to) && (edge.verb !== 'waits on' || edge.waiting),
+    )
     .map((edge) => `${edge.verb} ${titles.get(edge.to)}`);
-  if (!said.length) return null;
-  return (
-    <span className="running-relations">
-      {said.map((line) => (
-        <span key={line}>{line}</span>
-      ))}
-    </span>
-  );
-}
 
 export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined }) {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const asked = params.get('key');
+  // The page the link that named this key goes to, should no owner answer for it.
+  const sent: unknown = (useLocation().state as { route?: unknown } | null)?.route;
+  const fallback = typeof sent === 'string' && sent.startsWith('/') ? sent : undefined;
   const [cadence, setCadence] = useState(cadenceOf(undefined));
   const board = useTool<RunningBoard>('ui.running', {}, { every: cadence });
   const data = board.data;
@@ -412,13 +423,16 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
   useEffect(() => {
     if (!asked) pushed.current = false;
   }, [asked]);
-  const select = (key: RunningKey | null, how: 'push' | 'replace') => {
+  const select = (key: RunningKey | null, how: 'push' | 'replace', route?: string) => {
     const next = new URLSearchParams(params);
     if (key) next.set('key', key);
     else next.delete('key');
     if (how === 'push') pushed.current = true;
-    setParams(next, { replace: how === 'replace' });
+    setParams(next, { replace: how === 'replace', state: route ? { route } : undefined });
   };
+  // A link opens its key's sidebar from the board, or swaps it into the one already open.
+  const follow = (key: RunningKey, route?: string) =>
+    select(key, asked ? 'replace' : 'push', route);
   // A key another node absorbed opens that node, in place of the address that named it.
   const absorber = data && asked ? absorberOf(data, asked) : undefined;
   const redirect = absorber && absorber.key !== asked ? absorber.key : undefined;
@@ -520,15 +534,14 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
       box={box}
       className={box ? 'running-node' : 'running-row'}
       reading={reading}
+      relations={!box && data ? relationsOf(node, data, titles) : undefined}
       onSelect={onSelect}
       onHover={(key) => setHover((old) => key ?? (old === node.key ? null : old))}
-    >
-      {!box && data && <Relations node={node} board={data} titles={titles} />}
-    </Card>
+    />
   );
 
   return (
-    <Reading.Provider value={{ now, nameOf, open: (key) => select(key, 'replace') }}>
+    <Reading.Provider value={{ now, nameOf, open: follow }}>
       <div className="page-stage running">
         {data && board.error && <LoadState {...board} />}
         {data && !board.error && now.stale && board.loadedAt && (
@@ -660,8 +673,9 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
                 attention={absorber?.attention}
                 moving={!!absorber?.dot}
                 onClose={close}
+                onMissing={fallback ? () => navigate(fallback, { replace: true }) : undefined}
                 nameOf={nameOf}
-                open={(key) => select(key, 'replace')}
+                open={follow}
               />
             )}
           </aside>
@@ -680,7 +694,9 @@ function headsOf(
   return Object.fromEntries(
     LANES.map((lane) => {
       const notes =
-        Number(board.lanes[lane].failed.length > 0) + Number(staleLane(board.lanes[lane], now));
+        board.lanes[lane].summaries.filter((summary) => summary.attention).length +
+        Number(board.lanes[lane].failed.length > 0) +
+        Number(staleLane(board.lanes[lane], now));
       return [lane, measured[lane] || HEAD + notes * NOTE];
     }),
   );
