@@ -235,7 +235,10 @@ export interface CodeRunning {
    * the newest first and only so many; the summary counts the rest.
    */
   runningHolds(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary | null }>;
-  /** The machines project checks hold, as hardware nodes `check:<baseKey>`. */
+  /**
+   * The machines project checks hold, and any a check could not give back, as hardware
+   * nodes `check:<baseKey>`.
+   */
   runningChecks(caller: Caller): Promise<RunningNode[]>;
   /** The sidebar of `check:<baseKey>`; null for any other key. */
   runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;

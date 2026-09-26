@@ -6,6 +6,7 @@ import { Context } from 'cordis';
 import { CodeService } from '@merv/code-research/service';
 import type { CodeCapture } from '@merv/code-research/types';
 import codeUiPlugin from '@merv/code-research/ui';
+import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-research/running';
 import { CodeRepositories } from '@merv/code/store/repository';
 import {
   createService,
@@ -17,6 +18,8 @@ import {
 } from '@merv/contracts';
 import { UiRegistry, type RunningContribution } from '@merv/ui';
 import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import type { SandboxCheckHandle, SandboxChecks } from '@merv/sandboxes';
+import { baseFixture } from './fixtures/code-bases.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
@@ -328,6 +331,10 @@ const tasks = (drawn: string[] = []): RunningContribution => ({
 const codeOf = (sections: RunningSection[]) =>
   sections.find((section) => section.owner === 'code-research' && section.title === 'Code');
 
+/** An id inside a branch, read by its head and its tail as the Code page reads it. */
+const short = (branch: string) =>
+  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
+
 test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a signed-in operator is offered the merge', async (t) => {
   const f = await fixture(t);
   const work = await f.publishing('Publish the index');
@@ -433,7 +440,7 @@ test('done work whose pull request waits for a merge is held on the board in the
         : needs,
       attention: true,
     },
-    { label: 'Branch', value: [{ mono: unit.branch }] },
+    { label: 'Branch', value: [{ mono: short(unit.branch) }] },
     {
       label: 'Working',
       value: [
@@ -615,17 +622,17 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   const key = (letter: string) => letter.repeat(64);
   // Handed off three minutes ago: the deadline is the hand-off, the timeout and the slack.
   const deadline = new Date(Date.now() + (600 + 1500 - 180) * 1000).toISOString();
-  const handedOff = new Date(Date.parse(deadline) - (600 + 1500) * 1000).toISOString();
   const insert = async (
     base: string,
     state: string,
     check: string,
     job: string | null,
     until: string | null = deadline,
+    blocker: string | null = null,
   ) =>
     await f.state.transaction((tx) =>
       tx.run(
-        "INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,execution_epoch,deadline,check_state,check_job_json) VALUES (?,?,?,?,?,'fixture',?,?,?,1,?,?,?)",
+        "INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,execution_epoch,deadline,check_state,check_job_json,blocker) VALUES (?,?,?,?,?,'fixture',?,?,?,1,?,?,?,?)",
         f.admin.projectId,
         base,
         JSON.stringify([f.feature, f.other].sort()),
@@ -637,18 +644,38 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
         until,
         check,
         job,
+        blocker,
       ),
     );
   await insert(key('a'), 'running', 'running', handle());
   await insert(key('b'), 'running', 'queued', null);
   await insert(key('c'), 'cancelled', 'running', handle({ releaseAttempts: 2 }));
-  // A check still Merv's a minute past its deadline, which Code settles on its next pass:
-  // one that stays there is waiting on a person.
-  const late = new Date(Date.now() - 60_000).toISOString();
-  await insert(key('d'), 'running', 'running', handle({ sandboxId: 'sbx_late' }), late);
-  // Not in flight: a check that ended, and one whose base stopped before it rented anything.
+  // A check still Merv's a minute past its deadline is Code's to settle on its next drain,
+  // so it is said in ink; one still there past the grace is waiting on a person.
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  await insert(key('d'), 'running', 'running', handle({ sandboxId: 'sbx_late' }), ago(60_000));
+  await insert(
+    key('3'),
+    'running',
+    'running',
+    handle({ sandboxId: 'sbx_stuck' }),
+    ago(OVERDUE_GRACE_MS + 60_000),
+  );
+  // A machine Code stopped asking back for: the handle is gone, and only the blocker Code
+  // wrote in the same breath names it (bases.ts reclaim).
+  await insert(
+    key('4'),
+    'suspended',
+    'none',
+    null,
+    deadline,
+    'code_check_unreclaimed: sandbox sbx_lost could not be given back (the service answered 503)',
+  );
+  // Not in flight: a check that ended, one whose base stopped before it rented anything, and
+  // a base that never had a check.
   await insert(key('e'), 'cancelled', 'unavailable', null);
   await insert(key('f'), 'suspended', 'queued', null);
+  await insert(key('7'), 'cancelled', 'none', null);
 
   const checks = await f.state.snapshot(() => f.code.runningChecks(f.admin));
   const checking = [{ to: `work:${checked.id}`, verb: 'checks' }];
@@ -660,9 +687,34 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   };
   assert.deepEqual(checks, [
     {
+      key: `check:${key('3')}`,
+      ...common,
+      lines: [['Running']],
+      look: 'solid',
+      dot: 'live',
+      attention: {
+        says: ['Past its deadline'],
+        who: 'An operator retries or cancels the base on Code',
+      },
+      units: { count: 1, busy: true },
+      aliases: ['sandbox:sbx_stuck'],
+    },
+    {
+      key: `check:${key('4')}`,
+      ...common,
+      lines: [['Stopped · ', { state: 'suspended' }]],
+      look: 'quiet',
+      attention: {
+        says: ['Machine not given back'],
+        who: 'An operator releases it from the sandboxes console',
+      },
+      units: { count: 1, busy: false },
+      aliases: ['sandbox:sbx_lost'],
+    },
+    {
       key: `check:${key('a')}`,
       ...common,
-      lines: [['Running ', { since: handedOff }]],
+      lines: [['Running']],
       look: 'solid',
       dot: 'live',
       units: { count: 1, busy: true },
@@ -691,15 +743,10 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
     {
       key: `check:${key('d')}`,
       ...common,
-      lines: [
-        ['Running ', { since: new Date(Date.parse(late) - (600 + 1500) * 1000).toISOString() }],
-      ],
+      lines: [['Running']],
       look: 'solid',
       dot: 'live',
-      attention: {
-        says: ['Past its deadline'],
-        who: 'An operator retries or cancels the base on Code',
-      },
+      attention: { says: ['Past its deadline · stopping'], quiet: true },
       units: { count: 1, busy: true },
       aliases: ['sandbox:sbx_late'],
     },
@@ -720,6 +767,14 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
           lines: [],
           look: 'solid',
           attention: { says: ['Lease ends in 6m'], who: 'A producer or operator extends it.' },
+        },
+        // Idle is never red of itself: alone, the machine Code let go of would read in ink.
+        {
+          key: 'sandbox:sbx_lost',
+          lane: 'hardware',
+          title: 'A6000',
+          lines: [['Idle 40m · $2.49/h']],
+          look: 'solid',
         },
       ],
     }),
@@ -758,15 +813,25 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
         edge.verb === 'checks',
     ),
   );
+  // The machine Code let go of is drawn once, on its check, in the red only a person ends.
+  const lost = answer.lanes.hardware.nodes.find(({ key: at }) => at === `check:${key('4')}`)!;
+  assert.deepEqual(lost.aliases, ['sandbox:sbx_lost']);
+  assert.deepEqual(lost.attention, {
+    says: ['Machine not given back'],
+    who: 'An operator releases it from the sandboxes console',
+  });
+  // The sandbox's own lease, the check past its grace and the machine let go of need a
+  // person; the check just past its deadline and the refusals being retried do not.
+  assert.equal(answer.lanes.hardware.needsYou, 3);
   for (const lane of Object.values(answer.lanes)) assert.deepEqual(lane.failed, []);
 
-  // The sidebar: how long of its time it has had, the work it checks, and the machine's own
+  // The sidebar: when the check runs out of time, the work it checks, and the machine's own
   // sections after them. It carries no control, and its record is the merge on Code.
   const sidebar = await f.panel(running, `check:${key('a')}`);
   assert.deepEqual(sidebar.header, {
     kind: 'Code check',
     title: 'npm test -- --ci',
-    says: ['Running ', { since: handedOff }],
+    says: ['Running'],
   });
   assert.deepEqual(
     sidebar.sections.map(({ title, owner }) => [title, owner]),
@@ -777,7 +842,7 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
     ],
   );
   assert.deepEqual(sidebar.sections[0].kind === 'facts' && sidebar.sections[0].rows, [
-    { label: 'Time', value: [{ since: handedOff, of: 600 }] },
+    { label: 'Deadline', value: [{ until: deadline }] },
     { label: 'Command', value: [{ mono: SPEC.command }] },
   ]);
   assert.deepEqual(sidebar.sections[1].kind === 'links' && sidebar.sections[1].rows, [
@@ -794,11 +859,187 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   assert.equal(sidebar.live, true);
   assert.deepEqual(sidebar.aliases, ['sandbox:sbx_check']);
 
-  // A check that ended still answers an open sidebar; a key that names no base, or no base of
-  // this project's, belongs to nobody here.
+  // Only the deadline is stored, so a timeout an operator raises mid-check moves nothing
+  // the board or the sidebar says about it.
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
+      JSON.stringify({ check: { ...SPEC, timeoutSeconds: 1800 } }),
+      f.admin.projectId,
+    ),
+  );
+  assert.deepEqual(await f.state.snapshot(() => f.code.runningChecks(f.admin)), checks);
+  const { observedAt: _, ...said } = sidebar;
+  const { observedAt: __, ...again } = await f.panel(running, `check:${key('a')}`);
+  assert.deepEqual(again, said);
+
+  // The machine Code let go of answers with the red and the machine it names.
+  const unreclaimed = await f.panel(running, `check:${key('4')}`);
+  assert.deepEqual(unreclaimed.header, {
+    kind: 'Code check',
+    title: 'npm test -- --ci',
+    says: ['Stopped · ', { state: 'suspended' }],
+    attention: {
+      says: ['Machine not given back'],
+      who: 'An operator releases it from the sandboxes console',
+    },
+  });
+  assert.deepEqual(unreclaimed.aliases, ['sandbox:sbx_lost']);
+
+  // A check that ended still answers an open sidebar with its verdict, and one that stopped
+  // before a verdict with where its base stopped. A base that never had a check, a key that
+  // names no base, or no base of this project's, belongs to nobody here.
   const ended = await f.panel(running, `check:${key('e')}`);
   assert.deepEqual(ended.header.says, ['Ended · ', { state: 'unavailable' }]);
   assert.equal(ended.live, false);
-  for (const nobody of [`check:${key('9')}`, 'check:not-a-base'])
+  const stopped = await f.panel(running, `check:${key('f')}`);
+  assert.deepEqual(stopped.header.says, ['Stopped · ', { state: 'suspended' }]);
+  for (const nobody of [`check:${key('7')}`, `check:${key('9')}`, 'check:not-a-base'])
     await assert.rejects(f.panel(running, nobody), { code: 'running_not_found' });
+});
+
+test('the work since its base is read from the project’s newest commits alone, and its branch is printed the way Code prints it', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Recent work');
+  await f.accept(work, f.feature);
+  const rows = async () => {
+    const [code] = await f.state.snapshot(() => f.code.runningCode(f.admin, [`work:${work.id}`]));
+    return code.kind === 'facts' ? code.rows : [];
+  };
+  const row = async (label: string) => (await rows()).find((item) => item.label === label);
+  const createdAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  const insert = (sql: string, ...values: string[]) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        `INSERT INTO code_commands (id,project_id,session_id,actor_id,request_id,input_hash,command_json,status,receipt_json) ${sql}`,
+        ...values,
+      ),
+    );
+  const stats = JSON.stringify({
+    stats: { commitCount: 2, filesChanged: 1, insertions: 5, deletions: 1 },
+  });
+  await insert(
+    "VALUES ('cmd-unit',?,'session-fixture',?,'cmd-unit','hash',?,'succeeded',?)",
+    f.admin.projectId,
+    f.admin.actorId,
+    JSON.stringify({ instanceId: work.id, createdAt }),
+    stats,
+  );
+  assert.deepEqual(await row('Working'), {
+    label: 'Working',
+    value: [
+      { state: 'closed' },
+      ' · 2 commits since base · +5 −1 in 1 file · last commit ',
+      { ago: createdAt },
+    ],
+  });
+
+  // The id inside the branch is its head and its tail; the whole id is printed nowhere.
+  const hex = work.id.slice('wf_'.length);
+  assert.deepEqual(await row('Branch'), {
+    label: 'Branch',
+    value: [{ mono: `merv/work/wf_${hex.slice(0, 8)}…${hex.slice(-6)}` }],
+  });
+  assert.ok(!JSON.stringify(await rows()).includes(hex));
+
+  // Two hundred newer commits of other work push this unit's out of what is read, and a row
+  // behind them that no parser could read is never reached: nothing older is decoded.
+  await insert(
+    "VALUES ('cmd-unreadable',?,'session-probe',?,'cmd-unreadable','hash','not json','succeeded',?)",
+    f.admin.projectId,
+    f.admin.actorId,
+    stats,
+  );
+  await insert(
+    "SELECT 'cmd-recent-'||n,?,'session-recent',?,'cmd-recent-'||n,'hash',?,'succeeded',? FROM generate_series(1,200) AS n",
+    f.admin.projectId,
+    f.admin.actorId,
+    JSON.stringify({ instanceId: 'wf_elsewhere', createdAt }),
+    stats,
+  );
+  assert.deepEqual(await row('Working'), { label: 'Working', value: [{ state: 'closed' }] });
+});
+
+test('a machine Code stops asking back for stays on its check, red, named by the blocker Code wrote', async (t) => {
+  const f = await baseFixture(t);
+  const command = 'make test';
+  await f.state.transaction(async (tx) => {
+    const limits = JSON.stringify({
+      format: 1,
+      denyGlobs: [],
+      secretExemptGlobs: [],
+      check: {
+        command,
+        timeoutSeconds: 600,
+        image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+      },
+    });
+    await tx.run(
+      'INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+      f.projectId,
+      'local',
+      'repository-bases',
+      '{}',
+      '{}',
+      limits,
+      '[]',
+      new Date().toISOString(),
+    );
+  });
+  // A machine that never comes up, and a service that will not take it back.
+  const machine: SandboxCheckHandle = {
+    sandboxId: 'sbx_kept',
+    objectId: 'obj_kept',
+    jobId: null,
+    restoreJobId: null,
+    sha256: '',
+    ready: false,
+    environment: null,
+    isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
+  };
+  const checks: SandboxChecks = {
+    start: async (_projectId, spec) => ({ ...machine, sha256: spec.source.sha256 }),
+    step: async (_projectId, _plan, handle) => handle,
+    follow: async () => assert.fail('a machine that never came up has no job to follow'),
+    release: async () => {
+      throw new Error('the service answered 503');
+    },
+  };
+  f.bases.checks = checks;
+  const { a, b } = f.commits;
+  const base = await f.state.transaction((tx) => f.bases.ensure(tx, f.projectId, [a, b]));
+  for (let pass = 0; pass < 2; pass += 1) await f.bases.work(f.projectId);
+  await f.bases.control(f.scope, f.admin, {
+    key: base.key,
+    action: 'suspend',
+    reason: 'the operator stops this base',
+    requestId: 'req-suspend',
+  });
+  const standing = async () => {
+    const all = await f.state.read((sql) => f.bases.checking(sql, f.projectId));
+    return all.find((check) => check.key === base.key)!;
+  };
+
+  // While Code still asks, each refusal is said in ink, and nobody is asked to move.
+  for (let pass = 0; pass < 4; pass += 1) await f.bases.work(f.projectId);
+  const asking = checkNode(await standing(), command, [], Date.now());
+  assert.deepEqual(asking.attention, {
+    says: ['Giving machine back · refused ', { count: 4 }, ' times, retrying'],
+    quiet: true,
+  });
+
+  // The fifth refusal lets go of the handle; the check stays, red, and takes in the machine.
+  await f.bases.work(f.projectId);
+  const given = await standing();
+  assert.equal(given.phase, null);
+  assert.deepEqual(given.unreclaimed, { sandboxId: 'sbx_kept' });
+  const node = checkNode(given, command, [], Date.now());
+  assert.deepEqual(node.lines, [['Stopped · ', { state: 'suspended' }]]);
+  assert.deepEqual(node.attention, {
+    says: ['Machine not given back'],
+    who: 'An operator releases it from the sandboxes console',
+  });
+  assert.deepEqual(node.aliases, ['sandbox:sbx_kept']);
+  const one = await f.state.read((sql) => f.bases.checkOf(sql, f.projectId, base.key));
+  assert.ok(one && hasCheck(one), 'its sidebar still answers');
 });

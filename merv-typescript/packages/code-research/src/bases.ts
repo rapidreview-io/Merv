@@ -80,6 +80,19 @@ const RECLAIM_ATTEMPTS = 5;
 /** Only these two say a machine may still be Merv's; anything else is a handle to give back. */
 const IN_FLIGHT = "check_state IN ('queued','running')";
 const now = () => new Date().toISOString();
+/**
+ * The blocker a check writes when it stops asking for its machine back and lets go of the
+ * handle. It is the one trace left of a machine that is still rented, so it names it.
+ */
+const UNRECLAIMED = 'code_check_unreclaimed: sandbox ';
+const unreclaimedBlocker = (sandboxId: string | null, reason: string) =>
+  `${UNRECLAIMED}${sandboxId ?? 'unnamed'} could not be given back (${reason})`;
+/** The machine such a blocker names; null for any other blocker. */
+function unreclaimedOf(blocker: string | null): { sandboxId: string | null } | null {
+  if (!blocker?.startsWith(UNRECLAIMED)) return null;
+  const named = blocker.slice(UNRECLAIMED.length).split(' ', 1)[0];
+  return { sandboxId: named && named !== 'unnamed' ? named : null };
+}
 
 /**
  * Whether a check still owns its machine: its base is running and healthy, the check is
@@ -107,9 +120,17 @@ export interface CodeCheckStanding {
    */
   phase: 'starting' | 'running' | 'returning' | null;
   checkState: CodeBaseCheckState;
+  /** The base's state, or quarantined: where a check that stopped without a verdict stopped. */
+  base: CodeBaseState | 'quarantined';
   sandboxId: string | null;
   /** How many times in a row the service refused to take the machine back. */
   releaseAttempts: number;
+  /**
+   * A machine Code stopped asking the service to take back, and let go of: still rented,
+   * and nobody's to give back now but a person's. Read from the base's blocker, for as long
+   * as that names it; null otherwise.
+   */
+  unreclaimed: { sandboxId: string | null } | null;
   /** When the check must have its verdict: the hand-off, plus its timeout and slack. */
   deadline: string | null;
 }
@@ -133,8 +154,10 @@ function standing(row: BaseRow): CodeCheckStanding {
         ? 'returning'
         : null,
     checkState: row.check_state,
+    base: row.health === 'quarantined' ? 'quarantined' : row.state,
     sandboxId: handle?.sandboxId ?? null,
     releaseAttempts: handle?.releaseAttempts ?? 0,
+    unreclaimed: unreclaimedOf(row.blocker),
     deadline: row.deadline,
   };
 }
@@ -844,14 +867,16 @@ export class CodeBaseService {
 
   /**
    * The checks that hold a machine or are about to: the rows advanceChecks steps, less a
-   * check that lost its base before it rented anything, which holds nothing. A pure read.
+   * check that lost its base before it rented anything, which holds nothing; and every base
+   * whose blocker still names a machine it could not give back. A pure read.
    */
   async checking(sql: Sql, projectId: string): Promise<CodeCheckStanding[]> {
     const rows = await sql.all<BaseRow>(
-      `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL) ORDER BY base_key`,
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL OR blocker LIKE ?) ORDER BY base_key`,
       projectId,
+      `${UNRECLAIMED}%`,
     );
-    return rows.map(standing).filter((check) => check.phase !== null);
+    return rows.map(standing).filter((check) => check.phase !== null || check.unreclaimed);
   }
 
   /** One base's check, in flight or long over; null for a set nobody asked for. */
@@ -861,15 +886,12 @@ export class CodeBaseService {
   }
 
   /**
-   * The command the project's checks run, and for how long. A command this server cannot
-   * read stops its base on the next step; a reader is only told nothing about it.
+   * The command the project's checks run. A command this server cannot read stops its base
+   * on the next step; a reader is only told nothing about it.
    */
-  async checkCommand(
-    sql: Sql,
-    projectId: string,
-  ): Promise<Pick<CodeCheckSpec, 'command' | 'timeoutSeconds'> | null> {
+  async checkCommand(sql: Sql, projectId: string): Promise<string | null> {
     const spec = await this.checkSpec(sql, projectId).catch(() => null);
-    return spec && { command: spec.command, timeoutSeconds: spec.timeoutSeconds };
+    return spec?.command ?? null;
   }
 
   /**
@@ -994,7 +1016,7 @@ export class CodeBaseService {
         );
         return;
       }
-      refused = `code_check_unreclaimed: sandbox ${handle.sandboxId ?? 'unnamed'} could not be given back (${reason})`;
+      refused = unreclaimedBlocker(handle.sandboxId, reason);
     }
     await this.state.transaction(async (tx) => {
       // The reservation of an epoch nobody will finish goes back with the machine. Without

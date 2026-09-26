@@ -1,5 +1,4 @@
 import {
-  CODE_CHECK_SLACK_SECONDS,
   filterAsync,
   keyId,
   keyKind,
@@ -37,7 +36,8 @@ import type { CodeBaseService, CodeCheckStanding } from './bases.js';
  * Code says three things there. Which work still owes a person a move: the blockers Code
  * already publishes, read back through Workflows and worded by the person moves the Code page
  * speaks, so a done task whose pull request waits for a merge stays on the board saying so.
- * Which machines its project checks hold, from the handle each check persists. And the Code
+ * Which machines its project checks hold, from the handle each check persists, and which one
+ * a check could not give back, from the blocker it wrote when it let go. And the Code
  * section of any work that has a unit: its branch, where its work has got to, its acceptance
  * and its publication, led by the move a person owes it.
  */
@@ -130,9 +130,6 @@ export function holdsOf(
   };
 }
 
-/** What a check runs and for how long, as far as a reader is told. */
-type CheckCommand = { command: string; timeoutSeconds: number } | null;
-
 /** A command's first line, which is all a card has room for. */
 const commandLine = (command: string) => {
   const line = command.trim().split(/\r?\n/)[0].trim();
@@ -140,21 +137,22 @@ const commandLine = (command: string) => {
 };
 
 /**
- * When the check was handed its base. Nothing records it on its own: the deadline is the
- * hand-off plus the timeout and its slack (bases.ts handOff), so it is read back from there.
+ * How long a check may stand past its deadline before a person is asked to move. Code fails
+ * such a base itself on its next drain (bases.ts drain), which comes every five seconds but
+ * waits behind a merge in hand, and a merge is given two minutes; until then it is stopping.
  */
-function handedOff(check: CodeCheckStanding, command: CheckCommand): string | null {
-  const deadline = check.deadline ? Date.parse(check.deadline) : Number.NaN;
-  if (!command || !Number.isFinite(deadline)) return null;
-  return new Date(
-    deadline - (command.timeoutSeconds + CODE_CHECK_SLACK_SECONDS) * 1000,
-  ).toISOString();
-}
+export const OVERDUE_GRACE_MS = 180_000;
 
-/** The sandbox a check's machine is, so its owner's node folds into the check's. */
-function sandboxOf(check: CodeCheckStanding): string | null {
-  const key = check.sandboxId && runningKey('sandbox', check.sandboxId);
-  return key && runningKeyPattern.test(key) ? key : null;
+/** The sandboxes a check's machines are, so their owner's nodes fold into the check's. */
+function machinesOf(check: CodeCheckStanding): string[] {
+  return [
+    ...new Set(
+      [check.sandboxId, check.unreclaimed?.sandboxId].flatMap((id) => {
+        const key = id && runningKey('sandbox', id);
+        return key && runningKeyPattern.test(key) ? [key] : [];
+      }),
+    ),
+  ];
 }
 
 /** Work a check proves: selected where the board draws it, and read on Code where it does not. */
@@ -171,10 +169,18 @@ interface CheckFace {
   attention?: RunningAttention;
 }
 
-/** A check's line, how it looks, its dot, and what it needs of a person, from where it stands. */
-function checkFace(check: CodeCheckStanding, command: CheckCommand, now: number): CheckFace {
+/** The states a check ends in; any other is where one stood when its base stopped under it. */
+const ENDED = new Set(['passed', 'failed', 'skipped', 'unavailable']);
+
+/** Where the check itself stands: its line, how it looks, its dot, and what it asks of anyone. */
+function phaseFace(check: CodeCheckStanding, now: number): CheckFace {
   if (check.phase === null)
-    return { line: ['Ended · ', { state: check.checkState }], look: 'quiet' };
+    return {
+      line: ENDED.has(check.checkState)
+        ? ['Ended · ', { state: check.checkState }]
+        : ['Stopped · ', { state: check.base }],
+      look: 'quiet',
+    };
   if (check.phase === 'returning') {
     const refused = check.releaseAttempts;
     return {
@@ -196,32 +202,55 @@ function checkFace(check: CodeCheckStanding, command: CheckCommand, now: number)
         : {}),
     };
   }
-  const since = handedOff(check, command);
+  // Only the deadline is kept: when the command began is nowhere recorded, so no clock is
+  // drawn. Past it, Code fails the base on its own; only a check still here after the
+  // grace is waiting on a person.
   const running = check.phase === 'running';
+  const over = check.deadline ? now - Date.parse(check.deadline) : Number.NaN;
   return {
-    line: running ? (since ? ['Running ', { since }] : ['Running']) : ['Starting'],
+    line: running ? ['Running'] : ['Starting'],
     look: running ? 'solid' : 'dashed',
     dot: running ? 'live' : 'starting',
-    ...(check.deadline && Date.parse(check.deadline) <= now
+    ...(over >= OVERDUE_GRACE_MS
       ? {
           attention: {
             says: ['Past its deadline'],
             who: 'An operator retries or cancels the base on Code',
           },
         }
-      : {}),
+      : over >= 0
+        ? { attention: { says: ['Past its deadline · stopping'], quiet: true as const } }
+        : {}),
   };
+}
+
+/**
+ * A check's line, how it looks, its dot, and what it needs of a person, from where it stands.
+ * A machine Code let go of is still rented, and nothing but a person will give it back, so
+ * that outranks whatever the check itself is doing.
+ */
+function checkFace(check: CodeCheckStanding, now: number): CheckFace {
+  const face = phaseFace(check, now);
+  return check.unreclaimed
+    ? {
+        ...face,
+        attention: {
+          says: ['Machine not given back'],
+          who: 'An operator releases it from the sandboxes console',
+        },
+      }
+    : face;
 }
 
 /** A check that holds a machine, as the hardware lane draws it. */
 export function checkNode(
   check: CodeCheckStanding,
-  command: CheckCommand,
+  command: string | null,
   units: readonly string[],
   now: number,
 ): RunningNode {
-  const face = checkFace(check, command, now);
-  const sandbox = sandboxOf(check);
+  const face = checkFace(check, now);
+  const machines = machinesOf(check);
   const links = units
     .map((unitId) => runningKey('work', unitId))
     .filter((key) => runningKeyPattern.test(key))
@@ -231,38 +260,48 @@ export function checkNode(
     key: runningKey('check', check.key),
     lane: 'hardware',
     title: 'Code check',
-    ...(command ? { name: commandLine(command.command) } : {}),
+    ...(command ? { name: commandLine(command) } : {}),
     lines: [face.line],
     look: face.look,
     ...(face.dot ? { dot: face.dot } : {}),
     ...(face.attention ? { attention: face.attention } : {}),
     units: { count: 1, busy: check.phase === 'running' },
     ...(links.length ? { links } : {}),
-    ...(sandbox ? { aliases: [sandbox] } : {}),
+    ...(machines.length ? { aliases: machines } : {}),
   };
 }
 
 /**
- * A check's sidebar: how long it has had of its time, what it runs, and the accepted work it
- * proves merges cleanly, which is the only honest "used by" a check machine has. The machine itself is
- * the absorbed sandbox's to describe. No controls: Code gives its machines back itself, and
- * a base's controls take a reason, on Code.
+ * Whether a base has a check to speak of. One that is not checking, whose check left no
+ * verdict and no machine, never had one, or had one that stopped and gave its machine back.
+ */
+export const hasCheck = (check: CodeCheckStanding) =>
+  check.phase !== null || !!check.unreclaimed || check.checkState !== 'none';
+
+/**
+ * A check's sidebar: when it runs out of time, what it runs, and the accepted work it proves
+ * merges cleanly, which is the only honest "used by" a check machine has. The machine itself
+ * is the absorbed sandbox's to describe. No controls: Code gives its machines back itself,
+ * and a base's controls take a reason, on Code.
  */
 export function checkPanel(
   check: CodeCheckStanding,
-  command: CheckCommand,
+  command: string | null,
   members: readonly { unitId: string; name: string }[],
   now: number,
 ): RunningPanelPart {
-  const face = checkFace(check, command, now);
-  const sandbox = sandboxOf(check);
-  const since = handedOff(check, command);
+  const face = checkFace(check, now);
+  const machines = machinesOf(check);
   const sections: RunningSection[] = [];
   const facts: RunningFact[] = [];
-  if (command && since && (check.phase === 'starting' || check.phase === 'running'))
-    facts.push({ label: 'Time', value: [{ since, of: command.timeoutSeconds }] });
+  if (
+    (check.phase === 'starting' || check.phase === 'running') &&
+    check.deadline &&
+    Date.parse(check.deadline) > now
+  )
+    facts.push({ label: 'Deadline', value: [{ until: check.deadline }] });
   // The title has room for the first line only; the whole command is machine text to copy.
-  const whole = command?.command.trim();
+  const whole = command?.trim();
   if (whole && whole !== commandLine(whole) && whole.length <= 400)
     facts.push({ label: 'Command', value: [{ mono: whole }] });
   if (facts.length)
@@ -277,7 +316,7 @@ export function checkPanel(
   return {
     header: {
       kind: 'Code check',
-      title: command ? commandLine(command.command) : 'Code check',
+      title: command ? commandLine(command) : 'Code check',
       says: face.line,
       ...(face.attention ? { attention: face.attention } : {}),
     },
@@ -285,11 +324,18 @@ export function checkPanel(
     actions: [],
     route: `/code/merge/${check.key}`,
     live: check.phase !== null,
-    ...(sandbox ? { aliases: [sandbox] } : {}),
+    ...(machines.length ? { aliases: machines } : {}),
   };
 }
 
 const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/**
+ * The branch as the Code page prints it (code-section.tsx): the id inside it is read by its
+ * head and its tail, the way every digest is, because no id is printed whole.
+ */
+const shortBranch = (branch: string) =>
+  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
 
 /**
  * The Code section of one unit's work. The move a person owes it leads, in the words and with
@@ -325,7 +371,7 @@ export function codeSection(
       ...(person ? { attention: true } : {}),
     });
   }
-  rows.push({ label: 'Branch', value: [{ mono: unit.branch }] });
+  rows.push({ label: 'Branch', value: [{ mono: shortBranch(unit.branch) }] });
   const stats = receipt?.receipt?.stats;
   if (stats || unit.canonicalHead)
     rows.push({
@@ -483,7 +529,7 @@ export class CodeRunningReader {
       await this.scope.require(caller, 'read', tx);
       if (!bases) return null;
       const check = await bases.checkOf(tx, caller.projectId, baseKey);
-      if (!check) return null;
+      if (!check || !hasCheck(check)) return null;
       const command = await bases.checkCommand(tx, caller.projectId);
       const accepted = await acceptedUnits(tx, caller.projectId, check.members);
       const members = await mapAsync(unitsOf(check, accepted), async (unitId) => ({
