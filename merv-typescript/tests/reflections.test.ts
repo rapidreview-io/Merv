@@ -663,8 +663,8 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   );
   assert.ok(await f.app.ctx.tools.call('artifact.read', caller, { artifactId: ended.digest!.id }));
 
-  // The server admits any read, but Codex is launched with an explicit allowlist: every read a
-  // lens brief names must be on it, or a Codex lens cannot see the tool it was told to use.
+  // Every read a lens brief names is listed to its session, and a Codex lens sees that list whole:
+  // an allowlist of Codex's own once hid the tools a lens was told to use.
   const launch = buildLaunch(
     {
       name: 'local-codex',
@@ -676,11 +676,10 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
     { session: execution, secret, mcpUrl: 'http://127.0.0.1:8080/mcp', cwd: '/tmp/merv-lens' },
     {},
   );
-  const enabled = JSON.parse(
-    /enabled_tools=(\[[^\]]*\])/.exec(
-      launch.args.find((arg) => arg.startsWith('mcp_servers'))!,
-    )![1]!,
-  ) as string[];
+  assert.doesNotMatch(
+    launch.args.find((arg) => arg.startsWith('mcp_servers'))!,
+    /enabled_tools/,
+  );
   const reads = new Set(
     (await f.app.ctx.tools.describe(caller))
       .filter((tool) => tool.annotations?.readOnlyHint === true)
@@ -691,10 +690,6 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   ].filter((name) => reads.has(name));
   for (const read of ['research.lineage', 'usage.read', 'project.records'])
     assert.ok(named.includes(read), read);
-  assert.deepEqual(
-    named.filter((name) => !enabled.includes(name)),
-    [],
-  );
 });
 
 test('a standalone wave names no lineage, and a digest that does not fit is omitted yet stays readable', async (t) => {

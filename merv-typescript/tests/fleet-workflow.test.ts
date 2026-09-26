@@ -1096,17 +1096,10 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     {},
   );
   const servers = launch.args.find((arg) => arg.startsWith('mcp_servers='))!;
-  const enabled = JSON.parse(/enabled_tools=(\[[^\]]*\])/.exec(servers)![1]!) as string[];
-  const searches = [
-    'web.search',
-    'web.extract',
-    'nisa.search',
-    'nisa.semantic_search',
-    'nisa.paper',
-    'nisa.excerpts',
-    'nisa.related',
-  ];
-  for (const name of searches) assert.ok(enabled.includes(name), name);
+  // It sees every read the server lists to its session, the searches included, and none is
+  // hidden from it: its shell has the network.
+  assert.doesNotMatch(servers, /enabled_tools|disabled_tools/);
+  assert.match(servers, /default_tools_approval_mode="approve"/);
   // And its launch text says which to use for what.
   assert.match(launch.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
   assert.match(
@@ -1140,7 +1133,16 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
   tools.registerSessionPolicy(h.sessions);
   const worker = await h.sessions.authenticate(machine.secret);
   const offered = (await tools.describe(worker)).map(({ name }) => name);
-  for (const name of searches) assert.ok(offered.includes(name), name);
+  for (const name of [
+    'web.search',
+    'web.extract',
+    'nisa.search',
+    'nisa.semantic_search',
+    'nisa.paper',
+    'nisa.excerpts',
+    'nisa.related',
+  ])
+    assert.ok(offered.includes(name), name);
   const found = (await tools.call('web.search', worker, { query: 'cordis plugin' })) as WebSearch;
   assert.deepEqual(
     found.results.map(({ url }) => url),

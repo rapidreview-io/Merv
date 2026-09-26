@@ -272,33 +272,18 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
     assert.equal(settings[`features.${feature}`], 'false');
   assert.equal(settings.web_search, '"disabled"');
   assert.equal(settings['skills.config'], '[]');
-  // The manifest's own tools, plus the reads every worker may make. Codex is launched with
-  // an explicit allowlist, so without these a Codex worker cannot see the project reads its
-  // recipe tells it to use, while a Claude worker in the same role can.
-  const enabled = JSON.parse(
-    /enabled_tools=(\[[^\]]*\])/.exec(settings.mcp_servers)![1]!,
-  ) as string[];
-  assert.deepEqual(enabled.slice(0, 3), ['task.get', 'task.checkpoint', '_nisa.search']);
-  for (const read of ['project.records', 'paper.read', 'experiment.get_state', 'feed.list'])
-    assert.ok(enabled.includes(read), read);
-  // Nisa's literature search reaches every Codex worker as Merv's own reads; the internet does
-  // not reach one whose shell has no network, and Codex's hosted search is off for all.
-  for (const read of [
-    'nisa.search',
-    'nisa.semantic_search',
-    'nisa.paper',
-    'nisa.excerpts',
-    'nisa.related',
-  ])
-    assert.ok(enabled.includes(read), read);
-  for (const read of ['web.search', 'web.extract']) assert.ok(!enabled.includes(read), read);
+  // Codex sees what the server lists to its session, as a Claude worker does: no allowlist of
+  // its own, which hid the project reads its recipe told it to use. Nobody answers a prompt, so
+  // every listed tool is approved; the internet does not reach a worker whose shell has no
+  // network, and Codex's hosted search is off for all.
+  assert.doesNotMatch(settings.mcp_servers, /enabled_tools/);
+  assert.match(settings.mcp_servers, /,default_tools_approval_mode="approve",/);
+  assert.match(settings.mcp_servers, /,disabled_tools=\["web\.search","web\.extract"\]\}\}$/);
   // Its launch text sends it to Nisa for literature, and names no internet read it lacks.
   assert.match(spec.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
   assert.doesNotMatch(spec.stdin, /web\.search|web search/);
   // Codex stops waiting on a tool after 60 s by default: a web search may take longer.
   assert.match(settings.mcp_servers, /,tool_timeout_sec=180,/);
-  assert.match(settings.mcp_servers, /"task.checkpoint"=\{approval_mode="approve"\}/);
-  assert.match(settings.mcp_servers, /"project.records"=\{approval_mode="approve"\}/);
   assert.match(settings.mcp_servers, /url="http:\/\/127.0.0.1:8080\/mcp"/);
   assert.match(settings.mcp_servers, /bearer_token_env_var="MERV_AGENT_SESSION_TOKEN"/);
   assert.match(settings.mcp_servers, /required=true/);
@@ -332,18 +317,14 @@ test('a hosted Codex profile calls the model through Main with its session beare
   assert.equal(settings['sandbox_workspace_write.network_access'], 'true');
   assert.equal(config(plain.args)['sandbox_workspace_write.network_access'], 'false');
   assert.equal(settings.web_search, '"disabled"');
-  const enabled = (args: string[]) =>
-    JSON.parse(/enabled_tools=(\[[^\]]*\])/.exec(config(args).mcp_servers)![1]!) as string[];
+  // The internet reads are hidden from a worker without the network, and only from it.
+  const offline = /,disabled_tools=\["web\.search","web\.extract"\]/;
+  const disabled = (args: string[]) => offline.test(config(args).mcp_servers);
+  assert.equal(disabled(spec.args), false);
+  assert.equal(disabled(plain.args), true);
   assert.deepEqual(
-    enabled(spec.args).filter((name) => !enabled(plain.args).includes(name)),
-    ['web.search', 'web.extract'],
-  );
-  assert.deepEqual(
-    config(spec.args).mcp_servers.replace(
-      /,"web\.(?:search|extract)"(?:=\{approval_mode="approve"\})?/g,
-      '',
-    ),
-    config(plain.args).mcp_servers,
+    config(spec.args).mcp_servers,
+    config(plain.args).mcp_servers.replace(offline, ''),
   );
   // Everything else is byte-identical, and the machine's environment gains no key.
   const varies = /^(model_provider|sandbox_workspace_write\.network_access|mcp_servers)/;
@@ -372,8 +353,7 @@ test('a hosted Codex profile calls the model through Main with its session beare
   const reviewLaunch = buildLaunch(hosted, sealed, safeEnv);
   const review = reviewLaunch.args;
   assert.equal(review[review.indexOf('--sandbox') + 1], 'read-only');
-  for (const read of ['web.search', 'web.extract']) assert.ok(!enabled(review).includes(read));
-  assert.ok(enabled(review).includes('nisa.search'));
+  assert.equal(disabled(review), true);
   assert.match(reviewLaunch.stdin, /nisa\.search/);
   assert.doesNotMatch(reviewLaunch.stdin, /web\.search/);
 });
@@ -480,7 +460,9 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   const spec = buildLaunch(codex, request(true), safeEnv);
   assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'workspace-write');
   assert.match(spec.stdin, /workspace is yours to compute in/);
-  assert.match(config(spec.args).mcp_servers, /task.checkpoint/);
+  // Nothing in the launch hides the lease's writes: Codex sees them as the server lists them.
+  assert.doesNotMatch(config(spec.args).mcp_servers, /enabled_tools/);
+  assert.match(config(spec.args).mcp_servers, /default_tools_approval_mode="approve"/);
   // A checkout the next launch inherits is the thing under review and stays sealed.
   const retained = buildLaunch(
     codex,
@@ -706,9 +688,6 @@ test('launch rejects closed or inconsistent lease metadata, source credentials a
     },
     (r: LaunchRequest) => {
       r.cwd = 'relative/workspace';
-    },
-    (r: LaunchRequest) => {
-      r.session.execution.policy.tools[0].name = 'bad"tool';
     },
   ]) {
     const input = request();

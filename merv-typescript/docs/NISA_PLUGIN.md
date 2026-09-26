@@ -23,9 +23,9 @@ both.
 Every tool is a read of another service (`readOnly`, `openWorld`): it runs
 without holding a PostgreSQL snapshot, and every agent gets it with no grant or
 policy entry. Pi offers it to every turn, a reader's included, and runs it as
-the person; leased workers call it as an open read (Codex workers because the
-five names are in the runner's fixed project reads, Claude workers through
-`mcp__merv`); MCP clients list it. Input is validated here more strictly than
+the person; leased workers call it as an open read (both harnesses see every
+read Main lists to their session: Claude workers through `mcp__merv`, Codex
+workers with no allowlist of their own); MCP clients list it. Input is validated here more strictly than
 Nisa validates it; each paper comes back with `identifier` (`arxiv:<id>`),
 `title`, `authors`, `year` and `url` (`https://arxiv.org/abs/<id>`), which is
 what `paper.cite` takes, and nothing Nisa sends beyond the allowlisted fields
@@ -138,9 +138,9 @@ grep '"status":"ready"' | tail -n1`) lists `nisa`/`nisa-tools` and
    and in a new Pi turn. Then run one `nisa.search`, one `nisa.paper`
    (`2303.08774`), one `web.search` and one `web.extract` of a page that search
    returned, with the real keys; no test here has called the real services.
-5. **Workers.** Codex workers see the `nisa.*` tools, and the launch text that
-   names them, once their runner carries the change that lists them (hosted
-   runners: `deploy/hosted-release.mjs`, run by `release.mjs`). `web.*` reach
+5. **Workers.** Codex workers see the `nisa.*` tools as soon as Main lists
+   them, and the launch text that names them once their runner carries that
+   text (hosted runners: `deploy/hosted-release.mjs`, run by `release.mjs`). `web.*` reach
    only hosted, unsealed Codex launches and unsealed Claude launches, whose
    shells already have the network.
 6. **Size the web budget for Fleet.** Every Fleet agent in a project, its Pi

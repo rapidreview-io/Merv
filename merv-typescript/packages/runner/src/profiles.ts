@@ -190,42 +190,6 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
 }
 
 /**
- * The reads every leased worker may make, whatever its assignment names. The server admits
- * any read inside the project and lists them all to a session, and the work recipes tell a
- * worker to use them — but Codex is launched with an explicit `enabled_tools` allowlist built
- * from the write manifest, so a Codex worker could not see the tools its own brief named.
- * Claude workers have always had them: they are launched with the whole `mcp__merv` prefix.
- */
-const PROJECT_READS = [
-  'project.get',
-  'project.records',
-  'task.list',
-  'task.get',
-  'experiment.list',
-  'experiment.get_state',
-  'review.list',
-  'review.get',
-  'feed.list',
-  'paper.read',
-  'artifact.list',
-  'artifact.get',
-  'artifact.read',
-  'usage.read',
-  // A brief names research.lineage and usage.read by research cycle, and no brief carries the
-  // cycle's id: a worker finds it with research.list.
-  'research.list',
-  'research.get',
-  'research.lineage',
-  // Nisa's literature search, where the deployment has its key: a name the server does not list
-  // is only absent from the worker's tools. It reaches Nisa alone, never an address a worker
-  // chooses, though its query leaves Merv for Nisa.
-  'nisa.search',
-  'nisa.semantic_search',
-  'nisa.paper',
-  'nisa.excerpts',
-  'nisa.related',
-] as const;
-/**
  * Merv's internet reads (@merv/web). Each call sends its query, or the address of a page to read,
  * to an outside provider, and that is a way out of the machine: a worker whose shell has no
  * network, or a sealed review, is not given them. Codex's own hosted web search stays disabled.
@@ -304,19 +268,6 @@ function codexArgs(
   url: string,
   safeEnvironment: Record<string, string>,
 ): string[] {
-  const tools = [
-    ...new Set([
-      ...request.session.execution.policy.tools.map((tool) => tool.name),
-      ...PROJECT_READS,
-      // Only where its shell commands already have the network (below).
-      ...(internet(profile, request.session) ? INTERNET_READS : []),
-    ]),
-  ];
-  check(
-    tools.every((name) => /^[A-Za-z0-9_.-]{1,128}$/.test(name)),
-    'invalid_runner_launch',
-    'Invalid fixed tool manifest',
-  );
   const args = [
     'exec',
     '--ignore-user-config',
@@ -399,15 +350,21 @@ function codexArgs(
   config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
   config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
   config('sandbox_workspace_write.exclude_slash_tmp', 'true');
-  const toolApprovals = `{${tools.map((name) => `${quote(name)}={approval_mode="approve"}`).join(',')}}`;
-  // This is an allowlist, not just an approval preference. Sessions independently
-  // enforce the same fixed manifest and argument bindings on every server call.
+  // Codex sees what Merv's server lists to this session, as Claude does through the whole
+  // mcp__merv prefix: every read in the project and the writes this lease was granted. Sessions
+  // enforce the manifest and its argument bindings on every call, and a fixed list here hid the
+  // project reads a worker's own brief named. Every listed tool runs unprompted, since nobody
+  // answers a prompt under approval policy never; the internet reads stay off where the shell
+  // has no network.
+  const offline = internet(profile, request.session)
+    ? ''
+    : `,disabled_tools=${JSON.stringify(INTERNET_READS)}`;
   config(
     'mcp_servers',
     // The handshake waits behind the server's writer queue under load; Codex's default 30 s failed every review launch.
     // A call waits 60 s by default, and a web search can take 150 s (its turn, Tavily, then the
     // fallback): a worker that gave up would leave Merv finishing, and paying for, the call.
-    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,enabled_tools=${JSON.stringify(tools)},tools=${toolApprovals}}}`,
+    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"${offline}}}`,
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));

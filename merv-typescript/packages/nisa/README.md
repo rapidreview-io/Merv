@@ -24,10 +24,10 @@ checks the caller again before handing back the result. None names a
   `nisa_semantic_search`, `nisa_paper`, `nisa_excerpts` and `nisa_related`, and
   runs them as the person;
 - **leased workers** may call them as open reads their policy never names:
-  Claude workers through `mcp__merv`, Codex workers because the five names are
-  in the runner's fixed project reads (every Codex worker, sealed reviews
-  included: a call reaches Nisa alone, never an address the worker chooses,
-  though its query leaves Merv; see [Privacy](#privacy)). Every Codex and
+  both harnesses see every read Main lists to their session (Claude through
+  `mcp__merv`, Codex with no allowlist of its own), so every worker has them,
+  sealed reviews included: a call reaches Nisa alone, never an address the worker chooses,
+  though its query leaves Merv (see [Privacy](#privacy)). Every Codex and
   Claude launch's text names them for literature, and names `web.search` too
   where that launch is given it, since a worker otherwise reads its tools as
   project reads and answers from memory;
