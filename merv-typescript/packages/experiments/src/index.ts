@@ -6,6 +6,8 @@ import {
   check,
   digest,
   inTransaction,
+  keyId,
+  keyKind,
   MervError,
   newId,
   now,
@@ -18,6 +20,8 @@ import {
   type ProcessGraph,
   type ReviewApplication,
   type Reviews,
+  type RunningNode,
+  type RunningPanelPart,
   type Scope,
   type State,
   type Transaction,
@@ -27,7 +31,16 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
-import { ExperimentCompute } from './compute.js';
+import { ExperimentCompute, type ComputeRunning } from './compute.js';
+import {
+  computeNode,
+  computePanel,
+  enteredAgain,
+  experimentNode,
+  experimentPanel,
+  liveRun,
+  type ExperimentStanding,
+} from './running.js';
 import type {
   Experiment,
   ExperimentAttach,
@@ -85,6 +98,26 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
+/** Where an agent designs or runs the experiment, rather than a reviewer reading it. */
+const working = new Set(['planned', 'running']);
+/** One experiment's row for the Running page: its place and the lease on it now. */
+interface StandingRow {
+  id: string;
+  name: string;
+  review_id: string | null;
+  state: string;
+  revision: number;
+  updated_at: string;
+  lease_id: string | null;
+}
+/** What one board read knows beside an experiment's own row. */
+interface StandingContext {
+  runs: ComputeRunning[];
+  /** When the last lease on unheld work ended at its current revision, by experiment. */
+  released: Map<string, string>;
+  /** Experiments another plugin published a blocker on. */
+  blocked: ReadonlySet<string>;
+}
 /** The evidence, figures and exhibit a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
@@ -263,6 +296,172 @@ export class ExperimentService implements Experiments {
     this.open();
     caller = structuredClone(caller);
     return await this.workflows.process(caller, id);
+  }
+  /**
+   * The Running page's cards: every experiment on its way to a result, any other one a key in
+   * `include` names or a live GPU run still holds, and those runs. Read without evaluating a
+   * gate, because a submission's checks read the bytes it would submit.
+   */
+  async running(caller: Caller, include: ReadonlySet<string> = new Set()): Promise<RunningNode[]> {
+    this.open();
+    caller = structuredClone(caller);
+    return await inTransaction(this.state, undefined, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const runs = (await this.compute?.inFlight(caller.projectId, tx)) ?? [];
+      const held = [
+        ...new Set([
+          ...[...include].filter((key) => keyKind(key) === 'work').map(keyId),
+          ...runs.map((run) => run.experimentId),
+        ]),
+      ];
+      const ended = TERMINAL.map(() => '?').join(','),
+        kept = held.map(() => '?').join(',') || 'NULL';
+      const rows = await this.standingRows(
+        caller,
+        tx,
+        `(w.state NOT IN (${ended}) OR e.id IN (${kept}))`,
+        ...TERMINAL,
+        ...held,
+      );
+      const context: StandingContext = {
+        runs,
+        released: await this.releases(caller, rows, tx),
+        blocked: new Set(
+          (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
+        ),
+      };
+      const nodes: RunningNode[] = [];
+      for (const row of rows)
+        nodes.push(experimentNode(await this.standing(caller, row, context, tx)));
+      return [...nodes, ...runs.map(computeNode)];
+    });
+  }
+  /**
+   * The Running sidebar of `work:<experimentId>` or `compute:<digest>`, for any state, so an
+   * open sidebar outlives the card. Null for a key that is not one of this project's.
+   */
+  async runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null> {
+    this.open();
+    caller = structuredClone(caller);
+    const kind = keyKind(key),
+      id = keyId(key);
+    if (kind === 'compute')
+      return await inTransaction(this.state, undefined, async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        const run = await this.compute?.find(caller.projectId, id, tx);
+        if (!run) return null;
+        const { name } = await this.row(caller, run.experimentId, tx);
+        return computePanel(run, name);
+      });
+    if (kind !== 'work') return null;
+    const read = await inTransaction(this.state, undefined, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const [row] = await this.standingRows(caller, tx, 'e.id=?', id);
+      if (!row) return null;
+      const experiment = await this.get(caller, id, tx);
+      const runs =
+        (await this.compute?.recent(caller.projectId, id, experiment.attempt.index, tx)) ?? [];
+      const context: StandingContext = {
+        runs,
+        released: await this.releases(caller, [row], tx),
+        blocked: new Set(
+          (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
+        ),
+      };
+      return { standing: await this.standing(caller, row, context, tx), experiment, runs };
+    });
+    if (!read) return null;
+    // The ladder is where the record stands, so no action's check runs to draw it.
+    const graph = await this.workflows.process(caller, id, { checks: false });
+    return experimentPanel({ ...read, graph });
+  }
+  private async standingRows(
+    caller: Caller,
+    tx: Transaction,
+    where: string,
+    ...params: (string | number)[]
+  ): Promise<StandingRow[]> {
+    return await tx.all<StandingRow>(
+      `SELECT e.id,e.name,e.review_id,w.state,w.revision,w.updated_at,l.id AS lease_id
+       FROM experiments e JOIN wf_instances w ON w.id=e.id
+       LEFT JOIN experiment_leases l ON l.project_id=e.project_id AND l.experiment_id=e.id
+        AND l.revision=w.revision AND l.released_at IS NULL
+       WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
+      caller.projectId,
+      ...params,
+    );
+  }
+  /**
+   * When the last lease on each unheld experiment ended at its current revision. Only a live
+   * lease is indexed, so this is one read for the whole board, and only for work an agent
+   * would hold and nobody does.
+   */
+  private async releases(
+    caller: Caller,
+    rows: StandingRow[],
+    tx: Transaction,
+  ): Promise<Map<string, string>> {
+    const unheld = rows.filter((row) => !row.lease_id && working.has(row.state));
+    if (!unheld.length) return new Map();
+    const ended = await tx.all<{ experiment_id: string; released_at: string }>(
+      `SELECT experiment_id,MAX(released_at) AS released_at FROM experiment_leases
+       WHERE project_id=? AND released_at IS NOT NULL
+       AND (${unheld.map(() => '(experiment_id=? AND revision=?)').join(' OR ')})
+       GROUP BY experiment_id`,
+      caller.projectId,
+      ...unheld.flatMap((row) => [row.id, row.revision]),
+    );
+    return new Map(ended.map((row) => [row.experiment_id, row.released_at]));
+  }
+  /** One card's facts, read without evaluating a gate; a review state's only in one. */
+  private async standing(
+    caller: Caller,
+    row: StandingRow,
+    context: StandingContext,
+    tx: Transaction,
+  ): Promise<ExperimentStanding> {
+    const ended = terminal.has(row.state);
+    const review = reviewing(row.state) && row.review_id;
+    let exhausted = false;
+    if (reviewing(row.state))
+      try {
+        exhausted = (
+          await this.workflows.limitStatus(
+            caller,
+            row.id,
+            row.state === 'design_review' ? 'design_rounds' : 'result_rounds',
+            tx,
+          )
+        ).exhausted;
+      } catch (error) {
+        if (!(error instanceof MervError && error.status === 404)) throw error;
+      }
+    const released = context.released.get(row.id);
+    return {
+      id: row.id,
+      name: row.name,
+      state: row.state,
+      updatedAt: row.updated_at,
+      idleSince: released && released > row.updated_at ? released : row.updated_at,
+      // A new attempt is not a return by itself, so the record's own arrivals say it.
+      again:
+        working.has(row.state) &&
+        enteredAgain(await this.workflows.history(caller, row.id, tx), row.state),
+      blocked: context.blocked.has(row.id),
+      lease: row.lease_id
+        ? {
+            started: (await this.workflows.workStarts(caller, row.id, tx)).some(
+              (start) => start.revision === row.revision,
+            ),
+          }
+        : null,
+      dependencies: ended
+        ? []
+        : (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
+      review: review ? await this.reviews.get(caller, review, tx) : null,
+      exhausted,
+      computing: context.runs.some((run) => run.experimentId === row.id && liveRun(run)),
+    };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
     const row = await tx.get<ExperimentRow>(

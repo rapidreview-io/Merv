@@ -320,7 +320,7 @@ export async function checkAssignment(
  * will refuse that step for the same reason and an overview that called the work ready
  * would send someone to find that out. A named action is still answered on its own terms,
  * so ending blocked work stays possible, and the two gates under which nothing is
- * dispatched anyway keep their own explanation.
+ * dispatched anyway keep their own explanation. Without `checks` no program callback runs.
  */
 export async function decision(
   definition: WorkflowDefinition,
@@ -330,8 +330,9 @@ export async function decision(
   workStart: WorkflowWorkStart | null = null,
   limits: WorkflowLimitStatus[] = [],
   provided: WorkflowProvidedBlocker[] = [],
+  checks = true,
 ): Promise<WorkflowDecision> {
-  const result = await ownDecision(definition, policy, context, query, workStart, limits);
+  const result = await ownDecision(definition, policy, context, query, workStart, limits, checks);
   result.providerBlockers = structuredClone(provided);
   if (
     !provided.length ||
@@ -358,6 +359,7 @@ async function ownDecision(
   query: WorkflowEvaluationInput,
   workStart: WorkflowWorkStart | null,
   limits: WorkflowLimitStatus[],
+  checks: boolean,
 ): Promise<WorkflowDecision> {
   const snapshot = context.snapshot;
   const terminal = definition.terminal.includes(snapshot.state);
@@ -383,7 +385,7 @@ async function ownDecision(
   };
   let gate: string | undefined;
   let waiting: string | undefined;
-  if (policy?.describe) {
+  if (checks && policy?.describe) {
     const description = workflowJson(
       await policy.describe(context),
       'invalid_workflow_policy',
@@ -438,6 +440,22 @@ async function ownDecision(
       'Action is unavailable in this workflow state',
       409,
     );
+  // Unchecked, the record alone says where the work stands: no action carries a status, and
+  // the gate is the state, or a prerequisite still open or failed where every step offered
+  // here waits on it, or every return used.
+  if (!checks) {
+    const offered = rules.filter((rule) => rule.suggested !== false);
+    if (offered.length && offered.every((rule) => rule.requiresDependencies))
+      try {
+        requireDependencies(context.dependencies);
+      } catch (error) {
+        if (!(error instanceof MervError)) throw error;
+        result.currentGate = error.code;
+        result.instruction = error.message;
+        result.blockers = [{ code: error.code, message: error.message, status: error.status }];
+      }
+    return escalate();
+  }
   result.actions = await mapAsync(
     rules,
     async (rule) =>

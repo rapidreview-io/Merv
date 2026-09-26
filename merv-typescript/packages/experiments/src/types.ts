@@ -3,6 +3,8 @@ import type {
   CodeUnit,
   ProcessGraph,
   ReviewApplication,
+  RunningNode,
+  RunningPanelPart,
   Transaction,
 } from '@merv/contracts';
 import type {} from 'cordis';
@@ -47,6 +49,13 @@ export interface Experiments {
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, experimentId: string): Promise<ProcessGraph>;
+  /**
+   * The Running page's cards: open experiments, any `work:<id>` key in `include`, an ended
+   * one a GPU run still holds, and each live GPU run as `compute:<digest>`. No gate is evaluated.
+   */
+  running(caller: Caller, include?: ReadonlySet<string>): Promise<RunningNode[]>;
+  /** The sidebar of `work:<experimentId>` or `compute:<digest>`; null for any other key. */
+  runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
   submitReview(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<Experiment>;
