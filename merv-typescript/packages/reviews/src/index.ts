@@ -26,6 +26,7 @@ import {
   type ReviewSubmit,
   type ReviewApplication,
   type ReviewSubmitOwner,
+  type RunningSection,
   type Scope,
   type Sql,
   type State,
@@ -33,6 +34,7 @@ import {
   type StoredEvent,
 } from '@merv/contracts';
 import { validateAssessment, evidenceFrom } from './findings.js';
+import { EARLIER, reviewSections } from './running.js';
 
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -357,21 +359,22 @@ export class ReviewService implements Reviews {
       'Review owner must be a plain object',
     );
     const descriptors = Object.getOwnPropertyDescriptors(owner);
-    const keys = ['id', 'owns', 'submit', ...(Object.hasOwn(owner, 'claim') ? ['claim'] : [])];
+    const optional = (['claim', 'gates'] as const).filter((key) => Object.hasOwn(owner, key));
+    const keys = ['id', 'owns', 'submit', ...optional];
     check(
       Reflect.ownKeys(owner).length === keys.length &&
         keys.every(
           (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
         ),
       'invalid_review_owner',
-      'Review owner requires only id, owns and submit, and may add claim',
+      'Review owner requires only id, owns and submit, and may add claim and gates',
     );
     check(
       typeof owner.id === 'string' &&
         idPattern.test(owner.id) &&
         typeof owner.owns === 'function' &&
         typeof owner.submit === 'function' &&
-        (keys.length === 3 || typeof owner.claim === 'function'),
+        optional.every((key) => typeof owner[key] === 'function'),
       'invalid_review_owner',
       'Review owner requires an identifier and callbacks',
     );
@@ -386,6 +389,7 @@ export class ReviewService implements Reviews {
       owns: owner.owns,
       submit: owner.submit,
       ...(owner.claim ? { claim: owner.claim } : {}),
+      ...(owner.gates ? { gates: owner.gates } : {}),
     });
     this.owners.set(registered.id, registered);
     this.ownerEpoch++;
@@ -801,6 +805,116 @@ export class ReviewService implements Reviews {
           ).map(hydrate),
         ),
     );
+  }
+
+  /**
+   * The Running sidebar's Review sections for these subjects, read inside the page's snapshot:
+   * one query over the project's reviews of them, then get() for the review that speaks for
+   * each, so waiting, the synopsis and the findings read as get() serves them to this caller.
+   */
+  async running(
+    caller: Caller,
+    subjectIds: readonly string[],
+    transaction?: Transaction,
+  ): Promise<RunningSection[]> {
+    caller = structuredClone(caller);
+    // A sidebar asks about its own key and the few it absorbed, and a machine's about none.
+    const subjects = [...new Set(subjectIds)]
+      .filter((id) => typeof id === 'string' && visible(id))
+      .slice(0, 64);
+    if (!subjects.length) return [];
+    await this.scope.require(caller, 'read', transaction);
+    const read = async (sql: Sql) => {
+      // The newest at the highest revision it pinned speaks for its subject, so an open
+      // re-review outranks the verdict it will replace.
+      const rows = await sql.all<
+        Pick<ReviewRow, 'id' | 'subject_id' | 'status' | 'verdict' | 'created_at'>
+      >(
+        `SELECT id, subject_id, status, verdict, created_at FROM reviews
+         WHERE project_id = ? AND subject_id IN (${subjects.map(() => '?').join(',')})
+         ORDER BY subject_revision DESC, created_at DESC, id DESC`,
+        caller.projectId,
+        ...subjects,
+      );
+      const rounds = subjects
+        .map((subjectId) => rows.filter((row) => row.subject_id === subjectId))
+        .filter((mine) => mine.length > 0);
+      const gates = await this.gatesOf(
+        rounds.flatMap((mine) => mine.slice(0, EARLIER + 1).map((row) => row.id)),
+        sql,
+      );
+      const gated = (id: string) => (gates.has(id) ? { gate: gates.get(id)! } : {});
+      const sections = await mapAsync(rounds, async ([newest, ...earlier]) => {
+        const current = await this.get(caller, newest!.id, transaction);
+        const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
+        return reviewSections({
+          current,
+          ...gated(current.id),
+          ...(claim ? { claim } : {}),
+          earlier: earlier.map((row) => ({
+            id: row.id,
+            status: row.status,
+            verdict: row.verdict,
+            createdAt: row.created_at,
+            ...gated(row.id),
+          })),
+        });
+      });
+      return sections.flat();
+    };
+    if (transaction) {
+      this.state.assertTransaction(transaction);
+      return await read(transaction);
+    }
+    return await this.state.read(read);
+  }
+
+  /**
+   * The gate each of these reviews was read at, named by the domain that owns it where its
+   * records are reviewed at more than one. The first owner to name a review names it.
+   */
+  private async gatesOf(reviewIds: readonly string[], sql: Sql): Promise<Map<string, string>> {
+    const gates = new Map<string, string>();
+    if (!reviewIds.length) return gates;
+    for (const owner of [...this.owners.values()]) {
+      if (!owner.gates) continue;
+      const named: unknown = await owner.gates(Object.freeze([...reviewIds]), sql);
+      if (!named || typeof named !== 'object') continue;
+      for (const id of reviewIds) {
+        const gate: unknown = Object.hasOwn(named, id)
+          ? (named as Record<string, unknown>)[id]
+          : null;
+        if (!gates.has(id) && typeof gate === 'string' && gate.length <= 40 && visible(gate))
+          gates.set(id, gate);
+      }
+    }
+    return gates;
+  }
+
+  /**
+   * When the open claim was taken, from the event recorded with it (the one claimStartedAt
+   * finds), and whether a leased worker took it through its review lease.
+   */
+  private async claimOf(
+    sql: Sql,
+    review: ReviewRequest,
+  ): Promise<{ at: string; agent: boolean } | undefined> {
+    const events = await sql.all<{ data_json: string; created_at: string }>(
+      "SELECT data_json, created_at FROM events WHERE project_id=? AND subject_id=? AND type='review.started' ORDER BY id DESC",
+      review.projectId,
+      review.id,
+    );
+    for (const event of events) {
+      let data: { claimId?: unknown; source?: { kind?: unknown } } = {};
+      try {
+        data = JSON.parse(event.data_json) ?? {};
+      } catch {
+        continue;
+      }
+      if (data.claimId === review.claimId || review.claimId === `legacy:${review.id}`)
+        return { at: event.created_at, agent: data.source?.kind === 'session' };
+    }
+    return undefined;
   }
 
   async checkStart(

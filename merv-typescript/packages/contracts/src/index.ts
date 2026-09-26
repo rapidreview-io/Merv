@@ -1614,6 +1614,11 @@ export interface ReviewSubmitOwner {
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
   /** Refuses a claim of an owned review that the owner's rules could never let finish. */
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
+  /**
+   * The gate each owned review among these was read at ('Design', 'Results'), for a domain
+   * whose records are reviewed at more than one. Read-only; ids it does not own are left out.
+   */
+  gates?(reviewIds: readonly string[], sql: Sql): Promise<Readonly<Record<string, string>>>;
 }
 export interface Reviews {
   provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
@@ -1655,6 +1660,15 @@ export interface Reviews {
   ): Promise<ReviewRequest>;
   submit(caller: Caller, input: ReviewSubmit, tx?: Transaction): Promise<ReviewRequest>;
   supersede(caller: Caller, reviewId: string, tx?: Transaction): Promise<void>;
+  /**
+   * The Running sidebar's Review sections for each subject that has a review: how the current
+   * review stands, and its earlier rounds. Waiting stays operator-only, as get() keeps it.
+   */
+  running(
+    caller: Caller,
+    subjectIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<import('./running.js').RunningSection[]>;
 }
 export interface Task {
   id: string;

@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type { Caller } from '@merv/contracts';
+import { keyId, keyKind, type Caller } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 
 export const reviewUiPlugin = {
@@ -20,6 +20,17 @@ export const reviewUiPlugin = {
             (review) => review.status === 'requested' || review.status === 'started',
           ).length,
         }),
+      }),
+    );
+    // A review is not a node of its own: it is a section on the work it judges.
+    ctx.effect(() =>
+      ctx.ui.contribute({
+        owner: 'reviews',
+        sections: async (read, keys) =>
+          await reviews.running(
+            read.caller,
+            keys.filter((key) => keyKind(key) === 'work').map(keyId),
+          ),
       }),
     );
   },

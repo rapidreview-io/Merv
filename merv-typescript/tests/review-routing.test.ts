@@ -152,6 +152,7 @@ test('review owner registration is closed, copied, unique and safe against stale
     { ...valid, owns: true },
     { ...valid, submit: undefined },
     { ...valid, claim: true },
+    { ...valid, gates: 'Design' },
     Object.create(valid),
     Object.defineProperty({ ...valid }, 'id', {
       get() {
