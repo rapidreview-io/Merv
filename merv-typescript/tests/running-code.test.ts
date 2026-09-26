@@ -1,0 +1,804 @@
+import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
+import { Context } from 'cordis';
+import { CodeService } from '@merv/code-research/service';
+import type { CodeCapture } from '@merv/code-research/types';
+import codeUiPlugin from '@merv/code-research/ui';
+import { CodeRepositories } from '@merv/code/store/repository';
+import {
+  createService,
+  personMove,
+  type Caller,
+  type RunningNode,
+  type RunningSection,
+  type WorkflowSnapshot,
+} from '@merv/contracts';
+import { UiRegistry, type RunningContribution } from '@merv/ui';
+import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import { boundProject } from './fixtures/code-binding.js';
+import { git, gitSource } from './fixtures/code-store.js';
+import { resolutionFixture } from './fixtures/resolution.js';
+import { assessment } from './fixtures/review-verdict.js';
+import { config as githubConfig, githubFixture } from './github-fixture.js';
+
+/**
+ * Code's part of the Running page, read the way ui.running reads it: through the code-ui
+ * adapter, inside one read-only snapshot, each part behind its own savepoint. A project Code
+ * hosts, with the GitHub App faked at its seam, accepts real units and opens a real pull
+ * request; the few rows no fixture here can reach otherwise (a blocker on work that has ended,
+ * a check's machine) are written as their owner writes them.
+ */
+
+async function fixture(t: TestContext) {
+  const f = await resolutionFixture(t, { human: true });
+  const remote = await githubFixture(t, f.state, f.admin);
+  await remote.enable();
+  const root = join(f.directory, 'code');
+  mkdirSync(join(root, 'tmp'), { recursive: true });
+  mkdirSync(join(root, 'empty-template'));
+  const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
+  await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
+  const code = await createService(
+    new CodeService(
+      f.state,
+      f.scope,
+      f.sessions,
+      f.artifacts,
+      f.workflows,
+      githubConfig,
+      remote.fetcher,
+      {
+        config: { root, settleMs: 60_000, reservedFreeBytes: 1 },
+        mirror: {
+          target: async () => ({ repository: 'fixture/private' }),
+          lsRemote: async (_project: string, ref: string) =>
+            remote.branches.get(ref.replace('refs/heads/', '')) ?? null,
+          push: async (_project: string, update: { ref: string; oid: string }) => {
+            remote.branches.set(update.ref.replace('refs/heads/', ''), update.oid);
+            return 'ok' as const;
+          },
+        },
+        mirrorConfig: { mirrorSeconds: 0 },
+        // Nothing merges or steps a check behind the test's back: a row written here stays.
+        autoMerge: false,
+      },
+    ),
+  );
+  const source = gitSource(t);
+  const bare = repositories.paths(f.admin.projectId).repository;
+  const root0 = source.commit({ 'own.txt': 'root\n' });
+  const feature = source.commit({ 'own.txt': 'feature\n' });
+  source.git('checkout', '--detach', root0);
+  const other = source.commit({ 'other.txt': 'other\n' });
+  for (const [name, commit] of Object.entries({ root0, feature, other }))
+    source.git('push', bare, `${commit}:refs/heads/${name}`);
+  await boundProject(f.state, f.admin.projectId, root0, 'repository');
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
+      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: root0 }),
+      JSON.stringify({
+        oid: root0,
+        operationId: 'fixture',
+        admittedBy: 'fixture',
+        admittedAt: 'now',
+        stored: true,
+      }),
+      f.admin.projectId,
+    ),
+  );
+  remote.branches.set('main', root0);
+  const handle = await f.workflows.register(
+    {
+      name: 'input',
+      version: 1,
+      managed: true,
+      initial: 'working',
+      states: ['working', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'working', action: 'accept', to: 'done' }],
+    },
+    {
+      successStates: ['done'],
+      actions: [
+        {
+          name: 'accept',
+          tool: 'input.accept',
+          instruction: 'Accept.',
+          states: ['working'],
+          transitions: ['accept'],
+          check: () => {},
+        },
+      ],
+    },
+  );
+  let sequence = 0;
+  const id = () => `request-${++sequence}`;
+  const actor = async (
+    name: string,
+    role: 'operator' | 'producer' | 'reader',
+  ): Promise<Caller> => ({
+    projectId: f.admin.projectId,
+    actorId: (await f.scope.issueActor(f.admin, { name, role })).actor.id,
+  });
+  const producer = await actor('Producer', 'operator');
+  const captures = new Map<string, CodeCapture>();
+  const original = code.capture.bind(code);
+  t.mock.method(code, 'capture', async (...args: Parameters<CodeService['capture']>) =>
+    args[1].kind === 'code-commit' && captures.has(args[1].commandId!)
+      ? captures.get(args[1].commandId!)!
+      : original(...args),
+  );
+  const start = (name: string) =>
+    handle.start(f.admin, {
+      workflow: 'input',
+      requestId: id(),
+      data: { title: name, goal: `Deliver ${name}` },
+    });
+  const declare = async (name: string) => {
+    const work = await start(name);
+    await f.state.transaction((tx) => code.declareUnit(f.admin, work.id, tx));
+    return work;
+  };
+  const move = (work: WorkflowSnapshot) =>
+    handle.transition(f.admin, {
+      instanceId: work.id,
+      action: 'accept',
+      expectedRevision: work.revision,
+      requestId: `accept-${work.id}`,
+    });
+  /** Acceptance as a passing review leaves it: an admitted upload, then the owner's record. */
+  const accept = async (work: WorkflowSnapshot, commit: string) => {
+    const commandId = `capture-${work.id}`;
+    captures.set(commandId, {
+      ref: { kind: 'code-commit', commandId },
+      status: 'ready',
+      provenance: {
+        projectId: f.admin.projectId,
+        instanceId: work.id,
+        readOnly: false,
+      } as CodeCapture['provenance'],
+      workspace: {
+        repositoryId: 'repository',
+        workspaceId: work.id,
+        mode: 'persistent',
+        branch: null,
+        baseOid: root0,
+        headOid: commit,
+        treeOid: git(bare, ['rev-parse', `${commit}^{tree}`]),
+        stats: { commitCount: 1, filesChanged: 1, insertions: 1, deletions: 0 },
+      },
+      observedAt: 'now',
+      eventId: null,
+    });
+    const evidence = await f.artifacts.create(producer, {
+      title: 'Evidence',
+      content: 'The delivered change was checked against its goal.',
+    });
+    const request = await f.reviews.request(producer, {
+      subjectId: work.id,
+      subjectRevision: work.revision,
+      producerId: producer.actorId,
+      artifactIds: [evidence.id],
+      criteria: ['The change works.'],
+      requestId: `review-${work.id}`,
+    });
+    const claim = await f.reviews.start(f.admin, request.id);
+    await f.reviews.submit(f.admin, {
+      reviewId: request.id,
+      claimId: claim.claimId!,
+      verdict: 'pass',
+      notes: 'Checked the delivered change.',
+      ...assessment(claim),
+      requestId: `pass-${request.id}`,
+    });
+    const done = await move(work);
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        "UPDATE code_units SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
+        commit,
+        f.admin.projectId,
+        work.id,
+      );
+      await tx.run(
+        "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES (?,?,'fixture',?,'upload','hash','{}','completed',?,'now','now',?)",
+        commandId,
+        f.admin.projectId,
+        commandId,
+        JSON.stringify({ head: commit }),
+        work.id,
+      );
+    });
+    await f.state.transaction((tx) =>
+      code.acceptUnit(
+        f.admin,
+        {
+          unitId: work.id,
+          terminalRevision: done.revision,
+          submissionRef: commandId,
+          reviewRef: request.id,
+          codeRef: { kind: 'code-commit', commandId },
+          reviewSessionId: null,
+        },
+        tx,
+      ),
+    );
+  };
+  /** A unit that publishes to main, accepted, whose publication has opened no pull request yet. */
+  const publishing = async (name: string) => {
+    await code.controlPublication(f.admin, {
+      action: 'record_canary',
+      staleMerged: false,
+      reason: 'The release matrix passed with this App and its rules.',
+      requestId: 'canary',
+    });
+    const work = await declare(name);
+    await f.state.transaction((tx) => code.publishOnAcceptance(f.admin, { unitId: work.id }, tx));
+    await f.state.transaction((tx) =>
+      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}` }, tx),
+    );
+    await accept(work, feature);
+    return work;
+  };
+  const sync = async () => {
+    await f.state.transaction((tx) => tx.run("UPDATE code_publications SET synced_at=''"));
+    return await code.syncPublications(f.admin);
+  };
+  const unbind = f.tasks.bindCode(code);
+  const unbindReviews = code.bindReviews(f.reviews);
+  f.beforeClose.push(async () => {
+    unbind();
+    unbindReviews();
+    await code.close();
+    repositories.git.close();
+  });
+
+  // The adapter as the application composes it, registered on a UI registry of its own.
+  const ctx = new Context();
+  const ui = new UiRegistry();
+  ctx.provide('ui', ui);
+  ctx.provide('codeResearch', code);
+  await ctx.plugin(codeUiPlugin);
+  f.beforeClose.unshift(async () => await ctx.fiber.dispose());
+  /** Code's contribution as registered, beside the other owners a test stands in for. */
+  const sources = (...others: RunningContribution[]): RunningSources => ({
+    contributions: () =>
+      [...ui.contributions(), ...others].sort((a, b) => a.owner.localeCompare(b.owner)),
+    tools: async () => [],
+    isolated: (read) => f.state.isolated(read),
+  });
+  /** Both reads, as the tools make them: inside one read-only snapshot, where nothing writes. */
+  const board = (running: RunningSources, caller: Caller = f.admin) =>
+    f.state.snapshot(() => runningBoard(running, caller));
+  const panel = (running: RunningSources, key: string, caller: Caller = f.admin) =>
+    f.state.snapshot(() => runningPanel(running, caller, key));
+  const holds = (caller: Caller = f.admin) => f.state.snapshot(() => code.runningHolds(caller));
+  const blockers = async (instanceId: string) =>
+    (await f.workflows.blockers(f.admin, instanceId)).filter((item) => item.provider === 'code');
+  return {
+    ...f,
+    code,
+    bare,
+    root0,
+    feature,
+    other,
+    actor,
+    start,
+    declare,
+    move,
+    accept,
+    publishing,
+    sync,
+    sources,
+    board,
+    panel,
+    holds,
+    blockers,
+  };
+}
+
+/**
+ * Tasks' part as far as this slice needs it: a key another owner marked is drawn quiet as
+ * done, as the tasks contribution draws a held done task, and any key named here is drawn.
+ */
+const tasks = (drawn: string[] = []): RunningContribution => ({
+  owner: 'tasks',
+  kinds: ['work'],
+  lanes: ['work'],
+  nodes: async (read) => ({
+    nodes: [...new Set([...drawn, ...read.include])].map((key): RunningNode => ({
+      key,
+      lane: 'work',
+      kind: 'Task',
+      title: key,
+      lines: [['Done']],
+      look: 'quiet',
+    })),
+  }),
+  panel: async () => ({
+    header: { kind: 'Task', title: 'Publishing', says: [{ state: 'done' }] },
+    sections: [],
+    actions: [],
+    live: false,
+  }),
+});
+
+const codeOf = (sections: RunningSection[]) =>
+  sections.find((section) => section.owner === 'code-research' && section.title === 'Code');
+
+test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a signed-in operator is offered the merge', async (t) => {
+  const f = await fixture(t);
+  const work = await f.publishing('Publish the index');
+  const key = `work:${work.id}`;
+  const running = f.sources(tasks());
+
+  // Before the first sync there is no pull request: nobody owes a merge yet, so nothing is
+  // held, and the Code section says in ink what the work waits on.
+  assert.deepEqual(await f.holds(), { marks: [], summary: null });
+  const [unopened] = await f.blockers(work.id);
+  const before = codeOf((await f.panel(running, key)).sections)!;
+  assert.equal(before.attention, undefined);
+  assert.deepEqual(before.kind === 'facts' && before.rows[0], {
+    label: 'Waiting',
+    value: [
+      'The publication for this work has not opened its pull request yet',
+      ' · ',
+      'The server',
+      ' · ',
+      { ago: unopened.since },
+    ],
+  });
+
+  const [opened] = await f.sync();
+  const pull = opened.pull!;
+  const [blocker] = await f.blockers(work.id);
+  assert.equal(blocker.code, 'code_publication_pending');
+  const move = personMove(blocker)!;
+  assert.equal(move.sentence, 'Waiting on a person to merge the pull request');
+
+  // The mark is the Code page's sentence and who ends the wait. The way to the merge is
+  // offered to the signed-in operator alone; an operator's key and a reader are only told.
+  const said = { key, says: [move.sentence], who: move.who };
+  const merge = { route: '/code', text: 'Merge reviewed proposal' };
+  assert.deepEqual(await f.holds(), { marks: [{ ...said, to: merge }], summary: null });
+  const operatorKey = await f.actor('Operator key', 'operator');
+  const reader = await f.actor('Reader', 'reader');
+  assert.deepEqual(await f.holds(operatorKey), { marks: [said], summary: null });
+  assert.deepEqual(await f.holds(reader), { marks: [said], summary: null });
+
+  // On the board the done task, drawn by its owner only because Code marked it, stands in
+  // the work lane with that attention; nothing failed, and the read wrote nothing.
+  const answer = await f.board(running);
+  assert.deepEqual(answer.lanes.work.nodes, [
+    {
+      key,
+      lane: 'work',
+      kind: 'Task',
+      title: key,
+      lines: [['Done']],
+      look: 'quiet',
+      attention: { says: [move.sentence], who: move.who, to: merge },
+      owner: 'tasks',
+    },
+  ]);
+  assert.equal(answer.lanes.work.needsYou, 1);
+  assert.deepEqual(answer.lanes.work.summaries, []);
+  for (const lane of Object.values(answer.lanes)) assert.deepEqual(lane.failed, []);
+  const read = (await f.board(running, reader)).lanes.work.nodes[0];
+  assert.deepEqual(read.attention, { says: [move.sentence], who: move.who });
+
+  // Where the work has got to comes from the newest commit that succeeded for this unit: not
+  // an older one, not one that failed, and not another unit's.
+  const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const newest = at(6);
+  const stats = (
+    commitCount: number,
+    filesChanged: number,
+    insertions: number,
+    deletions: number,
+  ) => JSON.stringify({ stats: { commitCount, filesChanged, insertions, deletions } });
+  await f.state.transaction(async (tx) => {
+    for (const [id, instanceId, createdAt, status, receipt] of [
+      ['cmd-older', work.id, at(120), 'succeeded', stats(1, 1, 3, 0)],
+      ['cmd-newest', work.id, newest, 'succeeded', stats(3, 2, 12, 4)],
+      ['cmd-failed', work.id, at(2), 'failed', null],
+      ['cmd-other', 'wf_elsewhere', at(1), 'succeeded', stats(9, 9, 9, 9)],
+    ] as const)
+      await tx.run(
+        'INSERT INTO code_commands (id,project_id,session_id,actor_id,request_id,input_hash,command_json,status,receipt_json,error) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        id,
+        f.admin.projectId,
+        'session-fixture',
+        f.admin.actorId,
+        id,
+        'hash',
+        JSON.stringify({ instanceId, createdAt }),
+        status,
+        receipt,
+        status === 'failed' ? 'push_rejected' : null,
+      );
+  });
+
+  // The Code section leads the sidebar, above every place, with the move; then the branch,
+  // the work since its base, the acceptance and the publication with its pull request.
+  const unit = await f.code.unit(f.admin, work.id);
+  const needs = [move.sentence, ' · ', move.who, ' · ', { ago: blocker.since }];
+  const rows = (link: boolean) => [
+    {
+      label: 'Needs',
+      value: link
+        ? [...needs, ' · ', { link: { route: '/code' }, text: 'Merge reviewed proposal' }]
+        : needs,
+      attention: true,
+    },
+    { label: 'Branch', value: [{ mono: unit.branch }] },
+    {
+      label: 'Working',
+      value: [
+        { state: 'closed' },
+        ' · 3 commits since base · +12 −4 in 2 files · last commit ',
+        { ago: newest },
+      ],
+    },
+    { label: 'Accepted', value: [{ ago: unit.acceptance!.acceptedAt }] },
+    {
+      label: 'Publication',
+      value: [{ state: 'pending' }, ' · ', { link: { href: pull.url }, text: `#${pull.number}` }],
+    },
+  ];
+  const sidebar = await f.panel(running, key);
+  assert.deepEqual(sidebar.sections[0], {
+    title: 'Code',
+    place: 'code',
+    attention: true,
+    owner: 'code-research',
+    kind: 'facts',
+    rows: rows(true),
+  });
+  const readerSection = codeOf((await f.panel(running, key, reader)).sections)!;
+  assert.deepEqual(readerSection.kind === 'facts' && readerSection.rows, rows(false));
+
+  // Work without a unit, and keys that are not work, have no Code section.
+  const plain = await f.start('No code here');
+  assert.deepEqual(
+    await f.state.snapshot(() =>
+      f.code.runningCode(f.admin, [`work:${plain.id}`, 'session:s1', 'sandbox:sbx_1']),
+    ),
+    [],
+  );
+});
+
+test('a move that is nobody’s holds nothing, open work is marked whatever its code, and done work is held for its publication alone, the newest twenty', async (t) => {
+  const f = await fixture(t);
+  const write = async (work: WorkflowSnapshot, code: string, since: string, key = 'fixture') => {
+    await f.state.transaction(async (tx) => {
+      await f.workflows.replaceBlockers(
+        {
+          projectId: f.admin.projectId,
+          instanceId: work.id,
+          provider: 'code',
+          blockers: [
+            { key, code, status: 409, message: `fixture ${code}`, next: 'Nothing.', related: [] },
+          ],
+        },
+        tx,
+      );
+      await tx.run('UPDATE wf_blockers SET since=? WHERE instance_id=?', since, work.id);
+    });
+  };
+  const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const ended = async (name: string) => {
+    const work = await f.start(name);
+    return { ...work, ...(await f.move(work)) };
+  };
+
+  // Open work, which its owner draws anyway, is marked for any person's move: main not in
+  // the repository is an administrator's, a quarantine an operator's. A wait on a
+  // successor is nobody's and marks nothing, and another provider's blocker is not Code's.
+  const main = await f.start('Waits on main');
+  await write(main, 'code_base_pending', at(50), 'main');
+  const quarantined = await f.start('Quarantined');
+  await write(quarantined, 'code_quarantined', at(49));
+  const stale = await f.start('Stale');
+  await write(stale, 'code_publication_stale', at(48));
+  const other = await f.start('Other provider');
+  await f.state.transaction((tx) =>
+    f.workflows.replaceBlockers(
+      {
+        projectId: f.admin.projectId,
+        instanceId: other.id,
+        provider: 'sessions',
+        blockers: [
+          {
+            key: 'k',
+            code: 'code_quarantined',
+            status: 409,
+            message: 'm',
+            next: 'n',
+            related: [],
+          },
+        ],
+      },
+      tx,
+    ),
+  );
+  // A quarantine that outlived its work holds nothing: only a publication holds done work.
+  const over = await ended('Ended quarantine');
+  await write(over, 'code_quarantined', at(47));
+
+  // Twenty-two done units wait on an operator to clear a disabled publication. The newest
+  // twenty are held; the other two are one line of the work lane that leads to Code.
+  const done: WorkflowSnapshot[] = [];
+  for (let index = 0; index < 22; index++) {
+    const work = await ended(`Done ${index}`);
+    await write(work, 'code_publication_disabled', at(40 - index), 'publication');
+    done.push(work);
+  }
+  const { marks, summary } = await f.holds();
+  const disabled = {
+    says: ['Publication is disabled for this project until an operator clears it'],
+    who: 'An operator',
+  };
+  assert.deepEqual(marks, [
+    {
+      key: `work:${main.id}`,
+      says: ['Main is not in this project’s repository yet'],
+      who: 'An administrator',
+    },
+    {
+      key: `work:${quarantined.id}`,
+      says: [
+        'Quarantined: the code kept here cannot be used, and an operator replans the work waiting on it',
+      ],
+      who: 'An operator',
+    },
+    ...done
+      .slice(2)
+      .reverse()
+      .map((work) => ({ key: `work:${work.id}`, ...disabled })),
+  ]);
+  assert.deepEqual(summary, {
+    lane: 'work',
+    says: [],
+    attention: {
+      says: [{ count: 2 }, ' more waiting on a person'],
+      to: { route: '/code', text: 'Open Code' },
+    },
+    actions: [],
+  });
+
+  // On the board the held work and the line stand together, and the line counts once.
+  const answer = await f.board(f.sources(tasks()));
+  assert.deepEqual(
+    answer.lanes.work.nodes.map(({ key }) => key).sort(),
+    marks.map(({ key }) => key).sort(),
+  );
+  assert.equal(answer.lanes.work.nodes.length, 22);
+  assert.deepEqual(
+    answer.lanes.work.summaries.map(({ owner, attention }) => ({ owner, attention })),
+    [{ owner: 'code-research', attention: summary!.attention }],
+  );
+  assert.equal(answer.lanes.work.needsYou, 23);
+});
+
+test('a check holding a machine is a hardware node that takes in its sandbox and checks the work it merges; its sidebar says its time and that work', async (t) => {
+  const f = await fixture(t);
+  const checked = await f.declare('Checked work');
+  await f.accept(checked, f.feature);
+  const SPEC = {
+    command: 'npm test -- --ci\nnpm run lint',
+    timeoutSeconds: 600,
+    image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+  };
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
+      JSON.stringify({ check: SPEC }),
+      f.admin.projectId,
+    ),
+  );
+  const handle = (extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      sandboxId: 'sbx_check',
+      jobId: 'job_1',
+      objectId: 'obj_1',
+      restoreJobId: null,
+      sha256: 'f'.repeat(64),
+      ready: true,
+      environment: null,
+      isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
+      epoch: 1,
+      ...extra,
+    });
+  const key = (letter: string) => letter.repeat(64);
+  // Handed off three minutes ago: the deadline is the hand-off, the timeout and the slack.
+  const deadline = new Date(Date.now() + (600 + 1500 - 180) * 1000).toISOString();
+  const handedOff = new Date(Date.parse(deadline) - (600 + 1500) * 1000).toISOString();
+  const insert = async (
+    base: string,
+    state: string,
+    check: string,
+    job: string | null,
+    until: string | null = deadline,
+  ) =>
+    await f.state.transaction((tx) =>
+      tx.run(
+        "INSERT INTO code_bases (project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,execution_epoch,deadline,check_state,check_job_json) VALUES (?,?,?,?,?,'fixture',?,?,?,1,?,?,?)",
+        f.admin.projectId,
+        base,
+        JSON.stringify([f.feature, f.other].sort()),
+        key('1'),
+        key('2'),
+        state,
+        'now',
+        'now',
+        until,
+        check,
+        job,
+      ),
+    );
+  await insert(key('a'), 'running', 'running', handle());
+  await insert(key('b'), 'running', 'queued', null);
+  await insert(key('c'), 'cancelled', 'running', handle({ releaseAttempts: 2 }));
+  // A check still Merv's a minute past its deadline, which Code settles on its next pass:
+  // one that stays there is waiting on a person.
+  const late = new Date(Date.now() - 60_000).toISOString();
+  await insert(key('d'), 'running', 'running', handle({ sandboxId: 'sbx_late' }), late);
+  // Not in flight: a check that ended, and one whose base stopped before it rented anything.
+  await insert(key('e'), 'cancelled', 'unavailable', null);
+  await insert(key('f'), 'suspended', 'queued', null);
+
+  const checks = await f.state.snapshot(() => f.code.runningChecks(f.admin));
+  const checking = [{ to: `work:${checked.id}`, verb: 'checks' }];
+  const common = {
+    lane: 'hardware',
+    title: 'Code check',
+    name: 'npm test -- --ci',
+    links: checking,
+  };
+  assert.deepEqual(checks, [
+    {
+      key: `check:${key('a')}`,
+      ...common,
+      lines: [['Running ', { since: handedOff }]],
+      look: 'solid',
+      dot: 'live',
+      units: { count: 1, busy: true },
+      aliases: ['sandbox:sbx_check'],
+    },
+    {
+      key: `check:${key('b')}`,
+      ...common,
+      lines: [['Starting']],
+      look: 'dashed',
+      dot: 'starting',
+      units: { count: 1, busy: false },
+    },
+    {
+      key: `check:${key('c')}`,
+      ...common,
+      lines: [['Giving machine back']],
+      look: 'quiet',
+      attention: {
+        says: ['Giving machine back · refused ', { count: 2 }, ' times, retrying'],
+        quiet: true,
+      },
+      units: { count: 1, busy: false },
+      aliases: ['sandbox:sbx_check'],
+    },
+    {
+      key: `check:${key('d')}`,
+      ...common,
+      lines: [
+        ['Running ', { since: new Date(Date.parse(late) - (600 + 1500) * 1000).toISOString() }],
+      ],
+      look: 'solid',
+      dot: 'live',
+      attention: {
+        says: ['Past its deadline'],
+        who: 'An operator retries or cancels the base on Code',
+      },
+      units: { count: 1, busy: true },
+      aliases: ['sandbox:sbx_late'],
+    },
+  ]);
+
+  // On the board the sandbox the check runs on folds into it, and its own attention
+  // becomes the check's; the check's edge lands on the work it proves where that is drawn.
+  const sandboxes: RunningContribution = {
+    owner: 'sandboxes',
+    kinds: ['sandbox'],
+    lanes: ['hardware'],
+    nodes: async () => ({
+      nodes: [
+        {
+          key: 'sandbox:sbx_check',
+          lane: 'hardware',
+          title: 'A6000',
+          lines: [],
+          look: 'solid',
+          attention: { says: ['Lease ends in 6m'], who: 'A producer or operator extends it.' },
+        },
+      ],
+    }),
+    panel: async (_read, sandbox, absorbedBy) =>
+      sandbox === 'sandbox:sbx_check'
+        ? {
+            header: { kind: 'Sandbox', title: 'A6000', says: [] },
+            sections: [
+              {
+                title: 'Machine',
+                place: 'machine',
+                kind: 'facts',
+                rows: [{ label: 'Size', value: [absorbedBy ? 'absorbed' : 'alone'] }],
+              },
+            ],
+            actions: [],
+            live: true,
+          }
+        : null,
+  };
+  const running = f.sources(tasks([`work:${checked.id}`]), sandboxes);
+  const answer = await f.board(running);
+  const drawn = answer.lanes.hardware.nodes.map(({ key }) => key);
+  assert.deepEqual(drawn.sort(), checks.map(({ key }) => key).sort());
+  const first = answer.lanes.hardware.nodes.find(({ key: at }) => at === `check:${key('a')}`)!;
+  assert.deepEqual(first.aliases, ['sandbox:sbx_check']);
+  assert.deepEqual(first.attention, {
+    says: ['Lease ends in 6m'],
+    who: 'A producer or operator extends it.',
+  });
+  assert.ok(
+    answer.edges.some(
+      (edge) =>
+        edge.from === `check:${key('a')}` &&
+        edge.to === `work:${checked.id}` &&
+        edge.verb === 'checks',
+    ),
+  );
+  for (const lane of Object.values(answer.lanes)) assert.deepEqual(lane.failed, []);
+
+  // The sidebar: how long of its time it has had, the work it checks, and the machine's own
+  // sections after them. It carries no control, and its record is the merge on Code.
+  const sidebar = await f.panel(running, `check:${key('a')}`);
+  assert.deepEqual(sidebar.header, {
+    kind: 'Code check',
+    title: 'npm test -- --ci',
+    says: ['Running ', { since: handedOff }],
+  });
+  assert.deepEqual(
+    sidebar.sections.map(({ title, owner }) => [title, owner]),
+    [
+      ['Check', 'code-research'],
+      ['Checking', 'code-research'],
+      ['Machine', 'sandboxes'],
+    ],
+  );
+  assert.deepEqual(sidebar.sections[0].kind === 'facts' && sidebar.sections[0].rows, [
+    { label: 'Time', value: [{ since: handedOff, of: 600 }] },
+    { label: 'Command', value: [{ mono: SPEC.command }] },
+  ]);
+  assert.deepEqual(sidebar.sections[1].kind === 'links' && sidebar.sections[1].rows, [
+    {
+      to: { key: `work:${checked.id}`, route: `/code/unit/${checked.id}` },
+      name: 'Checked work',
+    },
+  ]);
+  assert.deepEqual(sidebar.sections[2].kind === 'facts' && sidebar.sections[2].rows, [
+    { label: 'Size', value: ['absorbed'] },
+  ]);
+  assert.deepEqual(sidebar.actions, []);
+  assert.equal(sidebar.route, `/code/merge/${key('a')}`);
+  assert.equal(sidebar.live, true);
+  assert.deepEqual(sidebar.aliases, ['sandbox:sbx_check']);
+
+  // A check that ended still answers an open sidebar; a key that names no base, or no base of
+  // this project's, belongs to nobody here.
+  const ended = await f.panel(running, `check:${key('e')}`);
+  assert.deepEqual(ended.header.says, ['Ended · ', { state: 'unavailable' }]);
+  assert.equal(ended.live, false);
+  for (const nobody of [`check:${key('9')}`, 'check:not-a-base'])
+    await assert.rejects(f.panel(running, nobody), { code: 'running_not_found' });
+});

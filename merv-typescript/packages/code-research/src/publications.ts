@@ -60,6 +60,10 @@ interface Row {
   incident_json: string | null;
 }
 
+/** What a unit's publication reads of its pull request: which one, and whether it closed unmerged. */
+const reading = (pull: GitHubPullRequest | null) =>
+  pull ? `${pull.number} ${pull.url} ${pull.state === 'closed' && !pull.merged}` : '';
+
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
 export class CodePublicationService implements CodePublicationApi {
   constructor(
@@ -378,7 +382,11 @@ export class CodePublicationService implements CodePublicationApi {
         );
         await this.host!.apply(caller, record, 'published', tx);
         await this.host!.main(caller, pull.mergeCommitSha!, tx);
-      }
+      } else if (record.approval?.source === 'unit' && reading(record.pull) !== reading(pull))
+        // A unit's blocker is read back from this row, so it follows the pull request the
+        // moment one opens, and again when it closes unmerged: until then the wait said no
+        // pull request existed, and named nobody who could end it.
+        await this.host!.reconcile(caller, tx);
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }

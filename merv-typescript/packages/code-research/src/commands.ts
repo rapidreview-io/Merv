@@ -19,6 +19,7 @@ import {
   type CodeCommitInput,
   type Data,
   type Scope,
+  type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
@@ -184,6 +185,23 @@ export class CodeCommandService implements CodeCommands {
         )
       ).map((row) => this.decode(row));
     });
+  }
+  /**
+   * The newest commit that succeeded for one unit of work, whose stats say where its work has
+   * got to since its base. A pure read for the Running page; the unit is named only inside the
+   * command, so this reads the project's commands, and it is asked for one panel at a time.
+   */
+  async newestReceipt(
+    sql: Sql,
+    projectId: string,
+    instanceId: string,
+  ): Promise<CodeCommandRecord | null> {
+    const row = await sql.get<Row>(
+      "SELECT * FROM code_commands WHERE project_id=? AND status='succeeded' AND (command_json::jsonb ->> 'instanceId')=? ORDER BY _merv_rowid DESC LIMIT 1",
+      projectId,
+      instanceId,
+    );
+    return row ? this.decode(row) : null;
   }
   async operation(caller: Caller, commandId: string): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);

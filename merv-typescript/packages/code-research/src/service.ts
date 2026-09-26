@@ -43,6 +43,7 @@ import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
 import { CodePublicationService } from './publications.js';
 import { prepareRepository } from './repository-setup.js';
+import { CodeRunningReader } from './running.js';
 import { CodeTransportService } from './transport.js';
 import type { Code } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
@@ -124,6 +125,7 @@ export class CodeService extends CodeCommandService implements Code {
   readonly transport: CodeTransportService;
   private publicationStore: CodePublicationService;
   private publicationHost: PublicationHost;
+  private readonly board: CodeRunningReader;
   private storage: State;
   private readonly baseScope: Scope;
   private publicationClosed = false;
@@ -187,6 +189,11 @@ export class CodeService extends CodeCommandService implements Code {
       this.transport,
       this.publicationHost,
     );
+    this.board = new CodeRunningReader(state, scope, workflows, {
+      unit: (caller, unitId, tx) => this.unitStore.unit(caller, unitId, tx),
+      bases: () => this.baseStore,
+      receipt: (sql, projectId, instanceId) => this.newestReceipt(sql, projectId, instanceId),
+    });
     const initializeBase = this.initialize.bind(this);
     this.initialize = async () => {
       await initializeBase();
@@ -497,6 +504,19 @@ export class CodeService extends CodeCommandService implements Code {
       await this.github.assertBinding(caller, binding, tx, 'read');
       return await this.unitStore.bindLocal(caller, input, stored, tx);
     });
+  }
+  /** The Running page's reads, each on the page's snapshot (running.ts). */
+  runningHolds(caller: Caller) {
+    return this.board.holds(caller);
+  }
+  runningChecks(caller: Caller) {
+    return this.board.checks(caller);
+  }
+  runningPanel(caller: Caller, key: string) {
+    return this.board.panel(caller, key);
+  }
+  runningCode(caller: Caller, keys: readonly string[]) {
+    return this.board.sections(caller, keys);
   }
   async hosted(...args: Parameters<CodeUnitService['hosted']>) {
     return await this.unitStore.hosted(...args);
