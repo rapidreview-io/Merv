@@ -11,7 +11,7 @@
       "cloudflare-fleet-large": "rt1_d87527f5b9a1ee4b0d2b427e69a0f574d88210e8423cb4624bb3c50907221ea5"
     },
     "localId": "sha256:3639d18d302f3e194c294120972a817b7d86587eee7682536e20769822847769",
-    "sourceCommit": "0a595a12543fff8dabb82b4cda748179bd588fec",
+    "sourceCommit": "ee5da1691284b0639fc2b522bc2646ba3bd9ea29",
     "sandboxesCommit": "9b80856d9fe03439a4f958d6cf8eb4c95d844ea7"
   },
   "inputs": [
@@ -21,6 +21,7 @@
     "packages/code/src/merge-settings.ts",
     "packages/contracts/src/agent-guide.ts",
     "packages/contracts/src/async.ts",
+    "packages/contracts/src/code-blockers.ts",
     "packages/contracts/src/code-github.ts",
     "packages/contracts/src/code-publications.ts",
     "packages/contracts/src/code-store.ts",
@@ -30,6 +31,7 @@
     "packages/contracts/src/order.ts",
     "packages/contracts/src/paper-edit.ts",
     "packages/contracts/src/review-history.ts",
+    "packages/contracts/src/running.ts",
     "packages/contracts/src/schemas.ts",
     "packages/contracts/src/session-inputs.ts",
     "packages/contracts/src/text.ts",
