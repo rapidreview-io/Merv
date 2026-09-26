@@ -1453,6 +1453,26 @@ export interface Workflows {
     dependencies: WorkflowDependency[];
     dependents: WorkflowDependency[];
   }>;
+  /**
+   * What each of several instances depends on, for a view of many that draws prerequisites
+   * only: each one's `dependencies` as dependencies() reads it, without what depends on it,
+   * in a fixed number of reads. An id the project does not hold depends on nothing.
+   */
+  prerequisites(
+    caller: Caller,
+    instanceIds: readonly string[],
+    tx: Transaction,
+  ): Promise<Map<string, WorkflowDependency[]>>;
+  /**
+   * limitStatus of one limit for each of several instances, in a fixed number of reads per
+   * definition. An instance whose definition has no such limit is left out, not refused.
+   */
+  limitStatusOf(
+    caller: Caller,
+    instanceIds: readonly string[],
+    name: string,
+    tx: Transaction,
+  ): Promise<Map<string, WorkflowLimitStatus>>;
   checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void>;
   /**
    * The instance, everything it transitively depends on, and the children their policies

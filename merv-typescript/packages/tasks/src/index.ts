@@ -60,6 +60,7 @@ import {
   type WorkflowCheckContext,
   type WorkflowDefinition,
   type WorkflowExecutionReferences,
+  type WorkflowLimitStatus,
   type WorkflowPolicy,
   type Workflows,
   type WorkflowSnapshot,
@@ -172,6 +173,11 @@ const derivedBase = (version: number) => version === 5 || version === 10 || serv
 /** Only the internal service binding may create these tasks; their producer has no credential. */
 const serviceOwned = (version: number) =>
   version === TASK_WORKFLOW_SERVICE.version || version === 11;
+/** A record another plugin answers 404 for is simply not there to speak of. */
+const absent = (error: unknown): null => {
+  if (error instanceof MervError && error.status === 404) return null;
+  throw error;
+};
 /** Where review_rounds counts from: a service task counts its deliveries, any other its returns. */
 const roundsFrom = (version: number) => (serviceOwned(version) ? 'in_progress' : 'in_review');
 /** The same graph as version 2; only the execution policies registered beside it differ. */
@@ -1983,6 +1989,8 @@ export class TaskService implements Tasks {
    * Every task still in flight, and each ended one another owner holds on the board, read in
    * one snapshot that refuses writes. Guidance is never evaluated here: it is per reader, where
    * a card says the same to everyone, and it would cost an evaluation per task on every poll.
+   * The board draws only what a task waits on, so what waits on it is left to its sidebar, and
+   * the prerequisites and review rounds of every task are each read once for all of them.
    */
   async running(caller: Caller, include: Iterable<string> = []): Promise<RunningNode[]> {
     caller = structuredClone(caller);
@@ -2003,15 +2011,27 @@ export class TaskService implements Tasks {
               (blocker) => blocker.instanceId,
             ),
           );
+          const waitsOn = await this.workflows.prerequisites(
+            caller,
+            rows.map((row) => row.id),
+            tx,
+          );
+          const rounds = await this.workflows.limitStatusOf(
+            caller,
+            rows.filter((row) => row.state === roundsFrom(row.version)).map((row) => row.id),
+            'review_rounds',
+            tx,
+          );
           return await mapAsync(rows, async (row) =>
             taskNode(
               await this.standing(
                 caller,
                 row,
-                (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
+                waitsOn.get(row.id) ?? [],
                 leases,
                 blocked.has(row.id),
                 tx,
+                rounds,
               ),
             ),
           );
@@ -2068,6 +2088,11 @@ export class TaskService implements Tasks {
     return new Map(rows.map((row) => [`${row.task_id}@${row.revision}`, row.purpose]));
   }
 
+  /**
+   * One task's facts. `counted` is the board's one read of review rounds for every task; the
+   * sidebar, reading one task, counts its own. A review the task names and Reviews does not
+   * hold leaves the task drawn without it, rather than taking every other task with it.
+   */
   private async standing(
     caller: Caller,
     row: RunningTaskRow,
@@ -2075,15 +2100,18 @@ export class TaskService implements Tasks {
     leases: Awaited<ReturnType<TaskService['liveLeases']>>,
     blocked: boolean,
     tx: Transaction,
+    counted?: ReadonlyMap<string, WorkflowLimitStatus>,
   ): Promise<TaskStanding> {
     // Only the limit leaving the current state stops anything, as the gate reads it.
     const rounds =
-      row.state === roundsFrom(row.version)
-        ? await this.workflows.limitStatus(caller, row.id, 'review_rounds', tx)
-        : null;
+      row.state !== roundsFrom(row.version)
+        ? null
+        : counted
+          ? (counted.get(row.id) ?? null)
+          : await this.workflows.limitStatus(caller, row.id, 'review_rounds', tx);
     const review =
       row.state === 'in_review' && row.review_id
-        ? await this.reviews.get(caller, row.review_id, tx)
+        ? await this.reviews.get(caller, row.review_id, tx).catch(absent)
         : null;
     return {
       id: row.id,

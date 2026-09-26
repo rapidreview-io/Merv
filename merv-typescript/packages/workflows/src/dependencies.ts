@@ -88,6 +88,20 @@ function classify(
   };
 }
 
+/** What an edge's source depends on, read against the target as it stands now. */
+const prerequisiteOf = (edge: EdgeRow, target: NodeRow | undefined): WorkflowDependency => ({
+  ...classify(
+    target,
+    edge.target_id,
+    edge.target_workflow,
+    edge.target_version,
+    // The contract the edge pinned when it was made, whatever version the target runs now.
+    JSON.parse(edge.target_success_json) as string[],
+    JSON.parse(edge.target_terminal_json) as string[],
+  ),
+  ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
+});
+
 export async function relations(
   sql: Sql,
   projectId: string,
@@ -111,18 +125,7 @@ export async function relations(
         edge.target_id,
         projectId,
       );
-      dependencies.push({
-        ...classify(
-          target,
-          edge.target_id,
-          edge.target_workflow,
-          edge.target_version,
-          // The contract the edge pinned when it was made, whatever version the target runs now.
-          JSON.parse(edge.target_success_json) as string[],
-          JSON.parse(edge.target_terminal_json) as string[],
-        ),
-        ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
-      });
+      dependencies.push(prerequisiteOf(edge, target));
     }
     if (edge.target_id === instanceId) {
       const source = await sql.get<NodeRow>(
@@ -155,6 +158,36 @@ export async function relations(
     }
   }
   return { dependencies, dependents };
+}
+
+/**
+ * What each of several instances depends on, in two reads however many there are: the
+ * `dependencies` of relations() for each, in the same order, without what depends on them.
+ */
+export async function prerequisites(
+  sql: Sql,
+  projectId: string,
+  instanceIds: readonly string[],
+): Promise<Map<string, WorkflowDependency[]>> {
+  const found = new Map(instanceIds.map((id) => [id, [] as WorkflowDependency[]]));
+  if (!found.size) return found;
+  const edges = await sql.all<EdgeRow>(
+    `SELECT * FROM wf_dependencies WHERE project_id=? AND source_id IN (${[...found.keys()].map(() => '?').join(',')}) ORDER BY created_at,target_id,source_id`,
+    projectId,
+    ...found.keys(),
+  );
+  const wanted = [...new Set(edges.map((edge) => edge.target_id))];
+  const targets = wanted.length
+    ? await sql.all<NodeRow>(
+        `SELECT id,workflow,version,state,data_json FROM wf_instances WHERE project_id=? AND id IN (${wanted.map(() => '?').join(',')})`,
+        projectId,
+        ...wanted,
+      )
+    : [];
+  const byId = new Map(targets.map((target) => [target.id, target]));
+  for (const edge of edges)
+    found.get(edge.source_id)?.push(prerequisiteOf(edge, byId.get(edge.target_id)));
+  return found;
 }
 
 export function requireDependencies(dependencies: WorkflowDependency[]): void {

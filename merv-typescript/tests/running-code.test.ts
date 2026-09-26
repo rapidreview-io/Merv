@@ -955,7 +955,11 @@ test('the work since its base is read from the project’s newest commits alone,
   assert.deepEqual(await row('Working'), { label: 'Working', value: [{ state: 'closed' }] });
 });
 
-test('a machine Code stops asking back for stays on its check, red, named by the blocker Code wrote', async (t) => {
+/**
+ * A base whose check rented a machine that never came up, stopped by an operator with the
+ * given action, and a service that will not take the machine back until `taken` says so.
+ */
+async function keptMachine(t: TestContext, action: 'suspend' | 'cancel') {
   const f = await baseFixture(t);
   const command = 'make test';
   await f.state.transaction(async (tx) => {
@@ -992,12 +996,14 @@ test('a machine Code stops asking back for stays on its check, red, named by the
     environment: null,
     isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
   };
+  const service = { taken: false, asked: [] as (string | null)[] };
   const checks: SandboxChecks = {
     start: async (_projectId, spec) => ({ ...machine, sha256: spec.source.sha256 }),
     step: async (_projectId, _plan, handle) => handle,
     follow: async () => assert.fail('a machine that never came up has no job to follow'),
-    release: async () => {
-      throw new Error('the service answered 503');
+    release: async (_projectId, handle) => {
+      service.asked.push(handle.sandboxId);
+      if (!service.taken) throw new Error('the service answered 503');
     },
   };
   f.bases.checks = checks;
@@ -1006,18 +1012,23 @@ test('a machine Code stops asking back for stays on its check, red, named by the
   for (let pass = 0; pass < 2; pass += 1) await f.bases.work(f.projectId);
   await f.bases.control(f.scope, f.admin, {
     key: base.key,
-    action: 'suspend',
+    action,
     reason: 'the operator stops this base',
-    requestId: 'req-suspend',
+    requestId: `req-${action}`,
   });
   const standing = async () => {
     const all = await f.state.read((sql) => f.bases.checking(sql, f.projectId));
-    return all.find((check) => check.key === base.key)!;
+    return all.find((check) => check.key === base.key);
   };
+  return { f, base, command, service, standing };
+}
+
+test('a machine Code stops asking back for stays on its check, red, named by the blocker Code wrote', async (t) => {
+  const { f, base, command, standing } = await keptMachine(t, 'suspend');
 
   // While Code still asks, each refusal is said in ink, and nobody is asked to move.
   for (let pass = 0; pass < 4; pass += 1) await f.bases.work(f.projectId);
-  const asking = checkNode(await standing(), command, [], Date.now());
+  const asking = checkNode((await standing())!, command, [], Date.now());
   assert.deepEqual(asking.attention, {
     says: ['Giving machine back · refused ', { count: 4 }, ' times, retrying'],
     quiet: true,
@@ -1025,7 +1036,7 @@ test('a machine Code stops asking back for stays on its check, red, named by the
 
   // The fifth refusal lets go of the handle; the check stays, red, and takes in the machine.
   await f.bases.work(f.projectId);
-  const given = await standing();
+  const given = (await standing())!;
   assert.equal(given.phase, null);
   assert.deepEqual(given.unreclaimed, { sandboxId: 'sbx_kept' });
   const node = checkNode(given, command, [], Date.now());
@@ -1037,4 +1048,49 @@ test('a machine Code stops asking back for stays on its check, red, named by the
   assert.deepEqual(node.aliases, ['sandbox:sbx_kept']);
   const one = await f.state.read((sql) => f.bases.checkOf(sql, f.projectId, base.key));
   assert.ok(one && hasCheck(one), 'its sidebar still answers');
+});
+
+test('a machine Code let go of is asked for again every few minutes, even on a cancelled base, and its red goes once the service no longer holds it', async (t) => {
+  const { f, base, command, service, standing } = await keptMachine(t, 'cancel');
+  // The drain the cancel asked for runs on its own; every count below is from after it.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  for (let pass = 0; pass < 10 && !(await standing())?.unreclaimed; pass += 1)
+    await f.bases.work(f.projectId);
+  assert.deepEqual((await standing())?.unreclaimed, { sandboxId: 'sbx_kept' });
+  const red = async () => checkNode((await standing())!, command, [], f.clock()).attention;
+  const asked = service.asked.length;
+
+  // Straight after the last refusal nothing is asked, and a cancelled base is due for nothing.
+  await f.bases.work(f.projectId);
+  assert.equal(service.asked.length, asked);
+  assert.equal((await f.bases.due()).includes(f.projectId), false);
+
+  // Five minutes on, the machine is asked for by its name alone; still refused, still red.
+  f.advance(5 * 60_000);
+  assert.ok((await f.bases.due()).includes(f.projectId), 'it is due again');
+  await f.bases.work(f.projectId);
+  assert.deepEqual(service.asked.slice(asked), ['sbx_kept']);
+  assert.equal((await red())?.says[0], 'Machine not given back');
+
+  // An operator gives it back from the console; Code hears so on its next ask, not before.
+  service.taken = true;
+  f.advance(60_000);
+  await f.bases.work(f.projectId);
+  assert.equal(service.asked.length, asked + 1, 'asked once in five minutes, however often');
+  assert.equal((await red())?.says[0], 'Machine not given back');
+  f.advance(4 * 60_000);
+  const changes = f.changed();
+  await f.bases.work(f.projectId);
+  assert.equal(service.asked.length, asked + 2);
+  assert.equal(await standing(), undefined, 'the check leaves the board with its red');
+  const after = await f.state.read((sql) => f.bases.checkOf(sql, f.projectId, base.key));
+  assert.equal(after?.unreclaimed, null);
+  assert.equal(after && hasCheck(after), false);
+  assert.ok(f.changed() > changes, 'work that waits on the base is told');
+
+  // Nothing is left to ask for.
+  f.advance(10 * 60_000);
+  await f.bases.work(f.projectId);
+  assert.equal(service.asked.length, asked + 2);
+  assert.equal((await f.bases.due()).includes(f.projectId), false);
 });

@@ -489,6 +489,21 @@ test('a review state says who holds the review, and rounds used up need a person
   assert.deepEqual(node(await f.board(), work(experiment.id))?.lines, [['Running again']]);
 });
 
+test('an experiment naming a review Reviews does not hold is drawn without it, and the rest of the lane with it', async (t) => {
+  const f = await assembled(t);
+  const other = await f.create('ablate-depth');
+  const dangling = await f.design(await f.create('ablate-retrieval'));
+  await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.run('UPDATE experiments SET review_id=? WHERE id=?', 'review_gone', dangling.id),
+  );
+  const board = await f.board();
+  assert.deepEqual(board.lanes.work.failed, []);
+  assert.deepEqual(node(board, work(dangling.id))?.lines, [['Design review']]);
+  assert.equal(node(board, work(dangling.id))?.attention, undefined);
+  assert.ok(node(board, work(other.id)), 'the other experiment is drawn');
+});
+
 test('a planned experiment’s sidebar draws its ladder without running a check, so no artifact is read', async (t) => {
   const f = await assembled(t);
   const experiment = await f.create('weight-decay');
@@ -944,7 +959,7 @@ test('a GPU run past the time its service must have ended it claims no liveness 
   assert.equal(sidebar.live, true, 'the run the tick hears from is live');
 });
 
-test('a live run’s sidebar is found among the runs in flight, without reading every run the project had', async () => {
+test('a live run’s sidebar is found among the runs in flight, and a finished one among the runs written last, never among every run the project had', async () => {
   const compute = new ExperimentCompute(
     {} as never,
     {} as never,
@@ -967,25 +982,28 @@ test('a live run’s sidebar is found among the runs in flight, without reading 
     created_at: at(5),
     updated_at: at(5),
   });
-  const statements: string[] = [];
+  const statements: { sql: string; params: unknown[] }[] = [];
   const tx = {
-    all: async (sql: string) => {
-      statements.push(sql);
-      return /state IN/.test(sql)
-        ? [row('live', 'running')]
-        : [row('live', 'running'), row('done', 'completed')];
+    all: async (sql: string, ...params: unknown[]) => {
+      statements.push({ sql, params });
+      return /state NOT IN/.test(sql)
+        ? [row('done', 'completed')]
+        : /state IN/.test(sql)
+          ? [row('live', 'running')]
+          : assert.fail(`an unbounded read of the runs: ${sql}`);
     },
-    get: async (sql: string) => {
-      statements.push(sql);
-      return row('done', 'completed');
-    },
+    get: async (sql: string) => assert.fail(`a second read of one run: ${sql}`),
   } as never;
   const named = (key: string) => digest(['project', 'experiment', 1, key]);
   assert.equal((await compute.find('project', named('live'), tx))?.key, 'live');
   assert.equal(statements.length, 1, 'one read of the runs in flight');
   statements.length = 0;
   assert.equal((await compute.find('project', named('done'), tx))?.key, 'done');
-  assert.equal(statements.length, 3, 'a finished run is looked for among all');
+  assert.equal(statements.length, 2, 'then one read of the finished runs written last');
+  assert.match(statements[1]!.sql, /ORDER BY updated_at DESC,key LIMIT \?$/);
+  assert.deepEqual(statements[1]!.params, ['project', 100]);
   statements.length = 0;
+  // A key nobody was given costs the same two bounded reads, and finds nothing.
   assert.equal(await compute.find('project', named('missing'), tx), null);
+  assert.equal(statements.length, 2);
 });

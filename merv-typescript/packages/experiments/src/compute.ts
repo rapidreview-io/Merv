@@ -30,6 +30,8 @@ export interface ComputeRow {
   updated_at: string;
 }
 const live = "'submitting','running','cancelling'";
+/** How many of the runs written last a finished run's sidebar is looked for among. */
+const ENDED_FOUND = 100;
 const terminal = new Set(['completed', 'failed', 'cancelled']);
 const publicRow = (row: ComputeRow) => ({
   key: row.key,
@@ -192,26 +194,23 @@ export class ExperimentCompute {
   }
   /**
    * The run a digest names, at any state, so an open sidebar outlives the run's node. A live
-   * run is one of at most two on the state index; only a finished one is looked for among all.
+   * run is one of at most two on the state index. A digest is only ever handed out for a live
+   * run, so a finished one is asked for by a sidebar left open as it ended, and is among the
+   * runs written last: only those are looked through, however many the project has had, and
+   * however often a key nobody was given is asked for.
    */
   async find(projectId: string, wanted: string, tx: Transaction): Promise<ComputeRunning | null> {
     const flying = (await this.inFlight(projectId, tx)).find((run) => run.digest === wanted);
     if (flying) return flying;
-    const keys = await tx.all<Pick<ComputeRow, 'experiment_id' | 'attempt_index' | 'key'>>(
-      'SELECT experiment_id,attempt_index,key FROM experiment_compute_runs WHERE project_id=?',
+    const ended = await tx.all<ComputeRow>(
+      `SELECT * FROM experiment_compute_runs WHERE project_id=? AND state NOT IN (${live})
+       ORDER BY updated_at DESC,key LIMIT ?`,
       projectId,
+      ENDED_FOUND,
     );
-    const match = keys.find(
-      (row) => digest([projectId, row.experiment_id, row.attempt_index, row.key]) === wanted,
+    const row = ended.find(
+      (run) => digest([projectId, run.experiment_id, run.attempt_index, run.key]) === wanted,
     );
-    const row =
-      match &&
-      (await tx.get<ComputeRow>(
-        'SELECT * FROM experiment_compute_runs WHERE experiment_id=? AND attempt_index=? AND key=?',
-        match.experiment_id,
-        match.attempt_index,
-        match.key,
-      ));
     return row ? runningRow(row) : null;
   }
   private async currentWorker(

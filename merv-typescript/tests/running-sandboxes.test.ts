@@ -23,6 +23,7 @@ import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/runnin
 import { SandboxService, sandboxesPlugin, sandboxTools } from '../packages/sandboxes/src/index.js';
 import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
+import { machineNodes, machinePanel } from '../packages/sandboxes/src/running.js';
 import { createApp } from './fixtures/app.js';
 
 /**
@@ -936,4 +937,161 @@ test('the assembled application draws the machines from memory inside the read-o
   const extend = await tool('sandbox.extend', tokens.producer, panel.actions[0].input);
   assert.equal(extend.status, 200);
   assert.ok(remote.seen.includes('POST /v1/sandboxes/sbx_aurora/renew'));
+});
+
+/**
+ * A machine as merv-sandboxes main lists it today: the plain SandboxRecord, with its shape
+ * under the offer, the job and the lease asked for under the request, and no word on what
+ * the machine is doing.
+ */
+function sandboxRecord(
+  name: string,
+  state: string,
+  minutes: { created: number; updated: number; lease: number | null },
+  job: { main?: string; requested?: boolean } = {},
+  error: string | null = null,
+): Json {
+  const price = { amount: '32.40', currency: 'USD' };
+  return {
+    id: `sbx_${name}`,
+    namespace: 'merv-pi-0123abcd',
+    name,
+    provider: 'runpod-main',
+    plugin: 'runpod',
+    state,
+    revision: 4,
+    operation_id: `op_${name}`,
+    offer: {
+      provider: 'runpod-main',
+      plugin: 'runpod',
+      offer_id: 'h100_x8',
+      instance_type: 'gpu-8x',
+      region: 'us-east-1',
+      resources: {
+        cpu: 96,
+        memory_mb: 1474560,
+        gpu: 'H100',
+        gpu_count: 8,
+        gpu_memory_mb: 655360,
+        disk_gb: 2000,
+      },
+      hourly_price: price,
+      image: null,
+      available: true,
+      description: '',
+    },
+    login_user: 'root',
+    access_mode: 'inbound',
+    lease_expires_at: minutes.lease === null ? null : at(minutes.lease),
+    last_error: error ? { code: 'provider_error', message: error, retryable: false } : null,
+    created_at: at(minutes.created),
+    updated_at: at(minutes.updated),
+    ready_at: state === 'ready' ? at(minutes.created + 3) : null,
+    stopped_at: null,
+    main_job_id: job.main ?? null,
+    request: {
+      provider: 'runpod-main',
+      offer_id: 'h100_x8',
+      requirements: null,
+      name,
+      lease_seconds: 14400,
+      idempotency_key: null,
+      snapshot_id: null,
+      job: job.requested ? { name: 'train', command: train } : null,
+      release_when_done: false,
+      protected_runtime: false,
+    },
+    hourly_price: state === 'failed' ? null : price,
+    cost_so_far: state === 'failed' ? null : { amount: '31.32', currency: 'USD' },
+  };
+}
+
+test('a plain record from merv-sandboxes main reads its shape from the offer, its job from the request and its lease as granted, and says Ready rather than Idle', () => {
+  const now = Date.now();
+  const records = [
+    sandboxRecord('sweep', 'ready', { created: -60, updated: -55, lease: 6 }, { main: 'job_1' }),
+    sandboxRecord(
+      'arriving',
+      'ready',
+      { created: -2, updated: -1, lease: 200 },
+      {
+        requested: true,
+      },
+    ),
+    sandboxRecord('spare', 'ready', { created: -90, updated: -85, lease: 150 }),
+    sandboxRecord('warming', 'provisioning', { created: -4, updated: -4, lease: null }),
+    sandboxRecord(
+      'broken',
+      'failed',
+      { created: -30, updated: -12, lease: null },
+      {},
+      'the provider returned capacity_unavailable twice',
+    ),
+    sandboxRecord('ancient', 'failed', { created: -300, updated: -120, lease: null }),
+  ];
+  const machines = {
+    observedAt: new Date(now).toISOString(),
+    rows: records,
+    failed: false,
+    freshForMs: 60_000,
+  };
+  const lane = machineNodes(machines, now);
+  const node = (name: string) => lane.nodes.find(({ key }) => key === `sandbox:sbx_${name}`);
+  const rate = [{ money: null, rate: { amount: '32.40', currency: 'USD' } }];
+
+  // A machine rented for a job is at it: busy cells, its job's rank, and red as its lease ends.
+  assert.deepEqual(minutes(node('sweep')), {
+    key: 'sandbox:sbx_sweep',
+    lane: 'hardware',
+    title: '8× H100',
+    name: 'sweep',
+    lines: [['Running'], rate],
+    look: 'solid',
+    attention: { says: ['Lease ', { until: 6 }], who: WHO },
+    units: { count: 8, busy: true },
+    rank: 0,
+  });
+  assert.deepEqual(node('arriving')?.lines[0], ['Starting']);
+  assert.equal(node('arriving')?.units?.busy, true);
+  // Nothing says the spare machine is idle, only that it is ready; nor is it red.
+  assert.deepEqual(node('spare')?.lines[0], ['Ready']);
+  assert.equal(node('spare')?.units?.busy, false);
+  assert.equal(node('spare')?.attention, undefined);
+  assert.deepEqual(minutes(node('warming')?.lines[0]), ['Provisioning ', { since: -4 }]);
+  // A failed machine is news from its last change, for an hour.
+  assert.deepEqual(minutes(node('broken')?.attention), {
+    says: ['Failed ', { ago: -12 }],
+    who: WHO,
+  });
+  assert.equal(node('ancient'), undefined);
+
+  const sweep = machinePanel({ id: 'sbx_sweep', machines, record: null, allowed: true, now })!;
+  assert.deepEqual(minutes(sweep.header.says), ['Running']);
+  assert.deepEqual(minutes(rows(sweep, 'Now')), [
+    {
+      label: 'Cost so far',
+      value: [{ money: { amount: '31.32', currency: 'USD' }, rate: rate[0]!.rate }],
+    },
+    { label: 'Lease', value: [{ until: 6, of: 14400 }], attention: true },
+  ]);
+  assert.deepEqual(rows(sweep, 'Machine'), [
+    { label: 'Size', value: ['8× H100 · 96 vCPU · 1,440 GB'] },
+    { label: 'Provider', value: ['runpod · us-east-1'] },
+  ]);
+  const release = sweep.actions.find(({ label }) => label === 'Release machine');
+  assert.match(release?.guard?.consequence ?? '', /the job running on it stops with it/);
+  const spare = machinePanel({ id: 'sbx_spare', machines, record: null, allowed: true, now })!;
+  assert.deepEqual(spare.header.says, ['Ready']);
+  assert.doesNotMatch(
+    spare.actions.find(({ label }) => label === 'Release machine')?.guard?.consequence ?? '',
+    /stops with it/,
+  );
+  const broken = machinePanel({ id: 'sbx_broken', machines, record: null, allowed: true, now })!;
+  assert.deepEqual(minutes(broken.header.says), [
+    'Failed',
+    ' · ',
+    'the provider returned capacity_unavailable twice',
+    ' · ',
+    { ago: -12 },
+  ]);
 });

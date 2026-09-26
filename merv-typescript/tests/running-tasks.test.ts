@@ -583,6 +583,84 @@ test('a key that is not a task of this project has no task sidebar', async (t) =
   assert.equal((await f.app.ctx.tasks.running(f.operator, [`work:${experiment.id}`])).length, 0);
 });
 
+test('a task naming a review Reviews does not hold is drawn without it, and the rest of the lane with it', async (t) => {
+  const f = await fixture(t);
+  const ready = await f.create('Collect source archive');
+  const dangling = await f.create('Rebuild citation index');
+  await f.deliver(dangling);
+  await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.run('UPDATE tasks SET review_id=? WHERE id=?', 'review_gone', dangling.id),
+  );
+  const answer = await f.board();
+  assert.deepEqual(answer.lanes.work.failed, []);
+  const find = (task: { id: string }) =>
+    answer.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
+  assert.deepEqual(find(ready)?.lines, [['Ready']]);
+  assert.deepEqual(find(dangling)?.lines, [['In review']]);
+  assert.equal(find(dangling)?.attention, undefined);
+});
+
+test('the board reads what every task waits on, and its review rounds, once for all of them and never what waits on it', async (t) => {
+  const f = await fixture(t);
+  const source = await f.create('Collect source archive');
+  const second = await f.create('Normalise author names');
+  const waiting = await f.create('Rebuild citation index', { dependsOn: [source.id] });
+  const both = await f.create('Draft section 3.2', { dependsOn: [source.id, second.id] });
+  const reviewed = await f.create('Check figure units');
+  await f.verdict(await f.deliver(reviewed), 'needs_changes');
+  await f.deliver(reviewed);
+  const tasks = [source, second, waiting, both, reviewed];
+
+  // What the board reads for all of them at once is what each one's own read says.
+  const workflows = f.app.ctx.workflows;
+  await f.app.ctx.state.transaction(async (tx) => {
+    const waitsOn = await workflows.prerequisites(
+      f.operator,
+      tasks.map(({ id }) => id),
+      tx,
+    );
+    const rounds = await workflows.limitStatusOf(
+      f.operator,
+      tasks.map(({ id }) => id),
+      'review_rounds',
+      tx,
+    );
+    for (const task of tasks) {
+      assert.deepEqual(
+        waitsOn.get(task.id),
+        (await workflows.dependencies(f.operator, task.id, tx)).dependencies,
+        task.title,
+      );
+      assert.deepEqual(
+        rounds.get(task.id),
+        await workflows.limitStatus(f.operator, task.id, 'review_rounds', tx),
+        task.title,
+      );
+    }
+    assert.equal(rounds.get(reviewed.id)?.exhausted, true);
+  });
+
+  const calls: string[] = [];
+  const spied = workflows as unknown as Record<string, (...args: unknown[]) => unknown>;
+  for (const name of ['dependencies', 'limitStatus', 'prerequisites', 'limitStatusOf']) {
+    const original = spied[name]!;
+    spied[name] = function (this: unknown, ...args: unknown[]) {
+      calls.push(name);
+      return original.apply(this, args);
+    };
+    t.after(() => void (spied[name] = original));
+  }
+  const nodes = await f.app.ctx.tasks.running(f.operator);
+  assert.deepEqual(calls.sort(), ['limitStatusOf', 'prerequisites']);
+  assert.equal(nodes.length, tasks.length);
+  const answer = await f.board();
+  const find = (task: { id: string }) =>
+    answer.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
+  assert.deepEqual(find(both)?.lines, [['Waits on ', 'Collect source archive', ' and 1 more']]);
+  assert.deepEqual(find(reviewed)?.attention?.says, ['Every review round is used']);
+});
+
 test('a task that needs a person says so in the order that decides it', () => {
   const task: TaskStanding = {
     id: 'task_1',

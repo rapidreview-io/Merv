@@ -114,6 +114,34 @@ export const silent = (phrase: RunningPhrase | undefined, reading: Omit<RunningR
 /** Whether a value ticks: a phrase's clocks stand outside what a screen reader is told of a change. */
 export const ticks = (value: RunningValue) =>
   typeof value === 'object' && ('ago' in value || 'since' in value || 'until' in value);
+/** What joins a clock to the words before it, and goes with the clock: ' · ', ' for '. */
+const JOINS = /\s*(?:·|\bfor|\bsince)\s*$/;
+/**
+ * A phrase's words as a whole sentence that holds still: what a card's name and a sidebar's
+ * live region say, so neither changes every second. A clock is left out with whatever joined
+ * it to the words before it ('Running 22m' is 'Running', 'active for 1m · on mac-studio' is
+ * 'active · on mac-studio'); a countdown says only that something is ending.
+ */
+export function steadyText(
+  phrase: RunningPhrase | undefined,
+  reading: Omit<RunningReading, 'open'>,
+): string {
+  const parts: string[] = [];
+  for (const value of phrase ?? []) {
+    if (!ticks(value)) {
+      parts.push(valueText(value, reading));
+      continue;
+    }
+    const last = parts.length - 1;
+    if (last >= 0) parts[last] = parts[last]!.replace(JOINS, ' ');
+    if (typeof value === 'object' && 'until' in value) parts.push('ending');
+  }
+  return parts
+    .join('')
+    .replace(/\s+/g, ' ')
+    .replace(/(?:\s*·\s*){2,}/g, ' · ')
+    .replace(/^[\s·]+|[\s·]+$/g, '');
+}
 
 /**
  * Where a link goes. A key opens that thing's sidebar whether or not it is on the board,

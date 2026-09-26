@@ -31,7 +31,7 @@ import {
   type RunningLayout,
 } from './running-layout';
 import { Act, RunningSidebar } from './running-panel';
-import { Phrase, Reading, Target, phraseText, type RunningReading } from './running-phrase';
+import { Phrase, Reading, Target, steadyText, type RunningReading } from './running-phrase';
 
 /**
  * Running: everything in flight, in three bands — the work, the agent sessions on it, and
@@ -53,6 +53,11 @@ const TITLE: Record<RunningLaneName, string> = {
   sessions: 'Sessions',
   hardware: 'Hardware',
 };
+/** Where Escape is already someone else's: a menu or a dialog shuts itself with it. */
+const OWN_ESCAPE =
+  '[role="menu"], [role="menubar"], [role="listbox"], [role="dialog"], [role="alertdialog"], dialog';
+/** Where a key is being typed rather than pressed at the page. */
+const TYPING = 'input, textarea, select, [contenteditable="true"]';
 /** A total not yet known is the em dash, never a zero. */
 const EM = '—';
 /** One line under a band's heading — a part that did not load, a read gone stale. */
@@ -89,14 +94,22 @@ export const cadenceOf = (board: RunningBoard | undefined) =>
         ? 5_000
         : 15_000;
 
-/** A lane whose cached source is older than its owner says it stays current. */
-const staleLane = (lane: RunningLane, now: Clock) =>
-  !!lane.asOf && lane.freshForMs !== undefined && now.at - Date.parse(lane.asOf) > lane.freshForMs;
+/**
+ * A lane whose cached source was older than its owner says it stays current when the board
+ * was read. It is judged at that moment, the answer's own, and not against the page's clock
+ * counting on since: a board that is late to arrive again is the page's line to say, and a
+ * lane read on time is not stale only because the next answer has not come yet.
+ */
+export const staleLane = (lane: RunningLane, now: Clock) =>
+  !!lane.asOf &&
+  lane.freshForMs !== undefined &&
+  now.at - now.since - Date.parse(lane.asOf) > lane.freshForMs;
 
 /**
  * What a card is called, made of what it draws: its kind, its title, its name where that
  * is not the title, what needs a person where something does (otherwise its first line),
- * and its second line.
+ * and its second line. Its clocks are left out, words and all, so the name of a card in
+ * hand holds still while the board ticks; a screen reader repeats a name that changes.
  */
 export function nodeName(node: RunningNode, reading: Omit<RunningReading, 'open'>): string {
   const first = node.attention ? node.attention.says : node.lines[0];
@@ -104,8 +117,8 @@ export function nodeName(node: RunningNode, reading: Omit<RunningReading, 'open'
     node.kind,
     node.title,
     node.name !== node.title && node.name,
-    phraseText(first, reading),
-    phraseText(node.lines[1], reading),
+    steadyText(first, reading),
+    steadyText(node.lines[1], reading),
   ]
     .filter(Boolean)
     .join(', ');
@@ -459,7 +472,8 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
     (cards.find((card) => card.dataset.key === key) ?? graph.current)?.focus();
   }, [asked]);
   // Escape closes the sidebar wherever the cursor is — except inside a guard, where it
-  // means Cancel and has already been taken.
+  // means Cancel and has already been taken, and inside a menu or a dialog, such as the
+  // rail's account menu, whose own Escape shuts it and must not close this as well.
   const closing = useRef(close);
   closing.current = close;
   useEffect(() => {
@@ -467,7 +481,7 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       const from = event.target as Element | null;
-      if (from?.closest?.('.guard, input, textarea, select, [contenteditable="true"]')) return;
+      if (from?.closest?.(`.guard, ${OWN_ESCAPE}, ${TYPING}`)) return;
       event.preventDefault();
       closing.current();
     };
@@ -486,8 +500,13 @@ export function RunningPage({ nameOf }: { nameOf(id: string): string | undefined
   const lit = data && focus ? related(data, focus) : null;
   const reading = { now, nameOf };
   const kinds = !!data && kindsMix(data);
+  // The keys walk the cards, from a card or from the drawing itself: never with a modifier,
+  // which is the browser's (Alt+Left is Back), nor from a control in a band's heading.
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const current = (event.target as HTMLElement).closest?.<HTMLElement>('[data-key]')?.dataset.key;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const from = event.target as HTMLElement;
+    if (from !== event.currentTarget && !from.matches?.('[data-key]')) return;
+    const current = from.closest?.<HTMLElement>('[data-key]')?.dataset.key;
     const index = current ? order.indexOf(current) : -1;
     const step = (delta: number) =>
       order[index < 0 ? (delta > 0 ? 0 : order.length - 1) : index + delta];

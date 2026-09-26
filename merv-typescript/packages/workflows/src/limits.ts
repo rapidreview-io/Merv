@@ -104,8 +104,10 @@ export async function limitStatus(
     limit.name,
   );
   // PostgreSQL SUM(bigint) is numeric and arrives as text; a sum of two caps must stay a number.
-  const granted = Number(grants?.n ?? 0);
-  const used = Number(taken?.n ?? 0);
+  return statusOf(limit, Number(taken?.n ?? 0), Number(grants?.n ?? 0));
+}
+
+function statusOf(limit: WorkflowLoopLimit, used: number, granted: number): WorkflowLimitStatus {
   const max = limit.max + granted;
   return {
     name: limit.name,
@@ -118,6 +120,37 @@ export async function limitStatus(
     remaining: Math.max(0, max - used),
     exhausted: used >= max,
   };
+}
+
+/** limitStatus for each of several instances under one limit, in two reads however many. */
+export async function limitStatusOf(
+  sql: Sql,
+  limit: WorkflowLoopLimit,
+  instanceIds: readonly string[],
+): Promise<Map<string, WorkflowLimitStatus>> {
+  if (!instanceIds.length) return new Map();
+  const ids = instanceIds.map(() => '?').join(',');
+  const counted = async (query: string, ...params: string[]) =>
+    new Map(
+      (await sql.all<{ instance_id: string; n: number | string }>(query, ...params)).map((row) => [
+        row.instance_id,
+        Number(row.n),
+      ]),
+    );
+  const taken = await counted(
+    `SELECT instance_id,COUNT(*) AS n FROM wf_history WHERE instance_id IN (${ids}) AND from_state=? AND action IN (${limit.actions.map(() => '?').join(',')}) GROUP BY instance_id`,
+    ...instanceIds,
+    limit.from,
+    ...limit.actions,
+  );
+  const grants = await counted(
+    `SELECT instance_id,COALESCE(SUM(additional),0) AS n FROM wf_limit_grants WHERE instance_id IN (${ids}) AND limit_name=? GROUP BY instance_id`,
+    ...instanceIds,
+    limit.name,
+  );
+  return new Map(
+    instanceIds.map((id) => [id, statusOf(limit, taken.get(id) ?? 0, grants.get(id) ?? 0)]),
+  );
 }
 
 /** The limits leaving the instance's current state. Reads only, so guards stay pure. */

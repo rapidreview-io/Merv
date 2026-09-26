@@ -451,6 +451,36 @@ test('a review leased to an agent says so rather than naming the agent, and lett
   assert.equal(sidebar.live, false);
 });
 
+test('a wave naming a review Reviews does not hold is drawn without it, and the rest of the lane with it', async (t) => {
+  const f = await fixture(t);
+  const task = await f.app.ctx.tasks.create(await f.actor('Producer'), {
+    title: 'Rebuild citation index',
+    goal: 'Finish rebuilding the citation index so the draft can cite it.',
+    checks: ['Every reference resolves.'],
+    requestId: 'task',
+  });
+  let wave = await f.lenses(
+    await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' }),
+  );
+  wave = await f.synthesize(wave, await f.text(f.owner, 'Changes'));
+  assert.equal(wave.workflow.state, 'in_review');
+  await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.run('UPDATE reflections SET review_id=? WHERE id=?', 'review_gone', wave.id),
+  );
+  const answer = await f.board(f.owner);
+  assert.deepEqual(answer.lanes.work.failed, []);
+  const node = drawn(answer, wave);
+  assert.equal(node?.lines[0]?.[0], 'Review · waiting for a reviewer ');
+  assert.equal(node?.attention, undefined);
+  assert.ok(
+    answer.lanes.work.nodes.some(({ key }) => key === keyOf(task.id)),
+    'the task is drawn beside it',
+  );
+  const sidebar = await f.panel(f.owner, keyOf(wave.id));
+  assert.equal(sidebar.header.title, 'Wave');
+});
+
 test('a wave begun before version 4 cannot be ended, so its red asks for a review by hand or another round', async (t) => {
   const f = await fixture(t);
   const reviewer = await f.actor('Reviewer', 'reviewer');

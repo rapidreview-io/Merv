@@ -42,7 +42,9 @@ import type {
   WorkflowAssignmentRule,
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
+  WorkflowDependency,
   WorkflowLimitStatus,
+  WorkflowLoopLimit,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowProviderRelations,
@@ -61,7 +63,7 @@ import {
   validatePolicy,
 } from './evaluation.js';
 import { buildAssignment, readWorkStarts } from './assignments.js';
-import { limitFor, limitMessage, limitStatus, limitStatuses } from './limits.js';
+import { limitFor, limitMessage, limitStatus, limitStatusOf, limitStatuses } from './limits.js';
 import {
   admitDispatch,
   dispatchInput,
@@ -76,6 +78,7 @@ import {
   detachDependencies,
   normalizeDependencies,
   persistSuccess,
+  prerequisites,
   relations,
   requireDependencies,
 } from './dependencies.js';
@@ -1293,6 +1296,53 @@ export class WorkflowsService implements Workflows {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await relations(tx, caller.projectId, instanceId);
     });
+  }
+
+  async prerequisites(
+    caller: Caller,
+    instanceIds: readonly string[],
+    tx: Transaction,
+  ): Promise<Map<string, WorkflowDependency[]>> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read', tx);
+    return await prerequisites(tx, caller.projectId, [...new Set(instanceIds)]);
+  }
+
+  async limitStatusOf(
+    caller: Caller,
+    instanceIds: readonly string[],
+    name: string,
+    tx: Transaction,
+  ): Promise<Map<string, WorkflowLimitStatus>> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read', tx);
+    const ids = [...new Set(instanceIds)];
+    if (!ids.length) return new Map();
+    // One read of the instances, then two per definition among them, never two per instance.
+    const limits = new Map<string, { limit: WorkflowLoopLimit; ids: string[] }>();
+    for (const row of await tx.all<InstanceRow>(
+      `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+      caller.projectId,
+      ...ids,
+    )) {
+      const snapshot = this.snapshot(row);
+      const at = `${snapshot.workflow}@${snapshot.version}`;
+      const known = limits.get(at);
+      if (known) {
+        known.ids.push(snapshot.id);
+        continue;
+      }
+      const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
+        (item) => item.name === name,
+      );
+      if (limit) limits.set(at, { limit, ids: [snapshot.id] });
+    }
+    const statuses = new Map<string, WorkflowLimitStatus>();
+    for (const { limit, ids: some } of limits.values())
+      for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
+    return statuses;
   }
 
   async replaceBlockers(

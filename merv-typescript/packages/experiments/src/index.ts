@@ -26,6 +26,7 @@ import {
   type State,
   type Transaction,
   type WorkflowCheckContext,
+  type WorkflowDependency,
   type Workflows,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
@@ -117,6 +118,8 @@ interface StandingContext {
   released: Map<string, string>;
   /** Experiments another plugin published a blocker on. */
   blocked: ReadonlySet<string>;
+  /** On the board, what every open experiment waits on, read once for all of them. */
+  waitsOn?: ReadonlyMap<string, WorkflowDependency[]>;
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
@@ -344,6 +347,12 @@ export class ExperimentService implements Experiments {
         blocked: new Set(
           (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
         ),
+        // The board draws only what an experiment waits on; what waits on it is its sidebar's.
+        waitsOn: await this.workflows.prerequisites(
+          caller,
+          rows.filter((row) => !terminal.has(row.state)).map((row) => row.id),
+          tx,
+        ),
       };
       const nodes: RunningNode[] = [];
       for (const row of rows)
@@ -472,8 +481,16 @@ export class ExperimentService implements Experiments {
         : null,
       dependencies: ended
         ? []
-        : (await this.workflows.dependencies(caller, row.id, tx)).dependencies,
-      review: review ? await this.reviews.get(caller, review, tx) : null,
+        : (context.waitsOn?.get(row.id) ??
+          (await this.workflows.dependencies(caller, row.id, tx)).dependencies),
+      // A review the experiment names and Reviews does not hold is drawn as no review, so one
+      // dangling row costs its own card its reviewer and nothing else on the board.
+      review: review
+        ? await this.reviews.get(caller, review, tx).catch((error: unknown) => {
+            if (error instanceof MervError && error.status === 404) return null;
+            throw error;
+          })
+        : null,
       exhausted,
       computing: context.runs.some((run) => run.experimentId === row.id && liveRun(run)),
     };

@@ -93,6 +93,24 @@ function unreclaimedOf(blocker: string | null): { sandboxId: string | null } | n
   const named = blocker.slice(UNRECLAIMED.length).split(' ', 1)[0];
   return { sandboxId: named && named !== 'unnamed' ? named : null };
 }
+/**
+ * How long Code waits before asking again for a machine it let go of. The machine is still
+ * Code's to give back, whatever became of its base, so it keeps asking until the service
+ * has it; but slowly, because the service has already refused it several times in a row.
+ */
+const UNRECLAIMED_ASK_MS = 5 * 60_000;
+/** All a blocker still knows of the machine it names, which is all it takes to give it back. */
+const namedMachine = (sandboxId: string): CheckHandle => ({
+  sandboxId,
+  jobId: null,
+  objectId: null,
+  restoreJobId: null,
+  sha256: null,
+  ready: false,
+  environment: null,
+  isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
+  epoch: 0,
+});
 
 /**
  * Whether a check still owns its machine: its base is running and healthy, the check is
@@ -198,6 +216,8 @@ export class CodeBaseService {
   private readonly busy = new Map<string, Promise<void>>();
   private closed = false;
   private readonly executions = new Map<string, AbortController>();
+  /** When Code last asked for each machine it let go of, by project and base. */
+  private readonly asked = new Map<string, number>();
   constructor(
     private readonly state: State,
     private readonly repositories: CodeRepositories,
@@ -982,6 +1002,59 @@ export class CodeBaseService {
         await this.checkStopped(projectId, base, error).catch(() => undefined);
       }
     }
+    await this.askAgain(projectId);
+  }
+
+  /**
+   * Ask again, every few minutes, for each machine a blocker says Code let go of, whatever
+   * its base has become since. The service's answer is the only way to know the machine is
+   * gone: once it takes the machine back, or says it is already stopped or not there at all,
+   * the blocker is cleared and nobody is asked to release it any more. While the service still
+   * refuses, the blocker stays and names the machine, as it did.
+   */
+  private async askAgain(projectId: string): Promise<void> {
+    const checks = this.checks;
+    if (!checks || this.closed) return;
+    const rows = await this.state.read((sql) =>
+      sql.all<Pick<BaseRow, 'base_key' | 'blocker'>>(
+        'SELECT base_key,blocker FROM code_bases WHERE project_id=? AND blocker LIKE ? ORDER BY base_key',
+        projectId,
+        `${UNRECLAIMED}%`,
+      ),
+    );
+    for (const row of rows) {
+      const sandboxId = unreclaimedOf(row.blocker)?.sandboxId;
+      if (this.closed) return;
+      if (!sandboxId || !this.askable(projectId, row.base_key)) continue;
+      this.asked.set(`${projectId}:${row.base_key}`, this.clock());
+      try {
+        // The service answers the deletion of a machine already stopped or deleting with its
+        // record, and release takes one it does not know as gone, so an answer at all means
+        // the machine is no longer held. Its source, which the blocker does not name, is left
+        // to the retention it was shipped with.
+        await checks.release(projectId, namedMachine(sandboxId));
+        await this.state.transaction(async (tx) => {
+          const cleared = await tx.run(
+            'UPDATE code_bases SET blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND blocker=?',
+            now(),
+            projectId,
+            row.base_key,
+            row.blocker,
+          );
+          // Work that waits on this base was held by the blocker too.
+          if (cleared.changes) await this.hooks.changed(tx, projectId);
+        });
+        this.asked.delete(`${projectId}:${row.base_key}`);
+      } catch {
+        // Every row is its own failure here too: a refusal is the answer until the next ask.
+      }
+    }
+  }
+
+  /** Whether a machine Code let go of is due to be asked for again. */
+  private askable(projectId: string, key: string): boolean {
+    const at = this.asked.get(`${projectId}:${key}`);
+    return at === undefined || this.clock() - at >= UNRECLAIMED_ASK_MS;
   }
 
   /** Cancel, delete and forget one machine. Every call is safe twice and safe after a crash. */
@@ -1017,6 +1090,8 @@ export class CodeBaseService {
         return;
       }
       refused = unreclaimedBlocker(handle.sandboxId, reason);
+      // It has just refused, so the slow asking begins a whole wait from now.
+      this.asked.set(`${projectId}:${base.key}`, this.clock());
     }
     await this.state.transaction(async (tx) => {
       // The reservation of an epoch nobody will finish goes back with the machine. Without
@@ -1434,18 +1509,31 @@ export class CodeBaseService {
    * Every project with work due: for a start after a crash, and for a retry whose time came.
    * A machine still named on a row nominates its project whatever that row's state and health
    * are, because a crash between an operator's cancel, quarantine or suspend and the next
-   * drain leaves a rented machine that only a drain of that project can give back.
+   * drain leaves a rented machine that only a drain of that project can give back; and so
+   * does a machine Code let go of, once it is time to ask for it again.
    */
   async due(): Promise<string[]> {
-    return (
-      await this.state.read(
-        async (sql) =>
-          await sql.all<{ project_id: string }>(
-            "SELECT DISTINCT project_id FROM code_bases WHERE check_job_json IS NOT NULL OR (health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL))) ORDER BY project_id",
-            new Date(this.clock()).toISOString(),
-          ),
+    const { due, letGo } = await this.state.read(async (sql) => ({
+      due: await sql.all<{ project_id: string }>(
+        "SELECT DISTINCT project_id FROM code_bases WHERE check_job_json IS NOT NULL OR (health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL))) ORDER BY project_id",
+        new Date(this.clock()).toISOString(),
+      ),
+      letGo: this.checks
+        ? await sql.all<{ project_id: string; base_key: string; blocker: string }>(
+            'SELECT project_id,base_key,blocker FROM code_bases WHERE blocker LIKE ?',
+            `${UNRECLAIMED}%`,
+          )
+        : [],
+    }));
+    const projects = due.map((row) => row.project_id);
+    for (const row of letGo)
+      if (
+        unreclaimedOf(row.blocker)?.sandboxId &&
+        this.askable(row.project_id, row.base_key) &&
+        !projects.includes(row.project_id)
       )
-    ).map((row) => row.project_id);
+        projects.push(row.project_id);
+    return projects;
   }
 
   async close(): Promise<void> {

@@ -18,7 +18,7 @@ import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { ProcessDiagram, diagramOfGraph } from '../process';
-import { Phrase, Reading, Target, phraseText, silent, ticks, valueText } from './running-phrase';
+import { Phrase, Reading, Target, silent, steadyText, valueText } from './running-phrase';
 
 /**
  * The sidebar of whatever is in hand on the Running page. Its owner wrote every word of it
@@ -369,9 +369,10 @@ function Section({ section: sent }: { section: RunningSection }) {
 /**
  * The line under the title: how the thing stands, or — where it needs a person — what
  * needs one, in the refusal's colour, then who ends the wait and the way to the move. A
- * screen reader's live region holds every word of it and none of its clocks, wherever they
- * stand in the line, so a person is told once when the standing changes and never every
- * second.
+ * screen reader's live region holds it as a whole sentence without its clocks, wherever
+ * they stand in the line, and without what joined them to it ('Running', never 'Running ·'),
+ * so a person is told once when the standing changes and never every second. The line
+ * itself, clocks and all, is still there to be read.
  */
 function Standing({ says, attention }: { says: RunningPhrase; attention?: RunningAttention }) {
   const reading = useContext(Reading);
@@ -382,10 +383,7 @@ function Standing({ says, attention }: { says: RunningPhrase; attention?: Runnin
         <Phrase value={said} in="cell" />
       </p>
       <span className="sr-only" role="status">
-        {phraseText(
-          said.filter((value) => !ticks(value)),
-          reading,
-        )}
+        {steadyText(said, reading)}
       </span>
       {attention?.who && <p className="running-who">{attention.who}</p>}
       {attention?.to && (

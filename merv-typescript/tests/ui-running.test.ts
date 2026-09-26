@@ -17,7 +17,7 @@ const { act } = await import('react-dom/test-utils');
 // components.tsx first: it and list-filters.tsx import each other through a view, and
 // only this order has every module evaluated before another one calls into it.
 await import('../packages/ui/web/components.js');
-const { RunningPage, RunningView, cadenceOf, nodeName } =
+const { RunningPage, RunningView, cadenceOf, nodeName, staleLane } =
   await import('../packages/ui/web/views/running.js');
 const { streamRows } = await import('../packages/ui/web/views/running-panel.js');
 const { monoText } = await import('../packages/ui/web/views/running-phrase.js');
@@ -474,6 +474,103 @@ test('Escape inside a guard only cancels it; outside, it closes the sidebar and 
   assert.equal(document.activeElement, card('session:session_ablate'));
 });
 
+test('an Escape a menu or a dialog takes as its own shuts that, and leaves the sidebar open', async (t) => {
+  t.after(unmount);
+  drawn();
+  answers();
+  await mount(page());
+  await press(card('session:session_ablate'));
+  // The rail's account menu, open over the page, with the cursor on its first item.
+  const menu = document.createElement('div');
+  menu.setAttribute('role', 'menu');
+  const item = document.createElement('button');
+  item.setAttribute('role', 'menuitem');
+  menu.appendChild(item);
+  document.body.appendChild(menu);
+  t.after(() => menu.remove());
+  item.focus();
+  await key(item, 'Escape');
+  assert.equal(where, '/running?key=session:session_ablate');
+  assert.equal($('#running-panel')!.hidden, false);
+  menu.setAttribute('role', 'dialog');
+  await key(item, 'Escape');
+  assert.equal(where, '/running?key=session:session_ablate');
+  // Nor does one another control already took, wherever it was pressed.
+  await act(async () => {
+    const taken = new window.KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    taken.preventDefault();
+    $('#running-panel-title')!.dispatchEvent(taken);
+  });
+  assert.equal(where, '/running?key=session:session_ablate');
+  await key($('#running-panel-title')!, 'Escape');
+  assert.equal(where, '/running');
+});
+
+test('the board’s keys leave a modified key to the browser, and a control in a band’s heading to itself', async (t) => {
+  t.after(unmount);
+  drawn(1600);
+  answers();
+  await mount(page());
+  const graph = $('.running-graph')!;
+  await key(graph, 'ArrowRight');
+  const first = document.activeElement as HTMLElement;
+  assert.equal(first.dataset.key, 'work:wf_table');
+  const pressed = async (on: Element, name: string, more: KeyboardEventInit = {}) => {
+    let kept = true;
+    await act(async () => {
+      kept = on.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          key: name,
+          bubbles: true,
+          cancelable: true,
+          ...more,
+        }),
+      );
+    });
+    await settle(0);
+    return kept;
+  };
+  // Alt+Left is Back, and Cmd or Ctrl with an arrow is the browser's too.
+  for (const more of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }]) {
+    assert.equal(await pressed(first, 'ArrowLeft', more), true, JSON.stringify(more));
+    assert.equal(document.activeElement, first, JSON.stringify(more));
+  }
+  assert.equal(await pressed(first, 'j', { ctrlKey: true }), true);
+  assert.equal(document.activeElement, first);
+  // An arrow on Pause dispatch stays with it rather than jumping to the first card.
+  const pause = button('Pause dispatch')!;
+  pause.focus();
+  assert.equal(await pressed(pause, 'ArrowDown'), true);
+  assert.equal(document.activeElement, pause);
+  // Unmodified, from a card, the keys still walk.
+  await key(first, 'j');
+  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
+});
+
+test('a lane is stale by the age of its source when the board was read, not by the page’s clock since', () => {
+  const read = Date.parse('2026-09-25T12:00:00.000Z');
+  const lane = (old: number) => ({
+    nodes: [],
+    summaries: [],
+    needsYou: 0,
+    failed: [],
+    asOf: new Date(read - old).toISOString(),
+    freshForMs: 10_000,
+  });
+  const after = (ms: number) => ({ at: read + ms, since: ms, stale: false });
+  // Read 8 s old against a 10 s window: current, however long the next board takes.
+  assert.equal(staleLane(lane(8_000), after(0)), false);
+  assert.equal(staleLane(lane(8_000), after(5_000)), false);
+  assert.equal(staleLane(lane(8_000), after(60_000)), false);
+  // Already past its window when the board was read: stale from the start.
+  assert.equal(staleLane(lane(12_000), after(0)), true);
+  assert.equal(staleLane({ ...lane(12_000), asOf: undefined }, after(0)), false);
+});
+
 test('a key link in a sidebar swaps what it shows in place, and Close leaves the way it came', async (t) => {
   t.after(unmount);
   drawn();
@@ -667,7 +764,12 @@ test('the live region holds every word of the standing and none of its clocks', 
   // Words after a clock are the standing too: a new machine is told, the ticking is not.
   await press(card('session:session_index'));
   assert.match($('.running-says')!.textContent!, /^active for 1m · on mac-studio$/);
-  assert.equal(status().textContent, 'active for · on mac-studio');
+  // What joined a clock to the line goes with it, so the region is told a whole sentence.
+  assert.equal(status().textContent, 'active · on mac-studio');
+  // A countdown is said as something ending, which holds still until it has ended.
+  await press(card('sandbox:sbx_h100'));
+  assert.match($('.running-says')!.textContent!, /^Lease 6m 0s left$/);
+  assert.equal(status().textContent, 'Lease ending');
 });
 
 test('Halt lease names its consequence first, sends its input as written, and a halt of nothing keeps the guard open', async (t) => {
@@ -861,11 +963,12 @@ test('a card is named by what it draws, and one that needs a person says what in
   answers();
   await mount(page());
   const named = (key: string) => card(key).getAttribute('aria-label')!;
-  assert.match(
-    named('session:session_ablate'),
-    /^Ablate retrieval depth, Quiet 34m, on a Fleet VM$/,
+  assert.equal(named('session:session_ablate'), 'Ablate retrieval depth, Quiet, on a Fleet VM');
+  assert.equal(named('sandbox:sbx_h100'), '8× H100, aurora-sweep, Lease ending, $32.40/h');
+  assert.equal(
+    named('session:session_index'),
+    'Rebuild citation index, code.commit, on mac-studio',
   );
-  assert.match(named('sandbox:sbx_h100'), /^8× H100, aurora-sweep, Lease 6m 0s left, \$32\.40\/h$/);
   assert.equal(
     named('work:wf_review'),
     'Task, Review citation index, Waits on Rebuild citation index',
@@ -873,6 +976,21 @@ test('a card is named by what it draws, and one that needs a person says what in
   assert.equal(card('sandbox:sbx_h100').title, 'aurora-sweep');
   const reading = { now: { at: Date.now(), since: 0, stale: false }, nameOf: () => undefined };
   assert.ok(nodeName(board().lanes.work.nodes[0]!, reading).includes('merge the pull request'));
+});
+
+test('a card’s name holds still while the board’s clocks tick', () => {
+  const at = Date.now();
+  const given = board(at);
+  const reading = (ms: number) => ({
+    now: { at: at + ms, since: ms, stale: false },
+    nameOf: () => undefined,
+  });
+  for (const lane of ['work', 'sessions', 'hardware'] as const)
+    for (const node of given.lanes[lane].nodes) {
+      const names = [0, 1000, 61_000, 3_700_000].map((ms) => nodeName(node, reading(ms)));
+      assert.deepEqual(new Set(names).size, 1, `${node.key}: ${names.join(' | ')}`);
+      assert.doesNotMatch(names[0]!, /\d+[smhd]\b|\bago\b|\bleft\b/, node.key);
+    }
 });
 
 test('the keyboard walks the cards in reading order and down through the bands', async (t) => {

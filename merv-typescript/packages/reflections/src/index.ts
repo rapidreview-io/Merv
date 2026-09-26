@@ -240,27 +240,46 @@ export class ReflectionService implements Reflections {
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Reflection> {
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const row = await this.row(caller, id, tx);
-      const submission = row.submission ? (JSON.parse(row.submission) as Submission) : null;
-      return {
-        id,
-        projectId: row.project_id,
-        title: row.title,
-        ownerId: row.owner_id,
-        createdAt: row.created_at,
-        attempt: row.attempt,
-        lenses: await mapAsync(
-          await this.lensRows(row, tx),
-          async (lens) => await this.hydrateLens(caller, lens, tx),
-        ),
-        workflow: await this.workflows.get(caller, id, tx),
-        review: row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null,
-        report: submission?.report ?? null,
-        changeSpec: submission?.changeSpec ?? null,
-        plan: submission?.plan ?? null,
-      };
-    });
+    return await inTransaction(
+      this.state,
+      transaction,
+      async (tx) => await this.wave(caller, id, tx),
+    );
+  }
+  /**
+   * One wave. `lenient` is the Running page's read, where a review the wave names and Reviews
+   * does not hold is drawn as no review rather than refusing the whole wave.
+   */
+  private async wave(
+    caller: Caller,
+    id: string,
+    tx: Transaction,
+    lenient = false,
+  ): Promise<Reflection> {
+    const row = await this.row(caller, id, tx);
+    const submission = row.submission ? (JSON.parse(row.submission) as Submission) : null;
+    return {
+      id,
+      projectId: row.project_id,
+      title: row.title,
+      ownerId: row.owner_id,
+      createdAt: row.created_at,
+      attempt: row.attempt,
+      lenses: await mapAsync(
+        await this.lensRows(row, tx),
+        async (lens) => await this.hydrateLens(caller, lens, tx),
+      ),
+      workflow: await this.workflows.get(caller, id, tx),
+      review: row.review_id
+        ? await this.reviews.get(caller, row.review_id, tx).catch((error: unknown) => {
+            if (lenient && error instanceof MervError && error.status === 404) return null;
+            throw error;
+          })
+        : null,
+      report: submission?.report ?? null,
+      changeSpec: submission?.changeSpec ?? null,
+      plan: submission?.plan ?? null,
+    };
   }
   async list(caller: Caller, transaction?: Transaction): Promise<Reflection[]> {
     caller = structuredClone(caller);
@@ -1489,7 +1508,7 @@ export class ReflectionService implements Reflections {
   }
   /** What the Running page says of one wave: its record, every lease on it, its review limit. */
   private async runningFacts(caller: Caller, id: string, tx: Transaction): Promise<WaveFacts> {
-    const wave = await this.get(caller, id, tx);
+    const wave = await this.wave(caller, id, tx, true);
     const ids = [wave.id, ...wave.lenses.map((lens) => lens.id)];
     const leases = await tx.all<{
       id: string;
@@ -1535,9 +1554,17 @@ export class ReflectionService implements Reflections {
         caller.projectId,
         ...(held.length ? [...held, caller.projectId, ...held] : []),
       );
-      return await mapAsync(waves, async ({ id }) =>
-        waveNode(await this.runningFacts(caller, id, tx)),
-      );
+      // A wave whose record names something no longer there is left off on its own; the
+      // other waves are drawn.
+      const nodes = await mapAsync(waves, async ({ id }) => {
+        try {
+          return waveNode(await this.runningFacts(caller, id, tx));
+        } catch (error) {
+          if (error instanceof MervError && error.status === 404) return null;
+          throw error;
+        }
+      });
+      return nodes.filter((node) => node !== null);
     });
   }
   async runningPanel(caller: Caller, id: string): Promise<RunningPanelPart | null> {

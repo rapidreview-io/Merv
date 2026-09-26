@@ -106,25 +106,55 @@ interface Machine {
   check: boolean;
 }
 
+/**
+ * The job a plain record was rented for, as a verdict: the list says which job a machine was
+ * made to run, never whether it still runs, so a machine that has one is taken to be at it.
+ * That errs toward the guard that names the job and the red of a lease running out under it.
+ */
+function rentedFor(row: Loose, request: Loose): string | undefined {
+  if (text(row.main_job_id)) return 'running';
+  return request.job !== undefined && request.job !== null ? 'starting' : undefined;
+}
+
+/**
+ * One row of the machine list, in either shape the service sends: the row its console reads,
+ * with the machine's shape, what it is doing and the lease it was granted beside the record;
+ * or the plain record merv-sandboxes lists today, where the shape sits under the offer, the
+ * job and the lease asked for under the request, and nothing says what it is doing now.
+ */
 function machineOf(value: unknown): Machine | null {
   const row = object(value);
   const id = typeof row.id === 'string' ? row.id : '';
   const key = runningKey('sandbox', id);
   if (!runningKeyPattern.test(key)) return null;
   const activity = object(row.activity);
-  const resources = object(row.resources);
+  const request = object(row.request);
+  const resources = object(row.resources ?? object(row.offer).resources);
   const name = text(row.name);
+  const state = text(row.state, 40) ?? '';
   const gpus = number(resources.gpu_count);
   return {
     id,
     key,
     ...(name ? { name } : {}),
-    state: text(row.state, 40) ?? '',
-    verdict: text(activity.verdict, 40),
-    clause: text(activity.clause),
-    at: instant(activity.at),
+    state,
+    verdict: text(activity.verdict, 40) ?? (row.activity ? undefined : rentedFor(row, request)),
+    clause:
+      text(activity.clause) ??
+      (state === 'failed' ? text(object(row.last_error).message) : undefined),
+    // A plain record's clock is where the console's own row takes it from: a machine still
+    // arriving counts from its creation, a failed one from its last change.
+    at:
+      instant(activity.at) ??
+      (row.activity
+        ? undefined
+        : state === 'provisioning'
+          ? instant(row.created_at)
+          : state === 'failed'
+            ? instant(row.updated_at)
+            : undefined),
     lease: instant(row.lease_expires_at),
-    leaseSeconds: number(row.lease_seconds),
+    leaseSeconds: number(row.lease_seconds ?? request.lease_seconds),
     cost: money(row.cost_so_far),
     rate: money(row.hourly_price),
     gpu: text(resources.gpu, 60),
@@ -149,6 +179,8 @@ function accelerator(machine: Machine): string {
 /** The job in hand on a ready machine, in words; undefined while the machine is idle. */
 const working = (machine: Machine) =>
   machine.state === 'ready' ? WORKING.get(machine.verdict ?? '') : undefined;
+/** A ready machine with nothing in hand: idle where the service said so, else only ready. */
+const free = (machine: Machine) => (machine.verdict ? 'Idle' : 'Ready');
 /** A job that holds the machine: running, or starting to. One being cancelled is letting go. */
 const jobRunning = (machine: Machine) =>
   machine.state === 'ready' && (machine.verdict === 'running' || machine.verdict === 'starting');
@@ -175,7 +207,7 @@ function standing(machine: Machine): RunningPhrase {
     case 'unknown':
       return ['Connection lost'];
     default:
-      return held(working(machine) ?? 'Idle', machine.at);
+      return held(working(machine) ?? free(machine), machine.at);
   }
 }
 
@@ -191,7 +223,7 @@ function status(machine: Machine): RunningPhrase {
     case 'failed':
       return line('Failed', machine.clause, machine.at ? { ago: machine.at } : undefined);
     case 'ready':
-      return line(working(machine) ?? 'Idle', since);
+      return line(working(machine) ?? free(machine), since);
     default:
       return standing(machine);
   }
