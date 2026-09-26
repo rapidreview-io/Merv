@@ -31,6 +31,14 @@ function must(fact: boolean, what: string): void {
 }
 
 const RUNNER = 'demo-runner';
+/** The machine every Git lease here runs on, as its runner reports itself. */
+export const buildMachine = {
+  runnerId: RUNNER,
+  machine: { hostname: 'build-01', system: 'linux', architecture: 'x86_64' },
+  platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 8 }],
+  capacity: 8,
+  capabilities: ['code.v2'],
+};
 const author = {
   GIT_AUTHOR_NAME: 'Demo',
   GIT_AUTHOR_EMAIL: 'demo@example.test',
@@ -89,11 +97,24 @@ interface Held {
   sessionId: string;
   control: { sessionId: string; runnerId: string; hostRef: string };
   worker: Caller;
+  /** The lease credential its runner gave the agent, the one the agent calls Merv with. */
+  secret: string;
   workspace: Record<string, unknown>;
 }
 
+/** The writer still at work, handed back so the demo keeps its lease and its calls going. */
+export interface GitWriter {
+  unitId: string;
+  sessionId: string;
+  runnerId: string;
+  secret: string;
+}
+
 /** Seed the Git model of one demo project, and report what a screenshot can now prove. */
-export async function seedGit(app: App, operator: Caller): Promise<Record<string, unknown>> {
+export async function seedGit(
+  app: App,
+  operator: Caller,
+): Promise<{ report: Record<string, unknown>; writer: GitWriter }> {
   const ctx = app.ctx;
   const code = ctx.codeResearch;
   const root = join(app.directory, 'git');
@@ -246,13 +267,7 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
 
   await ctx.sessions.setDispatch(operator, { enabled: true });
   const heartbeat = async (caller: Caller) =>
-    await ctx.sessions.heartbeatRunner(caller, {
-      runnerId: RUNNER,
-      machine: { hostname: 'demo', system: 'demo', architecture: 'demo' },
-      platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 8 }],
-      capacity: 8,
-      capabilities: ['code.v2'],
-    });
+    await ctx.sessions.heartbeatRunner(caller, buildMachine);
   await heartbeat(operator);
   // A runner belongs to the authority that registered it and a review is offered by the
   // reviewing authority, so the same machine announces itself under that one as well.
@@ -313,6 +328,7 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
       control,
       workspace,
       worker: await ctx.sessions.authenticate(secret),
+      secret,
     };
   };
 
@@ -883,7 +899,7 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
     units.some((unit) => !made.has(unit.unitId)),
     'a lane with no receipt at all, which is the class the old drawing dropped',
   );
-  return {
+  const report = {
     main,
     repository: paths.repository,
     published,
@@ -905,4 +921,6 @@ export async function seedGit(app: App, operator: Caller): Promise<Record<string
       publications: status.publication?.records.length ?? 0,
     },
   };
+  const writer = { unitId: open.unitId, sessionId: open.sessionId, runnerId: RUNNER };
+  return { report, writer: { ...writer, secret: open.secret } };
 }

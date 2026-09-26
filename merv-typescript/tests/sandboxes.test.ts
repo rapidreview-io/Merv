@@ -476,7 +476,7 @@ test('the fake control plane publishes a manifest and a fleet this build accepts
   };
   assert.deepEqual(
     list.sandboxes.map((entry) => entry.state),
-    ['ready', 'ready', 'provisioning', 'ready', 'failed', 'stopped'],
+    ['ready', 'ready', 'provisioning', 'ready', 'failed', 'stopped', 'ready'],
   );
   assert.deepEqual(
     list.sandboxes.filter((entry) => entry.attention).map((entry) => entry.attention),

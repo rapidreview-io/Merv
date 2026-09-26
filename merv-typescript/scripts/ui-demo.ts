@@ -9,12 +9,18 @@ import { sandboxesPlugin } from '@merv/sandboxes';
 import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
 import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 import { useRunSchema } from './database.js';
-import { fakeGitHub, seedGit } from './ui-demo-git.js';
+import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
+import { beating, mcp, seedRunning } from './ui-demo-running.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
  * two tasks (one reviewed and done, one awaiting delivery) and a pinned review.
  * Type `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) or `quit` on stdin.
+ *
+ * The Running page gets its own work last (scripts/ui-demo-running.ts): tasks waiting, worked
+ * on and in review, a running and a planned experiment, an open reflection wave, and agents on
+ * two machines, mac-studio and lab-gpu-01 (and build-01 with `--git`), whose runners and
+ * leases the demo keeps alive and whose agents keep calling Merv, one read every 20 s in turn.
  *
  * `--git` seeds the Git model as well: a bound and imported repository, units with their
  * commits, the bases the server merged from them and one publication. It runs in this process
@@ -188,11 +194,11 @@ async function main() {
 
   // Real local session/registry calls using disposable demo data, not live agent processes.
   const owner = { ...operator, credentialId: boot.credential.id };
-  const joinAgent = async (name: string, requestId: string) => {
+  const joinAgent = async (name: string, requestId: string, runnerId = 'local-demo') => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
     const agent = await app.ctx.sessions.registerAgent(owner, {
       name,
-      runnerId: 'local-demo',
+      runnerId,
       requestId,
       secret: token,
     });
@@ -251,14 +257,42 @@ async function main() {
   }
 
   const git = seedsGit ? await seedGit(app, owner) : undefined;
-
-  const heartbeat = setInterval(async () => {
-    try {
-      await app.ctx.sessions.heartbeat(owner, { sessionId: execution.id, runnerId: 'local-demo' });
-    } catch {
-      clearInterval(heartbeat);
-    }
-  }, 20_000);
+  const { machines, leases } = await seedRunning(app, {
+    url,
+    owner,
+    token: boot.token,
+    producer: p,
+    reviewer: r,
+    joinAgent,
+    sweep: {
+      taskId: sweepTask.id,
+      sessionId: execution.id,
+      runnerId: 'local-demo',
+      call: mcp(url, working.token),
+      reads: [
+        ['workflow.assignment', { instanceId: sweepTask.id }],
+        ['task.get', { taskId: sweepTask.id }],
+      ],
+    },
+  });
+  // The Git writer's machine stays present, and its agent keeps reading its assignment.
+  if (git) {
+    const { unitId, sessionId, runnerId, secret } = git.writer;
+    machines.push(buildMachine);
+    leases.push({
+      sessionId,
+      runnerId,
+      call: mcp(url, secret),
+      reads: [
+        ['workflow.assignment', { instanceId: unitId }],
+        ['task.get', { taskId: unitId }],
+      ],
+    });
+  }
+  // The Git machine last reported itself before the rest was seeded: beat once before ready.
+  const beat = beating(url, boot.token, machines, leases);
+  await beat();
+  const heartbeat = setInterval(() => void beat(), 20_000);
   heartbeat.unref();
 
   console.log(
@@ -266,10 +300,11 @@ async function main() {
       {
         status: 'ready',
         ui: `${url}/ui/`,
+        running: `${url}/ui/running`,
         directory,
         schema,
         ...(sandboxes.length ? { sandboxes } : {}),
-        ...(git ? { git } : {}),
+        ...(git ? { git: git.report } : {}),
         tokens: {
           operator: boot.token,
           producer: producer.token,

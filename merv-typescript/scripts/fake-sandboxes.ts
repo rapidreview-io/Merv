@@ -143,6 +143,7 @@ type Seed = readonly [S, S, S, S, S | null, N, N, N | null, N, S | null, S | nul
 const train = 'python train.py --decay 1.0';
 const evaluate = 'python eval.py --split held-out';
 const batch = 'python export.py --all';
+const serve = 'python serve.py --checkpoint step-9810';
 const ending = 'lease ends in 6m';
 const broken = 'provisioning failed';
 const seeds: Seed[] = [
@@ -152,7 +153,10 @@ const seeds: Seed[] = [
   ['dunes-eval', 'ready', 'runpod', 'us-east-1', 'L40S', 2, 32, 6, -9, ending, evaluate],
   ['ember-retry', 'failed', 'lambda', 'us-east-1', 'H100', 8, 96, null, -21, broken, null],
   ['flint-batch', 'stopped', 'modal', 'us-central-1', null, 0, 16, -35, -35, null, batch],
+  ['garnet-serve', 'ready', 'lambda', 'us-west-2', 'A10', 1, 30, 95, -3, null, serve],
 ];
+/** What one accelerator costs an hour where it is not the big-GPU rate. */
+const perGpu: Record<string, number> = { A10: 0.75 };
 const steps = ['Requested', 'Offer chosen', 'Machine allocated', 'Image pulled', 'Ready'];
 const reasons: Record<string, string> = {
   idle: 'no job since the warmup finished',
@@ -172,7 +176,7 @@ function record(seed: Seed): Json {
   const clause = reasons[verdict] ?? command ?? `allocating ${gpus} ${gpu} in ${region}`;
   const created = clock - (settled ? 58 : 5);
   const ready = settled ? created + 4 : null;
-  const rate = gpu ? gpus * 4.05 : cpu * 0.0325;
+  const rate = gpu ? gpus * (perGpu[gpu] ?? 4.05) : cpu * 0.0325;
   const spent = ready === null ? 0 : (rate * -ready) / 60;
   // A provision that never priced out has no accounting at all: both amounts are null.
   const priced = (amount: number) =>
