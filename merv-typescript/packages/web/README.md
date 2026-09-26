@@ -163,7 +163,14 @@ survive one:
 
 The daily budgets are shared by everyone in a project, and by every project in
 the deployment: a reader can spend its project's day. Raise them through the
-environment below.
+environment below. Size them for Fleet before enabling its workflow
+(`MERV_FLEET_WORKFLOW_ENABLED`): every Fleet agent in a project shares the
+project's day with its Pi turns, and up to `MERV_FLEET_PROJECT_LIMIT` (5)
+agents run at once. Five agents making 20 calls a step spend the default 200 in
+two steps, and every later step that day, and the project's Pi, gets
+`web_budget_exhausted`. Set `MERV_WEB_DAILY_CALLS_PER_PROJECT` to about the
+project limit times the calls a step makes times the steps a project runs a
+day, and `MERV_WEB_DAILY_CALLS` to what the projects together may spend.
 
 Each call a provider was asked for is logged to stderr as one JSON line,
 `{"event":"web.call","tool","projectId","actorId","providers","ms","code"?}`,

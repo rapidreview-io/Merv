@@ -85,24 +85,42 @@ export async function request(
   return data as Record<string, unknown>;
 }
 
-/** Calls in flight, at most `total`; the next waits its turn, in order, for up to `waitMs`. */
+/**
+ * Calls in flight: at most `total` in the process and `perProject` for one project, so one
+ * project's literature sweep never takes every slot. A call past either waits its turn, in order,
+ * for up to `waitMs` (as @merv/web's slots do).
+ */
 export class Slots {
   private running = 0;
-  private readonly queue: (() => void)[] = [];
-  constructor(private readonly total: number) {}
+  private readonly held = new Map<string, number>();
+  private readonly queue: { project: string; start: () => void }[] = [];
 
-  acquire(waitMs: number, signal: AbortSignal, busy: () => MervError): Promise<() => void> {
+  constructor(
+    private readonly total: number,
+    private readonly perProject: number,
+  ) {}
+
+  acquire(
+    project: string,
+    waitMs: number,
+    signal: AbortSignal,
+    busy: () => MervError,
+  ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(signal.reason);
-    if (this.running < this.total) return Promise.resolve(this.take());
+    // Anyone waiting is waiting on a limit this call does not share, or it would have started.
+    if (this.free(project)) return Promise.resolve(this.take(project));
     return new Promise((resolve, reject) => {
-      const start = () => {
-        settle();
-        resolve(this.take());
+      const waiter = {
+        project,
+        start: () => {
+          settle();
+          resolve(this.take(project));
+        },
       };
       const settle = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', stop);
-        const index = this.queue.indexOf(start);
+        const index = this.queue.indexOf(waiter);
         if (index >= 0) this.queue.splice(index, 1);
       };
       const stop = () => {
@@ -114,18 +132,27 @@ export class Slots {
         reject(busy());
       }, waitMs);
       signal.addEventListener('abort', stop, { once: true });
-      this.queue.push(start);
+      this.queue.push(waiter);
     });
   }
 
-  private take(): () => void {
+  private free(project: string): boolean {
+    return this.running < this.total && (this.held.get(project) ?? 0) < this.perProject;
+  }
+
+  private take(project: string): () => void {
     this.running++;
+    this.held.set(project, (this.held.get(project) ?? 0) + 1);
     let released = false;
     return () => {
       if (released) return;
       released = true;
       this.running--;
-      this.queue[0]?.();
+      const left = this.held.get(project)! - 1;
+      if (left > 0) this.held.set(project, left);
+      else this.held.delete(project);
+      // The first waiter a freed slot admits, in the order they came.
+      this.queue.find((waiter) => this.free(waiter.project))?.start();
     };
   }
 }

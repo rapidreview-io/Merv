@@ -42,17 +42,33 @@ const year = (value: unknown): number | null => {
     ? number
     : null;
 };
+/** A year Nisa left out, read from the arXiv ID as Nisa's own data loader reads it: YYMM leads a
+ * new-style ID, and an old-style one's YY of 91 or more is 19YY. */
+const submitted = (id: string): number | null => {
+  const old = id.split('/')[1];
+  const yy = /^(\d{2})(?:0[1-9]|1[0-2])/.exec(old ?? id)?.[1];
+  if (yy === undefined) return null;
+  return Number(yy) + (old !== undefined && Number(yy) >= 91 ? 1900 : 2000);
+};
+/** "Henry E. Kyburg, Jr.": Nisa writes a generational suffix after a comma, like another name. */
+const suffix = /^(?:Jr|Sr|II|III|IV)\.?$/i;
 /** Nisa's comma-separated authors (or a list), each at most 300 characters as paper.cite takes. */
 function authors(value: unknown, max: number): { authors: string[]; more?: number } {
-  const all = (
+  const names =
     typeof value === 'string'
-      ? value.split(',')
+      ? value
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean)
+          .reduce<string[]>((kept, name) => {
+            if (suffix.test(name) && kept.length > 0) kept[kept.length - 1] += `, ${name}`;
+            else kept.push(name);
+            return kept;
+          }, [])
       : Array.isArray(value)
         ? value.filter((name) => typeof name === 'string')
-        : []
-  )
-    .map((name) => text(name, 300))
-    .filter(Boolean);
+        : [];
+  const all = names.map((name) => text(name, 300)).filter(Boolean);
   return all.length > max
     ? { authors: all.slice(0, max), more: all.length - max }
     : { authors: all };
@@ -90,7 +106,7 @@ export function paper(value: unknown, kind: Kind, chars: number): NisaPaper | un
     title: text(entry.title, kind === 'paper' ? 1000 : 300),
     authors: named.authors,
     ...(named.more !== undefined && { more_authors: named.more }),
-    year: year(entry.year),
+    year: year(entry.year) ?? submitted(id),
     citation_count: integer(entry.citation_count),
     score: kind === 'paper' ? null : score(kind === 'search' ? entry.score : similarity),
     snippets:

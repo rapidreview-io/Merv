@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import type { z } from 'zod';
-import { check, MervError } from '@merv/contracts';
+import { check, MervError, type Caller } from '@merv/contracts';
 import { NisaHttpError, request, Slots } from './client.js';
 import {
   excerptsInput,
@@ -8,7 +8,9 @@ import {
   paperInput,
   relatedInput,
   routeId,
+  SEARCH_OFFSETS,
   searchInput,
+  SEMANTIC_OFFSETS,
   semanticInput,
   type NisaSettings,
 } from './input.js';
@@ -43,6 +45,18 @@ import type {
 export type * from './types.js';
 
 const shortened = 'Passages are shortened to fit; read one paper with nisa.paper or nisa.excerpts';
+/** What a 404 means depends on the route: only a paper's own record says the paper is unknown. */
+const missing = {
+  paper: () => new MervError('nisa_not_found', 'Nisa has no such paper', 404),
+  excerpts: () => new MervError('nisa_not_found', 'Nisa has no full text for this paper', 404),
+  // Nisa's similar-paper data covers a fraction of the papers it holds, and no old-style ID.
+  related: () =>
+    new MervError(
+      'nisa_no_related',
+      'Nisa has no similar-paper data for this paper; nisa.paper may still find it',
+      404,
+    ),
+};
 
 /** Nisa's literature search for agents; see Nisa. Holds no state beyond its calls in flight. */
 export class NisaService implements Nisa {
@@ -54,7 +68,10 @@ export class NisaService implements Nisa {
     const parsed = nisaConfig.safeParse(config);
     check(parsed.success, 'invalid_nisa_config', 'The Nisa configuration is invalid');
     this.config = parsed.data;
-    this.slots = new Slots(this.config.maxInFlight);
+    this.slots = new Slots(
+      this.config.maxInFlight,
+      this.config.maxInFlightPerProject ?? Math.ceil(this.config.maxInFlight / 2),
+    );
   }
 
   /** Whether the deployment's key is set. */
@@ -62,39 +79,45 @@ export class NisaService implements Nisa {
     return !!process.env[this.config.keyEnv]?.trim();
   }
 
-  async search(input: NisaSearchInput): Promise<NisaPaperList> {
+  async search(caller: Caller, input: NisaSearchInput): Promise<NisaPaperList> {
     const value = parse(searchInput, input);
-    const data = await this.call('/api/sdk/search', this.config.searchTimeoutMs, {
-      query: value.query,
-      max_results: value.max_results,
-      offset: value.offset,
-      ...(value.author !== undefined && { author: value.author }),
-      ...(value.date_from !== undefined && { date_from: value.date_from }),
-      ...(value.date_to !== undefined && { date_to: value.date_to }),
-      // Enrichment starts one of Nisa's research agents; this plugin only ever looks papers up.
-      enrich: false,
+    const data = await this.call(caller, '/api/sdk/search', this.config.searchTimeoutMs, {
+      body: {
+        query: value.query,
+        max_results: value.max_results,
+        offset: value.offset,
+        ...(value.author !== undefined && { author: value.author }),
+        ...(value.date_from !== undefined && { date_from: value.date_from }),
+        ...(value.date_to !== undefined && { date_to: value.date_to }),
+        // Enrichment starts one of Nisa's research agents; this plugin only ever looks papers up.
+        enrich: false,
+      },
     });
-    return list(data, 'search', value.max_results, value.offset, MAX_SNIPPET_CHARS);
+    return list(data, 'search', value, MAX_SNIPPET_CHARS, SEARCH_OFFSETS);
   }
 
-  async semanticSearch(input: NisaSemanticSearchInput): Promise<NisaPaperList> {
+  async semanticSearch(caller: Caller, input: NisaSemanticSearchInput): Promise<NisaPaperList> {
     const value = parse(semanticInput, input);
-    const data = await this.call('/api/sdk/semantic_search', this.config.searchTimeoutMs, {
-      query: value.query,
-      max_results: value.max_results,
-      offset: value.offset,
-      ...(value.author !== undefined && { author: value.author }),
-      ...(value.year_min !== undefined && { year_min: value.year_min }),
-      ...(value.year_max !== undefined && { year_max: value.year_max }),
+    const data = await this.call(caller, '/api/sdk/semantic_search', this.config.searchTimeoutMs, {
+      body: {
+        query: value.query,
+        max_results: value.max_results,
+        offset: value.offset,
+        ...(value.author !== undefined && { author: value.author }),
+        ...(value.year_min !== undefined && { year_min: value.year_min }),
+        ...(value.year_max !== undefined && { year_max: value.year_max }),
+      },
     });
-    return list(data, 'semantic', value.max_results, value.offset, LIST_ABSTRACT_CHARS);
+    return list(data, 'semantic', value, LIST_ABSTRACT_CHARS, SEMANTIC_OFFSETS);
   }
 
-  async paper(input: NisaPaperInput): Promise<NisaPaper> {
+  async paper(caller: Caller, input: NisaPaperInput): Promise<NisaPaper> {
     const { arxiv_id } = parse(paperInput, input);
     const data = await this.call(
+      caller,
       `/api/sdk/paper/${encodeURIComponent(routeId(arxiv_id))}`,
       this.config.timeoutMs,
+      { missing: missing.paper },
     );
     // A record of another paper, or of none, is no answer to this question.
     const found = paper(data, 'paper', 0);
@@ -103,12 +126,14 @@ export class NisaService implements Nisa {
     return sized(MAX_ABSTRACT_CHARS, (chars) => paper(data, 'paper', chars) ?? found).value;
   }
 
-  async excerpts(input: NisaExcerptsInput): Promise<NisaExcerpts> {
+  async excerpts(caller: Caller, input: NisaExcerptsInput): Promise<NisaExcerpts> {
     const value = parse(excerptsInput, input);
     const query = new URLSearchParams({ q: value.query, max: String(value.max_excerpts) });
     const data = await this.call(
+      caller,
       `/api/sdk/paper/${encodeURIComponent(routeId(value.arxiv_id))}/excerpts?${query}`,
       this.config.timeoutMs,
+      { missing: missing.excerpts },
     );
     const flag = (key: string) =>
       typeof data[key] === 'boolean' ? { [key]: data[key] as boolean } : {};
@@ -141,11 +166,13 @@ export class NisaService implements Nisa {
     }).value;
   }
 
-  async related(input: NisaRelatedInput): Promise<NisaRelated> {
+  async related(caller: Caller, input: NisaRelatedInput): Promise<NisaRelated> {
     const value = parse(relatedInput, input);
     const data = await this.call(
+      caller,
       `/api/sdk/paper/${encodeURIComponent(routeId(value.arxiv_id))}/related?n=${value.max_results}`,
       this.config.timeoutMs,
+      { missing: missing.related },
     );
     const { value: answer } = sized(LIST_ABSTRACT_CHARS, (chars): NisaRelated => {
       const found = papers(data.papers, 'related', value.max_results, chars);
@@ -167,11 +194,13 @@ export class NisaService implements Nisa {
     this.stopping.abort();
   }
 
-  /** One call to Nisa, bounded and in turn: a GET, or a POST of `body`. */
+  /** One call to Nisa, bounded and in its project's turn: a GET, or a POST of `body`. A 404 is
+   * `missing` where the route names a paper, and Nisa's own failure elsewhere. */
   private async call(
+    caller: Caller,
     path: string,
     timeoutMs: number,
-    body?: unknown,
+    { body, missing }: { body?: unknown; missing?: () => MervError } = {},
   ): Promise<Record<string, unknown>> {
     check(!this.stopping.signal.aborted, 'nisa_stopped', 'Nisa is stopping', 503);
     const key = process.env[this.config.keyEnv]?.trim();
@@ -179,12 +208,13 @@ export class NisaService implements Nisa {
     let release: (() => void) | undefined;
     try {
       release = await this.slots.acquire(
+        caller.projectId,
         this.config.queueMs,
         this.stopping.signal,
         () =>
           new MervError(
             'nisa_busy',
-            `Merv already has ${this.config.maxInFlight} calls to Nisa in flight; try again shortly`,
+            'Merv is making as many calls to Nisa as it allows at once; try again shortly',
             429,
           ),
       );
@@ -195,7 +225,7 @@ export class NisaService implements Nisa {
         signal: this.stopping.signal,
       });
     } catch (error) {
-      throw this.failure(error);
+      throw this.failure(error, missing);
     } finally {
       release?.();
     }
@@ -203,7 +233,7 @@ export class NisaService implements Nisa {
 
   /** Nisa's failure as the caller sees it: its HTTP status at most, never its words. A refused
    * key is never 401 or 403, which a transport would read as the caller's own. */
-  private failure(error: unknown): MervError {
+  private failure(error: unknown, missing?: () => MervError): MervError {
     if (this.stopping.signal.aborted) return new MervError('nisa_stopped', 'Nisa is stopping', 503);
     if (error instanceof MervError) return error;
     if (error instanceof DOMException && error.name === 'TimeoutError')
@@ -232,16 +262,21 @@ export class NisaService implements Nisa {
         `Nisa refused this deployment's key (HTTP ${status})`,
         503,
       );
-    if (status === 404) return new MervError('nisa_not_found', 'Nisa has no such paper', 404);
+    if (status === 404 && missing) return missing();
     if (status === 429)
       return new MervError('nisa_rate_limited', 'Nisa is limiting requests (HTTP 429)', 429);
+    // Only the passages route says so: a search whose index or embeddings are down is a 500.
     if (status === 503 || status === 504)
       return new MervError(
         'nisa_index_unavailable',
         `Nisa's index is unavailable (HTTP ${status}); try again later`,
         503,
       );
-    return new MervError('nisa_upstream_error', `Nisa failed (HTTP ${status})`, 502);
+    return new MervError(
+      'nisa_upstream_error',
+      `Nisa failed (HTTP ${status})${status >= 500 ? '; try again later' : ''}`,
+      502,
+    );
   }
 }
 
@@ -251,38 +286,43 @@ function parse<S extends z.ZodTypeAny>(schema: S, input: unknown): z.infer<S> {
   return parsed.data;
 }
 
-/** A keyword or semantic page: the papers Nisa found, sized to fit, and where the next page starts. */
+/** A keyword or semantic page: the papers Nisa found, sized to fit, and where the next page
+ * starts, while Nisa pages that far (`furthest`). */
 function list(
   data: Record<string, unknown>,
   kind: Kind,
-  max: number,
-  offset: number,
+  { max_results: max, offset }: { max_results: number; offset: number },
   whole: number,
+  furthest: number,
 ): NisaPaperList {
   const given = Array.isArray(data.papers) ? data.papers.length : 0;
   const latest = data.index_latest_pub_month;
-  const { value } = sized(whole, (chars): NisaPaperList => {
-    const found = papers(data.papers, kind, max, chars);
+  const page = (found: NisaPaper[], chars: number, next?: number): NisaPaperList => {
+    const notes = [
+      chars < whole && shortened,
+      next !== undefined &&
+        next > furthest &&
+        `Nisa pages no further than offset ${furthest}; narrow the query to find the rest`,
+    ].filter(Boolean);
     return {
       papers: found,
       count: found.length,
       offset,
-      truncated: data.truncated === true,
-      ...(data.truncated === true && { next_offset: offset + Math.min(given, max) }),
+      truncated: next !== undefined,
+      ...(next !== undefined && next <= furthest && { next_offset: next }),
       ...(typeof latest === 'number' &&
         Number.isSafeInteger(latest) &&
         latest >= 190001 &&
         latest <= 999912 && { index_latest_pub_month: latest }),
-      ...(chars < whole && { note: shortened }),
+      ...(notes.length > 0 && { note: notes.join('; ') }),
     };
-  });
+  };
+  const next = data.truncated === true ? offset + Math.min(given, max) : undefined;
+  const { value, chars } = sized(whole, (chars) =>
+    page(papers(data.papers, kind, max, chars), chars, next),
+  );
   // Titles and authors alone rarely pass the limit; when they do, the page ends sooner.
-  return fitted(value, (count) => ({
-    ...value,
-    papers: value.papers.slice(0, count),
-    count,
-    ...(count < value.papers.length && { truncated: true, next_offset: offset + count }),
-  }));
+  return fitted(value, (count) => page(value.papers.slice(0, count), chars, offset + count));
 }
 
 /** `answer` with as many of its papers as fit MAX_ANSWER_BYTES. */

@@ -1,4 +1,5 @@
 import type {} from 'cordis';
+import type { Caller } from '@merv/contracts';
 
 /** Configuration names the key's environment variable and never carries the key. */
 export interface NisaConfig {
@@ -12,8 +13,10 @@ export interface NisaConfig {
   searchTimeoutMs?: number;
   /** A larger answer is refused, whatever its Content-Length says. */
   maxResponseBytes?: number;
-  /** Calls this process has in flight to Nisa at once; the next waits its turn. */
+  /** Calls this process has in flight to Nisa at once, and one project's (half of maxInFlight by
+   * default); a call past either waits its turn. */
   maxInFlight?: number;
+  maxInFlightPerProject?: number;
   /** How long a call waits for its turn before it is refused with nisa_busy. */
   queueMs?: number;
 }
@@ -27,6 +30,7 @@ export interface NisaSearchInput {
   query: string | string[];
   max_results?: number;
   offset?: number;
+  /** Whole name words, all matching; commas separate alternative authors. */
   author?: string;
   /** YYYY, YYYY-MM or YYYY-MM-DD; Nisa's index keeps months, so a day narrows nothing. */
   date_from?: string;
@@ -37,6 +41,7 @@ export interface NisaSemanticSearchInput {
   query: string | string[];
   max_results?: number;
   offset?: number;
+  /** A substring of the paper's author list. */
   author?: string;
   year_min?: number;
   year_max?: number;
@@ -65,6 +70,7 @@ export interface NisaPaper {
   /** At most 12 in a list, with more_authors saying how many are left out; 100 from nisa.paper. */
   authors: string[];
   more_authors?: number;
+  /** As Nisa gives it, or else the year the arXiv ID was submitted in. */
   year: number | null;
   /** The paper's arXiv abstract page. */
   url: string;
@@ -83,12 +89,14 @@ export interface NisaPaperList {
   papers: NisaPaper[];
   count: number;
   offset: number;
-  /** More papers match than this page holds; ask again with offset = next_offset. */
+  /** More papers match than this page holds; ask again with offset = next_offset, which is
+   * absent past the furthest offset Nisa pages to (500, or 200 by meaning). */
   truncated: boolean;
   next_offset?: number;
   /** The newest month (YYYYMM) in Nisa's keyword index: a later window finds nothing yet. */
   index_latest_pub_month?: number;
-  /** Set when snippets or abstracts were shortened so the answer fits an agent's context. */
+  /** Set when snippets or abstracts were shortened so the answer fits an agent's context, or when
+   * the next page lies past the furthest offset. */
   note?: string;
 }
 export interface NisaRelated {
@@ -117,16 +125,17 @@ export interface NisaExcerpts {
 
 /**
  * Nisa's literature search over its public API, with the deployment's one key. Every call
- * validates its input, is bounded in time and bytes, and answers only the allowlisted fields
- * above; each failure is a nisa_* error that repeats nothing Nisa said. Authorization belongs to
- * the tools that call it: any project reader may search.
+ * validates its input, is bounded in time and bytes, takes its turn among its project's calls,
+ * and answers only the allowlisted fields above; each failure is a nisa_* error that repeats
+ * nothing Nisa said. Authorization belongs to the tools that call it: any project reader may
+ * search.
  */
 export interface Nisa {
-  search(input: NisaSearchInput): Promise<NisaPaperList>;
-  semanticSearch(input: NisaSemanticSearchInput): Promise<NisaPaperList>;
-  paper(input: NisaPaperInput): Promise<NisaPaper>;
-  excerpts(input: NisaExcerptsInput): Promise<NisaExcerpts>;
-  related(input: NisaRelatedInput): Promise<NisaRelated>;
+  search(caller: Caller, input: NisaSearchInput): Promise<NisaPaperList>;
+  semanticSearch(caller: Caller, input: NisaSemanticSearchInput): Promise<NisaPaperList>;
+  paper(caller: Caller, input: NisaPaperInput): Promise<NisaPaper>;
+  excerpts(caller: Caller, input: NisaExcerptsInput): Promise<NisaExcerpts>;
+  related(caller: Caller, input: NisaRelatedInput): Promise<NisaRelated>;
   close(): void;
 }
 

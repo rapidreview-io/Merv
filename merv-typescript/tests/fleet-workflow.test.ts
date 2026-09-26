@@ -37,8 +37,17 @@ import {
   hostedCodexCapabilities,
   hostedCodexPlatform,
 } from '../packages/fleet/src/workflow.js';
+import { ToolRegistry } from '../packages/api/src/registry.js';
+import { NisaService } from '../packages/nisa/src/index.js';
+import { nisaTools } from '../packages/nisa/src/tools.js';
+import type { NisaPaperList } from '../packages/nisa/src/types.js';
+import { buildLaunch, validateProfile } from '../packages/runner/src/profiles.js';
+import { WebService } from '../packages/web/src/index.js';
+import { webTools } from '../packages/web/src/tools.js';
+import type { WebSearch } from '../packages/web/src/types.js';
 import { openState } from './fixtures/state.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
+import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
@@ -1053,6 +1062,99 @@ async function boot(h: Hosted, allocation: FleetAllocation) {
   assert.ok(session);
   return { runnerId, session, secret: request.secret };
 }
+
+test('a Fleet machine’s hosted Codex launch is given web and literature search, and its session calls both', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Searching');
+  await h.sessions.setDispatch(caller, { enabled: true });
+  const target = await h.start(caller);
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  assert.equal(allocation.owner.id, `${target.id}:0`);
+  await h.fleet.tick(); // Reserve and provision.
+  await h.fleet.tick(); // Launch.
+  const machine = await boot(h, allocation);
+  // The launch the hosted runner builds for that session, with its own profile
+  // (scripts/hosted-runner/smoke-supervisor.ts).
+  const launch = buildLaunch(
+    validateProfile({
+      name: 'hosted-codex',
+      harness: 'codex',
+      executable: '/usr/local/bin/codex',
+      isolatedLauncher: '/usr/local/bin/merv-assignment',
+      hosted: true,
+      model: hostedCodexPlatform.model,
+      enabled: true,
+      parallelism: 1,
+    }),
+    {
+      session: machine.session,
+      secret: machine.secret,
+      mcpUrl: 'https://merv.example.test/mcp',
+      cwd: '/home/assignment/work',
+    },
+    {},
+  );
+  const servers = launch.args.find((arg) => arg.startsWith('mcp_servers='))!;
+  const enabled = JSON.parse(/enabled_tools=(\[[^\]]*\])/.exec(servers)![1]!) as string[];
+  const searches = [
+    'web.search',
+    'web.extract',
+    'nisa.search',
+    'nisa.semantic_search',
+    'nisa.paper',
+    'nisa.excerpts',
+    'nisa.related',
+  ];
+  for (const name of searches) assert.ok(enabled.includes(name), name);
+  // And its launch text says which to use for what.
+  assert.match(launch.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
+  assert.match(
+    launch.stdin,
+    /web\.search and web\.extract find and read the rest of the public web/,
+  );
+
+  // Main lists that session both, and runs them as reads its policy never names.
+  const tavily = await provider(t, () => ({ body: tavilyResults(1) }));
+  const nisa = await provider(t, () => ({
+    body: {
+      truncated: false,
+      papers: [{ arxiv_id: '1706.03762', title: 'Attention Is All You Need', score: 1 }],
+    },
+  }));
+  const tools = new ToolRegistry(h.scope);
+  t.after(() => tools.close());
+  const web = new WebService(
+    { keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin },
+    { log: () => {} },
+  );
+  const papers = new NisaService({
+    keyEnv: keyEnv(t, `rr_sk_${'k'.repeat(43)}`),
+    origin: nisa.origin,
+  });
+  t.after(() => {
+    web.close();
+    papers.close();
+  });
+  for (const tool of [...webTools(web), ...nisaTools(papers)]) tools.register(tool);
+  tools.registerSessionPolicy(h.sessions);
+  const worker = await h.sessions.authenticate(machine.secret);
+  const offered = (await tools.describe(worker)).map(({ name }) => name);
+  for (const name of searches) assert.ok(offered.includes(name), name);
+  const found = (await tools.call('web.search', worker, { query: 'cordis plugin' })) as WebSearch;
+  assert.deepEqual(
+    found.results.map(({ url }) => url),
+    ['https://example.com/0'],
+  );
+  const literature = (await tools.call('nisa.search', worker, {
+    query: 'attention',
+  })) as NisaPaperList;
+  assert.deepEqual(
+    literature.papers.map(({ identifier }) => identifier),
+    ['arxiv:1706.03762'],
+  );
+  assert.deepEqual([tavily.seen.length, nisa.seen.length], [1, 1]);
+});
 
 test('Fleet produces Pi-directed work and its review director reviews the admin’s desk delivery', async (t) => {
   const h = await hosted(t, 2);

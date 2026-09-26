@@ -218,7 +218,7 @@ const PROJECT_READS = [
   'research.lineage',
   // Nisa's literature search, where the deployment has its key: a name the server does not list
   // is only absent from the worker's tools. It reaches Nisa alone, never an address a worker
-  // chooses.
+  // chooses, though its query leaves Merv for Nisa.
   'nisa.search',
   'nisa.semantic_search',
   'nisa.paper',
@@ -309,7 +309,7 @@ function codexArgs(
       ...request.session.execution.policy.tools.map((tool) => tool.name),
       ...PROJECT_READS,
       // Only where its shell commands already have the network (below).
-      ...(profile.hosted && !sealed(request.session) ? INTERNET_READS : []),
+      ...(internet(profile, request.session) ? INTERNET_READS : []),
     ]),
   ];
   check(
@@ -518,6 +518,20 @@ const sealed = (session: LaunchRequest['session']): boolean => {
   return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
 };
 
+/** Whether a launch is given Merv's internet reads: only where its shell has the network already,
+ * a hosted Codex launch or a Claude one, and never a sealed review. */
+const internet = (profile: RunnerProfile, session: LaunchRequest['session']): boolean =>
+  !sealed(session) &&
+  (profile.harness === 'claude' || (profile.harness === 'codex' && !!profile.hosted));
+
+/**
+ * What a launch is told of search beyond the project, naming only the reads it is given. Tool
+ * descriptions alone leave a worker answering from memory, since the rest of this text speaks of
+ * project reads only, and a literature survey that names no paper by its identifier helps nobody.
+ */
+const searching = (web: boolean): string =>
+  `For what this project does not hold, when your tools list them: nisa.search and nisa.semantic_search find scholarly papers (then nisa.paper, nisa.excerpts and nisa.related read one), so use them for literature rather than your memory${web ? ' or a web search' : ''}, and name each paper you cite by its arxiv identifier.${web ? ' web.search and web.extract find and read the rest of the public web: documentation, releases, datasets, licenses.' : ''}`;
+
 /**
  * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
  * a closing message after the handoff tool returns and prints its `turn.completed` only then, so
@@ -625,6 +639,7 @@ export function buildLaunch(
     // then invent what the project already holds. The list binds writes; reads are open.
     'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the reviews and the living paper.',
     'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
+    ...(profile.harness === 'command' ? [] : [searching(internet(profile, session))]),
     sealed(session)
       ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
       : session.execution.policy.readOnly

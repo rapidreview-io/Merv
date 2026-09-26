@@ -38,6 +38,8 @@ export const nisaConfig = z
       .default(2 * 1024 * 1024),
     // Nisa serves every user from one worker: Merv keeps its own share of it small.
     maxInFlight: z.number().int().min(1).max(64).default(4),
+    /** Half of maxInFlight when unset, so one project's sweep leaves the others a turn. */
+    maxInFlightPerProject: z.number().int().min(1).max(64).optional(),
     /** How long a call past maxInFlight waits for its turn before nisa_busy. */
     // With a search's deadline, inside the 180 s a Codex worker waits on a tool.
     queueMs: z.number().int().min(0).max(15_000).default(15_000),
@@ -61,8 +63,8 @@ export function canonicalId(value: string): string | undefined {
   return old ? `${old[1]}/${old[2]}` : undefined;
 }
 /** How Nisa's routes name a paper: an old-style ID with an underscore for its slash, as Nisa's
- * full-text index keys it (a route segment cannot carry a slash, and Nisa's metadata lookup
- * takes either). */
+ * full-text index keys it (a route segment cannot carry a slash, and Nisa's paper record takes
+ * either; its similar-paper data holds no old-style paper at all). */
 export const routeId = (id: string) => id.replace('/', '_');
 
 export const arxivId = z
@@ -81,7 +83,9 @@ export const arxivId = z
 const text = (max: number) => z.string().trim().min(1).max(max);
 const phrasings = (count: number, description: string) =>
   z.union([text(1000), z.array(text(1000)).min(1).max(count)]).describe(description);
-const author = text(200).optional().describe('Author name, matched as a substring');
+// Nisa filters the two searches differently: its keyword index by whole name words, its
+// semantic search by a substring of the author list.
+const author = (description: string) => text(200).optional().describe(description);
 const results = (fallback: number) =>
   z
     .number()
@@ -106,6 +110,10 @@ const month = (value: string, earliest: boolean) => {
 };
 const year = z.number().int().min(1900).max(2100);
 
+/** The furthest offset each search pages to: Nisa clamps any further one to it. */
+export const SEARCH_OFFSETS = 500;
+export const SEMANTIC_OFFSETS = 200;
+
 export const searchInput = z
   .object({
     query: phrasings(
@@ -113,8 +121,16 @@ export const searchInput = z
       'Plain keywords, no operators or quotes; or a list of up to 8 phrasings searched together and merged',
     ),
     max_results: results(10),
-    offset: z.number().int().min(0).max(500).default(0).describe('Papers to skip (0-500)'),
-    author,
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(SEARCH_OFFSETS)
+      .default(0)
+      .describe('Papers to skip (0-500)'),
+    author: author(
+      'Author name as whole words, all of which must match (Yann LeCun); commas separate alternative authors (Vaswani, Hinton)',
+    ),
     date_from: date.optional().describe('Earliest publication: YYYY, YYYY-MM or YYYY-MM-DD'),
     date_to: date.optional().describe('Latest publication: YYYY, YYYY-MM or YYYY-MM-DD'),
   })
@@ -131,8 +147,14 @@ export const semanticInput = z
       'A natural-language description of the papers wanted, or a list of up to 4 paraphrases searched together',
     ),
     max_results: results(10),
-    offset: z.number().int().min(0).max(200).default(0).describe('Papers to skip (0-200)'),
-    author,
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(SEMANTIC_OFFSETS)
+      .default(0)
+      .describe('Papers to skip (0-200)'),
+    author: author('Part of an author name, matched as a substring of the author list'),
     year_min: year.optional().describe('Earliest publication year'),
     year_max: year.optional().describe('Latest publication year'),
   })

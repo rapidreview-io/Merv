@@ -390,13 +390,14 @@ test('Nisa is held to its deadline, bytes and JSON, never followed elsewhere, an
     searchTimeoutMs: 1000,
     maxResponseBytes: 4096,
   });
-  const find = () => service.search({ query: 'q' });
+  const find = () => service.search(caller, { query: 'q' });
   const words = { error: 'search failed: upstream words and upstream-secret' };
   for (const [status, code, http] of [
     [400, 'nisa_request_refused', 422],
     [401, 'nisa_key_refused', 503],
     [403, 'nisa_key_refused', 503],
-    [404, 'nisa_not_found', 404],
+    // A search route that is missing is Nisa's failure, never a paper that does not exist.
+    [404, 'nisa_upstream_error', 502],
     [429, 'nisa_rate_limited', 429],
     [500, 'nisa_upstream_error', 502],
     [503, 'nisa_index_unavailable', 503],
@@ -413,6 +414,9 @@ test('Nisa is held to its deadline, bytes and JSON, never followed elsewhere, an
     // Nisa retries its own index; Merv asks once.
     assert.equal(fake.seen.length - tried, 1);
   }
+  // Nisa's searches answer 500 when their index or embeddings are down, so a 5xx says to retry.
+  reply = () => ({ status: 500, body: words });
+  await assert.rejects(find(), { message: 'Nisa failed (HTTP 500); try again later' });
   reply = () => ({ status: 302, headers: { location: `${elsewhere.origin}/collect` } });
   await assert.rejects(find(), { code: 'nisa_upstream_error', status: 502 });
   assert.equal(elsewhere.seen.length, 0, 'a redirect was followed with the key');
@@ -441,7 +445,10 @@ test('Nisa is held to its deadline, bytes and JSON, never followed elsewhere, an
   // Without its key there is nothing to call with.
   const keyless = new NisaService({ keyEnv: 'MERV_NISA_TEST_UNSET_KEY', origin: fake.origin });
   assert.equal(keyless.configured, false);
-  await assert.rejects(keyless.search({ query: 'q' }), { code: 'nisa_unavailable', status: 503 });
+  await assert.rejects(keyless.search(caller, { query: 'q' }), {
+    code: 'nisa_unavailable',
+    status: 503,
+  });
   // Its origin is https, or loopback only for a test.
   for (const origin of ['http://api.rapidreview.io', 'https://api.rapidreview.io/api', 'ftp://x'])
     assert.equal(nisaConfig.safeParse({ origin }).success, false, origin);
@@ -462,7 +469,7 @@ test('calls to Nisa wait their turn, and one past the wait is refused before any
   });
   const asked = () => fake.seen.length;
   // Nisa has one call at a time from this process; the others run as it ends, in order.
-  const calls = ['one', 'two', 'three'].map((query) => service.search({ query }));
+  const calls = ['one', 'two', 'three'].map((query) => service.search(caller, { query }));
   while (asked() === 0) await new Promise((resolve) => setTimeout(resolve, 10));
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(asked(), 1);
@@ -474,18 +481,134 @@ test('calls to Nisa wait their turn, and one past the wait is refused before any
   );
   // One that waits past queueMs is refused, and Nisa never hears of it.
   gate = deferred();
-  const held = service.search({ query: 'held' });
+  const held = service.search(caller, { query: 'held' });
   while (asked() === 3) await new Promise((resolve) => setTimeout(resolve, 10));
   const started = Date.now();
-  await assert.rejects(service.search({ query: 'refused' }), {
+  await assert.rejects(service.search(caller, { query: 'refused' }), {
     code: 'nisa_busy',
     status: 429,
-    message: 'Merv already has 1 calls to Nisa in flight; try again shortly',
+    message: 'Merv is making as many calls to Nisa as it allows at once; try again shortly',
   });
   assert.ok(Date.now() - started >= 900, 'it waited its turn first');
   gate.resolve();
   await held;
   assert.equal(asked(), 4);
+});
+
+test('one project’s calls leave the others their turn', async (t) => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  const fake = await provider(t, async () => {
+    await gate.promise;
+    return { body: search };
+  });
+  // One project may hold half of maxInFlight by default.
+  const service = new NisaService({
+    keyEnv: keyEnv(t, key),
+    origin: fake.origin,
+    maxInFlight: 2,
+    queueMs: 1000,
+  });
+  const other: Caller = { ...caller, projectId: 'project-b' };
+  const calls = [
+    service.search(caller, { query: 'a1' }),
+    service.search(caller, { query: 'a2' }),
+    service.search(other, { query: 'b1' }),
+  ];
+  while (fake.seen.length < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.deepEqual(new Set(fake.seen.map(({ body }) => body.query)), new Set(['a1', 'b1']));
+  gate.resolve();
+  await Promise.all(calls);
+  assert.equal(fake.seen[2].body.query, 'a2');
+});
+
+test('a 404 names what its route lacks, and a page never points past where Nisa pages', async (t) => {
+  let page: Record<string, unknown> = search;
+  const fake = await nisa(t, ({ path }) => {
+    const route = new URL(path, 'http://nisa').pathname;
+    if (route.startsWith('/api/sdk/paper/'))
+      return { status: 404, body: { error: 'Paper 1001.0160 not found' } };
+    return route.endsWith('search') ? { body: page } : undefined;
+  });
+  const tools = registry(t, new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin }));
+  await assert.rejects(tools.call('nisa.paper', caller, { arxiv_id: '1001.0160' }), {
+    code: 'nisa_not_found',
+    status: 404,
+    message: 'Nisa has no such paper',
+  });
+  // Nisa's similar-paper data covers a fraction of its papers: a real ID is never called unknown.
+  await assert.rejects(tools.call('nisa.related', caller, { arxiv_id: '1001.0160' }), {
+    code: 'nisa_no_related',
+    status: 404,
+    message: 'Nisa has no similar-paper data for this paper; nisa.paper may still find it',
+  });
+  await assert.rejects(
+    tools.call('nisa.excerpts', caller, { arxiv_id: '1001.0160', query: 'scaling' }),
+    { code: 'nisa_not_found', message: 'Nisa has no full text for this paper' },
+  );
+
+  // Nisa pages keyword search to offset 500 and semantic search to 200: a next page past either
+  // is one the tools refuse, so the answer says to narrow the query instead.
+  page = {
+    ...search,
+    truncated: true,
+    papers: Array.from({ length: 20 }, (_, index) => ({
+      arxiv_id: `2303.${10000 + index}`,
+      title: `Paper ${index}`,
+      score: 1,
+      snippets: [],
+    })),
+  };
+  const within = (await tools.call('nisa.search', caller, {
+    query: 'q',
+    offset: 480,
+    max_results: 20,
+  })) as NisaPaperList;
+  assert.equal(within.next_offset, 500);
+  await tools.call('nisa.search', caller, { query: 'q', offset: within.next_offset });
+  for (const [name, offset, furthest] of [
+    ['nisa.search', 495, 500],
+    ['nisa.semantic_search', 190, 200],
+  ] as const) {
+    const past = (await tools.call(name, caller, {
+      query: 'q',
+      offset,
+      max_results: 20,
+    })) as NisaPaperList;
+    assert.equal(past.truncated, true, name);
+    assert.equal(past.next_offset, undefined, name);
+    assert.equal(
+      past.note,
+      `Nisa pages no further than offset ${furthest}; narrow the query to find the rest`,
+    );
+  }
+});
+
+test('a generational suffix stays with its author, and a year Nisa leaves out comes from the ID', async (t) => {
+  let record: Record<string, unknown> = paperRecord;
+  const fake = await nisa(t, ({ path }) =>
+    /^\/api\/sdk\/paper\/[^/]+$/.test(path) ? { body: record } : undefined,
+  );
+  const tools = registry(t, new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin }));
+  const read = async (arxiv_id: string, fields: Record<string, unknown>) => {
+    record = { ...paperRecord, arxiv_id, ...fields };
+    return (await tools.call('nisa.paper', caller, { arxiv_id })) as NisaPaper;
+  };
+  // Nisa's author lists write "Henry E. Kyburg, Jr.": paper.cite would take "Jr." for an author.
+  assert.deepEqual(
+    (await read('1301.6713', { authors: 'Henry E. Kyburg, Jr., Charles Lee Isbell, Jr, Ada, III' }))
+      .authors,
+    ['Henry E. Kyburg, Jr.', 'Charles Lee Isbell, Jr', 'Ada, III'],
+  );
+  // Nisa's paper route reads no year from an old-style ID; the ID holds its submission year.
+  for (const [id, year] of [
+    ['hep-th/9901001', 1999],
+    ['math/0211159', 2002],
+    ['2303.08774', 2023],
+  ] as const)
+    assert.equal((await read(id, { year: null })).year, year, id);
+  assert.equal((await read('2303.08774', { year: 2024 })).year, 2024);
 });
 
 test('an answer fits what Pi shows of one result, whatever the papers’ text', async (t) => {
@@ -513,9 +636,13 @@ test('an answer fits what Pi shows of one result, whatever the papers’ text', 
         : { body: { ...paperRecord, abstract: cjk.repeat(10) } },
   );
   const service = new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin });
-  const list = await service.search({ query: 'q', max_results: 20 });
-  const record = await service.paper({ arxiv_id: '2303.08774' });
-  const passages = await service.excerpts({ arxiv_id: '2303.08774', query: 'q', max_excerpts: 20 });
+  const list = await service.search(caller, { query: 'q', max_results: 20 });
+  const record = await service.paper(caller, { arxiv_id: '2303.08774' });
+  const passages = await service.excerpts(caller, {
+    arxiv_id: '2303.08774',
+    query: 'q',
+    max_excerpts: 20,
+  });
   for (const [name, answer] of [
     ['nisa.search', list],
     ['nisa.paper', record],
@@ -567,11 +694,28 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
     assert.match(definition.description, /untrusted source material/);
   }
   // A model picks by description: papers here, not through a web search.
+  const described = (name: string) => definitions.find((tool) => tool.name === name)!.description;
   for (const name of ['nisa.search', 'nisa.semantic_search'])
     assert.match(
-      definitions.find((tool) => tool.name === name)!.description,
-      /^Search scholarly papers \(arXiv\).*Use this, not a web search, for literature.*paper\.cite/,
+      described(name),
+      /^Search scholarly papers \(arXiv\).*Use this, not a web search, for literature.*paper\.cite.*more_authors.*nisa\.paper before citing/,
     );
+  // What a model sends leaves Merv, as web.search says of its own queries.
+  for (const name of ['nisa.search', 'nisa.semantic_search', 'nisa.excerpts'])
+    assert.match(
+      described(name),
+      /leaves Merv for Nisa.*never put unpublished project text, credentials or signed links in it/,
+    );
+  assert.match(described('nisa.semantic_search'), /the provider that embeds it/);
+  // A passage carries no title or authors: its citation comes from the paper's record.
+  assert.match(described('nisa.excerpts'), /paper\.cite with the record nisa\.paper returns/);
+  assert.match(described('nisa.related'), /nisa_no_related/);
+  // Nisa filters authors by whole words in one search and by substring in the other.
+  const author = (name: string) =>
+    (describeTool(definitions.find((tool) => tool.name === name)!).inputSchema.properties as any)
+      .author.description;
+  assert.match(author('nisa.search'), /whole words.*commas separate alternative authors/);
+  assert.match(author('nisa.semantic_search'), /substring/);
 });
 
 test('a Pi turn is offered Nisa and runs it as its person, a reader included', async (t) => {

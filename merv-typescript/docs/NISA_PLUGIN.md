@@ -30,7 +30,16 @@ Nisa validates it; each paper comes back with `identifier` (`arxiv:<id>`),
 `title`, `authors`, `year` and `url` (`https://arxiv.org/abs/<id>`), which is
 what `paper.cite` takes, and nothing Nisa sends beyond the allowlisted fields
 passes. Each answer is sized to what Pi shows the model of one result. Failures
-are `nisa_*` errors that repeat nothing Nisa wrote.
+are `nisa_*` errors that repeat nothing Nisa wrote. Every worker launch's text
+names the `nisa.*` searches for literature, and `web.search` for the rest of
+the web where that launch is given it: a worker otherwise reads its tools as
+project reads and answers from memory.
+
+Queries leave Merv: Nisa receives each one (the passage search's terms in its
+URL, so in its access logs), and embeds a semantic search's query through
+DeepInfra. The descriptions tell a model never to put unpublished project text,
+credentials or signed links in them; the package README's Privacy section has
+the detail.
 
 ## How this replaces the earlier designs
 
@@ -55,11 +64,18 @@ are `nisa_*` errors that repeat nothing Nisa wrote.
   Nisa's side, and `qa.ask` is a paid, asynchronous write that execution
   policies would have to name. Until then an agent answers from these reads
   with its own model.
-- **PDF links** (`/api/sdk/paper/{id}/pdf`): agents read papers through Merv's
-  own paper tools.
+- **PDF links** (`/api/sdk/paper/{id}/pdf`): the route links a PDF, and no
+  Merv tool yet turns a PDF into text an agent can read. Merv's `paper.*`
+  tools are the project's own living paper, not arXiv papers, so an agent sees
+  a paper's body only through `nisa.excerpts` (at most 20 passages of at most
+  2,000 characters that match its terms).
 - **Per-person Nisa accounts.** One key means every agent's search is that one
-  Nisa account's, and a leaked key exposes that account's lists and chats.
-  Merv has no per-person secret bindings for it.
+  Nisa account's. A Nisa key has no scope: it is a credential for the whole
+  account, so a leaked key reads that account's chats, transcripts and research
+  documents, changes and shares its lists, starts paid agent turns, and sends
+  shell commands to any `nisa` CLI the account has connected (the user-shell
+  route asks no approval). Hence the dedicated account below. Merv has no
+  per-person secret bindings for it.
 
 ## Turning on literature and internet search
 
@@ -68,6 +84,15 @@ Production and staging each have their own `/etc/merv/typescript.env`
 `deploy/render-config.mjs` composes a plugin only when its variable is set, and
 checks each key's shape without ever copying it into the rendered config.
 Nothing here needs a database migration.
+
+First create a Nisa account for Merv alone, with an address that is not a
+person's (anonymous accounts cannot mint keys), and never use it for chats,
+lists or a connected `nisa` CLI; never mint the key from your own account.
+Signed in to it in a browser, mint one key with `POST /api/sdk/auth/api-keys`
+(Nisa shows the raw key once). To revoke it later, delete it from that browser
+login with `DELETE /api/sdk/auth/api-keys/<id>` (its id is in
+`GET /api/sdk/auth/api-keys`; a key cannot manage keys) and remove the
+variable.
 
 Add to `/etc/merv/typescript.env` on **staging** first, then **production**,
 with real values only in that file (never on a command line, in a log or in
@@ -113,10 +138,19 @@ grep '"status":"ready"' | tail -n1`) lists `nisa`/`nisa-tools` and
    and in a new Pi turn. Then run one `nisa.search`, one `nisa.paper`
    (`2303.08774`), one `web.search` and one `web.extract` of a page that search
    returned, with the real keys; no test here has called the real services.
-5. **Workers.** Codex workers see the `nisa.*` tools once their runner carries
-   the change that lists them (hosted runners: `deploy/hosted-release.mjs`, run
-   by `release.mjs`). `web.*` reach only hosted, unsealed Codex launches and
-   unsealed Claude launches, whose shells already have the network.
+5. **Workers.** Codex workers see the `nisa.*` tools, and the launch text that
+   names them, once their runner carries the change that lists them (hosted
+   runners: `deploy/hosted-release.mjs`, run by `release.mjs`). `web.*` reach
+   only hosted, unsealed Codex launches and unsealed Claude launches, whose
+   shells already have the network.
+6. **Size the web budget for Fleet.** Every Fleet agent in a project, its Pi
+   turns and its MCP clients share `MERV_WEB_DAILY_CALLS_PER_PROJECT` (200 a
+   day by default), and every project shares `MERV_WEB_DAILY_CALLS` (1000).
+   With `MERV_FLEET_WORKFLOW_ENABLED`, a wave of `MERV_FLEET_PROJECT_LIMIT` (5)
+   agents making 20 calls a step spends 200 in two steps, and later steps that
+   day get `web_budget_exhausted`. Raise both to about the project limit times
+   the calls a step makes times the steps a project runs a day, as far as the
+   Tavily plan allows.
 
 Before turning web search on, read its [privacy](../packages/web/README.md#privacy)
 and [cost](../packages/web/README.md#cost-controls) sections: queries leave

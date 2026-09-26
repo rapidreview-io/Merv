@@ -292,6 +292,9 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   ])
     assert.ok(enabled.includes(read), read);
   for (const read of ['web.search', 'web.extract']) assert.ok(!enabled.includes(read), read);
+  // Its launch text sends it to Nisa for literature, and names no internet read it lacks.
+  assert.match(spec.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
+  assert.doesNotMatch(spec.stdin, /web\.search|web search/);
   // Codex stops waiting on a tool after 60 s by default: a web search may take longer.
   assert.match(settings.mcp_servers, /,tool_timeout_sec=180,/);
   assert.match(settings.mcp_servers, /"task.checkpoint"=\{approval_mode="approve"\}/);
@@ -349,6 +352,13 @@ test('a hosted Codex profile calls the model through Main with its session beare
   assert.deepEqual(rest(spec.args), rest(plain.args));
   assert.equal(rest(plain.args).length, plain.args.length - 4);
   assert.deepEqual(spec.env, plain.env);
+  // Its launch text says when to use each: tool descriptions alone left workers answering from
+  // memory, since the rest of that text speaks of project reads.
+  assert.match(
+    spec.stdin,
+    /nisa\.search and nisa\.semantic_search find scholarly papers .* rather than your memory or a web search, and name each paper you cite by its arxiv identifier\. web\.search and web\.extract find and read the rest of the public web/,
+  );
+  assert.doesNotMatch(plain.stdin, /web\.search/);
   assert.equal(JSON.stringify(spec.args).includes(secret), false);
   // A sealed review stays on the offline read-only sandbox.
   const sealed = request(true, {
@@ -359,10 +369,13 @@ test('a hosted Codex profile calls the model through Main with its session beare
     retain: true,
     advancesCentral: false,
   });
-  const review = buildLaunch(hosted, sealed, safeEnv).args;
+  const reviewLaunch = buildLaunch(hosted, sealed, safeEnv);
+  const review = reviewLaunch.args;
   assert.equal(review[review.indexOf('--sandbox') + 1], 'read-only');
   for (const read of ['web.search', 'web.extract']) assert.ok(!enabled(review).includes(read));
   assert.ok(enabled(review).includes('nisa.search'));
+  assert.match(reviewLaunch.stdin, /nisa\.search/);
+  assert.doesNotMatch(reviewLaunch.stdin, /web\.search/);
 });
 
 test('repository skill discovery covers the working directory through the Git root, without siblings or outer repositories', (t) => {
@@ -534,6 +547,10 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
     'mcp__merv__web_search,mcp__merv__web_extract',
   );
   for (const launch of [spec, reviewer]) assert.ok(!launch.args.includes('--disallowedTools'));
+  // Each launch's text names the searches it is given, and a sealed review's no internet read.
+  for (const launch of [spec, reviewer]) assert.match(launch.stdin, /web\.search and web\.extract/);
+  assert.match(codeReviewer.stdin, /nisa\.search/);
+  assert.doesNotMatch(codeReviewer.stdin, /web\.search/);
   // A checkout that is thrown away afterwards is free to compute in.
   const ephemeral = buildLaunch(
     claude,
