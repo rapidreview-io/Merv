@@ -265,7 +265,8 @@ export interface Sessions {
   running(caller: Caller): Promise<RunningNodes>;
   /**
    * What dispatch holds back, as marks on that work, and the lane's own line about dispatch
-   * and machines. A narrow reading of the stuck rules, never the whole analysis.
+   * and machines. A narrow reading of the stuck rules, never the whole analysis: a hold is
+   * marked for every reader, and what the queue holds is told to an operator only.
    */
   runningMarks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
   /** A lease's sidebar, any status; null for a lease the project does not hold. */

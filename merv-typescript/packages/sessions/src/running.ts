@@ -241,10 +241,8 @@ function leaseRow(lease: Lease, now: number, idleNoticeSeconds: number): Running
   };
 }
 
-const STALLS: Record<
-  NonNullable<DispatchReading['stall']>['code'],
-  (waiting: number, machine?: string) => RunningAttention
-> = {
+type Stall = NonNullable<DispatchReading['stall']>;
+const STALLS: Record<Stall['code'], (waiting: number, stall: Stall) => RunningAttention> = {
   dispatch_disabled: (waiting) => ({
     says: ['Dispatch paused · ', { count: waiting }, ' waiting'],
     who: 'An operator starts dispatch',
@@ -253,15 +251,17 @@ const STALLS: Record<
     says: ['No machine online · ', { count: waiting }, ' waiting'],
     who: 'Someone with a write key of this project starts a runner',
   }),
-  runner_refusing: (_waiting, machine) => ({
-    says: [clip(machine ?? 'A machine', 200), ' refuses work'],
+  // A machine Fleet rents is 'a Fleet VM' wherever the page names it.
+  runner_refusing: (_waiting, { machine, rented }) => ({
+    says: [rented ? 'A Fleet VM' : clip(machine ?? 'A machine', 200), ' refuses work'],
     who: 'Whoever runs it restarts it, or an operator changes its settings',
   }),
 };
 /**
  * The Sessions lane's own line: dispatch in the Sessions page's words (paused, running or
- * waiting), the project's machines, and, while work waits, the one reason it does. The control
- * says the state it sets; only a start while work waits wears the accent.
+ * waiting), the project's machines, and, while work waits, the one reason it does, which only
+ * an operator's read counts. The control says the state it sets; only a start while work waits
+ * wears the accent.
  */
 export function laneSummary(reading: DispatchReading): RunningSummary {
   const { dispatch, fleet, machines, waiting, stall, operator } = reading;
@@ -291,7 +291,7 @@ export function laneSummary(reading: DispatchReading): RunningSummary {
   return {
     lane: 'sessions',
     says,
-    ...(stall && waiting ? { attention: STALLS[stall.code](waiting, stall.machine) } : {}),
+    ...(stall && waiting ? { attention: STALLS[stall.code](waiting, stall) } : {}),
     actions: [action],
   };
 }
@@ -318,7 +318,8 @@ const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) =>
 /**
  * What dispatch holds back, on the work it holds. A held target and ready work nobody took
  * need a person; a target still being retried, or put off by machines that could not prepare
- * it, resumes by itself, so it only replaces the work's line, without the red.
+ * it, resumes by itself, so it only replaces the work's line, without the red. All but the
+ * held are an operator's: see SessionDispatch.running.
  */
 export function dispatchMarks(reading: DispatchReading): RunningMark[] {
   const key = (instanceId: string) => runningKey('work', instanceId);
@@ -362,8 +363,6 @@ const platformPhrase = (platform: SessionPlatform) =>
   [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
 
 interface PanelRow extends LeaseRow {
-  at: number;
-  actor_id: string;
   closed_at: string | null;
   close_reason: string | null;
   outcome: string | null;
@@ -534,7 +533,7 @@ export class SessionRunning {
   async panel(caller: Caller, sessionId: string): Promise<RunningPanelPart | null> {
     return await this.read(caller, async (tx, operator) => {
       const row = await tx.get<PanelRow>(
-        `SELECT ${LEASE},s._merv_rowid AS at,s.actor_id,x.j #>> '{closedAt}' AS closed_at,
+        `SELECT ${LEASE},x.j #>> '{closedAt}' AS closed_at,
           x.j #>> '{closeReason}' AS close_reason,x.j #>> '{outcome}' AS outcome,
           x.j #>> '{deferral,cause}' AS deferral,x.j #>> '{agentId}' AS agent_id,
           x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,
@@ -618,9 +617,9 @@ export class SessionRunning {
       // When it must end, and, while nothing renews it, when it lapses and returns the work.
       const terms: RunningFact[] = live
         ? [
-            { label: 'Ends', value: [{ until: row.hard_deadline }] },
+            { label: 'Ends in', value: [{ until: row.hard_deadline }] },
             ...(row.status === 'offered' || silent
-              ? [{ label: 'Lapses', value: [{ until: row.expires_at }] }]
+              ? [{ label: 'Lapses in', value: [{ until: row.expires_at }] }]
               : []),
           ]
         : [
@@ -721,7 +720,7 @@ export class SessionRunning {
                   ...(at ? [', '] : []),
                   {
                     link: { key: runningKey('session', other.id) },
-                    text: clip(`${workName(other.label)} · ${other.role}`, 200),
+                    text: clip(`${workName(other.label)} · ${ROLES[other.role]}`, 200),
                   },
                 ]),
               });
@@ -745,20 +744,15 @@ export class SessionRunning {
           )
         : undefined;
       const continuing: Agent | null = agent ? JSON.parse(agent.agent_json) : null;
+      // How many assignments came before is not said: worker_sessions has no index to count an
+      // actor's by, and this sidebar is read every few seconds.
       if (continuing?.persistent) {
-        const earlier = (await tx.get<{ n: number }>(
-          'SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND actor_id=? AND _merv_rowid<?',
-          caller.projectId,
-          row.actor_id,
-          row.at,
-        ))!.n;
         sections.push({
           title: 'Agent',
           place: 'details',
           kind: 'facts',
           rows: [
             { label: 'Name', value: [clip(continuing.name, 200)] },
-            { label: 'Earlier assignments', value: [{ count: earlier }] },
             ...(continuing.contextEpoch > 0
               ? [{ label: 'Context resets', value: [{ count: continuing.contextEpoch }] }]
               : []),
