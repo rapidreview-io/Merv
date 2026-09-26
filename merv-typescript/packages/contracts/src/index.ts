@@ -1851,6 +1851,7 @@ export interface ServiceTaskCreator {
   ): Promise<{ id: string }>;
 }
 
+import type { RunningNode, RunningPanelPart } from './running.js';
 export interface Tasks {
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
@@ -1870,6 +1871,13 @@ export interface Tasks {
   markFailed(caller: Caller, input: TaskMarkFailed, tx?: Transaction): Promise<Task>;
   /** The owner capability another plugin creates service tasks with, under its own provider name. */
   serviceTasks(provider: string): ServiceTaskCreator;
+  /**
+   * The Running page's work lane: a node for every task still in flight, and for each ended
+   * one whose key another owner holds there (`include`, as Running keys). Reads only.
+   */
+  running(caller: Caller, include?: Iterable<string>): Promise<RunningNode[]>;
+  /** A task's sidebar on the Running page; null when no task of this project has the id. Reads only. */
+  runningPanel(caller: Caller, taskId: string): Promise<RunningPanelPart | null>;
 }
 declare module 'cordis' {
   interface Context {

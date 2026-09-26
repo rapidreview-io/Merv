@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { check } from '@merv/contracts';
+import { check, keyId, keyKind } from '@merv/contracts';
 import type { Caller, Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 
@@ -38,6 +38,17 @@ export const taskUiPlugin = {
             (task) => !['done', 'failed'].includes(task.workflow.state),
           ).length,
         }),
+      }),
+    );
+    // The work lane's tasks and a task's sidebar on the Running page, as the service reads them.
+    ctx.effect(() =>
+      ctx.ui.contribute({
+        owner: 'tasks',
+        kinds: ['work'],
+        lanes: ['work'],
+        nodes: async (read) => ({ nodes: await tasks.running(read.caller, read.include) }),
+        panel: async (read, key) =>
+          keyKind(key) === 'work' ? await tasks.runningPanel(read.caller, keyId(key)) : null,
       }),
     );
   },

@@ -56,3 +56,7 @@ See [structured task evidence](../../docs/STRUCTURED_TASK_EVIDENCE.md) for the v
 ## Workflow assignments
 
 Tasks registers producer/reviewer assignments with Workflows and shares recipe preparation between full read-only previews and saved context. Eligible reviewers can inspect an open review before claiming it; saved context, checkpoints and verdicts still require their current claim. Operators retain assistance access but cannot submit another producer’s delivery. Task reads expose historical `workStarts`; these are not ownership claims. See [assignment and begin](../../docs/WORKFLOW_ASSIGNMENT_PLAN.md).
+
+## Running page
+
+`tasks.running` draws the Running page's work lane: a card for every task not yet done or failed, and for an ended one only while another owner holds its key there (a Code merge). `tasks.runningPanel` answers a task's sidebar: its ladder, what it waits on and unblocks, its goal and a brief a person wrote, its checks with the delivery's claims while they stand, and its producer. Both read one snapshot and never evaluate guidance, so a card says the same to every reader: waiting comes from the prerequisites themselves, a task another plugin holds back reads `Waiting` rather than `Ready`, and red is kept for a failed prerequisite, used review rounds, a suspension, and (for operators) a review no independent reviewer can take. The task ui adapter registers both with `ctx.ui.contribute`; see [Running contributions](../../docs/UI_PLUGIN.md#running-contributions).
