@@ -1054,11 +1054,11 @@ async function boot(h: Hosted, allocation: FleetAllocation) {
   return { runnerId, session, secret: request.secret };
 }
 
-test('Fleet’s review director reviews what the admin, or Pi as them, delivered at the desk, and produces nothing', async (t) => {
+test('Fleet produces Pi-directed work and its review director reviews the admin’s desk delivery', async (t) => {
   const h = await hosted(t, 2);
   const caller = await h.project('Reviewed');
   await h.sessions.setDispatch(caller, { enabled: true });
-  // Pi acts with exactly its person's source, so its delivery is the founder's own.
+  // Pi acts with the person's source to direct work, but cannot produce its delivery.
   const source = await h.scope.delegationSource(caller);
   h.scope.registerConversationAuthority({ require: async () => source });
   const pi: Caller = {
@@ -1066,13 +1066,25 @@ test('Fleet’s review director reviews what the admin, or Pi as them, delivered
     human: undefined,
     conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
   };
-  const review = await delivered(h, pi, 'pi');
-  const producing = await h.tasks.create(caller, {
+  const review = await delivered(h, caller, 'human');
+  const producing = await h.tasks.create(pi, {
     title: 'Producing',
     goal: 'Add.',
     checks: ['It adds.'],
     requestId: 'producing',
   });
+  await assert.rejects(
+    h.tasks.submitDelivery(
+      pi,
+      confirmedDelivery({
+        taskId: producing.id,
+        expectedRevision: producing.workflow.revision,
+        artifactIds: [],
+        requestId: 'pi-delivery',
+      }),
+    ),
+    { code: 'conversation_task_producer_forbidden' },
+  );
   await h.adapter.start();
   const allocations = await h.fleet.listOwned(h.adapter, []);
   const by = (kind: string) => allocations.find((a) => a.source.kind === kind)!;
