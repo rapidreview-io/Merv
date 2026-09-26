@@ -1,20 +1,29 @@
-import { clip, visible, mapAsync } from '@merv/contracts';
+import { clip, visible, mapAsync, runningKeyPattern } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { check, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
+import type { RunningContribution, Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
 import { homeRead, identityOf } from './home.js';
+import { RunningRegistry, runningBoard, runningPanel, type RunningSources } from './running.js';
 import { serveBundle } from './static.js';
 
-export type { Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
+export type {
+  RunningContribution,
+  RunningRead,
+  Ui,
+  UiRow,
+  UiRowDescription,
+  UiRowStatus,
+} from './types.js';
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 
 /** Sidebar rows registered by feature adapters; a disposed registration disappears immediately. */
 export class UiRegistry implements Ui {
   private readonly entries = new Map<string, UiRow>();
+  private readonly running = new RunningRegistry();
 
   register(row: UiRow): () => void {
     check(row && typeof row === 'object', 'invalid_row', 'Row must be an object');
@@ -71,6 +80,15 @@ export class UiRegistry implements Ui {
     check(row.read, 'row_unreadable', `Row has no readable data: ${row.id}`, 404);
     return await row.read(caller, params);
   }
+
+  /** Adds one owner's part of the Running page; a disposed contribution leaves it at once. */
+  contribute(contribution: RunningContribution): () => void {
+    return this.running.contribute(contribution);
+  }
+
+  contributions(): RunningContribution[] {
+    return this.running.contributions();
+  }
 }
 
 export const uiPlugin = {
@@ -119,6 +137,36 @@ export const uiPlugin = {
             async (as, rowId, params) => await ui.read(as, rowId, params),
             caller,
           ),
+      }),
+    );
+    const running: RunningSources = {
+      contributions: () => ui.contributions(),
+      tools: async () => (await ctx.tools.list()).map((tool) => tool.name),
+    };
+    // A person's monitor. Its sidebars can hold what only an operator may read, so no
+    // conversation is offered it and the reads refuse leased workers and managed runners.
+    // One snapshot for every owner's part, as for ui.home.
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'ui.running',
+        description:
+          'Read what is in flight in this project in three lanes: the work, the agent sessions on it and the machines they use, with what needs a person and the edges between them.',
+        inputSchema: z.object({}).strict(),
+        readOnly: true,
+        conversation: 'never' as const,
+        handler: async (caller: Caller) => await runningBoard(running, caller),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'ui.running_panel',
+        description:
+          "Read the Running sidebar of one key: its owner's head, the sections every owner adds about it, and the controls this caller may use.",
+        inputSchema: z.object({ key: z.string().regex(runningKeyPattern) }).strict(),
+        readOnly: true,
+        conversation: 'never' as const,
+        handler: async (caller: Caller, input: { key: string }) =>
+          await runningPanel(running, caller, input.key),
       }),
     );
     ctx.effect(() =>

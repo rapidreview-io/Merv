@@ -6,7 +6,7 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 
 | Module               | Entry id       | Injects           | Owns                                                                                |
 | -------------------- | -------------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `@merv/ui`           | `ui`           | `api`, `tools`    | The `ui` row registry, the bundle at `/ui`, `ui.shell`, `ui.read`, the Settings row |
+| `@merv/ui`           | `ui`           | `api`, `tools`    | The `ui` row and Running registries, the `/ui` bundle, `ui.*` tools, a Settings row |
 | `@merv/scope/ui`     | `scope-ui`     | `scope`, `ui`     | People (a directory; no count)                                                      |
 | `@merv/tasks/ui`     | `tasks-ui`     | `tasks`, `ui`     | Tasks (count of tasks not done or failed)                                           |
 | `@merv/reviews/ui`   | `reviews-ui`   | `reviews`, `ui`   | Reviews (count of unclaimed and started reviews)                                    |
@@ -50,6 +50,38 @@ Domain plugins never import the UI. Adapters import only the public `@merv/ui/ty
 - `ui.read` (read-only): `{ rowId }` returns the data a row owns when it declares `read`; otherwise `row_unreadable`.
 
 Both are ordinary catalog tools, visible to agents as well as the browser.
+
+- `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
+- `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
+
+These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`.
+
+## Running contributions
+
+The Running page draws everything in flight from contributions that the owning plugins register in their existing ui adapters. No adapter injects anything new: `ctx.ui` carries the registry.
+
+```ts
+ctx.effect(() =>
+  ctx.ui.contribute({
+    owner: 'tasks', // unique while registered; the board orders ties by owner
+    kinds: ['work'], // key kinds whose sidebars this owner answers
+    lanes: ['work'], // lanes it draws in; a failure is reported there
+    nodes: async (read) => ({ nodes: await ctx.tasks.running(read.caller, read.include) }),
+    panel: async (read, key) => await ctx.tasks.runningPanel(read.caller, keyId(key)),
+  }),
+);
+```
+
+The vocabulary is `@merv/contracts`' `running.ts`: nodes, marks, lane summaries, sidebar parts and sections, and the values a phrase is made of. Owners send instants and never write durations, arrows or identifiers as words; the shell ticks every clock and draws every arrow. Every member is optional:
+
+- `marks(read)`: attention on keys other owners draw. Marks are read first, and every marked key reaches every `nodes()` as `read.include`, so the owner that draws it returns it even where its own rule would drop it.
+- `nodes(read)` and `summary(read)`: the owner's cards and its lane line. A cached source reports `asOf`, `freshForMs` and `failed`, and `pending` until it has been filled once.
+- `panel(read, key, absorbedBy?)`: the sidebar of a key this owner draws, or null for one it does not. The first contribution of the key's kind that answers owns it; a 404 or null means “not mine”, and any other refusal is the answer.
+- `sections(read, keys)`: sections about keys other owners draw, placed by `place`.
+
+`read.once(name, fn)` shares one read between the members of one contribution for one answer. Both tools are read-only, so every member runs inside one PostgreSQL snapshot: nothing may write (the state layer refuses it), and nothing may wait on a service outside this process — read a cache the service fills on its own timer instead. Call a service's own `get()` or `process()` outside any transaction you opened yourself; each opens its own read on the same snapshot. A part refused with 403 or 404 is absent; any other failure names the owner in its lanes' `failed`, and the rest of the board stands. What breaks the contract is left out, never forwarded.
+
+The board, not the owner, decides three things: a node that lists another owner's key in `aliases` absorbs it (and whatever that absorbed), so the thing is drawn once; a work node's dot comes from the sessions working on or reviewing it; and each lane counts what needs a person in `needsYou`. Only the owner's controls reach a sidebar, and only those it allowed for this caller whose tool this server has.
 
 ## Serving
 

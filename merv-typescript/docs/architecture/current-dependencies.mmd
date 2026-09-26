@@ -105,6 +105,7 @@ flowchart BT
   experiments --> contextBuilder
   experiments --> paper
   experiments -. optional .-> codeResearch
+  experiments -. optional .-> sandboxes
   merv_experiments_tools --> experiments
   merv_experiments_tools --> tools
   merv_experiments_ui --> experiments
@@ -197,6 +198,7 @@ flowchart BT
   reviews --> scope
   reviews --> artifacts
   reviews --> domainEvents
+  sandboxes -. optional .-> artifacts
   merv_sandboxes_tools --> sandboxes
   merv_sandboxes_tools --> tools
   merv_sandboxes_tools --> scope

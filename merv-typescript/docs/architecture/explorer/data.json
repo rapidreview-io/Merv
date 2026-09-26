@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-25",
+  "snapshot": "2026-09-26",
   "groups": [
     {
       "id": "front",
@@ -170,6 +170,26 @@
           "name": "artifact.read",
           "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
           "readOnly": true
+        },
+        {
+          "name": "artifact.storage_status",
+          "description": "Whether this project can retain large files in Sandboxes object storage.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.upload_begin",
+          "description": "Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.upload_complete",
+          "description": "Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.upload_resume",
+          "description": "Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.",
+          "readOnly": false
         }
       ]
     },
@@ -232,6 +252,26 @@
           "name": "artifact.read",
           "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
           "readOnly": true
+        },
+        {
+          "name": "artifact.storage_status",
+          "description": "Whether this project can retain large files in Sandboxes object storage.",
+          "readOnly": true
+        },
+        {
+          "name": "artifact.upload_begin",
+          "description": "Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.upload_complete",
+          "description": "Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.",
+          "readOnly": false
+        },
+        {
+          "name": "artifact.upload_resume",
+          "description": "Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.",
+          "readOnly": false
         }
       ]
     },
@@ -580,7 +620,8 @@
         "paper"
       ],
       "optional": [
-        "codeResearch"
+        "codeResearch",
+        "sandboxes"
       ],
       "kind": "service",
       "runtime": "server",
@@ -591,6 +632,21 @@
       "label": "Experiments",
       "purpose": "Owns plans, attempts, approved evidence, results, exhibits and both independent review stages. Git experiments bind review to the exact producer capture.",
       "exposedTools": [
+        {
+          "name": "compute.cancel",
+          "description": "Propose cancellation of one run owned by this experiment.",
+          "readOnly": false
+        },
+        {
+          "name": "compute.offers",
+          "description": "Read this project’s ML allowance and available GPU offers.",
+          "readOnly": true
+        },
+        {
+          "name": "compute.run",
+          "description": "Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.",
+          "readOnly": false
+        },
         {
           "name": "experiment.attach",
           "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
@@ -641,6 +697,21 @@
       "label": "Experiments · tools adapter",
       "purpose": "Connects Experiments to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
+        {
+          "name": "compute.cancel",
+          "description": "Propose cancellation of one run owned by this experiment.",
+          "readOnly": false
+        },
+        {
+          "name": "compute.offers",
+          "description": "Read this project’s ML allowance and available GPU offers.",
+          "readOnly": true
+        },
+        {
+          "name": "compute.run",
+          "description": "Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.",
+          "readOnly": false
+        },
         {
           "name": "experiment.attach",
           "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
@@ -1757,7 +1828,9 @@
         "sandboxes"
       ],
       "requires": [],
-      "optional": [],
+      "optional": [
+        "artifacts"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
@@ -2359,6 +2432,16 @@
           "readOnly": true
         },
         {
+          "name": "ui.running",
+          "description": "Read what is in flight in this project in three lanes: the work, the agent sessions on it and the machines they use, with what needs a person and the edges between them.",
+          "readOnly": true
+        },
+        {
+          "name": "ui.running_panel",
+          "description": "Read the Running sidebar of one key: its owner's head, the sections every owner adds about it, and the controls this caller may use.",
+          "readOnly": true
+        },
+        {
           "name": "ui.shell",
           "description": "Read your actor identity and selected project, the sidebar rows currently registered by active plugins with live row status, and the plugin lifecycle table.",
           "readOnly": true
@@ -2662,6 +2745,11 @@
     {
       "from": "experiments",
       "to": "codeResearch",
+      "optional": true
+    },
+    {
+      "from": "experiments",
+      "to": "sandboxes",
       "optional": true
     },
     {
@@ -3125,6 +3213,11 @@
       "optional": false
     },
     {
+      "from": "sandboxes",
+      "to": "artifacts",
+      "optional": true
+    },
+    {
       "from": "merv-sandboxes-tools",
       "to": "sandboxes",
       "optional": false
@@ -3324,7 +3417,7 @@
     "plugins": 63,
     "providers": 28,
     "adapters": 35,
-    "dependencies": 170
+    "dependencies": 172
   },
   "network": [
     {
