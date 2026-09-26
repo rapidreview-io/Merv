@@ -10,6 +10,11 @@ import type {
   RunnerPlatform,
   RunnerPresence,
   RunnerSettings,
+  RunningMark,
+  RunningNodes,
+  RunningPanelPart,
+  RunningSection,
+  RunningSummary,
   SessionDeferral,
   SessionOutcome,
   SessionReleaseOutcome,
@@ -252,6 +257,21 @@ export interface Sessions {
   projectStatus(caller: Caller): Promise<SessionsProjectStatus>;
   /** The rail's one number, read on its own rather than by computing a whole status. */
   liveSessionCount(caller: Caller): Promise<number>;
+  /**
+   * The Running page's Sessions lane: a node for every offered or active lease of the project,
+   * whoever offered it, with where it runs and the work it is on. Read-only, never for a
+   * leased worker or a managed runner, like every read below.
+   */
+  running(caller: Caller): Promise<RunningNodes>;
+  /**
+   * What dispatch holds back, as marks on that work, and the lane's own line about dispatch
+   * and machines. A narrow reading of the stuck rules, never the whole analysis.
+   */
+  runningMarks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
+  /** A lease's sidebar, any status; null for a lease the project does not hold. */
+  runningPanel(caller: Caller, sessionId: string): Promise<RunningPanelPart | null>;
+  /** The Sessions section of the given work's sidebar: the live leases on those instances. */
+  runningWork(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]>;
   /**
    * The live sessions of a project whose execution policy holds a workspace on `driver`,
    * whoever offered them. It is scoped by the project rather than by a caller's delegation

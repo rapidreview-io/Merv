@@ -31,6 +31,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
+import { SessionRunning } from './running.js';
 import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations, lastActivity } from './observations.js';
 import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
@@ -311,6 +312,7 @@ export class LeasedSessions implements Sessions {
   private closing?: Promise<void>;
   private closed = false;
   private dispatcher!: SessionDispatch;
+  private board!: SessionRunning;
   serviceWork!: SessionServiceWork;
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
@@ -395,6 +397,7 @@ export class LeasedSessions implements Sessions {
           this.thresholds,
         ),
       );
+      this.board = new SessionRunning(state, scope, this.dispatcher, this.clock, this.thresholds);
       this.serviceWork = new SessionServiceWork(
         state,
         scope,
@@ -1116,6 +1119,32 @@ export class LeasedSessions implements Sessions {
         caller.projectId,
       ))!.n;
     });
+  }
+  async running(caller: Caller) {
+    this.ordinary(caller);
+    this.ensureOpen();
+    return await this.board.nodes(caller);
+  }
+  async runningMarks(caller: Caller) {
+    this.ordinary(caller);
+    this.ensureOpen();
+    return await this.board.marks(caller);
+  }
+  async runningPanel(caller: Caller, sessionId: string) {
+    this.ordinary(caller);
+    this.ensureOpen();
+    check(text(sessionId), 'invalid_session', 'A session identifier is required');
+    return await this.board.panel(caller, sessionId);
+  }
+  async runningWork(caller: Caller, instanceIds: readonly string[]) {
+    this.ordinary(caller);
+    this.ensureOpen();
+    check(
+      Array.isArray(instanceIds) && instanceIds.every((id) => text(id)),
+      'invalid_instance',
+      'Instance identifiers are required',
+    );
+    return await this.board.work(caller, instanceIds);
   }
   /**
    * Every live session of the project that holds a workspace on `driver`, whoever offered it.
