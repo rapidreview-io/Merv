@@ -1,4 +1,10 @@
-import { requireDirecting, excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
+import {
+  requireDirecting,
+  excludedFromReview,
+  releasedLease,
+  mapAsync,
+  boundedPaperContext,
+} from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -28,7 +34,7 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import type { Paper, PaperRevision, PaperWorkspace } from '@merv/paper/types';
+import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCapture } from '@merv/code-research/types';
 import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
@@ -153,7 +159,7 @@ const recipeNames: Record<ActiveState, string> = {
   running: 'experiment.execute',
   experiment_review: 'experiment.attempt_review',
 };
-const instructions: Record<ActiveState, string> = {
+const previousInstructions: Record<ActiveState, string> = {
   planned:
     'Design an experiment that can test its stated question. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
   design_review:
@@ -162,6 +168,14 @@ const instructions: Record<ActiveState, string> = {
     'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
   experiment_review:
     'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
+};
+const instructions: Record<ActiveState, string> = {
+  planned:
+    'Design an experiment that can test its stated question as one step toward the project paper’s Problem, scope and goals. It need not achieve the whole project goal alone. Read any abbreviated paper sections with paper.read and distinguish established findings from the hypothesis. Preserve source-specified methods when the question calls for reproduction; identify each deliberate departure and limit the conclusion accordingly. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
+  design_review:
+    'Independently test whether the exact pinned design can answer its research question and make the stated contribution toward the project paper’s goals. An experiment may be an intermediate step; do not require it to complete the whole project. Read any abbreviated paper sections with paper.read. Compare source-specified methods with the plan when it claims reproduction, and check that departures are explicit and the promised conclusion is limited accordingly. Examine controls, baselines, leakage, evaluation and feasibility. A structurally complete plan can still be scientifically unsound. Grade only the pinned submission.',
+  running: previousInstructions.running,
+  experiment_review: previousInstructions.experiment_review,
 };
 const handoffs: Record<ActiveState, string> = {
   planned:
@@ -210,36 +224,8 @@ const feasibilityFormat: FeasibilityStatement = {
 };
 
 /**
- * The paper as a worker needs it in its frozen context: every document's revision and
- * sections, with the text while it fits the room a recipe leaves for the rest. A section
- * past that names its size, and the worker reads it with paper.read; a paper that grew
- * within its own limits must never make an experiment impossible to assign.
+ * The paper is included in every frozen experiment context with revision provenance.
  */
-function paperContext(documents: PaperWorkspace['documents'], room = 40_000) {
-  let left = room;
-  const brief = (document: PaperRevision): PaperRevision => ({
-    ...document,
-    sections: document.sections.map((section) => {
-      const kept = section.content.length <= left;
-      if (kept) left -= section.content.length;
-      return kept
-        ? section
-        : { ...section, content: `(${section.content.length} characters; read with paper.read)` };
-    }),
-  });
-  return Object.fromEntries(
-    Object.entries(documents).map(([kind, document]) => [
-      kind,
-      {
-        current: brief(document.current),
-        published: document.published && {
-          ...document.published,
-          document: brief(document.published.document),
-        },
-      },
-    ]),
-  );
-}
 
 /**
  * What a worker may look at. The assignment's own tool list reads as the boundary of it: over
@@ -251,12 +237,12 @@ const reading =
 const verifying =
   ' Open what you are judging rather than judging the summary of it: artifact.read returns the retained bytes of everything pinned to this submission, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
 
-export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
+const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
   version: 9,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
-    instructions: instructions[state] + reading + (reviewing(state) ? verifying : ''),
+    instructions: previousInstructions[state] + reading + (reviewing(state) ? verifying : ''),
     // One recipe serves every program version, so it says when the feasibility text applies.
     outputInstructions:
       handoffs[state] +
@@ -281,6 +267,20 @@ export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state)
     ],
   },
 }));
+export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
+  ...previousExperimentRecipes,
+  ...previousExperimentRecipes.map((definition) => ({
+    ...definition,
+    version: 10,
+    recipe: {
+      ...definition.recipe,
+      instructions:
+        instructions[activeStates.find((state) => recipeNames[state] === definition.name)!] +
+        reading +
+        (definition.kind === 'review' ? verifying : ''),
+    },
+  })),
+];
 
 /**
  * How often a design review, and a results review, may return an experiment. A design return
@@ -354,6 +354,7 @@ export class ExperimentProgram {
     return handle;
   }
   private contexts = new Map<ActiveState, ContextRegistration>();
+  private historicalContexts: ContextRegistration[] = [];
   private closed = false;
 
   /** Complete storage migrations before publishing this service. */
@@ -375,13 +376,15 @@ export class ExperimentProgram {
         },
       ]);
       try {
-        for (const state of activeStates)
-          this.contexts.set(
-            state,
-            await host.contextBuilder.register(
-              EXPERIMENT_RECIPES.find((recipe) => recipe.name === recipeNames[state])!,
-            ),
-          );
+        for (const recipe of EXPERIMENT_RECIPES) {
+          const registration = await host.contextBuilder.register(recipe);
+          if (recipe.version === 10)
+            this.contexts.set(
+              activeStates.find((state) => recipeNames[state] === recipe.name)!,
+              registration,
+            );
+          else this.historicalContexts.push(registration);
+        }
         for (const version of PROGRAM_VERSIONS)
           this.handles.set(
             version,
@@ -393,6 +396,7 @@ export class ExperimentProgram {
       } catch (error) {
         for (const handle of this.handles.values()) handle.dispose();
         for (const context of this.contexts.values()) context.dispose();
+        for (const context of this.historicalContexts) context.dispose();
         throw error;
       }
     };
@@ -404,7 +408,9 @@ export class ExperimentProgram {
     for (const handle of this.handles.values()) handle.dispose();
     this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
+    for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
+    this.historicalContexts = [];
   }
 
   private async facts(context: WorkflowCheckContext): Promise<Experiment> {
@@ -708,7 +714,7 @@ export class ExperimentProgram {
         ...(experiment.workspace === 'git'
           ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
           : {}),
-        paper: paperContext((await this.host.paper.read(caller, tx)).documents),
+        paper: boundedPaperContext((await this.host.paper.read(caller, tx)).documents),
         paperChangesFormat: {
           documents: [
             {

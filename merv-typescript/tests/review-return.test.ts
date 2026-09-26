@@ -591,6 +591,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
       'workflows',
       'context-builder',
       'reviews',
+      'paper',
       'tasks',
     ],
   });

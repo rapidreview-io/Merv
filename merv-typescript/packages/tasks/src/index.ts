@@ -1,5 +1,6 @@
 import {
   check,
+  boundedPaperContext,
   checkReceipt,
   childRequest,
   clip,
@@ -71,6 +72,7 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
+import type { Paper } from '@merv/paper/types';
 import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
@@ -308,6 +310,7 @@ export class TaskService implements Tasks {
     private reviews: Reviews,
     private contextBuilder: ContextBuilder,
     private limits = TASK_LIMITS,
+    private paper?: Paper,
   ) {
     this.initialize = async () => {
       await state.migrate(
@@ -571,6 +574,7 @@ export class TaskService implements Tasks {
       reviewId: review?.id ?? null,
       claimId: review?.claimId ?? null,
       project: await this.projectContext(source, tx),
+      ...(this.paper ? { paper: await this.projectPaperContext(source, tx) } : {}),
     };
     await tx.run(
       'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1495,7 +1499,7 @@ export class TaskService implements Tasks {
   }
 
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
-    const key = purpose === 'review' ? 'task.review@3' : `${task.type}@${task.typeVersion}`;
+    const key = purpose === 'review' ? 'task.review@4' : `${task.type}@${task.typeVersion}`;
     const type = this.types.get(key);
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
@@ -1511,6 +1515,14 @@ export class TaskService implements Tasks {
     };
   }
 
+  private async projectPaperContext(caller: Caller, tx: Transaction): Promise<Data> {
+    check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
+    const workspace = await this.paper.read(caller, tx);
+    return JSON.parse(
+      JSON.stringify({ documents: boundedPaperContext(workspace.documents, 16_000) }),
+    ) as Data;
+  }
+
   /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
   private async contextInputs(
     caller: Caller,
@@ -1524,18 +1536,25 @@ export class TaskService implements Tasks {
     const { dependents: _dependents, ...assignmentTask } = task;
     // Worker contexts retain the offer's Introduction even if an operator later changes it.
     // Old immutable lease receipts without this field remain exactly as they were.
-    const project = caller.session
-      ? (
-          JSON.parse(
-            (await this.currentLease(caller, task.id, task.workflow.revision, tx)).receipt,
-          ) as Data
-        ).project
-      : await this.projectContext(caller, tx);
+    const receipt = caller.session
+      ? (JSON.parse(
+          (await this.currentLease(caller, task.id, task.workflow.revision, tx)).receipt,
+        ) as Data)
+      : null;
+    const project = receipt?.project ?? (await this.projectContext(caller, tx));
+    const paper =
+      receipt?.paper ?? (this.paper ? await this.projectPaperContext(caller, tx) : null);
+    const hasProjectPaper = type.definition.recipe.sections.some(
+      (section) => section.key === 'projectPaper',
+    );
     const taskMetadata =
       JSON.stringify(assignmentTask) +
       (project === undefined
         ? ''
-        : `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`);
+        : `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`) +
+      (!hasProjectPaper && paper
+        ? `\n\nProject paper (captured document revisions; read paper.read for abbreviated sections):\n${JSON.stringify(paper)}`
+        : '');
     let inputs: Record<string, ContextInput>;
     if (purpose === 'review') {
       check(review, 'invalid_context', 'Missing review assignment');
@@ -1634,6 +1653,12 @@ export class TaskService implements Tasks {
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
       if (artifactIds.length) inputs.checkpointEvidence = { artifactIds, mode: 'auto' };
     }
+    if (hasProjectPaper)
+      inputs.projectPaper = {
+        text: paper
+          ? JSON.stringify(paper)
+          : 'Project paper unavailable in this assignment; read paper.read before work.',
+      };
     inputs = Object.fromEntries(
       Object.entries(inputs).filter(([key]) =>
         type.definition.recipe.sections.some((section) => section.key === key),
@@ -2765,7 +2790,7 @@ export class TaskService implements Tasks {
 
 export const tasksPlugin = {
   name: 'merv-tasks',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder'],
+  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const tasks = await createService(
@@ -2777,6 +2802,7 @@ export const tasksPlugin = {
         ctx.reviews,
         ctx.contextBuilder,
         config.limits,
+        ctx.paper,
       ),
     );
     ctx.inject(['codeResearch'], (ctx) => {

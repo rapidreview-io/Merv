@@ -142,6 +142,19 @@ export interface Session {
   lease: WorkflowLease;
   workspace?: SessionWorkspaceRecord;
 }
+/** Project-visible address for a worker, without its delegation or frozen assignment. */
+export type SessionLookup = Pick<
+  Session,
+  | 'id'
+  | 'agentId'
+  | 'actorId'
+  | 'instanceId'
+  | 'expectedRevision'
+  | 'role'
+  | 'status'
+  | 'createdAt'
+  | 'closedAt'
+>;
 export interface SessionOffer {
   agentId?: string;
   instanceId: string;
@@ -155,6 +168,22 @@ export interface SessionOffer {
 export interface SessionControl {
   sessionId: string;
   runnerId: string;
+}
+export interface SessionMessage {
+  id: string;
+  sessionId: string;
+  instanceId: string;
+  expectedRevision: number;
+  senderActorId: string;
+  body: string;
+  createdAt: string;
+  acknowledgedAt: string | null;
+  reply: string | null;
+}
+export interface SessionMessageInput {
+  sessionId: string;
+  body: string;
+  requestId: string;
 }
 /** Opaque server-owned preparation; constructing a matching object does not confer authority. */
 export interface SessionInvocation {
@@ -281,6 +310,16 @@ export interface Sessions {
    */
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
+  message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
+  messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
+  acknowledgeMessage(
+    caller: Caller,
+    input: { messageId: string; reply?: string; requestId: string },
+  ): Promise<SessionMessage>;
+  findSession(
+    caller: Caller,
+    instanceId: string,
+  ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }>;
   setDispatch(
     caller: Caller,
     input: Partial<Pick<DispatchState, 'enabled' | 'ownMachines'>>,

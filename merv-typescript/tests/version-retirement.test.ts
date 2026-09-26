@@ -408,6 +408,7 @@ test('retiring the versions that can no longer start deletes their records and n
   }
   expected.session_managed_runners = [];
   expected.experiment_compute_runs = [];
+  expected.session_messages = [];
   const after = await snapshot(client);
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);

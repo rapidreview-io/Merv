@@ -7,6 +7,7 @@ import { feedPlugin } from '@merv/feed';
 import { fleetPlugin } from '@merv/fleet';
 import { identityPlugin } from '@merv/identity';
 import { piPlugin } from '@merv/pi';
+import { paperPlugin } from '@merv/paper';
 import { reviewsPlugin } from '@merv/reviews';
 import { runnerPlugin } from '@merv/runner';
 import { scopePlugin } from '@merv/scope';
@@ -86,7 +87,7 @@ const capabilities: Record<string, readonly string[]> = {
   reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
-  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder'],
+  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
   feed: ['state', 'scope', 'artifacts'],
   identity: [],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
@@ -924,6 +925,7 @@ test('each service boots with only its declared dependency closure and without A
     blobs: { plugin: blobsPlugin, config: { root: directory } },
     scope: { plugin: scopePlugin },
     artifacts: { plugin: artifactsPlugin },
+    paper: { plugin: paperPlugin },
     workflows: { plugin: workflowsPlugin },
     reviews: { plugin: reviewsPlugin },
     tasks: { plugin: tasksPlugin },

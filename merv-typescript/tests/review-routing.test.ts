@@ -23,6 +23,7 @@ async function fixture(t: TestContext, api = false) {
       'workflows',
       'context-builder',
       'reviews',
+      'paper',
       'tasks',
     ],
   });

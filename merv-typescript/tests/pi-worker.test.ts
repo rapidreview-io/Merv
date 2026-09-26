@@ -82,6 +82,7 @@ async function fixture(
     globalFetch?: typeof fetch;
     cutOff?: boolean;
     model?: string;
+    projectPaper?: string;
     toolFailures?: number[];
     toolResult?: unknown;
     progressFailures?: number[];
@@ -256,6 +257,7 @@ async function fixture(
           modelToken: relayToken,
           tools: [tool],
           notes: [],
+          ...(options.projectPaper === undefined ? {} : { projectPaper: options.projectPaper }),
         };
         return json({ work });
       }
@@ -421,6 +423,26 @@ test('model stream uses only the supplied relay transport, never ambient fetch',
   await app.run();
   assert.equal(ambientCalls, 0);
   assert.equal(app.modelRequests.length, 1);
+});
+
+test('project paper travels as labeled user-level source, outside trusted system instructions', async () => {
+  const source = JSON.stringify({
+    documents: {
+      problem: {
+        current: { revision: 4, sections: [{ id: 'goals', content: 'Recover target effect' }] },
+      },
+    },
+  });
+  const app = await fixture({ projectPaper: source });
+  await app.run();
+  const request = app.modelRequests[0];
+  const input = request.input as { role: string; content: unknown }[];
+  const system = input.filter(({ role }) => role === 'system');
+  const user = input.filter(({ role }) => role === 'user');
+  assert.ok(!JSON.stringify(system).includes('Recover target effect'));
+  assert.match(JSON.stringify(user), /Project paper snapshot for this project/);
+  assert.match(JSON.stringify(user), /Recover target effect/);
+  assert.match(JSON.stringify(user), /Question 1/);
 });
 
 test('startup waits for delayed enrollment without repeating a begun prompt', async () => {

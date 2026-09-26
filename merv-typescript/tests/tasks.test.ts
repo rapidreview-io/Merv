@@ -13,6 +13,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
+import { PaperService } from '@merv/paper';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, ReviewHistory, Workflows } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
@@ -41,8 +42,9 @@ async function fixture(limits?: { reviewRounds: number }) {
   const workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
+  const paper = await createService(new PaperService(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder, limits),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, limits, paper),
   );
   const brief = await artifacts.create(producer, {
     title: 'Brief',
@@ -64,6 +66,7 @@ async function fixture(limits?: { reviewRounds: number }) {
     });
   const cleanup = async () => {
     tasks.dispose();
+    paper.close();
     await state.close();
     rmSync(path, { recursive: true, force: true });
   };
@@ -81,6 +84,7 @@ async function fixture(limits?: { reviewRounds: number }) {
     workflows,
     reviews,
     builder,
+    paper,
     tasks,
     brief,
     create,
@@ -153,6 +157,38 @@ test('an Agent conversation directs a task while producer work stays available t
   assert.ok(
     (await f.workflows.dispatchCandidates(f.producer)).some((item) => item.instanceId === task.id),
   );
+});
+
+test('task work and review contexts carry the project paper with its revision', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'paper-goal',
+    changes: [{ id: 'goals', content: 'Build a reliable arithmetic library.' }],
+  });
+  const task = await f.create();
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-paper',
+  });
+  assert.match(work.prompt, /Project paper and document revisions/);
+  assert.match(work.prompt, /Build a reliable arithmetic library/);
+  assert.match(work.prompt, /"revision":1/);
+  const { pending } = await round(f, task.id, 'Paper review');
+  const claimId = (await f.reviews.get(f.reviewer, pending.reviewId!)).claimId!;
+  const review = await f.tasks.context(f.reviewer, {
+    taskId: task.id,
+    purpose: 'review',
+    claimId,
+    expectedRevision: pending.workflow.revision,
+    requestId: 'review-paper',
+  });
+  assert.match(review.prompt, /Build a reliable arithmetic library/);
+  assert.match(review.prompt, /intermediate step/);
 });
 
 test('task reads, context and failure keep their original caller and inputs', async (t) => {

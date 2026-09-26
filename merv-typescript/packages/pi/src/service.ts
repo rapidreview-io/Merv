@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
+  boundedPaperContext,
   check,
   delegationEnd,
   digest,
@@ -123,6 +124,7 @@ const publicCommand = (record: PiCommandRecord): PiCommand => {
     canMove: _move,
     tools: _tools,
     notes: _notes,
+    projectPaper: _paper,
     calledAt: _called,
     retried: _retried,
     ...value
@@ -730,7 +732,12 @@ export class PiService implements Pi, FleetOwner {
     return {
       instructions: piInstructions,
       turn: served
-        ? { commandId: served.id, notes: served.notes!, tools: served.tools ?? [] }
+        ? {
+            commandId: served.id,
+            notes: served.notes!,
+            tools: served.tools ?? [],
+            projectPaper: served.projectPaper,
+          }
         : null,
     };
   }
@@ -1196,11 +1203,17 @@ export class PiService implements Pi, FleetOwner {
         return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
       });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
-      const told = [...(await this.told(conversation, command, actor!.role, caller)), ...notes];
+      const paper = await this.tools.call('paper.read', caller, {}).catch(() => undefined);
+      const told = [...(await this.told(conversation, command, actor!.role, paper)), ...notes];
+      const projectPaper = this.paperSnapshot(paper);
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
       // grant names exactly it. switch_machine comes first, so no native tool's model name takes
       // its place. Its notes are kept the same way, so pi.prompt shows what the turn was given.
-      const { tools, sent } = await this.state.transaction(async (tx) => {
+      const {
+        tools,
+        sent,
+        projectPaper: sentPaper,
+      } = await this.state.transaction(async (tx) => {
         const current = (await this.bound(token, turn, tx)).command;
         if (!current.tools || !current.notes) {
           const names = new Set<string>();
@@ -1210,9 +1223,10 @@ export class PiService implements Pi, FleetOwner {
             )
             .map(({ name }) => name);
           current.notes ??= told;
+          current.projectPaper ??= projectPaper;
           await this.saveCommand(tx, current);
         }
-        return { tools: current.tools, sent: current.notes };
+        return { tools: current.tools, sent: current.notes, projectPaper: current.projectPaper };
       });
       this.streams.changed(conversation.id, command.id);
       const model = this.model(command.model);
@@ -1227,6 +1241,7 @@ export class PiService implements Pi, FleetOwner {
         ),
         instructions: piInstructions,
         notes: sent,
+        projectPaper: sentPaper,
       };
     } catch {
       // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept
@@ -1244,21 +1259,92 @@ export class PiService implements Pi, FleetOwner {
   }
   /** This turn's notes (turnNotes) from what the person can read now; a read that fails leaves
    * its line out. */
+  private paperSnapshot(value: unknown): string {
+    type Revision = {
+      revision?: number;
+      sections?: { id: string; title?: string; content: string }[];
+    };
+    type Document = { current?: Revision; published?: { document?: Revision } | null };
+    const documents = (value as { documents?: Record<string, Document> } | undefined)?.documents;
+    if (!documents || typeof documents !== 'object')
+      return 'Project paper unavailable in this assignment; read paper.read before research work.';
+    const kinds = ['problem', 'literature', 'methods', 'results'];
+    const picked = Object.fromEntries(
+      kinds
+        .filter((kind) => documents[kind])
+        .map((kind) => [
+          kind,
+          {
+            current: {
+              revision: documents[kind].current?.revision,
+              sections: documents[kind].current?.sections ?? [],
+            },
+            published: documents[kind].published?.document
+              ? {
+                  document: {
+                    revision: documents[kind].published.document.revision,
+                    sections: documents[kind].published.document.sections ?? [],
+                  },
+                }
+              : null,
+          },
+        ]),
+    );
+    const full = JSON.stringify({ documents: boundedPaperContext(picked, 12_000) });
+    if (full.length <= 30_000) return full;
+    // A paper with many sections can exceed the worker cap even when every body is abbreviated.
+    // Keep the four current Problem keys and document revisions; every other section is indexed
+    // for paper.read, with explicit counts for entries excluded from this bounded source packet.
+    const preview = (section: { id: string; title?: string; content: string }, limit: number) => ({
+      id: section.id.slice(0, 80),
+      title: section.title?.slice(0, 80),
+      content:
+        section.content.length > limit
+          ? `${section.content.slice(0, limit)}… (${section.content.length} characters; read with paper.read)`
+          : section.content,
+    });
+    const compact = (limit: number) =>
+      Object.fromEntries(
+        kinds
+          .filter((kind) => documents[kind])
+          .map((kind) => {
+            const document = documents[kind];
+            const sections = document.current?.sections ?? [];
+            const chosen =
+              kind === 'problem'
+                ? ['goals', 'scope', 'problem', 'constraints']
+                    .map((id) => sections.find((section) => section.id === id))
+                    .filter((section): section is NonNullable<typeof section> => !!section)
+                : [];
+            return [
+              kind,
+              {
+                current: {
+                  revision: document.current?.revision,
+                  sections: chosen.map((section) => preview(section, limit)),
+                  otherSections: `${sections.length - chosen.length} sections omitted; read with paper.read`,
+                },
+                publishedRevision: document.published?.document?.revision ?? null,
+              },
+            ];
+          }),
+      );
+    const summary = JSON.stringify({ documents: compact(2_000) });
+    return summary.length <= 30_000 ? summary : JSON.stringify({ documents: compact(500) });
+  }
   private async told(
     conversation: PiConversationRecord,
     command: PiCommandRecord,
     role: MemberRole,
-    caller: Caller,
+    paper: unknown,
   ): Promise<string[]> {
-    const read = <T>(name: string, input: object) =>
-      this.tools.call(name, caller, input).then(
-        (value) => value as T,
-        () => undefined,
-      );
-    const problem = await read<{ current?: { sections?: { id: string; content: string }[] } }>(
-      'paper.read',
-      { kind: 'problem' },
-    );
+    const workspace = paper as
+      | {
+          documents?: { problem?: { current?: { sections?: { id: string; content: string }[] } } };
+          current?: { sections?: { id: string; content: string }[] };
+        }
+      | undefined;
+    const problem = workspace?.documents?.problem ?? workspace;
     // What an answer that stopped early had already changed, as its events recorded them.
     const interrupted = await this.read(async (tx) => {
       const row = await tx.get<{ data_json: string }>(

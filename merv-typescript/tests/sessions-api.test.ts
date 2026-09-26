@@ -15,7 +15,12 @@ import { createApp } from './fixtures/app.js';
 import { RunnerClient } from '../packages/runner/src/client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 
-async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy, packetText?: string) {
+async function fixture(
+  t: TestContext,
+  policy?: WorkflowExecutionPolicy,
+  packetText?: string,
+  role: 'producer' | 'reviewer' = 'producer',
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-api-'));
   const app = await createApp({ directory, api: true, port: 0 });
   const boot = await app.ctx.scope.bootstrap({
@@ -60,10 +65,10 @@ async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy, packetT
         {
           state: 'working',
           check: async ({ caller, tx }) => {
-            await app.ctx.scope.require(caller, 'write', tx);
+            await app.ctx.scope.require(caller, role === 'reviewer' ? 'review' : 'write', tx);
           },
           build: () => ({
-            role: 'producer',
+            role,
             label: 'Transport test',
             brief: packetText ?? 'Verify the bounded transport.',
             references: [],
@@ -90,7 +95,7 @@ async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy, packetT
           },
           references: (): Record<string, string> => (packetText ? { evidence: packetText } : {}),
           lease: {
-            role: () => 'producer',
+            role: () => role,
             acquire: (): Data => (packetText ? { evidence: packetText } : {}),
             check: () => {},
             release: () => {},
@@ -145,13 +150,291 @@ async function fixture(t: TestContext, policy?: WorkflowExecutionPolicy, packetT
     );
     return client;
   }
-  return { app, boot, source, instance, http, offer, connect, cleanup };
+  return { app, boot, source, instance, program, http, offer, connect, cleanup };
 }
 
 function errorCode(result: any): string {
   assert.equal(result.isError, true, JSON.stringify(result));
   return JSON.parse(result.content[0].text).error.code;
 }
+
+test('session messages reach the next tool boundary, fence writes, and retain a worker reply', async (t) => {
+  const f = await fixture(t);
+  let writes = 0;
+  f.app.ctx.tools.register({
+    name: 'checked.echo',
+    description: 'A write reached only after message acknowledgement',
+    inputSchema: z.object({ tenant: z.string() }).strict(),
+    handler: async (caller) => {
+      await f.app.ctx.state.transaction(async (tx) => {
+        await f.app.ctx.scope.require(caller, 'write', tx);
+        writes++;
+      });
+      return { writes };
+    },
+  });
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const found = (
+    await f.app.ctx.tools.invoke('session.find', f.source, { instanceId: f.instance.id })
+  ).value as any;
+  assert.equal(found.current.id, issued.session.id);
+  assert.deepEqual(Object.keys(found.current).sort(), [
+    'actorId',
+    'agentId',
+    'closedAt',
+    'createdAt',
+    'expectedRevision',
+    'id',
+    'instanceId',
+    'role',
+    'status',
+  ]);
+  const sent = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Start T at the global mean before k additions.',
+      requestId: 'correction-1',
+    })
+  ).value as any;
+  assert.equal(sent.acknowledgedAt, null);
+  assert.equal(sent.instanceId, f.instance.id);
+  const retry = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Start T at the global mean before k additions.',
+      requestId: 'correction-1',
+    })
+  ).value as any;
+  assert.equal(retry.id, sent.id);
+  await assert.rejects(
+    f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Different instruction',
+      requestId: 'correction-1',
+    }),
+    { code: 'request_conflict' },
+  );
+
+  assert.equal(
+    errorCode(await client.callTool({ name: 'checked.echo', arguments: {} })),
+    'session_message_pending',
+  );
+  assert.equal(writes, 0);
+  const read = await client.callTool({ name: 'session.messages', arguments: {} });
+  assert.equal(read.isError, undefined, JSON.stringify(read));
+  const messages = JSON.parse((read.content as { text: string }[])[0].text) as any[];
+  assert.equal(messages[0].id, sent.id);
+  const ack = await client.callTool({
+    name: 'session.message.ack',
+    arguments: {
+      messageId: sent.id,
+      reply: 'I will correct the plan before submission.',
+      requestId: 'ack-1',
+    },
+  });
+  assert.equal(ack.isError, undefined, JSON.stringify(ack));
+  const acknowledged = (
+    await f.app.ctx.tools.invoke('session.messages', f.source, { sessionId: issued.session.id })
+  ).value as any[];
+  assert.equal(acknowledged[0].reply, 'I will correct the plan before submission.');
+  assert.ok(acknowledged[0].acknowledgedAt);
+  assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
+  assert.equal(writes, 1);
+
+  await f.program.transition(f.source, {
+    instanceId: f.instance.id,
+    expectedRevision: f.instance.revision,
+    action: 'finish',
+    requestId: 'finish-after-message',
+  });
+  await assert.rejects(
+    f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Too late',
+      requestId: 'correction-late',
+    }),
+    { code: 'session_ended' },
+  );
+  const after = (
+    await f.app.ctx.tools.invoke('session.find', f.source, { instanceId: f.instance.id })
+  ).value as any;
+  assert.equal(after.current, null);
+});
+
+test('a message queued after tool admission fences the transaction that submits work', async (t) => {
+  const f = await fixture(t);
+  let writes = 0;
+  let entered!: () => void;
+  let release!: () => void;
+  const inHandler = new Promise<void>((resolve) => (entered = resolve));
+  const continueHandler = new Promise<void>((resolve) => (release = resolve));
+  f.app.ctx.tools.register({
+    name: 'checked.echo',
+    description: 'A delayed domain submission',
+    inputSchema: z.object({ tenant: z.string() }).strict(),
+    handler: async (caller) => {
+      entered();
+      await continueHandler;
+      await f.app.ctx.state.transaction(async (tx) => {
+        await f.app.ctx.scope.require(caller, 'write', tx);
+        writes++;
+      });
+      return { writes };
+    },
+  });
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const submitting = client.callTool({ name: 'checked.echo', arguments: {} });
+  await inHandler;
+  const sent = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Correction arrived after admission.',
+      requestId: 'race-1',
+    })
+  ).value as any;
+  release();
+  assert.equal(errorCode(await submitting), 'session_message_pending');
+  assert.equal(writes, 0);
+  assert.equal(
+    (
+      await client.callTool({
+        name: 'session.message.ack',
+        arguments: { messageId: sent.id, requestId: 'race-ack', reply: 'Received.' },
+      })
+    ).isError,
+    undefined,
+  );
+  assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
+  assert.equal(writes, 1);
+});
+
+test('only a writer in the project can send, and only the addressed worker can acknowledge', async (t) => {
+  const f = await fixture(t);
+  const issued = await f.offer();
+  const reader = await f.app.ctx.scope.issueActor(f.source, { name: 'Reader', role: 'reader' });
+  const outsider = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const readerCaller = { actorId: reader.actor.id, projectId: f.source.projectId };
+  const outsiderCaller = { actorId: outsider.actor.id, projectId: outsider.project.id };
+  const message = {
+    sessionId: issued.session.id,
+    body: 'Bounded instruction',
+    requestId: 'auth-1',
+  };
+  await assert.rejects(f.app.ctx.sessions.message(readerCaller, message), { code: 'forbidden' });
+  await assert.rejects(f.app.ctx.sessions.message(outsiderCaller, message), {
+    code: 'session_not_found',
+  });
+  await assert.rejects(
+    f.app.ctx.sessions.message({ ...f.source, session: { id: issued.session.id } }, message),
+    { code: 'forbidden' },
+  );
+  const sent = await f.app.ctx.sessions.message(f.source, message);
+  const otherWork = await f.program.start(f.source, {
+    workflow: f.instance.workflow,
+    requestId: 'other-work',
+  });
+  const otherSecret = `ms_${randomBytes(32).toString('base64url')}`;
+  await f.app.ctx.sessions.offer(f.source, {
+    instanceId: otherWork.id,
+    expectedRevision: otherWork.revision,
+    runnerId: 'runner',
+    requestId: 'other-offer',
+    secret: otherSecret,
+  });
+  const otherWorker = await f.connect(otherSecret);
+  assert.equal(
+    errorCode(
+      await otherWorker.callTool({
+        name: 'session.message.ack',
+        arguments: { messageId: sent.id, requestId: 'wrong-worker-ack' },
+      }),
+    ),
+    'session_message_not_found',
+  );
+  await assert.rejects(
+    f.app.ctx.sessions.acknowledgeMessage(f.source, {
+      messageId: sent.id,
+      requestId: 'fake-ack',
+    }),
+    { code: 'session_required' },
+  );
+  await assert.rejects(
+    f.app.ctx.sessions.acknowledgeMessage(
+      { ...f.source, session: { id: 'another_session' } },
+      { messageId: sent.id, requestId: 'fake-worker-ack' },
+    ),
+    { code: 'forbidden' },
+  );
+  const found = await f.app.ctx.sessions.findSession(readerCaller, f.instance.id);
+  assert.equal(found.current?.id, issued.session.id);
+  assert.equal('source' in found.current!, false);
+  assert.equal('lease' in found.current!, false);
+  assert.equal('assignment' in found.current!, false);
+  assert.equal('execution' in found.current!, false);
+  await assert.rejects(f.app.ctx.sessions.findSession(outsiderCaller, f.instance.id), {
+    code: 'not_found',
+  });
+});
+
+test('a read-only reviewer can acknowledge a message before its verdict write', async (t) => {
+  const f = await fixture(
+    t,
+    {
+      readOnly: true,
+      tools: [{ name: 'checked.echo', alternatives: [{}] }],
+    },
+    undefined,
+    'reviewer',
+  );
+  let verdicts = 0;
+  f.app.ctx.tools.register({
+    name: 'checked.echo',
+    description: 'Review verdict surrogate',
+    inputSchema: z.object({}).strict(),
+    handler: async (caller) => {
+      await f.app.ctx.state.transaction(async (tx) => {
+        await f.app.ctx.scope.require(caller, 'review', tx);
+        verdicts++;
+      });
+      return { verdicts };
+    },
+  });
+  const issued = await f.offer();
+  const client = await f.connect(issued.secret);
+  const sent = (
+    await f.app.ctx.tools.invoke('session.message', f.source, {
+      sessionId: issued.session.id,
+      body: 'Check the paper-specific initialization.',
+      requestId: 'review-note',
+    })
+  ).value as any;
+  assert.equal(
+    errorCode(await client.callTool({ name: 'checked.echo', arguments: {} })),
+    'session_message_pending',
+  );
+  assert.equal(verdicts, 0);
+  assert.equal(
+    (await client.callTool({ name: 'session.messages', arguments: {} })).isError,
+    undefined,
+  );
+  assert.equal(
+    (
+      await client.callTool({
+        name: 'session.message.ack',
+        arguments: {
+          messageId: sent.id,
+          reply: 'I will verify that against the pinned source.',
+          requestId: 'review-ack',
+        },
+      })
+    ).isError,
+    undefined,
+  );
+  assert.equal((await client.callTool({ name: 'checked.echo', arguments: {} })).isError, undefined);
+  assert.equal(verdicts, 1);
+});
 
 test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and native binding checks', async (t) => {
   const f = await fixture(t);
@@ -223,7 +506,7 @@ test('real HTTP offers expose no secret; MCP sessions share a fixed catalog and 
   const listed = (await client.listTools()).tools;
   assert.deepEqual(
     listed.filter((tool) => !tool.annotations?.readOnlyHint).map((tool) => tool.name),
-    ['checked.default', 'checked.echo', 'checked.transform'],
+    ['checked.default', 'checked.echo', 'checked.transform', 'session.message.ack'],
   );
   assert.ok(listed.some((tool) => tool.name === 'artifact.list'));
   // A read the policy never named runs as given; a write it never named does not.
@@ -449,8 +732,10 @@ test('leased mounted calls require source grants and keep upstream project argum
   const issued = await f.offer();
   const client = await f.connect(issued.secret);
   assert.deepEqual(
-    (await client.listTools()).tools.filter((tool) => !tool.annotations?.readOnlyHint),
-    [],
+    (await client.listTools()).tools
+      .filter((tool) => !tool.annotations?.readOnlyHint)
+      .map((tool) => tool.name),
+    ['session.message.ack'],
     'Lease manifest does not replace the exact source grant',
   );
   f.app.ctx.scope.toolPolicy.replace([

@@ -22,6 +22,7 @@ export { mainAgentGuide } from './agent-guide.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
+export { boundedPaperContext } from './paper-context.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
 export {
   sessionWorkspaceSchema,
@@ -656,7 +657,7 @@ export type DelegationSource = { actorId: string; projectId: string } & (
 );
 /** One installed session manager owns the authority of credentialless worker actors. */
 export interface SessionAuthority {
-  require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
+  require(caller: Caller, tx: Transaction, permission: Permission): Promise<DelegationSource>;
 }
 export interface ConversationAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;

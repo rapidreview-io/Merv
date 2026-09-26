@@ -45,8 +45,15 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 85);
-    for (const name of ['session.dispatch', 'session.halt', 'session.observe'])
+    assert.equal(catalog.length, 88);
+    for (const name of [
+      'session.dispatch',
+      'session.halt',
+      'session.observe',
+      'session.find',
+      'session.message',
+      'session.messages',
+    ])
       assert.ok(
         catalog.some((tool) => tool.name === name),
         `${name} must be discoverable`,

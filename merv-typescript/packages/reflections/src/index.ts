@@ -1,4 +1,10 @@
-import { excludedFromReview, releasedLease, visible, everyAsync } from '@merv/contracts';
+import {
+  excludedFromReview,
+  releasedLease,
+  visible,
+  everyAsync,
+  boundedPaperContext,
+} from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
@@ -42,6 +48,7 @@ import {
   LENS_WORKFLOW,
   LENS_WORKFLOW_ENDABLE,
   WORKSPACE_RECIPES,
+  PROJECT_PAPER_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
   REFLECTION_WORKFLOW_ENDABLE,
@@ -131,6 +138,7 @@ export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
   private handles = new Map<string, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<string, ContextRegistration>();
+  private historicalContexts: ContextRegistration[] = [];
   private releaseOwner?: () => void;
   private closed = false;
   /** Complete storage migrations before publishing this service. */
@@ -152,6 +160,8 @@ export class ReflectionService implements Reflections {
       );
       try {
         for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
+          this.historicalContexts.push(await contextBuilder.register(recipe));
+        for (const recipe of PROJECT_PAPER_RECIPES)
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
         for (const definition of [
           LENS_WORKFLOW,
@@ -189,7 +199,9 @@ export class ReflectionService implements Reflections {
     for (const handle of this.handles.values()) handle.dispose();
     this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
+    for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
+    this.historicalContexts = [];
   }
   private async read(caller: Caller, tx: Transaction): Promise<void> {
     check(!this.closed, 'reflection_unavailable', 'Reflection program is unavailable', 503);
@@ -588,6 +600,14 @@ export class ReflectionService implements Reflections {
           ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
         }),
       },
+      projectPaper: {
+        text: JSON.stringify({
+          documents: boundedPaperContext(
+            (await this.paper.read(context.caller, context.tx)).documents,
+            20_000,
+          ),
+        }),
+      },
       research: {
         text: `Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.${
           // Only a wave Research started carries a digest, so only there is the tool named.
@@ -662,9 +682,7 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipe = [LENS_RECIPE, ...WORKSPACE_RECIPES].find(
-      (entry) => entry.name === `reflection.${stage}`,
-    )!;
+    const recipe = PROJECT_PAPER_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(recipe.name)!
       .preview(

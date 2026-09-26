@@ -262,4 +262,37 @@ ${withoutTriggers(
   ['worker_sessions_no_delete'],
   `DELETE FROM worker_sessions WHERE id IN (SELECT id FROM retired_plan_sessions);`,
 )}`,
+  10: `
+CREATE TABLE session_messages (
+  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  session_id TEXT NOT NULL REFERENCES worker_sessions(id),
+  sender_actor_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  acknowledged_at TEXT,
+  ack_request_id TEXT,
+  reply_body TEXT,
+  UNIQUE(project_id,sender_actor_id,request_id)
+);
+CREATE INDEX session_messages_pending ON session_messages(project_id,session_id,_merv_rowid) WHERE acknowledged_at IS NULL;
+CREATE OR REPLACE FUNCTION session_messages_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR OLD.acknowledged_at IS NOT NULL OR
+     NEW.id IS DISTINCT FROM OLD.id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+     NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.sender_actor_id IS DISTINCT FROM OLD.sender_actor_id OR
+     NEW.request_id IS DISTINCT FROM OLD.request_id OR NEW.fingerprint IS DISTINCT FROM OLD.fingerprint OR
+     NEW.body IS DISTINCT FROM OLD.body OR NEW.created_at IS DISTINCT FROM OLD.created_at OR
+     NEW.acknowledged_at IS NULL OR NEW.ack_request_id IS NULL THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session messages are retained; acknowledgement is write-once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_messages_immutable BEFORE UPDATE OR DELETE ON session_messages
+FOR EACH ROW EXECUTE FUNCTION session_messages_guard();
+`,
 };

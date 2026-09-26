@@ -986,7 +986,11 @@ test('the assembled application offers the stuck report as a read tool and the g
     listed.map((tool) => [tool.name, 'readOnly' in tool && tool.readOnly === true]),
     [
       ['session.dispatch', false],
+      ['session.find', true],
       ['session.halt', false],
+      ['session.message', false],
+      ['session.message.ack', false],
+      ['session.messages', true],
       ['session.observe', true],
       ['session.release_hold', false],
       ['session.stuck', true],

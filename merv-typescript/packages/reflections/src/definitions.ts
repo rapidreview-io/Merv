@@ -148,3 +148,21 @@ export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
         : recipe.recipe.outputInstructions,
   },
 }));
+
+/** Current assignments carry the project paper; published earlier recipes remain registered. */
+export const PROJECT_PAPER_RECIPES: TaskTypeDefinition[] = [LENS_RECIPE, ...WORKSPACE_RECIPES].map(
+  (definition) => ({
+    ...definition,
+    version: 9,
+    recipe: {
+      ...definition.recipe,
+      instructions: `${definition.recipe.instructions} Use the project paper’s Problem, scope, goals and current findings to place this reflection in the project’s trajectory. Read any abbreviated paper sections with paper.read. Verify newer evidence before changing established conclusions.`,
+      sections: [
+        ...definition.recipe.sections.slice(0, 1),
+        { key: 'projectPaper', title: 'Project paper and document revisions', required: true },
+        ...definition.recipe.sections.slice(1),
+      ],
+      maxChars: 32000,
+    },
+  }),
+);

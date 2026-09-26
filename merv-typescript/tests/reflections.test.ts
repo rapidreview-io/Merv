@@ -116,6 +116,21 @@ async function fixture(t: TestContext, reflections?: object) {
   };
   return { app, owner, actor, create, lenses, synthesize, verdict };
 }
+
+test('reflection lens context includes project paper goals and revision', async (t) => {
+  const f = await fixture(t);
+  await f.app.ctx.paper.patch(f.owner, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'reflection-paper-goal',
+    changes: [{ id: 'goals', content: 'Explain the project-level clustering result.' }],
+  });
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'reflection-paper' });
+  const context = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
+  assert.match(context.prompt, /Project paper and document revisions/);
+  assert.match(context.prompt, /Explain the project-level clustering result/);
+  assert.match(context.prompt, /"revision":1/);
+});
 test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
   const f = await fixture(t);
   const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
@@ -537,7 +552,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 7);
+  assert.equal(lensContext.typeVersion, 9);
   const history = JSON.parse(
     lensContext.prompt.slice(lensContext.prompt.indexOf('{"rounds":')).split('\n')[0]!,
   ) as ReviewHistory;

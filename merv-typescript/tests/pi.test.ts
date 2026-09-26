@@ -703,13 +703,33 @@ test('each turn says whom the agent serves, where, on what, what the project lac
       readOnly: true,
       inputSchema: z.object({ kind: z.string().optional() }).strict(),
       handler: () => ({
-        current: {
-          sections: [
-            { id: 'problem', content: 'Why proteins misfold' },
-            { id: 'scope', content: '  ' },
-            { id: 'goals', content: 'A model' },
-            { id: 'constraints', content: 'None' },
-          ],
+        documents: {
+          problem: {
+            current: {
+              revision: 7,
+              sections: [
+                { id: 'problem', content: 'Why proteins misfold' + '\0'.repeat(5_000) },
+                { id: 'scope', content: '  ' },
+                { id: 'goals', content: 'A model' + '\0'.repeat(5_000) },
+                { id: 'constraints', content: 'None' + '\0'.repeat(5_000) },
+              ],
+            },
+            published: null,
+          },
+          literature: {
+            current: {
+              revision: 3,
+              sections: [
+                { id: 'prior', content: 'Prior evidence ' + 'x'.repeat(15_000) },
+                ...Array.from({ length: 250 }, (_, index) => ({
+                  id: `section-${index}`,
+                  title: 'Long section title '.repeat(10),
+                  content: 'Evidence',
+                })),
+              ],
+            },
+            published: null,
+          },
         },
       }),
     }),
@@ -727,12 +747,18 @@ test('each turn says whom the agent serves, where, on what, what the project lac
   assert.match(first.work.notes[4], /^Machine: Standard/);
   assert.match(first.work.instructions!, /^You are this person's own agent in Merv/);
   assert.match(first.work.instructions!, /never call yourself ChatGPT/);
+  assert.match(first.work.projectPaper!, /"revision":7/);
+  assert.match(first.work.projectPaper!, /A model/);
+  assert.match(first.work.projectPaper!, /read with paper.read/);
+  assert.ok(first.work.projectPaper!.length < 32_000);
+  assert.match(first.work.projectPaper!, /251 sections omitted/);
   // What the turn was given is what its person reads back.
   const id = first.input.conversationId;
   const given = await f.pi.prompt(producer, id);
   assert.equal(given.instructions, first.work.instructions);
   assert.equal(given.turn?.commandId, first.input.commandId);
   assert.deepEqual(given.turn?.notes, first.work.notes);
+  assert.equal(given.turn?.projectPaper, first.work.projectPaper);
   // The stored list leads with switch_machine; the worker's ends with it.
   assert.deepEqual([...given.turn!.tools].sort(), first.work.tools.map(({ name }) => name).sort());
   // The agent writes, then its answer is stopped: the next turn says what it had made.

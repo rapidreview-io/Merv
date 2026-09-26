@@ -171,7 +171,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     message: 'Preserve the exact request across reload.',
     requestId: 'commit',
   };
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
+  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
   // The default composition keeps repositories under the data directory; nothing is imported.
   const unbound = {
@@ -241,7 +241,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
   assert.equal(app.ctx.sessions, originalSessions);
   assert.equal((await app.ctx.sessions.get(source, session.id)).status, 'active');
-  assert.deepEqual(await catalog(), []);
+  assert.deepEqual(await catalog(), ['session.message.ack']);
   assert.equal(
     (await rows()).some((row) => row.id === 'code'),
     false,
@@ -261,7 +261,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
 
   await app.setEnabled('code', true);
   assert.notEqual(app.ctx.codeResearch, originalProvider);
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
+  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
   assert.deepEqual(await commands(), [queued]);
   assert.deepEqual(await invoke('code.commit', input), queued);
@@ -333,7 +333,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   // A sealed proposal is read on the record that made it, one at a time, and it survives
   // the capability that sealed it being taken away and put back.
   assert.deepEqual(await app.ctx.codeResearch.proposal(source, proposal.id), proposal);
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
+  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   await app.setEnabled('code', false);
   await assert.rejects(async () => await proposalProvider.proposal(source, proposal.id), {
     code: 'code_unavailable',
@@ -367,5 +367,5 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
     'code.command_succeeded',
   ]);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
-  assert.deepEqual(await catalog(), ['code.commit', 'code.operation']);
+  assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
 });

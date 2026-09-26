@@ -171,6 +171,38 @@ automatic offers.
 `session.stuck` lists. See [loop limits, usage and budgets](BUDGETS_AND_LIMITS.md) and the
 [runner control plane](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
 
+## Steering an assigned agent
+
+Pi sends a message to a session with `session.message({sessionId, body, requestId})`.
+Project writers may send messages; project readers may read their history. Workers
+may read and acknowledge only their own session's messages. A message to a reviewer
+does not grant its sender authority to decide the review verdict.
+The message belongs to that session, not to its experiment or task. Use
+`session.find({instanceId})` to find the current and latest session from a work item;
+an ended session refuses a
+new message instead of claiming delivery. Repeating an identical request ID returns
+the retained message, while changing its contents is a conflict.
+
+Messages are queued for the worker's next Merv tool interaction. The worker reads
+them with `session.messages` and acknowledges them with `session.message.ack`,
+optionally including a reply. Pi reads that history to see the acknowledgment and
+response. Acknowledgment means the worker received the message; it does not prove
+that the requested correction was incorporated or independently reviewed.
+
+Pending messages fence worker writes, including submission. The write's authority
+check and message enqueue use database transactions, so an older preflight cannot
+authorize a submission past a newly queued message. The next tool call directs the
+worker to read and acknowledge the message before continuing, including before
+further evidence lookups. The worker can acknowledge receipt with a reply such as
+“I will check the cited procedure,” then inspect the evidence; acknowledgment does
+not require agreeing with the correction. This does not inject text into a running
+shell process or interrupt a long compute command.
+
+Messaging does not amend an immutable brief or approved plan. When work should be
+stopped, use the existing session halt and task/experiment terminal actions, then
+create replacement work with better instructions. Retain earlier evidence and
+account separately for any detached jobs that must be stopped.
+
 ## Remaining work
 
 This slice does not implement runner processes, workspace provisioning, durable

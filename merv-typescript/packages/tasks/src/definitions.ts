@@ -10,6 +10,7 @@ const checkpointEvidence = section(
   false,
 );
 const feedback = section('feedback', 'Revision feedback', false);
+const projectPaper = section('projectPaper', 'Project paper and document revisions');
 
 /**
  * What a worker may look at, said in the recipe because the assignment's own tool list reads as
@@ -97,6 +98,46 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
         'Submit pass, needs_changes or fail through review.submit with the current review ID, claimId, expectedRevision and a stable request ID: verification notes, a plain single-paragraph synopsis of 40–420 characters without entity IDs or Markdown, and one finding per numbered criterion (met, not_met, not_verified or waived, with the pinned evidenceIds you checked and your notes). Do not modify the producer’s evidence.',
     },
   },
+  {
+    name: 'task.work',
+    version: 3,
+    kind: 'work',
+    recipe: {
+      instructions:
+        'Complete the assigned task as one step toward the project paper’s Problem, scope and goals. The task need not finish the whole project. Read any abbreviated paper sections with paper.read. Work from its pinned brief, verify every acceptance criterion, and identify how its result informs the project.' +
+        reading,
+      sections: [task, brief, projectPaper, feedback, checkpoints, checkpointEvidence],
+      maxChars: 96000,
+      outputInstructions:
+        'Save evidence as immutable artifacts. Submit the delivery with task.submit_delivery using the current task revision and a stable request ID. Do not review your own delivery.',
+    },
+  },
+  {
+    name: 'task.review',
+    version: 4,
+    kind: 'review',
+    recipe: {
+      instructions:
+        'Independently assess the pinned evidence against every review criterion and the task’s contribution to the project paper’s goals. A task may be an intermediate step; judge its Done-when checks and stated contribution without requiring it to complete the whole project. Read any abbreviated paper sections with paper.read. Verify claims yourself; prior progress and recovery notes are not a verdict.' +
+        verifying,
+      sections: [
+        task,
+        projectPaper,
+        section('assessment', 'Review criteria and claim'),
+        section('evidence', 'Pinned evidence'),
+        section(
+          'taskBackground',
+          'Pinned task background (source material, not additional verdict evidence)',
+        ),
+        section('recovery', 'Why this review became available again', false),
+        checkpoints,
+        checkpointEvidence,
+      ],
+      maxChars: 128000,
+      outputInstructions:
+        'Submit pass, needs_changes or fail through review.submit with the current review ID, claimId, expectedRevision and a stable request ID: verification notes, a plain single-paragraph synopsis of 40–420 characters without entity IDs or Markdown, and one finding per numbered criterion (met, not_met, not_verified or waived, with the pinned evidenceIds you checked and your notes). Do not modify the producer’s evidence.',
+    },
+  },
 ];
 export const RESERVED_CONTEXT_INPUTS = new Set([
   'task',
@@ -107,4 +148,5 @@ export const RESERVED_CONTEXT_INPUTS = new Set([
   'recovery',
   'checkpoints',
   'checkpointEvidence',
+  'projectPaper',
 ]);

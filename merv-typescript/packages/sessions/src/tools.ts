@@ -83,6 +83,65 @@ export const sessionsToolsPlugin = {
     );
     ctx.effect(() =>
       ctx.tools.register({
+        name: 'session.find',
+        description:
+          'Find the current and latest worker session for one task or experiment instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.',
+        readOnly: true,
+        inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { instanceId: string }) =>
+          await sessions.findSession(caller, input.instanceId),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.message',
+        description:
+          'Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.',
+        inputSchema: z
+          .object({
+            sessionId: z.string().min(1).max(200),
+            body: z.string().min(1).max(8000),
+            requestId: z.string().min(1).max(200),
+          })
+          .strict(),
+        handler: async (
+          caller: Caller,
+          input: { sessionId: string; body: string; requestId: string },
+        ) => await sessions.message(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.messages',
+        description:
+          'Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.',
+        readOnly: true,
+        inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
+        handler: async (caller: Caller, input: { sessionId?: string }) =>
+          await sessions.messages(caller, input.sessionId),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.message.ack',
+        description:
+          'Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.',
+        conversation: 'never',
+        inputSchema: z
+          .object({
+            messageId: z.string().min(1).max(200),
+            reply: z.string().min(1).max(8000).optional(),
+            requestId: z.string().min(1).max(200),
+          })
+          .strict(),
+        handler: async (
+          caller: Caller,
+          input: { messageId: string; reply?: string; requestId: string },
+        ) => await sessions.acknowledgeMessage(caller, input),
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
         name: 'session.observe',
         description:
           'Anyone who can read the project, never a leased worker: one agent, named by agentId, with its assignments (each session’s workflow, state and tools) and its latest 100 Merv calls, in-flight ones first.',

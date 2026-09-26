@@ -405,6 +405,12 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     await client.query(
       "DELETE FROM component_migrations WHERE component='experiments' AND version=5",
     );
+    // Session messaging shipped after both retirements. Rewind its empty table with its version
+    // so the historical sessions can be removed and the current server can replay it on boot.
+    await client.query('DROP TABLE session_messages');
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='sessions' AND version=10",
+    );
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version IN (7,8)",
     );

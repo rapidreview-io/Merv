@@ -100,6 +100,8 @@ export interface PiCommandRecord extends PiCommand {
   /** The lines this turn appended to the agent's instructions (turnNotes, then its machine's),
    * fixed at its first serve like tools. Absent for a turn served before they were kept. */
   notes?: string[];
+  /** Project paper snapshot fixed when this turn was first served. Source material, not instructions. */
+  projectPaper?: string;
   /** Its first tool call, recorded before the call runs: from then it never starts again. */
   calledAt?: string;
   /** It started again once, on a fresh machine, after its own was lost. */
@@ -324,6 +326,8 @@ export interface PiWork {
   /** At most 8 lines of at most 300 characters the worker appends to this turn's system prompt:
    * who the agent serves, today and its model, what the project lacks, its machine. */
   notes: string[];
+  /** Bounded project paper source with current/published revision labels. */
+  projectPaper?: string;
   /** The agent's instructions (at most 32,000 characters), the same on every turn; an older Main
    * sends none and the worker keeps its own. */
   instructions?: string;
@@ -362,7 +366,7 @@ export interface PiCompletion {
  * the latest turn's appended notes and offered tools exactly as that turn was served. */
 export interface PiPrompt {
   instructions: string;
-  turn: { commandId: string; notes: string[]; tools: string[] } | null;
+  turn: { commandId: string; notes: string[]; tools: string[]; projectPaper?: string } | null;
 }
 export interface Pi {
   create(caller: Caller, input: unknown): Promise<PiConversation>;

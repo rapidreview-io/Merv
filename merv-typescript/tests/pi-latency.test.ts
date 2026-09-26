@@ -94,6 +94,7 @@ test(
         'workflows',
         'context-builder',
         'reviews',
+        'paper',
         'tasks',
         'sessions',
       ],

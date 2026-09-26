@@ -840,7 +840,7 @@ export class ProjectScope implements Scope {
           );
         const authority = this.sessionAuthority;
         check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
-        source = await authority.require(caller, sql as Transaction);
+        source = await authority.require(caller, sql as Transaction, permission);
       } else if (caller.session) {
         check(false, 'forbidden', 'Session authority cannot select another actor', 403);
       } else if (row.user_issuer && caller.key !== undefined) {

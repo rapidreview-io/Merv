@@ -67,6 +67,9 @@ import type {
   SessionWorkspace,
   SessionWorkspaceObservation,
   SessionBudgetInput,
+  SessionMessage,
+  SessionMessageInput,
+  SessionLookup,
   SessionUsageReport,
   BudgetStatus,
   UsageQuery,
@@ -281,6 +284,19 @@ interface Row {
   fingerprint: string;
   session_json: string;
 }
+interface MessageRow {
+  id: string;
+  project_id: string;
+  session_id: string;
+  sender_actor_id: string;
+  request_id: string;
+  fingerprint: string;
+  body: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  ack_request_id: string | null;
+  reply_body: string | null;
+}
 interface Frame {
   tx: Transaction;
   actorId: string;
@@ -303,6 +319,7 @@ interface InvocationState {
 /** Durable step credentials. Domain reservations and all lifecycle mutations share State transactions. */
 export class LeasedSessions implements Sessions {
   private readonly frames = new AsyncLocalStorage<Frame[]>();
+  private readonly toolHandler = new AsyncLocalStorage<string>();
   private readonly invocations = new WeakMap<SessionInvocation, InvocationState>();
   private readonly invocationIds = new Map<string, InvocationState>();
   private readonly fenced = new WeakMap<Transaction, Set<string>>();
@@ -370,6 +387,7 @@ export class LeasedSessions implements Sessions {
         { version: 7, sql: postgresMigrations[7] },
         { version: 8, sql: managedNoncePostgresMigration },
         { version: 9, sql: postgresMigrations[9] },
+        { version: 10, sql: postgresMigrations[10] },
       ]);
       this.managed = new ManagedRunnerBindings(state, scope, this.clock, config.managedSecretEnv);
       this.directory = await createService(new AgentDirectory(state, scope, this.clock));
@@ -409,7 +427,7 @@ export class LeasedSessions implements Sessions {
       try {
         this.disposers.push(
           scope.registerSessionAuthority({
-            require: async (caller, tx) => await this.guard(caller, tx),
+            require: async (caller, tx, permission) => await this.guard(caller, tx, permission),
           }),
         );
         this.disposers.push(
@@ -500,6 +518,50 @@ export class LeasedSessions implements Sessions {
     check(row, 'session_not_found', 'Session not found', 404);
     return row;
   }
+  private async messageRow(tx: Transaction, id: string): Promise<MessageRow> {
+    const row = await tx.get<MessageRow>('SELECT * FROM session_messages WHERE id=?', id);
+    check(row, 'session_message_not_found', 'Session message not found', 404);
+    return row;
+  }
+  private publicMessage(row: MessageRow, session: Session): SessionMessage {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      instanceId: session.instanceId,
+      expectedRevision: session.expectedRevision,
+      senderActorId: row.sender_actor_id,
+      body: row.body,
+      createdAt: row.created_at,
+      acknowledgedAt: row.acknowledged_at,
+      reply: row.reply_body,
+    };
+  }
+  private lookup(session: Session): SessionLookup {
+    return {
+      id: session.id,
+      ...(session.agentId ? { agentId: session.agentId } : {}),
+      actorId: session.actorId,
+      instanceId: session.instanceId,
+      expectedRevision: session.expectedRevision,
+      role: session.role,
+      status: session.status,
+      createdAt: session.createdAt,
+      closedAt: session.closedAt,
+    };
+  }
+  private async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
+    const row = await tx.get<{ id: string }>(
+      'SELECT id FROM session_messages WHERE session_id=? AND acknowledged_at IS NULL ORDER BY _merv_rowid LIMIT 1',
+      sessionId,
+    );
+    if (row)
+      throw new MervError(
+        'session_message_pending',
+        'A queued session message must be read with session.messages and acknowledged with session.message.ack before continuing.',
+        409,
+        { messageId: row.id },
+      );
+  }
   private async decode(row: Row, tx: Transaction): Promise<Session> {
     const session: Session = JSON.parse(row.session_json);
     const workspace = await tx.get<{ attachment_json: string; result_json: string | null }>(
@@ -572,7 +634,11 @@ export class LeasedSessions implements Sessions {
     );
     return execution;
   }
-  private async guard(caller: Caller, tx: Transaction): Promise<DelegationSource> {
+  private async guard(
+    caller: Caller,
+    tx: Transaction,
+    requiredPermission: Permission,
+  ): Promise<DelegationSource> {
     this.ensureOpen();
     this.state.assertTransaction(tx);
     const frame = this.frames
@@ -604,6 +670,20 @@ export class LeasedSessions implements Sessions {
       'Session is closed or expired',
       401,
     );
+    if (
+      requiredPermission !== 'read' &&
+      caller.session?.invocationId !== undefined &&
+      caller.session?.invocationId === this.toolHandler.getStore()
+    ) {
+      const tool = this.invocationIds.get(caller.session.invocationId)?.public.tool;
+      if (tool !== 'session.messages' && tool !== 'session.message.ack') {
+        // A sender takes this same row lock before inserting. The write being submitted and
+        // the message therefore have a single order even when their requests race.
+        if (!this.state.readScope)
+          await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', session.id);
+        await this.requireMessagesAcknowledged(session.id, tx);
+      }
+    }
     await this.source(session, tx);
     const invocationId = caller.session.invocationId;
     if (invocationId !== undefined) {
@@ -1179,6 +1259,215 @@ export class LeasedSessions implements Sessions {
     );
     return await this.observations.read(caller, agentId);
   }
+  async findSession(
+    caller: Caller,
+    instanceId: string,
+  ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }> {
+    this.ordinary(caller);
+    check(!caller.session, 'forbidden', 'Workers cannot look up other sessions', 403);
+    check(text(instanceId, 200), 'invalid_instance', 'A work item ID is required');
+    return await this.reading(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await this.workflows.get(caller, instanceId, tx);
+      const rows = await tx.all<Row>(
+        'SELECT * FROM worker_sessions WHERE project_id=? AND instance_id=? ORDER BY _merv_rowid DESC LIMIT 20',
+        caller.projectId,
+        instanceId,
+      );
+      const latest = rows[0] ? await this.decode(rows[0], tx) : null;
+      const currentRow = rows.find((row) => {
+        const status = (JSON.parse(row.session_json) as Session).status;
+        return status === 'offered' || status === 'active';
+      });
+      let current: Session | null = currentRow ? await this.decode(currentRow, tx) : null;
+      if (current) {
+        try {
+          await this.valid(current, tx);
+        } catch (error) {
+          if (!(error instanceof MervError) || error.status >= 500) throw error;
+          current = null;
+        }
+      }
+      return {
+        current: current ? this.lookup(current) : null,
+        latest: latest ? this.lookup(latest) : null,
+      };
+    });
+  }
+  async message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage> {
+    this.ordinary(caller);
+    check(
+      !caller.session && !caller.managed,
+      'forbidden',
+      'Workers cannot send operator messages',
+      403,
+    );
+    check(
+      text(input.sessionId, 200) && text(input.body, 8_000) && text(input.requestId, 200),
+      'invalid_session_message',
+      'A session ID, message of 1–8000 characters and stable requestId are required',
+    );
+    caller = structuredClone(caller);
+    input = structuredClone(input);
+    return await this.transaction(async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      const fingerprint = digest({ sessionId: input.sessionId, body: input.body });
+      const old = await tx.get<MessageRow>(
+        'SELECT * FROM session_messages WHERE project_id=? AND sender_actor_id=? AND request_id=?',
+        caller.projectId,
+        caller.actorId,
+        input.requestId,
+      );
+      if (old) {
+        check(
+          old.fingerprint === fingerprint,
+          'request_conflict',
+          'Message requestId was used for different input',
+          409,
+        );
+        const session = await this.decode(await this.row(tx, old.session_id), tx);
+        return this.publicMessage(old, session);
+      }
+      const row = await this.row(tx, input.sessionId);
+      check(
+        row.project_id === caller.projectId,
+        'session_not_found',
+        'Session not found in this project',
+        404,
+      );
+      await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', row.id);
+      const session = await this.decode(row, tx);
+      check(
+        live(session),
+        'session_ended',
+        'This session has ended; send to its successor instead',
+        409,
+      );
+      try {
+        await this.valid(session, tx);
+      } catch (error) {
+        if (!(error instanceof MervError) || error.status >= 500) throw error;
+        throw new MervError(
+          'session_ended',
+          'This assignment has ended; send to its successor instead',
+          409,
+        );
+      }
+      const createdAt = isoNow(this.clock);
+      const id = newId('session_message');
+      await tx.run(
+        'INSERT INTO session_messages(id,project_id,session_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        id,
+        caller.projectId,
+        session.id,
+        caller.actorId,
+        input.requestId,
+        fingerprint,
+        input.body,
+        createdAt,
+      );
+      await this.state.appendEvent(tx, {
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        type: 'session.message_queued',
+        subjectId: session.id,
+        data: {
+          messageId: id,
+          sessionId: session.id,
+          instanceId: session.instanceId,
+          revision: session.expectedRevision,
+        },
+      });
+      return this.publicMessage(await this.messageRow(tx, id), session);
+    });
+  }
+  async messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]> {
+    this.ordinary(caller);
+    caller = structuredClone(caller);
+    return await this.reading(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const id = sessionId ?? caller.session?.id;
+      check(id && text(id, 200), 'invalid_session_message', 'A session ID is required');
+      const row = await this.row(tx, id);
+      check(
+        row.project_id === caller.projectId,
+        'session_not_found',
+        'Session not found in this project',
+        404,
+      );
+      if (caller.session)
+        check(
+          caller.session.id === id,
+          'forbidden',
+          'Workers can read only their own messages',
+          403,
+        );
+      const session = await this.decode(row, tx);
+      const rows = await tx.all<MessageRow>(
+        'SELECT * FROM session_messages WHERE project_id=? AND session_id=? ORDER BY _merv_rowid',
+        caller.projectId,
+        id,
+      );
+      return rows.map((item) => this.publicMessage(item, session));
+    });
+  }
+  async acknowledgeMessage(
+    caller: Caller,
+    input: { messageId: string; reply?: string; requestId: string },
+  ): Promise<SessionMessage> {
+    this.ordinary(caller);
+    check(caller.session, 'session_required', 'Only the assigned worker may acknowledge', 403);
+    check(
+      text(input.messageId, 200) &&
+        text(input.requestId, 200) &&
+        (input.reply === undefined || text(input.reply, 8_000)),
+      'invalid_session_message',
+      'Acknowledgement requires messageId, stable requestId and an optional reply of 1–8000 characters',
+    );
+    caller = structuredClone(caller);
+    input = structuredClone(input);
+    return await this.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const row = await this.messageRow(tx, input.messageId);
+      check(
+        row.project_id === caller.projectId && row.session_id === caller.session!.id,
+        'session_message_not_found',
+        'Message not found in this session',
+        404,
+      );
+      const session = await this.decode(await this.row(tx, row.session_id), tx);
+      check(
+        live(session) && session.actorId === caller.actorId,
+        'session_ended',
+        'This session has ended',
+        409,
+      );
+      if (row.acknowledged_at) {
+        check(
+          row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
+          'request_conflict',
+          'Message was acknowledged with different input',
+          409,
+        );
+        return this.publicMessage(row, session);
+      }
+      await tx.run(
+        'UPDATE session_messages SET acknowledged_at=?,ack_request_id=?,reply_body=? WHERE id=? AND acknowledged_at IS NULL',
+        isoNow(this.clock),
+        input.requestId,
+        input.reply ?? null,
+        row.id,
+      );
+      await this.state.appendEvent(tx, {
+        projectId: caller.projectId,
+        actorId: caller.actorId,
+        type: 'session.message_acknowledged',
+        subjectId: session.id,
+        data: { messageId: row.id, sessionId: session.id, replied: input.reply !== undefined },
+      });
+      return this.publicMessage(await this.messageRow(tx, row.id), session);
+    });
+  }
   async setDispatch(
     caller: Caller,
     input: Parameters<SessionDispatch['setDispatch']>[1],
@@ -1747,7 +2036,7 @@ export class LeasedSessions implements Sessions {
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     this.ordinary(caller);
     caller = structuredClone(caller);
-    if (read) return true;
+    if (read || name === 'session.message.ack') return true;
     const id = caller.session?.id;
     const cached = id ? this.toolNames.get(id) : undefined;
     if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
@@ -1783,13 +2072,16 @@ export class LeasedSessions implements Sessions {
         'Workflow implementation changed during invocation',
         409,
       );
-    const admission = await this.workflows.authorizeLeaseDispatch(
-      caller,
-      session.lease,
-      { ...session.execution, registrationId: registrationId ?? current.registrationId },
-      { tool, input, ...(read ? { read } : {}) },
-      tx,
-    );
+    const admission =
+      tool === 'session.message.ack'
+        ? { tool, input: structuredClone(input) }
+        : await this.workflows.authorizeLeaseDispatch(
+            caller,
+            session.lease,
+            { ...session.execution, registrationId: registrationId ?? current.registrationId },
+            { tool, input, ...(read ? { read } : {}) },
+            tx,
+          );
     return { admission, registrationId: current.registrationId, session };
   }
   async prepare(
@@ -1899,6 +2191,10 @@ export class LeasedSessions implements Sessions {
       );
       // Observation storage yields too; recheck authorization before invoking the tool.
       await this.validate(invocation.caller, invocation.tool, state.input);
+      if (invocation.tool !== 'session.messages' && invocation.tool !== 'session.message.ack')
+        await this.reading(
+          async (tx) => await this.requireMessagesAcknowledged(state.sessionId, tx),
+        );
       // A session has one assignment, the frozen one it was offered; another record's
       // assignment is an admission of somebody else, so the question is refused by name.
       const own =
@@ -1914,7 +2210,10 @@ export class LeasedSessions implements Sessions {
       );
       const result = own
         ? (clone(own.assignment) as T)
-        : await handler(invocation.caller, clone(state.input));
+        : await this.toolHandler.run(
+            invocation.caller.session!.invocationId!,
+            async () => await handler(invocation.caller, clone(state.input)),
+          );
       // MCP may return a tool error without throwing. Native values have no such envelope.
       const failed =
         invocation.tool.startsWith('_') &&
