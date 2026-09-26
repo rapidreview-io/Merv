@@ -108,8 +108,7 @@ async function fixture(t: TestContext, since = '2000-01-01T00:00:00Z') {
     setResponse: (value: SandboxComputeRun) => {
       response = value;
     },
-};
-
+  };
 }
 
 const input = (experimentId: string, key = 'trial') => ({
@@ -127,10 +126,19 @@ test('offers answer normally without ML while run and cancel remain unavailable'
   const f = await fixture(t);
   f.unbind();
   assert.deepEqual(await f.experiments.computeOffers(f.caller), {
-    entitled: false, available: false, allowance: null, offers: [],
+    entitled: false,
+    available: false,
+    allowance: null,
+    offers: [],
   });
-  await assert.rejects(f.experiments.computeRun(f.caller, input('exp_missing')), code('compute_unavailable'));
-  await assert.rejects(f.experiments.computeCancel(f.caller, 'exp_missing', 'run_missing'), code('compute_unavailable'));
+  await assert.rejects(
+    f.experiments.computeRun(f.caller, input('exp_missing')),
+    code('compute_unavailable'),
+  );
+  await assert.rejects(
+    f.experiments.computeCancel(f.caller, 'exp_missing', 'run_missing'),
+    code('compute_unavailable'),
+  );
 });
 
 test('new human projects are entitled without a project-count limit; bootstrap and earlier projects are not', async (t) => {

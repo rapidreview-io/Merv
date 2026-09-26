@@ -62,11 +62,20 @@ const actorText = (
   return name ? `${prefix}${name}` : (unnamed ?? '');
 };
 
+/**
+ * Machine text as the page prints it. An id or a digest inside it — a run of 24 or more hex
+ * digits, as in `merv/work/wf_<32>` — is read by its head and its tail, the way the Code page
+ * reads a branch; the whole text is its hover title and what its copy control copies, so an
+ * owner sends it whole. Nobody reads thirty-two hex digits, and nobody fetches eight of them.
+ */
+export const monoText = (text: string) =>
+  text.replace(/[0-9a-f]{24,}/gi, (run) => `${run.slice(0, 8)}…${run.slice(-6)}`);
+
 /** A value's words, as the page draws them. */
 export function valueText(value: RunningValue, reading: Omit<RunningReading, 'open'>): string {
   if (typeof value === 'string') return value;
   const at = moment(reading.now);
-  if ('mono' in value) return value.mono;
+  if ('mono' in value) return monoText(value.mono);
   if ('state' in value) return words(value.state);
   if ('ago' in value) {
     const then = parsed(value.ago);
@@ -185,13 +194,17 @@ function Until({
 function Value({ value, in: place }: { value: RunningValue; in: 'facts' | 'line' | 'cell' }) {
   const reading = useContext(Reading);
   if (typeof value === 'string') return <>{value}</>;
-  if ('mono' in value)
+  if ('mono' in value) {
+    const shown = monoText(value.mono);
     return (
       <>
-        <span className="mono">{value.mono}</span>
+        <span className="mono" title={shown === value.mono ? undefined : value.mono}>
+          {shown}
+        </span>
         {place === 'facts' && <CopyButton text={value.mono} />}
       </>
     );
+  }
   if ('state' in value) return <span className="running-state">{words(value.state)}</span>;
   if ('ago' in value || 'since' in value) {
     const at = 'ago' in value ? value.ago : value.since;

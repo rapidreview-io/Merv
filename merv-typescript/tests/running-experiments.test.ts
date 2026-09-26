@@ -792,7 +792,7 @@ test('the words of a card follow where the experiment stands, first match wins',
     [
       ['Results review · unclaimed · ', { since: review.createdAt }],
       'dashed',
-      ['No independent reviewer'],
+      ['No independent reviewer can take it'],
     ],
   );
   assert.equal(

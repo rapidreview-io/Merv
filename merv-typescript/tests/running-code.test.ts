@@ -331,10 +331,6 @@ const tasks = (drawn: string[] = []): RunningContribution => ({
 const codeOf = (sections: RunningSection[]) =>
   sections.find((section) => section.owner === 'code-research' && section.title === 'Code');
 
-/** An id inside a branch, read by its head and its tail as the Code page reads it. */
-const short = (branch: string) =>
-  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
-
 test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a signed-in operator is offered the merge', async (t) => {
   const f = await fixture(t);
   const work = await f.publishing('Publish the index');
@@ -440,7 +436,7 @@ test('done work whose pull request waits for a merge is held on the board in the
         : needs,
       attention: true,
     },
-    { label: 'Branch', value: [{ mono: short(unit.branch) }] },
+    { label: 'Branch', value: [{ mono: unit.branch }] },
     {
       label: 'Working',
       value: [
@@ -898,7 +894,7 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
     await assert.rejects(f.panel(running, nobody), { code: 'running_not_found' });
 });
 
-test('the work since its base is read from the project’s newest commits alone, and its branch is printed the way Code prints it', async (t) => {
+test('the work since its base is read from the project’s newest commits alone, and its branch is sent whole for the page to shorten', async (t) => {
   const f = await fixture(t);
   const work = await f.declare('Recent work');
   await f.accept(work, f.feature);
@@ -934,13 +930,12 @@ test('the work since its base is read from the project’s newest commits alone,
     ],
   });
 
-  // The id inside the branch is its head and its tail; the whole id is printed nowhere.
-  const hex = work.id.slice('wf_'.length);
+  // The branch is sent whole, since it is what an operator fetches and copies; the page
+  // prints the id inside it by its head and its tail (tests/ui-running.test.ts).
   assert.deepEqual(await row('Branch'), {
     label: 'Branch',
-    value: [{ mono: `merv/work/wf_${hex.slice(0, 8)}…${hex.slice(-6)}` }],
+    value: [{ mono: `merv/work/${work.id}` }],
   });
-  assert.ok(!JSON.stringify(await rows()).includes(hex));
 
   // Two hundred newer commits of other work push this unit's out of what is read, and a row
   // behind them that no parser could read is never reached: nothing older is decoded.

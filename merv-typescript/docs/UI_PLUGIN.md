@@ -72,7 +72,7 @@ ctx.effect(() =>
 );
 ```
 
-The vocabulary is `@merv/contracts`' `running.ts`: nodes, marks, lane summaries, sidebar parts and sections, and the values a phrase is made of. Owners send instants and never write durations, arrows or identifiers as words; the shell ticks every clock and draws every arrow. Every member is optional:
+The vocabulary is `@merv/contracts`' `running.ts`: nodes, marks, lane summaries, sidebar parts and sections, and the values a phrase is made of. Owners send instants and never write durations, arrows or identifiers as words; the shell ticks every clock and draws every arrow. Machine text (`mono`) is sent whole, a branch as an operator fetches it: the shell prints an id or a digest inside it by its head and its tail, and keeps all of it for the hover title and the copy control. Every member is optional:
 
 - `marks(read)`: attention on keys other owners draw. Marks are read first, and every marked key reaches every `nodes()` as `read.include`, so the owner that draws it returns it even where its own rule would drop it.
 - `nodes(read)` and `summary(read)`: the owner's cards and its lane line. A cached source reports `asOf`, `freshForMs` and `failed`, and `pending` until it has been filled once.

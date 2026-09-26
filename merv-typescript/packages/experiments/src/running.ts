@@ -192,7 +192,7 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
       who: 'An independent reviewer reviews it by hand, or an operator allows another round.',
     };
   if (standing.review?.waiting)
-    return { says: ['No independent reviewer'], who: 'An operator provides one.' };
+    return { says: ['No independent reviewer can take it'], who: 'An operator provides one.' };
   return undefined;
 }
 

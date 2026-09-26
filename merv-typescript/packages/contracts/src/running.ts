@@ -30,9 +30,10 @@ export interface RunningMoney {
 }
 
 /**
- * Where a link goes. A key selects that node when it is on the board and follows its route
- * when it is not. A route is a page of this app. An href is https and opens outside the app.
- * The shell draws the arrow that ends a link, so no owner writes one.
+ * Where a link goes. A key opens that thing's sidebar, whether or not it is on the board: its
+ * owners are asked first, and the route it carries is followed only when no owner answers for
+ * the key. A route is a page of this app. An href is https and opens outside the app. The
+ * shell draws the arrow that ends a link, so no owner writes one.
  */
 export type RunningTarget =
   { key: RunningKey; route?: string } | { route: string } | { href: string };
@@ -46,7 +47,11 @@ export type RunningTarget =
 export type RunningValue =
   /** Words, as written. */
   | string
-  /** Machine text such as a branch or a tool name. In a facts row it gets a copy control. */
+  /**
+   * Machine text such as a branch or a tool name, sent whole. The shell prints an id or a
+   * digest inside it by its head and its tail, and keeps all of it for the hover title and,
+   * in a facts row, for the copy control.
+   */
   | { mono: string }
   /** A state word; `in_review` reads 'in review'. Drawn in ink; red only on a row that needs a person. */
   | { state: string }

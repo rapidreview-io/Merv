@@ -497,6 +497,46 @@ test('a wave begun before version 4 cannot be ended, so its red asks for a revie
   );
 });
 
+test('a review no eligible reviewer can take turns the wave red until an operator provides one', async (t) => {
+  const f = await fixture(t);
+  let wave = await f.lenses(
+    await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' }),
+  );
+  wave = await f.synthesize(wave, await f.text(f.owner, 'Changes'));
+  assert.equal(wave.workflow.state, 'in_review');
+  // Reviews' own signal, which review.get gives an operator alone, as it does for a task: its
+  // Review section says why in ink, and the wave carries the red and whose move it is.
+  const waiting = {
+    ...wave.review!,
+    waiting:
+      'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.',
+  };
+  const facts = { wave: { ...wave, review: waiting }, leases: [], exhausted: false };
+  const red = {
+    says: ['No independent reviewer can take it'],
+    who: 'An operator provides one.',
+    to: { route: `/reviews/${wave.review!.id}`, text: 'Open the review' },
+  };
+  const node = waveNode(facts);
+  assert.deepEqual(node.attention, red);
+  assert.deepEqual(node.lines, [
+    ['Review · waiting for a reviewer ', { since: wave.workflow.updatedAt }],
+  ]);
+  const graph = await f.app.ctx.reflections.process(f.owner, wave.id);
+  assert.deepEqual(wavePanel(facts, graph).header.attention, red);
+  // Returns used up name the move that ends both waits; with no signal there is no red.
+  assert.deepEqual(waveNode({ ...facts, exhausted: true }).attention!.says, [
+    'Review returns used up',
+  ]);
+  assert.equal(waveNode({ ...facts, wave }).attention, undefined);
+  // Only a wave still in review waits for a reviewer.
+  const approved = { ...wave.workflow, state: 'approved' };
+  assert.equal(
+    waveNode({ ...facts, wave: { ...facts.wave, workflow: approved } }).attention,
+    undefined,
+  );
+});
+
 test('an ended wave leaves the board and its sidebar keeps only its stages', async (t) => {
   const f = await fixture(t);
   let wave = await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' });

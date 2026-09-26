@@ -331,13 +331,6 @@ export function checkPanel(
 const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /**
- * The branch as the Code page prints it (code-section.tsx): the id inside it is read by its
- * head and its tail, the way every digest is, because no id is printed whole.
- */
-const shortBranch = (branch: string) =>
-  branch.replace(/[0-9a-f]{24,}/gi, (id) => `${id.slice(0, 8)}…${id.slice(-6)}`);
-
-/**
  * The Code section of one unit's work. The move a person owes it leads, in the words and with
  * the one control the Code page gives it; where no person owes one, the wait on the server is
  * said in ink. Then the branch, where the work has got to since its base, when it was
@@ -371,7 +364,9 @@ export function codeSection(
       ...(person ? { attention: true } : {}),
     });
   }
-  rows.push({ label: 'Branch', value: [{ mono: shortBranch(unit.branch) }] });
+  // Sent whole, because it is what an operator fetches: the page prints the id inside it by
+  // its head and its tail, as the Code page does, and copies all of it.
+  rows.push({ label: 'Branch', value: [{ mono: unit.branch }] });
   const stats = receipt?.receipt?.stats;
   if (stats || unit.canonicalHead)
     rows.push({

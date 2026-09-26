@@ -20,6 +20,7 @@ await import('../packages/ui/web/components.js');
 const { RunningPage, RunningView, cadenceOf, nodeName } =
   await import('../packages/ui/web/views/running.js');
 const { streamRows } = await import('../packages/ui/web/views/running-panel.js');
+const { monoText } = await import('../packages/ui/web/views/running-phrase.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { runnerLiveness } = await import('../packages/ui/web/liveness.js');
 
@@ -167,17 +168,19 @@ test('three bands say what each holds, and what needs a person is counted beside
   // The Sessions line carries dispatch and its one control, which never wears the accent.
   const pause = button('Pause dispatch')!;
   assert.ok(pause && !pause.classList.contains('btn--primary'));
-  assert.ok(text().includes('Dispatch on · 2 machines live'));
+  assert.ok(text().includes('Dispatch running · Machines 2 · Free slots 1'));
 });
 
 test('what a lane needs of a person has its own line, never cut, with who ends the wait and the way there', async (t) => {
   t.after(unmount);
   t.after(styled());
   drawn();
+  // An operator's read: only it counts the work that waits, and says the one reason why.
   const given = board();
+  given.lanes.sessions.needsYou = 1;
   given.lanes.sessions.summaries[0]!.attention = {
-    says: ['3 ready, not taken for ', { since: new Date(Date.now() - 720_000).toISOString() }],
-    who: 'An operator checks dispatch and machines',
+    says: ['No machine online · ', { count: 3 }, ' waiting'],
+    who: 'Someone with a write key of this project starts a runner',
     to: { route: '/sessions', text: 'Open sessions' },
   };
   answers(given);
@@ -186,12 +189,12 @@ test('what a lane needs of a person has its own line, never cut, with who ends t
   assert.ok(line, 'the red clause stands under the heading');
   assert.equal(line.closest('.running-summary'), null, 'not squeezed into the heading’s line');
   const red = line.querySelector<HTMLElement>('.running-attn')!;
-  assert.equal(red.textContent, '3 ready, not taken for 12m');
+  assert.equal(red.textContent, 'No machine online · 3 waiting');
   for (const item of [line, red]) {
     assert.notEqual(getComputedStyle(item).whiteSpace, 'nowrap');
     assert.notEqual(getComputedStyle(item).textOverflow, 'ellipsis');
   }
-  assert.ok(line.textContent!.includes('An operator checks dispatch and machines'));
+  assert.ok(line.textContent!.includes('Someone with a write key of this project starts a runner'));
   assert.equal(line.querySelector('a.running-target')!.getAttribute('href'), '/sessions');
 });
 
@@ -380,6 +383,52 @@ test('a key that is not on the board still opens its sidebar; one nobody answers
   assert.ok($('.running-close'), 'the sidebar can still be closed');
 });
 
+test('a sidebar whose owner cannot answer yet says it could not load, never Not found, and keeps asking', async (t) => {
+  t.after(unmount);
+  drawn();
+  const now = Date.now();
+  const given = board(now);
+  // A machine the board draws live, so its sidebar is read again every 4 s.
+  given.lanes.hardware.nodes[3]!.dot = 'live';
+  answers(given);
+  // Sandboxes before the machines were first read: 503, which is not a thing that is gone.
+  serve('/tools/ui.running_panel', (call, sent) => {
+    asked.push(String(sent.key));
+    return call === 1
+      ? {
+          status: 503,
+          body: {
+            error: {
+              code: 'sandbox_machines_pending',
+              message: 'The machines have not been read yet',
+            },
+          },
+        }
+      : {
+          body: {
+            result: {
+              key: 'sandbox:sbx_a10',
+              observedAt: given.observedAt,
+              header: { kind: 'Sandbox', title: 'embed-refs', says: ['Idle'] },
+              sections: [],
+              actions: [],
+              live: true,
+            },
+          },
+        };
+  });
+  await mount(page());
+  await press(card('sandbox:sbx_a10'));
+  assert.ok(text().includes('Could not load'), text().slice(0, 400));
+  assert.ok(!text().includes('Not found'));
+  assert.equal(where, '/running?key=sandbox:sbx_a10', 'the sidebar stays open');
+  assert.ok($('.running-close'), 'and can be closed');
+  await settle(4200);
+  assert.deepEqual(asked, ['sandbox:sbx_a10', 'sandbox:sbx_a10']);
+  assert.ok(!text().includes('Could not load'));
+  assert.equal($('#running-panel-title')!.textContent, 'embed-refs');
+});
+
 test('a link whose key nobody answers for goes to the page it carries, in place of a dead end', async (t) => {
   t.after(unmount);
   drawn();
@@ -493,6 +542,50 @@ test('an ending card steps back in faint ink, except for the red line saying wha
   }
 });
 
+test('a quiet line is ink wherever it stands: on a card, on an ending card, in a sidebar’s head and under a band', async (t) => {
+  t.after(unmount);
+  t.after(styled());
+  drawn();
+  const now = Date.now();
+  const given = board(now);
+  // What Fleet cannot see about a working machine, folded into the lease that took it in.
+  const quiet = {
+    says: ['The sandbox service is not answering about this machine'],
+    quiet: true as const,
+  };
+  given.lanes.sessions.nodes[0]!.attention = quiet;
+  given.lanes.sessions.needsYou = 0;
+  given.lanes.work.nodes[0]!.attention = {
+    says: ['Ready · launch failed 2 times, retrying'],
+    quiet: true,
+  };
+  given.lanes.work.needsYou = 0;
+  given.lanes.sessions.summaries[0]!.attention = { says: ['Dispatch waiting'], quiet: true };
+  const panel = sessionPanel(now);
+  panel.header.attention = quiet;
+  answers(given, { 'session:session_ablate': panel });
+  await mount(page());
+  assert.equal(all('.running-needs').length, 1, 'only the hardware band needs anyone');
+  for (const key of ['session:session_ablate', 'work:wf_table']) {
+    const held = card(key);
+    assert.ok(!held.classList.contains('running-attn'), key);
+    assert.equal(held.querySelector('.running-attn, .running-dot--attn'), null, key);
+  }
+  const line = (key: string) => card(key).querySelector<HTMLElement>('.running-line')!;
+  assert.equal(line('session:session_ablate').textContent, quiet.says[0]);
+  assert.equal(getComputedStyle(line('session:session_ablate')).color, 'var(--muted)');
+  // An ending card steps back, and its quiet line with it.
+  assert.equal(getComputedStyle(line('work:wf_table')).color, 'var(--faint)');
+  const lane = $('[data-lane="sessions"] .running-lane-attn')!;
+  assert.equal(lane.textContent, 'Dispatch waiting');
+  assert.equal(lane.querySelector('.running-attn'), null);
+  await press(card('session:session_ablate'));
+  const says = $('.running-says')!;
+  assert.equal(says.textContent, quiet.says[0]);
+  assert.ok(!says.classList.contains('running-attn'));
+  assert.equal(getComputedStyle(says).color, 'var(--muted)');
+});
+
 test('a held card’s sidebar borrows the board’s mark: the sentence, who ends the wait, and the way to the move', async (t) => {
   t.after(unmount);
   drawn();
@@ -507,6 +600,40 @@ test('a held card’s sidebar borrows the board’s mark: the sentence, who ends
   assert.equal(move.getAttribute('href'), '/code');
   assert.equal(move.textContent, 'Merge reviewed proposal');
   assert.ok(move.querySelector('svg'), 'the shell ends the link with its own arrow');
+});
+
+test('a link that is a fact’s whole value is a target of its own; one inside a sentence stays text', async (t) => {
+  t.after(unmount);
+  drawn();
+  const now = Date.now();
+  const task = taskPanel(now);
+  const code = task.sections.find((section) => section.title === 'Code')!;
+  if (code.kind === 'facts')
+    code.rows.unshift({
+      label: 'Needs',
+      value: [
+        'Merge the reviewed proposal · a signed-in operator · ',
+        { link: { route: '/code' }, text: 'Merge reviewed proposal' },
+      ],
+      attention: true,
+    });
+  answers(board(now), { 'work:wf_index': task });
+  await mount(page());
+  await press(card('work:wf_index'));
+  const value = (label: string) =>
+    all('.running-facts .kv-row')
+      .find((row) => row.querySelector('dt')?.textContent === label)!
+      .querySelector('dd')!;
+  // Reviews' last row is only the way to the verdict page, so it is as tall as a control.
+  const verdict = value('Verdict page').querySelector<HTMLAnchorElement>('a.running-target')!;
+  assert.ok(verdict.classList.contains('hit'));
+  assert.equal(verdict.getAttribute('href'), '/reviews/review_1');
+  assert.equal(verdict.textContent, 'Open the review');
+  assert.ok(value('Pull request').querySelector('a.running-target')!.classList.contains('hit'));
+  // Inside a sentence the link is words that go somewhere, at the sentence's own height.
+  const inline = value('Needs').querySelector<HTMLAnchorElement>('a.running-target')!;
+  assert.equal(inline.getAttribute('href'), '/code');
+  assert.ok(!inline.classList.contains('hit'));
 });
 
 test('the live region holds every word of the standing and none of its clocks', async (t) => {
@@ -688,6 +815,44 @@ test('no identifier is ever printed, on the board or in any sidebar', async (t) 
     await press(card(key));
     assert.doesNotMatch(text(), ids, `the ${key} sidebar prints an id`);
   }
+});
+
+test('machine text prints an id inside it by its head and its tail, and titles and copies all of it', async (t) => {
+  t.after(unmount);
+  drawn();
+  let copied = '';
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (value: string) => void (copied = value) },
+  });
+  t.after(() => Reflect.deleteProperty(navigator, 'clipboard'));
+  const hex = '0123456789abcdef0123456789abcdef';
+  const branch = `merv/work/wf_${hex}`;
+  assert.equal(monoText(branch), 'merv/work/wf_01234567…abcdef');
+  assert.equal(monoText(`HEAD ${'F'.repeat(40)}`), `HEAD FFFFFFFF…FFFFFF`);
+  // Fewer than 24 hex digits, and words, are machine text as sent.
+  for (const as of ['a'.repeat(23), 'python sweep.py --k 16', 'code.commit'])
+    assert.equal(monoText(as), as);
+  const now = Date.now();
+  const task = taskPanel(now);
+  const code = task.sections.find((section) => section.title === 'Code')!;
+  if (code.kind === 'facts') code.rows[0] = { label: 'Branch', value: [{ mono: branch }] };
+  answers(board(now), { 'work:wf_index': task });
+  await mount(page());
+  // Short machine text on a card is printed as it came, with nothing in its title.
+  const tool = card('session:session_index').querySelector<HTMLElement>('.mono')!;
+  assert.equal(tool.textContent, 'code.commit');
+  assert.equal(tool.getAttribute('title'), null);
+  await press(card('work:wf_index'));
+  const row = all('.running-facts .kv-row').find(
+    (item) => item.querySelector('dt')?.textContent === 'Branch',
+  )!;
+  const shown = row.querySelector<HTMLElement>('.mono')!;
+  assert.equal(shown.textContent, 'merv/work/wf_01234567…abcdef');
+  assert.equal(shown.getAttribute('title'), branch);
+  assert.ok(!text().includes(hex));
+  await press(row.querySelector('button[aria-label="Copy"]')!);
+  assert.equal(copied, branch, 'the copy is the branch an operator fetches, whole');
 });
 
 test('a card is named by what it draws, and one that needs a person says what in its name', async (t) => {

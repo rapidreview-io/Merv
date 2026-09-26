@@ -865,11 +865,14 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
 test('a lease bound to a Fleet machine takes that machine in, and Fleet describes it in the lease’s sidebar', async (t) => {
   const f = await fixture(t);
   const { allocation, machine, runnerId } = await rent(f);
+  const alias = `fleet:${allocation.id}`;
+  // Fleet draws on this page, so the machine is a node of its own until a lease takes it in.
+  assert.ok(f.ui.contributions().some(({ owner }) => owner === 'fleet'));
+  assert.equal(node(await f.board(f.owner), alias)?.owner, 'fleet');
   await f.sessions.setDispatch(f.owner, { enabled: true });
   const bound = (await f.sessions.lease(machine, { ...auto(runnerId) })).session!;
   assert.ok(bound);
   const key = `session:${bound.id}`;
-  const alias = `fleet:${allocation.id}`;
 
   const board = await f.board(f.owner);
   const drawn = node(board, key)!;
@@ -889,17 +892,15 @@ test('a lease bound to a Fleet machine takes that machine in, and Fleet describe
   assert.deepEqual(Object.keys(facts(panel, 'Machine')), ['Presence']);
   assert.match(panel.actions[0].guard!.consequence, /Its Fleet machine is then released\.$/);
   assert.ok(panel.actions[0].guard!.consequence.startsWith('The agent on a Fleet VM holds'));
-  // Fleet's own machine section follows the lease's, through the alias, wherever Fleet draws on
-  // this page; where it does not yet, the alias is all this lease owes it.
-  if (f.ui.contributions().some(({ owner }) => owner === 'fleet')) {
-    const own = panel.sections.findIndex(
-      ({ owner, title }) => owner === 'sessions' && title === 'Machine',
-    );
-    const fleets = panel.sections.findIndex(
-      ({ owner, place }) => owner === 'fleet' && place === 'machine',
-    );
-    assert.ok(fleets > own, 'Fleet describes the machine the lease took in');
-  }
+  // Fleet's own machine section follows the lease's, through the alias.
+  const own = panel.sections.findIndex(
+    ({ owner, title }) => owner === 'sessions' && title === 'Machine',
+  );
+  const fleets = panel.sections.findIndex(
+    ({ owner, place }) => owner === 'fleet' && place === 'machine',
+  );
+  assert.ok(own >= 0, 'the lease keeps its own Machine section');
+  assert.ok(fleets > own, 'Fleet describes the machine the lease took in');
 });
 
 test('a Fleet machine that refuses work is named as one, never by its hostname', async (t) => {

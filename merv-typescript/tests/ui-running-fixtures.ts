@@ -229,9 +229,18 @@ export function board(now = Date.now()): RunningBoard {
       work: lane(work),
       sessions: lane(sessions, {
         summaries: [
+          // Sessions' own words, which every reader gets; the control is an operator's, and so
+          // is the red clause of why work waits, which only an operator's read counts.
           {
             lane: 'sessions',
-            says: ['Dispatch on · 2 machines live'],
+            says: [
+              'Dispatch ',
+              { state: 'running' },
+              ' · Machines ',
+              { count: 2 },
+              ' · Free slots ',
+              { count: 1 },
+            ],
             actions: [
               {
                 label: 'Pause dispatch',
@@ -298,7 +307,7 @@ export function taskPanel(now = Date.now()): RunningPanel {
           },
           { label: 'Claimed', value: [{ ago: at(-900_000) }] },
           {
-            label: 'Review',
+            label: 'Verdict page',
             value: [{ link: { route: '/reviews/review_1' }, text: 'Open the review' }],
           },
         ],

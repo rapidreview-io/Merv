@@ -111,28 +111,33 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
 }
 
 /**
- * The wave's one red. A wave in review after its last allowed return is never leased a
- * reviewer, so it waits for a person: a reviewer who takes the review by hand, or its ending.
- * Only version 4 can be ended; a wave begun before it waits instead for another round.
- * Once someone has claimed that review the move is being made, and the line names them.
+ * The wave's red. A wave in review after its last allowed return is never leased a reviewer,
+ * so it waits for a person: a reviewer who takes the review by hand, or its ending. Only
+ * version 4 can be ended; a wave begun before it waits instead for another round. Once
+ * someone has claimed that review the move is being made, and the line names them. A review
+ * no eligible reviewer may take waits for an operator to provide one: Reviews tells only an
+ * operator so (`waiting`), as it does for a task, and its Review section says why in ink.
  */
 function attention({ wave, exhausted }: WaveFacts): RunningAttention | undefined {
-  if (!exhausted || wave.review?.status === 'started') return undefined;
-  return {
-    says: ['Review returns used up'],
-    who:
-      wave.workflow.version >= REFLECTION_WORKFLOW_ENDABLE.version
-        ? 'An independent reviewer reviews it by hand, or its owner or an operator ends it.'
-        : 'An independent reviewer reviews it by hand, or an operator allows another round.',
-    ...(wave.review
-      ? {
-          to: {
-            route: `/reviews/${encodeURIComponent(wave.review.id)}`,
-            text: 'Open the review',
-          },
-        }
-      : {}),
+  const review = wave.review && {
+    to: { route: `/reviews/${encodeURIComponent(wave.review.id)}`, text: 'Open the review' },
   };
+  if (exhausted && wave.review?.status !== 'started')
+    return {
+      says: ['Review returns used up'],
+      who:
+        wave.workflow.version >= REFLECTION_WORKFLOW_ENDABLE.version
+          ? 'An independent reviewer reviews it by hand, or its owner or an operator ends it.'
+          : 'An independent reviewer reviews it by hand, or an operator allows another round.',
+      ...review,
+    };
+  if (wave.workflow.state === 'in_review' && wave.review?.waiting)
+    return {
+      says: ['No independent reviewer can take it'],
+      who: 'An operator provides one.',
+      ...review,
+    };
+  return undefined;
 }
 
 export function waveNode(facts: WaveFacts): RunningNode {
