@@ -262,7 +262,15 @@ test('a waiting task is dashed with its edge, and turns red with who ends the wa
   assert.deepEqual(find(waiting)?.lines, [['Waits on ', 'Collect source archive']]);
   assert.equal(find(waiting)?.look, 'dashed');
   assert.equal(find(waiting)?.rank, 3);
-  assert.deepEqual(find(both)?.lines, [['Waits on ', 'Collect source archive', ' and 1 more']]);
+  // Both prerequisites are declared in one create, so they share a timestamp and either may be
+  // the one named first; the card names one of them and counts the other.
+  const [[lead, named, rest] = []] = find(both)?.lines ?? [];
+  assert.equal(lead, 'Waits on ');
+  assert.ok(
+    ['Collect source archive', 'Normalise author names'].includes(named as string),
+    `the card names a prerequisite, not ${String(named)}`,
+  );
+  assert.equal(rest, ' and 1 more');
   assert.deepEqual(
     answer.edges.filter(({ from }) => from === `work:${waiting.id}`),
     [{ from: `work:${waiting.id}`, to: `work:${source.id}`, verb: 'waits on', waiting: true }],
@@ -657,7 +665,15 @@ test('the board reads what every task waits on, and its review rounds, once for 
   const answer = await f.board();
   const find = (task: { id: string }) =>
     answer.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
-  assert.deepEqual(find(both)?.lines, [['Waits on ', 'Collect source archive', ' and 1 more']]);
+  // Both prerequisites are declared in one create, so they share a timestamp and either may be
+  // the one named first; the card names one of them and counts the other.
+  const [[lead, named, rest] = []] = find(both)?.lines ?? [];
+  assert.equal(lead, 'Waits on ');
+  assert.ok(
+    ['Collect source archive', 'Normalise author names'].includes(named as string),
+    `the card names a prerequisite, not ${String(named)}`,
+  );
+  assert.equal(rest, ' and 1 more');
   assert.deepEqual(find(reviewed)?.attention?.says, ['Every review round is used']);
 });
 
