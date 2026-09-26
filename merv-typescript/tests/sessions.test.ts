@@ -900,6 +900,31 @@ test('automatic dispatch moves past a candidate whose offer cannot be built', as
   });
 });
 
+test('a 5xx offer fault skips one candidate without recording a dispatch hold', async (t) => {
+  const f = await fixture(t);
+  await f.instance();
+  await f.instance();
+  const [first, second] = await f.workflows.dispatchCandidates(f.source);
+  assert.ok(first && second);
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.source, presenceInput);
+  let builds = 0;
+  f.onBuild(() => {
+    if (++builds === 1) throw new MervError('offer_unavailable', 'Temporary server fault', 503);
+  });
+  const leased = await f.sessions.lease(f.source, autoInput());
+  assert.equal(leased.reason, 'offered');
+  assert.equal(builds, 2);
+  assert.equal(leased.session?.instanceId, second.instanceId);
+  assert.notEqual(leased.session?.instanceId, first.instanceId);
+  assert.deepEqual(
+    await f.state.read((sql) =>
+      sql.all('SELECT * FROM session_dispatch_holds WHERE instance_id=?', first.instanceId),
+    ),
+    [],
+  );
+});
+
 test('automatic dispatch defaults off, pauses only new offers, and halt never revives old worker authority', async (t) => {
   const f = await fixture(t);
   await f.instance();
