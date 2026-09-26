@@ -19,7 +19,7 @@ const event = {
 };
 async function fixture(
   t: TestContext,
-  config: { lockTimeoutMs?: number; maxConnections?: number } = {},
+  config: { lockTimeoutMs?: number; maxConnections?: number; statementTimeoutMs?: number } = {},
 ) {
   // The class's own pool defaults, not the fixture's small test pools.
   const schema = schemaFor();
@@ -569,6 +569,71 @@ test('PostgreSQL snapshot scopes run sibling reads side by side, each in its own
   await assert.rejects(
     state.snapshot(() => state.transaction(async (tx) => await state.appendEvent(tx, event))),
     { code: 'read_only_scope' },
+  );
+});
+
+test('PostgreSQL: a statement that fails in an isolated read costs that read alone, and the snapshot reads on', async (t) => {
+  const { state } = await fixture(t, { statementTimeoutMs: 200 });
+  await state.transaction(async (tx) => await state.appendEvent(tx, event));
+  const code = (error: { code?: string }) => error.code;
+  // Without a savepoint, the first of these would abort the snapshot, and its COMMIT with it.
+  const outcomes = await state.snapshot(async () => {
+    const results: unknown[] = [];
+    for (const statement of ['SELECT 1/0', "SELECT '{bad'::jsonb", 'SELECT pg_sleep(1)'])
+      results.push(
+        await state
+          .isolated(() => state.transaction(async (tx) => await tx.get(statement)))
+          .catch(code),
+      );
+    // Catching its own failed statement does not save a read: the snapshot was aborted.
+    results.push(
+      await state
+        .isolated(async () => {
+          await state.read((sql) => sql.get('SELECT 1/0')).catch(() => undefined);
+          return 'swallowed';
+        })
+        .catch(code),
+    );
+    results.push(await state.isolated(async () => await state.eventHead()));
+    return results;
+  });
+  assert.deepEqual(outcomes, [
+    'state_unavailable',
+    'state_unavailable',
+    'state_timeout',
+    'state_unavailable',
+    1,
+  ]);
+
+  await state.snapshot(async () => {
+    // Savepoints nest by time on one connection: a second read waits its turn or is refused.
+    const release = deferred();
+    const first = state.isolated(async () => await release.promise);
+    await assert.rejects(
+      state.isolated(async () => 1),
+      { code: 'isolation_overlap' },
+    );
+    release.resolve();
+    await first;
+    await assert.rejects(
+      state.isolated(() => state.isolated(async () => 1)),
+      { code: 'isolation_overlap' },
+    );
+    // A read an isolated call leaves running is closed with it.
+    const go = deferred();
+    let late!: Promise<unknown>;
+    await state.isolated(() => {
+      late = go.promise.then(() => state.read((sql) => sql.get('SELECT 1')));
+    });
+    go.resolve();
+    await assert.rejects(late, { code: 'transaction_closed' });
+    assert.equal(await state.isolated(async () => await state.eventHead()), 1);
+  });
+  // Outside a scope every read is its own; a write transaction cannot isolate a statement.
+  assert.equal(await state.isolated(async () => await state.eventHead()), 1);
+  await assert.rejects(
+    state.transaction(() => state.isolated(async () => 1)),
+    { code: 'isolation_unavailable' },
   );
 });
 

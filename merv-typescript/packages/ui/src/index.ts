@@ -142,10 +142,24 @@ export const uiPlugin = {
     const running: RunningSources = {
       contributions: () => ui.contributions(),
       tools: async () => (await ctx.tools.list()).map((tool) => tool.name),
+      // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
+      isolated: async (read) => {
+        const state = ctx.get('state');
+        return state ? await state.isolated(read) : await read();
+      },
+      // An owner's adapter, e.g. @merv/sessions/ui, that failed or waits on what it needs.
+      absent: () =>
+        plugins()
+          .filter(({ state }) => state !== 'active' && state !== 'disabled')
+          .map(
+            ({ id, name }) =>
+              /^@merv\/([a-z][a-z0-9-]*)\/ui$/.exec(name)?.[1] ?? /^(.+)-ui$/.exec(id)?.[1],
+          )
+          .filter((owner) => owner !== undefined),
     };
     // A person's monitor. Its sidebars can hold what only an operator may read, so no
     // conversation is offered it and the reads refuse leased workers and managed runners.
-    // One snapshot for every owner's part, as for ui.home.
+    // One snapshot for every owner's part, as for ui.home, and a savepoint for each.
     ctx.effect(() =>
       ctx.tools.register({
         name: 'ui.running',

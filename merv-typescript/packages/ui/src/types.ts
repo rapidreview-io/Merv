@@ -58,8 +58,10 @@ export interface RunningRead {
  * own ui adapter, inside `ctx.effect` so it leaves with the adapter. Every member is optional
  * and every member only reads. Members run inside the read-only tool's PostgreSQL snapshot,
  * so none may write, and none may wait on a service outside this process: read a cache that
- * the service refreshes on its own timer instead. On the board, a part refused with 403 or 404
- * is simply absent; any other failure names the owner in its lanes, and the rest stands.
+ * the service refreshes on its own timer instead. Members are read one at a time, each behind
+ * its own savepoint, so a statement that fails costs only that member; leave no read running
+ * when a member returns. On the board, a part refused with 403 or 404 is simply absent; any
+ * other failure names the owner in its lanes, and the rest stands.
  */
 export interface RunningContribution {
   /** The owning plugin, e.g. 'tasks' or 'sessions'. Unique while registered: /^[a-z][a-z0-9-]{0,31}$/. */

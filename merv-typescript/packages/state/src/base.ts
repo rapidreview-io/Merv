@@ -29,6 +29,8 @@ interface Context {
   childTransaction?: Promise<unknown>;
   /** A read scope: nested "transactions" read on the same snapshot and refuse writes. */
   readOnly?: boolean;
+  /** Shared by every scope of one snapshot: whether an isolated read holds its savepoint. */
+  isolation?: { open: boolean };
 }
 
 /** Explicit transactions stay on one connection; async context never crosses requests. */
@@ -38,6 +40,7 @@ export abstract class StateStore implements State {
   private readonly listeners = new Set<() => void>();
   private closing?: Promise<void>;
   private closed = false;
+  private savepoints = 0;
 
   /** Reads take a connection of their own kind, so writers queued on the lock never starve a page. */
   protected abstract connect<T>(
@@ -224,6 +227,7 @@ export abstract class StateStore implements State {
       this.connect(async (connection) => {
         const scope = this.scope(connection);
         scope.readOnly = true;
+        scope.isolation = { open: false };
         try {
           await this.beginRead(connection);
           const value = await this.context.run(scope, fn);
@@ -243,6 +247,64 @@ export abstract class StateStore implements State {
         }
       }, 'read'),
     );
+  }
+
+  /**
+   * Inside a snapshot, runs `fn` behind a savepoint of its own. A statement that fails there,
+   * a timeout included, would otherwise abort the whole snapshot and every read after it; here
+   * it is rolled back to the savepoint, `fn` fails with its own error, and the snapshot reads
+   * on. Savepoints nest by time on the snapshot's one connection, so isolated calls run one at
+   * a time and an overlapping or nested one is refused. A read `fn` leaves running is closed
+   * with it. Outside any scope every read already has a transaction of its own, so `fn` runs as
+   * it is; a write transaction cannot isolate its statements, so there it is refused.
+   */
+  async isolated<T>(fn: () => T | Promise<T>): Promise<T> {
+    const current = this.context.getStore();
+    if (!current?.readOnly) {
+      check(
+        !current?.transaction,
+        'isolation_unavailable',
+        'Only a snapshot isolates its reads',
+        500,
+      );
+      return await fn();
+    }
+    check(current.live && !this.closed, 'transaction_closed', 'Database scope is no longer active');
+    const isolation = current.isolation!;
+    check(
+      !isolation.open,
+      'isolation_overlap',
+      'Isolated reads of one snapshot run one at a time',
+      500,
+    );
+    isolation.open = true;
+    const { connection } = current;
+    const savepoint = `merv_isolated_${++this.savepoints}`;
+    const scope = this.scope(connection, current);
+    scope.live = true;
+    try {
+      await connection.exec(`SAVEPOINT ${savepoint}`);
+      try {
+        const value = await this.context.run(scope, fn);
+        scope.live = false;
+        // Refused when `fn` caught a failed statement of its own: the snapshot is aborted all
+        // the same, so it is rolled back below and `fn` fails.
+        await connection.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        return value;
+      } catch (error) {
+        scope.live = false;
+        try {
+          await connection.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          await connection.exec(`RELEASE SAVEPOINT ${savepoint}`);
+        } catch {
+          connection.discard();
+        }
+        throw error;
+      }
+    } finally {
+      scope.live = false;
+      isolation.open = false;
+    }
   }
 
   assertTransaction(tx: Transaction): void {

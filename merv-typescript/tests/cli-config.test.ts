@@ -255,14 +255,18 @@ test('CLI serves a temporary Cordis configuration with placeholders and reports 
   });
   assert.equal(response.status, 200);
   const catalog = (await response.json()) as { tools: { name: string }[] };
-  assert.equal(catalog.tools.length, 97);
+  assert.equal(catalog.tools.length, 99);
   for (const name of ['reflection.end', 'session.dispatch', 'session.halt', 'session.observe'])
     assert.ok(
       catalog.tools.some((tool) => tool.name === name),
       `${name} is served`,
     );
   assert.ok(catalog.tools.some((tool) => tool.name === 'task.reissue_review'));
-  assert.ok(catalog.tools.some((tool) => tool.name === 'ui.shell'));
+  for (const name of ['ui.shell', 'ui.running', 'ui.running_panel'])
+    assert.ok(
+      catalog.tools.some((tool) => tool.name === name),
+      `${name} is served`,
+    );
   assert.ok(!catalog.tools.some((tool) => tool.name.startsWith('feed.')));
   assert.ok(await stored(dataDirectory), 'serve keeps its state in the data directory schema');
   assert.equal((await process.stop()).code, 0);

@@ -1,6 +1,7 @@
 import {
   check,
   keyKind,
+  mapAsync,
   MervError,
   runningKeyPattern,
   visible,
@@ -41,9 +42,11 @@ import type { RunningContribution, RunningRead } from './types.js';
  * lanes, the order of a lane and of a sidebar — and the refusal of anything malformed.
  *
  * Both reads run inside the read-only tool's PostgreSQL snapshot, so every part reads one
- * consistent project and none may write. Nothing here waits on a timer or on a service
- * outside this process: an owner whose facts are remote serves them from a cache it fills
- * on its own timer, and says how old they are.
+ * consistent project and none may write. Parts are read one at a time, each behind a
+ * savepoint of that snapshot, so a statement that fails in one part, a timeout included,
+ * costs that part alone. Nothing here waits on a timer or on a service outside this
+ * process: an owner whose facts are remote serves them from a cache it fills on its own
+ * timer, and says how old they are.
  */
 
 const LANES: readonly RunningLaneName[] = ['work', 'sessions', 'hardware'];
@@ -69,6 +72,21 @@ const VERBS = new Set<RunningVerb>([
 ]);
 /** The verbs by which a session lends its dot to the work it is on. */
 const WORKING = new Set<RunningVerb>(['works on', 'reviews']);
+/**
+ * Where each owner's part stands, to name it when its adapter is configured but not running:
+ * such an adapter registered nothing, and the board must not draw that silence as fact. Marks
+ * are held on work, so an owner that marks is missing there too. Reviews only adds sections.
+ * An owner that begins to draw on the board adds itself here.
+ */
+const STANDS = new Map<string, readonly RunningLaneName[]>([
+  ['tasks', ['work']],
+  ['experiments', ['work', 'hardware']],
+  ['reflections', ['work']],
+  ['code-research', ['work', 'hardware']],
+  ['sessions', ['work', 'sessions']],
+  ['fleet', ['sessions']],
+  ['sandboxes', ['hardware']],
+]);
 /** Strongest first. */
 const DOTS: readonly NonNullable<RunningNode['dot']>[] = ['moving', 'live', 'starting'];
 const LOOKS = new Set(['solid', 'dashed', 'quiet']);
@@ -153,6 +171,16 @@ export interface RunningSources {
   contributions(): readonly RunningContribution[];
   /** The registered tool names, read once per answer: an action for any other tool is not sent. */
   tools(): Promise<Iterable<string>>;
+  /**
+   * Runs one part alone, so that a statement failing inside it fails only that part: in the
+   * application, behind its own savepoint of the read's snapshot. Parts come one at a time.
+   */
+  isolated?<T>(read: () => Promise<T>): Promise<T>;
+  /**
+   * Owners whose ui adapter is configured and switched on but is not running: it failed, or
+   * waits on a plugin it needs. Each is named as failed in the lanes it would draw in.
+   */
+  absent?(): readonly string[];
 }
 
 // ─── Validation: every part is checked, and what fails is left out ────────────────────────
@@ -719,11 +747,18 @@ function refuseWorkers(caller: Caller): void {
   );
 }
 
+type Isolated = <T>(read: () => Promise<T>) => Promise<T>;
+/** One part at a time, each alone: behind a savepoint in the application, as it is in a test. */
+const isolation =
+  (sources: RunningSources): Isolated =>
+  async (read) =>
+    sources.isolated ? await sources.isolated(read) : await read();
+
 /** A part refused to this caller, or naming nothing, is absent; any other failure is reported. */
 type Part<T> = { value: T } | { refused: true } | { failed: true };
-async function part<T>(read: () => Promise<T>): Promise<Part<T>> {
+async function part<T>(isolated: Isolated, read: () => Promise<T>): Promise<Part<T>> {
   try {
-    return { value: await read() };
+    return { value: await isolated(read) };
   } catch (error) {
     return error instanceof MervError && (error.status === 403 || error.status === 404)
       ? { refused: true }
@@ -773,9 +808,10 @@ const lanesOf = (
 
 /**
  * ui.running: everything in flight, in three lanes. Every owner's marks are read first, so a
- * key one owner holds on the board reaches the owner that draws it. Then every owner's nodes
- * and lane summary are read together. A part refused to this caller is absent; a part that
- * fails names its owner in its lanes, and the rest of the board stands.
+ * key one owner holds on the board reaches the owner that draws it. Then each owner's nodes
+ * and lane summary are read, in owner order, each part alone. A part refused to this caller
+ * is absent; a part that fails names its owner in its lanes, as does an owner whose adapter
+ * is not running, and the rest of the board stands.
  */
 export async function runningBoard(sources: RunningSources, caller: Caller): Promise<RunningBoard> {
   refuseWorkers(caller);
@@ -783,15 +819,20 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   const owners = contributions.map(({ owner }) => owner);
   const read = readers(caller);
   const tools = toolNames(sources);
+  const isolated = isolation(sources);
   const failed = new Map<RunningLaneName, Set<string>>(LANES.map((lane) => [lane, new Set()]));
-  const fail = (lanes: RunningLaneName[], owner: string) =>
+  const fail = (lanes: readonly RunningLaneName[], owner: string) =>
     lanes.forEach((lane) => failed.get(lane)!.add(owner));
+  for (const owner of sources.absent?.() ?? []) {
+    const lanes = STANDS.get(owner);
+    if (lanes && !owners.includes(owner)) fail(lanes, owner);
+  }
 
   const marks: RunningMark[] = [];
-  const markParts = await Promise.all(
-    contributions.map((contribution) =>
-      contribution.marks ? part(async () => await contribution.marks!(read(contribution))) : null,
-    ),
+  const markParts = await mapAsync(contributions, async (contribution) =>
+    contribution.marks
+      ? await part(isolated, async () => await contribution.marks!(read(contribution)))
+      : null,
   );
   markParts.forEach((answer, at) => {
     if (!answer || 'refused' in answer) return;
@@ -801,16 +842,16 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   });
   const include = marks.map(({ key }) => key);
 
-  const parts = await Promise.all(
-    contributions.map(async (contribution) => {
-      const own = read(contribution, include);
-      const [nodes, summary] = await Promise.all([
-        contribution.nodes ? part(async () => await contribution.nodes!(own)) : null,
-        contribution.summary ? part(async () => await contribution.summary!(own)) : null,
-      ]);
-      return { contribution, nodes, summary };
-    }),
-  );
+  const parts = await mapAsync(contributions, async (contribution) => {
+    const own = read(contribution, include);
+    const nodes = contribution.nodes
+      ? await part(isolated, async () => await contribution.nodes!(own))
+      : null;
+    const summary = contribution.summary
+      ? await part(isolated, async () => await contribution.summary!(own))
+      : null;
+    return { contribution, nodes, summary };
+  });
 
   const drawn: RunningNode[] = [];
   const keys = new Set<string>();
@@ -907,7 +948,8 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
         ? { freshForMs: Math.max(0, Math.min(...deadlines) - Date.parse(oldest.asOf)) }
         : {}),
       ...(pending.has(lane) ? { pending: true as const } : {}),
-      failed: owners.filter((owner) => failed.get(lane)!.has(owner)),
+      // By owner id, the order of contributions, whether or not the owner registered one.
+      failed: [...failed.get(lane)!].sort(),
       ...(all.length > nodes.length ? { more: all.length - nodes.length } : {}),
     };
   }
@@ -919,7 +961,8 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
  * whose panel answers; a 404 or null from a contribution means the key is not its, and any
  * other refusal or failure is the answer. The owners of what the node absorbed add their
  * sections without their head or controls, and every other owner may add sections about the
- * key or anything it absorbed. Only the owner's controls are sent, and only those allowed.
+ * key or anything it absorbed; a part of theirs that fails is left out. Only the owner's
+ * controls are sent, and only those allowed. Each part is read alone, as on the board.
  */
 export async function runningPanel(
   sources: RunningSources,
@@ -935,12 +978,15 @@ export async function runningPanel(
   const contributions = sources.contributions();
   const read = readers(caller);
   const tools = toolNames(sources);
+  const isolated = isolation(sources);
   const ownerOf = async (wanted: string, except?: RunningContribution, absorbedBy?: string) => {
     for (const contribution of contributions) {
       if (contribution === except || !contribution.panel) continue;
       if (!contribution.kinds?.includes(keyKind(wanted))) continue;
       try {
-        const answer = await contribution.panel(read(contribution), wanted, absorbedBy);
+        const answer = await isolated(
+          async () => await contribution.panel!(read(contribution), wanted, absorbedBy),
+        );
         if (answer) return { contribution, part: answer as unknown };
       } catch (error) {
         if (!(error instanceof MervError && error.status === 404)) throw error;
@@ -973,8 +1019,9 @@ export async function runningPanel(
       visited.add(alias);
       aliases.push(alias);
     });
-    const answers = await Promise.all(
-      next.map(async (alias) => await ownerOf(alias, owner, key).catch(() => null)),
+    const answers = await mapAsync(
+      next,
+      async (alias) => await ownerOf(alias, owner, key).catch(() => null),
     );
     level = [];
     for (const answer of answers) {
@@ -990,14 +1037,12 @@ export async function runningPanel(
     (contribution) =>
       contribution !== owner && !absorbers.has(contribution) && contribution.sections,
   );
-  const contributed = await Promise.all(
-    others.map(async (contribution) => ({
-      contribution,
-      sections: await Promise.resolve()
-        .then(() => contribution.sections!(read(contribution), [key, ...aliases]))
-        .catch(() => []),
-    })),
-  );
+  const contributed = await mapAsync(others, async (contribution) => ({
+    contribution,
+    sections: await isolated(
+      async () => await contribution.sections!(read(contribution), [key, ...aliases]),
+    ).catch(() => []),
+  }));
 
   const sections = compose(
     [{ contribution: owner, sections: own.sections }, ...absorbed, ...contributed].map(

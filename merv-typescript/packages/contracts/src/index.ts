@@ -564,6 +564,11 @@ export interface State {
   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
   /** Whether the current async context is inside such a snapshot, where nothing may write. */
   readonly readScope: boolean;
+  /**
+   * Inside a snapshot, runs `fn` behind a savepoint of its own: a statement that fails there
+   * costs only this call, and the snapshot reads on. Calls on one snapshot run one at a time.
+   */
+  isolated<T>(fn: () => T | Promise<T>): Promise<T>;
   assertTransaction(tx: Transaction): void;
   migrate(component: string, migrations: Migration[]): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;

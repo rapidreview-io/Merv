@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import {
   MervError,
@@ -11,6 +11,7 @@ import {
   type RunningBoard,
   type RunningLaneName,
   type RunningNode,
+  type RunningPanel,
   type RunningPanelPart,
   type RunningSection,
   type RunningSummary,
@@ -65,6 +66,7 @@ const find = (answer: RunningBoard, key: string) =>
   Object.values(answer.lanes)
     .flatMap(({ nodes }) => nodes)
     .find((node) => node.key === key);
+const keyKindOf = (key: string) => key.slice(0, key.indexOf(':'));
 const refusal = (status: number) => new MervError('refused', 'Not for this caller', status);
 
 test('a session that absorbs its Fleet machine takes its place, its links and its attention, and its own attention outranks it', async () => {
@@ -312,6 +314,84 @@ test('a part that fails names its owner in its lanes and leaves the rest standin
   assert.deepEqual(keys(answer, 'hardware').sort(), ['sandbox:old', 'sandbox:still-here']);
   assert.equal(answer.lanes.hardware.asOf, at);
   assert.equal(answer.lanes.work.asOf, undefined);
+});
+
+test('each part is read alone and one at a time, and an owner whose adapter is not running is named where it would draw', async () => {
+  const order: string[] = [];
+  let open = 0;
+  const isolated = async <T>(read: () => Promise<T>): Promise<T> => {
+    assert.equal(open, 0, 'no part overlaps another');
+    open++;
+    try {
+      return await read();
+    } finally {
+      open--;
+    }
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 2));
+  const heard = async (name: string) => {
+    order.push(name);
+    await tick();
+  };
+  const slow = (owner: string, lane: RunningLaneName, key: string): RunningContribution => ({
+    owner,
+    kinds: [keyKindOf(key)],
+    lanes: [lane],
+    marks: async () => (await heard(`${owner}.marks`), []),
+    nodes: async () => (await heard(`${owner}.nodes`), { nodes: [node(key, lane)] }),
+    summary: async () => (await heard(`${owner}.summary`), null),
+    panel: async (_read, wanted, absorbedBy) => {
+      await heard(`${owner}.panel ${wanted}${absorbedBy ? ` in ${absorbedBy}` : ''}`);
+      return {
+        header: { kind: owner, title: wanted, says: [] },
+        sections: [],
+        actions: [],
+        live: false,
+        ...(wanted === 'session:S' ? { aliases: ['fleet:F', 'fleet:G'] } : {}),
+      };
+    },
+    sections: async () => (await heard(`${owner}.sections`), []),
+  });
+  const walk = sources([
+    slow('tasks', 'work', 'work:T'),
+    slow('sessions', 'sessions', 'session:S'),
+    slow('fleet', 'sessions', 'fleet:F'),
+    {
+      owner: 'broken',
+      lanes: ['work'],
+      nodes: async () => {
+        throw new Error('broken');
+      },
+    },
+  ]);
+  const absent = ['sessions', 'code-research', 'sandboxes', 'paper', 'constructor'];
+  const answer = await runningBoard({ ...walk, isolated, absent: () => absent }, caller);
+  assert.deepEqual(order, [
+    'fleet.marks',
+    'sessions.marks',
+    'tasks.marks',
+    'fleet.nodes',
+    'fleet.summary',
+    'sessions.nodes',
+    'sessions.summary',
+    'tasks.nodes',
+    'tasks.summary',
+  ]);
+  // Sessions registered after all; Paper and whatever else draws nothing are not the board's.
+  assert.deepEqual(answer.lanes.work.failed, ['broken', 'code-research']);
+  assert.deepEqual(answer.lanes.sessions.failed, []);
+  assert.deepEqual(answer.lanes.hardware.failed, ['code-research', 'sandboxes']);
+  assert.deepEqual(keys(answer, 'sessions'), ['fleet:F', 'session:S']);
+
+  order.length = 0;
+  const panel = await runningPanel({ ...walk, isolated }, caller, 'session:S');
+  assert.deepEqual(panel.aliases, ['fleet:F', 'fleet:G']);
+  assert.deepEqual(order, [
+    'sessions.panel session:S',
+    'fleet.panel fleet:F in session:S',
+    'fleet.panel fleet:G in session:S',
+    'tasks.sections',
+  ]);
 });
 
 test('a cache that was never filled leaves its lane pending, and a lane goes stale when its first cache does', async () => {
@@ -971,7 +1051,11 @@ test('a sidebar belongs to the first owner of its kind that answers; a 404 means
   });
 });
 
-test('the assembled application serves both reads inside one read-only snapshot, to operators and readers alike', async (t) => {
+/** The default composition over HTTP, with an operator and a reader of one project. */
+async function assembled(
+  t: TestContext,
+  extra: { id: string; name: string; required?: boolean }[] = [],
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
@@ -980,13 +1064,15 @@ test('the assembled application serves both reads inside one read-only snapshot,
   const app = await createApp({
     directory: join(directory, 'data'),
     config: {
-      plugins: plugins.map((entry) =>
-        entry.id === 'api'
-          ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
-          : entry.id === 'ui'
-            ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry,
-      ) as never,
+      plugins: plugins
+        .map((entry) =>
+          entry.id === 'api'
+            ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
+            : entry.id === 'ui'
+              ? { ...entry, config: { assets: join(directory, 'nowhere') } }
+              : entry,
+        )
+        .concat(extra) as never,
     },
   });
   t.after(() => app.stop());
@@ -1005,6 +1091,11 @@ test('the assembled application serves both reads inside one read-only snapshot,
     });
     return { status: response.status, body: (await response.json()) as any };
   };
+  return { app, credentials, reader, tool };
+}
+
+test('the assembled application serves both reads inside one read-only snapshot, to operators and readers alike', async (t) => {
+  const { app, credentials, reader, tool } = await assembled(t);
   for (const token of [credentials.token, reader]) {
     const answer = await tool('ui.running', token);
     assert.equal(answer.status, 200);
@@ -1107,4 +1198,123 @@ test('the assembled application serves both reads inside one read-only snapshot,
   const write = await tool('ui.running_panel', credentials.token, { key: 'probe:write' });
   assert.equal(write.status, 409);
   assert.equal(write.body.error.code, 'read_only_scope');
+});
+
+test('a statement that fails in one part is rolled back to that part alone, on the board and in a sidebar', async (t) => {
+  const { app, reader, tool } = await assembled(t);
+  const sql = async (statement: string) =>
+    await app.ctx.state.transaction(async (tx) => await tx.get<{ one: number }>(statement));
+  const facts = (title: string, value: string) => ({
+    title,
+    place: 'details' as const,
+    kind: 'facts' as const,
+    rows: [{ label: title, value: [value] }],
+  });
+  const disposers = [
+    app.ctx.ui.contribute({
+      owner: 'aaa',
+      lanes: ['work'],
+      marks: async () => {
+        await sql('SELECT 1/0');
+        return [];
+      },
+      nodes: async () => {
+        await sql(`SELECT '{bad'::jsonb`);
+        return { nodes: [node('work:never', 'work')] };
+      },
+      sections: async () => {
+        await sql('SELECT 1/0');
+        return [facts('Never', 'drawn')];
+      },
+    }),
+    app.ctx.ui.contribute({
+      owner: 'bbb',
+      kinds: ['session'],
+      lanes: ['sessions'],
+      nodes: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const row = await sql('SELECT 1 AS one');
+        return { nodes: [node('session:x', 'sessions', { title: `Read ${row?.one}` })] };
+      },
+      summary: async () => {
+        await sql('SELECT 1/0');
+        return null;
+      },
+      panel: async (_read, key) =>
+        key === 'session:x'
+          ? {
+              header: { kind: 'Agent', title: 'Session x', says: ['Live'] },
+              sections: [facts('Lease', `Read ${(await sql('SELECT 1 AS one'))?.one}`)],
+              actions: [],
+              live: true,
+              aliases: ['sandbox:gone', 'sandbox:kept'],
+            }
+          : null,
+    }),
+    // Swallowing its own failure does not save a part: the snapshot's statement still failed.
+    app.ctx.ui.contribute({
+      owner: 'ccc',
+      kinds: ['sandbox'],
+      lanes: ['hardware'],
+      nodes: async () => {
+        await sql('SELECT 1/0').catch(() => undefined);
+        return { nodes: [node('sandbox:swallowed', 'hardware')] };
+      },
+      panel: async (_read, key) => {
+        if (key === 'sandbox:gone') await sql('SELECT 1/0');
+        return { header: {}, sections: [facts('Machine', key)] } as never;
+      },
+    }),
+    app.ctx.ui.contribute({
+      owner: 'ddd',
+      lanes: ['hardware'],
+      nodes: async () => ({
+        nodes: [
+          node('sandbox:after', 'hardware', {
+            title: `Read ${(await sql('SELECT 1 AS one'))?.one}`,
+          }),
+        ],
+      }),
+      sections: async () => [facts('Contributed', `Read ${(await sql('SELECT 1 AS one'))?.one}`)],
+    }),
+  ];
+  t.after(() => disposers.forEach((dispose) => dispose()));
+
+  const answer = await tool('ui.running', reader);
+  assert.equal(answer.status, 200, JSON.stringify(answer.body));
+  const board = answer.body.result as RunningBoard;
+  assert.deepEqual(board.lanes.work.failed, ['aaa']);
+  assert.deepEqual(board.lanes.sessions.failed, ['bbb']);
+  assert.deepEqual(board.lanes.hardware.failed, ['ccc']);
+  assert.equal(find(board, 'session:x')?.title, 'Read 1');
+  assert.equal(find(board, 'sandbox:after')?.title, 'Read 1');
+  assert.equal(find(board, 'work:never'), undefined);
+  assert.equal(find(board, 'sandbox:swallowed'), undefined);
+
+  const panel = await tool('ui.running_panel', reader, { key: 'session:x' });
+  assert.equal(panel.status, 200, JSON.stringify(panel.body));
+  const { sections, aliases } = panel.body.result as RunningPanel;
+  assert.deepEqual(
+    sections.map(({ owner, title }) => `${owner}:${title}`),
+    ['bbb:Lease', 'ccc:Machine', 'ddd:Contributed'],
+  );
+  assert.deepEqual(aliases, ['sandbox:gone', 'sandbox:kept']);
+});
+
+test('an owner whose adapter is configured but not running is named as failed where it would draw', async (t) => {
+  // Fleet's adapter without Fleet: it waits on what it needs and registers nothing.
+  const { reader, tool } = await assembled(t, [
+    { id: 'fleet-ui', name: '@merv/fleet/ui', required: false },
+  ]);
+  const shell = await tool('ui.shell', reader);
+  assert.equal(
+    shell.body.result.plugins.find(({ id }: { id: string }) => id === 'fleet-ui')?.state,
+    'pending',
+  );
+  const answer = await tool('ui.running', reader);
+  assert.equal(answer.status, 200);
+  const { lanes } = answer.body.result as RunningBoard;
+  assert.deepEqual(lanes.sessions.failed, ['fleet']);
+  assert.deepEqual(lanes.work.failed, []);
+  assert.deepEqual(lanes.hardware.failed, []);
 });

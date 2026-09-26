@@ -322,7 +322,10 @@ export interface RunningLane {
   freshForMs?: number;
   /** A cache behind this lane has never been filled, so its count is not known yet. */
   pending?: true;
-  /** Owners whose part of this lane did not load. The rest of the lane still stands. */
+  /**
+   * Owners whose part of this lane did not load, by owner id, including an owner whose ui
+   * adapter is configured but not running. The rest of the lane still stands.
+   */
   failed: string[];
   /** Nodes beyond the lane's cap of 200, which are not drawn. */
   more?: number;
