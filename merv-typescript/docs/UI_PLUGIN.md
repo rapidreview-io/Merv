@@ -54,7 +54,7 @@ Both are ordinary catalog tools, visible to agents as well as the browser.
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
 
-These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`.
+These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. `@merv/ui` registers the page itself as the `running` row (`/running`, first under Agents), with no status and no read of its own: the page reads these two tools (`views/running.tsx`).
 
 ## Running contributions
 

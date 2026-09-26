@@ -41,6 +41,8 @@ export const KIND: Record<string, { color: string; label: string }> = {
   reviews: { color: 'var(--kind-red)', label: 'Review' },
   reflections: { color: 'var(--kind-red)', label: 'Reflection' },
   sessions: { color: 'var(--kind-slate)', label: 'Agent' },
+  // The Running page is black and white: its words, its workflows and its glyph are ink.
+  running: { color: 'var(--text)', label: '' },
   code: { color: 'var(--kind-slate)', label: 'Code' },
   connections: { color: 'var(--kind-slate)', label: 'Connection' },
   feed: { color: 'var(--kind-gray)', label: 'Post' },

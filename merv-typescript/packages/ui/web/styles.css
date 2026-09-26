@@ -4691,3 +4691,600 @@ del.cut {
   color: var(--refutes);
   overflow-wrap: anywhere;
 }
+
+/* Running ----------------------------------------------------------------- */
+/* Everything in flight, in three bands, and the sidebar of what is in hand beside them
+   (views/running.tsx). The page is black and white: kind words and the workflow are ink,
+   green is only the dot of what is live, and red is only ever what a person has to do.
+   The board and the sidebar share one grid, so opening the sidebar narrows the board and
+   never covers it. The rule is the room the page has and not the size of the screen,
+   because the rail can be hidden: beside the board while the page holds both, under it
+   where it does not, and in its place on a phone (the page hides the board itself). */
+.running {
+  container: running / inline-size;
+}
+.running-plane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.running-board,
+.running-panel {
+  min-width: 0;
+}
+@container running (min-width: 900px) {
+  .running-plane[data-open] {
+    grid-template-columns: minmax(0, 1fr) clamp(360px, 36%, 460px);
+  }
+  /* The sidebar stays in view while the board scrolls, and scrolls on its own. */
+  .running-panel {
+    position: sticky;
+    top: var(--space-4);
+    max-height: calc(100vh - 2 * var(--space-4));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-left: var(--space-5);
+    border-left: 1px solid var(--line);
+  }
+}
+@container running (max-width: 899.98px) {
+  .running-board:not([hidden]) + .running-panel {
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--line);
+  }
+}
+/* Opened under the board, the sidebar's head is brought to the top of the view, clear of
+   the bar a phone keeps there. */
+.running-panel-head {
+  scroll-margin-top: var(--space-4);
+}
+@media (max-width: 880px) {
+  .running-panel-head {
+    scroll-margin-top: calc(var(--topbar-h) + var(--space-4));
+  }
+}
+/* A red word, line or rule means one thing on this page: a person is needed. */
+.running-attn {
+  color: var(--refutes);
+}
+
+/* The drawing: one measured frame, the bands stacked in it, the lines behind the cards. */
+.running-graph {
+  position: relative;
+}
+.running-graph:focus-visible {
+  outline-offset: 4px;
+}
+.running-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.running-band + .running-band,
+.running-lane + .running-lane {
+  border-top: 1px solid var(--line);
+}
+/* A band's name, its count and its own line; the lines run behind it, not over it. */
+.running-band-head {
+  position: relative;
+  z-index: 1;
+  min-height: 44px;
+  padding: 12px 0 10px;
+}
+.running-band-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+}
+.running-band-title {
+  flex: none;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 22px;
+  white-space: nowrap;
+}
+.running-needs {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--refutes);
+}
+.running-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+.running-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.running-note {
+  margin-top: 2px;
+  font-size: var(--text-sm);
+}
+/* What a lane needs of a person has a line of its own under the heading, so it is never
+   cut to make room for the lane's other words; who ends the wait and the way there follow. */
+.running-lane-attn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
+}
+/* A card is the object here, so it keeps its frame: what a line ends at and what the
+   pointer picks up. Its ground covers any line passing behind it. */
+.running-node,
+.running-row {
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  background: var(--bg-elev);
+}
+.running-node {
+  position: absolute;
+  z-index: 1;
+  overflow: hidden;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.running-node:hover {
+  border-color: var(--muted);
+}
+.running-node.running-look--dashed {
+  border-style: dashed;
+}
+.running-node.running-attn,
+.running-row.running-attn {
+  color: var(--text);
+}
+.running-node.running-attn {
+  border-color: var(--refutes);
+}
+/* The card in hand is ringed in ink, not the accent: this page keeps its colours for news. */
+.running-node.on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 1px var(--text);
+}
+/* What is not related to the card in hand steps back, and is still read: its inks step
+   down a shade, each still 4.5:1, and only what is drawn and never read fades. A card
+   that needs a person never steps back. */
+.running-node.dim {
+  border-color: var(--line);
+}
+.running-node.dim .running-title {
+  color: var(--muted);
+}
+.running-node.dim .running-line {
+  color: var(--faint);
+}
+.running-node.dim :is(.running-dot, .running-units) {
+  opacity: 0.42;
+}
+.running-face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A kind is said in the faint small caps and never in a kind colour, which would read as
+   an alarm on this page. */
+.running-kind {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 16px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.running-face > .running-kind {
+  margin-bottom: 4px;
+}
+.running-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  padding-right: 14px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 18px;
+}
+.running-line {
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+.running-line.running-attn {
+  color: var(--refutes);
+}
+/* An ending card steps back, except for the line that says what a person must do. */
+.running-look--quiet :is(.running-title, .running-line):where(:not(.running-attn)) {
+  color: var(--faint);
+}
+/* Green only where something is live, and it breathes only while a call is in flight;
+   red where a person is needed; a hollow ring while something is starting. */
+.running-dot {
+  position: absolute;
+  top: 5px;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.running-dot--live,
+.running-dot--moving {
+  background: var(--supports);
+}
+.running-dot--moving {
+  animation: map-breathe 1.8s ease-in-out infinite;
+}
+.running-dot--starting {
+  border: 1.5px solid var(--ghost);
+}
+.running-dot--attn {
+  background: var(--refutes);
+}
+/* A machine's accelerators, one cell each: filled while a job runs on it. */
+.running-units {
+  display: grid;
+  grid-template-columns: repeat(4, 9px);
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.running-units i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--muted);
+  border-radius: 2px;
+}
+.running-units i.on {
+  border-color: var(--text);
+  background: var(--text);
+}
+.running-units--dashed i {
+  border-style: dashed;
+}
+.running-ghost {
+  position: absolute;
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+}
+/* Lines: a prerequisite always, in the ink of what is drawn and never read, dashed while
+   it is unsettled; a relation between bands only for what is in hand, in ink, and red only
+   where both of its ends need a person. */
+.running-links {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.running-links path {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.running-wait path {
+  stroke: var(--ghost);
+}
+.running-wait.on path {
+  stroke: var(--muted);
+}
+.running-link path {
+  stroke: var(--text);
+}
+.running-link.running-attn path {
+  stroke: var(--refutes);
+}
+.running-link--waiting path:first-child {
+  stroke-dasharray: 4 4;
+}
+.running-wait.dim {
+  opacity: 0.42;
+}
+.running-port {
+  fill: var(--bg-elev);
+  stroke: var(--ghost);
+  stroke-width: 1.2;
+}
+.running-port.on {
+  fill: var(--text);
+  stroke: var(--text);
+}
+/* No room to draw: each band is a ruled list, and a row says its relations in words. The
+   heading's own line wraps here rather than carrying its control off the side of a phone. */
+.running-graph--stacked {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.running-graph--stacked .running-band-line {
+  flex-wrap: wrap;
+}
+.running-graph--stacked .running-summary {
+  flex-wrap: wrap;
+}
+.running-graph--stacked .running-summary > span {
+  white-space: normal;
+}
+.running-rows {
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.running-row {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 11px var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.running-row:hover,
+.running-row.on {
+  background: var(--bg-soft);
+}
+.running-row .running-dot {
+  top: 6px;
+}
+.running-row .running-title {
+  -webkit-line-clamp: 3;
+}
+.running-row .running-line {
+  white-space: normal;
+}
+.running-relations {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* The sidebar: its head, its controls, then its sections in the order they came. */
+.running-panel {
+  container: running-panel / inline-size;
+}
+.running-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding-bottom: var(--space-5);
+}
+.running-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.running-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--hit);
+}
+.running-close {
+  margin-left: auto;
+}
+.running-panel-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.running-says,
+.running-who {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.running-says.running-attn {
+  color: var(--refutes);
+}
+.running-move {
+  align-self: flex-start;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.running-acts {
+  gap: var(--space-2);
+}
+/* The way to the thing's own page closes the sidebar, in ink like every word on it. */
+.running-open {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.running-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.running-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.running-section-head.running-attn {
+  color: var(--refutes);
+}
+details.running-section > summary {
+  justify-content: flex-start;
+  min-height: var(--hit);
+}
+.running-aside {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.running-facts {
+  grid-template-columns: 120px minmax(0, 1fr);
+  font-size: var(--text-sm);
+}
+/* A value is a line of text: machine text wraps inside it, its copy glyph right behind. */
+.running-facts dd {
+  display: block;
+}
+.running-facts .kv-row.running-attn > * {
+  color: var(--refutes);
+}
+/* A state is its word, in the ink of the line it stands in. */
+.running-state {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.running-until {
+  font-variant-numeric: tabular-nums;
+}
+/* A link inside a fact is text that goes somewhere, ended by the shell's own glyph. */
+.running-target {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.running-target:hover {
+  color: var(--active);
+}
+.running-target > svg {
+  flex: none;
+  color: var(--faint);
+}
+/* A jump row is one line a thing, as tall as a target, edge to edge. */
+.running-jumps {
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.running-jump {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--hit);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  text-decoration: none;
+}
+.running-jump-name {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.running-jump-says {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  text-align: right;
+}
+.running-jump.running-attn :is(.running-jump-name, .running-jump-says) {
+  color: var(--refutes);
+}
+.running-jump > svg {
+  align-self: center;
+}
+.running-text {
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.running-text--clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.running-ladder {
+  overflow-x: auto;
+  padding-bottom: var(--space-1);
+}
+/* The Merv calls: bounded, scrolling on their own, so the sections under them stay near. */
+.running-stream {
+  list-style: none;
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--line);
+}
+.running-stream > li {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto 40px;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.running-stream time {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.running-stream-call {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.running-stream-quiet {
+  color: var(--faint);
+}
+.running-stream-quiet > span:last-child {
+  grid-column: 2 / -1;
+}
+/* The sidebar is narrower than any screen the 720px rule is written for, so its tables
+   stack by its own width: each fact under its column's name. */
+@container running-panel (max-width: 520px) {
+  .running-panel .ruled-head {
+    display: none;
+  }
+  .running-panel .ruled-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .running-panel .ruled-row > [data-label] {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: var(--space-3);
+    align-items: baseline;
+  }
+  .running-panel .ruled-row > [data-label]::before {
+    content: attr(data-label);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .running-panel .ruled-row > [data-label]:is(:empty, :has(> .ghost:only-child)) {
+    display: none;
+  }
+}

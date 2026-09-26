@@ -17,6 +17,7 @@ export interface NavSection {
 const SECTION_OF_VIEW: Record<string, string> = {
   artifacts: 'research',
   reflections: 'work',
+  running: 'operations',
   sessions: 'operations',
   code: 'operations',
   feed: 'activity',

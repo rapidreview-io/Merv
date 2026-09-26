@@ -100,11 +100,12 @@ test('a runner states the answer its last lease request received, or nothing', (
   assert.equal(phrase({}), null);
 });
 
-test('a runner is present or quiet, and silent where presence was not reported', () => {
+test('a runner is present or offline, and silent where presence was not reported', () => {
   const phrase = (runner: Parameters<typeof runnerLiveness>[0]) =>
     runnerLiveness(runner, now)?.phrase ?? null;
   assert.equal(phrase({ live: true, lastSeenAt: at(12) }), 'live · seen 12s ago');
-  assert.equal(phrase({ live: false, lastSeenAt: at(180) }), 'quiet · last seen 3m ago');
+  // Quiet is a lease that has made no call; a machine with no heartbeat is offline.
+  assert.equal(phrase({ live: false, lastSeenAt: at(180) }), 'offline · last seen 3m ago');
   assert.equal(phrase({ live: true }), 'live');
   assert.equal(phrase({ lastSeenAt: at(10) }), null);
 });

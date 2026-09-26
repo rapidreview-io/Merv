@@ -197,6 +197,18 @@ export const uiPlugin = {
         ) => await ui.read(caller, input.rowId, input.params),
       }),
     );
+    // Running is this plugin's own place: it draws what every owner contributes, so no one
+    // owner registers it. It reports no count, and so adds nothing to the shell's poll.
+    ctx.effect(() =>
+      ui.register({
+        id: 'running',
+        label: 'Running',
+        group: 'operations',
+        order: 19,
+        path: '/running',
+        view: { kind: 'running' },
+      }),
+    );
     ctx.effect(() =>
       ui.register({
         id: 'settings',

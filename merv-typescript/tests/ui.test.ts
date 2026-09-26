@@ -358,6 +358,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'knowledge',
       'reviews',
 
+      'running',
       'sessions',
       'code',
       'feed',
@@ -379,7 +380,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     [
       ['Research', ['Files']],
       ['Work', ['Work', 'Reflections']],
-      ['Agents', ['Sessions', 'Code']],
+      // Running is the ui plugin's own place, and the first under Agents.
+      ['Agents', ['Running', 'Sessions', 'Code']],
       ['Feed', ['Feed']],
     ],
   );
@@ -388,6 +390,12 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   for (const id of ['people', 'knowledge'])
     assert.deepEqual(shell.rows.find((entry) => entry.id === id)?.status, {});
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
+  // Running counts nothing in the chrome and has no row read: its page reads ui.running.
+  const running = shell.rows.find((entry) => entry.id === 'running');
+  assert.deepEqual(
+    [running?.path, running?.view, running?.status, running?.readable],
+    ['/running', { kind: 'running' }, {}, false],
+  );
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'code')?.view, { kind: 'code' });
   assert.equal(shell.rows.find((entry) => entry.id === 'code')?.readable, true);
   // A record page reads its record and the gate it stands at in one answer.
@@ -481,6 +489,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'knowledge',
     'reviews',
 
+    'running',
     'sessions',
     'code',
     'artifacts',
@@ -501,6 +510,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'knowledge',
     'reviews',
 
+    'running',
     'sessions',
     'code',
     'feed',
@@ -544,6 +554,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'knowledge',
     'reviews',
 
+    'running',
     'sessions',
     'code',
     'feed',
