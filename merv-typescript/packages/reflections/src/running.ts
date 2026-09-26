@@ -10,6 +10,7 @@ import {
   type RunningSection,
   type WorkflowSnapshot,
 } from '@merv/contracts';
+import { REFLECTION_WORKFLOW_ENDABLE } from './definitions.js';
 import type { ChangeSpec, Reflection } from './types.js';
 
 /**
@@ -91,6 +92,8 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
         ? { says: ['Synthesis · with an agent'], look: 'solid' }
         : { says: ['Synthesis · waiting ', { since: own.since }], look: 'dashed' };
     case 'in_review':
+      // A leased reviewer is an agent, whose name is never drawn; a person claims it by hand.
+      if (own.held) return { says: ['Review · with an agent'], look: 'solid' };
       return wave.review?.status === 'started' && wave.review.reviewerId
         ? {
             says: [
@@ -110,13 +113,17 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
 /**
  * The wave's one red. A wave in review after its last allowed return is never leased a
  * reviewer, so it waits for a person: a reviewer who takes the review by hand, or its ending.
+ * Only version 4 can be ended; a wave begun before it waits instead for another round.
  * Once someone has claimed that review the move is being made, and the line names them.
  */
 function attention({ wave, exhausted }: WaveFacts): RunningAttention | undefined {
   if (!exhausted || wave.review?.status === 'started') return undefined;
   return {
     says: ['Review returns used up'],
-    who: 'An independent reviewer reviews it by hand, or its owner or an operator ends it.',
+    who:
+      wave.workflow.version >= REFLECTION_WORKFLOW_ENDABLE.version
+        ? 'An independent reviewer reviews it by hand, or its owner or an operator ends it.'
+        : 'An independent reviewer reviews it by hand, or an operator allows another round.',
     ...(wave.review
       ? {
           to: {

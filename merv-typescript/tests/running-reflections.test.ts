@@ -56,7 +56,10 @@ async function fixture(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const actor = async (name: string, role: 'producer' | 'reviewer' | 'reader' = 'producer') => {
+  const actor = async (
+    name: string,
+    role: 'producer' | 'reviewer' | 'operator' | 'reader' = 'producer',
+  ) => {
     const issued = await app.ctx.scope.issueActor(owner, { name, role });
     return {
       projectId: owner.projectId,
@@ -397,6 +400,101 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   });
   assert.equal(long.title.length, 200);
   assert.ok(long.title.endsWith('…'));
+});
+
+test('a review leased to an agent says so rather than naming the agent, and letting it go restarts its wait', async (t) => {
+  const f = await fixture(t);
+  let wave = await f.lenses(
+    await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' }),
+  );
+  wave = await f.synthesize(wave, await f.text(f.owner, 'Changes'));
+  const secret = token();
+  // The owner wrote the synthesis, so the review worker is directed by someone else.
+  await f.app.ctx.sessions.registerAgent(await f.actor('Lead', 'operator'), {
+    name: 'Review agent',
+    runnerId: 'external',
+    requestId: 'review-agent',
+    secret,
+  });
+  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+    instanceId: wave.id,
+    expectedRevision: wave.workflow.revision,
+    requestId: 'review',
+  });
+  assert.equal(execution.role, 'reviewer');
+  // The lease started the review, so its reviewer is the agent.
+  const review = await f.app.ctx.reviews.get(f.owner, wave.review!.id);
+  assert.deepEqual([review.status, review.reviewerId], ['started', execution.actorId]);
+  const reader = await f.actor('Reader', 'reader');
+  for (const caller of [f.owner, reader]) {
+    const node = drawn(await f.board(caller), wave)!;
+    assert.deepEqual([node.lines, node.look], [[['Review · with an agent']], 'solid']);
+  }
+  let sidebar = await f.panel(f.owner, keyOf(wave.id));
+  assert.deepEqual([sidebar.header.says, sidebar.live], [['Review · with an agent'], true]);
+
+  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.domainEvents.drain();
+  const [{ released_at: released }] = await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.all<{ released_at: string }>(
+        'SELECT released_at FROM reflection_leases WHERE id=?',
+        execution.id,
+      ),
+  );
+  const node = drawn(await f.board(f.owner), wave)!;
+  assert.deepEqual(
+    [node.lines, node.look],
+    [[['Review · waiting for a reviewer ', { since: released }]], 'dashed'],
+  );
+  sidebar = await f.panel(f.owner, keyOf(wave.id));
+  assert.equal(sidebar.live, false);
+});
+
+test('a wave begun before version 4 cannot be ended, so its red asks for a review by hand or another round', async (t) => {
+  const f = await fixture(t);
+  const reviewer = await f.actor('Reviewer', 'reviewer');
+  let wave = await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' });
+  // As production holds it: a wave started before version 4, with version-2 lenses.
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run('UPDATE wf_instances SET version=3 WHERE id=?', wave.id);
+    for (const lens of wave.lenses)
+      await tx.run('UPDATE wf_instances SET version=2 WHERE id=?', lens.id);
+  });
+  wave = await f.synthesize(await f.lenses(wave), await f.text(f.owner, 'Changes'));
+  wave = await f.verdict(wave, reviewer, false);
+  wave = await f.synthesize(wave, await f.text(f.owner, 'Changes again'));
+  assert.deepEqual([wave.workflow.version, wave.workflow.state], [3, 'in_review']);
+  const red = {
+    says: ['Review returns used up'],
+    who: 'An independent reviewer reviews it by hand, or an operator allows another round.',
+    to: { route: `/reviews/${wave.review!.id}`, text: 'Open the review' },
+  };
+  assert.deepEqual(drawn(await f.board(f.owner), wave)!.attention, red);
+  assert.deepEqual((await f.panel(f.owner, keyOf(wave.id))).header.attention, red);
+  await assert.rejects(
+    f.app.ctx.reflections.end(f.owner, {
+      reflectionId: wave.id,
+      expectedRevision: wave.workflow.revision,
+      reason: 'Version 3 has no ending.',
+      requestId: 'end',
+    }),
+    { code: 'invalid_transition' },
+  );
+
+  // The move it names is one an operator can make, and it lifts the red.
+  await f.app.ctx.workflows.extendLimit(f.owner, {
+    instanceId: wave.id,
+    limit: 'review_returns',
+    additional: 1,
+    reason: 'One more round to restore the ablation result.',
+    requestId: 'another-round',
+  });
+  const node = drawn(await f.board(f.owner), wave)!;
+  assert.deepEqual(
+    [node.lines, node.attention],
+    [[['Review · waiting for a reviewer ', { since: wave.workflow.updatedAt }]], undefined],
+  );
 });
 
 test('an ended wave leaves the board and its sidebar keeps only its stages', async (t) => {
