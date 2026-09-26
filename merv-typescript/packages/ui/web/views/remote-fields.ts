@@ -74,16 +74,28 @@ export const phrase = (data: Json, parts: UiPhrasePart[], separator = ' · ') =>
 
 const SYMBOL: Record<string, string> = { USD: '$', EUR: '€', GBP: '£' };
 
-/** What it has cost so far over what it costs per hour, and the one word for a rate of zero. */
-export function money(data: Json, column: Extract<UiColumn, { type: 'money' }>): string {
-  const rate = num(at(data, column.rate));
-  const total = num(at(data, column.total));
+/**
+ * What it has cost so far — against its cap, where it has one — over what it costs per
+ * hour, and the one word for a rate of zero: `$2.10 of $8.00 · $2.49/h`, or `free`.
+ */
+export function formatMoney(
+  total: number | undefined,
+  rate: number | undefined,
+  currency = 'USD',
+  of?: number,
+): string {
   if (rate === 0 && !total) return 'free';
-  const currency = column.currency ?? 'USD';
   // Sub-cent rates are real on metered compute, and rounding one to a cent overstates it.
   const cash = (value: number) =>
     `${SYMBOL[currency] ?? `${currency} `}${value.toFixed(value && value < 0.1 ? 3 : 2)}`;
-  return [total !== undefined && cash(total), rate !== undefined && `${cash(rate)}/h`]
+  return [
+    total !== undefined && `${cash(total)}${of === undefined ? '' : ` of ${cash(of)}`}`,
+    rate !== undefined && `${cash(rate)}/h`,
+  ]
     .filter(Boolean)
     .join(' · ');
 }
+
+/** A remote row's money column, read through the same words. */
+export const money = (data: Json, column: Extract<UiColumn, { type: 'money' }>): string =>
+  formatMoney(num(at(data, column.total)), num(at(data, column.rate)), column.currency ?? 'USD');

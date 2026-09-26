@@ -12,6 +12,7 @@ import { CollectionView, RecordView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
+import { RunningView } from './running';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
 import { TasksView } from './tasks';
@@ -39,6 +40,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   feed: FeedView,
   settings: SettingsView,
   sessions: SessionsView,
+  running: RunningView,
   code: CodeView,
   experiments: ExperimentsView,
   paper: PaperView,

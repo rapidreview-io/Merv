@@ -83,6 +83,21 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
+test('Running is the first place under Agents, ahead of Fleet, Sessions and Code', () => {
+  // Sessions and Code declare the work group; the rail files them, and Running, under Agents.
+  const sections = buildNavigation([
+    row('code', 'code', 'work', 25),
+    row('sessions', 'sessions', 'work', 24),
+    row('fleet', 'collection', 'operations', 20),
+    row('running', 'running', 'operations', 19),
+    row('reviews', 'reviews', 'work', 17),
+  ]);
+  assert.deepEqual(
+    sections.map((section) => [section.label, section.rows.map((entry) => entry.id)]),
+    [['Agents', ['running', 'fleet', 'sessions', 'code']]],
+  );
+});
+
 test('unknown views retain their declared group, path, status and deterministic ordering', () => {
   const rows = [
     row('z-lab', 'new-scientific-view', 'science-lab', 20, '/laboratory/results'),

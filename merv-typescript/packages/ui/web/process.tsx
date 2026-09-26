@@ -1,3 +1,4 @@
+import { workRoute } from '@merv/contracts/running';
 import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import { useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -300,7 +301,11 @@ export function RowDiagram({
   return <ProcessDiagram {...diagramOfShape(shape, workflow.state)} kind={kind} compact />;
 }
 
-/** The view kind a workflow's records are read under, which is also the route they open at. */
+/**
+ * The view kind a workflow's records are read under. The page each opens at is the shared
+ * contract's (`workRoute`), so a relation on a record and one in a Running sidebar go to
+ * the same place.
+ */
 const PLACE: Record<string, string> = {
   task: 'tasks',
   experiment: 'experiments',
@@ -314,11 +319,11 @@ const PLACE: Record<string, string> = {
  * has succeeded, ended or is still moving says so in its own word and colour.
  */
 export function Dependency({ item }: { item: WorkflowDependency }) {
-  const place = PLACE[item.workflow];
+  const route = workRoute(item.workflow, item.id);
   return (
     <p className="cluster">
-      <KindLabel kind={place ?? item.workflow} />
-      {place ? <Link to={`/${place}/${item.id}`}>{item.name}</Link> : item.name}
+      <KindLabel kind={PLACE[item.workflow] ?? item.workflow} />
+      {route ? <Link to={route}>{item.name}</Link> : item.name}
       <StatusPill value={item.state} />
     </p>
   );

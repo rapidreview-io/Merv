@@ -147,13 +147,16 @@ export interface RunnerFacts {
   lastDecision?: string | null;
   lastDecisionAt?: string | null;
 }
-/** A runner's behaviour: present, or quiet since its last heartbeat. */
+/**
+ * A runner's behaviour: present, or offline since its last heartbeat. `quiet` is kept for
+ * a lease that has made no call, so one word never means two things on the Agents pages.
+ */
 export function runnerLiveness(runner: RunnerFacts, now: Now): Liveness | null {
   if (typeof runner.live !== 'boolean') return null;
   const { at } = clockOf(now);
   return runner.live
     ? say('live', 'ok', ago(runner.lastSeenAt, at, 'seen '))
-    : say('quiet', 'warn', ago(runner.lastSeenAt, at, 'last seen '));
+    : say('offline', 'warn', ago(runner.lastSeenAt, at, 'last seen '));
 }
 /** Leases the runner took, and a closed reason where the last cycle gave it none. */
 const TAKEN = new Set(['offered', 'replayed']);
