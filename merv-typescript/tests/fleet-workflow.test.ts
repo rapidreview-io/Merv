@@ -316,6 +316,42 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   assert.equal(f.allocations[2]?.owner.id, 'task_b:0');
 });
 
+test('a runner claimed by another step covers its actual work and frees the rent target', async (t) => {
+  const f = await fixture(t, { maxAgents: 3 });
+  const a = { instanceId: 'task_a', expectedRevision: 0 };
+  const b = { instanceId: 'task_b', expectedRevision: 0 };
+  f.demand([a]);
+  await f.adapter.reconcile();
+  const first = f.allocations[0]!;
+  first.phase = 'running';
+  first.runtime = { launch: { deliveryState: 'launched' } } as FleetAllocation['runtime'];
+  f.inspections.set(first.id, {
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: null,
+  });
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 1, 'an unclaimed runner still covers its rent target');
+
+  f.inspections.get(first.id)!.session = {
+    id: 'session_b',
+    instanceId: b.instanceId,
+    expectedRevision: b.expectedRevision,
+    status: 'active',
+    closedAt: null,
+    outcome: null,
+    releaseAcknowledged: false,
+    capturePending: false,
+  };
+  f.demand([a, b]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2);
+  assert.equal(f.allocations[1]?.owner.id, 'task_a:0');
+  assert.notEqual(f.allocations[1]?.requestId, first.requestId);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2, 'actual task and fresh rent target are both covered');
+});
+
 test('workflow bounds created but unclaimed retries across restart without blocking new revisions', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 2 }]);

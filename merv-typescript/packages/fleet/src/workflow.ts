@@ -374,14 +374,21 @@ export class FleetWorkflowAdapter implements FleetOwner {
       if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.has(a.owner.id))
         await this.fleet.cancelOwned(this, a.id);
     if (walletPaused && this.clock() - newestWallet < walletRetryCooldownMs) return;
-    const covered = new Set(active.filter((a) => a.intent === 'run').map((a) => a.owner.id));
+    const covered = new Set<string>();
+    for (const a of active.filter((a) => a.intent === 'run')) {
+      // The allocation names why Fleet rented the runner, but Sessions may assign it another
+      // ready step. Once bound, that actual step consumes the coverage; the intended one waits.
+      const session = (await this.sessions.inspectManaged(a.id, a.epoch))?.session;
+      covered.add(session ? targetId(session) : a.owner.id);
+    }
     let slots = Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || !this.served.has(projectId)) continue;
-      const released = allocations.filter((a) => a.owner.id === id && a.phase === 'released');
+      const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === id);
+      const released = attempts.filter((a) => a.phase === 'released');
       let unclaimed = 0;
       let lastUnclaimedAt = 0;
       // A new task revision has a new id. For this exact revision, stop paying for
@@ -398,7 +405,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
         (unclaimed > 0 && this.clock() - lastUnclaimedAt < unclaimedRetryCooldownMs)
       )
         continue;
-      const generation = released.length;
+      // An active allocation claimed by different work still owns its original request ID.
+      // Count it too, or Fleet's idempotent request simply returns that busy allocation.
+      const generation = attempts.length;
       try {
         await this.fleet.request(sourceCaller(source), {
           requestId: `wf:${digest({ id, generation })}`,
