@@ -1,8 +1,8 @@
 # Runner control plane
 
 Workflows selects eligible assignments. Sessions reserves them, tracks runner
-presence and applies project dispatch controls. The optional `sessions-api` and
-`sessions-ui` adapters expose those operations through the existing API and UI.
+presence and applies project dispatch controls. The API plugin binds Sessions optionally
+to expose its HTTP controls; the optional `sessions-ui` adapter exposes its UI.
 There is no additional scheduling provider and no Sessions dependency on Tasks,
 Reviews or Feed.
 
@@ -143,8 +143,8 @@ server still enforces current desired limits when issuing work.
 
 The Sessions page uses `ui.read` for its data and authenticated HTTP for operator
 controls. It shows dispatch, connected runners, leases, workspace attachments and captured commits, and available work.
-Removing `sessions-ui` removes that page; removing `sessions-api` removes its
-HTTP controls. Neither adapter owns durable records or adds agent tools.
+Removing `sessions-ui` removes that page; unloading Sessions withdraws its HTTP
+controls while the API stays available. Neither HTTP registration nor the UI adapter owns durable records or adds agent tools.
 
 ## Workspace declarations
 

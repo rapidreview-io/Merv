@@ -124,7 +124,10 @@
         "tools",
         "identity"
       ],
-      "optional": [],
+      "optional": [
+        "sessions",
+        "codeResearch"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -314,25 +317,6 @@
       "owner": "code",
       "label": "Code",
       "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-code-api",
-      "source": "packages/code-research/src/api.ts",
-      "provides": [],
-      "requires": [
-        "api",
-        "codeResearch"
-      ],
-      "optional": [],
-      "kind": "api",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-code-api",
-      "group": "front",
-      "owner": "codeResearch",
-      "label": "codeResearch · api adapter",
-      "purpose": "Connects codeResearch to the API registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -2189,25 +2173,6 @@
       ]
     },
     {
-      "plugin": "merv-sessions-api",
-      "source": "packages/sessions/src/api.ts",
-      "provides": [],
-      "requires": [
-        "sessions",
-        "api"
-      ],
-      "optional": [],
-      "kind": "api",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-sessions-api",
-      "group": "front",
-      "owner": "sessions",
-      "label": "Agent Sessions · api adapter",
-      "purpose": "Connects Agent Sessions to the API registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
       "plugin": "merv-sessions-tools",
       "source": "packages/sessions/src/tools.ts",
       "provides": [],
@@ -2718,6 +2683,16 @@
       "optional": false
     },
     {
+      "from": "api",
+      "to": "sessions",
+      "optional": true
+    },
+    {
+      "from": "api",
+      "to": "codeResearch",
+      "optional": true
+    },
+    {
       "from": "merv-artifact-tools",
       "to": "artifacts",
       "optional": false
@@ -2760,16 +2735,6 @@
     {
       "from": "code",
       "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "merv-code-api",
-      "to": "api",
-      "optional": false
-    },
-    {
-      "from": "merv-code-api",
-      "to": "codeResearch",
       "optional": false
     },
     {
@@ -3458,16 +3423,6 @@
       "optional": true
     },
     {
-      "from": "merv-sessions-api",
-      "to": "sessions",
-      "optional": false
-    },
-    {
-      "from": "merv-sessions-api",
-      "to": "api",
-      "optional": false
-    },
-    {
       "from": "merv-sessions-tools",
       "to": "sessions",
       "optional": false
@@ -3594,10 +3549,10 @@
     }
   ],
   "counts": {
-    "plugins": 67,
+    "plugins": 65,
     "providers": 30,
-    "adapters": 37,
-    "dependencies": 178
+    "adapters": 35,
+    "dependencies": 176
   },
   "network": [
     {

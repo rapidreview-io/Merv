@@ -66,10 +66,6 @@
       "name": "@merv/experiments"
     },
     {
-      "id": "sessions-api",
-      "name": "@merv/sessions/api"
-    },
-    {
       "id": "sessions-tools",
       "name": "@merv/sessions/tools"
     },

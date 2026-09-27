@@ -214,7 +214,7 @@ and [backend audit](BACKEND_PARITY_AUDIT.md).
 
 ## HTTP control and configuration
 
-The `sessions` provider depends on State, Scope, Workflows and Domain Events. The small `sessions-api` adapter depends only on Sessions and API.
+The `sessions` provider depends on State, Scope, Workflows and Domain Events. The API plugin binds Sessions optionally and withdraws its HTTP controls when Sessions unloads.
 Neither exposes an agent tool; the optional `sessions-tools` adapter registers `usage.read`,
 `usage.set_budget`, `session.stuck` and `session.release_hold`. A normal source credential controls these routes;
 use `X-Merv-Project-Id` when project selection is required.

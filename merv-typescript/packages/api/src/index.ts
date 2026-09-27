@@ -76,6 +76,12 @@ export const apiPlugin = {
       );
       yield () => api.stop();
       await api.start();
+      ctx.inject(['sessions'], (ctx) => {
+        ctx.effect(() => api.registerSessions(ctx.sessions));
+      });
+      ctx.inject(['codeResearch'], (ctx) => {
+        ctx.effect(() => api.registerCode(ctx.codeResearch));
+      });
       yield ctx.provide('api', api);
     });
   },

@@ -608,11 +608,13 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   }
 });
 
-test('session route and credential namespaces stay reserved when the optional HTTP adapter is unloaded', async (t) => {
+test('session route and credential namespaces stay reserved when the Sessions provider is unloaded', async (t) => {
   const f = await fixture(t);
   assert.throws(() => f.app.ctx.api.mount('/sessions', () => {}), { code: 'invalid_mount' });
   const issued = await f.offer();
-  await f.app.setEnabled('sessions-api', false);
+  const api = f.app.ctx.api;
+  await f.app.setEnabled('sessions', false);
+  assert.equal(f.app.ctx.api, api, 'API stays active without Sessions');
   const denied = await f.http('/mcp', issued.secret, {
     jsonrpc: '2.0',
     id: 1,
@@ -669,6 +671,13 @@ test('session route and credential namespaces stay reserved when the optional HT
   } finally {
     delete process.env[env];
   }
+  await f.app.setEnabled('sessions', true);
+  assert.equal(f.app.ctx.api, api, 'Restoring Sessions keeps the same API');
+  assert.equal((await f.http('/sessions')).status, 200);
+  await f.app.setEnabled('api', false);
+  await f.app.setEnabled('api', true);
+  assert.notEqual(f.app.ctx.api, api, 'API restarts with a new server');
+  assert.equal((await f.http('/sessions')).status, 200, 'Existing Sessions binds to the new API');
 });
 
 test('leased mounted calls require source grants and keep upstream project arguments; delayed dispatch rechecks arguments', async (t) => {

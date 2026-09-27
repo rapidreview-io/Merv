@@ -232,7 +232,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
 
   await app.setEnabled('code', false);
   assert.equal(app.status().find((entry) => entry.id === 'code')?.state, 'disabled');
-  for (const id of ['code-tools', 'code-api', 'code-ui']) {
+  for (const id of ['code-tools', 'code-ui']) {
     const entry = app.status().find((entry) => entry.id === id);
     assert.equal(entry?.state, 'pending', id);
     assert.deepEqual(entry?.missingDependencies, ['codeResearch'], id);

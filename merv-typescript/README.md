@@ -82,13 +82,13 @@ Dependencies, build output, caches, default runtime directories, SQLite files (r
 
 ### Configure plugins
 
-The domain/API composition has 39 plugin entries. The default server configuration adds the browser layer for 53 entries. The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
+The domain/API composition has 34 plugin entries. The default server configuration adds the browser layer for 47 entries. The application uses upstream `@cordisjs/plugin-loader@1.0.0-rc.7`. Its default composition is [config/default.json](config/default.json). To run an explicit plugin list:
 
 ```sh
 npm start -- --dir .merv --config config/default.json --host 127.0.0.1 --port 3081
 ```
 
-A JSON configuration has a `plugins` array. Each entry has a stable `id`, a module `name`, an optional `config` object, and optional `disabled` and `required` flags. Module names can be installed packages or relative file paths. Relative paths resolve beside the configuration file; programmatic `config` objects resolve them from this workspace root. New plugins are added here without editing `src/app.ts`.
+A JSON configuration has a `plugins` array. Each entry has a stable `id`, a module `name`, an optional `config` object, and optional `disabled` and `required` flags. Module names can be installed packages or relative file paths. Relative paths resolve beside the configuration file; programmatic `config` objects resolve them from this workspace root. New plugins are added here without editing `src/app.ts`. API binds Sessions and CodeResearch automatically when available; custom configurations should remove the retired `@merv/sessions/api` and `@merv/code-research/api` entries. Unloading either provider withdraws its HTTP controls without stopping API.
 
 `${directory}`, `${host}`, and `${port}` are the supported substitutions inside configuration values. An exact `${port}` retains its numeric type. Command-line host/port values supply substitutions; literal plugin values stay literal. State, blobs, registry, and API also validate their own configuration before acquiring resources or publishing services. `init` and `actor` keep their minimal State/Scope composition and do not accept `--config`.
 

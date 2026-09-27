@@ -110,6 +110,7 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
+  api: ['sessions', 'codeResearch'],
   // Sandboxes alone bridges its optional object store into Artifacts; Artifacts never imports it.
   sandboxes: ['artifacts'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
@@ -779,7 +780,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['code-research', 'pi', 'sessions'],
+    api: ['pi'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];

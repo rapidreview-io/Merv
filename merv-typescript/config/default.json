@@ -71,11 +71,6 @@
       "required": false
     },
     {
-      "id": "code-api",
-      "name": "@merv/code-research/api",
-      "required": false
-    },
-    {
       "id": "code-ui",
       "name": "@merv/code-research/ui",
       "required": false
@@ -94,10 +89,6 @@
         }
       },
       "required": false
-    },
-    {
-      "id": "sessions-api",
-      "name": "@merv/sessions/api"
     },
     {
       "id": "sessions-tools",

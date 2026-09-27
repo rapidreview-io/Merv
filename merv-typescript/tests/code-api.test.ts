@@ -17,7 +17,8 @@ import {
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import type { CodeApiProvider } from '../packages/api/src/types.js';
-import codeApiPlugin from '../packages/code-research/src/api.js';
+import { apiPlugin } from '@merv/api';
+import { identityPlugin } from '@merv/identity';
 import { openState } from './fixtures/state.js';
 
 const control: CodeCommandControl = {
@@ -42,10 +43,15 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
   const boot = await scope.bootstrap({ projectName: 'Code controls', actorName: 'Controller' });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const tools = new ToolRegistry(scope);
-  const api = new ApiServer(scope, tools, { port: 0, maxBodyBytes });
-  const url = await api.start();
+  const ctx = new Context();
+  ctx.provide('scope', scope);
+  ctx.provide('tools', tools);
+  await ctx.plugin(identityPlugin, {});
+  await ctx.plugin(apiPlugin, { port: 0, maxBodyBytes });
+  const api = ctx.api as ApiServer;
+  const url = api.url!;
   t.after(async () => {
-    await api.stop();
+    await ctx.fiber.dispose();
     await tools.close();
     await state.close();
   });
@@ -115,7 +121,7 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
       allow: response.headers.get('allow'),
     };
   }
-  return { state, scope, boot, caller, tools, api, url, command, provider, calls, request };
+  return { state, scope, boot, caller, tools, api, ctx, url, command, provider, calls, request };
 }
 
 test('Code controls pass the authenticated source and exact command envelope, including null and failure results', async (t) => {
@@ -321,31 +327,29 @@ async function bodyWait(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 test(
-  'Code adapter unload withdraws controls while a request body is still arriving',
+  'Code provider unload withdraws controls while a request body is still arriving',
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    const ctx = new Context();
-    ctx.provide('api', f.api);
-    ctx.provide('codeResearch', {
-      ...f.provider,
-      commit: () => {
-        throw new Error('Not a transport operation');
-      },
-      operation: (): CodeCommandRecord => ({
-        command: f.command,
-        status: 'queued',
-        receipt: null,
-        error: null,
-      }),
-      close() {},
+    const provider = await f.ctx.plugin((ctx: Context) => {
+      ctx.provide('codeResearch', {
+        ...f.provider,
+        commit: () => {
+          throw new Error('Not a transport operation');
+        },
+        operation: (): CodeCommandRecord => ({
+          command: f.command,
+          status: 'queued',
+          receipt: null,
+          error: null,
+        }),
+        close() {},
+      });
     });
-    t.after(() => ctx.fiber.dispose());
-    const adapter = await ctx.plugin(codeApiPlugin);
-    await adapter.await();
+    await provider.await();
     assert.equal((await f.request('next')).status, 200);
     const waiting = await bodyWait(f);
-    await adapter.dispose();
+    await provider.dispose();
     waiting.finish();
     const result = await waiting.response;
     assert.equal(result.status, 503);

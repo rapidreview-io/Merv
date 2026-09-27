@@ -26,7 +26,7 @@ merely because this optional service changes.
 | ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Code       | State, Scope, Sessions, Artifacts | Durable command identity, worker admission, source ownership, immutable receipts and proposals |
 | code-tools | Code, Tools                       | `code.commit` and `code.operation`                                                             |
-| code-api   | Code, API                         | Source-authenticated command retrieval and completion                                          |
+| API        | Scope, Tools, Identity; optional CodeResearch and Sessions | Source-authenticated command retrieval and completion |
 | code-ui    | Code, UI                          | Recent operations and sealed proposals in the Code page                                        |
 | Runner     | None; separate machine context    | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts     |
 

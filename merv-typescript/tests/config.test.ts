@@ -19,7 +19,7 @@ function folder(t: TestContext) {
   return directory;
 }
 
-test('default configuration includes session enforcement and API adds its control adapter and tool transports', () => {
+test('default configuration includes session enforcement and API adds tool transports without separate control adapters', () => {
   const core = loadConfiguration({ directory: './data' });
   assert.deepEqual(
     core.entries.map((entry) => entry.id),
@@ -60,7 +60,7 @@ test('default configuration includes session enforcement and API adds its contro
     root: join(resolve('./data'), 'blobs'),
   });
   const full = loadConfiguration({ directory: './data', api: true });
-  assert.equal(full.entries.length, 36, 'legacy API selection excludes the browser layer');
+  assert.equal(full.entries.length, 34, 'legacy API selection excludes the browser layer');
   assert.equal(full.entries.find((entry) => entry.id === 'tools')?.name, '@merv/api/tools-plugin');
   assert.deepEqual(full.entries.find((entry) => entry.id === 'api')?.config, {
     host: '127.0.0.1',
@@ -70,8 +70,6 @@ test('default configuration includes session enforcement and API adds its contro
   const order = (id: string) => full.entries.findIndex((entry) => entry.id === id);
   const requirements: Record<string, string[]> = {
     api: ['tools', 'scope', 'identity'],
-    'sessions-api': ['sessions', 'api'],
-    'code-api': ['code-research', 'api'],
     code: ['state', 'scope'],
     'code-research': [
       'code',
@@ -161,7 +159,7 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
   const loaded = configuration(config);
-  assert.equal(loaded.entries.length, 49);
+  assert.equal(loaded.entries.length, 47);
   for (const [id, name] of [
     ['feed', '@merv/feed'],
     ['feed-tools', '@merv/feed/tools'],
@@ -180,16 +178,15 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
     loaded.entries
       .filter(
         (entry) =>
-          !['feed', 'feed-tools', 'code', 'code-research', 'code-tools', 'code-api'].includes(
-            entry.id,
-          ) && !browser(entry.id),
+          !['feed', 'feed-tools', 'code', 'code-research', 'code-tools'].includes(entry.id) &&
+          !browser(entry.id),
       )
       .every((entry) => entry.required),
   );
   assert.ok(loaded.entries.filter((entry) => browser(entry.id)).every((entry) => !entry.required));
   assert.ok(
     loaded.entries
-      .filter((entry) => ['code-tools', 'code-api'].includes(entry.id))
+      .filter((entry) => ['code-tools'].includes(entry.id))
       .every((entry) => !entry.required),
   );
 });
@@ -303,7 +300,7 @@ test('config-file modules resolve beside their JSON file and programmatic module
   });
   assert.equal(
     explicitDefault.entries.length,
-    49,
+    47,
     'Explicit config files must not be implicitly filtered by the legacy API default',
   );
 });

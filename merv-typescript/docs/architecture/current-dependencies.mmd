@@ -6,7 +6,6 @@ flowchart BT
     artifacts["artifacts"]
     blobs["blobs"]
     code["code"]
-    merv_code_api["merv-code-api"]
     codeResearch["codeResearch"]
     merv_code_tools["merv-code-tools"]
     merv_code_ui["merv-code-ui"]
@@ -53,7 +52,6 @@ flowchart BT
     merv_scope_tools["merv-scope-tools"]
     merv_scope_ui["merv-scope-ui"]
     sessions["sessions"]
-    merv_sessions_api["merv-sessions-api"]
     merv_sessions_tools["merv-sessions-tools"]
     merv_sessions_ui["merv-sessions-ui"]
     state["state"]
@@ -73,6 +71,8 @@ flowchart BT
   api --> scope
   api --> tools
   api --> identity
+  api -. optional .-> sessions
+  api -. optional .-> codeResearch
   merv_artifact_tools --> artifacts
   merv_artifact_tools --> tools
   merv_artifact_ui --> artifacts
@@ -82,8 +82,6 @@ flowchart BT
   artifacts --> blobs
   code --> state
   code --> scope
-  merv_code_api --> api
-  merv_code_api --> codeResearch
   codeResearch --> code
   codeResearch --> state
   codeResearch --> scope
@@ -221,8 +219,6 @@ flowchart BT
   sessions --> workflows
   sessions --> domainEvents
   sessions -. optional .-> tools
-  merv_sessions_api --> sessions
-  merv_sessions_api --> api
   merv_sessions_tools --> sessions
   merv_sessions_tools --> tools
   merv_sessions_ui --> sessions
