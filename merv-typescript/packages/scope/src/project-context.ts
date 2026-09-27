@@ -39,10 +39,16 @@ const summaryText = z
 export const projectContextUpdateSchema = z
   .object({
     summary: summaryText.transform((text) => text.trim()),
-    expectedSummary: summaryText,
+    expectedSummary: summaryText.optional(),
+    expectedContextRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     requestId: z.string().min(1).max(256).refine(visible),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      (input.expectedSummary === undefined) !== (input.expectedContextRevision === undefined),
+    'Supply exactly one of expectedSummary or expectedContextRevision from project.get',
+  );
 
 /** A detached copy parsed, so direct service calls cannot execute supplied getters. */
 export function parseProjectContextUpdate(input: unknown): ProjectContextUpdate {

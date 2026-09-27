@@ -1019,16 +1019,24 @@ export class ProjectScope implements Scope {
             (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
           );
           await authorize();
-          const changed = await tx.run(
-            'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND summary=? AND context_revision<9007199254740991',
-            input.summary,
-            caller.projectId,
-            input.expectedSummary,
-          );
+          const changed =
+            input.expectedContextRevision === undefined
+              ? await tx.run(
+                  'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND summary=? AND context_revision<9007199254740991',
+                  input.summary,
+                  caller.projectId,
+                  input.expectedSummary!,
+                )
+              : await tx.run(
+                  'UPDATE projects SET summary=?,context_revision=context_revision+1 WHERE id=? AND context_revision=? AND context_revision<9007199254740991',
+                  input.summary,
+                  caller.projectId,
+                  input.expectedContextRevision,
+                );
           check(
             changed.changes === 1,
             'project_context_conflict',
-            'Project Introduction changed; reread it before retrying with its exact text',
+            'Project Introduction changed; reread project.get before retrying with its current contextRevision or exact summary',
             409,
           );
           const result = project(

@@ -27,7 +27,7 @@ export const scopeToolsPlugin = {
     );
     register(
       'project.context.update',
-      'Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.',
+      'Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.',
       projectContextUpdateSchema,
       async (c, i) => await ctx.scope.updateProjectContext(c, i),
     );

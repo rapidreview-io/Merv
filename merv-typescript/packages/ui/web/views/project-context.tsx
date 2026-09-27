@@ -12,7 +12,15 @@ const Unwritten = ({ action }: { action?: ReactNode }) => (
 
 function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: () => void }) {
   const heading = useId();
-  const [draft, setDraft] = useState<{ summary: string; expectedSummary: string } | null>(null);
+  type Draft = { summary: string } & (
+    | { expectedContextRevision: number; expectedSummary?: never }
+    | { expectedSummary: string; expectedContextRevision?: never }
+  );
+  const baseline = () =>
+    project.contextRevision === undefined
+      ? { expectedSummary: project.summary ?? '' }
+      : { expectedContextRevision: project.contextRevision };
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [conflict, setConflict] = useState(false);
   const mutation = useCommand<Project>({
     tool: 'project.context.update',
@@ -37,9 +45,7 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
         type="button"
         // Offered from the empty state it is the page's one control, and wears the accent.
         className={cx('btn', !project.summary && 'btn--primary')}
-        onClick={() =>
-          setDraft({ summary: project.summary ?? '', expectedSummary: project.summary ?? '' })
-        }
+        onClick={() => setDraft({ summary: project.summary ?? '', ...baseline() })}
       >
         Edit introduction
       </button>
@@ -79,9 +85,14 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
           <button
             type="button"
             className="btn"
-            disabled={mutation.locked || project.summary === draft.expectedSummary}
+            disabled={
+              mutation.locked ||
+              (draft.expectedContextRevision === undefined
+                ? project.summary === draft.expectedSummary
+                : project.contextRevision === draft.expectedContextRevision)
+            }
             onClick={() => {
-              setDraft({ ...draft, expectedSummary: project.summary ?? '' });
+              setDraft({ summary: draft.summary, ...baseline() });
               setConflict(false);
             }}
           >

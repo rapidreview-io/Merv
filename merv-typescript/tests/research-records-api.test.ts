@@ -141,6 +141,35 @@ test('Introduction HTTP and MCP preserve exact baseline, original replay result 
   );
 });
 
+test('Introduction tool accepts project.get contextRevision and refuses stale revisions', async (t) => {
+  const f = await fixture(t);
+  const observed = (await f.http('project.get')).body.result;
+  const first = await f.http('project.context.update', {
+    summary: 'Revision-based introduction.',
+    expectedContextRevision: observed.contextRevision,
+    requestId: 'revision-write',
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.result.contextRevision, observed.contextRevision + 1);
+  const stale = await f.http('project.context.update', {
+    summary: 'Stale draft.',
+    expectedContextRevision: observed.contextRevision,
+    requestId: 'revision-stale',
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, 'project_context_conflict');
+  for (const input of [
+    { summary: 'No baseline.', requestId: 'revision-none' },
+    {
+      summary: 'Both baselines.',
+      expectedContextRevision: first.body.result.contextRevision,
+      expectedSummary: first.body.result.summary,
+      requestId: 'revision-both',
+    },
+  ])
+    assert.equal((await f.http('project.context.update', input)).status, 400);
+});
+
 test('Knowledge transport reads complete scoped metadata, exposes unresolved states and withdraws with its provider', async (t) => {
   const f = await fixture(t);
   const intro = await f.app.ctx.scope.updateProjectContext(f.caller, {

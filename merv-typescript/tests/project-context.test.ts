@@ -89,6 +89,46 @@ const update = (
   requestId = 'intro',
 ): ProjectContextUpdate => ({ summary, expectedSummary, requestId });
 
+test('Introduction accepts a read context revision and rejects stale or ambiguous baselines', async (t) => {
+  const f = await fixture(t);
+  const observed = await f.scope.project(f.reader);
+  const first = await f.scope.updateProjectContext(f.producer, {
+    summary: 'First intent.',
+    expectedContextRevision: observed.contextRevision!,
+    requestId: 'revision-first',
+  });
+  assert.equal(first.contextRevision, 1);
+  assert.equal(first.summary, 'First intent.');
+  await assert.rejects(
+    f.scope.updateProjectContext(f.producer, {
+      summary: 'Stale intent.',
+      expectedContextRevision: observed.contextRevision!,
+      requestId: 'revision-stale',
+    }),
+    { code: 'project_context_conflict' },
+  );
+  for (const invalid of [
+    { summary: 'No baseline.', requestId: 'missing' },
+    {
+      summary: 'Both.',
+      expectedSummary: first.summary!,
+      expectedContextRevision: 1,
+      requestId: 'both',
+    },
+    { summary: 'Negative.', expectedContextRevision: -1, requestId: 'negative' },
+    { summary: 'Fraction.', expectedContextRevision: 1.5, requestId: 'fraction' },
+  ])
+    await assert.rejects(f.scope.updateProjectContext(f.producer, invalid), {
+      code: 'invalid_project_context',
+    });
+  const legacy = await f.scope.updateProjectContext(
+    f.producer,
+    update('Legacy still works.', first.summary!, 'legacy-after-revision'),
+  );
+  assert.equal(legacy.contextRevision, 2);
+  assert.equal((await f.events()).length, 2);
+});
+
 test('Introduction updates trim only new text, retain original receipts across later edits/restart and preserve identity', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(await f.scope.project(f.reader), f.boot.project);

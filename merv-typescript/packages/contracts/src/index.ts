@@ -837,8 +837,9 @@ export interface Project {
 }
 export interface ProjectContextUpdate {
   summary: string;
-  /** Exact previously observed Introduction; whitespace is significant. */
-  expectedSummary: string;
+  /** Supply exactly one baseline from project.get. Whitespace is significant in text mode. */
+  expectedSummary?: string;
+  expectedContextRevision?: number;
   requestId: string;
 }
 /** Project-bound actor credentials are distinct from human login and future worker leases. */
