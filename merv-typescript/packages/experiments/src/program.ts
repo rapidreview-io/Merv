@@ -37,7 +37,7 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCapture } from '@merv/code-research/types';
 import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
-import type { FeasibilityStatement } from './evidence.js';
+import type { FeasibilityStatement, MetricsExhibit } from './evidence.js';
 
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
@@ -267,6 +267,9 @@ const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state)
     ],
   },
 }));
+const attemptReviewRecipe = previousExperimentRecipes.find(
+  (definition) => definition.name === 'experiment.attempt_review',
+)!;
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
   ...previousExperimentRecipes,
   ...previousExperimentRecipes.map((definition) => ({
@@ -280,7 +283,77 @@ export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
         (definition.kind === 'review' ? verifying : ''),
     },
   })),
+  {
+    ...attemptReviewRecipe,
+    version: 11,
+    recipe: {
+      ...attemptReviewRecipe.recipe,
+      instructions: instructions.experiment_review + reading + verifying,
+      sections: [
+        ...attemptReviewRecipe.recipe.sections,
+        {
+          key: 'exhibitReference',
+          title: 'Metrics exhibit (read the retained artifact to verify its source mapping)',
+          required: true,
+        },
+      ],
+    },
+  },
 ];
+
+/** A generated exhibit repeats JSON result data only when every source is already inline. */
+export function redundantExhibitId(
+  selected: readonly ExperimentEvidence[],
+  inlineResultIds: readonly string[],
+  content: string,
+  experimentId: string,
+  attemptIndex: number,
+): string | null {
+  const exhibits = selected.filter((item) => item.role === 'exhibit' && item.systemGenerated);
+  if (exhibits.length !== 1) return null;
+  let exhibit: MetricsExhibit;
+  try {
+    exhibit = JSON.parse(content) as MetricsExhibit;
+  } catch {
+    return null;
+  }
+  if (
+    !exhibit ||
+    typeof exhibit !== 'object' ||
+    exhibit.kind !== 'metrics_exhibit' ||
+    exhibit.experimentId !== experimentId ||
+    exhibit.attemptIndex !== attemptIndex ||
+    !Array.isArray(exhibit.resultFiles) ||
+    exhibit.resultFiles.length === 0
+  )
+    return null;
+  const results = new Map(
+    selected
+      .filter(
+        (item) =>
+          item.role === 'result' &&
+          item.resultFormat === 'json' &&
+          inlineResultIds.includes(item.artifactId),
+      )
+      .map((item) => [item.artifactId, item]),
+  );
+  if (
+    !exhibit.resultFiles.every((file) => {
+      const source = file?.source;
+      const result = source && results.get(source.artifactId);
+      return (
+        result &&
+        Object.hasOwn(file, 'data') &&
+        source.type === 'result_file' &&
+        source.resultFormat === 'json' &&
+        source.path === result.path &&
+        source.sha256 === result.hash
+      );
+    })
+  )
+    return null;
+  return exhibits[0].artifactId;
+}
 
 /**
  * How often a design review, and a results review, may return an experiment. A design return
@@ -380,7 +453,7 @@ export class ExperimentProgram {
       try {
         for (const recipe of EXPERIMENT_RECIPES) {
           const registration = await host.contextBuilder.register(recipe);
-          if (recipe.version === 10)
+          if (recipe.version === (recipe.name === 'experiment.attempt_review' ? 11 : 10))
             this.contexts.set(
               activeStates.find((state) => recipeNames[state] === recipe.name)!,
               registration,
@@ -925,6 +998,53 @@ export class ExperimentProgram {
         ]),
       ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
     } else inputs = await this.inputs(context.caller, experiment, context.tx);
+    const evidenceMode = inputs.evidenceArtifacts.length
+      ? await this.host.contextBuilder.mode(
+          context.caller,
+          inputs.evidenceArtifacts,
+          96_000,
+          context.tx,
+        )
+      : 'auto';
+    let exhibitReference: string | null = null;
+    if (state === 'experiment_review' && evidenceMode === 'auto') {
+      const selected = (inputs.experiment as { selectedEvidence?: ExperimentEvidence[] })
+        .selectedEvidence;
+      const exhibit = selected?.find(
+        (item) =>
+          item.role === 'exhibit' &&
+          item.systemGenerated &&
+          inputs.evidenceArtifacts.includes(item.artifactId),
+      );
+      if (exhibit) {
+        const resultEvidence = selected!.filter(
+          (item) => item.role === 'result' && inputs.evidenceArtifacts.includes(item.artifactId),
+        );
+        const resultArtifacts = await mapAsync(
+          resultEvidence,
+          async (item) =>
+            await this.host.artifacts.get(context.caller, item.artifactId, context.tx),
+        );
+        const inlineResultIds = resultArtifacts
+          .filter(
+            (artifact) =>
+              resultEvidence.some(
+                (item) => item.artifactId === artifact.id && item.hash === artifact.hash,
+              ) &&
+              (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json'),
+          )
+          .map((artifact) => artifact.id);
+        const read = await this.host.artifacts.read(context.caller, exhibit.artifactId);
+        if (read.encoding === 'utf8' && read.artifact.hash === exhibit.hash)
+          exhibitReference = redundantExhibitId(
+            selected!,
+            inlineResultIds,
+            read.content,
+            experiment.id,
+            experiment.attempt.index,
+          );
+      }
+    }
     const sources: Record<string, ContextInput> = {
       experiment: { text: JSON.stringify(inputs.experiment) },
       feedback: { text: JSON.stringify(inputs.feedback) },
@@ -934,14 +1054,16 @@ export class ExperimentProgram {
       ...(inputs.evidenceArtifacts.length
         ? {
             evidence: {
-              artifactIds: inputs.evidenceArtifacts,
-              mode: await this.host.contextBuilder.mode(
-                context.caller,
-                inputs.evidenceArtifacts,
-                96_000,
-                context.tx,
-              ),
+              artifactIds: inputs.evidenceArtifacts.filter((id) => id !== exhibitReference),
+              mode: evidenceMode,
             },
+          }
+        : {}),
+      ...(state === 'experiment_review'
+        ? {
+            exhibitReference: exhibitReference
+              ? { artifactIds: [exhibitReference], mode: 'references' as const }
+              : { text: 'Any metrics exhibit is included with the selected evidence above.' },
           }
         : {}),
       ...(inputs.review ? { assessment: { text: JSON.stringify(inputs.review) } } : {}),

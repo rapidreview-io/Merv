@@ -27,6 +27,7 @@ import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
+import { redundantExhibitId } from '@merv/experiments/program';
 import { CodeService } from '@merv/code-research/service';
 import type {
   Experiment,
@@ -357,6 +358,68 @@ test('a results review whose evidence outgrows the recipe lists it for the revie
   assert.equal(packet.context!.type, 'experiment.attempt_review');
   assert.match(packet.context!.prompt, /Bytes are not included/);
   assert.doesNotMatch(packet.context!.prompt, /row,value/);
+});
+
+test('results review keeps JSON observations inline and references an exactly redundant generated exhibit', async (t) => {
+  const f = await fixture(t);
+  const running = await f.verdict((await f.design(await f.create())).experiment, 'pass');
+  await f.workflows.begin(f.source, {
+    instanceId: running.id,
+    expectedRevision: running.workflow.revision,
+  });
+  const content = '{"seed":20,"coverage":0.9,"width":0.47}';
+  const result = await f.artifacts.create(f.source, {
+    title: 'Development summary',
+    content,
+    mediaType: 'application/json',
+  });
+  await f.experiments.attach(f.source, {
+    experimentId: running.id,
+    expectedRevision: running.workflow.revision,
+    attemptIndex: running.attempt.index,
+    artifactId: result.id,
+    role: 'result',
+    path: 'dev-summary.json',
+    resultFormat: 'json',
+    requestId: f.request(),
+  });
+  await f.attach(running, 'report', `${report}\nThe metrics_exhibit.json pins the summary.\n`);
+  const assessment = await f.transition(running, 'submit_results');
+  const packet = await f.workflows.assignment(f.reviewer, assessment.id);
+  const exhibit = assessment.evidence.find((item) => item.role === 'exhibit')!;
+  const exhibitRead = await f.artifacts.read(f.reviewer, exhibit.artifactId);
+  assert.equal(packet.context!.typeVersion, 11);
+  assert.match(packet.context!.prompt, /"coverage":0\.9/);
+  assert.match(packet.context!.prompt, /Metrics exhibit \(read the retained artifact/);
+  assert.match(packet.context!.prompt, new RegExp(`Artifact ${exhibit.artifactId} \\(`));
+  assert.doesNotMatch(packet.context!.prompt, /"resultFiles":/);
+  assert.ok(packet.context!.sources.some((artifact) => artifact.id === exhibit.artifactId));
+  assert.equal(JSON.parse(exhibitRead.content).resultFiles[0].data.coverage, 0.9);
+  assert.equal(
+    redundantExhibitId(
+      assessment.evidence,
+      [],
+      exhibitRead.content,
+      running.id,
+      running.attempt.index,
+    ),
+    null,
+    'Missing inline source leaves the full exhibit available for inline review',
+  );
+  const altered = assessment.evidence.map((item) =>
+    item.role === 'result' ? { ...item, hash: 'different-result-hash' } : item,
+  );
+  assert.equal(
+    redundantExhibitId(
+      altered,
+      [result.id],
+      exhibitRead.content,
+      running.id,
+      running.attempt.index,
+    ),
+    null,
+    'A changed source hash must not suppress exhibit data',
+  );
 });
 
 test('dispatch and activation read metadata only; fixed grants do not depend on complete draft evidence', async (t) => {
