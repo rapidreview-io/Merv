@@ -1,0 +1,57 @@
+{
+  "sourceCommit": "2475267919eb2a0eb5e93cc3c5c2a64eaee7aa85",
+  "mainRelease": "20260927T040223Z-24752679-9c6fb829ffa7",
+  "mainImage": "sha256:83e4423c26e5066214312e3f1d74dc8b3eba605d9f4142c4193a5eb7811dc271",
+  "rollout": "--no-rollback; hosted rebuild matched the deployed worker image",
+  "localValidation": {
+    "suite": {
+      "passed": 2177,
+      "failed": 0,
+      "skipped": 1,
+      "skipReason": "optional cross-repository Nisa integration"
+    },
+    "deploymentTestsPassed": 57,
+    "finalPiAndManagedTestsPassed": 69,
+    "serverBuild": "passed",
+    "browserTypecheck": "passed",
+    "formatting": "passed"
+  },
+  "http": {
+    "health": 200,
+    "ui": 200,
+    "anonymous": 401,
+    "approvedOrigin": 200,
+    "unapprovedOrigin": 403,
+    "assets": 200
+  },
+  "agentCanary": {
+    "result": "pass",
+    "projectId": "project_abbf907a81cf4448ae5c0025926595a2",
+    "agentId": "agent_3e09bedb5fd84f7a9ffb85b21795ae79",
+    "registration": 200,
+    "wrongProject": 403,
+    "oldAfterRotation": 401,
+    "rotatedSelf": 200,
+    "retiredSelf": 401,
+    "identityMigrationHash": "d2eded577c1088f84eb816a72d69be537108989daf00095cd109f60ed05f6bfb"
+  },
+  "piCanary": {
+    "conversation": "pic_2251590eace14520a9a72bfcdb8001de",
+    "status": "completed",
+    "error": null,
+    "reply": true,
+    "servedByRelease": true,
+    "released": true,
+    "apps": {
+      "cloudflare-fleet-large": true
+    },
+    "seconds": 25
+  },
+  "cleanup": "Synthetic agent retired; source actor disabled; all synthetic Scope and Identity credentials revoked; Pi machine released.",
+  "applicationSourceNetLines": 892,
+  "limitations": [
+    "Net LOC reduction goal not met in this migration.",
+    "Existing nonexpiring Scope credentials retain their expiry policy.",
+    "Do not roll back to a pre-Identity image that ignores the central ledger."
+  ]
+}
