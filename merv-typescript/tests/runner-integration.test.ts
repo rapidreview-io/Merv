@@ -229,6 +229,7 @@ test(
     );
     assert.equal(runner.snapshot().launches.length, 1);
     assert.equal(runner.snapshot().launches[0].exitCode, 0);
+    assert.equal((await f.sessions())[0].closeReason, 'local_process_exit_code_0_without_handoff');
     assert.equal((await f.sessions()).length, 1);
     for (const path of files(f.runnerDirectory))
       assert.equal(
@@ -236,6 +237,45 @@ test(
         false,
         `Source credential absent from ${path}`,
       );
+  },
+);
+
+test(
+  'an immediate process failure records its exit code without publishing stderr',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const script = join(f.runnerDirectory, 'crash.mjs');
+    mkdirSync(f.runnerDirectory, { recursive: true });
+    writeFileSync(script, 'process.stderr.write("private-model-output"); process.exit(7);\n');
+    f.config.profiles = [
+      {
+        name: 'test-worker',
+        harness: 'command',
+        executable: process.execPath,
+        args: [script],
+        enabled: true,
+        parallelism: 1,
+      },
+    ];
+    const runner = f.make();
+    await runner.start();
+    await f.enabled(true);
+    const deadline = Date.now() + 15_000;
+    let session: Session | undefined;
+    while (Date.now() < deadline) {
+      await runner.tick();
+      session = (await f.sessions())[0];
+      if (session?.status === 'released') break;
+      await delay(50);
+    }
+    assert.ok(session);
+    assert.equal(session.status, 'released');
+    await f.enabled(false);
+    assert.equal(session.outcome, 'crash_loop');
+    assert.equal(session.closeReason, 'local_process_exit_code_7');
+    assert.equal(session.closeReason.includes('private-model-output'), false);
+    assert.equal(runner.snapshot().launches[0]?.exitCode, 7);
   },
 );
 

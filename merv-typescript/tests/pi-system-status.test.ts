@@ -97,6 +97,8 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
     },
   } as unknown as Fleet;
   const result = await systemStatus(caller, sessions, fleet);
+  assert.equal(result.scope, 'project');
+  if (result.scope !== 'project') throw new Error('Expected project status');
   assert.deepEqual(seen, ['project-a', 'project-a', 'project-a']);
   assert.equal(result.dispatch.state, 'running');
   assert.equal(result.workers.liveShown, 0);

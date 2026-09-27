@@ -162,6 +162,22 @@ const diagnostic = (error: unknown) =>
         /^[a-z_]{1,100}$/.test((error as { code: string }).code)
       ? (error as { code: string }).code
       : 'runner_operation_failed';
+/** Only supervisor-owned fields enter the durable session reason; process output is untrusted. */
+function terminalReason(record: LaunchRecord): string {
+  const reason = record.reason;
+  if (reason === 'deadline') return 'local_process_deadline';
+  if (reason === 'launch_failed') return 'local_process_launch_failed';
+  if (reason === 'controller_stop') return 'local_process_controller_stopped';
+  if (reason === 'external_stop') return 'local_process_external_stop';
+  if (reason === 'guardian_lost') return 'local_process_guardian_lost';
+  if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
+    return `local_process_signal_${record.exitSignal}`;
+  if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
+    return record.exitCode === 0
+      ? 'local_process_exit_code_0_without_handoff'
+      : `local_process_exit_code_${record.exitCode}`;
+  return 'local_process_finished_without_exit_status';
+}
 class RunnerSourceRefusal extends RunnerControlError {}
 /** What a put-off preparation recorded on the launch, as the release route carries it. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
@@ -735,7 +751,7 @@ export class MachineRunner implements Runner {
       record.sessionId,
       this.ledger.runnerId,
       outcome,
-      'local_process_finished',
+      terminalReason(record),
       this.readUsage(record),
       deferralOf(record),
     );

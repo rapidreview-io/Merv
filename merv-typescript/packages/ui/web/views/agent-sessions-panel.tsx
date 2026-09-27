@@ -70,10 +70,8 @@ function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: C
                 <Stamp at={assignment.expiresAt} />,
               ],
               !!assignment.closedAt && ['Closed', <Stamp at={assignment.closedAt} />],
-              !!(assignment.outcome || assignment.closeReason) && [
-                'Outcome',
-                words(assignment.outcome ?? assignment.closeReason ?? ''),
-              ],
+              !!assignment.outcome && ['Outcome', words(assignment.outcome)],
+              !!assignment.closeReason && ['Reason', words(assignment.closeReason)],
             ]}
           />
           <span className="label">

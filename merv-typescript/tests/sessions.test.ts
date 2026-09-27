@@ -14,7 +14,9 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { z } from 'zod';
+import type { Context } from 'cordis';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
 import type { NisaPaper } from '../packages/nisa/src/types.js';
@@ -667,6 +669,59 @@ test('session metadata and tool preparation cannot adopt a replacement worker', 
       await assert.rejects(pending, { code: 'forbidden' });
     });
   }
+});
+
+test('system.status gives a leased worker only its authenticated session', async (t) => {
+  const f = await fixture(t);
+  const { token, session } = await f.offer();
+  const worker = await f.sessions.authenticate(token);
+  const tools = new ToolRegistry(f.scope);
+  t.after(() => tools.close());
+  tools.registerSessionPolicy(f.sessions);
+  let fleetReads = 0;
+  sessionsToolsPlugin.apply({
+    tools,
+    sessions: f.sessions,
+    get: () => {
+      fleetReads++;
+      return undefined;
+    },
+    effect: (register: () => unknown) => register(),
+  } as unknown as Context);
+
+  assert.equal(
+    (await tools.describe(worker)).some((tool) => tool.name === 'system.status'),
+    true,
+  );
+  const result = await tools.call('system.status', worker, {});
+  assert.equal(fleetReads, 0);
+  assert.equal((result as { scope: string }).scope, 'session');
+  assert.equal((result as { session: { id: string } }).session.id, session.id);
+  assert.equal(
+    (result as { session: { instanceId: string } }).session.instanceId,
+    session.instanceId,
+  );
+  const serialized = JSON.stringify(result);
+  for (const field of [
+    'dispatch',
+    'fleet',
+    'workers',
+    'waiting',
+    'blockers',
+    'source',
+    'lease',
+    'execution',
+    'hostRef',
+  ])
+    assert.equal(
+      serialized.includes(`"${field}"`),
+      false,
+      `${field} is private to the project view`,
+    );
+
+  const project = await tools.call('system.status', f.owner, {});
+  assert.equal((project as { scope: string }).scope, 'project');
+  assert.equal((project as { dispatch: { state: string } }).dispatch.state, 'paused');
 });
 
 test('a leased worker lists and runs web and literature search, open reads its policy never names', async (t) => {

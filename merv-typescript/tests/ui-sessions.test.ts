@@ -242,6 +242,37 @@ test('leases open on what is live or recent; the older history is one control aw
   assert.ok(!text().includes('Show all'), 'nothing is left to show');
 });
 
+test('a failed lease shows both the outcome and the runner exit reason', async (t) => {
+  t.after(unmount);
+  const ended = {
+    ...status().sessions[0],
+    status: 'released',
+    closedAt: new Date().toISOString(),
+    outcome: 'crash_loop',
+    closeReason: 'local_process_exit_code_7',
+    workflow: { name: 'task', state: 'in_progress' },
+    tools: [],
+  };
+  serve('/tools/ui.read', () => read({ sessions: [ended] }));
+  serve('/sessions/agents/agent_1/observation', {
+    body: {
+      agent: status().agents[0],
+      assignments: [ended],
+      toolCalls: [],
+      toolCallTotal: 0,
+      tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
+      tokenAccounting: { kind: 'estimate', method: 'test' },
+    },
+  });
+  await mount(page());
+  const opener = document.querySelector<HTMLButtonElement>('.agent-select')!;
+  await act(async () => opener.click());
+  await settle(20);
+  const shown = text();
+  assert.ok(shown.includes('Outcome') && shown.includes('crash loop'), shown);
+  assert.ok(shown.includes('Reason') && shown.includes('local process exit code 7'), shown);
+});
+
 test('a clock that jumps cannot lapse a lease the read never saw', async (t) => {
   t.after(unmount);
   serve('/tools/ui.read', (call) => (call === 1 ? read() : { network: true }));

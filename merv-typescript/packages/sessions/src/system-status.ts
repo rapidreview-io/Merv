@@ -5,14 +5,36 @@ import type { Sessions } from './types.js';
 /** Provider/runner diagnostics can embed private endpoints; a status overview never needs one. */
 const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitted]');
 
-/** A compact operational read for a person's agent. Each owner enforces project authority. */
+/** A compact operational read. Sessions enforces the caller's authority for each view. */
 export async function systemStatus(caller: Caller, sessions: Sessions, fleet?: Fleet) {
+  if (caller.session) {
+    const session = await sessions.describe(caller);
+    return {
+      scope: 'session' as const,
+      projectId: session.projectId,
+      session: {
+        id: session.id,
+        instanceId: session.instanceId,
+        expectedRevision: session.expectedRevision,
+        role: session.role,
+        status: session.status,
+        label: session.assignment.label,
+        createdAt: session.createdAt,
+        activatedAt: session.activatedAt,
+        expiresAt: session.expiresAt,
+        closedAt: session.closedAt,
+        closeReason: session.closeReason,
+        outcome: session.outcome ?? null,
+      },
+    };
+  }
   const [project, blockers, allocations] = await Promise.all([
     sessions.projectStatus(caller),
     sessions.stuck(caller),
     fleet?.list(caller, 0) ?? Promise.resolve(null),
   ]);
   return {
+    scope: 'project' as const,
     projectId: caller.projectId,
     observedAt: project.observedAt,
     dispatch: {
