@@ -8,7 +8,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
 import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
-import type { ResearchLineage } from '../packages/research/src/types.js';
+import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
 import {
   CHANGE_SPEC_CRITERION,
@@ -655,6 +655,12 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   assert.match(context.prompt, /Predecessor cycle digest \(decisions already made/);
   assert.ok(context.prompt.includes('The first question was answered elsewhere.'));
   assert.match(context.prompt, /research\.lineage/);
+  assert.match(context.prompt, /research\.list identifies this wave's current cycle/);
+  assert.match(
+    context.prompt,
+    /researchDependencies are the exact selected task and experiment IDs/,
+  );
+  assert.match(context.prompt, /paper content captured in this assignment may lag those results/);
   assert.ok(context.sources.some((source) => source.id === ended.digest!.id));
   assert.ok(Buffer.byteLength(context.prompt) < 16 * 1024);
 
@@ -677,6 +683,12 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   });
   assert.match(execution.assignment.context!.prompt, /Predecessor cycle digest/);
   const caller = await f.app.ctx.sessions.authenticate(secret);
+  const cycles = (await f.app.ctx.tools.call('research.list', caller, {})) as ResearchRecord[];
+  assert.equal(cycles.find((entry) => entry.reflectionId === wave.id)?.id, cycle.id);
+  assert.deepEqual(
+    cycles.find((entry) => entry.reflectionId === wave.id)?.researchDependencies,
+    cycle.researchDependencies,
+  );
   const lineage = (await f.app.ctx.tools.call('research.lineage', caller, {
     researchId: cycle.id,
   })) as ResearchLineage;
@@ -714,7 +726,7 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   const named = [
     ...new Set(briefs.flatMap((brief) => brief.match(/\b[a-z_]+\.[a-z_]+\b/g) ?? [])),
   ].filter((name) => reads.has(name));
-  for (const read of ['research.lineage', 'usage.read', 'project.records'])
+  for (const read of ['research.list', 'research.lineage', 'usage.read', 'project.records'])
     assert.ok(named.includes(read), read);
 });
 
