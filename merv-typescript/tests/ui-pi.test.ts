@@ -1563,6 +1563,56 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
   assert.equal(buttons()[0].textContent, 'Ran');
 });
 
+test('research.advance tells Pi the transition and every child ID while keeping the full Problem for the person', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const proposal = {
+    id: 'pip_advance',
+    name: 'research.advance',
+    input: { researchId: 'research_1', expectedRevision: 0, requestId: 'advance_1' },
+    at: '2026-09-20T00:00:01Z',
+  };
+  boot(
+    () => snapshot(conversation(), [{ ...command('c1', 'completed'), proposals: [proposal] }]),
+    () => [conversation()],
+  );
+  const result = {
+    id: 'research_1',
+    workflow: { state: 'researching', revision: 1 },
+    reflectionId: 'reflection_very_long_identifier_that_must_not_be_clipped',
+    integrations: ['task_first', 'task_second'],
+    successorId: 'research_successor',
+    problem: { text: 'Full Problem content '.repeat(300) },
+  };
+  serve('/tools/pi.run', { body: { result: { result } } });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
+  await settle(10);
+  assert.equal(sent.length, 1, 'running the proposal still starts one continuation turn');
+  const told = String(sent[0]!.text);
+  assert.match(told, /^Ran research\.advance:/);
+  for (const value of [
+    result.id,
+    result.workflow.state,
+    result.reflectionId,
+    ...result.integrations,
+    result.successorId,
+    'research.get',
+    'workflow.status_and_next',
+  ])
+    assert.ok(told.includes(value), value);
+  assert.ok(told.includes('"revision":1'));
+  assert.ok(!told.includes('Full Problem content'));
+  assert.ok(told.length < 500);
+  const full = document.querySelector<HTMLPreElement>('.pi-proposal details pre')!;
+  assert.ok(full.textContent?.includes(result.problem.text));
+});
+
 const models = [
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5 },
   { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10 },
