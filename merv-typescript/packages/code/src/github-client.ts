@@ -727,6 +727,7 @@ export class GitHubClient {
     required: string[],
     checks: GitHubPullDetails['checks'],
   ) {
+    githubResponse(githubOid, sha);
     const statuses = await this.collection(
       token,
       `${repositoryPath(repository)}/commits/${sha}/statuses`,

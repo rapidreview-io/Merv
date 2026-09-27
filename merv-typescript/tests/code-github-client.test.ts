@@ -263,6 +263,16 @@ test('required checks accept real commit-scoped status shape and reject wrong or
     ),
     false,
   );
+  await assert.rejects(
+    api.requiredChecks(
+      'private-test-token',
+      'example/research',
+      'not-a-commit-sha',
+      ['merv/consolidation-approved'],
+      [],
+    ),
+    { code: 'github_response' },
+  );
 });
 
 test('rules inspect a caller-selected App status and comments preserve caller text once', async (t) => {
