@@ -60,6 +60,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   const upstream: { body: Record<string, any>; authorization: string }[] = [];
   let hold: Promise<void> | undefined;
   let afterCompleted: Promise<void> | undefined;
+  let terminalFrame = completed(80, 30);
   const logs: string[] = [];
   const write = process.stderr.write;
   process.stderr.write = ((chunk: string) => logs.push(String(chunk)) > 0) as never;
@@ -86,7 +87,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
             async start(controller) {
               controller.enqueue(new TextEncoder().encode('event: response.created\ndata: {}\n\n'));
               await held;
-              controller.enqueue(new TextEncoder().encode(completed(80, 30)));
+              controller.enqueue(new TextEncoder().encode(terminalFrame));
               await finish;
               try {
                 controller.close();
@@ -136,6 +137,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
     revoke: () => void (live = false),
     hold: (until: Promise<void>) => void (hold = until),
     afterCompleted: (until: Promise<void>) => void (afterCompleted = until),
+    respond: (frame: string) => void (terminalFrame = frame),
   };
 }
 
@@ -151,6 +153,47 @@ test('what Codex sends passes with the binding’s model and effort and the rela
     max_output_tokens: 65_536,
   });
   assert.doesNotMatch(f.logs.join(''), /"event":"codex_relay_failure"/);
+  assert.match(
+    f.logs.join(''),
+    /"event":"codex_relay_terminal","model":"gpt-6-luna","status":"completed","incompleteReason":null/,
+  );
+});
+
+test('an incomplete terminal is forwarded and logged with only a safe reason', async (t) => {
+  const f = await fixture(t);
+  const privateReason = 'secret URL https://private.example/token';
+  const frame = `event: response.incomplete\ndata: ${JSON.stringify({
+    type: 'response.incomplete',
+    response: {
+      status: 'incomplete',
+      incomplete_details: { reason: privateReason },
+      usage: { input_tokens: 80, output_tokens: 30 },
+    },
+  })}\n\n`;
+  f.respond(frame);
+  const response = await f.call();
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), `event: response.created\ndata: {}\n\n${frame}`);
+  const terminal = f.logs
+    .map((line) => JSON.parse(line))
+    .find((entry) => entry.event === 'codex_relay_terminal');
+  assert.deepEqual(
+    (({ event, model, status, incompleteReason }) => ({ event, model, status, incompleteReason }))(
+      terminal,
+    ),
+    {
+      event: 'codex_relay_terminal',
+      model: 'gpt-6-luna',
+      status: 'incomplete',
+      incompleteReason: 'other',
+    },
+  );
+  assert.equal(typeof terminal.elapsedMs, 'number');
+  assert.ok(!f.logs.join('').includes(privateReason));
+  assert.match(f.logs.join(''), /"event":"codex_relay_usage"/);
+  f.respond(frame.replace(privateReason, 'max_output_tokens'));
+  assert.match(await (await f.call()).text(), /response\.incomplete/);
+  assert.ok(f.logs.some((line) => line.includes('"incompleteReason":"max_output_tokens"')));
 });
 
 test('closing after response.completed settles usage without a relay failure', async (t) => {

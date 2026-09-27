@@ -317,6 +317,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
       let heldBytes = 0;
       let tail = '';
       let usage: Usage | null | undefined;
+      let terminalReported = false;
       // Usage is kept the moment its frame arrives: a client may hang up right after it.
       const keep = (data: string) => {
         if (usage !== undefined) return;
@@ -354,11 +355,35 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
             .filter((line) => line.startsWith('data:'))
             .map((line) => line.slice(5).trimStart())
             .join('\n');
-          if (
-            /^event:\s*response\.(?:completed|incomplete|failed)\s*$/im.test(content) ||
-            /^\{\s*"type"\s*:\s*"response\.(?:completed|incomplete|failed)"/.test(data)
-          )
+          const terminal =
+            /(?:^|\r?\n)event:\s*response\.(completed|incomplete|failed)\s*(?:\r?\n|$)/i.exec(
+              content,
+            )?.[1] ??
+            /^\{\s*"type"\s*:\s*"response\.(completed|incomplete|failed)"/.exec(data)?.[1];
+          if (terminal) {
             keep(data);
+            if (!terminalReported) {
+              terminalReported = true;
+              let reason: unknown;
+              if (terminal === 'incomplete') {
+                try {
+                  reason = JSON.parse(data).response?.incomplete_details?.reason;
+                } catch {}
+              }
+              report(this.config.onTerminal, {
+                event: `${this.config.name}_relay_terminal` as const,
+                model: grant.model,
+                status: terminal as 'completed' | 'incomplete' | 'failed',
+                incompleteReason:
+                  terminal !== 'incomplete'
+                    ? null
+                    : reason === 'max_output_tokens' || reason === 'content_filter'
+                      ? reason
+                      : 'other',
+                elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
+              });
+            }
+          }
           if (
             /^event:\s*response\.completed\s*$/im.test(content) ||
             /^\{\s*"type"\s*:\s*"response\.completed"/.test(data)

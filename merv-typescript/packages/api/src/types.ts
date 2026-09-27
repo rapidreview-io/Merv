@@ -141,13 +141,21 @@ export interface ModelRelayUsage<E extends string = string> {
   outputTokens: number;
   reasoningTokens: number;
 }
+/** A provider terminal frame, without its text, tool arguments, identifiers or raw reason. */
+export interface ModelRelayTerminal<E extends string = string> {
+  event: E;
+  model: string;
+  status: 'completed' | 'incomplete' | 'failed';
+  incompleteReason: 'max_output_tokens' | 'content_filter' | 'other' | null;
+  elapsedMs: number;
+}
 /**
  * A relay that holds the provider key for workers that hold none (model-relay.ts). A feature
  * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
  * what the relay sets in them, and the lane that allows one call in flight.
  */
 export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = string> {
-  /** Names the records, `${name}_relay_usage` and `${name}_relay_failure`. */
+  /** Names the records, `${name}_relay_usage`, `${name}_relay_failure` and `${name}_relay_terminal`. */
   name: N;
   route: string;
   token: RegExp;
@@ -173,6 +181,7 @@ export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = 
   maxRequestsPerGrant?: number;
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
+  onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
   /** Charges a call before it goes upstream and returns what it charged; throwing refuses it,
    *  with the error's `code` when it has one. The charge stands for a call that never finishes. */
   reserve?: (grant: G, body: Record<string, unknown>) => Promise<number>;

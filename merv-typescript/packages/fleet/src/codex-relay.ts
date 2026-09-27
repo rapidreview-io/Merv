@@ -256,6 +256,7 @@ export async function codexModelRelay(
     // A second, in-memory bound: a step's calls, far beyond what one takes.
     maxRequestsPerGrant: 1000,
     onFailure: log,
+    onTerminal: log,
     // Settles the day the call was charged to, even past midnight.
     onUsage: async (record, grant, reserved) => {
       log(record);
