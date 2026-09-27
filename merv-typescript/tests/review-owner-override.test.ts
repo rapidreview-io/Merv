@@ -546,7 +546,8 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
         proposed: { id: string };
       }
     ).proposed.id;
-  const [onKey, asPerson] = [await propose(), await propose()];
+  const onKey = await propose();
+  assert.equal(await propose(), onKey, 'repeated calls in one turn share one proposal');
   const conversation: Caller = {
     actorId: owner.actorId,
     projectId: project.id,
@@ -581,7 +582,21 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
   // Run pressed with the person's key is not the person.
   await assert.rejects(run(key, onKey), { code: 'review_independence' });
   assert.equal((await reviews.get(owner, review.id)).status, 'requested');
-  const ran = (await run(owner, asPerson)) as { result: ReviewRequest };
+  await assert.rejects(run(owner, onKey), { code: 'pi_proposal_ran' });
+  const retry = await f.begun(owner);
+  const asPerson = (
+    (await f.pi.tool(retry.token, {
+      ...retry.input,
+      name: 'review.start',
+      input: { reviewId: review.id, override: true },
+    })) as { proposed: { id: string } }
+  ).proposed.id;
+  await f.pi.complete(retry.token, f.completion(retry.input));
+  const ran = (await f.pi.run(owner, {
+    id: retry.input.conversationId,
+    commandId: retry.input.commandId,
+    proposalId: asPerson,
+  })) as { result: ReviewRequest };
   assert.deepEqual(
     [ran.result.status, ran.result.reviewerId, ran.result.override],
     ['started', owner.actorId, true],
