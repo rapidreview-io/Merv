@@ -146,6 +146,69 @@ function Canary({ controls, onDone }: { controls: Controls; onDone(): void }) {
   );
 }
 
+/** One reviewed head and observed base are one merge intent. A changed pin remounts this
+ * control, while an uncertain response keeps the original request id and all its arguments. */
+function MergeGuard({
+  publication,
+  base,
+  busy,
+  onMerged,
+}: {
+  publication: CodePublication;
+  base: string;
+  busy: boolean;
+  onMerged(): void;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const command = useCommand<{ publication: CodePublication }>({
+    tool: 'code.publication.merge',
+    send: (input) => request('/merge', input),
+    validate: (value) =>
+      value?.publication?.proposalId === publication.proposalId &&
+      !!(value.publication.pull?.merged || value.publication.stale),
+    onSuccess: () => {
+      setConfirm(false);
+      onMerged();
+    },
+  });
+  if (!confirm)
+    return (
+      <button className="btn btn--primary" disabled={busy} onClick={() => setConfirm(true)}>
+        Merge reviewed proposal…
+      </button>
+    );
+  return (
+    <div role="alertdialog" aria-label="Confirm reviewed merge" className="pr-guard stack">
+      <p>
+        Merge <Short value={publication.headOid} /> into <strong>{publication.baseBranch}</strong>{' '}
+        using a merge commit? GitHub checks and branch protection apply. The base may advance
+        concurrently; GitHub does not offer an atomic base lock.
+      </p>
+      <Failure message={command.error} />
+      <div className="cluster">
+        {!command.retry && (
+          <button className="btn" disabled={busy || command.busy} onClick={() => setConfirm(false)}>
+            Cancel
+          </button>
+        )}
+        <button
+          className="btn btn--primary"
+          disabled={busy || command.busy}
+          onClick={() =>
+            void command.submit({
+              proposalId: publication.proposalId,
+              expectedHead: publication.headOid,
+              expectedBase: base,
+            })
+          }
+        >
+          {command.retry ? 'Retry same request' : 'Confirm merge'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function GitHubPublications({
   rows,
   error,
@@ -170,13 +233,11 @@ export function GitHubPublications({
   const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
   const [failed, setFailed] = useState('');
   const [busy, setBusy] = useState(false);
-  const [confirm, setConfirm] = useState('');
   const seen = useRef(new Map<string, string>());
   useEffect(() => {
     seen.current = new Map();
     setDetails({});
     setFailed('');
-    setConfirm('');
   }, [epoch]);
   // A pull request is read once, and again only when GitHub says it changed.
   useEffect(() => {
@@ -319,50 +380,23 @@ export function GitHubPublications({
           </div>
         )}
         {p.lastError && <p role="alert">{words(p.lastError)}</p>}
-        {gate &&
-          (confirm === p.proposalId ? (
-            <div role="alertdialog" aria-label="Confirm reviewed merge" className="pr-guard stack">
-              <p>
-                Merge <Short value={p.headOid} /> into <strong>{p.baseBranch}</strong> using a merge
-                commit? GitHub checks and branch protection apply. The base may advance
-                concurrently; GitHub does not offer an atomic base lock.
-              </p>
-              <div className="cluster">
-                <button className="btn" disabled={busy} onClick={() => setConfirm('')}>
-                  Cancel
-                </button>
-                <button
-                  className="btn btn--primary"
-                  disabled={busy}
-                  onClick={() =>
-                    void act(async () => {
-                      await request('/merge', {
-                        proposalId: p.proposalId,
-                        expectedHead: p.headOid,
-                        expectedBase: d.pull.base.sha,
-                        requestId: crypto.randomUUID(),
-                      });
-                      setConfirm('');
-                      seen.current.delete(p.proposalId);
-                      await reload();
-                    })
-                  }
-                >
-                  Confirm merge
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <button
-                className="btn btn--primary"
-                disabled={busy}
-                onClick={() => setConfirm(p.proposalId)}
-              >
-                Merge reviewed proposal…
-              </button>
-            </div>
-          ))}
+        {gate && (
+          <MergeGuard
+            key={JSON.stringify([p.proposalId, p.headOid, d.pull.base.sha])}
+            publication={p}
+            base={d.pull.base.sha}
+            busy={busy}
+            onMerged={() => {
+              seen.current.delete(p.proposalId);
+              void reload().catch((error: unknown) => {
+                if (epoch === scopeVersion())
+                  setFailed(
+                    error instanceof Error ? error.message : 'Publications could not be read',
+                  );
+              });
+            }}
+          />
+        )}
         {p.pull && (
           <div className="pr-line">
             <a className="pr-out cluster" href={p.pull.url} target="_blank" rel="noreferrer">

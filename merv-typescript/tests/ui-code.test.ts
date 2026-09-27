@@ -23,6 +23,7 @@ const { createElement, useEffect, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter, useLocation } = await import('react-router-dom');
 const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
+const { GitHubPublications } = await import('../packages/ui/web/views/github-publications.js');
 const { PageLede } = await import('../packages/ui/web/shell.js');
 const { chipsOf, gitModel, relationsOf, waitersOf } =
   await import('../packages/ui/web/views/code-model.js');
@@ -316,6 +317,45 @@ const published = (over: Partial<CodePublication> = {}): CodePublication => ({
   merge: { requestId: 'q', actorId: 'a', expectedBase: 'c0', requestedAt: '', commitSha: 'g1' },
   ...over,
 });
+const openPull = (base: string, updatedAt: string) => ({
+  id: 3,
+  number: 3,
+  nodeId: 'pr_3',
+  url: 'https://github.com/lab/grokking/pull/3',
+  title: 'Wave one',
+  body: '',
+  state: 'open' as const,
+  draft: false,
+  head: { ref: 'merv/publish/p1', sha: 'g1', repositoryId: 1 },
+  base: { ref: 'main', sha: base, repositoryId: 1 },
+  merged: false,
+  mergeCommitSha: null,
+  mergeable: true,
+  mergeState: 'clean',
+  updatedAt,
+});
+const publicationDetails = (pull: ReturnType<typeof openPull>) => ({
+  pull,
+  files: [],
+  commits: [],
+  checks: [],
+  reviews: [],
+  commitStatus: 'success',
+  statusCount: 0,
+});
+const publicationWidget = (rows: CodePublication[]) =>
+  createElement(
+    MemoryRouter,
+    null,
+    createElement(GitHubPublications, {
+      rows,
+      error: '',
+      reload: async () => {},
+      operator: true,
+      named: () => undefined,
+      onControlled() {},
+    }),
+  );
 /** The whole project read, of which the drawing uses two parts. */
 const status = (
   units: CodeUnit[],
@@ -1499,6 +1539,89 @@ test('a canary whose answer never came is retried as it was sent, and no other r
   assert.deepEqual(sent[1], sent[0]);
   assert.equal(sent[1]!.staleMerged, false);
   assert.equal(form(), null, 'the confirmed report closes the form');
+});
+
+test('an uncertain reviewed merge retries its original request and pins', async (t) => {
+  t.after(unmount);
+  const pull = openPull('c0', '2026-09-05T00:00:00Z');
+  const proposal = published({ pull });
+  serve('/code/publications/p1', {
+    body: { publication: proposal, details: publicationDetails(pull) },
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/code/publications/merge', (_call, body) => {
+    sent.push(body);
+    return sent.length === 1
+      ? { network: true }
+      : {
+          body: {
+            publication: {
+              ...proposal,
+              pull: { ...pull, merged: true, mergeCommitSha: 'merged' },
+            },
+          },
+        };
+  });
+  await mount(publicationWidget([proposal]));
+  await settle(10);
+  await click('Merge reviewed proposal…');
+  await click('Confirm merge');
+  assert.equal(sent.length, 1);
+  assert.equal(typeof sent[0]!.requestId, 'string');
+  assert.ok(text().includes('Retry same request'), text());
+  assert.ok(!text().includes('Cancel'), 'uncertain intent has no fresh-action escape');
+  await click('Retry same request');
+  assert.deepEqual(sent[1], sent[0]);
+  assert.equal(document.querySelector('[aria-label="Confirm reviewed merge"]'), null);
+});
+
+test('a changed merge base or reviewed head starts a new request intent', async (t) => {
+  t.after(unmount);
+  let pull = openPull('c0', '2026-09-05T00:00:00Z');
+  let proposal = published({ pull });
+  serve('/code/publications/p1', () => ({
+    body: { publication: proposal, details: publicationDetails(pull) },
+  }));
+  const sent: Record<string, unknown>[] = [];
+  serve('/code/publications/merge', (_call, body) => {
+    sent.push(body);
+    return sent.length < 3
+      ? { network: true }
+      : {
+          body: {
+            publication: {
+              ...proposal,
+              pull: { ...pull, merged: true, mergeCommitSha: 'merged' },
+            },
+          },
+        };
+  });
+  let setProposal!: (value: CodePublication) => void;
+  const Host = () => {
+    const [current, setCurrent] = useState(proposal);
+    setProposal = setCurrent;
+    return publicationWidget([current]);
+  };
+  await mount(createElement(Host));
+  await settle(10);
+  await click('Merge reviewed proposal…');
+  await click('Confirm merge');
+  pull = openPull('c1', '2026-09-05T00:00:01Z');
+  proposal = { ...proposal, pull };
+  await act(async () => setProposal(proposal));
+  await settle(10);
+  await click('Merge reviewed proposal…');
+  await click('Confirm merge');
+  assert.equal(sent[1]!.expectedBase, 'c1');
+  assert.notEqual(sent[1]!.requestId, sent[0]!.requestId);
+  pull = { ...openPull('c1', '2026-09-05T00:00:02Z'), head: { ...pull.head, sha: 'g2' } };
+  proposal = { ...proposal, headOid: 'g2', pull };
+  await act(async () => setProposal(proposal));
+  await settle(10);
+  await click('Merge reviewed proposal…');
+  await click('Confirm merge');
+  assert.equal(sent[2]!.expectedHead, 'g2');
+  assert.notEqual(sent[2]!.requestId, sent[1]!.requestId);
 });
 
 test('a superseded publication names the wave that replaced it, and never its id', async (t) => {
