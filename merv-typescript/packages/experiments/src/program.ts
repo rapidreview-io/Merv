@@ -313,6 +313,8 @@ interface FrozenInputs {
   experiment: Data;
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
+  /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
+  historicalArtifacts?: string[];
   review: ReviewRequest | null;
   feedback: Data;
 }
@@ -703,6 +705,25 @@ export class ExperimentProgram {
         ]);
     const approvedArtifacts =
       state === 'running' || state === 'experiment_review' ? this.approvedPlan(experiment) : [];
+    // Current review evidence remains inline. Feedback artifacts and producing recovery from a
+    // previous round stay available through artifact.read, without quoting their old bodies.
+    const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
+    const evidenceArtifacts = [
+      ...new Set(selected.filter((id) => reviewing(state) || !priorIds.has(id))),
+    ];
+    const historicalArtifacts = [
+      ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
+    ].filter((id) => !evidenceArtifacts.includes(id) && !approvedArtifacts.includes(id));
+    const historicalReferences = await mapAsync(historicalArtifacts, async (id) => {
+      const artifact = await this.host.artifacts.get(caller, id, tx);
+      return {
+        id: artifact.id,
+        title: artifact.title,
+        hash: artifact.hash,
+        mediaType: artifact.mediaType,
+        size: artifact.size,
+      };
+    });
     return {
       experiment: own({
         id: experiment.id,
@@ -734,13 +755,13 @@ export class ExperimentProgram {
         ),
       }),
       approvedArtifacts,
-      evidenceArtifacts: [
-        ...new Set([...selected, ...feedbackReviews.flatMap((prior) => prior.artifactIds)]),
-      ],
+      evidenceArtifacts,
+      historicalArtifacts,
       review,
       feedback: own({
         interruptions: experiment.attempt.feedback,
         previousReviews: feedbackReviews,
+        ...(historicalReferences.length ? { artifactReferences: historicalReferences } : {}),
         ...(history.rounds.length ? { history } : {}),
         recovery: review?.recovery ?? null,
       }),
@@ -792,7 +813,13 @@ export class ExperimentProgram {
   }
 
   private inputIds(inputs: FrozenInputs): string[] {
-    return [...new Set([...inputs.approvedArtifacts, ...inputs.evidenceArtifacts])].sort();
+    return [
+      ...new Set([
+        ...inputs.approvedArtifacts,
+        ...inputs.evidenceArtifacts,
+        ...(inputs.historicalArtifacts ?? []),
+      ]),
+    ].sort();
   }
 
   /**
@@ -880,6 +907,7 @@ export class ExperimentProgram {
       inputs = JSON.parse(
         (await this.lease(context.caller, experiment, context.tx)).inputs,
       ) as FrozenInputs;
+      const historical = new Set(inputs.historicalArtifacts ?? []);
       const owned = this.eligibleRecovery(experiment).filter(
         (evidence) => evidence.createdBy === context.caller.actorId,
       );
@@ -887,7 +915,9 @@ export class ExperimentProgram {
       inputs.evidenceArtifacts = [
         ...new Set([
           ...inputs.evidenceArtifacts,
-          ...owned.flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds]),
+          ...owned
+            .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
+            .filter((id) => !historical.has(id)),
         ]),
       ].filter((id) => allowed.has(id));
     } else inputs = await this.inputs(context.caller, experiment, context.tx);
@@ -951,6 +981,10 @@ export class ExperimentProgram {
           kind: 'artifact',
           id: artifact.id,
           label: artifact.title,
+        })),
+        ...(await mapAsync(inputs.historicalArtifacts ?? [], async (id) => {
+          const artifact = await this.host.artifacts.get(context.caller, id, context.tx);
+          return { kind: 'artifact' as const, id: artifact.id, label: artifact.title };
         })),
       ],
       handoff: {

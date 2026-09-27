@@ -945,6 +945,77 @@ test('successors receive exact rejected findings and manifests across both retur
   }
 });
 
+test('a returned execution references prior result bodies while retaining the pinned approved plan', async (t) => {
+  const f = await fixture(t);
+  const running = await f.running();
+  await f.workflows.begin(f.source, {
+    instanceId: running.id,
+    expectedRevision: running.workflow.revision,
+  });
+  const oldBody = 'PRIOR_ROUND_RESULT_BODY_73982 '.repeat(1200);
+  const prior = await f.attach(running, 'result', oldBody);
+  await f.attach(running, 'report', report);
+  const pending = await f.transition(running, 'submit_results');
+  // The current reviewer still receives the exact selected submission.
+  assert.match(
+    (await f.workflows.assignment(f.reviewer, pending.id)).context!.prompt,
+    /PRIOR_ROUND_RESULT_BODY_73982/,
+  );
+  const returned = await f.verdict(pending, 'needs_changes', 'running');
+  const offer = await f.offer(returned);
+  const prompt = offer.session.assignment.context!.prompt;
+  assert.doesNotMatch(prompt, /PRIOR_ROUND_RESULT_BODY_73982/);
+  assert.match(prompt, /Compare two methods/);
+  assert.match(prompt, new RegExp(prior.artifact.id));
+  assert.match(prompt, new RegExp(prior.artifact.hash));
+  assert.ok(
+    offer.session.assignment.references.some(
+      (reference) => reference.kind === 'artifact' && reference.id === prior.artifact.id,
+    ),
+  );
+  assert.ok((offer.session.execution.references.artifacts as string[]).includes(prior.artifact.id));
+  const worker = await f.sessions.authenticate(offer.secret);
+  assert.equal(
+    (await f.sessions.prepare(worker, 'artifact.read', { artifactId: prior.artifact.id })).input
+      .artifactId,
+    prior.artifact.id,
+  );
+  assert.equal((await f.artifacts.read(worker, prior.artifact.id)).content, oldBody);
+});
+
+test('a new planning round and its next design review reference earlier plan bodies', async (t) => {
+  const f = await fixture(t);
+  const first = await f.create();
+  const oldBody = `${plan}\n${'PRIOR_ROUND_PLAN_BODY_73982 '.repeat(1200)}`;
+  const prior = await f.attach(first, 'plan', oldBody);
+  const pending = await f.transition(first, 'submit_design');
+  assert.match(
+    (await f.workflows.assignment(f.reviewer, pending.id)).context!.prompt,
+    /PRIOR_ROUND_PLAN_BODY_73982/,
+  );
+  const returned = await f.verdict(pending, 'needs_changes', 'planned');
+  const offered = await f.offer(returned);
+  assert.doesNotMatch(offered.session.assignment.context!.prompt, /PRIOR_ROUND_PLAN_BODY_73982/);
+  assert.match(offered.session.assignment.context!.prompt, new RegExp(prior.artifact.id));
+  assert.match(offered.session.assignment.context!.prompt, new RegExp(prior.artifact.hash));
+  const worker = await f.sessions.authenticate(offered.secret);
+  assert.doesNotMatch(
+    (await f.workflows.assignment(worker, returned.id)).context!.prompt,
+    /PRIOR_ROUND_PLAN_BODY_73982/,
+  );
+  assert.equal(
+    (await f.sessions.prepare(worker, 'artifact.read', { artifactId: prior.artifact.id })).input
+      .artifactId,
+    prior.artifact.id,
+  );
+  await f.release(offered.session.id);
+  await f.attach(returned, 'plan', `${plan}\nCURRENT_PLAN_4872`);
+  const nextReview = await f.transition(returned, 'submit_design');
+  const prompt = (await f.workflows.assignment(f.reviewer, nextReview.id)).context!.prompt;
+  assert.match(prompt, /CURRENT_PLAN_4872/);
+  assert.doesNotMatch(prompt, /PRIOR_ROUND_PLAN_BODY_73982/);
+});
+
 test('declared producer terminal actions and owner cancellation close active work without relaxing evidence ownership', async (t) => {
   const f = await fixture(t);
   const experiment = await f.create();
