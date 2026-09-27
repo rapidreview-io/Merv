@@ -705,11 +705,15 @@ export class ExperimentProgram {
         ]);
     const approvedArtifacts =
       state === 'running' || state === 'experiment_review' ? this.approvedPlan(experiment) : [];
+    const approvedIds = new Set(approvedArtifacts);
     // Current review evidence remains inline. Feedback artifacts and producing recovery from a
     // previous round stay available through artifact.read, without quoting their old bodies.
+    // A results review pins the approved design again; its body already appears in approvedPlan.
     const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
     const evidenceArtifacts = [
-      ...new Set(selected.filter((id) => reviewing(state) || !priorIds.has(id))),
+      ...new Set(
+        selected.filter((id) => !approvedIds.has(id) && (reviewing(state) || !priorIds.has(id))),
+      ),
     ];
     const historicalArtifacts = [
       ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
@@ -919,7 +923,7 @@ export class ExperimentProgram {
             .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
             .filter((id) => !historical.has(id)),
         ]),
-      ].filter((id) => allowed.has(id));
+      ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
     } else inputs = await this.inputs(context.caller, experiment, context.tx);
     const sources: Record<string, ContextInput> = {
       experiment: { text: JSON.stringify(inputs.experiment) },

@@ -352,6 +352,39 @@ test('Experiments run both independent gates, pin exact evidence/exhibit without
   assert.equal(e.workflow.state, 'complete');
   assert.equal(e.conclusion, 'No improvement was observed.');
 });
+
+test('results review embeds approved design bodies once while retaining every pinned evidence reference', async (t) => {
+  const f = await fixture(t);
+  const submitted = await f.results(await f.running());
+  const review = await f.reviews.get(f.reviewer, submitted.reviewId!);
+  const assignment = await f.workflows.assignment(f.reviewer, submitted.id);
+  const prompt = assignment.context!.prompt;
+  const approved = prompt.split('## Exact approved plan\n')[1]!.split('## Pinned review')[0]!;
+  const evidence = prompt.split('## Selected evidence and retained work\n')[1]!.split('## ')[0]!;
+  const design = submitted.submissions.find((item) => item.stage === 'design')!;
+  const planId = design.evidence.find((item) => item.role === 'plan')!.artifactId;
+  const feasibilityId = design.evidence.find((item) => item.role === 'feasibility')!.artifactId;
+  const feasibility = (await f.artifacts.read(f.reviewer, feasibilityId)).content;
+
+  assert.ok(review.artifactIds.includes(planId));
+  assert.ok(review.artifactIds.includes(feasibilityId));
+  assert.ok(approved.includes(plan));
+  assert.ok(approved.includes(feasibility));
+  assert.ok(!evidence.includes(plan));
+  assert.ok(!evidence.includes(feasibility));
+  assert.ok(evidence.includes(report), 'current result and report evidence remains inline');
+  assert.ok(prompt.includes(review.criteria[0]!));
+  assert.deepEqual(
+    new Set(assignment.context!.sources.map((artifact) => artifact.id)),
+    new Set(review.artifactIds),
+    'frozen source metadata still names every pinned artifact',
+  );
+  assert.deepEqual(
+    new Set(assignment.references.filter((ref) => ref.kind === 'artifact').map((ref) => ref.id)),
+    new Set(review.artifactIds),
+    'the assignment still offers every pinned artifact to the reviewer',
+  );
+});
 test('Attempt fail and needs_changes require explicit routes and distinguish new attempts from new rounds', async (t) => {
   const f = await fixture(t);
   let e = await f.running();
