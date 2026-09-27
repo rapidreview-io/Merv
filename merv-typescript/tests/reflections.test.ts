@@ -130,6 +130,9 @@ test('reflection lens context includes project paper goals and revision', async 
   assert.match(context.prompt, /Project paper and document revisions/);
   assert.match(context.prompt, /Explain the project-level clustering result/);
   assert.match(context.prompt, /"revision":1/);
+  assert.match(context.prompt, /project\.records: it includes every task and experiment record/);
+  assert.match(context.prompt, /Do not call task\.list just to repeat that snapshot/);
+  assert.match(context.prompt, /refresh the live inventory or relevant records when needed/);
 });
 test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
   const f = await fixture(t);

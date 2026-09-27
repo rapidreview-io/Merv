@@ -614,7 +614,7 @@ export class ReflectionService implements Reflections {
         }),
       },
       research: {
-        text: `Read current research with project.records, task.get, experiment.get_state and paper.read. Inspect source evidence with artifact.read and its reviews with review.get. Existing work can progress during this wave; revisit relevant records before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.${
+        text: `Read the live project inventory with project.records: it includes every task and experiment record, and its tasks are the same records task.list returns. Do not call task.list just to repeat that snapshot. Use task.get and experiment.get_state for relevant records, paper.read for current paper, artifact.read for source evidence, and review.get for its reviews. Existing work can progress during this wave; refresh the live inventory or relevant records when needed before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.${
           // Only a wave Research started carries a digest, so only there is the tool named.
           typeof previousCycle === 'string'
             ? ' This research cycle follows an earlier one: research.lineage lists the cycles before it with their digests.'
