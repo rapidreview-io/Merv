@@ -390,6 +390,10 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
   const assignment = await f.app.ctx.workflows.assignment(f.owner, wave.id);
   assert.match(JSON.stringify(assignment), /version: 2/);
   assert.match(JSON.stringify(assignment), /deliverable is code in the project's repository/);
+  assert.match(
+    JSON.stringify(assignment),
+    /Done-when checks must be achievable and independently reviewable before any work that depends on it starts/,
+  );
   const report = await f.create(f.owner, 'Synthesis');
   const submit = async (spec: Artifact, requestId: string) =>
     await f.app.ctx.reflections.submit(f.owner, {
@@ -465,6 +469,10 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
   assert.match(
     JSON.stringify(reviewContext),
     /Verify that each declaration matches its deliverable/,
+  );
+  assert.match(
+    JSON.stringify(reviewContext),
+    /design submission and review belong to that experiment's own gate/,
   );
   assert.ok(JSON.stringify(reviewContext).includes(original.id));
   assert.deepEqual(

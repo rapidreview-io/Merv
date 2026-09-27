@@ -49,6 +49,7 @@ import {
   LENS_WORKFLOW_ENDABLE,
   WORKSPACE_RECIPES,
   PROJECT_PAPER_RECIPES,
+  DEPENDENCY_SAFE_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
   REFLECTION_WORKFLOW_ENDABLE,
@@ -161,7 +162,11 @@ export class ReflectionService implements Reflections {
       try {
         for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
           this.historicalContexts.push(await contextBuilder.register(recipe));
-        for (const recipe of PROJECT_PAPER_RECIPES)
+        for (const recipe of PROJECT_PAPER_RECIPES.filter(
+          (entry) => entry.name !== 'reflection.lens',
+        ))
+          this.historicalContexts.push(await contextBuilder.register(recipe));
+        for (const recipe of DEPENDENCY_SAFE_RECIPES)
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
         for (const definition of [
           LENS_WORKFLOW,
@@ -682,7 +687,7 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipe = PROJECT_PAPER_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipe = DEPENDENCY_SAFE_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(recipe.name)!
       .preview(
