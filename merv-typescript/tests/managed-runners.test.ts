@@ -1,7 +1,13 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createService, digest, type Caller, type WorkflowPolicy } from '@merv/contracts';
+import {
+  createService,
+  digest,
+  type Caller,
+  type WorkflowPolicy,
+  type WorkflowWorkspacePolicy,
+} from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
@@ -21,7 +27,11 @@ const machine = { hostname: 'managed-test', system: 'Linux', architecture: 'x64'
 
 async function fixture(
   t: TestContext,
-  options: { codeWorkspace?: boolean; clock?: () => number } = {},
+  options: {
+    codeWorkspace?: boolean;
+    reviewWorkspace?: 'ephemeral' | 'retained';
+    clock?: () => number;
+  } = {},
 ) {
   const env = `MERV_MANAGED_TEST_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = randomBytes(48).toString('hex');
@@ -29,6 +39,25 @@ async function fixture(
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
+  const reviewWorkspace: WorkflowWorkspacePolicy | undefined = options.reviewWorkspace
+    ? options.reviewWorkspace === 'ephemeral'
+      ? {
+          mode: 'ephemeral',
+          namespace: 'managed-review',
+          base: 'central',
+          retain: false,
+          driver: 'code.v2',
+        }
+      : {
+          mode: 'persistent',
+          namespace: 'managed-review',
+          base: 'central',
+          perBase: false,
+          retain: true,
+          advancesCentral: false,
+          driver: 'code.v2',
+        }
+    : undefined;
   const policy: WorkflowPolicy = {
     successStates: ['done'],
     actions: [
@@ -55,11 +84,11 @@ async function fixture(
           brief: 'Do the work',
           references: [],
           handoff: { instruction: 'Finish', tools: ['finish'] },
-          execution: { readOnly: false, tools: [] },
+          execution: { readOnly: !!reviewWorkspace, tools: [] },
           context: null,
         }),
         execution: {
-          readOnly: false,
+          readOnly: !!reviewWorkspace,
           tools: [
             {
               name: 'finish',
@@ -71,19 +100,21 @@ async function fixture(
               ],
             },
           ],
-          ...(options.codeWorkspace
-            ? {
-                workspace: {
-                  mode: 'persistent' as const,
-                  namespace: 'managed-test',
-                  base: 'reference:code' as const,
-                  perBase: false,
-                  retain: true,
-                  advancesCentral: false,
-                  driver: 'code.v2',
-                },
-              }
-            : {}),
+          ...(reviewWorkspace
+            ? { workspace: reviewWorkspace }
+            : options.codeWorkspace
+              ? {
+                  workspace: {
+                    mode: 'persistent' as const,
+                    namespace: 'managed-test',
+                    base: 'reference:code' as const,
+                    perBase: false,
+                    retain: true,
+                    advancesCentral: false,
+                    driver: 'code.v2',
+                  },
+                }
+              : {}),
         },
         ...(options.codeWorkspace ? { references: () => ({ code: 'a'.repeat(40) }) } : {}),
         lease: {
@@ -149,7 +180,7 @@ async function fixture(
     source: sourceIdentity,
     runtimeProfileId: 'codex-profile',
     platform: profile,
-    capabilities: options.codeWorkspace ? ['code.v2'] : [],
+    capabilities: options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : [],
     expiresAt: new Date((options.clock?.() ?? Date.now()) + 3_600_000).toISOString(),
   };
   const workerNonce = randomBytes(32).toString('hex');
@@ -161,7 +192,7 @@ async function fixture(
     runnerId,
     machine,
     platforms: [profile],
-    capabilities: options.codeWorkspace ? ['code.v2'] : [],
+    capabilities: options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : [],
     capacity,
   });
   const lease = (requestId = randomUUID()) => ({
@@ -601,7 +632,54 @@ test('managed Code v2 runner attaches its bound checkout using its verified sour
   assert.deepEqual(attached.workspace?.attachment, checkout);
   await f.sessions.authenticate(request.secret);
   assert.equal((await f.sessions.get(f.caller, session.id)).status, 'active');
+  assert.equal(
+    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending,
+    true,
+  );
   await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
+  assert.equal(
+    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending,
+    true,
+  );
+});
+
+test('managed inspection does not hold a released disposable read-only checkout for capture', async (t) => {
+  for (const mode of ['ephemeral', 'retained'] as const) {
+    await t.test(mode, async (subtest) => {
+      const f = await fixture(subtest, { reviewWorkspace: mode });
+      await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+      const request = f.lease();
+      const leased = await f.sessions.lease(f.caller, request);
+      const session = leased.session!;
+      assert.ok(session, leased.reason);
+      const checkout = {
+        repositoryId: 'repository-managed',
+        workspaceId: 'workspace-managed',
+        mode: mode === 'ephemeral' ? ('ephemeral' as const) : ('persistent' as const),
+        branch: mode === 'ephemeral' ? null : 'merv/review/managed',
+        baseOid: 'a'.repeat(40),
+        headOid: 'a'.repeat(40),
+        stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+      };
+      await f.sessions.attach(f.caller, {
+        sessionId: session.id,
+        runnerId: f.runnerId,
+        hostRef: 'launch-managed',
+        workspace: checkout,
+      });
+      await f.sessions.authenticate(request.secret);
+      await f.sessions.release(f.caller, {
+        sessionId: session.id,
+        runnerId: f.runnerId,
+      });
+      const inspected = (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+      assert.equal(inspected?.status, 'released');
+      assert.equal(inspected?.releaseAcknowledged, true);
+      assert.equal(inspected?.capturePending, mode === 'retained');
+    });
+  }
 });
 
 test('two concurrent managed lease requests create at most one bound session', async (t) => {

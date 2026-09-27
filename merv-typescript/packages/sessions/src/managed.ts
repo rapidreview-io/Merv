@@ -4,6 +4,7 @@ import {
   canonical,
   check,
   digest,
+  effectiveWorkspace,
   RUNNER_HARNESSES,
   codexHandoffGraceMs,
   sessionSecretPattern,
@@ -564,6 +565,11 @@ export class ManagedRunnerBindings {
           'SELECT result_json FROM session_workspaces WHERE session_id=?',
           row.bound_session_id,
         );
+        const policy = effectiveWorkspace(session.execution.policy);
+        // A disposable read-only checkout has no durable workspace output to wait for.
+        // Writable and retained checkouts still require their final capture.
+        const disposableReview =
+          session.execution.policy.readOnly && policy.mode === 'ephemeral' && !policy.retain;
         return {
           ...runner,
           session: {
@@ -574,7 +580,7 @@ export class ManagedRunnerBindings {
             closedAt: session.closedAt,
             outcome: session.outcome ?? null,
             releaseAcknowledged: row.runner_released_at !== null,
-            capturePending: !!workspace && workspace.result_json === null,
+            capturePending: !!workspace && workspace.result_json === null && !disposableReview,
           },
         };
       }),
