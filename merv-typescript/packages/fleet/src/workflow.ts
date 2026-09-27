@@ -9,11 +9,17 @@ import {
   type Caller,
   type DelegationSource,
   type Scope,
+  type State,
   type Transaction,
 } from '@merv/contracts';
 import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
-import { codexModelRelay, dailyTokens, setDailyTokens } from './codex-relay.js';
+import {
+  codexModelRelay,
+  modelBudgetStatus,
+  modelMigrations,
+  setDailyTokens,
+} from './codex-relay.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
 const workflowConfig = z
@@ -90,6 +96,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     private readonly scope: Scope,
     config: FleetWorkflowConfig = {},
     private readonly clock: () => number = Date.now,
+    private readonly state?: State,
   ) {
     const parsed = workflowConfig.safeParse(config);
     check(
@@ -107,6 +114,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async start(): Promise<void> {
     if (!this.config.enabled) return;
+    if (this.state) await this.state.migrate('fleet_workflow', modelMigrations);
     check(
       !this.closed && !this.timer,
       'fleet_workflow_started',
@@ -158,6 +166,40 @@ export class FleetWorkflowAdapter implements FleetOwner {
         ? { issuer: actor.user.issuer, subject: actor.user.subject }
         : { projectId: who.projectId, actorId: who.actorId },
     );
+  }
+  /** The managed worker's or project's current Fleet director's budget, without private counts. */
+  async modelBudget(caller: Caller) {
+    if (!this.config.enabled || !this.state) return null;
+    await this.scope.require(caller, 'read');
+    let person: string;
+    if (caller.session) {
+      try {
+        person = (await this.sessions.managedModelGrant(caller.session.id)).person;
+      } catch (error) {
+        if (error instanceof MervError && [401, 403, 404].includes(error.status)) return null;
+        throw error;
+      }
+    } else {
+      const selected = (await this.sessions.servedSources()).find(
+        (entry) => entry.projectId === caller.projectId,
+      );
+      if (!selected) return null;
+      const source =
+        selected.source.kind === 'service' ? selected.source.vouchedBy : selected.source;
+      const actor = await this.director(source);
+      if (!actor) return null;
+      person = digest(
+        actor.user
+          ? { issuer: actor.user.issuer, subject: actor.user.subject }
+          : { projectId: source.projectId, actorId: source.actorId },
+      );
+    }
+    const { blocked, blockReason, resetsAt } = await modelBudgetStatus(
+      this.state,
+      person,
+      this.config.dailyTokensPerPerson,
+    );
+    return { blocked, blockReason, resetsAt };
   }
   /** Who a source acts as while it may direct Fleet's work, else null, which also stops its
    * machines: a person while they may write, the review director while it may review. */
@@ -279,6 +321,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return {
         actor,
         who: actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : source.actorId,
+        key: digest(
+          actor?.user
+            ? { issuer: actor.user.issuer, subject: actor.user.subject }
+            : { projectId: source.projectId, actorId: source.actorId },
+        ),
       };
     };
     const everyone = this.config.people.includes('*');
@@ -286,9 +333,16 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const served = new Map<string, Map<string, DelegationSource>>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
-        const { actor, who } = await person(source);
+        const { actor, who, key } = await person(source);
         if (!actor || !(everyone || this.config.people.includes(who))) continue;
         const wanted = new Map<string, DelegationSource>();
+        if (
+          this.state &&
+          (await modelBudgetStatus(this.state, key, this.config.dailyTokensPerPerson)).blocked
+        ) {
+          served.set(projectId, wanted);
+          continue;
+        }
         for (const director of [source, await this.reviewer(source)])
           for (const target of (
             await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
@@ -382,7 +436,14 @@ export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
   async apply(ctx: Context, config: FleetWorkflowConfig = {}) {
-    const adapter = new FleetWorkflowAdapter(ctx.fleet, ctx.sessions, ctx.scope, config);
+    const adapter = new FleetWorkflowAdapter(
+      ctx.fleet,
+      ctx.sessions,
+      ctx.scope,
+      config,
+      Date.now,
+      ctx.state,
+    );
     await adapter.start();
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.
@@ -414,7 +475,7 @@ export const fleetWorkflowPlugin = {
           handler: async (caller: Caller, input: { tokens?: number }) => {
             const who = person(caller);
             if (input.tokens !== undefined) await setDailyTokens(ctx.state, who, input.tokens);
-            return await dailyTokens(ctx.state, who, adapter.config.dailyTokensPerPerson);
+            return await modelBudgetStatus(ctx.state, who, adapter.config.dailyTokensPerPerson);
           },
         }),
       );

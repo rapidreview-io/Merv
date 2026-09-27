@@ -1,4 +1,5 @@
 import test, { type TestContext } from 'node:test';
+import type { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,6 +19,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import { sessionsToolsPlugin } from '@merv/sessions/tools';
 import { FleetService } from '@merv/fleet';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
@@ -37,6 +39,7 @@ import {
   hostedCodexCapabilities,
   hostedCodexPlatform,
 } from '../packages/fleet/src/workflow.js';
+import { modelBudgetStatus, setDailyTokens } from '../packages/fleet/src/codex-relay.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
@@ -193,6 +196,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
         ...extra,
       },
       () => now,
+      state,
     );
   let adapter = makeAdapter(config);
   await adapter.start();
@@ -238,6 +242,36 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     modelApiKey: process.env[modelEnv]!,
   };
 }
+
+test('a refused model reservation stops new Fleet rents until its payer has enough tokens', async (t) => {
+  const f = await fixture(t);
+  const person = digest({ issuer, subject: 'founder' });
+  const today = new Date().toISOString().slice(0, 10);
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?)',
+      person,
+      today,
+      19_926_575,
+    );
+    await tx.run(
+      'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?)',
+      person,
+      today,
+      109_851,
+    );
+  });
+  f.demand([{ instanceId: 'task_waiting', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  assert.deepEqual(f.requests, []);
+  assert.deepEqual(f.open(), []);
+  assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, true);
+  assert.equal((await modelBudgetStatus(f.state, person, 20_000_000)).remaining, 73_425);
+  await setDailyTokens(f.state, person, 20_100_000);
+  await f.adapter.reconcile();
+  assert.deepEqual(f.requests, [f.caller.projectId]);
+  assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
+});
 
 test('workflow adapter covers demand with one pending slot and retries a claimed generation', async (t) => {
   const f = await fixture(t);
@@ -816,14 +850,21 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
       () => now,
     ),
   );
-  const adapter = new FleetWorkflowAdapter(fleet, sessions, scope, {
-    enabled: true,
-    people: [`${issuer} founder`, `${issuer} colleague`],
-    modelApiKeyEnv: modelEnv,
-    baseUrl: 'https://merv.example.test',
-    pollIntervalMs: 60_000,
-    maxAgents: workers,
-  });
+  const adapter = new FleetWorkflowAdapter(
+    fleet,
+    sessions,
+    scope,
+    {
+      enabled: true,
+      people: [`${issuer} founder`, `${issuer} colleague`],
+      modelApiKeyEnv: modelEnv,
+      baseUrl: 'https://merv.example.test',
+      pollIntervalMs: 60_000,
+      maxAgents: workers,
+    },
+    () => now,
+    state,
+  );
   t.after(async () => {
     await adapter.close();
     await fleet.close();
@@ -945,10 +986,23 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       const managedClaim = claim(runnerId);
       const leased = await sessions.lease(managed, managedClaim);
       assert.ok(leased.session, leased.reason);
-      await sessions.authenticate(managedClaim.secret);
-      return { allocation, managed, runnerId, session: leased.session };
+      const worker = await sessions.authenticate(managedClaim.secret);
+      return { allocation, managed, runnerId, session: leased.session, worker };
     }),
   );
+  const tools = new ToolRegistry(h.scope);
+  tools.registerSessionPolicy(sessions);
+  sessionsToolsPlugin.apply({
+    tools,
+    sessions,
+    get: (name: string) => (name === 'fleetWorkflow' ? adapter : undefined),
+    effect: (register: () => unknown) => register(),
+  } as unknown as Context);
+  const ownStatus = await tools.call('system.status', workers[0]!.worker, {});
+  assert.equal((ownStatus as { scope: string }).scope, 'session');
+  assert.equal((ownStatus as { modelBudget: { blocked: boolean } }).modelBudget.blocked, false);
+  assert.equal(JSON.stringify(ownStatus).includes('"tokens"'), false);
+  tools.close();
   assert.deepEqual(
     new Set(workers.map((worker) => worker.session.instanceId)),
     new Set(remaining.map((target) => target.id)),

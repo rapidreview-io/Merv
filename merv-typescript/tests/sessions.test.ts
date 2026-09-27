@@ -682,8 +682,8 @@ test('system.status gives a leased worker only its authenticated session', async
   sessionsToolsPlugin.apply({
     tools,
     sessions: f.sessions,
-    get: () => {
-      fleetReads++;
+    get: (name: string) => {
+      if (name === 'fleet') fleetReads++;
       return undefined;
     },
     effect: (register: () => unknown) => register(),

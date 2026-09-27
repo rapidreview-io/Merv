@@ -16,11 +16,18 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'system.status',
         description:
-          'Read operational status. People and Pi receive project dispatch, Fleet allocations, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session status.',
+          'Read operational status. People and Pi receive project dispatch, Fleet allocations and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session and model-budget wait status.',
         readOnly: true,
         inputSchema: z.object({}).strict(),
-        handler: async (caller: Caller) =>
-          await systemStatus(caller, sessions, caller.session ? undefined : ctx.get('fleet')),
+        handler: async (caller: Caller) => {
+          const workflow = ctx.get('fleetWorkflow');
+          return await systemStatus(
+            caller,
+            sessions,
+            caller.session ? undefined : ctx.get('fleet'),
+            workflow ? () => workflow.modelBudget(caller) : undefined,
+          );
+        },
       }),
     );
     ctx.effect(() =>

@@ -162,7 +162,14 @@ function Plugins({ shell }: ViewProps) {
 
 /** A person's own daily limit of Fleet workers' model tokens, and what they used today. */
 function DailyTokens() {
-  const limit = useTool<{ tokens: number; usedToday: number }>('fleet.daily_tokens');
+  const limit = useTool<{
+    tokens: number;
+    usedToday: number;
+    remaining?: number;
+    lastRefusedTokens?: number | null;
+    blocked?: boolean;
+    resetsAt?: string;
+  }>('fleet.daily_tokens');
   const [draft, setDraft] = useState<string>();
   const save = useCommand<{ tokens: number }>({
     tool: 'fleet.daily_tokens',
@@ -195,6 +202,14 @@ function DailyTokens() {
         onChange={(event) => setDraft(event.target.value)}
       />
       <span className="muted">{limit.data.usedToday.toLocaleString()} used today</span>
+      {limit.data.blocked && (
+        <span role="status">
+          Fleet is waiting for model tokens. {limit.data.remaining?.toLocaleString()} remain.
+          {limit.data.lastRefusedTokens != null &&
+            ` The last rejected request needed a reservation of ${limit.data.lastRefusedTokens.toLocaleString()}.`}
+          {limit.data.resetsAt && ` Usage resets at ${limit.data.resetsAt} (UTC).`}
+        </span>
+      )}
       <button
         className="btn"
         disabled={

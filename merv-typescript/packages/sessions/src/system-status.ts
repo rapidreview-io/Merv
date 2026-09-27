@@ -2,11 +2,33 @@ import type { Caller } from '@merv/contracts';
 import type { Fleet } from '@merv/fleet/types';
 import type { Sessions } from './types.js';
 
+type ModelBudget = {
+  blocked: boolean;
+  blockReason: string | null;
+  resetsAt: string;
+};
+const modelWait = (budget: ModelBudget | null) =>
+  budget
+    ? {
+        blocked: budget.blocked,
+        reason: budget.blockReason,
+        resetsAt: budget.resetsAt,
+        ...(budget.blocked
+          ? { next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.' }
+          : {}),
+      }
+    : null;
+
 /** Provider/runner diagnostics can embed private endpoints; a status overview never needs one. */
 const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitted]');
 
 /** A compact operational read. Sessions enforces the caller's authority for each view. */
-export async function systemStatus(caller: Caller, sessions: Sessions, fleet?: Fleet) {
+export async function systemStatus(
+  caller: Caller,
+  sessions: Sessions,
+  fleet?: Fleet,
+  modelBudget?: () => Promise<ModelBudget | null>,
+) {
   if (caller.session) {
     const session = await sessions.describe(caller);
     return {
@@ -26,12 +48,14 @@ export async function systemStatus(caller: Caller, sessions: Sessions, fleet?: F
         closeReason: session.closeReason,
         outcome: session.outcome ?? null,
       },
+      modelBudget: modelWait((await modelBudget?.()) ?? null),
     };
   }
-  const [project, blockers, allocations] = await Promise.all([
+  const [project, blockers, allocations, budget] = await Promise.all([
     sessions.projectStatus(caller),
     sessions.stuck(caller),
     fleet?.list(caller, 0) ?? Promise.resolve(null),
+    modelBudget?.() ?? Promise.resolve(null),
   ]);
   return {
     scope: 'project' as const,
@@ -57,6 +81,7 @@ export async function systemStatus(caller: Caller, sessions: Sessions, fleet?: F
     },
     fleet: {
       available: allocations !== null,
+      modelBudget: modelWait(budget),
       allocations: (allocations ?? [])
         .filter((allocation) => allocation.phase !== 'released')
         .map((allocation) => ({

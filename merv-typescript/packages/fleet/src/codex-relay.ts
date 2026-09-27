@@ -23,6 +23,18 @@ export const limitsMigration = {
   );`,
 };
 
+/** The latest unaffordable reservation, separate from charged usage and personal limits. */
+export const blockerMigration = {
+  version: 3,
+  sql: `CREATE TABLE fleet_model_blockers (
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    required_tokens BIGINT NOT NULL,
+    PRIMARY KEY(person, day)
+  );`,
+};
+export const modelMigrations = [usageMigration, limitsMigration, blockerMigration];
+
 const maxRequestBytes = 16 * 1024 * 1024;
 /** One call's output, reasoning included: well above a step's longest answer, and a bound on a
  *  single call's spend. */
@@ -123,6 +135,45 @@ export async function dailyTokens(state: State, person: string, fallback: number
     return { tokens: Number(own?.tokens ?? fallback), usedToday: Number(used?.tokens ?? 0) };
   });
 }
+/** A refusal stops new Fleet rent while today's remaining tokens cannot fund that last request. */
+export async function modelBudgetStatus(state: State, person: string, fallback: number) {
+  const today = day();
+  return await state.read(async (sql) => {
+    const own = await sql.get<{ tokens: number | string }>(
+      'SELECT tokens FROM fleet_model_limits WHERE person=?',
+      person,
+    );
+    const used = await sql.get<{ tokens: number | string }>(
+      'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
+      person,
+      today,
+    );
+    const refusal = await sql.get<{ required_tokens: number | string }>(
+      'SELECT required_tokens FROM fleet_model_blockers WHERE person=? AND day=?',
+      person,
+      today,
+    );
+    const tokens = Number(own?.tokens ?? fallback);
+    const usedToday = Number(used?.tokens ?? 0);
+    const lastRefusedTokens = refusal ? Number(refusal.required_tokens) : null;
+    const remaining = Math.max(0, tokens - usedToday);
+    const blockReason =
+      remaining <= maxOutputTokens
+        ? 'minimum_reservation_unaffordable'
+        : lastRefusedTokens !== null && remaining < lastRefusedTokens
+          ? 'last_refused_reservation_unaffordable'
+          : null;
+    return {
+      tokens,
+      usedToday,
+      remaining,
+      lastRefusedTokens,
+      blocked: blockReason !== null,
+      blockReason,
+      resetsAt: new Date(new Date(`${today}T00:00:00.000Z`).getTime() + 86_400_000).toISOString(),
+    };
+  });
+}
 export async function setDailyTokens(state: State, person: string, tokens: number) {
   await state.transaction((tx) =>
     tx.run(
@@ -146,7 +197,7 @@ export async function codexModelRelay(
   state: State,
   options: { providerKey: () => string; dailyTokensPerPerson: number },
 ): Promise<ModelRelayConfig<ManagedModelGrant, 'codex'>> {
-  await state.migrate('fleet_workflow', [usageMigration, limitsMigration]);
+  await state.migrate('fleet_workflow', modelMigrations);
   // The day each session's one call in flight was charged to.
   const days = new Map<string, string>();
   return {
@@ -168,7 +219,7 @@ export async function codexModelRelay(
           grant.person,
         );
         const ceiling = Number(own?.tokens ?? options.dailyTokensPerPerson);
-        return (
+        const admitted =
           most <= ceiling &&
           (await tx.get(
             'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens WHERE fleet_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
@@ -176,8 +227,21 @@ export async function codexModelRelay(
             today,
             most,
             ceiling,
-          ))
-        );
+          ));
+        if (admitted)
+          await tx.run(
+            'DELETE FROM fleet_model_blockers WHERE person=? AND day=?',
+            grant.person,
+            today,
+          );
+        else
+          await tx.run(
+            'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=excluded.required_tokens',
+            grant.person,
+            today,
+            most,
+          );
+        return admitted;
       });
       if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
       check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);

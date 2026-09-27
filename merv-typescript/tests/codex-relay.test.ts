@@ -9,6 +9,7 @@ import {
   codexModelRelay,
   codexPayload,
   dailyTokens,
+  modelBudgetStatus,
   setDailyTokens,
 } from '../packages/fleet/src/codex-relay.js';
 import { openState } from './fixtures/state.js';
@@ -258,6 +259,21 @@ test('a call is charged at its most before it goes out and settled when it finis
   assert.equal(refused.status, 403);
   assert.deepEqual(await refused.json(), { error: 'fleet_model_ceiling' });
   assert.match(f.logs.join(''), /"event":"codex_relay_ceiling"/);
+  assert.deepEqual(
+    (({ blocked, blockReason, lastRefusedTokens, remaining }) => ({
+      blocked,
+      blockReason,
+      lastRefusedTokens,
+      remaining,
+    }))(await modelBudgetStatus(f.state, grant.person, most + 50)),
+    {
+      blocked: true,
+      blockReason: 'last_refused_reservation_unaffordable',
+      lastRefusedTokens: most,
+      remaining: most - 60,
+    },
+  );
+  assert.equal((await modelBudgetStatus(f.state, 'another-person', most + 50)).blocked, false);
   // A restart keeps the day's total: a fresh relay on the same database refuses too.
   assert.equal((await f.call(codex, await f.start())).status, 403);
   assert.equal(f.upstream.length, 1);
@@ -281,6 +297,31 @@ test('a call cut off before it finishes keeps its charge, and calls in flight co
   release();
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await f.spent(), most);
+});
+
+test('a successful reservation clears the last refusal, and yesterday’s refusal does not block today', async (t) => {
+  const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
+  const f = await fixture(t, most - 1);
+  assert.equal((await f.call()).status, 403);
+  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens, most);
+  const smaller = { model: grant.model, input: [], store: false, stream: true };
+  assert.ok(Math.ceil(JSON.stringify(codexPayload(smaller, grant)).length / 4) + 65_536 < most);
+  assert.equal((await f.call(smaller)).status, 200);
+  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens, null);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?)',
+      grant.person,
+      yesterday,
+      most + 100_000,
+    ),
+  );
+  assert.equal((await modelBudgetStatus(f.state, grant.person, most - 1)).lastRefusedTokens, null);
+  const fresh = await modelBudgetStatus(f.state, 'fresh-person', 65_536);
+  assert.equal(fresh.blocked, true);
+  assert.equal(fresh.blockReason, 'minimum_reservation_unaffordable');
+  assert.equal(fresh.lastRefusedTokens, null);
 });
 
 test('the provider key never reaches a response or a log', async (t) => {

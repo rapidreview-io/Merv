@@ -108,6 +108,22 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
   assert.equal(result.blockers.items[1]?.kind, 'dispatch_failing');
   assert.equal(JSON.stringify(result).includes('private.example'), false);
   assert.equal(JSON.stringify(result).includes('secret'), false);
+  const budget = await systemStatus(caller, sessions, fleet, async () => ({
+    blocked: true,
+    blockReason: 'last_refused_reservation_unaffordable',
+    resetsAt: '2026-09-27T00:00:00.000Z',
+    tokens: 20_000_000,
+    usedToday: 19_926_575,
+  }));
+  assert.equal(budget.scope, 'project');
+  if (budget.scope !== 'project') throw new Error('Expected project status');
+  assert.deepEqual(budget.fleet.modelBudget, {
+    blocked: true,
+    reason: 'last_refused_reservation_unaffordable',
+    resetsAt: '2026-09-27T00:00:00.000Z',
+    next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
+  });
+  assert.equal(JSON.stringify(budget).includes('20000000'), false);
 });
 
 test('system.status is a read-only conversation tool and project access is checked', async () => {
