@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished.",
   "definitions": [
     {
       "name": "consolidation",
@@ -1731,6 +1731,42 @@
       "type": "reflection.review",
       "version": 9,
       "hash": "ce269d116693b68e4a34d1419a871de8015fbfd46ef8c792f8924439be13cbb0",
+      "published": true
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 11,
+      "hash": "f8e6520cf66b5420a2b0cba26431939908c227f4adb8bf3089b5b9f5db7fceab",
+      "published": true
+    },
+    {
+      "type": "reflection.lens",
+      "version": 10,
+      "hash": "b8d69750091cdf6c500aac7f23aff5c2e2c203954cb86087e3a7495d20fbef14",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 11,
+      "hash": "987492f74bbcce798f5eaf73ce0d2bd48db53639860d513595c3b2f96ec17937",
+      "published": false
+    },
+    {
+      "type": "reflection.review",
+      "version": 11,
+      "hash": "5ee3296faec103e045dc37ecd186a3ac73fddbfdde38092f1f48930c29da6fd0",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 10,
+      "hash": "802917236c78ae9dd03355ef4efb0a6b2144517712c3143f03b95894017c7ec7",
+      "published": true
+    },
+    {
+      "type": "reflection.review",
+      "version": 10,
+      "hash": "a95491c391ca0dd9bb44d034ba229918886d0786f3126831911946832003f609",
       "published": true
     }
   ]
