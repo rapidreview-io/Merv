@@ -1743,19 +1743,19 @@
       "type": "reflection.lens",
       "version": 10,
       "hash": "b8d69750091cdf6c500aac7f23aff5c2e2c203954cb86087e3a7495d20fbef14",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
       "version": 11,
       "hash": "987492f74bbcce798f5eaf73ce0d2bd48db53639860d513595c3b2f96ec17937",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.review",
       "version": 11,
       "hash": "5ee3296faec103e045dc37ecd186a3ac73fddbfdde38092f1f48930c29da6fd0",
-      "published": false
+      "published": true
     },
     {
       "type": "reflection.synthesis",
