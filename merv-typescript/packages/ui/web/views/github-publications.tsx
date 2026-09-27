@@ -374,7 +374,7 @@ export function GitHubPublications({
             {d.pull.base.sha !== p.baseOid && (
               <span className="status status--warn">
                 <span className="status-dot" aria-hidden="true" />
-                Base advanced
+                Base differs from proposal
               </span>
             )}
           </div>
