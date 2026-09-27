@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--host ResearchSuite_Control] [--public https://origin]
-//                           [--dry-run] [--resume <release-id>] [--skip-hosted]
+//                           [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -23,6 +23,7 @@ const args = process.argv.slice(2);
 const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const host = opt('--host', 'ResearchSuite_Control');
 const dryRun = args.includes('--dry-run');
+const noRollback = args.includes('--no-rollback');
 const resume = opt('--resume');
 const PRODUCTION = 'https://experiments.rapidreview.io';
 const PUBLIC = opt('--public', PRODUCTION);
@@ -65,7 +66,7 @@ if [ -n "$PREV" ]; then
   PREV_DIR=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' merv-typescript-control-1)
 fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
-printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
+printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":${!noRollback}}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
 printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
 (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
 H=starting; R=0
@@ -77,8 +78,14 @@ for i in $(seq 1 60); do
   sleep 5
 done
 if [ "$H" != healthy ]; then
-  # The new image never became healthy (or is restart-looping): put the previous image back before reporting.
+  # A schema cutover may make the previous image unsafe. Leave it stopped when requested.
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
+  if [ "${noRollback ? '1' : '0'}" = 1 ]; then
+    (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1
+    printf '{"release":"%s","image":"%s","imageId":"%s","noRollback":true,"rolledBack":false,"containerHealth":"%s","restarts":"%s","previousImage":"%s","log":"%s"}\\n' \\
+      "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$LOG" > deploy-status.json
+    exit 1
+  fi
   if [ -z "$PREV" ]; then (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1; fi
   [ -n "$PREV" ] && (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
@@ -206,6 +213,15 @@ if (vm.rolledBack) {
   console.error(`release ${release} failed and was rolled back to ${vm.previousImage}`);
   process.exit(1);
 }
+if (vm.noRollback) {
+  log(
+    `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | — | FAILED | container ${vm.containerHealth} after ${vm.restarts} restarts; previous image was not started; log: ${vm.log.slice(0, 300)} | forward recovery required`,
+  );
+  console.error(
+    `release ${release} failed; previous image was not started. Forward recovery is required.`,
+  );
+  process.exit(1);
+}
 const pub = await publicChecks();
 console.log(JSON.stringify(pub));
 const ok =
@@ -217,7 +233,7 @@ const ok =
   pub.health === 200 &&
   pub.ui === 200;
 log(
-  `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | rollback \`${vm.previousImage}\``,
+  `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | previous image \`${vm.previousImage}\``,
 );
 if (!ok) process.exit(1);
 if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted() !== 0) {

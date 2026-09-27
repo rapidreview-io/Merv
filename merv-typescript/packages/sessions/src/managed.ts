@@ -16,6 +16,7 @@ import {
 } from '@merv/contracts';
 import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
+import type { CredentialStore } from '@merv/identity/credentials';
 import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
@@ -64,7 +65,8 @@ export class ManagedRunnerBindings {
     private state: State,
     private scope: Scope,
     private clock: () => number,
-    private secretEnv?: string,
+    private secretEnv: string | undefined,
+    private credentials: CredentialStore,
   ) {}
 
   /** Whether Fleet rents machines for this server's automatic work at all. */
@@ -178,6 +180,9 @@ export class ManagedRunnerBindings {
         );
       } else {
         const now = new Date(this.clock()).toISOString();
+        const enrollmentExpiresAt = new Date(
+          Math.min(this.clock() + 900_000, Date.parse(value.expiresAt)),
+        ).toISOString();
         await tx.run(
           'INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
           value.allocationId,
@@ -189,10 +194,21 @@ export class ManagedRunnerBindings {
           canonical(value.platform),
           canonical(identity.capabilities),
           tokenDigest(enrollmentToken),
-          new Date(Math.min(this.clock() + 900_000, Date.parse(value.expiresAt))).toISOString(),
+          enrollmentExpiresAt,
           tokenDigest(`unbound:${enrollmentToken}`),
           value.expiresAt,
           now,
+        );
+        await this.credentials.issue(
+          {
+            owner: 'sessions',
+            subject: value.allocationId,
+            kind: 'managed-enrollment',
+            token: enrollmentToken,
+            expiresAt: enrollmentExpiresAt,
+            hardDeadline: enrollmentExpiresAt,
+          },
+          tx,
         );
       }
       return { enrollmentToken };
@@ -216,6 +232,7 @@ export class ManagedRunnerBindings {
     );
     const workerNonce = parsed.data.workerNonce;
     return await this.state.transaction(async (tx) => {
+      const credential = await this.credentials.authenticate(token, 'managed-enrollment', tx);
       const row = await tx.get<ManagedBindingRow>(
         'SELECT * FROM session_managed_runners WHERE enrollment_hash=?',
         tokenDigest(token),
@@ -224,6 +241,12 @@ export class ManagedRunnerBindings {
         row && Date.parse(row.enrollment_expires_at) > this.clock(),
         'unauthorized',
         'Managed enrollment expired or invalid',
+        401,
+      );
+      check(
+        credential.subject === row.allocation_id,
+        'unauthorized',
+        'Invalid managed enrollment',
         401,
       );
       await this.admits(row, tx);
@@ -242,6 +265,17 @@ export class ManagedRunnerBindings {
           nonceHash,
           controlHash,
           row.allocation_id,
+        );
+        await this.credentials.issue(
+          {
+            owner: 'sessions',
+            subject: row.allocation_id,
+            kind: 'managed-control',
+            token: controlToken,
+            expiresAt: row.control_expires_at,
+            hardDeadline: row.control_expires_at,
+          },
+          tx,
         );
       }
       return {
@@ -272,6 +306,7 @@ export class ManagedRunnerBindings {
     );
     return await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
+        const credential = await this.credentials.authenticate(token, 'managed-control', tx);
         const row = await tx.get<ManagedBindingRow>(
           'SELECT * FROM session_managed_runners WHERE control_hash=?',
           tokenDigest(token),
@@ -282,6 +317,12 @@ export class ManagedRunnerBindings {
             Date.parse(row.control_expires_at) > this.clock(),
           'unauthorized',
           'Managed runner credential expired or invalid',
+          401,
+        );
+        check(
+          credential.subject === row.allocation_id,
+          'unauthorized',
+          'Invalid managed runner credential',
           401,
         );
         await this.current(row, tx);
@@ -296,8 +337,11 @@ export class ManagedRunnerBindings {
     return await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
         const bearer = sessionSecretPattern.test(tokenOrSessionId);
-        const found = await tx.get<{ session_json: string }>(
-          `SELECT session_json FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
+        const credential = bearer
+          ? await this.credentials.authenticate(tokenOrSessionId, 'session-execution', tx)
+          : undefined;
+        const found = await tx.get<{ session_json: string; token_hash: string }>(
+          `SELECT session_json,token_hash FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
           bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
         );
         const session: Session | undefined = found && JSON.parse(found.session_json);
@@ -310,6 +354,12 @@ export class ManagedRunnerBindings {
         const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
         const now = this.clock();
         check(
+          !credential || credential.subject === session?.id,
+          'unauthorized',
+          'No live managed session holds this credential',
+          401,
+        );
+        check(
           session &&
             row &&
             platform?.model &&
@@ -321,6 +371,8 @@ export class ManagedRunnerBindings {
           'No live managed session holds this credential',
           401,
         );
+        if (!bearer)
+          await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
         const { user, projectId, id } = await this.current(row, tx);
         return {
           id: session.id,
@@ -359,6 +411,7 @@ export class ManagedRunnerBindings {
       'Managed runner authority is unavailable',
       401,
     );
+    await this.credentials.authenticateHash(row.control_hash, 'managed-control', tx);
     await this.current(row, tx);
     return { row, sourceCaller: sourceCaller(JSON.parse(row.source_json)) };
   }

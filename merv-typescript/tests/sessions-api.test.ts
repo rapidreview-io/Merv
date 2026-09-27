@@ -158,6 +158,30 @@ function errorCode(result: any): string {
   return JSON.parse(result.content[0].text).error.code;
 }
 
+test('only the source owner can rotate an agent key, and the old key stops working', async (t) => {
+  const f = await fixture(t);
+  const token = `ms_${randomBytes(32).toString('base64url')}`;
+  const registered = await f.http('/sessions/agents', f.boot.token, {
+    name: 'External client',
+    runnerId: 'external',
+    requestId: 'register',
+    secret: token,
+  });
+  assert.equal(registered.status, 200);
+  const agentId = registered.body.agent.id;
+  const route = `/sessions/agents/${agentId}/rotate`;
+  assert.equal((await f.http(route, token, {})).status, 403);
+  const outsider = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  assert.equal((await f.http(route, outsider.token, {})).status, 404);
+  const rotated = await f.http(route, f.boot.token, {});
+  assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+  assert.equal(rotated.body.agent.id, agentId);
+  assert.ok(rotated.body.expiresAt);
+  assert.notEqual(rotated.body.token, token);
+  assert.equal((await f.http('/sessions/self', token)).status, 401);
+  assert.equal((await f.http('/sessions/self', rotated.body.token)).status, 200);
+});
+
 test('session messages reach the next tool boundary, fence writes, and retain a worker reply', async (t) => {
   const f = await fixture(t);
   let writes = 0;
@@ -640,18 +664,27 @@ test('session route and credential namespaces stay reserved when the Sessions pr
   assert.equal((await f.http('/account')).status, 200, 'Ordinary source credential remains usable');
   // Seed a real valid legacy-format credential to make the otherwise rare prefix collision deterministic.
   const collision = `ms_${'a'.repeat(40)}`;
-  await f.app.ctx.state.transaction(
-    async (tx) =>
-      await tx.run(
-        'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at) VALUES(?,?,?,?,?,?)',
-        'legacy-prefix-collision',
-        f.source.actorId,
-        f.source.projectId,
-        'actor',
-        createHash('sha256').update(collision).digest('hex'),
-        new Date().toISOString(),
-      ),
-  );
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at) VALUES(?,?,?,?,?,?)',
+      'legacy-prefix-collision',
+      f.source.actorId,
+      f.source.projectId,
+      'actor',
+      createHash('sha256').update(collision).digest('hex'),
+      new Date().toISOString(),
+    );
+    await f.app.ctx.identity.credentials!.adopt(
+      {
+        owner: 'scope',
+        subject: 'legacy-prefix-collision',
+        kind: 'actor',
+        tokenHash: createHash('sha256').update(collision).digest('hex'),
+        expiresAt: null,
+      },
+      tx,
+    );
+  });
   assert.equal((await f.http('/account', collision)).body.actor.id, f.source.actorId);
   const env = `MERV_SESSION_BIND_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = issued.secret;

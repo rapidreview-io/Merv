@@ -20,6 +20,7 @@ import {
 } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
+import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import {
   commandInput,
   completionInput,
@@ -153,6 +154,7 @@ export class PiService implements Pi, FleetOwner {
   readonly streams = new PiStreams();
   readonly config: z.output<typeof piConfig>;
   private readonly secret: string;
+  private readonly credentials: CredentialStore;
   private readonly disposers: (() => void)[] = [];
   /** Memory only, never State: the stage each open conversation last showed, what its worker
    * last reported within a turn, and the answer it has streamed so far, which a turn ended early
@@ -205,6 +207,7 @@ export class PiService implements Pi, FleetOwner {
         503,
       );
     this.config = parsed.data;
+    this.credentials = new CredentialStore(state, clock);
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
       !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
@@ -229,8 +232,36 @@ export class PiService implements Pi, FleetOwner {
   }
 
   async initialize(): Promise<void> {
+    await this.credentials.initialize();
     await this.state.migrate('pi', [migration, hostMigration, usageMigration]);
     if (!this.config.enabled) return;
+    // A release may find live slots and turns created before Identity owned their credentials.
+    // Adopt only records that Pi still considers active; never recreate ended authority.
+    await this.state.transaction(async (tx) => {
+      const hosts = await tx.all<{ data_json: string }>(
+        "SELECT data_json FROM pi_hosts WHERE status='live'",
+      );
+      for (const row of hosts) {
+        const host = decode<PiHostRecord>(row);
+        for (const role of roles)
+          if (host[role]) await this.syncWorkerCredential(tx, host, host[role]!);
+      }
+      const turns = await tx.all<{ data_json: string }>(
+        "SELECT data_json FROM pi_commands WHERE status='working'",
+      );
+      for (const row of turns) {
+        const command = decode<PiCommandRecord>(row);
+        const host = command.hostId ? await this.host(tx, command.hostId) : null;
+        if (
+          host?.status === 'live' &&
+          roles.some(
+            (role) =>
+              host[role]?.allocationId === command.runtimeId && host[role]?.epoch === command.epoch,
+          )
+        )
+          await this.syncModelCredential(tx, command);
+      }
+    });
     this.disposers.push(this.fleet.registerOwner('pi-host', this));
     this.disposers.push(
       this.scope.registerConversationAuthority({
@@ -313,6 +344,27 @@ export class PiService implements Pi, FleetOwner {
   }
   /** The relay hash follows the turn's slot, which a cut-over may change before it is claimed. */
   private async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
+    const previous = await tx.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
+      command.conversationId,
+      command.id,
+    );
+    const old = previous ? decode<PiCommandRecord>(previous) : null;
+    if (old) {
+      if (
+        old.status === 'working' &&
+        (command.status !== 'working' || this.modelToken(old) !== this.modelToken(command))
+      )
+        await this.revokeModelCredential(tx, old);
+    }
+    if (
+      command.status === 'working' &&
+      (!old ||
+        old.status !== 'working' ||
+        this.modelToken(old) !== this.modelToken(command) ||
+        old.expiresAt !== command.expiresAt)
+    )
+      await this.syncModelCredential(tx, command);
     await tx.run(
       'UPDATE pi_commands SET status=?,relay_hash=?,data_json=? WHERE conversation_id=? AND id=?',
       command.status,
@@ -339,6 +391,22 @@ export class PiService implements Pi, FleetOwner {
   /** Each open page of the conversations sharing the host re-reads once the transaction commits
    * (announce). */
   private async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
+    const previous = await this.host(tx, host.id);
+    const live = host.status === 'live' ? roles.flatMap((role) => host[role] ?? []) : [];
+    for (const slot of live) {
+      const old =
+        previous &&
+        roles
+          .map((role) => previous[role])
+          .find((value) => value?.allocationId === slot.allocationId && value.epoch === slot.epoch);
+      if (!old || old.expiresAt !== slot.expiresAt) await this.syncWorkerCredential(tx, host, slot);
+    }
+    if (previous)
+      for (const role of roles) {
+        const slot = previous[role];
+        if (slot && !live.some((current) => current.allocationId === slot.allocationId))
+          await this.revokeWorkerCredential(tx, previous, slot);
+      }
     host.revision++;
     await tx.run(
       'INSERT INTO pi_hosts(id,key,status,created_at,data_json) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,data_json=excluded.data_json',
@@ -450,6 +518,71 @@ export class PiService implements Pi, FleetOwner {
   }
   private modelToken(command: PiCommandRecord): string {
     return `pir_${this.signature('model', [command.conversationId, command.id, command.epoch, command.runtimeId])}`;
+  }
+  private workerSubject(host: PiHostRecord, slot: PiSlot): string {
+    return `${host.id}:${slot.allocationId}:${slot.epoch}`;
+  }
+  private modelSubject(command: PiCommandRecord): string {
+    return `${command.conversationId}:${command.id}:${command.epoch}:${command.runtimeId}`;
+  }
+  private async syncWorkerCredential(
+    tx: Transaction,
+    host: PiHostRecord,
+    slot: PiSlot,
+  ): Promise<void> {
+    const allocation = await this.allocation(slot.allocationId, tx);
+    if (!allocation) return;
+    // Fleet can reset its deadline once when a queued rental starts. Its two phases each
+    // last at most 24 hours, so the same worker key has a fixed outer limit of 48 hours.
+    const hardDeadline = new Date(Date.parse(allocation.createdAt) + 2 * 86_400_000).toISOString();
+    const tokenHash = tokenDigest(this.workerToken(host.id, slot));
+    const credential = await this.credentials.adopt(
+      {
+        owner: 'pi',
+        subject: this.workerSubject(host, slot),
+        kind: 'pi-worker',
+        tokenHash,
+        expiresAt: slot.expiresAt,
+        hardDeadline,
+      },
+      tx,
+    );
+    if (
+      credential.expiresAt &&
+      credential.expiresAt < slot.expiresAt &&
+      credential.expiresAt > this.time() &&
+      !credential.revokedAt
+    )
+      await this.credentials.renew(tokenHash, 'pi', slot.expiresAt, tx);
+  }
+  private async syncModelCredential(tx: Transaction, command: PiCommandRecord): Promise<void> {
+    const tokenHash = tokenDigest(this.modelToken(command));
+    await this.credentials.adopt(
+      {
+        owner: 'pi',
+        subject: this.modelSubject(command),
+        kind: 'pi-model',
+        tokenHash,
+        expiresAt: command.expiresAt,
+        hardDeadline: command.expiresAt,
+      },
+      tx,
+    );
+  }
+  private async revokeCredential(tx: Transaction, token: string, kind: string): Promise<void> {
+    try {
+      await this.credentials.authenticate(token, kind, tx);
+    } catch (error) {
+      if (error instanceof MervError && error.status === 401) return;
+      throw error;
+    }
+    await this.credentials.revoke(tokenDigest(token), 'pi', tx);
+  }
+  private revokeWorkerCredential(tx: Transaction, host: PiHostRecord, slot: PiSlot) {
+    return this.revokeCredential(tx, this.workerToken(host.id, slot), 'pi-worker');
+  }
+  private revokeModelCredential(tx: Transaction, command: PiCommandRecord) {
+    return this.revokeCredential(tx, this.modelToken(command), 'pi-model');
   }
 
   async create(caller: Caller, input: unknown): Promise<PiConversation> {
@@ -1084,11 +1217,19 @@ export class PiService implements Pi, FleetOwner {
     this.ready();
     const match = /^piw_(flt_[A-Za-z0-9]+)\.([A-Za-z0-9_-]{43})$/.exec(token);
     check(match, 'pi_unauthorized', 'Invalid conversation worker credential', 401);
+    const credential = await this.credentials
+      .authenticate(token, 'pi-worker', tx)
+      .catch((error: unknown) => {
+        if (error instanceof MervError && error.status === 401)
+          throw new MervError('pi_unauthorized', 'Invalid conversation worker credential', 401);
+        throw error;
+      });
     const allocation = await this.allocation(match[1], tx);
     const owned = allocation && (await this.owning(allocation, tx));
     check(owned, 'pi_unauthorized', 'Conversation runtime is unavailable', 401);
     check(
-      equal(token, this.workerToken(owned.host.id, owned.slot)),
+      credential.subject === this.workerSubject(owned.host, owned.slot) &&
+        equal(token, this.workerToken(owned.host.id, owned.slot)),
       'pi_unauthorized',
       'Invalid conversation worker credential',
       401,
@@ -2154,6 +2295,13 @@ export class PiService implements Pi, FleetOwner {
       401,
     );
     return this.read(async (tx) => {
+      const credential = await this.credentials
+        .authenticate(token, 'pi-model', tx)
+        .catch((error: unknown) => {
+          if (error instanceof MervError && error.status === 401)
+            throw new MervError('pi_unauthorized', 'Invalid model credential', 401);
+          throw error;
+        });
       const row = await tx.get<{ data_json: string }>(
         'SELECT data_json FROM pi_commands WHERE relay_hash=?',
         hash(token),
@@ -2162,7 +2310,9 @@ export class PiService implements Pi, FleetOwner {
       const command = decode<PiCommandRecord>(row);
       const conversation = await this.conversation(tx, command.conversationId);
       check(
-        equal(token, this.modelToken(command)) && command.status === 'working',
+        credential.subject === this.modelSubject(command) &&
+          equal(token, this.modelToken(command)) &&
+          command.status === 'working',
         'pi_unauthorized',
         'Model credential is no longer active',
         401,
@@ -2235,6 +2385,13 @@ export class PiService implements Pi, FleetOwner {
     await this.read(async (tx) => {
       const conversation = await this.conversation(tx, grant.conversationId);
       const command = await this.command(tx, conversation.id, grant.commandId);
+      await this.credentials
+        .authenticateHash(tokenDigest(this.modelToken(command)), 'pi-model', tx)
+        .catch((error: unknown) => {
+          if (error instanceof MervError && error.status === 401)
+            throw new MervError('pi_authority_stale', 'Model authority is no longer active', 403);
+          throw error;
+        });
       check(
         grant.userId === conversation.userId &&
           grant.projectId === conversation.projectId &&

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { canonical, createService, digest, type Migration } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
+import { CredentialStore } from '@merv/identity/credentials';
 import { WorkflowsService } from '@merv/workflows';
 import { managedNoncePostgresMigration } from '../packages/sessions/src/managed-nonce.postgres.js';
 import { ManagedRunnerBindings } from '../packages/sessions/src/managed.js';
@@ -106,7 +107,17 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
         ),
       );
     assert.deepEqual(await row(), { ...before, worker_nonce_hash: null });
-    const bindings = new ManagedRunnerBindings(state, scope, Date.now, env);
+    const credentials = new CredentialStore(state);
+    await credentials.initialize();
+    await credentials.adopt({
+      owner: 'sessions',
+      subject: allocationId,
+      kind: 'managed-enrollment',
+      tokenHash: sha(enrollmentToken),
+      expiresAt,
+      hardDeadline: expiresAt,
+    });
+    const bindings = new ManagedRunnerBindings(state, scope, Date.now, env, credentials);
     bindings.registerValidator({
       current: async () => true,
       admits: async () => true,

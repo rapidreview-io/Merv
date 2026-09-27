@@ -451,6 +451,68 @@ one, add a dated receipt section at the top of `RELEASES.md`. List what changed,
 the env and catalog SHA-256 before and after, grant IDs and expiries, and the
 plugin count the container reports afterwards. Never record a secret.
 
+For a Main-only authentication release, run the existing protected canary even
+when `hosted-release.mjs` finds no worker-image change. This reads the root-only
+canary key inside the VM, tests one real Pi turn on the currently pinned Standard
+release, stops the canary machine, and checks the other hosted apps. The helper
+limits the turn to 420 seconds and machine-release polling to 180 seconds. It
+prints only the receipt, never the key. Run after Main's release smoke passes:
+
+```sh
+ssh -o BatchMode=yes ResearchSuite_Control 'sudo timeout 12m python3 -' <<'PY'
+import json, runpy
+from pathlib import Path
+
+base = Path('/opt/merv-typescript/hosted')
+runs = sorted(p for p in base.iterdir()
+              if (p / 'preflight.json').is_file()
+              and (p / 'finish.json').is_file()
+              and json.loads((p / 'finish.json').read_text()).get('result') == 'pass')
+if not runs:
+    raise SystemExit('No passing hosted release is available for the canary')
+run = runs[-1]
+plan = json.loads((run / 'plan.json').read_text())
+state = json.loads(Path('/var/lib/merv-fleet-pilot/hosted-release/state.json').read_text())
+step = runpy.run_path(str(run / 'source/deploy/hosted-release-vm.py'),
+                      run_name='merv_live_canary')['Step'](run, plan)
+print(json.dumps(step.canary({'releaseId': state['current']['releases']['cloudflare-fleet']})))
+PY
+```
+
+Identity now records each Pi worker and model credential's hash, purpose,
+expiry, and revocation. Pi still checks its live Fleet slot, turn, and person's
+delegated authority on each use. A queued Fleet allocation gets its running
+deadline when provisioning begins; Pi can renew its worker credential only
+while that slot remains current, and its fixed outer deadline is 48 hours from
+allocation creation (the two 24-hour maximum phases). A model credential ends
+with its turn. No bearer can renew itself.
+
+The previous Main image may not enforce a revocation or expiry first recorded
+only in Identity. Before rolling back an authentication release, stop new agent
+work and check that image against the credentials and schema in use, including
+revoked and expired keys. If it cannot enforce the current authority, keep Main
+in maintenance and release a corrected image forward. Preserve the new image,
+database, credential ledger, and active-session evidence; do not restore an old
+database snapshot or restart an older image as an automatic response to a later
+authentication failure.
+
+For the first central-authentication cutover, publish the reviewed commit at
+`origin/main` and run `node deploy/release.mjs --no-rollback`. If the new image
+fails its health wait, this option stops Main without restarting the old image;
+recover with a corrected forward release. After Main is healthy, run the Pi
+canary above and, from `merv-typescript`, run:
+
+```sh
+ssh -o BatchMode=yes ResearchSuite_Control 'sudo timeout 12m docker exec -i -e MERV_IDENTITY_CANARY=1 -w /app merv-typescript-control-1 node --input-type=module -' < deploy/identity-auth-canary.mjs
+```
+
+The reviewed script creates one isolated project,
+registers, rotates and retires one external agent, verifies wrong-project and
+revoked-token denials, and revokes every synthetic credential in Scope and
+Identity. It prints the applied `identity-credentials@1` migration hash for the
+published-migration receipt. The synthetic project and retired agent remain as
+audit history; they have no usable credentials or running machine.
+
 Publish the reviewed main-server source before building an immutable release.
 Reconcile concurrent changes; do not deploy an old checkout. Do not change
 published migration SQL or remove production migration-ledger rows for rollback.

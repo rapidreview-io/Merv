@@ -65,6 +65,7 @@ export interface SessionApiProvider {
   agent(caller: Caller, agentId: string): Promise<unknown>;
   agentObservation(caller: Caller, agentId: string): Promise<unknown>;
   retireAgent(caller: Caller, agentId: string): Promise<unknown>;
+  rotateAgent(caller: Caller, agentId: string): Promise<unknown>;
   agentSelf(token: string): Promise<unknown>;
   assignAgent(token: string, input: unknown): Promise<unknown>;
   releaseAgentAssignment(token: string, executionId: string): Promise<unknown>;

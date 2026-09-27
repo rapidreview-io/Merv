@@ -914,6 +914,15 @@ export class ApiServer {
           );
           return;
         }
+        const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
+        if (rotateAgentRoute && req.method === 'POST') {
+          json(
+            res,
+            200,
+            await this.sessions.get().rotateAgent(sourceCaller, pathSegment(rotateAgentRoute[1]!)),
+          );
+          return;
+        }
         const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
         if (agentRoute) {
           const agentId = pathSegment(agentRoute[1]!);

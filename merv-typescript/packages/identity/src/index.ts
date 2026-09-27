@@ -10,6 +10,7 @@ import {
 } from 'jose';
 import { MervError, type VerifiedIdentity } from '@merv/contracts';
 import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
+import { CredentialStore } from './credentials.js';
 
 export type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
 
@@ -145,6 +146,7 @@ function boundedFetch(fetcher: typeof globalThis.fetch, clock: () => number): Fe
 
 /** Verifies external user identities; it owns no project, actor or membership state. */
 export class SupabaseIdentity implements IdentityProvider {
+  credentials?: CredentialStore;
   #public: IdentityConfiguration = { enabled: false };
   #key?: Uint8Array | JWTVerifyGetKey;
   #issuer = '';
@@ -265,9 +267,13 @@ export class SupabaseIdentity implements IdentityProvider {
 
 export const identityPlugin = {
   name: 'merv-identity',
-  inject: [],
-  apply(ctx: Context, config: IdentityConfig = {}) {
-    ctx.provide('identity', new SupabaseIdentity(config));
+  inject: ['state'],
+  async apply(ctx: Context, config: IdentityConfig = {}) {
+    const identity = new SupabaseIdentity(config);
+    const credentials = new CredentialStore(ctx.state);
+    await credentials.initialize();
+    identity.credentials = credentials;
+    ctx.provide('identity', identity);
   },
 };
 export default identityPlugin;

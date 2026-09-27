@@ -357,7 +357,7 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
   assert.ok(beat.expiresAt <= beat.hardDeadline);
   f.advance(14_400_001);
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_expired',
+    code: 'unauthorized',
   });
   assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
@@ -470,7 +470,7 @@ test('revocation before first authentication creates no work start and sibling c
     'expired',
   );
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_closed',
+    code: 'unauthorized',
   });
   const otherCaller: Caller = { ...f.source, credentialId: other.credential.id };
   assert.equal((await f.workflows.workStarts(otherCaller, session.instanceId)).length, 0);
@@ -513,7 +513,7 @@ test('durable human authority outlives the initiating JWT but never a membership
   await f.scope.addMember(refreshed, project.id, { subject: 'worker', role: 'producer' });
   await f.events.drain();
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_closed',
+    code: 'unauthorized',
   });
   const row = (await f.state.read(
     async (sql) =>
@@ -566,7 +566,7 @@ test('one invocation may finish its own handoff transaction, while later calls a
   // And it keeps saying so. A worker retrying a handoff whose response was lost has only
   // this refusal to tell it the work committed.
   await assert.rejects(async () => await f.sessions.authenticate(token), {
-    code: 'session_completed',
+    code: 'unauthorized',
   });
   const done = await f.sessions.get(f.source, session.id);
   assert.equal(done.status, 'released');
@@ -807,7 +807,7 @@ test('key revocation drains immediately and replacement keys never inherit lease
     'expired',
   );
   await assert.rejects(async () => await f.sessions.authenticate(offered.token), {
-    code: 'session_closed',
+    code: 'unauthorized',
   });
   const replacementCaller = await f.scope.caller(
     { kind: 'key', key: await f.scope.authenticateKey(replacement.token) },
@@ -1009,7 +1009,7 @@ test('automatic dispatch defaults off, pauses only new offers, and halt never re
   await assert.rejects(async () => await f.scope.require(worker, 'write'));
   await f.sessions.setDispatch(f.owner, { enabled: true });
   await assert.rejects(async () => await f.sessions.authenticate(input.secret), {
-    code: 'session_closed',
+    code: 'unauthorized',
   });
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
   const next = (await f.sessions.lease(f.source, autoInput())).session!;
@@ -1415,7 +1415,7 @@ test('a continuing agent keeps its identity and credential across explicit assig
   assert.equal(c.contextEpoch, 1);
   assert.equal((await f.sessions.agentSelf(token)).assignments[0].contextEpoch, 0);
   await f.sessions.retireAgent(f.source, agent.id);
-  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'agent_retired' });
+  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'unauthorized' });
   assert.equal(
     (await f.scope.actors(f.owner)).find((actor) => actor.id === agent.actorId)?.active,
     false,
@@ -1532,7 +1532,7 @@ test('source revocation retires even an idle continuing agent; failed assignment
   assert.equal((await f.sessions.agentSelf(token)).agent.id, agent.id);
   await f.scope.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
-  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'agent_retired' });
+  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'unauthorized' });
   assert.equal(
     (await f.scope.actors(f.owner)).find((actor) => actor.id === agent.actorId)?.active,
     false,
@@ -1718,6 +1718,75 @@ test('agent observations retain tool timings and estimates across assignments wi
     assert.equal(serialized.includes(secret), false);
 });
 
+test('owner rotation keeps a continuing agent across idle and active assignments', async (t) => {
+  const f = await fixture(t);
+  const firstToken = secret();
+  const agent = await f.sessions.registerAgent(f.source, {
+    name: 'Rotating agent',
+    runnerId: 'external',
+    requestId: 'rotate',
+    secret: firstToken,
+  });
+  const first = await f.sessions.rotateAgent(f.source, agent.id);
+  assert.equal(first.agent.id, agent.id);
+  assert.match(first.token, /^ms_[A-Za-z0-9_-]{43}$/);
+  await assert.rejects(f.sessions.agentSelf(firstToken), { code: 'unauthorized' });
+  assert.equal((await f.sessions.agentSelf(first.token)).agent.id, agent.id);
+  const assignment = await f.sessions.assignAgent(first.token, {
+    instanceId: (await f.instance()).id,
+    expectedRevision: 0,
+    requestId: 'after-idle-rotation',
+  });
+  const priorCaller = await f.sessions.authenticate(first.token);
+  assert.equal(priorCaller.session?.id, assignment.id);
+  const priorInvocation = await f.sessions.prepare(priorCaller, 'artifact.read', {
+    artifactId: 'frozen-artifact',
+  });
+  const second = await f.sessions.rotateAgent(f.source, agent.id);
+  assert.equal(second.agent.id, agent.id);
+  await assert.rejects(f.sessions.agentSelf(first.token), { code: 'unauthorized' });
+  await assert.rejects(
+    f.sessions.run(priorInvocation, () => 'must not run'),
+    {
+      code: 'unauthorized',
+    },
+  );
+  assert.equal((await f.sessions.authenticate(second.token)).session?.id, assignment.id);
+  await f.sessions.releaseAgentAssignment(second.token, assignment.id);
+  assert.equal((await f.sessions.agentSelf(second.token)).current, null);
+});
+
+test('restart adopts legacy session credentials once and never restores revoked authority', async (t) => {
+  const f = await fixture(t);
+  const agentToken = secret();
+  const agent = await f.sessions.registerAgent(f.source, {
+    name: 'Legacy agent',
+    runnerId: 'external',
+    requestId: 'legacy-agent',
+    secret: agentToken,
+  });
+  const offered = await f.offer();
+  // Simulate records written by the previous image, before the Identity table existed.
+  await f.state.transaction(async (tx) => {
+    await tx.run('ALTER TABLE identity_credentials DISABLE TRIGGER identity_credentials_no_delete');
+    await tx.run(
+      'DELETE FROM identity_credentials WHERE owner=? AND subject IN (?,?)',
+      'sessions',
+      agent.id,
+      offered.session.id,
+    );
+    await tx.run('ALTER TABLE identity_credentials ENABLE TRIGGER identity_credentials_no_delete');
+  });
+  await f.restart();
+  assert.equal((await f.sessions.agentSelf(agentToken)).agent.id, agent.id);
+  assert.equal((await f.sessions.authenticate(offered.token)).session?.id, offered.session.id);
+  await f.sessions.retireAgent(f.source, agent.id);
+  await f.sessions.release(f.source, { sessionId: offered.session.id, runnerId: 'runner' });
+  await f.restart();
+  await assert.rejects(f.sessions.agentSelf(agentToken), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.authenticate(offered.token), { code: 'unauthorized' });
+});
+
 test('agent observations are project-scoped read-only metadata with a bounded call window and lifetime totals', async (t) => {
   const f = await fixture(t);
   const offered = await f.offer();
@@ -1844,7 +1913,7 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 2);
   await f.scope.revokeActor(f.owner, f.source.actorId);
   await f.events.drain();
-  await assert.rejects(f.sessions.agentSelf(token), { code: 'agent_retired' });
+  await assert.rejects(f.sessions.agentSelf(token), { code: 'unauthorized' });
 });
 
 for (const boundary of ['offer expiry', 'hard deadline'] as const) {

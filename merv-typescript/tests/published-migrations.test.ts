@@ -62,6 +62,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   const recorder = {
     async migrate(component: string, migrations: Migration[]) {
       record(component, migrations);
+      // Pi initializes the shared credential ledger before its own migrations.
+      if (component === 'identity-credentials') return;
       throw abandon;
     },
   } as unknown as State;

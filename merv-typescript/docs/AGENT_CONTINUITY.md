@@ -1,6 +1,6 @@
 # Continuing agents and assignment executions
 
-Agent Sessions owns the agent instance and its authenticated session. Scope owns the corresponding security actor and checks its source authority. Workflows owns assignment reservations. No Cordis dependencies were added.
+Sessions owns the agent instance and its lifecycle. Identity issues and verifies credentials; Scope checks the corresponding actor and source authority. Workflows owns assignment reservations. A credential identifies an existing agent or execution; it does not create another agent record.
 
 ## Identities
 
@@ -29,6 +29,8 @@ An authenticated source (human, user key or actor credential) registers the agen
 
 Use a cryptographically random secret. Only its digest is stored; registration returns metadata, not the secret. Replaying the same source/runner/request returns the original agent. Changed input conflicts, and replay never revives a retired agent. The agent remains bound to that source authority and project; knowing an agent ID cannot take it over.
 
+Continuing agent keys expire after 30 days. The authorizing source can call `POST /sessions/agents/:agentId/rotate` to receive `{ agent, token, expiresAt }`. Store the returned token securely and switch the client's bearer immediately: all prior keys stop working, including previously authenticated calls when they next check authority. Rotation preserves the agent, actor and assignment history. The agent's own key cannot rotate itself. Existing keys receive their initial 30-day deadline when first migrated; restarting does not extend it.
+
 The continuing credential supports these controls, even between assignments:
 
 | Route                               | Purpose                                                                                                                |
@@ -48,7 +50,7 @@ The authorizing source can use `GET /sessions/agents`, `GET /sessions/agents/:ag
 
 Each execution freezes the assignment, context, reference IDs, tool policy and workflow revision. Retained history records what context was supplied, not what a model demonstrably remembers. Explicit resets increment the context epoch while preserving agent identity and older snapshots. Resetting context does not make a producer an independent reviewer.
 
-Ending an assignment releases its workflow/domain ownership and permissions without retiring a continuing agent. Output attribution keeps the stable actor. Access to newly authored output is filtered by the exact execution event, so old unpinned files are not silently authorized because the actor ID matches. Experiments likewise require the current execution's own plan/report where fresh authorship is required. Review independence continues to compare the stable producer/reviewer actor.
+Ending an assignment releases its workflow/domain ownership and permissions without retiring a continuing agent. Sessions renews execution credentials on activation and heartbeat, up to the execution's fixed hard deadline, and revokes them on closure. Hosted Codex retains its existing one-minute model-call handoff grace; closed executions cannot make MCP calls. Output attribution keeps the stable actor. Access to newly authored output is filtered by the exact execution event, so old unpinned files are not silently authorized because the actor ID matches. Experiments likewise require the current execution's own plan/report where fresh authorship is required. Review independence continues to compare the stable producer/reviewer actor.
 
 Already prepared invocations, claims, workspace observations, command receipts and final code captures remain tied to their original execution ID. A late release, result, or cleanup event cannot be redirected to the agent's next assignment. A running remote request may still finish after release; it does not gain the next assignment's authority.
 

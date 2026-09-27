@@ -984,7 +984,9 @@
       "provides": [
         "identity"
       ],
-      "requires": [],
+      "requires": [
+        "state"
+      ],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -2988,6 +2990,11 @@
       "optional": false
     },
     {
+      "from": "identity",
+      "to": "state",
+      "optional": false
+    },
+    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -3552,7 +3559,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 176
+    "dependencies": 177
   },
   "network": [
     {

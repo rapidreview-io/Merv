@@ -270,6 +270,11 @@ export interface Sessions {
   agents(caller: Caller): Promise<AgentStatus[]>;
   agent(caller: Caller, agentId: string): Promise<AgentStatus>;
   retireAgent(caller: Caller, agentId: string): Promise<Agent>;
+  /** Owner-authorized replacement of a continuing agent's 30-day credential. */
+  rotateAgent(
+    caller: Caller,
+    agentId: string,
+  ): Promise<{ agent: Agent; token: string; expiresAt: string }>;
   agentSelf(
     token: string,
   ): Promise<AgentStatus & { available: import('@merv/contracts').WorkflowDispatchCandidate[] }>;

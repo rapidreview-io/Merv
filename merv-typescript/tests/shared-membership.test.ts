@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 
 import { ProjectScope } from '@merv/scope';
 import { Memberships } from '@merv/scope/memberships';
+import { CredentialStore } from '@merv/identity/credentials';
+import { postgresMigrations } from '../packages/scope/src/index.postgres.js';
 import type { HumanPrincipal, Principal, Role } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
@@ -586,15 +588,13 @@ test('v2 migration preserves local projects and credentials; adoption is explici
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const migrate = state.migrate.bind(state);
-  state.migrate = async (component, migrations) =>
-    await migrate(
-      component,
-      component === 'scope' ? migrations.filter((migration) => migration.version <= 2) : migrations,
-    );
-  const oldScope = await createService(new ProjectScope(state));
+  await state.migrate(
+    'scope',
+    [1, 2].map((version) => ({ version, sql: postgresMigrations[version] })),
+  );
+  await new CredentialStore(state).initialize();
+  const oldScope = new ProjectScope(state);
   const legacy = await oldScope.bootstrap({ projectName: 'Legacy', actorName: 'Local operator' });
-  state.migrate = migrate;
   let scope = await createService(new ProjectScope(state));
   assert.deepEqual(await scope.authenticate(legacy.token), {
     ...legacy.actor,

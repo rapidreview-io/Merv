@@ -6,6 +6,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
+import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import { countWrites, openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -700,6 +701,11 @@ test('a hosted session’s model grant holds while it is live or just handed off
   // Codex writes its closing turn after the handoff: the runner's minute of grace.
   now += 59_000;
   assert.deepEqual(await f.sessions.managedModelGrant(request.secret), grant);
+  assert.deepEqual(await f.sessions.managedModelGrant(session.id), grant);
+  // A relay validating an admitted stream by session id still depends on its original credential.
+  await new CredentialStore(f.state, () => now).revoke(tokenDigest(request.secret), 'sessions');
+  await assert.rejects(f.sessions.managedModelGrant(session.id), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'unauthorized' });
   now += 2_000;
   await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'unauthorized' });
 });

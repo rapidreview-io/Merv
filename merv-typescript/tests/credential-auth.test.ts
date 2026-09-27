@@ -417,3 +417,29 @@ test('operator self-rotation stages a replacement before invalidating the authen
   assert.equal(selfRevoke.isError, true);
   assert.equal(decode(selfRevoke).error.code, 'self_revoke');
 });
+
+test('Identity revocation rejects new authentication and already prepared Scope authority', async (t) => {
+  const state = await openState();
+  t.after(() => state.close());
+  const scope = await createService(new ProjectScope(state));
+  const { CredentialStore, tokenDigest } = await import('@merv/identity/credentials');
+  const credentials = new CredentialStore(state);
+  await credentials.initialize();
+  const issued = await scope.bootstrap({
+    projectName: 'Central revocation',
+    actorName: 'Operator',
+  });
+  const caller = identity(issued);
+  await scope.require(caller, 'write');
+  await credentials.revoke(tokenDigest(issued.token), 'scope');
+  await assert.rejects(scope.authenticate(issued.token), { code: 'unauthorized' });
+  await assert.rejects(scope.require(caller, 'write'), { code: 'unauthorized' });
+  // The credential ledger is authoritative even when legacy metadata has not been changed.
+  const old = await state.read((sql) =>
+    sql.get<{ revoked_at: string | null }>(
+      'SELECT revoked_at FROM actor_credentials WHERE id=?',
+      issued.credential.id,
+    ),
+  );
+  assert.equal(old?.revoked_at, null);
+});

@@ -4,8 +4,8 @@ import {
   visible,
   check,
   digest,
+  MervError,
   newId,
-  sessionSecretPattern,
   sha256Hex,
   type Caller,
   type DelegationSource,
@@ -14,6 +14,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Agent, AgentRegistration } from './types.js';
+import type { CredentialStore } from '@merv/identity/credentials';
 
 export const tokenDigest = sha256Hex;
 export { sourceCaller } from '@merv/contracts';
@@ -33,6 +34,7 @@ export class AgentDirectory {
     private state: State,
     private scope: Scope,
     private clock: () => number,
+    private credentials: CredentialStore,
   ) {
     this.initialize = async () => {
       await state.migrate('agents', [
@@ -67,12 +69,10 @@ export class AgentDirectory {
       );
       return JSON.parse(old.agent_json);
     }
+    const tokenHash = tokenDigest(input.secret);
     check(
-      !(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenDigest(input.secret))) &&
-        !(await tx.get(
-          'SELECT id FROM worker_sessions WHERE token_hash=?',
-          tokenDigest(input.secret),
-        )),
+      !(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenHash)) &&
+        !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)),
       'session_secret_used',
       'Session secret was already used',
       409,
@@ -111,6 +111,26 @@ export class AgentDirectory {
       'active',
       JSON.stringify(agent),
     );
+    if (persistent) {
+      const expiresAt = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
+      try {
+        await this.credentials.issue(
+          {
+            owner: 'sessions',
+            subject: id,
+            kind: 'session-agent',
+            token: input.secret,
+            expiresAt,
+            hardDeadline: expiresAt,
+          },
+          tx,
+        );
+      } catch (error) {
+        if (error instanceof MervError && error.code === 'credential_conflict')
+          throw new MervError('session_secret_used', 'Session secret was already used', 409);
+        throw error;
+      }
+    }
     await this.state.appendEvent(tx, {
       projectId: agent.projectId,
       actorId: caller.actorId,
@@ -138,16 +158,8 @@ export class AgentDirectory {
     return agent;
   }
   async authenticate(secret: string, tx: Transaction): Promise<Agent> {
-    check(
-      typeof secret === 'string' && sessionSecretPattern.test(secret),
-      'unauthorized',
-      'Invalid agent credential',
-      401,
-    );
-    const row = await tx.get<AgentRow>(
-      'SELECT * FROM agents WHERE token_hash=?',
-      tokenDigest(secret),
-    );
+    const credential = await this.credentials.authenticate(secret, 'session-agent', tx);
+    const row = await tx.get<AgentRow>('SELECT * FROM agents WHERE id=?', credential.subject);
     check(row, 'unauthorized', 'Invalid agent credential', 401);
     const agent: Agent = JSON.parse(row.agent_json);
     await this.require(agent, tx);
@@ -157,9 +169,6 @@ export class AgentDirectory {
   async require(agent: Agent, tx: Transaction, status = 401): Promise<void> {
     check(agent.status === 'active', 'agent_retired', 'Agent has been retired', status);
     await this.scope.requireDelegation(agent.source, 'read', tx);
-  }
-  async findToken(secret: string, tx: Transaction): Promise<boolean> {
-    return !!(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenDigest(secret)));
   }
   async list(caller: Caller, tx: Transaction): Promise<Agent[]> {
     return (
@@ -174,6 +183,7 @@ export class AgentDirectory {
     agent.status = 'retired';
     agent.retiredAt = new Date(this.clock()).toISOString();
     await this.save(agent, tx);
+    await this.credentials.revokeSubject('sessions', agent.id, 'session-agent', tx);
     await this.scope.retireSessionActor(agent.actorId, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: agent.projectId,

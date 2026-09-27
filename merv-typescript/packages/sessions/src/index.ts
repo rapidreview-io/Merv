@@ -5,6 +5,7 @@ import { postgresMigrations } from './index.postgres.js';
 import { managedNoncePostgresMigration } from './managed-nonce.postgres.js';
 import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
+import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
 import {
   canonical,
@@ -334,6 +335,7 @@ export class LeasedSessions implements Sessions {
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   private managed!: ManagedRunnerBindings;
+  private credentials!: CredentialStore;
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -389,8 +391,19 @@ export class LeasedSessions implements Sessions {
         { version: 9, sql: postgresMigrations[9] },
         { version: 10, sql: postgresMigrations[10] },
       ]);
-      this.managed = new ManagedRunnerBindings(state, scope, this.clock, config.managedSecretEnv);
-      this.directory = await createService(new AgentDirectory(state, scope, this.clock));
+      this.credentials = new CredentialStore(state, this.clock);
+      await this.credentials.initialize();
+      this.managed = new ManagedRunnerBindings(
+        state,
+        scope,
+        this.clock,
+        config.managedSecretEnv,
+        this.credentials,
+      );
+      this.directory = await createService(
+        new AgentDirectory(state, scope, this.clock, this.credentials),
+      );
+      await this.backfillCredentials();
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
       this.dispatcher = await createService(
         new SessionDispatch(
@@ -487,6 +500,82 @@ export class LeasedSessions implements Sessions {
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
   private idleCheckedAt = Number.NEGATIVE_INFINITY;
+  /** Adopt credentials created before Identity owned the ledger. Existing deadlines stay immutable. */
+  private async backfillCredentials(): Promise<void> {
+    const agentDeadline = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
+    await this.state.transaction(async (tx) => {
+      for (const row of await tx.all<{ id: string; token_hash: string; status: string }>(
+        'SELECT id,token_hash,status FROM agents WHERE token_hash IS NOT NULL',
+      )) {
+        if (row.status !== 'active') continue;
+        await this.credentials.adopt(
+          {
+            owner: 'sessions',
+            subject: row.id,
+            kind: 'session-agent',
+            tokenHash: row.token_hash,
+            expiresAt: agentDeadline,
+            hardDeadline: agentDeadline,
+          },
+          tx,
+        );
+      }
+      for (const row of await tx.all<{ id: string; token_hash: string; session_json: string }>(
+        "SELECT id,token_hash,session_json FROM worker_sessions WHERE status IN ('offered','active')",
+      )) {
+        const session = JSON.parse(row.session_json) as Session;
+        await this.credentials.adopt(
+          {
+            owner: 'sessions',
+            subject: row.id,
+            kind: 'session-execution',
+            tokenHash: row.token_hash,
+            expiresAt: session.expiresAt,
+            hardDeadline: session.hardDeadline,
+          },
+          tx,
+        );
+      }
+      const managedTable = await tx.get<{ name: string | null }>(
+        "SELECT to_regclass('session_managed_runners') AS name",
+      );
+      if (!managedTable?.name) return;
+      for (const row of await tx.all<{
+        allocation_id: string;
+        enrollment_hash: string;
+        enrollment_expires_at: string;
+        control_hash: string;
+        control_expires_at: string;
+        worker_nonce_hash: string | null;
+      }>(
+        'SELECT allocation_id,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,worker_nonce_hash FROM session_managed_runners',
+      )) {
+        await this.credentials.adopt(
+          {
+            owner: 'sessions',
+            subject: row.allocation_id,
+            kind: 'managed-enrollment',
+            tokenHash: row.enrollment_hash,
+            expiresAt: row.enrollment_expires_at,
+            hardDeadline: row.enrollment_expires_at,
+          },
+          tx,
+        );
+        if (row.worker_nonce_hash)
+          await this.credentials.adopt(
+            {
+              owner: 'sessions',
+              subject: row.allocation_id,
+              kind: 'managed-control',
+              tokenHash: row.control_hash,
+              expiresAt: row.control_expires_at,
+              hardDeadline: row.control_expires_at,
+            },
+            tx,
+          );
+      }
+    });
+  }
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
@@ -670,6 +759,17 @@ export class LeasedSessions implements Sessions {
       'Session is closed or expired',
       401,
     );
+    await this.credentials.authenticateHash(
+      (await this.row(tx, session.id)).token_hash,
+      'session-execution',
+      tx,
+    );
+    if (caller.session.agentCredentialHash)
+      await this.credentials.authenticateHash(
+        caller.session.agentCredentialHash,
+        'session-agent',
+        tx,
+      );
     if (
       requiredPermission !== 'read' &&
       caller.session?.invocationId !== undefined &&
@@ -756,6 +856,26 @@ export class LeasedSessions implements Sessions {
     session.closeReason = reason;
     session.outcome = outcome ?? (status === 'expired' ? 'expired' : 'released');
     await this.save(tx, session);
+    const credential = await tx.get<{ token_hash: string }>(
+      'SELECT token_hash FROM worker_sessions WHERE id=?',
+      session.id,
+    );
+    // Hosted Codex may finish its already-started model call for one minute after handoff.
+    // The model relay alone grants that grace; MCP still sees the closed execution.
+    const managedTable =
+      reason === 'handoff'
+        ? await tx.get<{ name: string | null }>(
+            "SELECT to_regclass('session_managed_runners') AS name",
+          )
+        : undefined;
+    const managedHandoff =
+      managedTable?.name &&
+      (await tx.get(
+        'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?',
+        session.id,
+      ));
+    if (credential && !managedHandoff)
+      await this.credentials.revoke(credential.token_hash, 'sessions', tx);
     await recordUsage(tx, session);
     // An offer that lapsed before any process activated it is a launch that was lost, and
     // would otherwise be re-offered every five minutes for ever with nothing counting it.
@@ -794,6 +914,10 @@ export class LeasedSessions implements Sessions {
       if (!(error instanceof MervError)) throw error;
     }
     return session;
+  }
+  private async renewSessionCredential(session: Session, tx: Transaction): Promise<void> {
+    const row = await this.row(tx, session.id);
+    await this.credentials.renew(row.token_hash, 'sessions', session.expiresAt, tx);
   }
   /** The record moved by this worker's own hand: its handoff landed. */
   private async handedOff(session: Session, tx: Transaction): Promise<boolean> {
@@ -937,11 +1061,12 @@ export class LeasedSessions implements Sessions {
       'This workflow step already has a live session',
       409,
     );
+    // Historical rows retain their hashes even after their Identity credentials are revoked.
+    // Reuse is a malformed runner offer, never a failed launch of the target.
+    const tokenHash = tokenDigest(input.secret);
     check(
-      !(await tx.get(
-        'SELECT id FROM worker_sessions WHERE token_hash=?',
-        tokenDigest(input.secret),
-      )) && !(await this.directory.findToken(input.secret, tx)),
+      !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)) &&
+        !(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenHash)),
       'session_secret_used',
       'Session secret was already used',
       409,
@@ -1052,6 +1177,23 @@ export class LeasedSessions implements Sessions {
       session.status,
       JSON.stringify(session),
     );
+    try {
+      await this.credentials.issue(
+        {
+          owner: 'sessions',
+          subject: id,
+          kind: 'session-execution',
+          token: input.secret,
+          expiresAt: session.expiresAt,
+          hardDeadline: session.hardDeadline,
+        },
+        tx,
+      );
+    } catch (error) {
+      if (error instanceof MervError && error.code === 'credential_conflict')
+        throw new MervError('session_secret_used', 'Session secret was already used', 409);
+      throw error;
+    }
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: caller.actorId,
@@ -1125,6 +1267,38 @@ export class LeasedSessions implements Sessions {
       const current = await this.currentAgentExecution(agent, tx);
       if (current) await this.closeSession(current, 'agent_retired', tx, 'released', 'halted');
       return await this.directory.retire(agent, 'agent_retired', tx);
+    });
+  }
+  async rotateAgent(
+    caller: Caller,
+    agentId: string,
+  ): Promise<{ agent: Agent; token: string; expiresAt: string }> {
+    this.ordinary(caller);
+    caller = structuredClone(caller);
+    return await this.transaction(async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      const agent = await this.directory.controlled(caller, agentId, tx);
+      await this.directory.require(agent, tx, 409);
+      check(
+        agent.persistent,
+        'agent_forbidden',
+        'Only continuing agents may rotate credentials',
+        403,
+      );
+      await this.credentials.revokeSubject('sessions', agent.id, 'session-agent', tx);
+      const expiresAt = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
+      const issued = await this.credentials.issue(
+        {
+          owner: 'sessions',
+          subject: agent.id,
+          kind: 'session-agent',
+          prefix: 'ms_',
+          expiresAt,
+          hardDeadline: expiresAt,
+        },
+        tx,
+      );
+      return { agent, token: issued.token, expiresAt };
     });
   }
   async agentSelf(token: string) {
@@ -1840,6 +2014,7 @@ export class LeasedSessions implements Sessions {
         Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
       ).toISOString();
       await this.save(tx, session);
+      await this.renewSessionCredential(session, tx);
     });
   }
   private async controlMutation(
@@ -1929,21 +2104,22 @@ export class LeasedSessions implements Sessions {
     });
   }
   async authenticate(token: string): Promise<Caller> {
-    check(
-      typeof token === 'string' && sessionSecretPattern.test(token),
-      'unauthorized',
-      'Invalid session bearer credential',
-      401,
-    );
     const result = await this.transaction(async (tx) => {
-      const agent = (await this.directory.findToken(token, tx))
-        ? await this.directory.authenticate(token, tx)
-        : undefined;
+      const credential = await this.credentials.authenticate(
+        token,
+        ['session-agent', 'session-execution'],
+        tx,
+      );
+      const agent =
+        credential.kind === 'session-agent'
+          ? await this.directory.get(credential.subject, tx)
+          : undefined;
+      if (agent) await this.directory.require(agent, tx);
       const current = agent ? await this.currentAgentExecution(agent, tx) : undefined;
       if (agent) check(current, 'agent_idle', 'Agent has no current assignment', 409);
       const row = current
         ? await this.row(tx, current.id)
-        : await tx.get<Row>('SELECT * FROM worker_sessions WHERE token_hash=?', tokenDigest(token));
+        : await tx.get<Row>('SELECT * FROM worker_sessions WHERE id=?', credential.subject);
       check(row, 'unauthorized', 'Invalid session bearer credential', 401);
       const session = await this.decode(row, tx),
         error = await this.reconcile(session, tx);
@@ -1972,6 +2148,7 @@ export class LeasedSessions implements Sessions {
           Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
         ).toISOString();
         await this.save(tx, session);
+        await this.renewSessionCredential(session, tx);
         await this.state.appendEvent(tx, {
           projectId: session.projectId,
           actorId: session.actorId,
@@ -1984,7 +2161,10 @@ export class LeasedSessions implements Sessions {
           },
         });
       }
-      return { caller: this.worker(session) };
+      const caller = this.worker(session);
+      if (credential.kind === 'session-agent')
+        caller.session!.agentCredentialHash = credential.tokenHash;
+      return { caller };
     });
     if (result.error) throw result.error;
     return result.caller!;
@@ -2106,6 +2286,9 @@ export class LeasedSessions implements Sessions {
           id: prepared.session.id,
           ...(prepared.session.agentSessionId
             ? { agentSessionId: prepared.session.agentSessionId }
+            : {}),
+          ...(caller.session?.agentCredentialHash
+            ? { agentCredentialHash: caller.session.agentCredentialHash }
             : {}),
           invocationId,
         }),

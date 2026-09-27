@@ -44,6 +44,7 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const tools = new ToolRegistry(scope);
   const ctx = new Context();
+  ctx.provide('state', state);
   ctx.provide('scope', scope);
   ctx.provide('tools', tools);
   await ctx.plugin(identityPlugin, {});

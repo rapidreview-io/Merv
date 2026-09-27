@@ -2,6 +2,12 @@
   "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8.",
   "migrations": [
     {
+      "component": "identity-credentials",
+      "version": 1,
+      "hash": "d2eded577c1088f84eb816a72d69be537108989daf00095cd109f60ed05f6bfb",
+      "published": false
+    },
+    {
       "component": "fleet",
       "version": 1,
       "hash": "1d4245772a1b522cc544809d15de2e719c4a6f33fc2ff42133762a18509616ec",

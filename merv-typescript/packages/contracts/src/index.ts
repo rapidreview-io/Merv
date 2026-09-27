@@ -635,7 +635,12 @@ export interface Caller {
   /** User-owned machine authority, distinct from human login and actor credentials. */
   key?: { id: string; membershipId: string };
   /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
-  session?: { id: string; agentSessionId?: string; invocationId?: string };
+  session?: {
+    id: string;
+    agentSessionId?: string;
+    agentCredentialHash?: string;
+    invocationId?: string;
+  };
   conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
   /** Server-authenticated supervisor; the binding is rechecked on every control. */
   managed?: {

@@ -89,7 +89,7 @@ const capabilities: Record<string, readonly string[]> = {
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
   feed: ['state', 'scope', 'artifacts'],
-  identity: [],
+  identity: ['state'],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope'],
   codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
@@ -410,7 +410,10 @@ function assertComponentReferences(
         owner === 'code-research' &&
         specifier.startsWith('@merv/code/') &&
         codeUtilityExports.has(specifier.slice('@merv/code/'.length));
-      if (!utility) {
+      // Identity's credential store is a public shared authority, also usable by standalone services.
+      const credentials =
+        ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
+      if (!utility && !credentials) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import test, { type TestContext } from 'node:test';
@@ -18,6 +19,7 @@ import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
+import { CredentialStore, tokenDigest } from '../packages/identity/src/credentials.js';
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
@@ -1433,6 +1435,59 @@ test('a restart releases every machine; the next send restores the full tree on 
   assert.equal(second.work.checkpoint?.content, fullTree);
   assert.equal(second.work.checkpoint?.hash, sha(fullTree));
   await assert.rejects(f.pi.next(first.token, { workerId: 'old_worker' }), code('pi_unauthorized'));
+});
+
+test('Identity owns Pi worker and model credentials through their distinct lifetimes', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const stored = async (token: string) =>
+    await f.state.read((sql) =>
+      sql.get<{ owner: string; kind: string; revoked_at: string | null }>(
+        'SELECT owner,kind,revoked_at FROM identity_credentials WHERE token_hash=?',
+        tokenDigest(token),
+      ),
+    );
+  assert.deepEqual(await stored(bound.token), { owner: 'pi', kind: 'pi-worker', revoked_at: null });
+  assert.deepEqual(await stored(bound.work.modelToken), {
+    owner: 'pi',
+    kind: 'pi-model',
+    revoked_at: null,
+  });
+  await f.pi.stop(f.operator, conversation.id);
+  assert.ok((await stored(bound.work.modelToken))?.revoked_at);
+  assert.equal((await stored(bound.token))?.revoked_at, null);
+  await f.restart();
+  assert.ok((await stored(bound.token))?.revoked_at);
+  await assert.rejects(f.pi.authenticateWorker(bound.token), code('pi_unauthorized'));
+});
+
+test('revoking a model credential at Identity fences an already admitted Pi relay grant', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  await new CredentialStore(f.state).revoke(tokenDigest(bound.work.modelToken), 'pi');
+  await assert.rejects(f.pi.authorizeModel(bound.work.modelToken), code('pi_unauthorized'));
+  await assert.rejects(f.pi.validateModel(grant), code('pi_authority_stale'));
+  await f.pi.authenticateWorker(bound.token);
+});
+
+test('a Pi signing-secret rotation rejects an old model token despite its Identity record', async (t) => {
+  const f = await fixture(t);
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const name = `MERV_PI_ROTATED_${randomBytes(8).toString('hex')}`;
+  process.env[name] = 'replacement-pi-signing-secret-at-least-32-characters';
+  t.after(() => delete process.env[name]);
+  const rotated = new PiService(f.state, f.scope, f.fleet, f.tools, f.blobs, {
+    ...f.pi.config,
+    secretEnv: name,
+  });
+  await assert.rejects(rotated.authorizeModel(bound.work.modelToken), code('pi_unauthorized'));
 });
 
 test('Fleet outcomes end a turn with their own reason; a missing row counts as lost', async (t) => {

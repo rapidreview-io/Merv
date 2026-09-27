@@ -11,6 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ProjectScope } from '@merv/scope';
 import { scopeToolsPlugin } from '@merv/scope/tools';
 import { SupabaseIdentity } from '@merv/identity';
+import { CredentialStore } from '@merv/identity/credentials';
 import { ApiServer, ToolRegistry } from '@merv/api';
 import type { Caller, IssuedUserKey, Project, UserKey } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
@@ -636,6 +637,13 @@ test('existing opaque actor tokens can begin with mk_ without becoming user keys
         new Date(f.time()).toISOString(),
       ),
   );
+  await new CredentialStore(f.state, f.time).adopt({
+    owner: 'scope',
+    subject: id,
+    kind: 'actor',
+    tokenHash: createHash('sha256').update(token).digest('hex'),
+    expiresAt: null,
+  });
   assert.equal((await f.scope.authenticate(token)).id, legacy.actor.id);
   f.routing.actor = 0;
   const account = await f.request<{ kind: string; actor: { id: string } }>('/account', { token });
