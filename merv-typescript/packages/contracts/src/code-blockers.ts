@@ -115,6 +115,12 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
         who: 'An operator',
         whose: 'operator',
       };
+    case 'code_publication_setup_required':
+      return {
+        sentence: 'Publication setup needs an operator before this code can reach main',
+        who: 'An operator',
+        whose: 'operator',
+      };
     case 'code_publication_incident':
       return {
         sentence: 'A publication incident is kept here until an operator clears it',
@@ -175,6 +181,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
 const PUBLICATION: Partial<Record<CodeUnitPublication['state'], string>> = {
   pending: 'code_publication_pending',
   stale: 'code_publication_stale',
+  setup_required: 'code_publication_setup_required',
   disabled: 'code_publication_disabled',
   closed: 'code_publication_closed',
   unsealed: 'code_publish_unverifiable',

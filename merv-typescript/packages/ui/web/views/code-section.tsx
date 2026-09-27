@@ -24,7 +24,8 @@ const CANVAS = '/code';
 
 /**
  * A publication that stopped rather than one in flight. Only `pending` is still moving and
- * only `published` arrived; everything else — closed, unsealed, stale, disabled, incident —
+ * only `published` arrived; everything else — closed, unsealed, stale, setup required,
+ * disabled, incident —
  * is a publication that will not reach main as it stands, and reads in the refusal's colour.
  */
 const refused = (state: string) => state !== 'pending' && state !== 'published';

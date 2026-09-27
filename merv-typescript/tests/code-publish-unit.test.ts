@@ -509,8 +509,43 @@ test('a quarantine never reaches work that has ended, but a publication wait doe
   // recorded no canary, so no merge of it could succeed and the wait says so.
   assert.deepEqual(
     (await f.blockers(publishing.id)).map((item) => item.code),
-    ['code_publication_disabled'],
+    ['code_publication_setup_required'],
   );
+  assert.equal((await f.code.unit(f.admin, publishing.id)).publication?.state, 'setup_required');
+});
+
+test('incomplete rules visibility needs setup even with a canary, while failed enforcement is disabled', async (t) => {
+  const f = await fixture(t, true);
+  await f.canary();
+  const work = await f.declare('Publishing');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  await f.state.transaction(async (tx) => {
+    const row = await tx.get<{ record_json: string }>(
+      'SELECT record_json FROM code_publication_controls WHERE project_id=?',
+      f.admin.projectId,
+    );
+    const controls = JSON.parse(row!.record_json);
+    controls.visibility = { incomplete: true };
+    await tx.run(
+      'UPDATE code_publication_controls SET record_json=? WHERE project_id=?',
+      JSON.stringify(controls),
+      f.admin.projectId,
+    );
+  });
+  await f.code.reconcileAll();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'setup_required');
+  assert.equal((await f.blockers(work.id))[0].code, 'code_publication_setup_required');
+  await f.code.controlPublication(f.admin, {
+    action: 'record_canary',
+    staleMerged: true,
+    reason: 'The stale merge passed despite the required checks.',
+    requestId: 'failed-canary',
+  });
+  await f.code.reconcileAll();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');
+  assert.equal((await f.blockers(work.id))[0].code, 'code_publication_disabled');
 });
 
 test('an acceptance that cannot be sealed is still recorded, and says so', async (t) => {

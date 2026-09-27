@@ -1653,6 +1653,11 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     who: 'An operator',
     whose: 'operator',
   });
+  assert.deepEqual(said('code_publication_setup_required'), {
+    sentence: 'Publication setup needs an operator before this code can reach main',
+    who: 'An operator',
+    whose: 'operator',
+  });
   assert.deepEqual(said('code_publication_incident'), {
     sentence: 'A publication incident is kept here until an operator clears it',
     who: 'An operator',
@@ -1733,6 +1738,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     'code_publication_pending',
     'code_publication_stale',
     'code_publication_disabled',
+    'code_publication_setup_required',
     'code_publication_incident',
     'code_publish_unverifiable',
     'code_quarantined',
@@ -1752,6 +1758,10 @@ test('a unit’s own publication is read as the blocker Code publishes about it'
     },
   );
   assert.equal(publicationBlocker({ state: 'unsealed' })?.code, 'code_publish_unverifiable');
+  assert.equal(
+    publicationBlocker({ state: 'setup_required' })?.code,
+    'code_publication_setup_required',
+  );
   // A pending publication carries a pull only once one exists, and the move follows the
   // fact: nothing to merge, so nothing offers a merge.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -69,9 +69,14 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
       message: `main moved; a successor task integrates it${named}`,
       next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
     },
+    setup_required: {
+      code: 'code_publication_setup_required',
+      message: `publication setup is incomplete${named}`,
+      next: 'An operator checks code.status publication controls, completes the required merge-safety check or rules visibility, then merges the reviewed pull request.',
+    },
     disabled: {
       code: 'code_publication_disabled',
-      message: `publication is not enabled for this project${named}`,
+      message: `publication was disabled after failed enforcement${named}`,
       next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
     },
     closed: {
@@ -1422,11 +1427,12 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
           visibility?: { incomplete?: boolean };
         })
       : {};
-    // Match the publication gate: unavailable enforcement must name the operator recovery,
-    // never tell a researcher that a merge can proceed.
-    return enforcement.disabled || !enforcement.canary || enforcement.visibility?.incomplete
-      ? { ...publication, state: 'disabled' }
-      : publication;
+    // A failed canary explicitly disables publication. Missing setup also blocks merging,
+    // but must not say an operator needs to clear a disablement that never happened.
+    if (enforcement.disabled) return { ...publication, state: 'disabled' };
+    if (!enforcement.canary || enforcement.visibility?.incomplete)
+      return { ...publication, state: 'setup_required' };
+    return publication;
   }
 
   protected override async record(tx: Transaction, row: UnitRow): Promise<CodeUnit> {

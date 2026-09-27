@@ -750,7 +750,9 @@ export class ResearchService implements Research {
       'publication_pending',
       publication?.state === 'pending'
         ? `The consolidation task ${taskId} is accepted; a signed-in operator merges its pull request${pull} before the cycle completes`
-        : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
+        : publication?.state === 'setup_required'
+          ? `The consolidation task ${taskId} is accepted; an operator completes publication setup before its pull request can be merged${pull}`
+          : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
       409,
     );
   }

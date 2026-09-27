@@ -52,6 +52,7 @@ export const HELD = 20;
 const PUBLICATION = new Set([
   'code_publication_pending',
   'code_publication_stale',
+  'code_publication_setup_required',
   'code_publication_disabled',
   'code_publication_closed',
   'code_publish_unverifiable',

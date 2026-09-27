@@ -510,6 +510,11 @@ test('an accepted consolidation task whose publication waits on an operator hold
     code: 'publication_pending',
     message: new RegExp(`merges its pull request ${pull.url}`),
   });
+  main.publication = { state: 'setup_required', pull };
+  await assert.rejects(advance(), {
+    code: 'publication_pending',
+    message: /operator completes publication setup before its pull request can be merged/,
+  });
   assert.match(
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /publication_pending/,

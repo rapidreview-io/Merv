@@ -42,7 +42,15 @@ export interface CodeAcceptedSince {
  * `unsealed` is the accepted unit whose facts could not open a publication at all.
  */
 export interface CodeUnitPublication {
-  state: 'pending' | 'stale' | 'disabled' | 'closed' | 'unsealed' | 'incident' | 'published';
+  state:
+    | 'pending'
+    | 'stale'
+    | 'setup_required'
+    | 'disabled'
+    | 'closed'
+    | 'unsealed'
+    | 'incident'
+    | 'published';
   pull?: { number: number; url: string };
   /** The verified merge commit on main; present only once `published`. */
   mergeCommit?: string;
