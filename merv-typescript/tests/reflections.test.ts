@@ -6,11 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import type { Artifact, Caller, ReviewApplication } from '@merv/contracts';
+import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
-import { CHANGE_SPEC_CRITERION } from '../packages/reflections/src/definitions.js';
+import {
+  CHANGE_SPEC_CRITERION,
+  REFLECTION_CRITERIA,
+} from '../packages/reflections/src/definitions.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext, reflections?: object) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflection-'));
@@ -603,6 +606,42 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
   assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
   assert.match(lensContext.prompt, /"verdict":"needs_changes"/);
+  const rounds = [firstReview, secondReview].map((reviewId) => {
+    const line = lensContext.prompt
+      .split('\n')
+      .find((part) => part.startsWith('{"round":') && part.includes(`"reviewId":"${reviewId}"`));
+    assert.ok(line, `rejected round ${reviewId} is included in full`);
+    return JSON.parse(line) as ReviewHistory['rounds'][number];
+  });
+  assert.deepEqual(
+    rounds.map(({ round, reviewId, verdict, returnTo, notes }) => ({
+      round,
+      reviewId,
+      verdict,
+      returnTo,
+      notes,
+    })),
+    [firstReview, secondReview].map((reviewId, index) => ({
+      round: index + 1,
+      reviewId,
+      verdict: 'needs_changes',
+      returnTo: index ? 'reflecting' : 'synthesizing',
+      notes: 'Verified exact frozen sources and lens outputs.',
+    })),
+  );
+  assert.ok(
+    rounds.every(
+      (round) =>
+        round.unmet.length === REFLECTION_CRITERIA.length &&
+        round.unmet.every(
+          (finding, index) =>
+            finding.criterionNumber === index + 1 &&
+            finding.status === 'not_met' &&
+            finding.criterion === REFLECTION_CRITERIA[index]!.slice(0, 200) &&
+            finding.notes === 'Checked against the corpus.',
+        ),
+    ),
+  );
   assert.ok(!lensContext.prompt.includes(reviewer.actorId));
   assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
   assert.deepEqual(
