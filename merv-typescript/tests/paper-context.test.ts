@@ -40,12 +40,18 @@ test('paper context references an identical published body but keeps revisions a
     methods: {
       current: {
         revision: 3,
-        sections: [{ id: 'protocol-new', title: 'Protocol', content: methods }],
+        sections: [
+          { id: 'protocol-new', title: 'Protocol', content: methods },
+          { id: 'brief', content: 'Short' },
+        ],
       },
       published: {
         document: {
           revision: 3,
-          sections: [{ id: 'protocol-published', title: 'Published protocol', content: methods }],
+          sections: [
+            { id: 'protocol-published', title: 'Published protocol', content: methods },
+            { id: 'brief', content: 'Short' },
+          ],
         },
         publication: { reviewId: 'review-3' },
       },
@@ -67,6 +73,7 @@ test('paper context references an identical published body but keeps revisions a
   assert.equal(result.methods.published.document.revision, 3);
   assert.equal(result.methods.published.publication.reviewId, 'review-3');
   assert.equal(result.methods.published.document.sections[0]!.title, 'Published protocol');
+  assert.equal(result.methods.published.document.sections[1]!.content, 'Short');
   assert.equal(result.results.current.sections[0]!.content, currentResults);
   assert.equal(result.results.published.document.sections[0]!.content, publishedResults);
   assert.equal(documents.methods.published.document.sections[0]!.content, methods);

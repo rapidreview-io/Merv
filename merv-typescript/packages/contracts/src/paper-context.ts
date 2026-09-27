@@ -40,8 +40,12 @@ export function boundedPaperContext<T extends object>(documents: T, room = 40_00
     // abbreviated content, so a distinct published draft is still shown.
     for (const section of document.published.document.sections) {
       const sameAs = currentBodies.get(kind)?.get(section.content);
-      if (sameAs !== undefined) {
-        section.content = `(same content as current revision ${document.current.revision ?? '?'}, section ${sameAs}; read with paper.read)`;
+      const reference =
+        sameAs === undefined
+          ? null
+          : `(same content as current revision ${document.current.revision ?? '?'}, section ${sameAs}; read with paper.read)`;
+      if (reference && reference.length < section.content.length) {
+        section.content = reference;
       } else if (section.content.length <= left) {
         left -= section.content.length;
       } else {
