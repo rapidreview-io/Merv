@@ -1,4 +1,11 @@
-import { excludedFromReview, releasedLease, visible, everyAsync, sha256Hex } from '@merv/contracts';
+import {
+  excludedFromReview,
+  releasedLease,
+  visible,
+  everyAsync,
+  sha256Hex,
+  reviewHistory,
+} from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
@@ -674,15 +681,19 @@ export class ReflectionService implements Reflections {
         `reflection ${wave.id}; ${entry.perspective} lens ${entry.id}; attempt ${entry.attempt}`,
       ),
     );
-    const reviewItems = reviews.map((entry, index) =>
+    const historicalRounds = reviewHistory(
+      reviews.map((entry) => ({ review: entry })),
+      Number.MAX_SAFE_INTEGER,
+    ).rounds;
+    const reviewItems = historicalRounds.map((entry, index) =>
       item(
-        `review:${entry.id}`,
+        `review:${entry.reviewId}`,
         `Reflection review ${index + 1}`,
-        index === reviews.length - 1 ? 700 : 350,
+        index === historicalRounds.length - 1 ? 700 : 350,
         JSON.stringify(entry),
         `reflection ${wave.id}; earlier review round ${index + 1}`,
         'review.get',
-        { reviewId: entry.id },
+        { reviewId: entry.reviewId },
       ),
     );
     const reviewerFeedback =
@@ -930,7 +941,24 @@ export class ReflectionService implements Reflections {
             ? await this.reviews.start(context.caller, wave.review_id, context.tx)
             : null;
         const inputs = await this.inputs({ ...context, caller: context.source });
-        if (review) inputs.assessment = { text: JSON.stringify(review) };
+        if (review) {
+          const assessment = inputs.assessment;
+          check(
+            assessment && 'rankedItems' in assessment && assessment.rankedItems.length === 1,
+            'invalid_context',
+            'Reflection review assessment is missing',
+          );
+          const content = JSON.stringify(review);
+          inputs.assessment = {
+            rankedItems: [
+              {
+                ...assessment.rankedItems[0]!,
+                content: { text: content },
+                hash: sha256Hex(Buffer.from(content, 'utf8')),
+              },
+            ],
+          };
+        }
         const ids = this.inputIds(inputs);
         for (const id of ids) await this.artifacts.get(context.source, id, context.tx);
         const receipt = {

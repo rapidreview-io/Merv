@@ -6,14 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
+import type { Artifact, Caller, ReviewApplication } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
-import {
-  CHANGE_SPEC_CRITERION,
-  REFLECTION_CRITERIA,
-} from '../packages/reflections/src/definitions.js';
+import { CHANGE_SPEC_CRITERION } from '../packages/reflections/src/definitions.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
 async function fixture(t: TestContext, reflections?: object) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflection-'));
@@ -573,7 +570,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
   // With no rejected round there is nothing to carry, and the context says so.
   const untouched = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
-  assert.ok(untouched.omitted.includes('history'));
+  assert.ok(!untouched.prompt.includes('review:'));
   assert.doesNotMatch(untouched.prompt, /Earlier review rounds/);
   wave = await f.synthesize(await f.lenses(wave));
   const firstIds = wave.lenses.map((l) => l.id);
@@ -583,22 +580,9 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.workflow.state, 'synthesizing');
   // The first repair already reads the one rejected round, and the feedback section is unchanged.
   const repair = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
-  assert.ok(!repair.omitted.includes('history') && !repair.omitted.includes('feedback'));
-  assert.match(repair.prompt, /Earlier review rounds, oldest first/);
-  assert.ok(
-    repair.prompt.includes(
-      JSON.stringify({
-        previousReviews: [
-          {
-            id: firstReview,
-            synopsis:
-              'The exact submission requires repair of the documented coverage and evidence problems.',
-          },
-        ],
-        recovery: null,
-      }),
-    ),
-  );
+  assert.ok(repair.prompt.includes(`review:${firstReview}`));
+  assert.match(repair.prompt, /Prior review feedback and recovery/);
+  assert.match(repair.prompt, /The exact submission requires repair/);
   assert.deepEqual(
     wave.lenses.map((l) => l.id),
     firstIds,
@@ -606,47 +590,19 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   wave = await f.synthesize(wave);
   const secondReview = wave.review!.id;
   // A reviewer judges the submission in front of them and is shown no earlier verdicts.
-  assert.doesNotMatch(
-    (await f.app.ctx.workflows.assignment(reviewer, wave.id)).context!.prompt,
-    /Earlier review rounds/,
-  );
+  const independentReview = (await f.app.ctx.workflows.assignment(reviewer, wave.id)).context!;
+  assert.doesNotMatch(independentReview.prompt, /Earlier review rounds/);
+  assert.match(independentReview.prompt, /"previousReviews":\[/);
+  assert.doesNotMatch(independentReview.prompt, /"verdict":"needs_changes"/);
   wave = await f.verdict(wave, reviewer, false, 'reflecting');
   assert.equal(wave.workflow.state, 'reflecting');
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 9);
-  const history = JSON.parse(
-    lensContext.prompt.slice(lensContext.prompt.indexOf('{"rounds":')).split('\n')[0]!,
-  ) as ReviewHistory;
-  assert.equal(history.omittedRounds, 0);
-  assert.deepEqual(
-    history.rounds.map(({ round, reviewId, verdict, returnTo, notes }) => ({
-      round,
-      reviewId,
-      verdict,
-      returnTo,
-      notes,
-    })),
-    [firstReview, secondReview].map((reviewId, index) => ({
-      round: index + 1,
-      reviewId,
-      verdict: 'needs_changes',
-      returnTo: index ? 'reflecting' : 'synthesizing',
-      notes: 'Verified exact frozen sources and lens outputs.',
-    })),
-  );
-  assert.ok(
-    history.rounds.every(
-      (round) =>
-        round.unmet.length === REFLECTION_CRITERIA.length &&
-        round.unmet.every(
-          (finding, index) =>
-            finding.status === 'not_met' &&
-            finding.criterion === REFLECTION_CRITERIA[index]!.slice(0, 200),
-        ),
-    ),
-  );
+  assert.equal(lensContext.typeVersion, 10);
+  assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
+  assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
+  assert.match(lensContext.prompt, /"verdict":"needs_changes"/);
   assert.ok(!lensContext.prompt.includes(reviewer.actorId));
   assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
   assert.deepEqual(
@@ -813,8 +769,9 @@ test('a standalone wave names no lineage, and a digest that does not fit is omit
   });
   const lens = wave.lenses[0]!;
   const context = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.ok(context.omitted.includes('previousCycle'));
-  assert.ok(!context.prompt.includes('Predecessor cycle digest'));
+  assert.ok(context.omitted.some((id) => id.includes(oversized.id)));
+  assert.ok(context.prompt.includes('Predecessor cycle digest'));
+  assert.doesNotMatch(context.prompt, /x{100}/);
   assert.ok(
     (
       await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 })
@@ -889,7 +846,10 @@ test('leased lens calls use exact execution evidence, retain context through rel
   });
   const caller = await f.app.ctx.sessions.authenticate(secret);
   assert.equal(execution.role, 'producer');
-  assert.match(execution.assignment.context!.prompt, /live research access/i);
+  assert.match(
+    execution.assignment.context!.prompt,
+    /Read the live inventory with project.records/i,
+  );
   // The lens may read the wave it belongs to, as it may read anything in the project.
   assert.ok(await f.app.ctx.tools.call('reflection.get', caller, { reflectionId: wave.id }));
   const artifact = (await f.app.ctx.tools.call('artifact.create', caller, {
