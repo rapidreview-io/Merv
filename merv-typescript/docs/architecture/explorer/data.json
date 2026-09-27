@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-26",
+  "snapshot": "2026-09-27",
   "groups": [
     {
       "id": "front",
@@ -651,12 +651,12 @@
         },
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -716,12 +716,12 @@
         },
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The active worker must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
           "name": "experiment.create",
-          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
+          "description": "Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Optional workspace \"git\" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.",
           "readOnly": false
         },
         {
@@ -2132,9 +2132,29 @@
           "readOnly": false
         },
         {
+          "name": "session.find",
+          "description": "Find the current and latest worker session for one task or experiment instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.",
+          "readOnly": true
+        },
+        {
           "name": "session.halt",
           "description": "Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.",
           "readOnly": false
+        },
+        {
+          "name": "session.message",
+          "description": "Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "readOnly": false
+        },
+        {
+          "name": "session.message.ack",
+          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.",
+          "readOnly": false
+        },
+        {
+          "name": "session.messages",
+          "description": "Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.",
+          "readOnly": true
         },
         {
           "name": "session.observe",
@@ -2149,6 +2169,11 @@
         {
           "name": "session.stuck",
           "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "readOnly": true
+        },
+        {
+          "name": "system.status",
+          "description": "Read this project’s automatic dispatch state, Fleet allocations when Fleet is installed, runners, sessions, caller-admissible waiting work and blockers. The server checks project access; blockers include work whose workspace driver cannot run on available machines.",
           "readOnly": true
         },
         {
@@ -2206,9 +2231,29 @@
           "readOnly": false
         },
         {
+          "name": "session.find",
+          "description": "Find the current and latest worker session for one task or experiment instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.",
+          "readOnly": true
+        },
+        {
           "name": "session.halt",
           "description": "Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.",
           "readOnly": false
+        },
+        {
+          "name": "session.message",
+          "description": "Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "readOnly": false
+        },
+        {
+          "name": "session.message.ack",
+          "description": "Assigned worker only: acknowledge one queued message after reading it. Include a short reply explaining what you will do or why you cannot apply it. The acknowledgement is durable and idempotent by requestId; it records receipt, not incorporation into submitted evidence.",
+          "readOnly": false
+        },
+        {
+          "name": "session.messages",
+          "description": "Read durable messages and worker acknowledgements for a session. A worker may omit sessionId to read its own queue. Messages are queued until acknowledged; an acknowledgement may carry a substantive reply.",
+          "readOnly": true
         },
         {
           "name": "session.observe",
@@ -2223,6 +2268,11 @@
         {
           "name": "session.stuck",
           "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "readOnly": true
+        },
+        {
+          "name": "system.status",
+          "description": "Read this project’s automatic dispatch state, Fleet allocations when Fleet is installed, runners, sessions, caller-admissible waiting work and blockers. The server checks project access; blockers include work whose workspace driver cannot run on available machines.",
           "readOnly": true
         },
         {
@@ -2304,7 +2354,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -2365,7 +2415,8 @@
         "artifacts",
         "workflows",
         "reviews",
-        "contextBuilder"
+        "contextBuilder",
+        "paper"
       ],
       "optional": [
         "codeResearch"
@@ -2391,7 +2442,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. Optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Optional workspace \"git\" (default none; requires Code) gives the producing worker a private Git checkout: it records its work with code.commit and delivers that commit, which the independent reviewer inspects in a read-only checkout pinned to it, so a code repository is never split into artifacts. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives and pins the base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. The workspace is fixed at creation. Only a leased reviewer, working in that pinned checkout, can pass a Git task; an interactive reviewer may return or fail it.",
           "readOnly": false
         },
         {
@@ -3488,6 +3539,11 @@
     },
     {
       "from": "tasks",
+      "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "tasks",
       "to": "codeResearch",
       "optional": true
     },
@@ -3541,7 +3597,7 @@
     "plugins": 67,
     "providers": 30,
     "adapters": 37,
-    "dependencies": 177
+    "dependencies": 178
   },
   "network": [
     {
