@@ -418,6 +418,55 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   );
 });
 
+test('project evidence can be saved without an experiment worker, while a lease fences association', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.create();
+  const artifact = await f.artifacts.create(f.source, {
+    title: 'Independent observation',
+    content: plan,
+  });
+  assert.equal(artifact.createdBy, f.source.actorId);
+  assert.deepEqual((await f.experiments.get(f.source, experiment.id)).evidence, []);
+
+  const association = await f.experiments.attach(f.source, {
+    experimentId: experiment.id,
+    expectedRevision: experiment.workflow.revision,
+    attemptIndex: experiment.attempt.index,
+    artifactId: artifact.id,
+    role: 'plan',
+    path: 'observation.md',
+    requestId: f.request(),
+  });
+  assert.equal(association.artifactId, artifact.id);
+  assert.equal(association.sessionId, null);
+
+  await f.offer(experiment);
+  const later = await f.artifacts.create(f.source, {
+    title: 'Later independent observation',
+    content: plan + '\nLater observation.\n',
+  });
+  assert.equal(later.createdBy, f.source.actorId);
+  await assert.rejects(
+    () =>
+      f.experiments.attach(f.source, {
+        experimentId: experiment.id,
+        expectedRevision: experiment.workflow.revision,
+        attemptIndex: experiment.attempt.index,
+        artifactId: later.id,
+        role: 'plan',
+        path: 'later.md',
+        requestId: f.request(),
+      }),
+    { code: 'experiment_leased' },
+  );
+  assert.deepEqual(
+    (await f.experiments.get(f.source, experiment.id)).evidence.map(
+      (evidence) => evidence.artifactId,
+    ),
+    [artifact.id],
+  );
+});
+
 test('offer freezes recovery inputs, fences interactive writes and permits only this worker’s new outputs', async (t) => {
   const f = await fixture(t);
   const experiment = await f.create();
@@ -1533,6 +1582,45 @@ test('an assigned reviewer updates the paper through its scoped verdict only', a
   assert.equal(document.published?.publication.reviewId, review.id);
   assert.equal(document.current.sections[0].content, edit.documents[0].changes[0].content);
   await f.release(offered.session.id, lead);
+});
+
+test('Hosted experiments reject explicit legacy bases before creating work', async (t) => {
+  const f = await fixture(t);
+  t.after(f.tasks.bindCode(f.code));
+  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
+  const prerequisite = await f.tasks.create(f.source, {
+    title: 'Retained baseline',
+    goal: 'Keep the baseline in Git',
+    checks: ['Evidence retained'],
+    workspace: 'git',
+    requestId: f.request(),
+  });
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
+      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: 'a'.repeat(40) }),
+      JSON.stringify({ oid: 'a'.repeat(40), operationId: 'cop_fixture', stored: true }),
+      f.source.projectId,
+    );
+  });
+  const input = {
+    name: 'hosted-follow-up',
+    intent: 'Compare against retained evidence.',
+    workspace: 'git' as const,
+    dependsOn: [prerequisite.id],
+    requestId: f.request(),
+  };
+  await assert.rejects(f.experiments.create(f.source, { ...input, baseTaskId: prerequisite.id }), {
+    code: 'incompatible_workspace',
+    message: /Omit baseTaskId.*dependsOn/,
+  });
+  const rows = await f.state.read((sql) =>
+    sql.all('SELECT id FROM experiments WHERE project_id=?', f.source.projectId),
+  );
+  assert.equal(rows.length, 0);
+  const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
+  assert.equal(created.workflow.version, 12);
+  assert.equal(created.baseTaskId, undefined);
 });
 
 test('A Git experiment created once Code keeps the project’s history names Code’s driver where it has a checkout, and its planner is no writer', async (t) => {

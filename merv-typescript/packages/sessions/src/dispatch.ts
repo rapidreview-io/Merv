@@ -279,6 +279,20 @@ const stuckKinds: StuckKind[] = [
   'no_live_runner',
   'runner_refusing',
 ];
+const localGitWhy =
+  'This step requires a runner’s local Git repository. Fleet machines do not have that repository, and no live project-owned runner is available.';
+const localGitNext =
+  'Start a project-owned runner with the repository, or prepare hosted Code and create replacement work using it. Preparing Code does not change this existing work’s frozen workspace policy.';
+/** This diagnosis is specific to Fleet's known inability to supply a local checkout. */
+function localGitBlocked(
+  queue: readonly WorkflowDispatchCandidate[],
+  fleet: boolean,
+  ownRunnerLive: boolean,
+): WorkflowDispatchCandidate[] {
+  return fleet && !ownRunnerLive
+    ? queue.filter((item) => item.workspace.mode !== 'none' && item.workspace.driver === undefined)
+    : [];
+}
 const stuckLimit = 200;
 /** Why queued work does not start: the first of these that holds, in attention()'s order. */
 export type DispatchStall = 'dispatch_disabled' | 'no_live_runner' | 'runner_refusing';
@@ -313,11 +327,16 @@ export interface DispatchReading {
    * operator, while the scan still offers them.
    */
   deferred: { instanceId: string; attempts: number }[];
-  /** Ready work nobody took for quietReadySeconds, read for an operator only. */
+  /** Ready work waiting beyond quietReadySeconds, or immediately incompatible with Fleet; operator only. */
   quiet: {
     instanceId: string;
     since: string;
-    code: 'queued' | 'budget_exceeded' | 'usage_unavailable' | 'awaiting_operator';
+    code:
+      | 'queued'
+      | 'budget_exceeded'
+      | 'usage_unavailable'
+      | 'awaiting_operator'
+      | 'runner_incompatible';
   }[];
 }
 /**
@@ -1250,6 +1269,35 @@ export class SessionDispatch {
         next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
       });
     }
+    const rented = new Set(
+      (
+        await tx.all<{ runner_id: string }>(
+          'SELECT runner_id FROM session_managed_runners WHERE project_id=? AND runner_id IS NOT NULL',
+          projectId,
+        )
+      ).map((row) => row.runner_id),
+    );
+    const incompatible = new Set<string>();
+    if (dispatch.enabled)
+      for (const item of localGitBlocked(
+        queue,
+        this.hooks.managed.serves(projectId) && !dispatch.ownMachines,
+        runners.some((runner) => runner.live && !rented.has(runner.runnerId)),
+      )) {
+        const key = targetKey(item);
+        if (failing.has(key) || deferred.has(key)) continue;
+        incompatible.add(key);
+        add({
+          kind: 'work_blocked',
+          instanceId: item.instanceId,
+          expectedRevision: item.expectedRevision,
+          label: item.label,
+          since: item.updatedAt,
+          code: 'runner_incompatible',
+          why: localGitWhy,
+          next: localGitNext,
+        });
+      }
     for (const item of all) {
       const key = targetKey(item),
         operator = item.role === 'operator';
@@ -1257,6 +1305,7 @@ export class SessionDispatch {
         live.has(key) ||
         failing.has(key) ||
         deferred.has(key) ||
+        incompatible.has(key) ||
         !older(item.updatedAt, limits.quietReadySeconds)
       )
         continue;
@@ -1564,6 +1613,13 @@ export class SessionDispatch {
       else deferred.push({ instanceId: run.instanceId, attempts: last.length });
     }
     const quiet: DispatchReading['quiet'] = [];
+    const incompatible = new Set(
+      localGitBlocked(
+        dispatch.enabled ? (admissible?.queue ?? []) : [],
+        fleet && !dispatch.ownMachines,
+        own.length > 0,
+      ).map(targetKey),
+    );
     if (admissible)
       for (const item of admissible.all) {
         const key = targetKey(item),
@@ -1572,7 +1628,7 @@ export class SessionDispatch {
           admissible.live.has(key) ||
           failing.has(key) ||
           runs.has(key) ||
-          !older(item.updatedAt, limits.quietReadySeconds) ||
+          (!incompatible.has(key) && !older(item.updatedAt, limits.quietReadySeconds)) ||
           (!step && !dispatch.enabled)
         )
           continue;
@@ -1581,11 +1637,13 @@ export class SessionDispatch {
           since: item.updatedAt,
           code: step
             ? 'awaiting_operator'
-            : admissible.unaccounted.has(item.instanceId)
-              ? 'usage_unavailable'
-              : admissible.spent.has(item.instanceId)
-                ? 'budget_exceeded'
-                : 'queued',
+            : incompatible.has(key)
+              ? 'runner_incompatible'
+              : admissible.unaccounted.has(item.instanceId)
+                ? 'usage_unavailable'
+                : admissible.spent.has(item.instanceId)
+                  ? 'budget_exceeded'
+                  : 'queued',
         });
       }
     return {

@@ -3,6 +3,7 @@ import {
   MervError,
   type Caller,
   type WorkflowPolicy,
+  type WorkflowWorkspacePolicy,
   type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
@@ -58,6 +59,7 @@ async function fixture(
     maxLaunchFailures?: number;
     dispatchSchema?: number;
     config?: SessionsConfig;
+    workspace?: WorkflowWorkspacePolicy;
   } = {},
 ) {
   let clock = Date.parse('2026-01-01T00:00:00.000Z');
@@ -86,6 +88,7 @@ async function fixture(
       };
     },
     execution: {
+      ...(options.workspace ? { workspace: options.workspace } : {}),
       readOnly: false,
       tools: [
         {
@@ -1132,4 +1135,83 @@ test('a run of deferred preparations is shown as work nobody could take, with it
   assert.equal(report.total, 1, 'nothing counts it, so only this report asks for someone');
   assert.match(report.items[0].why, /could not prepare its checkout/);
   assert.match(report.items[0].next, /code\.status/);
+});
+
+test('Fleet local-Git incompatibility is immediate, per target, and clears with an own runner', async (t) => {
+  const f = await fixture(t, {
+    workspace: {
+      mode: 'ephemeral',
+      namespace: 'work',
+      base: 'central',
+      retain: false,
+    },
+  });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const work = await f.instance();
+  let served = true;
+  t.after(
+    f.sessions.registerManagedValidator({
+      current: async () => false,
+      admits: async () => false,
+      serves: (projectId) => served && projectId === f.owner.projectId,
+    }),
+  );
+  const blocked = async () =>
+    (await f.sessions.stuck(f.owner)).items.filter((item) => item.code === 'runner_incompatible');
+  assert.deepEqual(
+    (await blocked()).map((item) => [item.kind, item.instanceId]),
+    [['work_blocked', work.id]],
+  );
+  assert.match((await blocked())[0].next, /frozen workspace policy/);
+  const marks = async () => (await f.sessions.runningMarks(f.owner)).marks;
+  assert.match(JSON.stringify(await marks()), /Fleet cannot supply/);
+  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: true });
+  assert.deepEqual(await blocked(), [], 'own-machines mode does not dispatch to Fleet');
+  assert.doesNotMatch(JSON.stringify(await marks()), /Fleet cannot supply/);
+  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: false });
+  assert.equal((await blocked()).length, 1);
+  await f.sessions.setDispatch(f.owner, { enabled: false });
+  assert.deepEqual(await blocked(), []);
+  assert.deepEqual(await marks(), []);
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  served = false;
+  assert.deepEqual(await blocked(), []);
+  assert.deepEqual(await marks(), []);
+  served = true;
+  await f.sessions.heartbeatRunner(f.source, presence());
+  assert.deepEqual(await blocked(), []);
+  assert.deepEqual(await marks(), []);
+  f.advance(120_000);
+  assert.equal((await blocked()).length, 1, 'an offline own runner cannot supply the checkout');
+  assert.match(JSON.stringify(await marks()), /Fleet cannot supply/);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  const { worker } = await f.active();
+  assert.deepEqual(await blocked(), [], 'live work is not reported as waiting');
+  await f.sessions.describe(worker);
+});
+
+test('Fleet does not label scratch or hosted-driver work as needing a local repository', async (t) => {
+  for (const workspace of [
+    { mode: 'none' as const },
+    {
+      mode: 'ephemeral' as const,
+      namespace: 'work',
+      base: 'central' as const,
+      retain: false,
+      driver: 'code.v2',
+    },
+  ]) {
+    const f = await fixture(t, { workspace });
+    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.instance();
+    t.after(
+      f.sessions.registerManagedValidator({
+        current: async () => false,
+        admits: async () => false,
+        serves: () => true,
+      }),
+    );
+    assert.deepEqual((await f.sessions.stuck(f.owner)).items, []);
+    assert.deepEqual((await f.sessions.runningMarks(f.owner)).marks, []);
+  }
 });

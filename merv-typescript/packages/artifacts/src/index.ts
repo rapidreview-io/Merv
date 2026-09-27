@@ -395,11 +395,59 @@ export class ArtifactStore implements Artifacts {
     caller = structuredClone(caller);
     const artifact = await this.get(caller, artifactId);
     check(
-      !artifact.objectId && artifact.size <= 2_000_000,
+      artifact.size <= 2_000_000,
       'artifact_size',
       'Artifact exceeds the inline limit; use artifact.read with mode download',
     );
-    const bytes = await this.blobs.get(caller.projectId, artifact.hash);
+    let bytes: Buffer;
+    if (artifact.objectId) {
+      const storage = this.storage();
+      const { url } = await storage.download(caller.projectId, artifact.objectId);
+      // The storage adapter validates the signed origin. Do not follow a redirect to another one.
+      let response: Response;
+      try {
+        response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+      } catch {
+        check(false, 'storage_unavailable', 'Artifact download failed', 502);
+        throw new Error('unreachable');
+      }
+      check(response.ok && response.body, 'storage_unavailable', 'Artifact download failed', 502);
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let oversized = false;
+      const reader = response.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const part = Buffer.from(value);
+          size += part.length;
+          if (size > 2_000_000) {
+            oversized = true;
+            break;
+          }
+          chunks.push(part);
+        }
+      } catch {
+        check(false, 'storage_unavailable', 'Artifact download failed', 502);
+      }
+      if (oversized) await reader.cancel().catch(() => {});
+      check(
+        !oversized,
+        'artifact_size',
+        'Artifact exceeds the inline limit; use artifact.read with mode download',
+      );
+      bytes = Buffer.concat(chunks, size);
+      check(
+        bytes.length === artifact.size &&
+          createHash('sha256').update(bytes).digest('hex') === artifact.hash,
+        'artifact_hash_mismatch',
+        'Stored artifact bytes do not match their immutable metadata',
+        502,
+      );
+    } else {
+      bytes = await this.blobs.get(caller.projectId, artifact.hash);
+    }
     await this.get(caller, artifactId);
     // Any valid UTF-8 is text, whatever its media type. A text answer has to be one the caller
     // could send back: tool input refuses NUL in text, so bytes carrying it come back as base64

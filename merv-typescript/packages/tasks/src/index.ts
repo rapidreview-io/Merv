@@ -1236,6 +1236,13 @@ export class TaskService implements Tasks {
         );
         const git = input.workspace === 'git';
         if (git) this.requireCode();
+        const hosted = input.workspace === 'git' && (await this.requireCode().hosted(caller, tx));
+        check(
+          !hosted || input.baseTaskId === undefined,
+          'incompatible_workspace',
+          'Hosted Code cannot use the legacy baseTaskId workspace. Omit baseTaskId and keep the prerequisite in dependsOn; Code derives its accepted commit using the Fleet-supported driver.',
+          409,
+        );
         if (input.baseTaskId !== undefined) {
           const base = await tx.get<{ id: string }>(
             'SELECT id FROM tasks WHERE id=? AND project_id=?',
@@ -1339,10 +1346,6 @@ export class TaskService implements Tasks {
           'The pinned brief must contain the task goal and every Done-when check',
         );
         // Once Code keeps the project's history, new Git work lives there and nowhere else.
-        const hosted =
-          input.workspace === 'git' &&
-          input.baseTaskId === undefined &&
-          (await this.requireCode().hosted(caller, tx));
         const version = service
           ? this.artifacts.largeUploadAvailable
             ? 11

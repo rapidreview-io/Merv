@@ -894,11 +894,13 @@ test('A project imported into Code while a Git task is under way lets that task 
     ['legacy-local', undefined, 0, 'idle'],
   );
 
-  // New Git work lives in Code; work that names a base task is still the explicit legacy form.
+  // Reject the legacy form before it can silently select a Fleet-incompatible checkout.
   const hosted = await f.create({ workspace: 'git' });
   assert.equal(hosted.workflow.version, 5);
-  const based = await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] });
-  assert.equal(based.workflow.version, 4);
+  await assert.rejects(
+    async () => await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] }),
+    { code: 'incompatible_workspace' },
+  );
   assert.equal((await f.create()).workflow.version, 2);
   // Main is named but Code does not hold it, so the hosted task is blocked, never launched.
   await assert.rejects(async () => await f.lease(hosted), { code: 'code_base_pending' });

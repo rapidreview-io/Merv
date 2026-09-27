@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -13,7 +16,12 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { ExperimentService } from '@merv/experiments';
-import { check, type Caller, type ReviewApplication } from '@merv/contracts';
+import {
+  check,
+  type Caller,
+  type LargeArtifactStorage,
+  type ReviewApplication,
+} from '@merv/contracts';
 import type {
   Experiment,
   ExperimentAttach,
@@ -28,6 +36,84 @@ const report =
   '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
+
+test('small uploaded evidence is readable and attachable while actual oversized downloads are rejected', async (t) => {
+  const f = await fixture(t);
+  const bytes = Buffer.from(`${plan}\n${'Evidence for the paired comparison. '.repeat(1200)}`);
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  let served = bytes;
+  let requests = 0;
+  const server = createServer((_request, response) => {
+    requests++;
+    response.end(served);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/evidence`;
+  const storage: LargeArtifactStorage = {
+    async begin(_projectId, uploadId) {
+      return {
+        objectId: 'obj_plan',
+        status: {
+          uploadId,
+          partSize: bytes.length,
+          partCount: 1,
+          parts: [],
+          completedParts: [1],
+          nextPart: null,
+        },
+      };
+    },
+    async resume() {
+      throw new Error('unexpected resume');
+    },
+    async complete() {
+      return { objectId: 'obj_plan', size: bytes.length, sha256: hash, state: 'available' };
+    },
+    async download() {
+      return { url, expiresAt: new Date(Date.now() + 50_000).toISOString() };
+    },
+  };
+  const unbind = f.artifacts.bindLarge(storage);
+  t.after(unbind);
+  const begun = await f.artifacts.uploadBegin(f.producer, {
+    title: 'plan.md',
+    size: bytes.length,
+    sha256: hash,
+    mediaType: 'text/markdown',
+  });
+  const artifact = await f.artifacts.uploadComplete(f.producer, begun.uploadId);
+  assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
+  const outsider = await f.scope.bootstrap({
+    projectName: 'Other project',
+    actorName: 'Other owner',
+  });
+  await assert.rejects(
+    f.artifacts.read({ actorId: outsider.actor.id, projectId: outsider.project.id }, artifact.id),
+    code('not_found'),
+  );
+  assert.equal(requests, 1);
+  const experiment = await f.create();
+  const attached = await f.experiments.attach(f.producer, {
+    experimentId: experiment.id,
+    attemptIndex: experiment.attempt.index,
+    expectedRevision: experiment.workflow.revision,
+    artifactId: artifact.id,
+    role: 'plan',
+    path: 'plan.md',
+    requestId: f.id(),
+  });
+  assert.equal(attached.artifactId, artifact.id);
+  served = Buffer.alloc(bytes.length, 97);
+  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_hash_mismatch'));
+  served = Buffer.alloc(2_000_001, 97);
+  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_size'));
+});
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
     state = await openState(dir);

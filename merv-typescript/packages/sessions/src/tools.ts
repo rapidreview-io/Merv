@@ -4,6 +4,7 @@ import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { budgetSchema, dispatchSchema, haltSchema, releaseHoldSchema } from './dispatch.js';
 import type { SessionBudgetInput, Sessions, UsageQuery } from './types.js';
+import { systemStatus } from './system-status.js';
 
 /** Optional tools over usage, budgets and stuck work; authority lives with the Sessions provider. */
 export const sessionsToolsPlugin = {
@@ -11,6 +12,16 @@ export const sessionsToolsPlugin = {
   inject: ['sessions', 'tools'],
   apply(ctx: Context) {
     const sessions = ctx.sessions;
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'system.status',
+        description:
+          'Read this project’s automatic dispatch state, Fleet allocations when Fleet is installed, runners, sessions, caller-admissible waiting work and blockers. The server checks project access; blockers include work whose workspace driver cannot run on available machines.',
+        readOnly: true,
+        inputSchema: z.object({}).strict(),
+        handler: async (caller: Caller) => await systemStatus(caller, sessions, ctx.get('fleet')),
+      }),
+    );
     ctx.effect(() =>
       ctx.tools.register({
         name: 'usage.read',

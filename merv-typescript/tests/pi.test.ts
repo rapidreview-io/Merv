@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import test, { type TestContext } from 'node:test';
 import { z } from 'zod';
+import type { Context } from 'cordis';
+import type { Sessions } from '@merv/sessions/types';
 import {
   check,
   MervError,
@@ -16,6 +18,7 @@ import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
+import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
@@ -23,6 +26,43 @@ import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fi
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
+
+test('Pi offers and runs system.status under the real conversation policy', async (t) => {
+  const f = await fixture(t);
+  const sessions = {
+    projectStatus: async (caller: Caller) => {
+      assert.equal(caller.projectId, f.operator.projectId);
+      return {
+        observedAt: '2026-09-26T00:00:00Z',
+        dispatch: { enabled: false, ownMachines: true, fleet: false },
+        runnerTotal: 0,
+        runners: [],
+        liveSessionCount: 0,
+        sessionTotal: 0,
+        sessions: [],
+        queueTotal: 0,
+        queue: [],
+      };
+    },
+    stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
+  } as unknown as Sessions;
+  sessionsToolsPlugin.apply({
+    sessions,
+    tools: f.tools,
+    get: (name: string) => (name === 'fleet' ? f.fleet : undefined),
+    effect: (register: () => unknown) => register(),
+  } as unknown as Context);
+  const bound = await f.begun(f.operator);
+  assert.ok(bound.work.tools.some((tool) => tool.name === 'system.status'));
+  assert.deepEqual(
+    (
+      (await f.pi.tool(bound.token, { ...bound.input, name: 'system.status', input: {} })) as {
+        dispatch: unknown;
+      }
+    ).dispatch,
+    { enabled: false, state: 'paused', ownMachines: true, fleet: false },
+  );
+});
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
   const f = await fixture(t);

@@ -679,15 +679,20 @@ export class ExperimentService implements Experiments {
           'Git experiments require Code captures',
           503,
         );
+        const hosted = input.workspace === 'git' && (await this.code!.hosted(caller, tx));
+        check(
+          !hosted || input.baseTaskId === undefined,
+          'incompatible_workspace',
+          'Hosted Code cannot use the legacy baseTaskId workspace. Omit baseTaskId and keep the prerequisite in dependsOn; Code derives its accepted commit using the Fleet-supported driver.',
+          409,
+        );
         const workflow = await (
           await this.program.handleFor(
             programVersion(
               input.workspace,
               input.baseTaskId,
               // Once Code keeps the project's history, new Git work lives there and nowhere else.
-              input.workspace === 'git' &&
-                input.baseTaskId === undefined &&
-                (await this.code!.hosted(caller, tx)),
+              hosted,
               this.artifacts.largeUploadAvailable,
             ),
           )
