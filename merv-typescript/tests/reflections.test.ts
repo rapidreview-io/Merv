@@ -130,9 +130,61 @@ test('reflection lens context includes project paper goals and revision', async 
   assert.match(context.prompt, /Project paper and document revisions/);
   assert.match(context.prompt, /Explain the project-level clustering result/);
   assert.match(context.prompt, /"revision":1/);
-  assert.match(context.prompt, /project\.records: it includes every task and experiment record/);
-  assert.match(context.prompt, /Do not call task\.list just to repeat that snapshot/);
-  assert.match(context.prompt, /refresh the live inventory or relevant records when needed/);
+  assert.match(context.prompt, /project\.records; task\.list repeats its task records/);
+  assert.match(context.prompt, /Refresh live records when needed/);
+});
+test('large paper and five lens reports remain reviewable within the ranked context budget', async (t) => {
+  const f = await fixture(t);
+  for (const kind of ['methods', 'results'] as const)
+    await f.app.ctx.paper.patch(f.owner, {
+      kind,
+      expectedRevision: 0,
+      requestId: `large-${kind}`,
+      changes: [
+        { id: `${kind}-detail`, title: `${kind} detail`, content: `${kind} ${'x'.repeat(13_000)}` },
+      ],
+    });
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'large-paper-wave' });
+  const reports: Artifact[] = [];
+  for (const [index, lens] of wave.lenses.entries()) {
+    const caller = await f.actor(`Large lens ${index}`);
+    const artifact = await f.app.ctx.artifacts.create(caller, {
+      title: `${lens.perspective} report`,
+      content: `# Summary\n${lens.perspective} verified source ${'y'.repeat(8_000)}`,
+    });
+    reports.push(artifact);
+    await f.app.ctx.reflections.submitLens(caller, {
+      lensId: lens.id,
+      artifactId: artifact.id,
+      expectedRevision: 0,
+      requestId: `large-lens-${index}`,
+    });
+    if (index === 0) {
+      const peerContext = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[1]!.id))
+        .context!;
+      assert.doesNotMatch(peerContext.prompt, new RegExp(artifact.id));
+    }
+  }
+  const synthesis = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
+  assert.ok(synthesis.prompt.length <= 32_000);
+  assert.ok(reports.every((report) => synthesis.sources.some((source) => source.id === report.id)));
+  assert.match(synthesis.prompt, /paper:methods:current:1/);
+  assert.match(synthesis.prompt, /paper:results:current:1/);
+  assert.ok(synthesis.omitted.length > 0, 'overflow is reported by exact item ID');
+  assert.ok(
+    reports.some((report) => synthesis.omitted.some((id) => id.includes(report.id))),
+    'lens bodies that do not fit stay referenced',
+  );
+  const first = await f.app.ctx.artifacts.read(f.owner, reports[0].id);
+  assert.match(first.content, /verified source/);
+  const submitted = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
+  const reviewer = await f.actor('Independent large-paper reviewer', 'reviewer');
+  const review = (await f.app.ctx.workflows.assignment(reviewer, submitted.id)).context!;
+  assert.ok(review.prompt.length <= 32_000);
+  assert.match(review.prompt, /Exact independent review criteria/);
+  assert.ok(review.sources.some((source) => source.id === submitted.report!.id));
+  assert.ok(review.sources.some((source) => source.id === submitted.changeSpec!.id));
+  assert.ok(reports.every((report) => review.sources.some((source) => source.id === report.id)));
 });
 test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
   const f = await fixture(t);
@@ -651,16 +703,12 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
   const wave = await f.app.ctx.reflections.get(f.owner, cycle.reflectionId!);
   const lens = wave.lenses[0]!;
   const context = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.ok(!context.omitted.includes('previousCycle'));
-  assert.match(context.prompt, /Predecessor cycle digest \(decisions already made/);
+  assert.match(context.prompt, /predecessor cycle of reflection/);
   assert.ok(context.prompt.includes('The first question was answered elsewhere.'));
   assert.match(context.prompt, /research\.lineage/);
-  assert.match(context.prompt, /research\.list identifies this wave's current cycle/);
-  assert.match(
-    context.prompt,
-    /researchDependencies are the exact selected task and experiment IDs/,
-  );
-  assert.match(context.prompt, /paper content captured in this assignment may lag those results/);
+  assert.match(context.prompt, /research\.list identifies this wave's cycle/);
+  assert.match(context.prompt, /researchDependencies name the selected work/);
+  assert.match(context.prompt, /Paper content can lag accepted current-cycle results/);
   assert.ok(context.sources.some((source) => source.id === ended.digest!.id));
   assert.ok(Buffer.byteLength(context.prompt) < 16 * 1024);
 

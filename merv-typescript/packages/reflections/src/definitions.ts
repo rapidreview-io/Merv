@@ -181,3 +181,18 @@ export const DEPENDENCY_SAFE_RECIPES: TaskTypeDefinition[] = PROJECT_PAPER_RECIP
           },
         },
 );
+
+/** Ranked source items replace all-or-nothing sections without changing published recipes. */
+export const HIERARCHICAL_RECIPES: TaskTypeDefinition[] = DEPENDENCY_SAFE_RECIPES.map(
+  (definition) => ({
+    ...definition,
+    version: definition.version + 1,
+    recipe: {
+      ...definition.recipe,
+      instructions: `${definition.recipe.instructions} The context first lists every source with its retrieval tool and then includes whole source bodies in priority order. An item absent from Selected full content is still evidence to open with its retrieval tool. Read the live inventory with project.records; task.list repeats its task records. If Research is available, research.list identifies this wave's cycle by reflectionId and its researchDependencies name the selected work; research.lineage shows predecessor cycle digests. Verify those tasks and experiments through task.get, experiment.get_state, review.get and artifact.read before saying work was not done. Paper content can lag accepted current-cycle results; reconcile record and evidence times with paper.read before concluding. Refresh live records when needed.`,
+      sections: definition.recipe.sections.map((section) =>
+        section.key === 'research' ? { ...section, required: false } : section,
+      ),
+    },
+  }),
+);

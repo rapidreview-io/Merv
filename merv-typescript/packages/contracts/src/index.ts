@@ -1761,13 +1761,24 @@ export interface TaskTypeDefinition {
   kind: 'work' | 'review';
   recipe: ContextRecipe;
 }
+export interface RankedContextItem {
+  id: string;
+  title: string;
+  priority: number;
+  content: { text: string } | { artifactId: string };
+  revision?: number;
+  hash?: string;
+  association?: string;
+  refs: { tool: string; input: Record<string, string | number | boolean | null> }[];
+}
 export type ContextInput =
   | { text: string; omitted?: string[] }
   | {
       artifactIds: string[];
       /** Text is strict UTF-8; auto retains binary references; references never embeds bytes. */
       mode?: 'text' | 'auto' | 'references';
-    };
+    }
+  | { rankedItems: RankedContextItem[] };
 export interface ContextBuild {
   subject: { id: string; revision: number; claimId?: string };
   inputs: Record<string, ContextInput>;

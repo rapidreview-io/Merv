@@ -152,6 +152,135 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
   }
 });
 
+test('ranked context reserves every authorized retrieval reference before promoting whole high-priority bodies', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-ranked-context-'));
+  const state = await openState(directory);
+  const scope = await createService(new ProjectScope(state));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
+  try {
+    const owner = await scope.bootstrap({ projectName: 'Ranked', actorName: 'Owner' });
+    const foreign = await scope.bootstrap({ projectName: 'Foreign', actorName: 'Foreign' });
+    const caller = { actorId: owner.actor.id, projectId: owner.project.id };
+    const low = await artifacts.create(caller, {
+      title: 'Low evidence',
+      content: 'L'.repeat(1_000),
+    });
+    const high = await artifacts.create(caller, {
+      title: 'High evidence',
+      content: 'HIGH_EVIDENCE',
+    });
+    const outside = await artifacts.create(
+      { actorId: foreign.actor.id, projectId: foreign.project.id },
+      { title: 'Foreign', content: 'private' },
+    );
+    const recipe = await builder.register({
+      name: 'test.ranked',
+      version: 1,
+      kind: 'work',
+      recipe: {
+        instructions: 'Judge source evidence.',
+        sections: [
+          { key: 'early', title: 'Early', required: true },
+          { key: 'late', title: 'Late', required: true },
+        ],
+        outputInstructions: 'Cite exact sources.',
+        maxChars: 1_800,
+      },
+    });
+    const ranked = (artifact: typeof low, priority: number) => ({
+      id: `artifact:${artifact.id}`,
+      title: artifact.title,
+      priority,
+      content: { artifactId: artifact.id },
+      hash: artifact.hash,
+      association: 'selected source',
+      refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
+    });
+    const input = {
+      subject: { id: 'ranked-subject', revision: 1 },
+      inputs: {
+        early: { rankedItems: [ranked(low, 1)] },
+        late: { rankedItems: [ranked(high, 10)] },
+      },
+      requestId: 'ranked-build',
+    };
+    const built = await recipe.build(caller, input);
+    assert.match(built.prompt, /HIGH_EVIDENCE/);
+    assert.doesNotMatch(built.prompt, /L{100}/);
+    assert.ok(built.prompt.indexOf(low.id) < built.prompt.indexOf('HIGH_EVIDENCE'));
+    assert.ok(built.prompt.indexOf(high.id) < built.prompt.indexOf('HIGH_EVIDENCE'));
+    assert.deepEqual(
+      built.sources.map((source) => source.id),
+      [low.id, high.id],
+    );
+    assert.deepEqual(built.omitted, [`artifact:${low.id}`]);
+    assert.ok(built.prompt.length <= 1_800);
+    assert.deepEqual(await recipe.build(caller, input), built);
+    await assert.rejects(
+      recipe.build(caller, {
+        ...input,
+        requestId: 'foreign-ranked',
+        inputs: { ...input.inputs, early: { rankedItems: [ranked(outside, 1)] } },
+      }),
+      /not found/i,
+    );
+    await assert.rejects(
+      recipe.build(caller, {
+        ...input,
+        requestId: 'ranked-minimum-overflow',
+        inputs: {
+          early: {
+            rankedItems: Array.from({ length: 10 }, (_, i) => ({
+              ...ranked(low, 1),
+              id: `item-${i}`,
+            })),
+          },
+          late: { rankedItems: [ranked(high, 10)] },
+        },
+      }),
+      /Minimum context references exceed the recipe budget/,
+    );
+    const large = await artifacts.create(caller, {
+      title: 'Large text evidence',
+      content: 'Z'.repeat(70_000),
+    });
+    const binary = await artifacts.create(caller, {
+      title: 'Binary evidence',
+      mediaType: 'application/octet-stream',
+      encoding: 'base64',
+      content: Buffer.from([0, 1, 2, 3]).toString('base64'),
+    });
+    const wider = await builder.register({
+      name: 'test.ranked.large',
+      version: 1,
+      kind: 'work',
+      recipe: {
+        instructions: 'Inspect evidence.',
+        sections: [{ key: 'evidence', title: 'Evidence', required: true }],
+        outputInstructions: 'Cite sources.',
+        maxChars: 30_000,
+      },
+    });
+    const largeContext = await wider.build(caller, {
+      subject: { id: 'large', revision: 1 },
+      inputs: { evidence: { rankedItems: [ranked(large, 10), ranked(binary, 9)] } },
+      requestId: 'large-ranked-build',
+    });
+    assert.ok(largeContext.prompt.length <= 30_000);
+    assert.doesNotMatch(largeContext.prompt, /Z{100}/);
+    assert.ok(largeContext.prompt.includes(large.id));
+    assert.ok(largeContext.prompt.includes(binary.id));
+    assert.deepEqual(largeContext.omitted, [`artifact:${large.id}`, `artifact:${binary.id}`]);
+  } finally {
+    builder.close();
+    await state.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('task types supply distinct recipes; checkpoints and revoked review recovery produce a fresh traceable context', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-flow-'));
   let app = await createApp({ directory, api: false });

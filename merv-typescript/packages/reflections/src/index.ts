@@ -1,10 +1,4 @@
-import {
-  excludedFromReview,
-  releasedLease,
-  visible,
-  everyAsync,
-  boundedPaperContext,
-} from '@merv/contracts';
+import { excludedFromReview, releasedLease, visible, everyAsync, sha256Hex } from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
@@ -16,12 +10,12 @@ import {
   inTransaction,
   MervError,
   now,
-  reviewHistory,
   type Artifact,
   type Artifacts,
   type Caller,
   type ContextBuilder,
   type ContextInput,
+  type RankedContextItem,
   type ContextRegistration,
   type ProcessGraph,
   type ReviewApplication,
@@ -50,6 +44,7 @@ import {
   WORKSPACE_RECIPES,
   PROJECT_PAPER_RECIPES,
   DEPENDENCY_SAFE_RECIPES,
+  HIERARCHICAL_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
   REFLECTION_WORKFLOW_ENDABLE,
@@ -66,9 +61,6 @@ import type {
   ReflectionSubmit,
 } from './types.js';
 export type * from './types.js';
-
-/** What the earlier rounds may take of a 24000-character recipe, so they never crowd out the assignment. */
-const REVIEW_HISTORY_CHARS = 6000;
 
 interface WaveRow {
   id: string;
@@ -167,6 +159,8 @@ export class ReflectionService implements Reflections {
         ))
           this.historicalContexts.push(await contextBuilder.register(recipe));
         for (const recipe of DEPENDENCY_SAFE_RECIPES)
+          this.historicalContexts.push(await contextBuilder.register(recipe));
+        for (const recipe of HIERARCHICAL_RECIPES)
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
         for (const definition of [
           LENS_WORKFLOW,
@@ -579,79 +573,211 @@ export class ReflectionService implements Reflections {
       context.snapshot.state === 'in_review' && wave.review_id
         ? await this.reviews.get(context.caller, wave.review_id, context.tx)
         : null;
-    const lenses = (await this.lensRows(wave, context.tx))
-      .filter((entry) => entry.artifact)
-      .map((entry) => (JSON.parse(entry.artifact!) as Artifact).id);
-    const history = reviewHistory(
-      (JSON.parse(wave.feedback) as ReviewRequest[]).map((entry) => ({ review: entry })),
-      REVIEW_HISTORY_CHARS,
-    );
+    const lensRows = (await this.lensRows(wave, context.tx)).filter((entry) => entry.artifact);
+    const reviews = JSON.parse(wave.feedback) as ReviewRequest[];
     const previousCycle = (
       lens ? await this.workflows.get(context.caller, wave.id, context.tx) : context.snapshot
     ).data.previousCycleDigestId;
-    return {
-      assignment: {
-        text: JSON.stringify({
-          reflectionId: wave.id,
-          title: wave.title,
-          attempt: wave.attempt,
-          workflow: context.snapshot,
-          ...(context.snapshot.data.requirePlan
-            ? {
-                nextWave:
-                  'Automatic research: submit an application/json change specification with an explicit continue or stop decision. A prose-only specification cannot finish this wave.',
-              }
-            : {}),
-          ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
-        }),
-      },
-      projectPaper: {
-        text: JSON.stringify({
-          documents: boundedPaperContext(
-            (await this.paper.read(context.caller, context.tx)).documents,
-            20_000,
-          ),
-        }),
-      },
-      research: {
-        text: `Read the live project inventory with project.records: it includes every task and experiment record, and its tasks are the same records task.list returns. Do not call task.list just to repeat that snapshot. If Research is available, research.list identifies this wave's current cycle by matching reflectionId; its researchDependencies are the exact selected task and experiment IDs. Open that work with task.get and experiment.get_state, then inspect relevant delivery, review and result artifacts with review.get and artifact.read. Before saying a diagnostic or method was not performed, check completed current-cycle tasks and their accepted evidence: the paper content captured in this assignment may lag those results. Compare record and evidence times, cite what you verified, and distinguish a paper section awaiting reconciliation from missing work. Use paper.read for the current paper. Existing work can progress during this wave; refresh the live inventory or relevant records when needed before concluding. Identify the evidence you actually examined and distinguish completed results from work in progress. No corpus is embedded in this assignment.${
-          // Only a wave Research started carries a digest, so only there is the tool named.
-          typeof previousCycle === 'string'
-            ? ' This research cycle follows an earlier one: research.lineage lists the cycles before it with their digests.'
-            : ''
-        }`,
-      },
-      ...(!lens ? { lenses: { artifactIds: lenses, mode: 'references' as const } } : {}),
-      ...(review && submission
+    const bucket = (rankedItems: RankedContextItem[]): ContextInput => ({ rankedItems });
+    const item = (
+      id: string,
+      title: string,
+      priority: number,
+      content: string,
+      association: string,
+      tool: string,
+      input: Record<string, string | number | boolean | null>,
+      revision?: number,
+    ): RankedContextItem => ({
+      id,
+      title,
+      priority,
+      content: { text: content },
+      ...(revision === undefined ? {} : { revision }),
+      hash: sha256Hex(Buffer.from(content, 'utf8')),
+      association,
+      refs: [{ tool, input }],
+    });
+    const artifactItem = (
+      artifact: Artifact,
+      priority: number,
+      association: string,
+    ): RankedContextItem => ({
+      id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(association)).slice(0, 12)}`,
+      title: artifact.title,
+      priority,
+      content: { artifactId: artifact.id },
+      hash: artifact.hash,
+      association,
+      refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
+    });
+    const assignment = JSON.stringify({
+      reflectionId: wave.id,
+      title: wave.title,
+      attempt: wave.attempt,
+      workflow: context.snapshot,
+      ...(context.snapshot.data.requirePlan
         ? {
-            submission: {
-              artifactIds: [submission.report.id, submission.changeSpec.id],
-              mode: 'references' as const,
-            },
-            assessment: { text: JSON.stringify(review) },
+            nextWave:
+              'Automatic research: submit an application/json change specification with an explicit continue or stop decision. A prose-only specification cannot finish this wave.',
           }
         : {}),
-      feedback: {
-        text: JSON.stringify({
-          previousReviews: (
-            JSON.parse(wave.feedback) as { id: string; synopsis: string; notes: string }[]
-          )
-            .slice(-1)
-            .map(({ id, synopsis }) => ({ id, synopsis })),
-          recovery: review?.recovery ?? null,
-        }),
-      },
-      // Authors only: a reviewer judges the submission in front of them, not earlier verdicts.
-      ...(!review && history.rounds.length ? { history: { text: JSON.stringify(history) } } : {}),
-      ...(typeof previousCycle === 'string'
-        ? { previousCycle: { artifactIds: [previousCycle], mode: 'auto' as const } }
-        : {}),
+      ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
+    });
+    const documents = (await this.paper.read(context.caller, context.tx)).documents;
+    const paperItems: RankedContextItem[] = [];
+    for (const [kind, document] of Object.entries(documents)) {
+      for (const [status, revision, publication] of [
+        ['current', document.current, null],
+        ['published', document.published?.document, document.published?.publication ?? null],
+      ] as const) {
+        if (!revision) continue;
+        for (const [index, section] of revision.sections.entries()) {
+          const paperItem = item(
+            `paper:${kind}:${status}:${revision.revision}:${index}:${section.id}`,
+            `${kind} ${status}: ${section.title || section.id}`,
+            kind === 'problem'
+              ? status === 'current'
+                ? 850
+                : 450
+              : status === 'current'
+                ? 600
+                : 250,
+            section.content,
+            `${kind}/${status}; section ${section.id}; updated ${revision.updatedAt ?? 'unknown'}${publication ? `; publication ${publication.id}` : ''}${status === 'published' && document.current.sections.some((current) => current.content === section.content) ? '; exact content also in current revision' : ''}`,
+            'paper.read',
+            status === 'current' ? { kind, section: section.id } : { kind, history: true },
+            revision.revision,
+          );
+          if (status === 'current')
+            paperItem.refs.push({ tool: 'paper.read', input: { kind, history: true } });
+          paperItems.push(paperItem);
+        }
+      }
+    }
+    if (!paperItems.length)
+      paperItems.push(
+        item(
+          `paper:workspace:${wave.id}`,
+          'Project paper workspace',
+          500,
+          JSON.stringify(documents),
+          `reflection ${wave.id}; paper workspace without sections`,
+          'paper.read',
+          {},
+        ),
+      );
+    const lensItems = lensRows.map((entry) =>
+      artifactItem(
+        JSON.parse(entry.artifact!) as Artifact,
+        800,
+        `reflection ${wave.id}; ${entry.perspective} lens ${entry.id}; attempt ${entry.attempt}`,
+      ),
+    );
+    const reviewItems = reviews.map((entry, index) =>
+      item(
+        `review:${entry.id}`,
+        `Reflection review ${index + 1}`,
+        index === reviews.length - 1 ? 700 : 350,
+        JSON.stringify(entry),
+        `reflection ${wave.id}; earlier review round ${index + 1}`,
+        'review.get',
+        { reviewId: entry.id },
+      ),
+    );
+    const reviewerFeedback =
+      review && (reviews.length || review.recovery)
+        ? [
+            {
+              ...item(
+                `review:${review.id}:limited-feedback`,
+                'Prior review synopsis and current recovery',
+                700,
+                JSON.stringify({
+                  previousReviews: reviews.slice(-1).map(({ id, synopsis }) => ({ id, synopsis })),
+                  recovery: review.recovery ?? null,
+                }),
+                `reflection ${wave.id}; limited reviewer feedback`,
+                'review.get',
+                { reviewId: review.id },
+              ),
+              refs: [
+                ...(reviews.length
+                  ? [{ tool: 'review.get', input: { reviewId: reviews.at(-1)!.id } }]
+                  : []),
+                { tool: 'review.get', input: { reviewId: review.id } },
+              ],
+            },
+          ]
+        : [];
+    const previousArtifact =
+      typeof previousCycle === 'string'
+        ? await this.artifacts.get(context.caller, previousCycle, context.tx)
+        : null;
+    return {
+      assignment: bucket([
+        item(
+          `reflection:${wave.id}:${lens ? `lens:${lens.id}` : 'wave'}:${context.snapshot.revision}`,
+          lens ? `${lens.perspective} lens assignment` : 'Reflection assignment',
+          1000,
+          assignment,
+          `reflection ${wave.id}; attempt ${wave.attempt}`,
+          lens ? 'reflection.lens' : 'reflection.get',
+          lens ? { lensId: lens.id } : { reflectionId: wave.id },
+          context.snapshot.revision,
+        ),
+      ]),
+      projectPaper: bucket(paperItems),
+      research: bucket([]),
+      lenses: bucket(lens ? [] : lensItems),
+      submission: bucket(
+        review && submission
+          ? [
+              artifactItem(submission.report, 780, `reflection ${wave.id}; synthesis report`),
+              artifactItem(
+                submission.changeSpec,
+                780,
+                `reflection ${wave.id}; change specification`,
+              ),
+            ]
+          : [],
+      ),
+      assessment: bucket(
+        review
+          ? [
+              item(
+                `review:${review.id}:assessment`,
+                'Exact independent review criteria',
+                950,
+                JSON.stringify(review),
+                `reflection ${wave.id}; current review`,
+                'review.get',
+                { reviewId: review.id },
+              ),
+            ]
+          : [],
+      ),
+      feedback: bucket(review ? reviewerFeedback : reviewItems.slice(-1)),
+      ...(!review ? { history: bucket(reviewItems.slice(0, -1)) } : {}),
+      previousCycle: bucket(
+        previousArtifact
+          ? [artifactItem(previousArtifact, 300, `predecessor cycle of reflection ${wave.id}`)]
+          : [],
+      ),
     };
   }
   private inputIds(inputs: Record<string, ContextInput>): string[] {
     return [
       ...new Set(
-        Object.values(inputs).flatMap((input) => ('artifactIds' in input ? input.artifactIds : [])),
+        Object.values(inputs).flatMap((input) =>
+          'artifactIds' in input
+            ? input.artifactIds
+            : 'rankedItems' in input
+              ? input.rankedItems.flatMap((item) =>
+                  'artifactId' in item.content ? [item.content.artifactId] : [],
+                )
+              : [],
+        ),
       ),
     ];
   }
@@ -687,7 +813,7 @@ export class ReflectionService implements Reflections {
     const inputs = context.caller.session
       ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipe = DEPENDENCY_SAFE_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipe = HIERARCHICAL_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(recipe.name)!
       .preview(
