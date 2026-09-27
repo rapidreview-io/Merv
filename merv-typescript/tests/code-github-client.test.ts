@@ -192,18 +192,19 @@ test('branch names are encoded as a single REST path parameter', async (t) => {
   );
 });
 
-test('generic App statuses verify the exact context, commit and issuer before and after emission', async (t) => {
+test('commit-scoped GitHub statuses omit sha; App approval still verifies context and issuer', async (t) => {
   const status = { context: 'build/reproducibility', description: 'Verified by the build owner' };
-  let statuses = [
-    { context: status.context, sha, state: 'success', creator: { login: 'other[bot]' } },
-  ];
+  let statuses = [{ context: status.context, state: 'success', creator: { login: 'other[bot]' } }];
   const emitted: unknown[] = [];
   const api = client((url, init) => {
-    if (url.pathname.endsWith('/statuses')) return statuses;
+    if (url.pathname.endsWith('/statuses')) {
+      assert.equal(url.pathname, `/repos/example/research/commits/${sha}/statuses`);
+      return statuses;
+    }
     assert.equal(url.pathname, `/repos/example/research/statuses/${sha}`);
     const body = JSON.parse(String(init.body));
     emitted.push(body);
-    statuses = [{ ...body, sha, creator: { login: 'merv[bot]' } }];
+    statuses = [{ ...body, creator: { login: 'merv[bot]' } }];
     return statuses[0];
   });
   t.after(() => api.close());
@@ -217,8 +218,51 @@ test('generic App statuses verify the exact context, commit and issuer before an
     true,
   );
   assert.deepEqual(emitted, [{ state: 'success', ...status }]);
-  statuses[0].sha = base;
+  statuses[0].creator.login = 'other[bot]';
   assert.equal(await api.appStatus('private-test-token', 'example/research', sha, status), false);
+  statuses = [{ context: 'other/check', state: 'success', creator: { login: 'merv[bot]' } }];
+  assert.equal(await api.appStatus('private-test-token', 'example/research', sha, status), false);
+});
+
+test('required checks accept real commit-scoped status shape and reject wrong or failed contexts', async (t) => {
+  let statuses = [{ context: 'merv/consolidation-approved', state: 'success' }];
+  const api = client((url) => {
+    assert.equal(url.pathname, `/repos/example/research/commits/${sha}/statuses`);
+    return statuses;
+  });
+  t.after(() => api.close());
+  assert.equal(
+    await api.requiredChecks(
+      'private-test-token',
+      'example/research',
+      sha,
+      ['merv/consolidation-approved'],
+      [],
+    ),
+    true,
+  );
+  statuses = [{ context: 'other/check', state: 'success' }];
+  assert.equal(
+    await api.requiredChecks(
+      'private-test-token',
+      'example/research',
+      sha,
+      ['merv/consolidation-approved'],
+      [],
+    ),
+    false,
+  );
+  statuses = [{ context: 'merv/consolidation-approved', state: 'failure' }];
+  assert.equal(
+    await api.requiredChecks(
+      'private-test-token',
+      'example/research',
+      sha,
+      ['merv/consolidation-approved'],
+      [],
+    ),
+    false,
+  );
 });
 
 test('rules inspect a caller-selected App status and comments preserve caller text once', async (t) => {

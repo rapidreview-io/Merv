@@ -625,10 +625,11 @@ export class GitHubClient {
     const approved =
       !!found &&
       githubResponse(
-        z.object({ sha: githubOid, state: z.string(), creator: z.object({ login: z.string() }) }),
+        // GitHub's commit-scoped statuses response omits sha on each status entry.
+        // The fixed /commits/{sha}/statuses route above binds the result to this commit.
+        z.object({ state: z.string(), creator: z.object({ login: z.string() }) }),
         found,
-      ).sha === sha &&
-      (found as { state: string }).state === 'success' &&
+      ).state === 'success' &&
       (found as { creator: { login: string } }).creator.login === `${this.#config.appSlug}[bot]`;
     if (approved || !emit) return approved;
     await this.request(`${path}/statuses/${sha}`, token, {
@@ -733,9 +734,10 @@ export class GitHubClient {
     return required.every((name) => {
       const latest = statuses.find(
         (status) => (status as { context?: string }).context === name,
-      ) as { sha?: string; state?: string } | undefined;
+      ) as { state?: string } | undefined;
       return (
-        (latest?.sha === sha && latest.state === 'success') ||
+        // The commit-scoped endpoint supplies the SHA; individual statuses have none.
+        latest?.state === 'success' ||
         checks.some(
           (c) =>
             c.name === name &&
