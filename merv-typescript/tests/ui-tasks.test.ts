@@ -663,6 +663,15 @@ test('a form that has locked its fields locks the records chosen in them too', a
 
 test('a new cycle names its prerequisites by picking them, and the tool is sent their ids', async (t) => {
   t.after(async () => await unmount());
+  serve('/tools/code.status', {
+    body: {
+      result: {
+        project: { durability: 'code' },
+        mirror: { blockedBy: 'github_automation_disabled' },
+        publication: { controls: { blockers: ['code_publication_canary_required'] } },
+      },
+    },
+  });
   const listed = (id: string, state: string) => ({ id, workflow: { state } });
   serve('/tools/task.list', {
     body: {
@@ -685,6 +694,14 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
     createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved: () => saved++ })),
   );
   await settle(10);
+  const preflight = document.querySelector('[role="note"]')!;
+  assert.match(preflight.textContent!, /Research can proceed/);
+  assert.match(preflight.textContent!, /Repository automation does not permit publishing/);
+  assert.match(preflight.textContent!, /required merge-safety check has not been recorded/);
+  assert.deepEqual(
+    [...preflight.querySelectorAll('a')].map((link) => link.getAttribute('href')),
+    ['/settings/integrations', '/code'],
+  );
   assert.equal(document.querySelector('textarea'), null, 'nowhere to type an id');
   const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
   const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
@@ -724,6 +741,55 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
   assert.equal(sent?.automatic, true);
   assert.equal(sent?.maxCycles, 10);
   assert.equal(saved, 1);
+});
+
+test('new cycle publication preflight does not blame a transient mirror outage on the operator', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/task.list', { body: { result: [] } });
+  serve('/tools/experiment.list', { body: { result: [] } });
+  serve('/tools/code.status', {
+    body: {
+      result: {
+        project: { durability: 'code' },
+        mirror: { blockedBy: 'code_mirror_unavailable' },
+        publication: { controls: { blockers: [] } },
+      },
+    },
+  });
+  await mount(createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved() {} })));
+  assert.equal(document.querySelector('[role="note"]'), null);
+});
+
+test('new cycle remains usable without hosted Code or its status read', async (t) => {
+  t.after(async () => await unmount());
+  for (const unavailable of [false, true]) {
+    serve('/tools/task.list', { body: { result: [] } });
+    serve('/tools/experiment.list', { body: { result: [] } });
+    if (!unavailable)
+      serve('/tools/code.status', {
+        body: { result: { project: { durability: 'legacy-local' } } },
+      });
+    let sent: Record<string, unknown> | undefined;
+    serve('/tools/research.create', (_call, body) => {
+      sent = body;
+      return { body: { result: { id: 'wf_cycle', workflow: { workflow: 'research' } } } };
+    });
+    await mount(createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved() {} })));
+    await settle(10);
+    assert.equal(document.querySelector('[role="note"]'), null);
+    const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      set.call(name, 'Research without publication');
+      name.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    });
+    await settle(10);
+    assert.equal(sent?.name, 'Research without publication');
+    await unmount();
+  }
 });
 
 test('work is listed as its chains: what waits stands under what it waits on, newest chain first', () => {
