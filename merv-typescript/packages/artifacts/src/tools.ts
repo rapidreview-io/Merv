@@ -36,7 +36,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.upload_begin',
-      'Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.',
+      'Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.',
       z
         .object({
           title: z.string().min(1).max(300),
