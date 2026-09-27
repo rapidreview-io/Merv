@@ -1,7 +1,11 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import type { Caller } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
 import { z } from 'zod';
+
+/** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
+const workerInlineBytes = 64_000;
+const workerRangeCharacters = 8_192;
 export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
@@ -87,7 +91,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.',
+      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.',
       z
         .object({
           artifactId: z.string().min(1),
@@ -96,12 +100,36 @@ export const artifactToolsPlugin = {
           length: z.number().int().min(1).optional(),
         })
         .strict(),
-      async (c, i) =>
-        i.mode === 'download'
-          ? await ctx.artifacts.download(c, i.artifactId)
-          : await ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
+      async (c, i) => {
+        if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId);
+        if (c.session) {
+          const artifact = await ctx.artifacts.get(c, i.artifactId);
+          if (artifact.size > workerInlineBytes && artifact.size <= 2_000_000) {
+            if (i.length === undefined || i.length > workerRangeCharacters) {
+              const downloadAvailable = ctx.artifacts.canDownload(artifact);
+              throw new MervError(
+                'artifact_read_requires_range',
+                `Artifact is ${artifact.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
+                413,
+                {
+                  artifactId: artifact.id,
+                  size: artifact.size,
+                  sha256: artifact.hash,
+                  downloadAvailable,
+                  maxRangeCharacters: workerRangeCharacters,
+                },
+              );
+            }
+          }
+        }
+        return await ctx.artifacts.read(c, i.artifactId, {
+          offset: i.offset,
+          length: i.length,
+        });
+      },
       true,
-      // A download URL is a bearer secret: only the person sees it.
+      // In a Pi conversation a signed URL is shown only to the person; a leased worker may
+      // request its own URL to download and inspect an artifact in its workspace.
       (i) => (i.mode === 'download' ? 'secret' : undefined),
     );
     register(

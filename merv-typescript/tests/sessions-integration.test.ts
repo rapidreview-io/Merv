@@ -12,6 +12,7 @@ import type {
   Caller,
   ContextPackage,
   IssuedUserKey,
+  LargeArtifactStorage,
   Project,
   ReviewRequest,
   Task,
@@ -254,6 +255,111 @@ async function reviewFlow(t: TestContext) {
   assert.equal(finalReview.verdict, 'pass');
   return f;
 }
+
+test('leased workers must deliberately range-read or download large artifacts', async (t) => {
+  const f = await fixture(t);
+  const source = await f.source();
+  const content = JSON.stringify({
+    predictions: Array.from({ length: 450_000 }, (_, i) => i % 10),
+  });
+  const artifact = await f.app.ctx.artifacts.create(source, {
+    title: 'Prediction arrays',
+    content,
+    mediaType: 'application/json',
+  });
+  assert.ok(artifact.size > 64_000 && artifact.size < 2_000_000);
+  const { secret } = await f.offer();
+  const worker = await f.connect(secret);
+
+  const refused = await worker.callTool({
+    name: 'artifact.read',
+    arguments: { artifactId: artifact.id },
+  });
+  assert.equal(refused.isError, true);
+  const error = JSON.parse((refused.content as { text: string }[])[0]!.text).error;
+  assert.equal(error.code, 'artifact_read_requires_range');
+  assert.equal(error.details.artifactId, artifact.id);
+  assert.equal(error.details.size, artifact.size);
+  assert.equal(error.details.sha256, artifact.hash);
+  assert.equal(error.details.downloadAvailable, false);
+  assert.equal(error.details.maxRangeCharacters, 8192);
+  assert.ok(!JSON.stringify(error).includes('predictions'));
+
+  const ranged = await f.call<{ content: string; offset: number; total: number }>(
+    worker,
+    'artifact.read',
+    { artifactId: artifact.id, offset: content.length - 10, length: 10 },
+  );
+  assert.equal(ranged.content, content.slice(-10));
+  assert.equal(ranged.offset, content.length - 10);
+  assert.equal(ranged.total, content.length);
+  const oversizedRange = await worker.callTool({
+    name: 'artifact.read',
+    arguments: { artifactId: artifact.id, length: 8193 },
+  });
+  assert.equal(oversizedRange.isError, true);
+  assert.equal(
+    JSON.parse((oversizedRange.content as { text: string }[])[0]!.text).error.code,
+    'artifact_read_requires_range',
+  );
+
+  assert.equal((await f.app.ctx.artifacts.read(source, artifact.id)).content, content);
+  assert.equal(
+    (
+      (await f.app.ctx.tools.call('artifact.read', source, { artifactId: artifact.id })) as {
+        content: string;
+      }
+    ).content,
+    content,
+  );
+
+  // Download mode remains callable by the authenticated worker and returns its private URL.
+  const url = 'https://storage.example/predictions?signature=test';
+  const storage: LargeArtifactStorage = {
+    begin: async (_projectId, uploadId) => ({
+      objectId: 'object_predictions',
+      status: {
+        uploadId,
+        partSize: artifact.size,
+        partCount: 1,
+        parts: [],
+        completedParts: [],
+        nextPart: null,
+      },
+    }),
+    resume: async () => ({
+      uploadId: '',
+      partSize: artifact.size,
+      partCount: 1,
+      parts: [],
+      completedParts: [1],
+      nextPart: null,
+    }),
+    complete: async () => ({
+      objectId: 'object_predictions',
+      size: artifact.size,
+      sha256: artifact.hash,
+      state: 'available' as const,
+    }),
+    download: async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+  };
+  const unbind = f.app.ctx.artifacts.bindLarge(storage);
+  t.after(unbind);
+  const upload = await f.app.ctx.artifacts.uploadBegin(source, {
+    title: 'Prediction download',
+    size: artifact.size,
+    sha256: artifact.hash,
+    mediaType: 'application/json',
+  });
+  const downloadable = await f.app.ctx.artifacts.uploadComplete(source, upload.uploadId);
+  const link = await f.call<{ artifact: Artifact; download: { url: string } }>(
+    worker,
+    'artifact.read',
+    { artifactId: downloadable.id, mode: 'download' },
+  );
+  assert.equal(link.artifact.id, downloadable.id);
+  assert.equal(link.download.url, url);
+});
 
 test('one user key can authorize independent producer and reviewer sessions through the real HTTP and MCP surfaces; the application retains their work and reflection metadata across restart', async (t) => {
   const f = await reviewFlow(t);
