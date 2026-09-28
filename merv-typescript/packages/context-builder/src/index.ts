@@ -1,4 +1,4 @@
-import { visible, recorded, mapAsync } from '@merv/contracts';
+import { clip, visible, recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -29,7 +29,12 @@ const identifier = z.string().regex(/^[a-z][a-z0-9_.-]{0,127}$/);
 const rankedItem = z
   .object({
     id: z.string().trim().min(1).max(300),
-    title: z.string().trim().min(1).max(300),
+    // Clipped, not rejected: a long section title must not fail every build that lists it.
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .transform((title) => clip(title, 300)),
     priority: z.number().int().min(-1_000_000).max(1_000_000),
     content: z.union([
       z.object({ text: z.string() }).strict(),

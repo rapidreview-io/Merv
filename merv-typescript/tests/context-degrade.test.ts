@@ -393,3 +393,28 @@ test('ranked references that must stay listed and do not fit still fail', async 
     { code: 'context_too_large', message: /Minimum context references exceed/ },
   );
 });
+
+test('a ranked title over 300 characters renders clipped instead of failing', async (t) => {
+  const { builder, operator } = await setup(t);
+  const registration = await builder.register({ ...definition, name: 'test.degrade-title' });
+  const title = `${'t'.repeat(299)}😀${'u'.repeat(20)}`;
+  const preview = await registration.preview(operator, {
+    subject,
+    inputs: {
+      evidence: {
+        rankedItems: [
+          textItem('long', `  ${title}  `, 10, 'Short body.', 'long title', [
+            { tool: 'task.get', input: { id: 'long' } },
+          ]),
+        ],
+      },
+    },
+  });
+  // At most 300 UTF-16 units, never half a surrogate pair.
+  const clipped = 't'.repeat(299);
+  assert.ok(
+    preview.prompt.includes(`\n### ${clipped}\nMetadata: {"id":"long","title":"${clipped}"`),
+  );
+  assert.ok(preview.prompt.includes(`\n### long: ${clipped}\nShort body.\n`));
+  assert.doesNotMatch(preview.prompt, /u{20}|\uD83D/);
+});
