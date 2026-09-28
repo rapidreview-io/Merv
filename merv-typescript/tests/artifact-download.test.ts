@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import type { Artifact, Caller } from '@merv/contracts';
+import { MAX_ARTIFACT_BYTES, type Artifact, type Caller } from '@merv/contracts';
+import { MAX_BLOB_BYTES } from '@merv/blobs/common';
 import { createApp } from './fixtures/app.js';
 import { s3Server } from './fixtures/s3-server.js';
 import { stateConfig } from './fixtures/state.js';
@@ -147,6 +148,10 @@ test('revocation during download preparation prevents URL issuance and later req
     { code: 'forbidden' },
   );
   assert.equal(f.server!.requests.length, count);
+});
+
+test('every inline artifact fits in one blob, which its download mirror writes', () => {
+  assert.ok(MAX_ARTIFACT_BYTES <= MAX_BLOB_BYTES);
 });
 
 test('the first download of bytes kept in the row mirrors them into storage, once', async (t) => {

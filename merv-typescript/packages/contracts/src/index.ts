@@ -1143,7 +1143,6 @@ export interface LargeArtifactStorage {
  * uploadBegin and uploadResume.
  */
 export interface Artifacts {
-  readonly downloadSupported: boolean;
   canDownload(artifact: Artifact): boolean;
   readonly largeUploadAvailable: boolean;
   bindLarge(storage: LargeArtifactStorage): () => void;

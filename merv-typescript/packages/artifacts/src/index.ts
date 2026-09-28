@@ -54,8 +54,6 @@ export class ArtifactStore implements Artifacts {
   get largeUploadAvailable(): boolean {
     return !!this.large;
   }
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   private uploads: Uploads;
   constructor(
     private state: State,
@@ -68,18 +66,13 @@ export class ArtifactStore implements Artifacts {
       () => this.storage(),
       (caller, artifactId) => this.get(caller, artifactId),
     );
-    this.initialize = async () => {
-      await state.migrate('artifacts', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        { version: 2, sql: postgresMigrations[2] },
-        { version: 3, sql: postgresMigrations[3] },
-        { version: 4, sql: postgresMigrations[4] },
-        { version: 5, sql: postgresMigrations[5] },
-      ]);
-    };
+  }
+  /** Complete storage migrations before publishing this service. */
+  async initialize() {
+    await this.state.migrate(
+      'artifacts',
+      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+    );
   }
   private storage(): LargeArtifactStorage {
     check(this.large, 'storage_unavailable', 'Project large-file storage is unavailable', 503);
@@ -231,11 +224,8 @@ export class ArtifactStore implements Artifacts {
       `${JSON.stringify({ event: 'artifacts.io_in_transaction', site, stack })}\n`,
     );
   }
-  get downloadSupported() {
-    return typeof this.blobs.download === 'function';
-  }
   canDownload(artifact: Artifact): boolean {
-    return artifact.objectId ? !!this.large : this.downloadSupported;
+    return artifact.objectId ? !!this.large : typeof this.blobs.download === 'function';
   }
   async download(caller: Caller, artifactId: string) {
     caller = structuredClone(caller);

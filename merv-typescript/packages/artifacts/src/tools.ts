@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import { MervError, type Caller } from '@merv/contracts';
+import { MervError, MAX_ARTIFACT_BYTES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
@@ -49,7 +49,7 @@ export const artifactToolsPlugin = {
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.',
+      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
       z
         .object({
           title: z.string().min(1).max(300),
@@ -140,7 +140,7 @@ export const artifactToolsPlugin = {
         if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId);
         if (c.session) {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
-          if (artifact.size > workerInlineBytes && artifact.size <= 2_000_000) {
+          if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {
             if (i.length === undefined || i.length > workerRangeCharacters) {
               const downloadAvailable = ctx.artifacts.canDownload(artifact);
               throw new MervError(
