@@ -5,7 +5,9 @@ import type { Context } from 'cordis';
 import { createHash } from 'node:crypto';
 import {
   check,
+  MervError,
   newId,
+  sha256Hex,
   now,
   inTransaction,
   MAX_ARTIFACT_BYTES,
@@ -33,6 +35,26 @@ const fromRow = (row: any): Artifact => ({
   createdAt: row.created_at,
   ...(row.object_id ? { objectId: row.object_id } : {}),
 });
+/** Large storage returns unverified bytes; blobs.get verifies its own. */
+const verified = (bytes: Buffer, artifact: Artifact): Buffer => {
+  check(
+    bytes.length === artifact.size && sha256Hex(bytes) === artifact.hash,
+    'blob_corrupt',
+    'Stored artifact bytes do not match their metadata',
+    500,
+  );
+  return bytes;
+};
+/** A row implies its bytes: storage that has lost them is a server fault, never a 404. */
+async function missing<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof MervError && error.code === 'blob_not_found')
+      throw new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
+    throw error;
+  }
+}
 type UploadRow = {
   project_id: string;
   created_by: string;
@@ -137,7 +159,10 @@ export class ArtifactStore implements Artifacts {
         409,
       );
     });
-    const result = await storage.begin(caller.projectId, uploadId, { ...input, title, mediaType });
+    const result = await storage.begin(caller.projectId, uploadId, {
+      size: input.size,
+      sha256: input.sha256,
+    });
     await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const row = await tx.get(
@@ -163,7 +188,7 @@ export class ArtifactStore implements Artifacts {
           uploadId,
         );
     });
-    return result.status;
+    return { uploadId, ...result.plan };
   }
   async uploadResume(
     caller: Caller,
@@ -179,7 +204,7 @@ export class ArtifactStore implements Artifacts {
       'Retry artifact.upload_begin to recover the upload',
       409,
     );
-    return { ...(await storage.resume(caller.projectId, row.object_id, startPart)), uploadId };
+    return { uploadId, ...(await storage.resume(caller.projectId, row.object_id, startPart)) };
   }
   async uploadComplete(caller: Caller, uploadId: string): Promise<Artifact> {
     caller = structuredClone(caller);
@@ -326,6 +351,15 @@ export class ArtifactStore implements Artifacts {
       ).map(fromRow);
     });
   }
+  /** The bytes behind a row: large-storage bytes are verified here, blob bytes by blobs.get. */
+  private async fetch(projectId: string, artifact: Artifact): Promise<Buffer> {
+    if (!artifact.objectId) return await missing(() => this.blobs.get(projectId, artifact.hash));
+    const storage = this.storage();
+    return verified(
+      await missing(() => storage.read(projectId, artifact.objectId!, artifact.size)),
+      artifact,
+    );
+  }
   get downloadSupported() {
     return typeof this.blobs.download === 'function';
   }
@@ -336,8 +370,8 @@ export class ArtifactStore implements Artifacts {
     caller = structuredClone(caller);
     const artifact = await this.get(caller, artifactId);
     if (artifact.objectId) {
-      check(this.large, 'storage_unavailable', 'Project large-file storage is unavailable', 503);
-      const download = await this.large.download(caller.projectId, artifact.objectId);
+      const storage = this.storage();
+      const download = await missing(() => storage.download(caller.projectId, artifact.objectId!));
       await this.get(caller, artifactId);
       return { artifact, download };
     }
@@ -347,7 +381,9 @@ export class ArtifactStore implements Artifacts {
       'This storage provider does not support direct downloads',
       501,
     );
-    const download = await this.blobs.download(caller.projectId, artifact.hash, artifact.size);
+    const download = await missing(() =>
+      this.blobs.download!(caller.projectId, artifact.hash, artifact.size),
+    );
     // Signing can wait for remote storage. Revocation during that wait must prevent issuance.
     await this.get(caller, artifactId);
     return { artifact, download };
@@ -361,55 +397,7 @@ export class ArtifactStore implements Artifacts {
       'artifact_size',
       'Artifact exceeds the inline limit; use artifact.read with mode download',
     );
-    let bytes: Buffer;
-    if (artifact.objectId) {
-      const storage = this.storage();
-      const { url } = await storage.download(caller.projectId, artifact.objectId);
-      // The storage adapter validates the signed origin. Do not follow a redirect to another one.
-      let response: Response;
-      try {
-        response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
-      } catch {
-        check(false, 'storage_unavailable', 'Artifact download failed', 502);
-        throw new Error('unreachable');
-      }
-      check(response.ok && response.body, 'storage_unavailable', 'Artifact download failed', 502);
-      const chunks: Buffer[] = [];
-      let size = 0;
-      let oversized = false;
-      const reader = response.body.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const part = Buffer.from(value);
-          size += part.length;
-          if (size > MAX_ARTIFACT_BYTES) {
-            oversized = true;
-            break;
-          }
-          chunks.push(part);
-        }
-      } catch {
-        check(false, 'storage_unavailable', 'Artifact download failed', 502);
-      }
-      if (oversized) await reader.cancel().catch(() => {});
-      check(
-        !oversized,
-        'artifact_size',
-        'Artifact exceeds the inline limit; use artifact.read with mode download',
-      );
-      bytes = Buffer.concat(chunks, size);
-      check(
-        bytes.length === artifact.size &&
-          createHash('sha256').update(bytes).digest('hex') === artifact.hash,
-        'artifact_hash_mismatch',
-        'Stored artifact bytes do not match their immutable metadata',
-        502,
-      );
-    } else {
-      bytes = await this.blobs.get(caller.projectId, artifact.hash);
-    }
+    const bytes = await this.fetch(caller.projectId, artifact);
     await this.get(caller, artifactId);
     return view(artifact, bytes, range);
   }

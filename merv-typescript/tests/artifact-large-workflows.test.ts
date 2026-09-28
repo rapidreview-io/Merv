@@ -54,6 +54,9 @@ test('configured storage gives new producers upload grants while reviewers stay 
     download: async () => {
       throw new Error('not used');
     },
+    read: async () => {
+      throw new Error('not used');
+    },
   } as LargeArtifactStorage;
   const unbind = app.ctx.artifacts.bindLarge(storage);
   t.after(unbind);

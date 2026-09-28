@@ -1094,18 +1094,34 @@ export interface ArtifactUploadStatus {
   completedParts: number[];
   nextPart: number | null;
 }
+/** An upload plan as large storage issues it; artifacts adds the upload ID. */
+export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId'>;
+/**
+ * Object storage for artifacts above the inline limit, implemented by @merv/sandboxes. Missing
+ * bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a refused origin, a
+ * forbidden grant) pass through unchanged.
+ */
 export interface LargeArtifactStorage {
+  /** Idempotent by key. Objects hold opaque bytes (application/octet-stream). */
   begin(
     projectId: string,
-    uploadId: string,
-    input: ArtifactUploadInput,
-  ): Promise<{ objectId: string; status: ArtifactUploadStatus }>;
-  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadStatus>;
+    key: string,
+    expect: { size: number; sha256: string },
+  ): Promise<{ objectId: string; plan: ArtifactUploadPlan }>;
+  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadPlan>;
+  /** The adapter validates the response shape (`sandbox_unavailable` 502 otherwise). */
   complete(
     projectId: string,
     objectId: string,
   ): Promise<{ objectId: string; size: number; sha256: string; state: string }>;
+  /** A missing object is `blob_not_found`, an outage `blob_unavailable`. */
   download(projectId: string, objectId: string): Promise<{ url: string; expiresAt: string }>;
+  /**
+   * Reads at most maxBytes + 1 bytes, with the same error mapping as download; the caller
+   * verifies size and hash. An object's bytes are readable only while an equivalent binding
+   * (same namespace and subject) is present; Merv never migrates objects.
+   */
+  read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
 }
 export interface Artifacts {
   readonly downloadSupported: boolean;

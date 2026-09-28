@@ -1,7 +1,7 @@
 import {
   check,
-  type ArtifactUploadInput,
-  type ArtifactUploadStatus,
+  MervError,
+  type ArtifactUploadPlan,
   type LargeArtifactStorage,
 } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
@@ -11,12 +11,24 @@ type Row = Record<string, any>;
 const row = (value: unknown): Row =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Row) : {};
 
+/** The slowest link an object read is still given time to finish on: one megabit a second. */
+const MIN_READ_BYTES_PER_SECOND = 131_072;
+
+/** A missing object and an outage speak the blobs vocabulary; other refusals pass through. */
+function stored(error: unknown): never {
+  if (error instanceof MervError && error.code === 'sandbox_not_found')
+    throw new MervError('blob_not_found', 'Stored object not found', 404);
+  if (error instanceof MervError && error.code === 'sandbox_unavailable')
+    throw new MervError('blob_unavailable', error.message, 503);
+  throw error;
+}
+
 /** The ML application grant selects the project's subject for every storage request. */
 export class SandboxArtifactStorage implements LargeArtifactStorage {
   private readonly client: SandboxClient;
   constructor(
     origin: string,
-    timeoutMs: number,
+    private readonly timeoutMs: number,
     private readonly config: { namespace: string; tokenEnv: string; storageOrigins: string[] },
   ) {
     this.client = new SandboxClient(origin, timeoutMs, config.storageOrigins);
@@ -49,7 +61,7 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
     );
     return url.href;
   }
-  private status(uploadId: string, response: unknown): ArtifactUploadStatus {
+  private plan(response: unknown): ArtifactUploadPlan {
     const value = row(response);
     check(
       Number.isSafeInteger(value.part_size) &&
@@ -60,7 +72,6 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
       502,
     );
     return {
-      uploadId,
       partSize: value.part_size,
       partCount: value.part_count,
       parts: value.parts.map((part: unknown) => {
@@ -84,14 +95,15 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
       nextPart: Number.isSafeInteger(value.next_part) ? value.next_part : null,
     };
   }
-  async begin(projectId: string, uploadId: string, input: ArtifactUploadInput) {
+  async begin(projectId: string, key: string, expect: { size: number; sha256: string }) {
     const response = row(
       await this.client.write(this.entry(projectId), 'POST', '/v1/storage/objects', {
-        name: `artifacts/${uploadId}`,
-        idempotency_key: uploadId,
-        sha256: input.sha256,
-        size_bytes: input.size,
-        content_type: input.mediaType,
+        name: `artifacts/${key}`,
+        idempotency_key: key,
+        sha256: expect.sha256,
+        size_bytes: expect.size,
+        // The media type is artifact metadata; the stored object is opaque bytes.
+        content_type: 'application/octet-stream',
         retain_until_deleted: true,
       }),
     );
@@ -102,20 +114,16 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
       'Sandboxes returned no object ID',
       502,
     );
-    return { objectId, status: this.status(uploadId, response) };
+    return { objectId, plan: this.plan(response) };
   }
-  async resume(
-    projectId: string,
-    objectId: string,
-    startPart: number,
-  ): Promise<ArtifactUploadStatus> {
-    const response = await this.client.read(
-      this.entry(projectId),
-      sandboxRoute('/v1/storage/objects/{id}/upload', objectId),
-      { start_part: startPart },
+  async resume(projectId: string, objectId: string, startPart: number) {
+    return this.plan(
+      await this.client.read(
+        this.entry(projectId),
+        sandboxRoute('/v1/storage/objects/{id}/upload', objectId),
+        { start_part: startPart },
+      ),
     );
-    // The public upload identifier is added by ArtifactStore, never selected by Sandboxes.
-    return this.status('', response);
   }
   async complete(projectId: string, objectId: string) {
     const response = row(
@@ -127,23 +135,83 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
         3_600_000,
       ),
     );
+    check(
+      typeof response.id === 'string' &&
+        Number.isSafeInteger(response.size_bytes) &&
+        typeof response.sha256 === 'string' &&
+        typeof response.state === 'string',
+      'sandbox_unavailable',
+      'Sandboxes returned an invalid completed object',
+      502,
+    );
     return {
-      objectId: String(response.id),
-      size: Number(response.size_bytes),
-      sha256: String(response.sha256),
-      state: String(response.state),
+      objectId: response.id as string,
+      size: response.size_bytes as number,
+      sha256: response.sha256 as string,
+      state: response.state as string,
     };
   }
   async download(projectId: string, objectId: string) {
     const response = row(
-      await this.client.read(
-        this.entry(projectId),
-        sandboxRoute('/v1/storage/objects/{id}/download-short', objectId),
-      ),
+      await this.client
+        .read(
+          this.entry(projectId),
+          sandboxRoute('/v1/storage/objects/{id}/download-short', objectId),
+        )
+        .catch(stored),
     );
+    const expires = typeof response.expires_at === 'string' ? Date.parse(response.expires_at) : NaN;
     return {
       url: this.signed(response.url),
-      expiresAt: new Date(Date.now() + 50_000).toISOString(),
+      expiresAt: new Date(Number.isFinite(expires) ? expires : Date.now() + 50_000).toISOString(),
     };
+  }
+  async read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer> {
+    // The link has passed signed(): https, or loopback http, on a configured storage origin.
+    const { url } = await this.download(projectId, objectId);
+    return await this.#fetch(url, maxBytes);
+  }
+  /**
+   * GET a signed object link, reading at most maxBytes + 1 bytes: one byte more than asked is
+   * enough for the caller to see the object is not what its metadata says.
+   */
+  async #fetch(url: string, maxBytes: number): Promise<Buffer> {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        // Never follow a redirect off the configured storage origin.
+        redirect: 'manual',
+        signal: AbortSignal.timeout(
+          this.timeoutMs + Math.ceil((maxBytes / MIN_READ_BYTES_PER_SECOND) * 1000),
+        ),
+      });
+    } catch {
+      throw new MervError('blob_unavailable', 'Stored object is unreachable', 503);
+    }
+    const reader = response.body?.getReader();
+    try {
+      check(response.status !== 404, 'blob_not_found', 'Stored object not found', 404);
+      check(
+        response.ok && reader,
+        'blob_unavailable',
+        `Stored object could not be read (HTTP ${response.status})`,
+        503,
+      );
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      while (size <= maxBytes) {
+        const part = await reader.read();
+        if (part.done) break;
+        chunks.push(part.value);
+        size += part.value.byteLength;
+      }
+      return Buffer.concat(chunks, Math.min(size, maxBytes + 1));
+    } catch (error) {
+      if (error instanceof MervError) throw error;
+      throw new MervError('blob_unavailable', 'Stored object read failed', 503);
+    } finally {
+      // Stopping early, a refusal and a failure all leave no body occupying a connection.
+      await (reader ? reader.cancel() : response.body?.cancel())?.catch(() => {});
+    }
   }
 }

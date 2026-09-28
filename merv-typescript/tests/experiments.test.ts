@@ -6,8 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -43,24 +41,11 @@ test('small uploaded evidence is readable and attachable while actual oversized 
   const hash = createHash('sha256').update(bytes).digest('hex');
   let served = bytes;
   let requests = 0;
-  const server = createServer((_request, response) => {
-    requests++;
-    response.end(served);
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  });
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/evidence`;
   const storage: LargeArtifactStorage = {
-    async begin(_projectId, uploadId) {
+    async begin() {
       return {
         objectId: 'obj_plan',
-        status: {
-          uploadId,
+        plan: {
           partSize: bytes.length,
           partCount: 1,
           parts: [],
@@ -76,7 +61,12 @@ test('small uploaded evidence is readable and attachable while actual oversized 
       return { objectId: 'obj_plan', size: bytes.length, sha256: hash, state: 'available' };
     },
     async download() {
-      return { url, expiresAt: new Date(Date.now() + 50_000).toISOString() };
+      throw new Error('unexpected download');
+    },
+    // Like the Sandboxes adapter: at most one byte more than the declared size.
+    async read(_projectId, _objectId, maxBytes) {
+      requests++;
+      return served.subarray(0, maxBytes + 1);
     },
   };
   const unbind = f.artifacts.bindLarge(storage);
@@ -110,9 +100,9 @@ test('small uploaded evidence is readable and attachable while actual oversized 
   });
   assert.equal(attached.artifactId, artifact.id);
   served = Buffer.alloc(bytes.length, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_hash_mismatch'));
+  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('blob_corrupt'));
   served = Buffer.alloc(2_000_001, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_size'));
+  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('blob_corrupt'));
 });
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),

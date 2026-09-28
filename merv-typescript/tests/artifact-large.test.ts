@@ -47,12 +47,11 @@ test('large artifact upload, replay, download and absent storage keep inline art
   const calls: string[] = [];
   let digest = input.sha256;
   const storage: LargeArtifactStorage = {
-    async begin(projectId, uploadId) {
+    async begin(projectId) {
       calls.push(`begin:${projectId}`);
       return {
         objectId: 'obj_rows',
-        status: {
-          uploadId,
+        plan: {
           partSize: 8_000_000,
           partCount: 1,
           parts: [
@@ -66,7 +65,6 @@ test('large artifact upload, replay, download and absent storage keep inline art
     async resume(_projectId, _objectId, startPart) {
       calls.push(`resume:${startPart}`);
       return {
-        uploadId: '',
         partSize: 8_000_000,
         partCount: 1,
         parts: [],
@@ -84,6 +82,9 @@ test('large artifact upload, replay, download and absent storage keep inline art
         url: 'https://bucket.example/file',
         expiresAt: new Date(Date.now() + 50_000).toISOString(),
       };
+    },
+    async read() {
+      throw new Error('an object over the inline limit is never read inline');
     },
   };
   const unbind = app.ctx.artifacts.bindLarge(storage);

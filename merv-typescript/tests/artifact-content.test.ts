@@ -177,8 +177,7 @@ test('create and uploadBegin refuse malformed media types and request IDs with c
       begun.push(uploadId);
       return {
         objectId: `obj_${uploadId}`, // idempotent by key, like Sandboxes
-        status: {
-          uploadId,
+        plan: {
           partSize: 10,
           partCount: 1,
           parts: [],
@@ -194,6 +193,9 @@ test('create and uploadBegin refuse malformed media types and request IDs with c
       throw new Error('unused');
     },
     async download() {
+      throw new Error('unused');
+    },
+    async read() {
       throw new Error('unused');
     },
   };
