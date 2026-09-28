@@ -350,6 +350,9 @@ test(
   async (t) => {
     const f = await fixture();
     const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
+    // Counts every transaction of the boot, not only the adoption pass. That is exact today because
+    // State.migrate runs its steps through the internal transact(), not transaction(); a new
+    // boot-time transaction elsewhere must be excluded here rather than tolerated.
     const transaction = t.mock.method(f.state, 'transaction');
     await f.boot();
     assert.equal(adopt.mock.callCount(), 0);

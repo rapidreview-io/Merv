@@ -147,7 +147,8 @@ async function whileWriterHeld(f: Fixture, operation: () => Promise<unknown>) {
   } finally {
     release.resolve();
     await writer;
-    await running.catch(() => undefined);
+    // A 'queued' operation settles only now; its rejection must still fail the test.
+    await running;
   }
 }
 
