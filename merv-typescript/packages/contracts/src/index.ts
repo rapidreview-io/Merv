@@ -1791,7 +1791,7 @@ export interface TaskFailure {
 export type TaskRecord = Omit<Task, 'guidance'>;
 export interface ContextRecipe {
   instructions: string;
-  /** In format 2, a required section needs at least one item. */
+  /** A required section needs at least one item. */
   sections: { key: string; title: string; required: boolean }[];
   outputInstructions: string;
   /** The only budget, in UTF-16 code units (JavaScript string length). */
@@ -1806,7 +1806,7 @@ export interface TaskTypeDefinition {
   kind: 'work' | 'review';
   recipe: ContextRecipe;
 }
-/** A unit of a format-2 context. Every item is listed by one line or embedded as one block. */
+/** A unit of a context. Every item is listed by one line or embedded as one block. */
 export interface ContextItem {
   /** Printed on one line, clipped to 300; two IDs equal after that fail invalid_context. */
   id: string;

@@ -296,13 +296,13 @@ const configuration = z
  * 512 KiB, and the rest of the receipt, the project Introduction included, is far smaller.
  */
 const PAPER_RECEIPT_BYTES = 384 * 1024;
-/**
- * How a format-2 recipe embeds each section's items. The task, its brief, revision feedback and
- * the review criteria are always embedded; the rest fit while they can, highest priority first.
- * A custom input section is fit at 500, like the task background.
- */
 /** A context input before it becomes items: one text, or artifacts listed by ID. */
 type Source = { text: string } | { artifactIds: string[] };
+/**
+ * How each section's items are embedded. The task, its brief, revision feedback and the review
+ * criteria are always embedded; the rest fit while they can, highest priority first. A custom
+ * input section is fit at 500, like the task background.
+ */
 const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
   task: { embed: 'always' },
   brief: { embed: 'always' },
@@ -1548,7 +1548,7 @@ export class TaskService implements Tasks {
   }
 
   /**
-   * The paper as a format-2 recipe's items use it: whole sections, highest priority first, while
+   * The paper as the recipe's items use it: whole sections, highest priority first, while
    * their distinct text fits the recipe budget, since no more could ever be embedded, and while
    * their JSON fits PAPER_RECEIPT_BYTES, since a lease freezes them in its receipt. `left` names
    * the sections past that by ID and title while those fit too, and `more` counts the rest; both
@@ -1723,7 +1723,7 @@ export class TaskService implements Tasks {
   }
 
   /**
-   * The inputs as a format-2 recipe takes them: each text becomes one item and each artifact one
+   * The inputs as the recipe takes them: each text becomes one item and each artifact one
    * item named by its title, embedded as ITEM_RULES says, and the paper becomes its sections.
    */
   private async contextItems(
