@@ -17,6 +17,7 @@ import {
 } from '@merv/contracts';
 import { CredentialStore } from '@merv/identity/credentials';
 import { ProjectScope } from '@merv/scope';
+import type { LedgerKind } from '@merv/scope/ledger';
 import { openState } from './fixtures/state.js';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -66,11 +67,12 @@ async function legacyCredential(
     token = randomBytes(32).toString('base64url'),
     id = newId('credential'),
     expiresAt = null as string | null,
+    revokedAt = null as string | null,
   } = {},
 ) {
   await f.state.transaction((tx) =>
     tx.run(
-      'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at,expires_at,previous_id) VALUES(?,?,?,?,?,?,?,NULL)',
+      'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at,expires_at,revoked_at,previous_id) VALUES(?,?,?,?,?,?,?,?,NULL)',
       id,
       f.machine.actor.id,
       f.owner.projectId,
@@ -78,6 +80,7 @@ async function legacyCredential(
       sha256Hex(token),
       f.time(),
       expiresAt,
+      revokedAt,
     ),
   );
   return { id, token, tokenHash: sha256Hex(token) };
@@ -86,7 +89,11 @@ async function legacyCredential(
 /** A project key of alice's written straight to Scope's table, as an older image would. */
 async function legacyKey(
   f: Fixture,
-  { token = `mk_${randomBytes(32).toString('base64url')}`, id = newId('key') } = {},
+  {
+    token = `mk_${randomBytes(32).toString('base64url')}`,
+    id = newId('key'),
+    revokedAt = null as string | null,
+  } = {},
 ) {
   const key = {
     id,
@@ -96,12 +103,12 @@ async function legacyKey(
     label: null,
     createdAt: f.time(),
     expiresAt: null,
-    revokedAt: null,
+    revokedAt,
     previousId: null,
   };
   await f.state.transaction((tx) =>
     tx.run(
-      'INSERT INTO user_keys(id,issuer,subject,project_id,grant_scope,label,token_hash,created_at,expires_at,previous_id) VALUES(?,?,?,?,?,NULL,?,?,NULL,NULL)',
+      'INSERT INTO user_keys(id,issuer,subject,project_id,grant_scope,label,token_hash,created_at,expires_at,revoked_at,previous_id) VALUES(?,?,?,?,?,NULL,?,?,NULL,?,NULL)',
       id,
       issuer,
       'alice',
@@ -109,6 +116,7 @@ async function legacyKey(
       'project',
       sha256Hex(token),
       key.createdAt,
+      revokedAt,
     ),
   );
   const principal: Principal = { kind: 'key', key };
@@ -130,11 +138,13 @@ const unauthorized = { code: 'unauthorized', status: 401 };
 
 const unadopted: [
   string,
+  LedgerKind,
   (f: Fixture) => Promise<{ token: string; tokenHash: string }>,
   (scope: ProjectScope, token: string) => Promise<unknown>,
 ][] = [
   [
     'revokeCredential',
+    'actor',
     async (f) => {
       const legacy = await legacyCredential(f);
       await f.scope.revokeCredential(f.owner, legacy.id);
@@ -144,6 +154,7 @@ const unadopted: [
   ],
   [
     'rotateCredential',
+    'actor',
     async (f) => {
       const legacy = await legacyCredential(f);
       const next = await f.scope.rotateCredential(f.owner, { credentialId: legacy.id });
@@ -154,6 +165,7 @@ const unadopted: [
   ],
   [
     'revokeKey',
+    'user-key',
     async (f) => {
       const legacy = await legacyKey(f);
       await f.scope.revokeKey(f.alice, legacy.id);
@@ -163,6 +175,7 @@ const unadopted: [
   ],
   [
     'rotateKey',
+    'user-key',
     async (f) => {
       const legacy = await legacyKey(f);
       const next = await f.scope.rotateKey(f.alice, { keyId: legacy.id });
@@ -173,7 +186,7 @@ const unadopted: [
   ],
 ];
 
-for (const [name, retire, authenticate] of unadopted)
+for (const [name, kind, retire, authenticate] of unadopted)
   test(`${name} of a row the ledger has not adopted succeeds and stays revoked`, async (t) => {
     const f = await fixture();
     const legacy = await retire(f);
@@ -182,8 +195,25 @@ for (const [name, retire, authenticate] of unadopted)
     });
     await t.test('a restarted Scope still refuses the token', async () => {
       await assert.rejects(authenticate(await f.boot(), legacy.token), unauthorized);
+      // Scope refuses on its own revoked_at too; the ledger must refuse on its own.
+      await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
     });
   });
+
+test('a restart adopts a revoked row the ledger never held as revoked', async () => {
+  const f = await fixture();
+  const revokedAt = f.time(-hour);
+  const credential = await legacyCredential(f, { revokedAt });
+  const key = await legacyKey(f, { revokedAt });
+  await f.boot();
+  for (const [legacy, kind] of [
+    [credential, 'actor'],
+    [key, 'user-key'],
+  ] as const) {
+    assert.equal((await ledgerRow(f, legacy.tokenHash))?.revoked_at, revokedAt);
+    await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
+  }
+});
 
 test('a credential revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
