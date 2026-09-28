@@ -1,16 +1,33 @@
 type Section = { id?: string; content: string };
-type Revision = { revision?: number; sections: Section[] };
+type Revision = { revision?: number; sections: Section[]; omittedSections?: number };
 type Document = { current: Revision; published: { document: Revision } | null };
 const rank = (id?: string) => {
   const position = ['goals', 'scope', 'problem', 'constraints'].indexOf(id ?? '');
   return position < 0 ? 4 : position;
 };
+const marker = (length: number) => `(${length} characters; read with paper.read)`;
 
-/** Keep revision metadata and mark long paper sections for an explicit paper.read. */
-export function boundedPaperContext<T extends object>(documents: T, room = 40_000): T {
+/** The paper JSON cap for a frozen recipe whose required section carries the paper: a third of
+ *  its budget, so the paper leaves room for everything else the section and recipe hold. */
+export const paperJsonCap = (maxChars: number) => Math.floor(maxChars / 3);
+
+/**
+ * Keep revision metadata and mark long paper sections for an explicit paper.read. `room` bounds
+ * the section bodies. When the JSON is still longer than `maxJson`, which counts titles, IDs and
+ * markers too, every body but the current problem's goals, scope, problem and constraints becomes
+ * its marker; if that is not enough, those other sections are removed and each revision counts
+ * them in `omittedSections`. Under the cap the result is exactly what `room` alone gives.
+ */
+export function boundedPaperContext<T extends object>(
+  documents: T,
+  room = 40_000,
+  maxJson = Infinity,
+): T {
   const copy = structuredClone(documents);
   let left = room;
   const currentBodies = new Map<string, Map<string, string>>();
+  /** Sections that still hold their whole body. */
+  const whole = new Set<Section>();
   const shorten = (revision: Revision, prioritizeGoal = false) => {
     const included = new Map<string, string>();
     const sections = prioritizeGoal
@@ -19,9 +36,10 @@ export function boundedPaperContext<T extends object>(documents: T, room = 40_00
     for (const section of sections) {
       if (section.content.length <= left) {
         left -= section.content.length;
+        whole.add(section);
         if (!included.has(section.content))
           included.set(section.content, section.id ?? `#${revision.sections.indexOf(section) + 1}`);
-      } else section.content = `(${section.content.length} characters; read with paper.read)`;
+      } else section.content = marker(section.content.length);
     }
     return included;
   };
@@ -48,10 +66,31 @@ export function boundedPaperContext<T extends object>(documents: T, room = 40_00
         section.content = reference;
       } else if (section.content.length <= left) {
         left -= section.content.length;
+        whole.add(section);
       } else {
-        section.content = `(${section.content.length} characters; read with paper.read)`;
+        section.content = marker(section.content.length);
       }
     }
+  }
+  if (JSON.stringify(copy).length <= maxJson) return copy;
+  const revisions = entries.flatMap(([, document]) =>
+    document.published ? [document.current, document.published.document] : [document.current],
+  );
+  const problem = entries.find(([kind]) => kind === 'problem')?.[1].current;
+  const kept = (revision: Revision, section: Section) =>
+    revision === problem && rank(section.id) < 4;
+  for (const revision of revisions)
+    for (const section of revision.sections)
+      if (whole.has(section) && !kept(revision, section)) {
+        const shorter = marker(section.content.length);
+        if (shorter.length < section.content.length) section.content = shorter;
+      }
+  if (JSON.stringify(copy).length <= maxJson) return copy;
+  for (const revision of revisions) {
+    const sections = revision.sections.filter((section) => kept(revision, section));
+    if (sections.length === revision.sections.length) continue;
+    revision.omittedSections = revision.sections.length - sections.length;
+    revision.sections = sections;
   }
   return copy;
 }

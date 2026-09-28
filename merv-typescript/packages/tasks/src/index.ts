@@ -1,6 +1,7 @@
 import {
   check,
   boundedPaperContext,
+  paperJsonCap,
   checkReceipt,
   childRequest,
   clip,
@@ -574,7 +575,15 @@ export class TaskService implements Tasks {
       reviewId: review?.id ?? null,
       claimId: review?.claimId ?? null,
       project: await this.projectContext(source, tx),
-      ...(this.paper ? { paper: await this.projectPaperContext(source, tx) } : {}),
+      ...(this.paper
+        ? {
+            paper: await this.projectPaperContext(
+              source,
+              this.contextType({ type: row.type_name, typeVersion: row.type_version }, purpose),
+              tx,
+            ),
+          }
+        : {}),
     };
     await tx.run(
       'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1518,12 +1527,20 @@ export class TaskService implements Tasks {
     };
   }
 
-  private async projectPaperContext(caller: Caller, tx: Transaction): Promise<Data> {
+  /** The paper lands in a required section of `type`'s recipe, so its JSON is capped by that recipe. */
+  private async projectPaperContext(
+    caller: Caller,
+    type: { definition: TaskTypeDefinition },
+    tx: Transaction,
+  ): Promise<Data> {
     check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
     const workspace = await this.paper.read(caller, tx);
-    return JSON.parse(
-      JSON.stringify({ documents: boundedPaperContext(workspace.documents, 16_000) }),
-    ) as Data;
+    const documents = boundedPaperContext(
+      workspace.documents,
+      16_000,
+      paperJsonCap(type.definition.recipe.maxChars),
+    );
+    return JSON.parse(JSON.stringify({ documents })) as Data;
   }
 
   /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
@@ -1546,7 +1563,7 @@ export class TaskService implements Tasks {
       : null;
     const project = receipt?.project ?? (await this.projectContext(caller, tx));
     const paper =
-      receipt?.paper ?? (this.paper ? await this.projectPaperContext(caller, tx) : null);
+      receipt?.paper ?? (this.paper ? await this.projectPaperContext(caller, type, tx) : null);
     const hasProjectPaper = type.definition.recipe.sections.some(
       (section) => section.key === 'projectPaper',
     );

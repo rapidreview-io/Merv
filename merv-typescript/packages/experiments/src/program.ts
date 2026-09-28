@@ -4,6 +4,7 @@ import {
   releasedLease,
   mapAsync,
   boundedPaperContext,
+  paperJsonCap,
 } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
@@ -429,6 +430,8 @@ export class ExperimentProgram {
     return handle;
   }
   private contexts = new Map<ActiveState, ContextRegistration>();
+  /** Each active state's recipe budget; the paper inside its required experiment JSON is capped by it. */
+  private budgets = new Map<ActiveState, number>();
   private historicalContexts: ContextRegistration[] = [];
   private closed = false;
 
@@ -453,12 +456,11 @@ export class ExperimentProgram {
       try {
         for (const recipe of EXPERIMENT_RECIPES) {
           const registration = await host.contextBuilder.register(recipe);
-          if (recipe.version === (recipe.name === 'experiment.attempt_review' ? 11 : 10))
-            this.contexts.set(
-              activeStates.find((state) => recipeNames[state] === recipe.name)!,
-              registration,
-            );
-          else this.historicalContexts.push(registration);
+          if (recipe.version === (recipe.name === 'experiment.attempt_review' ? 11 : 10)) {
+            const state = activeStates.find((state) => recipeNames[state] === recipe.name)!;
+            this.contexts.set(state, registration);
+            this.budgets.set(state, recipe.recipe.maxChars);
+          } else this.historicalContexts.push(registration);
         }
         for (const version of PROGRAM_VERSIONS)
           this.handles.set(
@@ -812,7 +814,11 @@ export class ExperimentProgram {
         ...(experiment.workspace === 'git'
           ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
           : {}),
-        paper: boundedPaperContext((await this.host.paper.read(caller, tx)).documents),
+        paper: boundedPaperContext(
+          (await this.host.paper.read(caller, tx)).documents,
+          undefined,
+          paperJsonCap(this.budgets.get(state as ActiveState) ?? Infinity),
+        ),
         paperChangesFormat: {
           documents: [
             {

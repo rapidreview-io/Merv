@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { boundedPaperContext, createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -189,6 +189,51 @@ test('task work and review contexts carry the project paper with its revision', 
   });
   assert.match(review.prompt, /Build a reliable arithmetic library/);
   assert.match(review.prompt, /intermediate step/);
+});
+
+test('a task.work@2 context carries a mature paper capped to a third of its budget', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  // Many sections with long titles: their JSON outgrows the recipe though every body is short.
+  for (const kind of ['literature', 'methods'] as const)
+    await f.paper.patch(f.producer, {
+      kind,
+      expectedRevision: 0,
+      requestId: `paper-${kind}`,
+      changes: Array.from({ length: 100 }, (_, index) => ({
+        id: `${kind}-${index}`,
+        title: `${kind} section ${index} `.padEnd(300, 't'),
+        content: `Finding ${index}.`,
+      })),
+    });
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'paper-goal',
+    changes: [{ id: 'goals', content: 'Build a reliable arithmetic library.' }],
+  });
+  const documents = (await f.paper.read(f.producer)).documents;
+  assert.ok(JSON.stringify(boundedPaperContext(documents, 16_000)).length > 60_000);
+  const task = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.'],
+    briefId: f.brief.id,
+    requestId: 'create-mature-paper',
+    type: 'task.work',
+    typeVersion: 2,
+  });
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-mature-paper',
+  });
+  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@2');
+  assert.ok(work.prompt.length <= 48_000);
+  assert.match(work.prompt, /Build a reliable arithmetic library/);
+  assert.match(work.prompt, /"omittedSections":100/);
+  assert.doesNotMatch(work.prompt, /literature section 1 /);
 });
 
 test('task reads, context and failure keep their original caller and inputs', async (t) => {
