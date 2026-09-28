@@ -152,7 +152,8 @@ export class Uploads {
     );
     // An object within the inline limit is copied into its row, so reading it never reaches
     // storage again. Corrupt bytes fail the completion; an outage leaves the row reading through
-    // the object instead.
+    // the object instead. An object storage has just reported available but cannot find is not
+    // what it claimed.
     let content: Buffer | null = null;
     if (size <= MAX_ARTIFACT_BYTES)
       try {
@@ -161,6 +162,12 @@ export class Uploads {
           hash: row.hash,
         });
       } catch (error) {
+        if (error instanceof MervError && error.code === 'blob_not_found')
+          throw new MervError(
+            'upload_mismatch',
+            'Stored object differs from the declared artifact',
+            502,
+          );
         if (!(error instanceof MervError && error.code === 'blob_unavailable')) throw error;
       }
     return await this.state.transaction(async (tx) => {

@@ -343,13 +343,22 @@ test('completing a small upload copies its verified bytes into the row', async (
   assert.equal(store.reads, 1, 'later reads are local');
 });
 
-test('corrupt bytes served at completion fail it and record no artifact', async (t) => {
+test('corrupt or missing bytes at completion fail it and record no artifact', async (t) => {
   const f = await fixture(t);
   const { store, uploadId } = await upload(f, t, Buffer.from('declared'));
   store.served = async () => Buffer.from('replaced');
   await assert.rejects(f.artifacts.uploadComplete(f.caller, uploadId), {
     code: 'blob_corrupt',
     status: 500,
+  });
+  assert.deepEqual(await f.artifacts.list(f.caller), []);
+  // An object storage reported available but cannot find is not what it claimed: never a 404.
+  store.served = async () => {
+    throw new MervError('blob_not_found', 'Blob not found', 404);
+  };
+  await assert.rejects(f.artifacts.uploadComplete(f.caller, uploadId), {
+    code: 'upload_mismatch',
+    status: 502,
   });
   assert.deepEqual(await f.artifacts.list(f.caller), []);
   store.served = async () => Buffer.from('declared');
