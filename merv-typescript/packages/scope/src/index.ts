@@ -971,6 +971,8 @@ export class ProjectScope implements Scope {
           403,
         );
       };
+      // Decided before the receipt lookup, so a replay needs no second decision, and again after
+      // a fresh write (the receipt's `after`), on the same transaction.
       await authorize();
       return await receipted(
         tx,
@@ -981,7 +983,6 @@ export class ProjectScope implements Scope {
           const before = project(
             (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
           );
-          await authorize();
           const changed =
             input.expectedContextRevision === undefined
               ? await tx.run(
@@ -1036,10 +1037,6 @@ export class ProjectScope implements Scope {
           result: 'result_json',
           conflict: 'requestId already updated project context with different input',
           after: authorize,
-          replay: async (result) => {
-            await authorize();
-            return result;
-          },
         },
       );
     });
