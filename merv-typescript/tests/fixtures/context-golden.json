@@ -24,6 +24,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
@@ -40,6 +43,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -61,6 +67,11 @@
         "prompt": "a4e7ba02fedaffa485e178e3cf9213def0d1d673c8bd7cfcefc989d97fbdf6b7",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "b4c9473b34ca759e233e09d2c937004ec33b110441c217c75a26afbf758800ab",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "dd25a28d1afeb32071e76397a751507217605f1dd70703fa4ae1c10411bebf56",
@@ -147,6 +158,11 @@
         "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "e7d0cf5be65f2376ea10e9a3171de91ec7946f65138621ceec2d06b896c07392",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.attempt_review@11": {
@@ -171,6 +187,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
         "omitted": ["feedback"],
@@ -187,6 +206,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -208,6 +230,11 @@
         "prompt": "abe30fe32a4faad24ac8286435a6247644b8ecc45b9efc55249345e6d1e3fc77",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "56c0160762064038d318daec03433ba1150df803826de8852acf25710827ca0f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "26d42e041437ea94f602ac445d1f3c011b2745090a2e3bb934022b49f0ac9189",
@@ -296,6 +323,11 @@
         "prompt": "504eb49b9904a5c2069ba555e3625226a9a168011a40e397ad466743ee27f494",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "044dc5a0d25d1df93c6a6f2c76fe8dec015df2a6045b01226a619c5a865fe830",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.attempt_review@9": {
@@ -320,6 +352,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
@@ -336,6 +371,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -357,6 +395,11 @@
         "prompt": "a4e7ba02fedaffa485e178e3cf9213def0d1d673c8bd7cfcefc989d97fbdf6b7",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "b4c9473b34ca759e233e09d2c937004ec33b110441c217c75a26afbf758800ab",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "dd25a28d1afeb32071e76397a751507217605f1dd70703fa4ae1c10411bebf56",
@@ -443,6 +486,11 @@
         "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "e7d0cf5be65f2376ea10e9a3171de91ec7946f65138621ceec2d06b896c07392",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.design_review@10": {
@@ -467,6 +515,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
         "omitted": ["approvedPlan", "feedback"],
@@ -483,6 +534,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -504,6 +558,11 @@
         "prompt": "fbc7f6ffef97cc1d746d0596ab5cdeecaa9a6099da1cb8d280f1f13cc6b2f012",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "34bc0b49d3031ffe718d83c62e8520297be71ca89acc9ace36f4595d7a3eedab",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "2af03756af59a03a39386450c01ccb443d071a7d84c770ae2055f2959b38cfb6",
@@ -590,6 +649,11 @@
         "prompt": "fed17ceb54223489e13714d78655faced09d6e12c257b38fe5406f81c86f59f0",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "aa4c7379284d1055f1620b088385724c429ca0c96eaa07dc6a89b4710cf83a7d",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.design_review@9": {
@@ -614,6 +678,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
         "omitted": ["approvedPlan", "feedback"],
@@ -630,6 +697,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -651,6 +721,11 @@
         "prompt": "4e36eda7a26b50e779d4be83bb301d45577b33497109e07137f493562c711438",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "7b7e3974df694a6b29609342a420a013d03263c941a701a09e95ba12f6087ed0",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "0f035900ebcaf9d3d661dbdffbb275479e8e29f624190a3039a8cbc149f05453",
@@ -737,6 +812,11 @@
         "prompt": "c7ea7db795cf44039fff7a95f1805ab0e4f6b1d82099789d77eafe9547249387",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "7b0a2859ace6531a478fe590fe087857c12b5608162c2bc681689ce3ee66a5f8",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.design@10": {
@@ -761,6 +841,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
@@ -777,6 +860,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -798,6 +884,11 @@
         "prompt": "e4e2089b9cd00e99bf12671454ecfd0a29eb80e400c8717e4628b4286a4c16c6",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "2b9b6fb157c9ce6195dbf4e91bb5f543e0590e45eca8c2820d409f411cb62d9f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "a7dcfb56749cf55767980f91a25a1df651a2b04544022e39d0ab25fc9ba3024e",
@@ -884,6 +975,11 @@
         "prompt": "a8ac4b0b71e7bc8e9e09f0751bf5869d3c7dc33370e27860c6abfc315024394d",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "521cbaa1495dcad044ee5c5af9c5a632dab7aa55d13675c07ddcb2903099825c",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.design@9": {
@@ -908,6 +1004,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
@@ -924,6 +1023,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -945,6 +1047,11 @@
         "prompt": "c4aad75d7c0110a3241115daed0378cf124a8d1b371356151b8924b807325516",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "633feba3bbfd58e88e7ba0f0c7b98af0b5c41dd3abe9f5c951e82218bf6f6a42",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "2ba42318daf0fd4fbfd044e53b300c120747b0cb22490ff359e5c61a4702eee9",
@@ -1031,6 +1138,11 @@
         "prompt": "46a066bb9a661e8b85703d1badc0d551ef46b42440cfb39215172c71875bb920",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "42c799203ccd69796e20acea3ae1d2c46b8c460e27363265bb3d7228a969b6ad",
+        "omitted": [],
+        "sources": []
       }
     },
     "experiment.execute@10": {
@@ -1055,6 +1167,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
@@ -1071,6 +1186,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1092,6 +1210,11 @@
         "prompt": "506d0e11842caec3df22dbad9856224c2fc65cdd3149943994bd72148fefe957",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "3abe4618884095b501e853a54cb6f58288f1c7c20c676876f132d240864fb9b1",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "df30a7686e2e6f9194cde83bf204eeb4bc0efdc446afce114b7f41c3d525d18b",
@@ -1176,6 +1299,11 @@
       },
       "ranked/line-breaks": {
         "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "7e81cc5cf1f168651f42a2e8c500a511a78390bb8d60a4cf79730f53f5a855ac",
         "omitted": [],
         "sources": []
       }
@@ -1202,6 +1330,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
@@ -1218,6 +1349,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1239,6 +1373,11 @@
         "prompt": "506d0e11842caec3df22dbad9856224c2fc65cdd3149943994bd72148fefe957",
         "omitted": [],
         "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-bytes": {
+        "prompt": "3abe4618884095b501e853a54cb6f58288f1c7c20c676876f132d240864fb9b1",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_160000"]
       },
       "references/over-optional": {
         "prompt": "df30a7686e2e6f9194cde83bf204eeb4bc0efdc446afce114b7f41c3d525d18b",
@@ -1325,6 +1464,11 @@
         "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "7e81cc5cf1f168651f42a2e8c500a511a78390bb8d60a4cf79730f53f5a855ac",
+        "omitted": [],
+        "sources": []
       }
     },
     "project.reflection@1": {
@@ -1349,6 +1493,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
         "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
@@ -1365,6 +1512,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1386,6 +1536,11 @@
         "prompt": "d6fdb8135e42cf433bdeccddffefb713b852ab354c701d0eb92c59aeef27fa48",
         "omitted": [],
         "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-bytes": {
+        "prompt": "f94dd9725949df0aa2602c6f648581ae0b0b8a5e87beec050b91f259e48748a8",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_96000"]
       },
       "references/over-optional": {
         "prompt": "534e81e3558de652cc4fbf6cd221ad0d898ff8e377b726febaf0dd04bf4f6945",
@@ -1478,6 +1633,11 @@
         "prompt": "ceaddbab9a998172f47d051563c4654318026cb3f83cf976ed3e44766ace3e5c",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "123ed1594fe66a61fc42ce8d2885491def7532f84ad757c53a6bf51bac5dc73c",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.lens@10": {
@@ -1510,6 +1670,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "c332ac61705779aca5128663b650d6839d59815da24b29dab79b343d90252060",
         "omitted": [
@@ -1534,6 +1697,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1563,6 +1729,11 @@
         "prompt": "bfa58caabc9af1bb9adf91456ca3694b63be579dfa0b839a090e72f5e54db518",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "7a3fcd9a3b650c1ce84b101be09b3ff452734a310d5a2eabc8bd127cc563cfd9",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "58a99c27a5026ad184b8483e4fa7fceb0dd001b790b0f5dd3c583212aa8fba7c",
@@ -1657,6 +1828,11 @@
         "prompt": "351df5c45a75e69e71675767f7ad20d5efd30f822be8d2022eb53773e410d25e",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "1d5b7d4e3baec6eb9d2e3c7d7ca01a0e586643325bf0425c13fecf199465b581",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.lens@7": {
@@ -1681,6 +1857,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
@@ -1697,6 +1876,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1718,6 +1900,11 @@
         "prompt": "31161016bad83afec1b4219055792a6bd135c3bb29d08e46bb3ad31d81fa26bb",
         "omitted": [],
         "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-bytes": {
+        "prompt": "5865d7869c4aa5d4d1723ad0b0dedec0937763c22830826abe914b40071b37f8",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_24000"]
       },
       "references/over-optional": {
         "prompt": "4c724b6b5f95947454ce896809c4c49e86ad82cf7f0a8a61f82bdf4434516aca",
@@ -1810,6 +1997,11 @@
         "prompt": "b58a9de3a87a5ec9d78a7d5d606331e2c3bd85098f07d61cce922b56edce297d",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "68d733a8bdd40adf8d6961c749024ff55b1576f2b22063579ecf1f3a1f8afea4",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.lens@9": {
@@ -1834,6 +2026,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
@@ -1850,6 +2045,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -1871,6 +2069,11 @@
         "prompt": "a10215e3a54cd135d33bcdd0efe3688848c76588b4a015dd0f5d6597fe10bb32",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "b6842282fac8fe859a9d44097d35ca4b0b47a6dff9d630919657bb316c7ec555",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "81ca5a96d490827ba03aa748c93f33a77d3f112d7c440d5a6446d3b2748fe91f",
@@ -1965,6 +2168,11 @@
         "prompt": "3b7cc06339ba94d0ab357ce7c1101073c62a35c6a16e179b2c8cb809c9690ad8",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "db85319d438d638dbc707082ae22321d8448b7f5c49312e52a60ca1ed2b0fea1",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.review@10": {
@@ -1989,6 +2197,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
         "omitted": ["feedback", "previousCycle"],
@@ -2005,6 +2216,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2026,6 +2240,11 @@
         "prompt": "b68cbc0a14c8d9ffe4781ad79721a6354e2cc08ba1f1298850096b375c287a0b",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "3b92ef74076c28f5c62d66dc11be9360628d1158fe914dc42fb0b63d4a3bc6b4",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "ad56cfcbdb1e10b0d1c2929dce3808169d2519ce39d12f233233dcc37e57d0cf",
@@ -2118,6 +2337,11 @@
         "prompt": "4bb0af578c66a667373261cec6c150994241e0f49c161b6628cc2397d3667dc3",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "c55cb32fcde619d2d8568a4008444b61a8688f4cf86fb4f6c07ea9e5a6f9d87b",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.review@11": {
@@ -2142,6 +2366,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
         "omitted": ["research", "feedback", "previousCycle"],
@@ -2158,6 +2385,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2179,6 +2409,11 @@
         "prompt": "e626f9fd6c2a039e96a4f251f32f341b95503767765ac677eeb94dc82dad2615",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "db6f9198e0efae4e14faa016708b7ce4c6929c0f4567407a2df6804374768327",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "f70f7d8b8888ed518fb35fb1010f99bc4e0a22ea1da569696a6b822e7903f3d5",
@@ -2271,6 +2506,11 @@
         "prompt": "3ffb7dfec40d295ad09089f2d89b4e3249c359742863346cfdd2785abccf874e",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "c78a1579a34d3a9657592f9e813803117e0b22e8edbeca18fc194aa4cdca61e5",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.review@8": {
@@ -2295,6 +2535,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
         "omitted": ["feedback", "previousCycle"],
@@ -2311,6 +2554,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2332,6 +2578,11 @@
         "prompt": "383f12126bebe46c926304a2a620240d377743458074dd88606882be012c20bf",
         "omitted": [],
         "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-bytes": {
+        "prompt": "b54726803c981dfa12274ae5d1fd6ac2b115dacf88b58e32357f3313936a9094",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_24000"]
       },
       "references/over-optional": {
         "prompt": "72bb035ee91127338f2ca153458156bafa3e8b97c98ca4ab817208e77ab59fbf",
@@ -2422,6 +2673,11 @@
         "prompt": "302be0add224b0f7f3b450458e5e032de39ea98e6996ce3b256851e326607bd9",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "12f03a1864b8846a6b3242410fd46534cdb2280b9e8cf63ff06c1c72806d8eea",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.review@9": {
@@ -2446,6 +2702,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
         "omitted": ["feedback", "previousCycle"],
@@ -2462,6 +2721,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2483,6 +2745,11 @@
         "prompt": "071d9185d9a818a6fb58dbe8b1edef71405f12f775dfbd3eac5495f5fa10e2f9",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "ee190b0f27eb22b34b380f944663ecc0cadf06c10d2449275836a04ba98615da",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "9b8ea5c3a982f1415e9627f226ab4cd5952f5dbbde77617b2a504fee55cb5225",
@@ -2575,6 +2842,11 @@
         "prompt": "837c1af48a21de060cdc4e12364601d7a6d64babc541a0d1f319bb537269149b",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "1124007a6baeb8ed51f238eb876d620551f2c36231d631c7bdbc2449e11a8c04",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.synthesis@10": {
@@ -2599,6 +2871,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
@@ -2615,6 +2890,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2636,6 +2914,11 @@
         "prompt": "b5bebbbb5997f75919323afbb8b38efbb331c5b9ebf155268f1bfb57020cc89f",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "f7d9c45bee012e5c82bf0f9d28f1c6c0818033988577679d8c5ddb43b35521a7",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "0d633eb92f7ab9ed620675d2e16a8b508d8c7c3677b8f086b00c16c3d143624d",
@@ -2730,6 +3013,11 @@
         "prompt": "7b986dc11cf1ab8977214c8b5c72c4af91536347d299bfff5451b413365eea6c",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "3062ec73f107eb83c6155c31522049092f705f1d0cb01ebf567bc56bf6e0e479",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.synthesis@11": {
@@ -2754,6 +3042,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
         "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
@@ -2770,6 +3061,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2791,6 +3085,11 @@
         "prompt": "530c8eccb41706a9ab83abe871e9390ba9a4d43e6587a260c93e77436bf62f46",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "6d506e85cdefad8124d6bda6e4e51e59bf481de38159fe66f8fd87c91726f707",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "da3780e3e592b3fee4c35dd04af18bb3d123ea3b20e75e168a29f26ba8c3c2cb",
@@ -2885,6 +3184,11 @@
         "prompt": "7dc9761609b636a72481d774befdfbeee31b4041a7b360c2b933cc83740c9121",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "dd1545222f4175beee55c02beff0e5a0df11e148ea851f545f6944af08db87ff",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.synthesis@8": {
@@ -2909,6 +3213,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
@@ -2925,6 +3232,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -2946,6 +3256,11 @@
         "prompt": "79391d0b39d74d418576eab0811f71b69bfc893731785586fa29e6e57e7d8fc5",
         "omitted": [],
         "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-bytes": {
+        "prompt": "284e73e53db5315cb8d6ac8195699cec8418a59cd57ca377d0ae07519abecc91",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_24000"]
       },
       "references/over-optional": {
         "prompt": "a3a93a132004d757b6572e4c32c62305022b050c4119db1eb1a781ccbd7d25bc",
@@ -3038,6 +3353,11 @@
         "prompt": "05f7716a672949c784f65ba7c4910015f190fe8869d4e91a53aacd64210b5d9c",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "21e20bae777c7413da35fee706339df8d102c970089f6fbfe958228807901fe8",
+        "omitted": [],
+        "sources": []
       }
     },
     "reflection.synthesis@9": {
@@ -3062,6 +3382,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
@@ -3078,6 +3401,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3099,6 +3425,11 @@
         "prompt": "9207135f0e9ee6231abb5497d19cba78fa448eef944dd1df37fd67c2b5915c96",
         "omitted": [],
         "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-bytes": {
+        "prompt": "80a86806b6894734b07bd0afaf7e6495a8bbb57dc49aa7008f1fd3fddcb6d83a",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_32000"]
       },
       "references/over-optional": {
         "prompt": "dac51d5bdefda6ff58681aae5500eeb219970b2dc68d9f603fba2d88b3adde72",
@@ -3193,6 +3524,11 @@
         "prompt": "a69ab290122c32cb87b33d86841a589ba72c1cb136640e07572835119b4c25c7",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "da4d72d3d6f9d101d91e1d922d9a6004135445ea560c9334f9788d5562f5fdfe",
+        "omitted": [],
+        "sources": []
       }
     },
     "task.review@3": {
@@ -3217,6 +3553,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
@@ -3233,6 +3572,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3254,6 +3596,11 @@
         "prompt": "3bfef91aa3a64aeb70ba4e2138a51b9f3ca56c6bab684cb4d452d4328aeee677",
         "omitted": [],
         "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-bytes": {
+        "prompt": "2877b72d190d7925ac74552683f452aec7ae981dcc00f6427c1052f8eeece9aa",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_96000"]
       },
       "references/over-optional": {
         "prompt": "5e12da652fcea5078e5f342b4f3f60ef21d30c0381c992a410d41eb914ccad9f",
@@ -3344,6 +3691,11 @@
         "prompt": "354d8c24c36bb612a9d57d54ee2de2d7d248c9fd3d20e271600b54de55bd89ff",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "22400568a9b6ec819c50f3eeb149821e1daa59404c21aac0e7b02a1c14a169b2",
+        "omitted": [],
+        "sources": []
       }
     },
     "task.review@4": {
@@ -3368,6 +3720,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
@@ -3384,6 +3739,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3405,6 +3763,11 @@
         "prompt": "4c7cf844f0b5a1ae47fe8bb5d04718ed61d2d9a49f813c5fa2556330c0ea08ca",
         "omitted": [],
         "sources": ["artifact_golden_over_128000"]
+      },
+      "references/over-bytes": {
+        "prompt": "8822b942961a1fc10785ee4ecf333071c8c31eb25fcf96db990fff318925ee29",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_128000"]
       },
       "references/over-optional": {
         "prompt": "6d2563da21bf30f152a50c41fb15d9632016d6ce8f25f77dca96fdb5f5103b02",
@@ -3497,6 +3860,11 @@
         "prompt": "c3ea0cacf65bdaf0e044cfe38b9a9425eaea7f88c5c0511feabfe5a16cf058a8",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "960a708504b074cb589d93b794323e662ba4c9b885356bb32d117c39cbf6cb1b",
+        "omitted": [],
+        "sources": []
       }
     },
     "task.work@1": {
@@ -3521,6 +3889,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
@@ -3537,6 +3908,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3558,6 +3932,11 @@
         "prompt": "54cbb846a205ff526ff92f7629a6ddd7c5c57dfaa6112cf059e0c9f2659d39f0",
         "omitted": [],
         "sources": ["artifact_golden_over_48000"]
+      },
+      "references/over-bytes": {
+        "prompt": "e898b14b2ee6f657080361596226b9a2a1694b8e86304c91dc45ed97dd1c3728",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_48000"]
       },
       "references/over-optional": {
         "prompt": "8a6d3ad1dc16eb71d0b900022f0176416808fdb72853fc88f6b05a6917e23dbb",
@@ -3644,6 +4023,11 @@
         "prompt": "c491af273e14829e246b6bb7b2d0f54f1709e5baa4db71efe5d5b3d5ab3a296e",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "f2d5711c5ab180d9cf73242ba18809ab1a6816e13aa43a2f376020b6fafa47a5",
+        "omitted": [],
+        "sources": []
       }
     },
     "task.work@2": {
@@ -3668,6 +4052,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
@@ -3684,6 +4071,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3705,6 +4095,11 @@
         "prompt": "340c3c2542719b700ab6fc2c3bfcb6be748c7e6d6edba54c675899a3ea750c38",
         "omitted": [],
         "sources": ["artifact_golden_over_48000"]
+      },
+      "references/over-bytes": {
+        "prompt": "5b19fdcce2880a8dc81cc4aa92a2bbc361c59897f13352a602998161bb81a99f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_48000"]
       },
       "references/over-optional": {
         "prompt": "cd484fc4ceae52b2f45d0e70898337aba7fc73d6fc4b50752399bda8a299db3c",
@@ -3791,6 +4186,11 @@
         "prompt": "050e05b76b053091baf9ced74941351bc7346eac782294b5118b0eadd2d9a4e2",
         "omitted": [],
         "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "9f28382d027cc5ae51b1ed8d37ec69a9170430772351b79557b123a3fd2c5a5c",
+        "omitted": [],
+        "sources": []
       }
     },
     "task.work@3": {
@@ -3815,6 +4215,9 @@
       "text/over-required": {
         "error": "context_too_large"
       },
+      "text/over-bytes": {
+        "error": "context_too_large"
+      },
       "text/over-optional": {
         "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
@@ -3831,6 +4234,9 @@
         "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
       },
       "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-bytes": {
         "error": "context_too_large"
       },
       "auto/over-optional": {
@@ -3852,6 +4258,11 @@
         "prompt": "2c654c4c1c98826929ce3bb493afdcd09a4f2e19c2a589b83824b0a15d1cdc20",
         "omitted": [],
         "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-bytes": {
+        "prompt": "af12193e84c8d0edcf1dd8005ffb98c634d210ce4294b2ba522f1c051691f175",
+        "omitted": [],
+        "sources": ["artifact_golden_over_bytes_96000"]
       },
       "references/over-optional": {
         "prompt": "2c4e170781b1a9bf12fe44dfbcefeca4d87af0cdcfa53a4f4d9a3ca15160279c",
@@ -3938,6 +4349,11 @@
       },
       "ranked/line-breaks": {
         "prompt": "18ba20b51412577189fc375b8cbd3a5344c0cf449bcec76ec3e6d9f7a150a047",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/id-line-breaks": {
+        "prompt": "c017e84f556e4d28b1db9447cfcdadb9c6e22c36f9cac4f7814356fb797933db",
         "omitted": [],
         "sources": []
       }

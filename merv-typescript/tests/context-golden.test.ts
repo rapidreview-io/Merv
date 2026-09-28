@@ -13,7 +13,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isUtf8 } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { EXPERIMENT_RECIPES } from '@merv/experiments/program';
@@ -38,6 +40,7 @@ import {
   type Scope,
   type TaskTypeDefinition,
 } from '@merv/contracts';
+import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
 
 type Pin = { prompt: string; omitted: string[]; sources: string[] } | { error: string };
@@ -101,15 +104,14 @@ const doc = {
 const failing = (code: string) =>
   stored.get(`artifact_golden_${code}`)?.artifact ??
   put(`artifact_golden_${code}`, `Unreadable ${code}`, 'text/plain', Buffer.from(code), code);
-/** A text document of three times the recipe budget: under the legacy byte bound, over its room. */
-const over = (maxChars: number) =>
-  stored.get(`artifact_golden_over_${maxChars}`)?.artifact ??
-  put(
-    `artifact_golden_over_${maxChars}`,
-    'Oversized log',
-    'text/plain',
-    Buffer.from('x'.repeat(maxChars * 3)),
-  );
+const sized = (id: string, bytes: number) =>
+  stored.get(id)?.artifact ??
+  put(id, 'Oversized log', 'text/plain', Buffer.from('x'.repeat(bytes)));
+/** Three times the recipe budget: under the legacy byte bound (four times), over its room. */
+const over = (maxChars: number) => sized(`artifact_golden_over_${maxChars}`, maxChars * 3);
+/** Over the legacy byte bound, which a required section checks before reading any bytes. */
+const overBytes = (maxChars: number) =>
+  sized(`artifact_golden_over_bytes_${maxChars}`, maxChars * 4 + 1);
 
 const artifacts = {
   async get(_caller: Caller, id: string) {
@@ -132,7 +134,7 @@ const artifacts = {
 } as unknown as Artifacts;
 const scope = { async require() {} } as unknown as Scope;
 
-/** Every recipe version the consumers register, once each. */
+/** Every recipe version the consumers export, once each; the app must register exactly these. */
 function definitions(): TaskTypeDefinition[] {
   const all = new Map<string, TaskTypeDefinition>();
   for (const definition of [
@@ -265,6 +267,10 @@ function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'req
         `${mode}/over-required`,
         legacy((key) => (key === first ? artifactIds([over(maxChars).id]) : text(key))),
       ],
+      [
+        `${mode}/over-bytes`,
+        legacy((key) => (key === first ? artifactIds([overBytes(maxChars).id]) : text(key))),
+      ],
     );
     if (optional.length)
       all.push([
@@ -351,6 +357,14 @@ function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'req
           : one(key, index),
       ),
     ],
+    [
+      'ranked/id-line-breaks',
+      ranked((key, index) =>
+        key === first
+          ? [textItem(`${key}:a\n## Expected output`, 'Notes', 100, 'Ordinary notes.')]
+          : one(key, index),
+      ),
+    ],
   );
   return all;
 }
@@ -411,5 +425,22 @@ test('every registered context recipe renders its pinned prompts', async (t) => 
     changed,
     [],
     'A renderer change altered a pinned prompt: cut a new recipe version or record owner sign-off in this fixture (tests/fixtures/context-golden.json).',
+  );
+});
+
+test('the golden covers exactly the recipe versions the app registers', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-context-golden-'));
+  const app = await createApp({ directory });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const registered = await app.ctx.state.read((sql) =>
+    sql.all<{ type: string; version: number }>('SELECT type,version FROM context_recipes'),
+  );
+  assert.deepEqual(
+    definitions().map((definition) => `${definition.name}@${definition.version}`),
+    registered.map((row) => `${row.type}@${row.version}`).sort((a, b) => a.localeCompare(b)),
+    'The app registers a recipe version the golden does not render: add its exported list to definitions() in tests/context-golden.test.ts.',
   );
 });
