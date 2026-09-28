@@ -426,11 +426,10 @@ async function ownDecision(
   const assignment = policy.assignments?.find((rule) => rule.state === snapshot.state);
   // A worker received its assignment with its lease and holds no workflow.begin, so begin is
   // neither offered to it nor answered for it.
-  const beginOffered = !!assignment && !context.caller.session;
+  const beginRule = context.caller.session ? undefined : assignment;
   if (query.action)
     check(
-      rules.some((rule) => rule.name === query.action) ||
-        (query.action === 'begin' && beginOffered),
+      rules.some((rule) => rule.name === query.action) || (query.action === 'begin' && beginRule),
       'invalid_action',
       'Action is unavailable in this workflow state',
       409,
@@ -463,8 +462,7 @@ async function ownDecision(
     query.action ? action.action === query.action : rules[index].suggested !== false,
   );
   // Guidance checks admission only. Building a packet may itself read guidance.
-  // beginOffered implies an assignment; testing both narrows `assignment` for the packet below.
-  if (assignment && beginOffered) {
+  if (beginRule) {
     const begin: WorkflowActionStatus = {
       action: 'begin',
       tool: 'workflow.begin',
@@ -475,7 +473,7 @@ async function ownDecision(
       blockers: [],
     };
     try {
-      await checkAssignment(assignment, context);
+      await checkAssignment(beginRule, context);
     } catch (error) {
       // Unavailable assignment resources are a blocker, not a failure to read the task.
       if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))

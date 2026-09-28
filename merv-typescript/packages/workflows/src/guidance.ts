@@ -118,23 +118,17 @@ export class WorkflowGuidance extends WorkflowEngine {
       // Work whose prerequisite ended without succeeding: the engine resolves that gate
       // itself, to the ending action its program declares. Such a record is not ready for
       // anything and nothing will be dispatched for it, and counting it as ready is what
-      // makes a project with nothing left to do look busy.
-      const stalled = new Set(
-        workflows
-          .filter(
-            (item) => item.available && !item.terminal && item.currentGate === 'dependency_failed',
-          )
-          .map((item) => item.instanceId),
-      );
-      // Work at an exhausted loop limit still names an action, since a human may accept or
-      // end it, but nothing will be dispatched for it and it is not ready for a worker.
-      const escalated = new Set(
-        workflows
-          .filter(
-            (item) => item.available && !item.terminal && item.currentGate === 'loop_limit_reached',
-          )
-          .map((item) => item.instanceId),
-      );
+      // makes a project with nothing left to do look busy. Work at an exhausted loop limit
+      // still names an action, since a human may accept or end it, but nothing will be
+      // dispatched for it and it is not ready for a worker.
+      const gated = (gate: string) =>
+        new Set(
+          workflows
+            .filter((item) => item.available && !item.terminal && item.currentGate === gate)
+            .map((item) => item.instanceId),
+        );
+      const stalled = gated('dependency_failed');
+      const escalated = gated('loop_limit_reached');
       const waiting = (id: string) => stalled.has(id) || escalated.has(id);
       return {
         projectId: caller.projectId,
