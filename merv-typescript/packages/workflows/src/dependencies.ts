@@ -59,24 +59,25 @@ const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
 const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
   [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
 
-/** Without declared success states an instance never settles, so it never counts as failed. */
+/**
+ * An instance judged against a contract; one the project no longer holds has only its id and
+ * what its edge recorded. Without declared success states it never settles, so never fails.
+ */
 function classify(
-  node: NodeRow | undefined,
-  id: string,
-  workflow: string,
-  version: number,
+  node: Pick<NodeRow, 'id' | 'workflow' | 'version'> & Partial<NodeRow>,
   success: readonly string[] | null | undefined,
   terminal: readonly string[],
 ): WorkflowDependency {
-  const settled = !!node && !!success?.includes(node.state);
-  const ended = !!node && terminal.includes(node.state);
+  const { state } = node;
+  const settled = !!state && !!success?.includes(state);
+  const ended = !!state && terminal.includes(state);
   return {
-    id,
-    workflow: node?.workflow ?? workflow,
-    version: node ? Number(node.version) : version,
-    name: instanceName(node ? JSON.parse(node.data_json) : {}, node?.workflow ?? workflow),
-    state: node?.state ?? 'missing',
-    revision: Number(node?.revision ?? 0),
+    id: node.id,
+    workflow: node.workflow,
+    version: Number(node.version),
+    name: instanceName(node.data_json ? JSON.parse(node.data_json) : {}, node.workflow),
+    state: state ?? 'missing',
+    revision: Number(node.revision ?? 0),
     settled,
     terminal: ended,
     failed: ended && !!success && !settled,
@@ -129,10 +130,11 @@ export async function prerequisites(
   for (const edge of edges)
     found.get(edge.source_id)!.push({
       ...classify(
-        targets.get(edge.target_id),
-        edge.target_id,
-        edge.target_workflow,
-        Number(edge.target_version),
+        targets.get(edge.target_id) ?? {
+          id: edge.target_id,
+          workflow: edge.target_workflow,
+          version: edge.target_version,
+        },
         JSON.parse(edge.target_success_json) as string[],
         JSON.parse(edge.target_terminal_json) as string[],
       ),
@@ -173,14 +175,7 @@ export async function dependents(
       read.set(key, await contracts.get(sql, source.workflow, Number(source.version)));
     const pinned = read.get(key);
     found.get(edge.target_id)!.push({
-      ...classify(
-        source,
-        source.id,
-        source.workflow,
-        Number(source.version),
-        pinned?.successStates,
-        pinned?.definition.terminal ?? [],
-      ),
+      ...classify(source, pinned?.successStates, pinned?.definition.terminal ?? []),
       ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
     });
   }
@@ -212,16 +207,8 @@ export async function instanceRelations(
 ): Promise<WorkflowRelations | null> {
   const node = (await nodes(sql, projectId, [instanceId])).get(instanceId);
   if (!node) return null;
-  const version = Number(node.version);
-  const pinned = await contracts.get(sql, node.workflow, version);
-  const instance = classify(
-    node,
-    node.id,
-    node.workflow,
-    version,
-    pinned?.successStates,
-    pinned?.definition.terminal ?? [],
-  );
+  const pinned = await contracts.get(sql, node.workflow, Number(node.version));
+  const instance = classify(node, pinned?.successStates, pinned?.definition.terminal ?? []);
   return {
     instance: {
       ...instance,
