@@ -172,8 +172,9 @@ otherwise it opens its own transaction, which is read-only inside a `state.snaps
 
 **Callbacks.** Every program callback (guards, `describe`, lease hooks, builders) is
 awaited in the engine's transaction and must not write to `wf_instances`: after each
-group of callbacks the engine rereads the instance and refuses any change as
-`invalid_workflow_policy` 500, and rechecks the caller's authority and the registration.
+group of callbacks the engine rereads the instance, refuses it as
+`invalid_workflow_policy` 500 if it reads differently (a rewrite to equal values is not
+seen), and rechecks the caller's authority and the registration.
 A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
 `nested_transaction`, `transaction_*`, `state_*`) never is, and a write under a read is
 `invalid_workflow_policy` 500.
