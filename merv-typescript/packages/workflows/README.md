@@ -87,6 +87,10 @@ Unmanaged graph mutations require `write` permission directly. A registration ha
   content; replay returns the original snapshot, not the current instance state.
 - Every mutation commits instance state, command response, history, and its durable
   event together. Revision mismatches fail without creating a command response.
+- A `workflow.transition` event carries, besides the move, whether it left the instance in
+  a terminal state (`terminal`) and in one of its version's success states (`settled`), so a
+  consumer that acts only on ended work reads nothing for any other move. Events recorded
+  before these fields existed lack them and are never rewritten.
 - Pass a State-owned active `Transaction` to combine workflow changes with another
   component's records. Await every operation, including domain callbacks, before the transaction returns.
 - Registration disposal stops new execution of its graph. It does not delete

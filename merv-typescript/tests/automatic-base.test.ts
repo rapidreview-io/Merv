@@ -264,6 +264,68 @@ async function fixture(t: TestContext) {
   };
 }
 
+test('a move that does not end the work reads nothing of what waits on it; one recorded before events said so is read as before', async (t) => {
+  const f = await fixture(t);
+  const staged: WorkflowDefinition = {
+    name: 'staged',
+    version: 1,
+    initial: 'drafting',
+    states: ['drafting', 'building', 'built', 'dropped'],
+    terminal: ['built', 'dropped'],
+    edges: [
+      { from: 'drafting', action: 'advance', to: 'building' },
+      { from: 'building', action: 'finish', to: 'built' },
+      { from: 'building', action: 'abandon', to: 'dropped' },
+    ],
+  };
+  await f.workflows.register(staged, {
+    successStates: ['built'],
+    actions: [
+      ['advance', 'drafting'],
+      ['finish', 'building'],
+      ['abandon', 'building'],
+    ].map(([name, state]) => ({
+      name,
+      tool: `staged.${name}`,
+      states: [state],
+      transitions: [name],
+      instruction: `The work may ${name}.`,
+      check: () => {},
+    })),
+  });
+  const root = await f.start([], 'staged');
+  for (let i = 0; i < 60; i++) await f.start([root]);
+  const relations = t.mock.method(f.workflows, 'dependencyRelations');
+  await f.move(root, 'advance');
+  assert.equal(relations.mock.callCount(), 0);
+  const moved = (await f.state.events(f.project.id)).filter(
+    (event) => event.type === 'workflow.transition' && event.subjectId === root.id,
+  );
+  assert.deepEqual(
+    moved.map((event) => [event.data.action, event.data.terminal, event.data.settled]),
+    [
+      ['start', false, false],
+      ['advance', false, false],
+    ],
+  );
+  // An event from before the fields existed is read as it always was.
+  const { terminal: _, settled: __, ...legacy } = moved[1]!.data;
+  await f.state.transaction(
+    async (tx) => await f.code.transitioned({ ...moved[1]!, data: legacy }, tx),
+  );
+  assert.equal(relations.mock.callCount(), 1);
+  relations.mock.resetCalls();
+  await f.move(root, 'finish');
+  assert.ok(relations.mock.callCount() > 0, 'ending the work reads what waits on it');
+  assert.deepEqual(
+    (await f.state.events(f.project.id))
+      .filter((event) => event.type === 'workflow.transition' && event.subjectId === root.id)
+      .map((event) => [event.data.action, event.data.terminal, event.data.settled])
+      .at(-1),
+    ['finish', true, true],
+  );
+});
+
 test('a unit with no accepted code beneath it starts from the project’s pinned main', async (t) => {
   const f = await fixture(t);
   await f.bind(oid('a'));

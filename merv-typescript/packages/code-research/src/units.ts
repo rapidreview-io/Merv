@@ -1355,12 +1355,13 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   }
 
   /**
-   * The durable consumer of workflow.transition. A base changes only when work ends, so every
-   * other transition costs one read; then only what waits on the ended work is derived again,
-   * climbing past a dependent that has itself ended, because a derivation looks through those.
+   * The durable consumer of workflow.transition. A base changes only when work ends, so a move
+   * the event says did not end the work costs nothing past the base check (an event recorded
+   * before events said so is read as before); then only what waits on the ended work is derived
+   * again, climbing past a dependent that has itself ended, because a derivation looks through
+   * those.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
-    const ended = await this.workflows.dependencyRelations(event.projectId, event.subjectId, tx);
     if (
       this.bases?.enabled &&
       (await this.bases.records(tx, event.projectId)).some(
@@ -1370,6 +1371,8 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       await this.reconcileProject(tx, event.projectId);
       return;
     }
+    if (event.data.terminal === false) return;
+    const ended = await this.workflows.dependencyRelations(event.projectId, event.subjectId, tx);
     if (!ended?.instance.terminal) return;
     const seen = new Set<string>();
     const queue = [...ended.dependents];

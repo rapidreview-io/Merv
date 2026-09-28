@@ -1831,6 +1831,7 @@ export class WorkflowsService implements Workflows {
       await this.record(
         transaction,
         caller,
+        registered,
         snapshot,
         input.requestId,
         hash,
@@ -1961,6 +1962,7 @@ export class WorkflowsService implements Workflows {
       await this.record(
         transaction,
         caller,
+        registered,
         after,
         input.requestId,
         hash,
@@ -2070,6 +2072,7 @@ export class WorkflowsService implements Workflows {
       await this.record(
         tx,
         caller,
+        owner,
         after,
         input.requestId,
         hash,
@@ -2212,9 +2215,14 @@ export class WorkflowsService implements Workflows {
     return JSON.parse(row.response_json) as T;
   }
 
+  /**
+   * The event says whether the move ended the work and whether it ended well, as the version
+   * pins them, so a consumer that acts only on ended work reads nothing for any other move.
+   */
   private async record(
     tx: Transaction,
     caller: Caller,
+    registration: Registration,
     snapshot: WorkflowSnapshot,
     requestId: string,
     hash: string,
@@ -2251,6 +2259,8 @@ export class WorkflowsService implements Workflows {
       action,
       from,
       to: snapshot.state,
+      terminal: registration.definition.terminal.includes(snapshot.state),
+      settled: registration.policy?.successStates?.includes(snapshot.state) ?? false,
     });
   }
 
