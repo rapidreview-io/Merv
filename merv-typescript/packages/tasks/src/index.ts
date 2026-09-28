@@ -1487,6 +1487,8 @@ export class TaskService implements Tasks {
   }
   async context(caller: Caller, input: TaskContext): Promise<ContextPackage> {
     ({ caller, input } = structuredClone({ caller, input }));
+    // The preview reads artifact bytes under the writer lock. The Context Builder README gives
+    // the seam that moves them out: a lock-free preview between two short transactions.
     return await this.state.transaction(async (tx) => {
       const { task, review } = await this.assignment(caller, input, tx);
       const type = this.contextType(task, input.purpose);
