@@ -858,6 +858,26 @@ test('children is asked for at most 1,000 instances at once', async (t) => {
   assert.deepEqual(sizes, [1000, 1000, 500]);
 });
 
+test('a children answer that is not a record is refused', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  let answer: unknown;
+  const handle = await workflows.register(graph(), {
+    ...policy(),
+    children: () => answer as Record<string, string[]>,
+  });
+  const root = await start(handle, caller, 'preparation', 'root');
+  for (const malformed of [undefined, null, 'none', [root.id]]) {
+    answer = malformed;
+    await assert.rejects(async () => await workflows.dependencyClosure(caller, root.id), {
+      code: 'invalid_workflow_policy',
+      status: 500,
+    });
+  }
+  answer = {};
+  assert.deepEqual(await workflows.dependencyClosure(caller, root.id), [root.id]);
+});
+
 test('a closure deeper than the bound is refused, not cut short', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());

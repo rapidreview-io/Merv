@@ -1579,8 +1579,14 @@ export class WorkflowsService implements Workflows {
           instanceIds: Object.freeze(ids),
           tx,
         });
+        check(
+          typeof named === 'object' && named !== null && !Array.isArray(named),
+          'invalid_workflow_policy',
+          'Workflow children must be a record of instance id to child ids',
+          500,
+        );
         for (const id of ids) {
-          const children = Object.hasOwn(named ?? {}, id) ? named[id] : [];
+          const children = Object.hasOwn(named, id) ? named[id] : [];
           check(
             Array.isArray(children) && children.every((child) => typeof child === 'string'),
             'invalid_workflow_policy',
