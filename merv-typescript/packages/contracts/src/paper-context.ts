@@ -16,7 +16,10 @@ export const paperJsonCap = (maxChars: number) => Math.floor(maxChars / 3);
  * the section bodies. When the JSON is still longer than `maxJson`, which counts titles, IDs and
  * markers too, every body but the current problem's goals, scope, problem and constraints becomes
  * its marker; if that is not enough, those other sections are removed and each revision counts
- * them in `omittedSections`. Under the cap the result is exactly what `room` alone gives.
+ * them in `omittedSections`. Only the problem's current revision keeps those four sections: its
+ * published revision loses them like any other. Under the cap the result is exactly what `room`
+ * alone gives. The result is typed as `T`, but a capped revision may hold fewer sections and an
+ * extra `omittedSections` count, so callers treat it as JSON for the prompt.
  */
 export function boundedPaperContext<T extends object>(
   documents: T,
