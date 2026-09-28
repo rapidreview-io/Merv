@@ -118,17 +118,6 @@ export function decode(input: ArtifactInput): Buffer {
   return bytes;
 }
 
-/** An upload request ID: the tool schema's rule and no stricter, because the value is only hashed. */
-export function request(requestId: unknown): string | undefined {
-  check(
-    requestId === undefined ||
-      (typeof requestId === 'string' && requestId.length >= 1 && requestId.length <= 128),
-    'invalid_artifact',
-    'requestId must be a string of 1-128 characters',
-  );
-  return requestId;
-}
-
 /** Refuses a malformed range before any lookup or storage I/O. */
 export function span(range: { offset?: unknown; length?: unknown }) {
   check(
