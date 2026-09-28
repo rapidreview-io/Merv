@@ -317,12 +317,11 @@ const itemRecipes: TaskTypeDefinition[] = [
     format: 2 as const,
   },
 }));
-export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
-  ...previousExperimentRecipes,
-  ...paperRecipes,
-  exhibitRecipe,
-  ...itemRecipes,
-];
+/**
+ * The recipes the program registers. The earlier versions above render nothing now, since every
+ * packet renders with these, so they are not registered; their rows stay in `context_recipes`.
+ */
+export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = itemRecipes;
 
 /**
  * How often a design review, and a results review, may return an experiment. A design return
@@ -401,7 +400,6 @@ export class ExperimentProgram {
     return handle;
   }
   private contexts = new Map<ActiveState, ContextRegistration>();
-  private historicalContexts: ContextRegistration[] = [];
   private closed = false;
 
   /** Complete storage migrations before publishing this service. */
@@ -423,15 +421,11 @@ export class ExperimentProgram {
         },
       ]);
       try {
-        for (const recipe of EXPERIMENT_RECIPES) {
-          const registration = await host.contextBuilder.register(recipe);
-          if (recipe.recipe.format === 2)
-            this.contexts.set(
-              activeStates.find((state) => recipeNames[state] === recipe.name)!,
-              registration,
-            );
-          else this.historicalContexts.push(registration);
-        }
+        for (const recipe of EXPERIMENT_RECIPES)
+          this.contexts.set(
+            activeStates.find((state) => recipeNames[state] === recipe.name)!,
+            await host.contextBuilder.register(recipe),
+          );
         for (const version of PROGRAM_VERSIONS)
           this.handles.set(
             version,
@@ -443,7 +437,6 @@ export class ExperimentProgram {
       } catch (error) {
         for (const handle of this.handles.values()) handle.dispose();
         for (const context of this.contexts.values()) context.dispose();
-        for (const context of this.historicalContexts) context.dispose();
         throw error;
       }
     };
@@ -455,9 +448,7 @@ export class ExperimentProgram {
     for (const handle of this.handles.values()) handle.dispose();
     this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
-    for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
-    this.historicalContexts = [];
   }
 
   private async facts(context: WorkflowCheckContext): Promise<Experiment> {

@@ -260,7 +260,9 @@ embedded whole while they fit and are otherwise listed by one line with its
 retrieval tool. Figures and the generated metrics exhibit are only listed, so
 their bytes are never read into a packet. These versions render every packet,
 including one for a lease offered earlier, whose frozen experiment record keeps
-the bounded paper it was offered with.
+the bounded paper it was offered with. Earlier versions render nothing, so the
+program no longer registers them; their rows stay in `context_recipes` as
+history.
 
 A design rejection opens a new attempt whose `feedbackReviewIds` names only the
 review that caused it, so `feedback.previousReviews` covers the current attempt
