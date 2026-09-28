@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { canonical, check, digest, MervError } from '@merv/contracts';
+import { canonical, check, digest, executionArgument, MervError } from '@merv/contracts';
 import type {
   Data,
   Sql,
@@ -7,9 +7,7 @@ import type {
   WorkflowAssignmentRule,
   WorkflowCheckContext,
   WorkflowDefinition,
-  WorkflowDispatchAdmission,
   WorkflowExecution,
-  WorkflowExecutionBinding,
   WorkflowExecutionPolicy,
   WorkflowExecutionReferences,
   WorkflowPolicy,
@@ -191,103 +189,6 @@ export async function executionReferences(
   return parsed.data;
 }
 
-function fixed(binding: WorkflowExecutionBinding, execution: WorkflowExecution): unknown {
-  if (binding.kind === 'literal') return binding.value;
-  if (binding.kind === 'target') return execution[binding.field];
-  if (binding.kind === 'reference') {
-    const reference = Object.hasOwn(execution.references, binding.name)
-      ? execution.references[binding.name]
-      : undefined;
-    check(
-      typeof reference === 'string',
-      'execution_reference_unavailable',
-      `Execution reference ${binding.name} is unavailable`,
-      409,
-    );
-    return reference;
-  }
-  return undefined;
-}
-
-export function admitDispatch(
-  execution: WorkflowExecution,
-  tool: string,
-  input: Data,
-): WorkflowDispatchAdmission {
-  const grant = execution.policy.tools.find((grant) => grant.name === tool);
-  check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
-  // Detached and bounded by dispatchInput() where the request entered.
-  const original = input;
-  check(
-    original && typeof original === 'object' && !Array.isArray(original),
-    'invalid_input',
-    'Tool input must be a JSON object',
-  );
-  const matches = new Map<string, Data>();
-  const errors: MervError[] = [];
-  for (const alternative of grant.alternatives) {
-    try {
-      const result = structuredClone(original);
-      for (const [field, binding] of Object.entries(alternative)) {
-        if (binding.kind === 'oneOf' || binding.kind === 'subset') {
-          const values = Object.hasOwn(execution.references, binding.name)
-            ? execution.references[binding.name]
-            : undefined;
-          check(
-            Array.isArray(values),
-            'execution_reference_unavailable',
-            `Execution reference ${binding.name} is unavailable`,
-            409,
-          );
-          // Omitting a subset means selecting no resources, never all available resources.
-          if (binding.kind === 'subset' && !Object.hasOwn(result, field)) result[field] = [];
-          // A choice among one reference is no choice: an omitted field takes it.
-          if (binding.kind === 'oneOf' && !Object.hasOwn(result, field) && values.length === 1)
-            result[field] = values[0]!;
-          check(
-            Object.hasOwn(result, field),
-            'execution_arguments_forbidden',
-            `Choose ${field} from the declared execution references`,
-            403,
-          );
-          const actual = result[field];
-          check(
-            binding.kind === 'oneOf'
-              ? typeof actual === 'string' && values.includes(actual)
-              : Array.isArray(actual) &&
-                  actual.every((value) => typeof value === 'string' && values.includes(value)),
-            'execution_arguments_forbidden',
-            `${field} is outside the declared execution references`,
-            403,
-          );
-        } else {
-          const expected = fixed(binding, execution);
-          if (Object.hasOwn(result, field))
-            check(
-              canonical(result[field]) === canonical(expected),
-              'execution_arguments_forbidden',
-              `${field} conflicts with this workflow assignment`,
-              403,
-            );
-          else result[field] = structuredClone(expected) as Data[string];
-        }
-      }
-      matches.set(canonical(result), result);
-    } catch (error) {
-      if (!(error instanceof MervError)) throw error;
-      errors.push(error);
-    }
-  }
-  check(
-    matches.size <= 1,
-    'execution_arguments_ambiguous',
-    'Supply the fixed fields needed to select one execution alternative',
-  );
-  if (!matches.size)
-    throw errors.find((error) => error.code === 'execution_arguments_forbidden') ?? errors[0]!;
-  return { tool, input: [...matches.values()][0]! };
-}
-
 /** Stable tool names come from declarations; readiness and prompt sources cannot add grants. */
 export function executionDisplay(
   execution: WorkflowExecution,
@@ -308,7 +209,7 @@ export function executionDisplay(
           }
           if (binding.kind === 'subset') continue;
           try {
-            args[field] = structuredClone(fixed(binding, execution)) as Data[string];
+            args[field] = structuredClone(executionArgument(binding, execution)) as Data[string];
           } catch (error) {
             if (!(error instanceof MervError) || error.code !== 'execution_reference_unavailable')
               throw error;

@@ -2,6 +2,7 @@ import { visible, recorded, createService, canonical, digest } from '@merv/contr
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
+  admitDispatch,
   check,
   effectiveWorkspace,
   mapAsync,
@@ -32,6 +33,7 @@ import type {
   WorkflowBegin,
   WorkflowWorkStart,
   WorkflowExecution,
+  WorkflowExecutionReferences,
   WorkflowExecutionTarget,
   WorkflowExecutionDispatch,
   WorkflowDispatchAdmission,
@@ -73,7 +75,6 @@ import {
   limitStatusesOf,
 } from './limits.js';
 import {
-  admitDispatch,
   dispatchInput,
   executionDisplay,
   executionFingerprint,
@@ -237,46 +238,6 @@ export class WorkflowsService implements Workflows {
   async initialize(): Promise<void> {
     await this.state.migrate('workflows', migrations);
     await this.state.read(async (sql) => await this.contracts.preload(sql));
-  }
-
-  /** Its caller was authorized for `read` at the method's entry, in the same transaction. */
-  private admitRead(
-    execution: WorkflowExecution,
-    tool: string,
-    input: Data,
-    read?: boolean,
-  ): WorkflowDispatchAdmission {
-    const registration = this.definition(execution.workflow, execution.version);
-    check(
-      registration.registrationId === execution.registrationId,
-      'execution_changed',
-      'The captured workflow registration has been withdrawn',
-      409,
-    );
-    // The project overview is asked for by leaving the instance out. A fixed binding would
-    // fill it in and answer for this worker's own record instead — a narrower question than
-    // the one asked, and the only read a session cannot otherwise express.
-    if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(input, 'instanceId'))
-      return { tool, input: structuredClone(input) };
-    try {
-      return admitDispatch(execution, tool, input);
-    } catch (error) {
-      if (!(error instanceof MervError)) throw error;
-      // A session reads whatever its project holds (founder, 2026-09-17: no read
-      // constraints). The policy still fills in what it names, so a read called as declared
-      // is admitted as declared; one it does not name, or names differently, is admitted as
-      // given, bounded by the project alone. Every write holds as published.
-      if (
-        read &&
-        [
-          'execution_tool_forbidden',
-          'execution_arguments_forbidden',
-          'execution_reference_unavailable',
-        ].includes(error.code)
-      )
-        return { tool, input: structuredClone(input) };
-      throw error;
-    }
   }
 
   async register(
@@ -780,14 +741,53 @@ export class WorkflowsService implements Workflows {
     worker: Caller,
     lease: WorkflowLease,
     transaction?: Transaction,
-  ): Promise<{ registrationId: string }> {
+    frozen?: WorkflowExecution,
+  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }> {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
+    if (frozen) frozen = workflowJson(frozen, 'invalid_execution_target', 400);
     return await this.read(transaction, async (tx) => {
-      const { row, registration } = await this.leaseStep(worker, lease, tx);
-      await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
+      const { rule, registration, row, context } = await this.leaseStep(worker, lease, tx);
+      let references: WorkflowExecutionReferences | undefined;
+      if (frozen) {
+        // The registration may have been reloaded since the offer; its caller fences that
+        // with the generation this returns. The policy is fenced by its content.
+        check(
+          frozen.instanceId === lease.instanceId &&
+            frozen.projectId === lease.projectId &&
+            frozen.actorId === lease.actorId &&
+            frozen.workflow === lease.workflow &&
+            frozen.version === lease.version &&
+            frozen.state === lease.state &&
+            frozen.revision === lease.expectedRevision &&
+            frozen.policyHash === lease.policyHash &&
+            executionFingerprint(frozen.policy) === lease.policyHash,
+          'execution_changed',
+          'Frozen dispatch authority does not match this active lease',
+          409,
+        );
+        references = executionMetadata(frozen.references);
+        if (rule.lease!.outputs) {
+          const extra = executionMetadata(
+            await rule.lease!.outputs(context, executionMetadata(lease.receipt)),
+          );
+          for (const [key, ids] of Object.entries(extra)) {
+            check(
+              Object.hasOwn(references, key) &&
+                Array.isArray(references[key]) &&
+                Array.isArray(ids) &&
+                ids.every((id) => typeof id === 'string' && id.length > 0),
+              'invalid_workflow_policy',
+              'Resource receipts may extend only declared reference arrays',
+              500,
+            );
+            references[key] = [...new Set([...(references[key] as string[]), ...ids])].sort();
+          }
+        }
+      }
+      await this.recheck(tx, [row], 'Lease callbacks must not change the workflow instance');
       this.requireActive(registration);
-      return { registrationId: registration.registrationId };
+      return { registrationId: registration.registrationId, ...(references && { references }) };
     });
   }
 
@@ -846,58 +846,6 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  async authorizeLeaseDispatch(
-    worker: Caller,
-    lease: WorkflowLease,
-    frozen: WorkflowExecution,
-    { ...input }: { tool: string; input: Data; read?: boolean },
-    transaction?: Transaction,
-  ): Promise<WorkflowDispatchAdmission> {
-    worker = structuredClone(worker);
-    lease = workflowJson(lease, 'invalid_lease', 400);
-    frozen = workflowJson(frozen, 'invalid_execution_target', 400);
-    input.input = dispatchInput(input.input);
-    return await this.read(transaction, async (tx) => {
-      const { rule, registration, row, context } = await this.leaseStep(worker, lease, tx);
-      check(
-        frozen.instanceId === lease.instanceId &&
-          frozen.projectId === lease.projectId &&
-          frozen.actorId === lease.actorId &&
-          frozen.workflow === lease.workflow &&
-          frozen.version === lease.version &&
-          frozen.state === lease.state &&
-          frozen.revision === lease.expectedRevision &&
-          frozen.policyHash === lease.policyHash &&
-          executionFingerprint(frozen.policy) === lease.policyHash &&
-          frozen.registrationId === registration.registrationId,
-        'execution_changed',
-        'Frozen dispatch authority does not match this active lease invocation',
-        409,
-      );
-      const references = executionMetadata(frozen.references);
-      if (rule.lease!.outputs) {
-        const extra = executionMetadata(
-          await rule.lease!.outputs(context, executionMetadata(lease.receipt)),
-        );
-        for (const [key, ids] of Object.entries(extra)) {
-          check(
-            Object.hasOwn(references, key) &&
-              Array.isArray(references[key]) &&
-              Array.isArray(ids) &&
-              ids.every((id) => typeof id === 'string' && id.length > 0),
-            'invalid_workflow_policy',
-            'Resource receipts may extend only declared reference arrays',
-            500,
-          );
-          references[key] = [...new Set([...(references[key] as string[]), ...ids])].sort();
-        }
-      }
-      await this.recheck(tx, [row], 'Lease callbacks must not change the workflow instance');
-      this.requireActive(registration);
-      return this.admitRead({ ...frozen, references }, input.tool, input.input, input.read);
-    });
-  }
-
   async releaseLease(
     lease: WorkflowLease,
     { ...input }: { reason: string },
@@ -953,7 +901,7 @@ export class WorkflowsService implements Workflows {
     dispatch.input = dispatchInput(dispatch.input);
     return await this.read(transaction, async (tx) => {
       const execution = await this.executionInternal(caller, dispatch, tx);
-      return this.admitRead(execution, dispatch.tool, dispatch.input, dispatch.read);
+      return admitDispatch(execution, dispatch.tool, dispatch.input, dispatch.read);
     });
   }
 

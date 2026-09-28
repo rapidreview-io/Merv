@@ -1408,6 +1408,150 @@ export interface WorkflowDispatchAdmission {
   tool: string;
   input: Data;
 }
+/** The value a fixed binding gives its argument; a oneOf or subset choice gives none. */
+export function executionArgument(
+  binding: WorkflowExecutionBinding,
+  execution: WorkflowExecution,
+): unknown {
+  if (binding.kind === 'literal') return binding.value;
+  if (binding.kind === 'target') return execution[binding.field];
+  if (binding.kind === 'reference') {
+    const reference = Object.hasOwn(execution.references, binding.name)
+      ? execution.references[binding.name]
+      : undefined;
+    check(
+      typeof reference === 'string',
+      'execution_reference_unavailable',
+      `Execution reference ${binding.name} is unavailable`,
+      409,
+    );
+    return reference;
+  }
+  return undefined;
+}
+/**
+ * Admits one tool call under an execution: a declared tool, with arguments its bindings allow
+ * and fill in. With `read`, the tool only reads, and a session reads whatever its project holds
+ * (founder, 2026-09-17: no read constraints). The policy still fills in what it names, so a
+ * read called as declared is admitted as declared; one it does not name, or names differently,
+ * is admitted as given, bounded by the project alone. Every write holds as published.
+ */
+export function admitDispatch(
+  execution: WorkflowExecution,
+  tool: string,
+  input: Data,
+  read = false,
+): WorkflowDispatchAdmission {
+  // A detached copy, bounded as the engine bounds a caller's data.
+  const encoded = canonical(
+    plain(input, 'invalid_input', {
+      depth: 32,
+      nodes: 16_000,
+      keys: 'any',
+      strings: 'json',
+      undefined: 'reject',
+      nullPrototype: false,
+    }),
+  );
+  check(encoded.length <= 4_000_000, 'invalid_input', 'Input is too large');
+  const original = JSON.parse(encoded) as Data;
+  check(
+    original && typeof original === 'object' && !Array.isArray(original),
+    'invalid_input',
+    'Tool input must be a JSON object',
+  );
+  // The project overview is asked for by leaving the instance out. A fixed binding would
+  // fill it in and answer for this worker's own record instead — a narrower question than
+  // the one asked, and the only read a session cannot otherwise express.
+  if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(original, 'instanceId'))
+    return { tool, input: original };
+  try {
+    return admitDeclared(execution, tool, original);
+  } catch (error) {
+    if (
+      read &&
+      error instanceof MervError &&
+      [
+        'execution_tool_forbidden',
+        'execution_arguments_forbidden',
+        'execution_reference_unavailable',
+      ].includes(error.code)
+    )
+      return { tool, input: original };
+    throw error;
+  }
+}
+function admitDeclared(
+  execution: WorkflowExecution,
+  tool: string,
+  original: Data,
+): WorkflowDispatchAdmission {
+  const grant = execution.policy.tools.find((grant) => grant.name === tool);
+  check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
+  const matches = new Map<string, Data>();
+  const errors: MervError[] = [];
+  for (const alternative of grant.alternatives) {
+    try {
+      const result = structuredClone(original);
+      for (const [field, binding] of Object.entries(alternative)) {
+        if (binding.kind === 'oneOf' || binding.kind === 'subset') {
+          const values = Object.hasOwn(execution.references, binding.name)
+            ? execution.references[binding.name]
+            : undefined;
+          check(
+            Array.isArray(values),
+            'execution_reference_unavailable',
+            `Execution reference ${binding.name} is unavailable`,
+            409,
+          );
+          // Omitting a subset means selecting no resources, never all available resources.
+          if (binding.kind === 'subset' && !Object.hasOwn(result, field)) result[field] = [];
+          // A choice among one reference is no choice: an omitted field takes it.
+          if (binding.kind === 'oneOf' && !Object.hasOwn(result, field) && values.length === 1)
+            result[field] = values[0]!;
+          check(
+            Object.hasOwn(result, field),
+            'execution_arguments_forbidden',
+            `Choose ${field} from the declared execution references`,
+            403,
+          );
+          const actual = result[field];
+          check(
+            binding.kind === 'oneOf'
+              ? typeof actual === 'string' && values.includes(actual)
+              : Array.isArray(actual) &&
+                  actual.every((value) => typeof value === 'string' && values.includes(value)),
+            'execution_arguments_forbidden',
+            `${field} is outside the declared execution references`,
+            403,
+          );
+        } else {
+          const expected = executionArgument(binding, execution);
+          if (Object.hasOwn(result, field))
+            check(
+              canonical(result[field]) === canonical(expected),
+              'execution_arguments_forbidden',
+              `${field} conflicts with this workflow assignment`,
+              403,
+            );
+          else result[field] = structuredClone(expected) as Data[string];
+        }
+      }
+      matches.set(canonical(result), result);
+    } catch (error) {
+      if (!(error instanceof MervError)) throw error;
+      errors.push(error);
+    }
+  }
+  check(
+    matches.size <= 1,
+    'execution_arguments_ambiguous',
+    'Supply the fixed fields needed to select one execution alternative',
+  );
+  if (!matches.size)
+    throw errors.find((error) => error.code === 'execution_arguments_forbidden') ?? errors[0]!;
+  return { tool, input: [...matches.values()][0]! };
+}
 export interface WorkflowAssignmentContent {
   role: string;
   label: string;
@@ -1458,19 +1602,17 @@ export interface Workflows {
     target: WorkflowExecutionTarget & { leaseId: string },
     tx?: Transaction,
   ): Promise<WorkflowLeaseOffer>;
-  /** The lease still holds; its references stay those frozen at the offer. */
+  /**
+   * The lease still holds, under the returned registration generation. With `frozen`, the
+   * execution the lease was offered, it also returns the references that execution grants
+   * now: the frozen ones, extended by the lease's own outputs.
+   */
   checkLease(
     worker: Caller,
     lease: WorkflowLease,
     tx?: Transaction,
-  ): Promise<{ registrationId: string }>;
-  authorizeLeaseDispatch(
-    worker: Caller,
-    lease: WorkflowLease,
-    frozen: WorkflowExecution,
-    input: { tool: string; input: Data; read?: boolean },
-    tx?: Transaction,
-  ): Promise<WorkflowDispatchAdmission>;
+    frozen?: WorkflowExecution,
+  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }>;
   activateLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowWorkStart>;
   /** Trusted exact resource cleanup; deliberately independent of caller's expired authority. */
   releaseLease(lease: WorkflowLease, input: { reason: string }, tx?: Transaction): Promise<void>;

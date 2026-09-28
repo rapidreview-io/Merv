@@ -186,10 +186,13 @@ Programs can supply generic assignment lease hooks to acquire, check and release
 their own ownership records. `offerLease` returns a frozen assignment, execution
 policy and opaque receipt. `activateLease` records first-start using metadata only.
 `checkLease` admits a durable lease against the current installed generation and
-returns that generation's id; `authorizeLeaseDispatch` separately fences a captured
-invocation generation and uses frozen inputs plus explicitly owned outputs. A lease
-step runs the step's `check` and `lease.check`, never `references`: the offer froze
-those, so a refusal that must end a live lease belongs in one of the two checks. Sessions owns credentials,
+returns that generation's id. Given the execution the lease was offered, it also fences
+that execution against the lease, its policy by content, and returns the references it
+grants now: the frozen ones, extended only in declared arrays by the lease's own
+`outputs`. Sessions fences each invocation's generation with the id and admits the tool
+call with `admitDispatch` from Contracts. A lease step runs the step's `check` and
+`lease.check`, never `references`: the offer froze those, so a refusal that must end a
+live lease belongs in one of the two checks. Sessions owns credentials,
 expiry and source authority; Workflows still has no dependency on Sessions, Tasks,
 Reviews or artifact storage. See [the integrated contract](../../docs/SESSION_LEASES.md).
 

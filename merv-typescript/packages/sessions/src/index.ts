@@ -8,6 +8,7 @@ import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
 import {
+  admitDispatch,
   canonical,
   check,
   delegationEnd,
@@ -28,6 +29,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowExecutionReferences,
   type Workflows,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
@@ -693,7 +695,12 @@ export class LeasedSessions implements Sessions {
     if (session.agentId)
       await this.directory.require(await this.directory.get(session.agentId, tx), tx);
   }
-  private async valid(session: Session, tx: Transaction): Promise<{ registrationId: string }> {
+  /** The session's lease still holds; with `frozen`, also the references its execution grants now. */
+  private async valid(
+    session: Session,
+    tx: Transaction,
+    frozen?: Session['execution'],
+  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
     check(live(session), 'session_closed', 'Session is closed', 401);
     check(
@@ -711,7 +718,7 @@ export class LeasedSessions implements Sessions {
         source: session.source,
         role: session.role,
       },
-      () => this.workflows.checkLease(this.worker(session), session.lease, tx),
+      () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
     );
     this.ensureOpen();
     check(
@@ -2245,7 +2252,9 @@ export class LeasedSessions implements Sessions {
     read?: boolean,
   ) {
     const session = await this.session(caller, tx);
-    const current = await this.valid(session, tx);
+    // Acknowledging a message is always admitted; it needs only a live lease.
+    const ack = tool === 'session.message.ack';
+    const current = await this.valid(session, tx, ack ? undefined : session.execution);
     if (registrationId !== undefined)
       check(
         current.registrationId === registrationId,
@@ -2253,26 +2262,9 @@ export class LeasedSessions implements Sessions {
         'Workflow implementation changed during invocation',
         409,
       );
-    const admission =
-      tool === 'session.message.ack'
-        ? { tool, input: structuredClone(input) }
-        : await this.framed(
-            {
-              tx,
-              actorId: session.actorId,
-              sessionId: session.id,
-              source: session.source,
-              role: session.role,
-            },
-            () =>
-              this.workflows.authorizeLeaseDispatch(
-                caller,
-                session.lease,
-                { ...session.execution, registrationId: registrationId ?? current.registrationId },
-                { tool, input, ...(read ? { read } : {}) },
-                tx,
-              ),
-          );
+    const admission = ack
+      ? { tool, input: structuredClone(input) }
+      : admitDispatch({ ...session.execution, references: current.references! }, tool, input, read);
     return { admission, registrationId: current.registrationId, session };
   }
   async prepare(

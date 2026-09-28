@@ -848,7 +848,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       checkLease: f.workflows.checkLease.bind(f.workflows),
       activateLease: f.workflows.activateLease.bind(f.workflows),
       releaseLease: f.workflows.releaseLease.bind(f.workflows),
-      authorizeLeaseDispatch: f.workflows.authorizeLeaseDispatch.bind(f.workflows),
       register: async (definition, policy) => {
         const handle = await f.workflows.register(definition, policy);
         return {

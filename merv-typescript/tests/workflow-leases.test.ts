@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createService } from '@merv/contracts';
+import { admitDispatch, createService } from '@merv/contracts';
 import type {
   Caller,
   Data,
@@ -15,6 +15,7 @@ import type {
   TaskDelivery,
   Transaction,
   WorkflowDefinition,
+  WorkflowExecution,
   WorkflowPolicy,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
@@ -154,20 +155,16 @@ test('lease authority retains its source and worker during pending checks', asyn
   });
   const offered = await f.offer();
   const worker = await sessions.authenticate(offered.secret);
-  for (const method of ['checkLease', 'activateLease', 'authorizeLeaseDispatch'] as const) {
+  for (const method of ['checkLease', 'activateLease', 'checkLease with its execution'] as const) {
     await t.test(method, async () => {
       const caller = structuredClone(worker);
       const checking =
-        method === 'authorizeLeaseDispatch'
-          ? workflows.authorizeLeaseDispatch(
+        method === 'checkLease with its execution'
+          ? workflows.checkLease(
               caller,
               offered.session.lease,
+              undefined,
               offered.session.execution,
-              {
-                tool: 'workflow.status_and_next',
-                input: {},
-                read: true,
-              },
             )
           : workflows[method](caller, offered.session.lease);
       caller.actorId = 'replacement';
@@ -301,6 +298,17 @@ test('lease generations survive provider reload but old invocations and released
   await f.app.setEnabled('tasks', true);
   const live = await f.app.ctx.workflows.checkLease(worker, offered.session.lease);
   assert.notEqual(live.registrationId, oldGeneration);
+  // The execution frozen under the old generation still grants its references.
+  assert.ok(
+    (
+      await f.app.ctx.workflows.checkLease(
+        worker,
+        offered.session.lease,
+        undefined,
+        offered.session.execution,
+      )
+    ).references,
+  );
   await assert.rejects(
     f.app.ctx.sessions.run(
       invocation,
@@ -363,12 +371,12 @@ test('a leased status_and_next admission stays within a statement budget', async
     true,
   );
   assert.equal(invocation.tool, 'workflow.status_and_next');
-  // The dispatch authorization runs inside the session's own frame, so every Scope check it
+  // The admission's lease check runs inside the session's own frame, so every Scope check it
   // makes for the worker resolves from that frame instead of re-reading the session row
-  // (about 400 statements unframed, 88 framed).
-  assert.ok(statements <= 160, `${statements} statements for one leased read`);
-  // The session's Scope check, its validation, and the dispatch authorization.
-  assert.equal(leaseSteps.mock.callCount(), 3);
+  // (about 400 statements unframed, 127 framed with a second lease step, 70 now).
+  assert.ok(statements <= 100, `${statements} statements for one leased read`);
+  // The session's Scope check, and its admission.
+  assert.equal(leaseSteps.mock.callCount(), 2);
   assert.equal(references.mock.callCount(), 0);
 });
 
@@ -561,7 +569,7 @@ test('a non-Task program can reserve, activate and release through generic hooks
 /** The engine alone, with one program whose lease hooks the test controls. */
 async function engineFixture(t: TestContext) {
   const state = await openState(':memory:');
-  const controls = { outputs: () => {} };
+  const controls: { outputs: () => Record<string, string[]> | void } = { outputs: () => {} };
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
@@ -625,10 +633,7 @@ async function engineFixture(t: TestContext) {
             assert.equal(receipt.leaseId, context.caller.session!.id);
           },
           release: async () => {},
-          outputs: () => {
-            controls.outputs();
-            return {};
-          },
+          outputs: () => controls.outputs() ?? {},
         },
       },
     ],
@@ -665,7 +670,7 @@ test('dispatch authorization acts on a snapshot of its request', async (t) => {
   });
 });
 
-test('lease lifecycle calls act on a snapshot of their inputs and admit only declared reads', async (t) => {
+test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   const f = await engineFixture(t);
   assert.ok(await f.workflows.assignment(f.caller, f.instance.id));
   assert.equal((await f.workflows.dispatchCandidates(f.caller))[0]!.instanceId, f.instance.id);
@@ -706,37 +711,74 @@ test('lease lifecycle calls act on a snapshot of their inputs and admit only dec
   const activating = f.workflows.activateLease(worker, activatedLease);
   activatedLease.instanceId = 'changed';
   assert.ok(await activating);
-  assert.equal(
-    (
-      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
-        tool: 'artifact.read',
-        input: { artifactId: 'own-artifact' },
-      })
-    ).input.artifactId,
-    'own-artifact',
+  // The frozen execution is read as it was called with, whatever changes while the check runs.
+  const frozen = structuredClone(offered.execution);
+  f.controls.outputs = () => {
+    frozen.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
+    frozen.references.artifacts = ['live-artifact'];
+  };
+  assert.deepEqual(
+    (await f.workflows.checkLease(worker, offered.lease, undefined, frozen)).references,
+    { artifacts: ['own-artifact'] },
   );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
-        tool: 'artifact.read',
-        input: { artifactId: 'live-artifact' },
-      }),
-    { code: 'execution_arguments_forbidden' },
-  );
-  for (const change of ['policy', 'read classification']) {
-    const frozen = structuredClone(offered.execution);
-    const request = { tool: 'undeclared.write', input: {}, read: false };
-    f.controls.outputs = () => {
-      if (change === 'policy') frozen.policy.tools.push({ name: request.tool, alternatives: [{}] });
-      else request.read = true;
-    };
-    await assert.rejects(
-      () => f.workflows.authorizeLeaseDispatch(worker, offered.lease, frozen, request),
-      { code: 'execution_tool_forbidden' },
-    );
-  }
+  f.controls.outputs = () => {};
   const release = { reason: 'Completed' };
   const releasing = f.workflows.releaseLease(offered.lease, release);
   release.reason = '';
   await releasing;
+});
+
+test('a lease check with its frozen execution grants the frozen references and declared outputs', async (t) => {
+  const f = await engineFixture(t);
+  const source = await f.scope.delegationSource(f.caller);
+  f.scope.registerSessionAuthority({ require: async () => source });
+  const actor = await f.state.transaction(
+    async (tx) =>
+      await f.scope.createSessionActor(
+        source,
+        { sessionId: 'lease-test', role: 'producer', name: 'Worker' },
+        tx,
+      ),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: 'lease-test' },
+  };
+  const { lease, execution } = await f.workflows.offerLease(f.caller, worker, {
+    ...f.target,
+    leaseId: 'lease-test',
+  });
+  const granted = async (frozen: WorkflowExecution = execution) =>
+    (await f.workflows.checkLease(worker, lease, undefined, frozen)).references;
+  // Without the execution there is nothing to grant.
+  assert.deepEqual(await f.workflows.checkLease(worker, lease), {
+    registrationId: execution.registrationId,
+  });
+  const references = await granted();
+  assert.deepEqual(references, { artifacts: ['own-artifact'] });
+  const admit = (input: Data, read?: boolean) =>
+    admitDispatch({ ...execution, references: references! }, 'artifact.read', input, read);
+  assert.equal(admit({ artifactId: 'own-artifact' }).input.artifactId, 'own-artifact');
+  assert.throws(() => admit({ artifactId: 'live-artifact' }), {
+    code: 'execution_arguments_forbidden',
+  });
+  // A read the policy does not bind is bounded by the project alone.
+  assert.equal(admit({ artifactId: 'live-artifact' }, true).input.artifactId, 'live-artifact');
+  // The lease's outputs extend the declared arrays, and only those.
+  f.controls.outputs = () => ({ artifacts: ['authored'] });
+  assert.deepEqual(await granted(), { artifacts: ['authored', 'own-artifact'] });
+  f.controls.outputs = () => ({ reviews: ['authored'] });
+  await assert.rejects(granted(), { code: 'invalid_workflow_policy', status: 500 });
+  f.controls.outputs = () => {};
+  // The frozen policy is fenced by its content, whatever hash it names.
+  const tampered = structuredClone(execution);
+  tampered.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
+  await assert.rejects(granted(tampered), { code: 'execution_changed', status: 409 });
+  await assert.rejects(granted({ ...execution, revision: execution.revision + 1 }), {
+    code: 'execution_changed',
+  });
+  // The offer's generation is not fenced here: a reload keeps the lease, and Sessions fences
+  // each invocation by the generation this check returns.
+  assert.deepEqual(await granted({ ...execution, registrationId: 'reloaded' }), references);
 });

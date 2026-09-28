@@ -141,13 +141,7 @@ test('each caller method authorizes its caller once, at entry', async (t) => {
   const once = { [worker.actorId]: 1 };
   assert.deepEqual(await decisions(() => f.workflows.checkLease(worker, lease!)), once);
   assert.deepEqual(
-    await decisions(() =>
-      f.workflows.authorizeLeaseDispatch(worker, lease!, execution!, {
-        tool: 'workflow.status_and_next',
-        input: {},
-        read: true,
-      }),
-    ),
+    await decisions(() => f.workflows.checkLease(worker, lease!, undefined, execution!)),
     once,
   );
   assert.deepEqual(await decisions(() => f.workflows.activateLease(worker, lease!)), once);
