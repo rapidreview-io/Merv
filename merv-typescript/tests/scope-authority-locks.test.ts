@@ -518,4 +518,7 @@ test('a provider cannot write on a read decision', async (t) => {
   await t.test('in a bare snapshot', async () => {
     await contexts.snapshot(f, refused);
   });
+  await t.test('in a plain read', async () => {
+    await contexts.read(f, refused);
+  });
 });
