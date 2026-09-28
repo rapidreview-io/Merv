@@ -172,7 +172,8 @@ export class DurableEvents implements DomainEvents {
     // shows it waiting on a retry or already past every committed event. The locked
     // transaction below still decides everything it delivers.
     const { head, progress } = await this.state.read(async (sql) => ({
-      head: (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id,
+      // Inside this read scope, eventHead reuses the same connection.
+      head: await this.state.eventHead(),
       progress: new Map(
         (
           await sql.all<Pick<Progress, 'id' | 'cursor' | 'retry_at'>>(
