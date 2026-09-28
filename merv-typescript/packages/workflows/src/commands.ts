@@ -20,7 +20,7 @@ import {
   normalizeDependencies,
   prerequisitesOf,
 } from './dependencies.js';
-import { checkInstance, checkRevision, type Registration } from './engine.js';
+import { checkInstance, checkRevision, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowLeases } from './leases.js';
 
 /**
@@ -144,13 +144,7 @@ export class WorkflowCommands extends WorkflowLeases {
       // The grant has its own record, keyed by the instance like every receipt (the retirement
       // migrations match on its id). An owner's optional resume writes its own transition
       // receipt, so retrying this request cannot advance suspended work twice.
-      await tx.run(
-        'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
-        caller.projectId,
-        input.requestId,
-        hash,
-        canonical({ id: snapshot.id, status }),
-      );
+      await this.receipt(tx, caller.projectId, input.requestId, hash, { id: snapshot.id, status });
       await registered.policy?.limitExtended?.(
         { caller, snapshot, tx, input: { reason, requestId: input.requestId } },
         status,
@@ -289,26 +283,8 @@ export class WorkflowCommands extends WorkflowLeases {
     });
     return await this.write(tx, async (transaction) => {
       // The program owns action-specific write/review policies; the engine still validates tenancy.
-      await this.scope.require(caller, 'read', transaction);
-      const row = await this.readRow(transaction, caller.projectId, input.instanceId);
-      const before = this.snapshot(row);
-      this.checkHandle(owner, before);
-      const replay = await this.replay<WorkflowSnapshot>(
-        transaction,
-        caller.projectId,
-        input.requestId,
-        hash,
-      );
-      if (replay) {
-        this.requireActive(owner);
-        return replay;
-      }
-      check(
-        before.revision === input.expectedRevision,
-        'revision_conflict',
-        `Expected revision ${input.expectedRevision}, found ${before.revision}`,
-        409,
-      );
+      const { row, before, replay } = await this.enter(transaction, caller, owner, input, hash);
+      if (replay) return replay;
       // A stale revision is named before a withdrawn handle, as when the registry was read here.
       this.requireActive(owner);
       const edge = owner.definition.edges.find(
@@ -431,25 +407,8 @@ export class WorkflowCommands extends WorkflowLeases {
     });
     return await this.write(transaction, async (tx) => {
       // As at start and transition: the program authorizes its own commands.
-      await this.scope.require(caller, 'read', tx);
-      const before = await this.readSnapshot(tx, caller.projectId, input.instanceId);
-      this.checkHandle(owner, before);
-      const replay = await this.replay<WorkflowSnapshot>(
-        tx,
-        caller.projectId,
-        input.requestId,
-        hash,
-      );
-      if (replay) {
-        this.requireActive(owner);
-        return replay;
-      }
-      check(
-        before.revision === input.expectedRevision,
-        'revision_conflict',
-        `Expected revision ${input.expectedRevision}, found ${before.revision}`,
-        409,
-      );
+      const { before, replay } = await this.enter(tx, caller, owner, input, hash);
+      if (replay) return replay;
       check(
         !owner.definition.terminal.includes(before.state),
         'invalid_transition',
@@ -459,13 +418,7 @@ export class WorkflowCommands extends WorkflowLeases {
       const added = await attachDependencies(tx, this.contracts, before, dependsOn);
       const dropped = await detachDependencies(tx, before, drop);
       if (!added.length && !dropped.length) {
-        await tx.run(
-          'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
-          caller.projectId,
-          input.requestId,
-          hash,
-          canonical(before),
-        );
+        await this.receipt(tx, caller.projectId, input.requestId, hash, before);
         this.requireActive(owner);
         return before;
       }
@@ -501,14 +454,38 @@ export class WorkflowCommands extends WorkflowLeases {
     });
   }
 
-  /** A handle commands only the instances of its own workflow version. */
-  private checkHandle(owner: Registration, snapshot: WorkflowSnapshot): void {
+  /**
+   * A handle command's entry on an instance of its own workflow version: the recorded response
+   * when the request was already answered, else the instance at the revision the command named.
+   */
+  private async enter(
+    tx: Transaction,
+    caller: Caller,
+    owner: Registration,
+    input: { requestId: string; instanceId: string; expectedRevision: number },
+    hash: string,
+  ): Promise<{ row: InstanceRow; before: WorkflowSnapshot; replay?: WorkflowSnapshot }> {
+    await this.scope.require(caller, 'read', tx);
+    const row = await this.readRow(tx, caller.projectId, input.instanceId);
+    const before = this.snapshot(row);
     check(
-      owner.definition.name === snapshot.workflow && owner.definition.version === snapshot.version,
+      owner.definition.name === before.workflow && owner.definition.version === before.version,
       'workflow_handle_mismatch',
       'The program handle does not own this workflow instance',
       403,
     );
+    const replay = await this.replay<WorkflowSnapshot>(tx, caller.projectId, input.requestId, hash);
+    if (replay) {
+      this.requireActive(owner);
+      return { row, before, replay };
+    }
+    check(
+      before.revision === input.expectedRevision,
+      'revision_conflict',
+      `Expected revision ${input.expectedRevision}, found ${before.revision}`,
+      409,
+    );
+    return { row, before };
   }
 
   /** The response a request recorded: a snapshot for a command, `{id, status}` for a grant. */
@@ -533,6 +510,23 @@ export class WorkflowCommands extends WorkflowLeases {
     return JSON.parse(row.response_json) as T;
   }
 
+  /** Stores a request's response, which a retry of it replays. */
+  private async receipt(
+    tx: Transaction,
+    projectId: string,
+    requestId: string,
+    hash: string,
+    response: unknown,
+  ): Promise<void> {
+    await tx.run(
+      'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
+      projectId,
+      requestId,
+      hash,
+      canonical(response),
+    );
+  }
+
   /**
    * The event says whether the move ended the work and whether it ended well, as the version
    * pins them, so a consumer that acts only on ended work reads nothing for any other move.
@@ -549,13 +543,7 @@ export class WorkflowCommands extends WorkflowLeases {
     data: Data,
     eventData: Data = {},
   ): Promise<void> {
-    await tx.run(
-      'INSERT INTO wf_requests (project_id, request_id, fingerprint, response_json) VALUES (?, ?, ?, ?)',
-      caller.projectId,
-      requestId,
-      hash,
-      canonical(snapshot),
-    );
+    await this.receipt(tx, caller.projectId, requestId, hash, snapshot);
     await tx.run(
       'INSERT INTO wf_history (instance_id, project_id, revision, action, actor_id, request_id, from_state, to_state, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       snapshot.id,
