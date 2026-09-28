@@ -76,7 +76,8 @@ function databaseError(error: unknown): MervError {
   const fail = (code: string, message: string, status: number) =>
     Object.defineProperty(new MervError(code, message, status), 'cause', {
       value: {
-        sqlstate: pg.code,
+        // Node socket errors (ECONNRESET, ...) also carry `code`; only a SQLSTATE is one.
+        sqlstate: /^[0-9A-Z]{5}$/.test(pg.code ?? '') ? pg.code : undefined,
         constraint: pg.constraint,
         table: pg.table,
         column: pg.column,
