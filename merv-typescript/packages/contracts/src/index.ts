@@ -566,9 +566,10 @@ export interface StoredEvent {
 export interface State {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   /**
-   * Reads on the current scope, or on a connection of its own outside one. Do not query a
-   * read's own `sql` while a transaction it started is still open: that transaction owns the
-   * connection. To join a caller's transaction without holding a read, use `ambient`.
+   * Reads on the current scope, or on a connection of its own outside one. While a transaction
+   * or snapshot the read started is open, it owns the connection, and a query on the read's own
+   * `sql` from outside it is refused (`transaction_busy`). To join a caller's transaction without
+   * holding a read, use `ambient`.
    */
   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
   /**

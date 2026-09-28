@@ -344,6 +344,15 @@ END $merv$;`);
         'transaction_closed',
         'Database scope is no longer active',
       );
+      // While a plain read's child transaction is open it owns the read's connection: a sibling
+      // query of the read would run inside it, or abort it by failing. Only the read's own
+      // context is refused; the child's callback may still use the read's `sql` on purpose.
+      check(
+        !(current === scope && scope.childTransaction && !scope.transaction && !scope.readOnly),
+        'transaction_busy',
+        'Wait for the transaction this read started',
+        409,
+      );
     };
     scope.sql = {
       run: async (sql, ...params) => {

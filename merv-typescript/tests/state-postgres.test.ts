@@ -199,6 +199,64 @@ test('PostgreSQL: a failed read drains the transaction it started', async (t) =>
   }
 });
 
+test("PostgreSQL: a read's sibling query waits for the transaction the read started", async (t) => {
+  const { state } = await fixture(t);
+  const code = (error: { code?: string }) => error.code;
+  // A sibling that ran on the connection would join the child, or abort it by failing.
+  for (const sibling of ['SELECT 1/0', 'SELECT 1']) {
+    const entered = deferred();
+    const outcomes = await state.read((sql) =>
+      Promise.all([
+        state
+          .transaction(async (tx) => {
+            await state.appendEvent(tx, event);
+            entered.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await state.appendEvent(tx, { ...event, subjectId: 'second' });
+          })
+          .then(() => 'ok', code),
+        entered.promise.then(() => sql.get(sibling)).then(() => 'ran', code),
+      ]),
+    );
+    assert.deepEqual(outcomes, ['ok', 'transaction_busy']);
+  }
+  assert.equal(await state.eventHead(), 4, "Both of each child's rows commit");
+  // Before and after its transaction, and inside a snapshot it opened, the read reads.
+  const readOnly = await state.read(async (sql) => {
+    await sql.get('SELECT 1');
+    await state.transaction(() => undefined);
+    await state.snapshot(() => state.transaction(async (tx) => await tx.get('SELECT 1')));
+    return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
+  });
+  assert.equal(readOnly, 4);
+  // The child's own callback may use the read's `sql`: it runs on the child's transaction.
+  assert.equal(
+    await state.read((sql) =>
+      state.transaction(async (tx) => {
+        await state.appendEvent(tx, event);
+        return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
+      }),
+    ),
+    5,
+  );
+  // A snapshot the read opened owns the connection the same way.
+  const opened = deferred();
+  const release = deferred();
+  const busy = await state.read((sql) =>
+    Promise.all([
+      state.snapshot(async () => {
+        opened.resolve();
+        await release.promise;
+      }),
+      opened.promise
+        .then(() => sql.get('SELECT 1'))
+        .then(() => 'ran', code)
+        .finally(() => release.resolve()),
+    ]),
+  );
+  assert.equal(busy[1], 'transaction_busy');
+});
+
 test('State.ambient is the transaction this context runs in, and nothing outside one', async (t) => {
   const { state } = await fixture(t);
   assert.equal(state.ambient, undefined);
