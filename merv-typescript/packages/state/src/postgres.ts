@@ -34,6 +34,8 @@ export interface PostgresConfig {
 
 /** Checked again where the schema is interpolated into SQL, for callers that skip the plugin Config. */
 export const POSTGRES_SCHEMA = /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/;
+/** A read-only transaction: a consistent snapshot that takes no writer lock. */
+const READ_BEGIN = 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY';
 export const POSTGRES_DEFAULTS = {
   schema: 'merv',
   maxConnections: 10,
@@ -128,10 +130,18 @@ export class PostgresState implements State {
   private readonly pool: Pool;
   private readonly readers: Pool;
   private readonly schema: string;
+  /**
+   * Opens a write transaction and takes the writer lock in one round trip. This advisory lock is
+   * the writer serialization: one writer per schema at a time, across app instances, which also
+   * keeps event IDs in commit order. The key is the one earlier servers bound as a parameter, so
+   * old and new instances still serialize with each other during a deploy.
+   */
+  private readonly writeBegin: string;
 
   private constructor(config: PostgresConfig) {
     this.schema = config.schema ?? POSTGRES_DEFAULTS.schema;
     check(POSTGRES_SCHEMA.test(this.schema), 'invalid_config', 'Invalid PostgreSQL schema');
+    this.writeBegin = `BEGIN; SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('merv-state:${this.schema}', 0))`;
     // URI TLS parameters override pg's ssl object. Keep TLS exclusively in the explicit config.
     let url: URL;
     try {
@@ -176,9 +186,8 @@ export class PostgresState implements State {
     const state = new PostgresState(config);
     try {
       await state.operation(() =>
-        state.connect(async (connection) => {
-          try {
-            await state.begin(connection);
+        state.connect((connection) =>
+          state.within(connection, state.writeBegin, undefined, async () => {
             // Even IF NOT EXISTS requires database CREATE. Production can pre-create
             // an owned schema and give this role authority only inside that schema.
             const existing = await connection.get<{ exists: number }>(
@@ -199,16 +208,8 @@ DO $merv$ BEGIN
     CREATE TRIGGER events_immutable BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION merv_events_immutable();
   END IF;
 END $merv$;`);
-            await connection.exec('COMMIT');
-          } catch (error) {
-            try {
-              await connection.exec('ROLLBACK');
-            } catch {
-              connection.discard();
-            }
-            throw error;
-          }
-        }),
+          }),
+        ),
       );
       return state;
     } catch (error) {
@@ -280,19 +281,37 @@ END $merv$;`);
     }
   }
 
-  private async begin(connection: Connection): Promise<void> {
-    await connection.exec('BEGIN');
-    // This advisory lock is the writer serialization: one writer per schema at a time, across app
-    // instances, which also keeps event IDs in commit order.
-    await connection.get(
-      'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, 0))',
-      [`merv-state:${this.schema}`],
-    );
-  }
-
-  /** A read-only transaction: a consistent snapshot that takes no writer lock. */
-  private async beginRead(connection: Connection): Promise<void> {
-    await connection.exec('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  /**
+   * Runs `run` in a transaction that `begin` opens on `connection`, and commits it or rolls it
+   * back. `begin` is inside the try: a writer-lock timeout leaves an aborted transaction block,
+   * which must be rolled back before the pool lends the connection again. `scope` retires before
+   * COMMIT or ROLLBACK is sent, so a late sibling fails with transaction_closed instead of
+   * running in autocommit without the writer lock.
+   */
+  private async within<T>(
+    connection: Connection,
+    begin: string,
+    scope: Context | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      await connection.exec(begin);
+      const value = await run();
+      if (scope) scope.live = false;
+      // exec reports a COMMIT the server turned into a rollback as transaction_aborted.
+      await connection.exec('COMMIT');
+      return value;
+    } catch (error) {
+      if (scope) scope.live = false;
+      try {
+        await connection.exec('ROLLBACK');
+      } catch {
+        connection.discard();
+      }
+      throw error;
+    } finally {
+      if (scope) scope.live = false;
+    }
   }
 
   private async shutdown(): Promise<void> {
@@ -353,39 +372,33 @@ END $merv$;`);
     scope.live = true;
     const tx: Transaction = { ...scope.sql, transactionId: Symbol('transaction') };
     scope.transaction = tx;
-    try {
-      await this.begin(connection);
-      const value = await this.context.run(scope, () => fn(tx));
-      scope.live = false;
-      await connection.exec('COMMIT');
-      if (scope.eventWritten)
-        this.context.exit(() =>
-          queueMicrotask(() => {
-            if (this.closed) return;
-            // Registrations created by a wakeup belong to the next commit. Still
-            // honor withdrawals before admitting a snapshotted listener.
-            for (const listener of [...this.listeners]) {
-              if (!this.listeners.has(listener)) continue;
-              try {
-                void Promise.resolve(listener()).catch(() => {});
-              } catch {
-                /* Wakeups cannot undo a committed transaction. */
-              }
-            }
-          }),
-        );
-      return value;
-    } catch (error) {
-      scope.live = false;
-      try {
-        await connection.exec('ROLLBACK');
-      } catch {
-        connection.discard();
-      }
-      throw error;
-    } finally {
-      scope.live = false;
-    }
+    const value = await this.within(
+      connection,
+      this.writeBegin,
+      scope,
+      async () => await this.context.run(scope, () => fn(tx)),
+    );
+    if (scope.eventWritten) this.wake();
+    return value;
+  }
+
+  /** Tells event listeners about a commit, outside any database scope. */
+  private wake(): void {
+    this.context.exit(() =>
+      queueMicrotask(() => {
+        if (this.closed) return;
+        // Registrations created by a wakeup belong to the next commit. Still
+        // honor withdrawals before admitting a snapshotted listener.
+        for (const listener of [...this.listeners]) {
+          if (!this.listeners.has(listener)) continue;
+          try {
+            void Promise.resolve(listener()).catch(() => {});
+          } catch {
+            /* Wakeups cannot undo a committed transaction. */
+          }
+        }
+      }),
+    );
   }
 
   async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
@@ -480,23 +493,12 @@ END $merv$;`);
         const scope = this.scope(connection);
         scope.readOnly = true;
         scope.isolation = { open: false };
-        try {
-          await this.beginRead(connection);
-          const value = await this.context.run(scope, fn);
-          scope.live = false;
-          await connection.exec('COMMIT');
-          return value;
-        } catch (error) {
-          scope.live = false;
-          try {
-            await connection.exec('ROLLBACK');
-          } catch {
-            connection.discard();
-          }
-          throw error;
-        } finally {
-          scope.live = false;
-        }
+        return await this.within(
+          connection,
+          READ_BEGIN,
+          scope,
+          async () => await this.context.run(scope, fn),
+        );
       }, this.readers),
     );
   }
