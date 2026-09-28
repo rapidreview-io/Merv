@@ -15,7 +15,16 @@ export interface WorkflowDependency {
   version: number;
   name: string;
   state: string;
+  /** 0 for a target the project no longer holds, whose state reads `missing`. */
+  revision: number;
+  /** In a success state of the contract: the edge's pinned one, or a dependent's own. */
   settled: boolean;
+  /** The fact: in a terminal state of that same contract. */
+  terminal: boolean;
+  /**
+   * The gate: this edge fails its dependent, which a terminal state other than success does
+   * when success states are declared. A provider's edge never does: the provider re-plans it.
+   */
   failed: boolean;
 }
 
@@ -53,9 +62,7 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
  * persisted execution manifests, so it holds with the owning plugin unloaded.
  */
 export interface WorkflowProviderDependency extends WorkflowDependency {
-  revision: number;
   goal?: string;
-  terminal: boolean;
   declaresWorkspace: boolean;
 }
 export interface WorkflowProviderRelations {

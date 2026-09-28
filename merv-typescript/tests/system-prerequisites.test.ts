@@ -82,7 +82,12 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
   const decision = await f.workflows.evaluate(f.admin, waiter.id);
   assert.equal(decision.currentGate, 'dependencies_pending');
   assert.equal(decision.nextAction, null);
-  assert.equal(decision.dependencies[0].failed, false);
+  // The target has ended without succeeding: that is a fact on the edge, not a failure of it.
+  const { settled, terminal, failed } = decision.dependencies[0];
+  assert.deepEqual(
+    { settled, terminal, failed },
+    { settled: false, terminal: true, failed: false },
+  );
   await f.state.transaction((tx) =>
     f.workflows.systemPrerequisites('other').replace({ ...input, dependencies: [] }, tx),
   );

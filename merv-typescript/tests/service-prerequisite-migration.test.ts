@@ -110,7 +110,9 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
       version: 1,
       name: 'migration',
       state: 'working',
+      revision: 0,
       settled: false,
+      terminal: false,
       failed: false,
     },
   ]);

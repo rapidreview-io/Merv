@@ -25,7 +25,9 @@ semantics. Unknown, cross-project and malformed targets are rejected atomically.
 The task ID is its workflow instance ID. Public task dependencies are set at
 creation; no dependency-editing tool is exposed. `task.get` and `task.list` return
 both `dependencies` (waits on) and `dependents` (unblocks). Each row carries its
-ID, workflow, current version, name, state, and `settled`/`failed` flags. The task
+ID, workflow, current version, name, state, revision, and `settled`/`terminal`/`failed`
+flags: `terminal` is the fact that the row has ended, `failed` whether that fails the
+dependent (never for a provider's edge, which the provider re-plans). The task
 UI displays both directions and links task prerequisites to their task pages.
 
 | Prerequisite condition        | Downstream task behavior                                                                                          |

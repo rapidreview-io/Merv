@@ -10,6 +10,7 @@ import { WorkflowsService } from '@merv/workflows';
 import {
   check,
   type Caller,
+  type Transaction,
   type WorkflowDefinition,
   type WorkflowPolicy,
   type Workflows,
@@ -88,6 +89,26 @@ async function start(
   });
 }
 
+/** The statements `run` sends through the transaction it is given, as their SQL. */
+async function statements(
+  state: Awaited<ReturnType<typeof openState>>,
+  run: (tx: Transaction) => Promise<unknown>,
+): Promise<string[]> {
+  const sent: string[] = [];
+  await state.transaction(async (tx) => {
+    const spied = tx as unknown as Record<'get' | 'all' | 'run', (...args: unknown[]) => unknown>;
+    for (const method of ['get', 'all', 'run'] as const) {
+      const original = spied[method].bind(tx);
+      spied[method] = (sql, ...args) => {
+        sent.push(String(sql));
+        return original(sql, ...args);
+      };
+    }
+    await run(tx);
+  });
+  return sent;
+}
+
 test('registered dependency semantics gate designated actions, guide failure recovery, and leave unrelated commands available', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());
@@ -105,7 +126,9 @@ test('registered dependency semantics gate designated actions, guide failure rec
       version: 1,
       name: 'upstream',
       state: 'working',
+      revision: 0,
       settled: false,
+      terminal: false,
       failed: false,
     },
   ]);
@@ -697,4 +720,96 @@ test('dependency policy validation and immutable contexts prevent changing regis
   const readOnly = await workflows.register(graph('read_only'), immutable);
   const guarded = await start(readOnly, caller, 'read_only', 'guarded', [upstream.id]);
   assert.equal((await workflows.evaluate(caller, guarded.id)).nextAction?.action, 'finish');
+});
+
+test('dependency reads and attaching cost the same however many edges there are', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const handle = await workflows.register(graph(), policy());
+  const busy = await start(handle, caller, 'preparation', 'busy'),
+    quiet = await start(handle, caller, 'preparation', 'quiet');
+  for (let i = 0; i < 100; i++)
+    await start(handle, caller, 'preparation', `waiter-${i}`, [busy.id]);
+  assert.equal((await workflows.dependencies(caller, busy.id)).dependents.length, 100);
+  // Guidance, the gate and a move read what an instance depends on, never what depends on it.
+  const cost = async (id: string) =>
+    (
+      await statements(state, async (tx) => {
+        await workflows.evaluate(caller, id, {}, tx);
+        await workflows.checkDependencies(caller, id, tx);
+        await handle.transition(
+          caller,
+          { instanceId: id, action: 'finish', expectedRevision: 0, requestId: `finish-${id}` },
+          tx,
+        );
+      })
+    ).length;
+  assert.equal(await cost(busy.id), await cost(quiet.id));
+  // Both directions come from the kept contracts, with no definition or success read.
+  const read = await statements(
+    state,
+    async (tx) => await workflows.dependencies(caller, busy.id, tx),
+  );
+  assert.deepEqual(
+    read.filter((sql) => /wf_definitions|wf_success_states/.test(sql)),
+    [],
+  );
+
+  // A start names a fresh id, so nothing can lead back to it: no probe and no walk however
+  // long the chain it joins (it was 317 statements for this one).
+  const chain = [await start(handle, caller, 'preparation', 'link-0')];
+  for (let i = 1; i < 20; i++)
+    chain.push(await start(handle, caller, 'preparation', `link-${i}`, [chain[i - 1].id]));
+  let tail!: Awaited<ReturnType<typeof start>>;
+  const started = await statements(state, async (tx) => {
+    tail = await handle.start(
+      caller,
+      {
+        workflow: 'preparation',
+        requestId: 'tail',
+        dependsOn: chain.map((link) => link.id),
+      },
+      tx,
+    );
+  });
+  assert.ok(started.length <= 12, `${started.length} statements to start on a 20-chain`);
+  assert.deepEqual(
+    (await workflows.dependencies(caller, tail.id)).dependencies.map((item) => item.id).sort(),
+    chain.map((link) => link.id).sort(),
+  );
+
+  // Otherwise one recursive query finds a cycle of any length, after every target is known.
+  const [a, b, c] = [chain[0], chain[1], chain[2]];
+  await assert.rejects(
+    async () =>
+      await handle.addDependencies(caller, {
+        instanceId: a.id,
+        dependsOn: [quiet.id, c.id],
+        expectedRevision: 0,
+        requestId: 'three-cycle',
+      }),
+    { code: 'dependency_cycle' },
+  );
+  await assert.rejects(
+    async () =>
+      await handle.addDependencies(caller, {
+        instanceId: a.id,
+        dependsOn: [c.id, 'missing'],
+        expectedRevision: 0,
+        requestId: 'missing-first',
+      }),
+    { code: 'not_found' },
+  );
+  assert.deepEqual((await workflows.dependencies(caller, a.id)).dependencies, []);
+  assert.deepEqual(
+    (await workflows.dependencies(caller, b.id)).dependencies.map((item) => item.id),
+    [a.id],
+  );
+  const linked = await handle.addDependencies(caller, {
+    instanceId: a.id,
+    dependsOn: [quiet.id],
+    expectedRevision: 0,
+    requestId: 'acyclic',
+  });
+  assert.equal(linked.revision, 1);
 });

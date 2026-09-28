@@ -81,6 +81,7 @@ import {
   normalizeDependencies,
   persistSuccess,
   prerequisites,
+  prerequisitesOf,
   relations,
   requireDependencies,
 } from './dependencies.js';
@@ -372,7 +373,7 @@ export class WorkflowsService implements Workflows {
         caller,
         snapshot,
         tx,
-        dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
+        dependencies: await prerequisitesOf(tx, caller.projectId, snapshot.id),
       }),
       query,
       (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
@@ -968,7 +969,7 @@ export class WorkflowsService implements Workflows {
       caller,
       snapshot,
       tx,
-      dependencies: (await relations(tx, caller.projectId, snapshot.id)).dependencies,
+      dependencies: await prerequisitesOf(tx, caller.projectId, snapshot.id),
     });
     return { snapshot, registration, rule, context };
   }
@@ -1278,7 +1279,7 @@ export class WorkflowsService implements Workflows {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
-      return await relations(tx, caller.projectId, instanceId);
+      return await relations(tx, this.contracts, caller.projectId, instanceId);
     });
   }
 
@@ -1380,9 +1381,10 @@ export class WorkflowsService implements Workflows {
         ).map((row) => row.target_id);
         await attachDependencies(
           tx,
+          this.contracts,
           source,
           wanted.filter((id) => !have.includes(id)),
-          provider,
+          { owner: provider },
         );
         const gone = have.filter((id) => !wanted.includes(id));
         if (gone.length)
@@ -1403,11 +1405,22 @@ export class WorkflowsService implements Workflows {
     tx: Transaction,
   ): Promise<WorkflowProviderRelations | null> {
     this.assertOpen();
-    return await providerRelations(tx, projectId, instanceId);
+    return await providerRelations(tx, this.contracts, projectId, instanceId);
   }
 
-  async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
-    requireDependencies((await this.dependencies(caller, instanceId, tx)).dependencies);
+  /** Reads only what the instance depends on, never what depends on it. */
+  async checkDependencies(
+    caller: Caller,
+    instanceId: string,
+    transaction?: Transaction,
+  ): Promise<void> {
+    this.assertOpen();
+    caller = structuredClone(caller);
+    await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await this.readSnapshot(tx, caller.projectId, instanceId);
+      requireDependencies(await prerequisitesOf(tx, caller.projectId, instanceId));
+    });
   }
 
   /** The provider freezes these roots before later dependencies can move a shared charge. */
@@ -1667,7 +1680,8 @@ export class WorkflowsService implements Workflows {
         time,
         time,
       );
-      await attachDependencies(transaction, snapshot, dependsOn);
+      // The id was just minted, so no edge can lead back to it.
+      await attachDependencies(transaction, this.contracts, snapshot, dependsOn, { fresh: true });
       await this.record(
         transaction,
         caller,
@@ -1764,7 +1778,7 @@ export class WorkflowsService implements Workflows {
             tx: transaction,
             input: proposed,
             transition: edge.action,
-            dependencies: (await relations(transaction, caller.projectId, before.id)).dependencies,
+            dependencies: await prerequisitesOf(transaction, caller.projectId, before.id),
           }),
         );
       }
@@ -1877,7 +1891,7 @@ export class WorkflowsService implements Workflows {
         'Terminal workflow instances cannot receive new dependencies',
         409,
       );
-      const added = await attachDependencies(tx, before, dependsOn);
+      const added = await attachDependencies(tx, this.contracts, before, dependsOn);
       const dropped = await detachDependencies(tx, before, drop);
       if (!added.length && !dropped.length) {
         await tx.run(

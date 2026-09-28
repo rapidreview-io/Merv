@@ -79,30 +79,6 @@ export function limitFor(
   return policy?.limits?.find((limit) => limit.from === from && limit.actions.includes(action));
 }
 
-/**
- * Counted from the history the engine already writes, so there is no counter to keep in
- * step and a cap deployed today covers rounds taken before it existed.
- */
-export async function limitStatus(
-  sql: Sql,
-  limit: WorkflowLoopLimit,
-  instanceId: string,
-): Promise<WorkflowLimitStatus> {
-  const taken = await sql.get<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM wf_history WHERE instance_id=? AND from_state=? AND action IN (${limit.actions.map(() => '?').join(',')})`,
-    instanceId,
-    limit.from,
-    ...limit.actions,
-  );
-  const grants = await sql.get<{ n: number | string }>(
-    'SELECT COALESCE(SUM(additional),0) AS n FROM wf_limit_grants WHERE instance_id=? AND limit_name=?',
-    instanceId,
-    limit.name,
-  );
-  // PostgreSQL SUM(bigint) is numeric and arrives as text; a sum of two caps must stay a number.
-  return statusOf(limit, Number(taken?.n ?? 0), Number(grants?.n ?? 0));
-}
-
 function statusOf(limit: WorkflowLoopLimit, used: number, granted: number): WorkflowLimitStatus {
   const max = limit.max + granted;
   return {
@@ -118,7 +94,11 @@ function statusOf(limit: WorkflowLoopLimit, used: number, granted: number): Work
   };
 }
 
-/** limitStatus for each of several instances under one limit, in two reads however many. */
+/**
+ * One limit's status for each of several instances, in two reads however many. Counted from the
+ * history the engine already writes, so there is no counter to keep in step and a cap deployed
+ * today covers rounds taken before it existed.
+ */
 export async function limitStatusOf(
   sql: Sql,
   limit: WorkflowLoopLimit,
@@ -148,6 +128,10 @@ export async function limitStatusOf(
     instanceIds.map((id) => [id, statusOf(limit, taken.get(id) ?? 0, grants.get(id) ?? 0)]),
   );
 }
+
+/** limitStatusOf for one instance. */
+export const limitStatus = async (sql: Sql, limit: WorkflowLoopLimit, instanceId: string) =>
+  (await limitStatusOf(sql, limit, [instanceId])).get(instanceId)!;
 
 /** The limits leaving the instance's current state. Reads only, so guards stay pure. */
 export async function limitStatuses(

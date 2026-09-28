@@ -184,7 +184,9 @@ test('A → B → C becomes ready one independent pass at a time; needs_changes 
         version: 2,
         name: a.title,
         state: 'in_progress',
+        revision: 0,
         settled: false,
+        terminal: false,
         failed: false,
       },
     ]);

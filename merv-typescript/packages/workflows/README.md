@@ -118,7 +118,13 @@ The service also owns project-scoped dependency edges. Programs declare durable
 `successStates` in policy and can pass `dependsOn` at start. The first registration
 of a version pins its success states, or their absence; a later registration that
 adds, drops or changes them is `workflow_version_conflict`. `dependencies` returns
-live forward/reverse rows; `checkDependencies` is the shared prerequisite guard.
+live forward/reverse rows, each with its revision and whether it is `settled`, `terminal`
+(ended, as a fact) or `failed` (ended in a way that fails the dependent; a provider's edge
+never is); `checkDependencies` is the shared prerequisite guard. Guidance, the guard and
+transitions read only what an instance depends on, in a fixed number of queries; what depends
+on it is read only when asked for. Attaching at start never walks the graph, because the new
+id cannot be reached; `addDependencies` and a provider's `replace` refuse a cycle with one
+recursive query, after every named target has been found and checked in the order given.
 Only actions with `requiresDependencies: true` enforce that guard automatically.
 Programs call it for assignment/execution gates as needed. A policy may name an
 authorized `dependencyFailureAction`; this changes guidance, never state.
