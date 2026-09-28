@@ -1607,8 +1607,9 @@ export interface Workflows {
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
   catalog(): WorkflowDefinition[];
   /**
-   * The stored contract of a version, loaded or not, or null when none is stored. It is frozen
-   * and never changes, so it needs no caller.
+   * The stored contract of a version, loaded or not, or null when none is stored. It never
+   * changes, so it needs no caller. The object returned is shared and deeply frozen: a caller
+   * that needs to change it copies it first.
    */
   pinned(workflow: string, version: number, tx?: Transaction): Promise<WorkflowPinned | null>;
   /**
