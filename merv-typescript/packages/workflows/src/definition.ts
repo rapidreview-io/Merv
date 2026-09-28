@@ -4,6 +4,17 @@ import { MervError, type WorkflowDefinition } from '@merv/contracts';
 export const identifier = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/;
 /** The public Tools naming contract, including reserved mounted namespaces. */
 export const toolName = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
+/**
+ * The actions the engine itself writes into wf_history beside the state it found. A graph
+ * cannot declare them: its own edge would be indistinguishable from the engine's bookkeeping.
+ */
+export const ENGINE_ACTIONS: readonly string[] = Object.freeze([
+  'start',
+  'add_dependencies',
+  'replan_dependencies',
+]);
+/** Code-unit order: the stored definition, and so its fingerprint, never depends on the locale. */
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function validateDefinition(input: WorkflowDefinition): WorkflowDefinition {
   if (!input || typeof input !== 'object')
@@ -40,6 +51,8 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     throw new MervError('invalid_workflow_policy', 'Workflow terminal states must be unique');
   if (!Array.isArray(input.edges))
     throw new MervError('invalid_workflow_policy', 'Workflow edges must be an array');
+  if (input.states.length > 256 || input.edges.length > 2048)
+    throw new MervError('invalid_workflow_policy', 'Workflow graph too large');
   if (input.managed !== undefined && typeof input.managed !== 'boolean')
     throw new MervError('invalid_workflow_policy', 'Workflow managed must be boolean');
   if (
@@ -54,13 +67,21 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     );
   const edges = new Set<string>();
   for (const edge of input.edges) {
-    if (!edge || !states.has(edge.from) || !states.has(edge.to))
+    if (
+      !edge ||
+      typeof edge.from !== 'string' ||
+      typeof edge.to !== 'string' ||
+      !states.has(edge.from) ||
+      !states.has(edge.to)
+    )
       throw new MervError('invalid_workflow_policy', 'Workflow transition states must be declared');
     if (typeof edge.action !== 'string' || !identifier.test(edge.action))
       throw new MervError(
         'invalid_workflow_policy',
         'Workflow action must be a nonempty identifier',
       );
+    if (ENGINE_ACTIONS.includes(edge.action))
+      throw new MervError('invalid_workflow_policy', `${edge.action} is reserved by the engine`);
     if (input.terminal.includes(edge.from))
       throw new MervError(
         'invalid_workflow_policy',
@@ -97,9 +118,11 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     initial: input.initial,
     states: [...input.states].sort(),
     terminal: [...input.terminal].sort(),
+    // Only the three edge fields are kept: anything else a caller attached would be stored,
+    // fingerprinted and copied into every read of the definition.
     edges: input.edges
-      .map((edge) => ({ ...edge }))
-      .sort((a, b) => `${a.from}:${a.action}`.localeCompare(`${b.from}:${b.action}`)),
+      .map(({ from, action, to }) => ({ from, action, to }))
+      .sort((a, b) => byCodeUnit(`${a.from}:${a.action}`, `${b.from}:${b.action}`)),
     managed: input.managed ?? false,
     ...(input.blocksStarts === undefined ? {} : { blocksStarts: [...input.blocksStarts].sort() }),
   };

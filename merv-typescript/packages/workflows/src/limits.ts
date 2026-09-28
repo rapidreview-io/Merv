@@ -1,5 +1,5 @@
 import { check } from '@merv/contracts';
-import { identifier } from './definition.js';
+import { ENGINE_ACTIONS, identifier } from './definition.js';
 import type {
   Sql,
   WorkflowDefinition,
@@ -8,12 +8,6 @@ import type {
   WorkflowPolicy,
   WorkflowSnapshot,
 } from '@merv/contracts';
-
-/**
- * The engine writes these into wf_history beside the state it found, and a limit is counted
- * by state and action, so a limit over one of them would count the engine's own bookkeeping.
- */
-const engineActions = ['start', 'add_dependencies', 'replan_dependencies'];
 
 /**
  * A limit caps an edge that returns work to an earlier state. An edge that stays where it is
@@ -57,8 +51,10 @@ export function validateLimits(
       const edge = definition.edges.find(
         (edge) => edge.from === limit.from && edge.action === action,
       );
+      // A limit is counted in wf_history by state and action, so one over an engine action
+      // would count the engine's own bookkeeping.
       check(
-        edge && edge.to !== limit.from && !engineActions.includes(action),
+        edge && edge.to !== limit.from && !ENGINE_ACTIONS.includes(action),
         'invalid_workflow_policy',
         `Limit ${limit.name} may only cap an edge that leaves ${limit.from} for another state`,
       );
