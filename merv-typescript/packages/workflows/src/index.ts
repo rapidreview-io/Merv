@@ -1629,13 +1629,16 @@ export class WorkflowsService implements Workflows {
     );
     const data = this.data(input.data);
     const dependsOn = normalizeDependencies(input.dependsOn);
+    // The fingerprint names the set asked for, so a retry in another order, or with an empty
+    // list for an omitted one, replays; the ids are attached in the order given.
+    const sorted = [...dependsOn].sort();
     const hash = digest({
       operation: 'start',
       actorId: caller.actorId,
       workflow: input.workflow,
       version: input.version ?? null,
       data,
-      ...(input.dependsOn === undefined ? {} : { dependsOn }),
+      ...(sorted.length ? { dependsOn: sorted } : {}),
     });
     return await inTransaction(this.state, tx, async (transaction) => {
       // Managed programs authorize their own commands, including reviewer-triggered repair.
@@ -1857,16 +1860,18 @@ export class WorkflowsService implements Workflows {
     checkRevision(input.expectedRevision);
     const dependsOn = normalizeDependencies(input.dependsOn);
     const drop = normalizeDependencies(input.drop ?? null).filter((id) => !dependsOn.includes(id));
+    // Fingerprinted as sets, as at start; the ids are attached and dropped in the order given.
     const hash = digest({
       operation: 'add_dependencies',
       actorId: caller.actorId,
       instanceId: input.instanceId,
       expectedRevision: input.expectedRevision,
-      dependsOn,
-      ...(drop.length ? { drop } : {}),
+      dependsOn: [...dependsOn].sort(),
+      ...(drop.length ? { drop: [...drop].sort() } : {}),
     });
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      // As at start and transition: a managed program authorizes its own commands.
+      await this.scope.require(caller, owner.definition.managed ? 'read' : 'write', tx);
       const before = await this.readSnapshot(tx, caller.projectId, input.instanceId);
       await this.checkOwnerForSnapshot(before, owner, tx);
       const replay = await this.replay(tx, caller.projectId, input.requestId, hash);

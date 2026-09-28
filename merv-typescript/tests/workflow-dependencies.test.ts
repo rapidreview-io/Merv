@@ -204,6 +204,16 @@ test('dependency creation normalizes inputs, rejects unsupported or out-of-scope
   const downstream = await handle.start(caller, input);
   assert.equal((await workflows.dependencies(caller, downstream.id)).dependencies.length, 1);
   assert.deepEqual(await handle.start(caller, { ...input, dependsOn: upstream.id }), downstream);
+  // The fingerprint names the set asked for: another order, or an empty list for none, replays.
+  const second = await start(handle, caller, 'preparation', 'second');
+  const pair = await start(handle, caller, 'preparation', 'pair', [upstream.id, second.id]);
+  assert.deepEqual(
+    await start(handle, caller, 'preparation', 'pair', [second.id, upstream.id]),
+    pair,
+  );
+  assert.deepEqual(await start(handle, caller, 'preparation', 'second', []), second);
+  const none = await start(handle, caller, 'preparation', 'none', []);
+  assert.deepEqual(await start(handle, caller, 'preparation', 'none'), none);
   const otherIdentity = await scope.bootstrap({ projectName: 'Private', actorName: 'Other' });
   const other = { actorId: otherIdentity.actor.id, projectId: otherIdentity.project.id };
   const foreign = await start(handle, other, 'preparation', 'foreign');
@@ -335,14 +345,15 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
     actorId: (await scope.issueActor(caller, { name: 'Reader', role: 'reader' })).actor.id,
     projectId: caller.projectId,
   };
-  await assert.rejects(
-    async () =>
-      await handle.addDependencies(reader, {
-        ...command,
-        expectedRevision: 1,
-        requestId: 'reader',
-      }),
-    { code: 'forbidden' },
+  // A managed program authorizes its own commands, as for start and transition, so the
+  // engine asks only that the caller can read the project.
+  assert.deepEqual(
+    await handle.addDependencies(reader, {
+      ...command,
+      expectedRevision: 1,
+      requestId: 'reader',
+    }),
+    attached,
   );
   assert.equal(await state.eventHead(), head + 1, 'Only actor creation should append an event');
   await handle.transition(caller, {
@@ -391,6 +402,36 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
   );
   assert.equal((await workflows.get(caller, b.id)).revision, 0);
   assert.deepEqual((await workflows.dependencies(caller, b.id)).dependencies, []);
+  // Fingerprinted as sets: a retry naming the same ids in another order replays.
+  const d = await start(handle, caller, 'preparation', 'd'),
+    e = await start(handle, caller, 'preparation', 'e'),
+    f = await start(handle, caller, 'preparation', 'f');
+  const set = { instanceId: f.id, dependsOn: [d.id, e.id], expectedRevision: 0, requestId: 'set' };
+  const added = await handle.addDependencies(caller, set);
+  assert.equal(added.revision, 1);
+  assert.deepEqual(
+    await handle.addDependencies(caller, { ...set, dependsOn: [e.id, d.id] }),
+    added,
+  );
+  const replan = { ...set, dependsOn: [], drop: [d.id, e.id], expectedRevision: 1 };
+  const replanned = await handle.addDependencies(caller, { ...replan, requestId: 'replan' });
+  assert.deepEqual(
+    await handle.addDependencies(caller, { ...replan, drop: [e.id, d.id], requestId: 'replan' }),
+    replanned,
+  );
+  // An unmanaged graph's handle leaves authority to the engine, which asks for write.
+  const loose = await workflows.register({ ...graph('loose'), managed: false }, policy());
+  const g = await start(loose, caller, 'loose', 'g');
+  await assert.rejects(
+    async () =>
+      await loose.addDependencies(reader, {
+        instanceId: g.id,
+        dependsOn: [d.id],
+        expectedRevision: 0,
+        requestId: 'reader-loose',
+      }),
+    { code: 'forbidden' },
+  );
 });
 
 test('success declarations and edge contracts survive provider removal and database restart', async (t) => {
