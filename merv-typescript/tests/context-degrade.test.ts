@@ -314,6 +314,20 @@ test('a mature paper no longer fails a reflection: the lowest-ranked references 
         : [{ tool: 'paper.read', input: { kind, history: true } }],
     );
   });
+  // The lowest-ranked paper item is backed by an artifact, so its cut shows the artifact stays a source.
+  const figure = await artifacts.create(operator, {
+    title: 'Figure notes',
+    content: 'The figure shows finding 0.',
+  });
+  paper.push({
+    id: `artifact:${figure.id}:figure`,
+    title: figure.title,
+    priority: 100,
+    content: { artifactId: figure.id },
+    hash: figure.hash,
+    association: 'paper figure',
+    refs: [{ tool: 'artifact.read', input: { artifactId: figure.id } }],
+  });
   const lenses = await Promise.all(
     ['rigor', 'novelty', 'risk', 'scope', 'evidence'].map(async (perspective) => {
       const report = await artifacts.create(operator, {
@@ -353,14 +367,15 @@ test('a mature paper no longer fails a reflection: the lowest-ranked references 
   const cutPaper = paper.filter((item) => !listed(item)).length;
   assert.ok(
     listing.includes(
-      `\n(${cutPaper} lower-priority items are not listed for lack of room; retrieve them through paper.read.)\n`,
+      `\n(${cutPaper} lower-priority items are not listed for lack of room; retrieve them through artifact.read or paper.read.)\n`,
     ),
   );
   // Interim: after the cut there is no room left for any body, not even the assignment's.
   assert.deepEqual(selected.match(/^### .*$/gm), null);
+  assert.ok(!listed(paper.at(-1)!));
   assert.deepEqual(
     preview.sources.map((source) => source.id),
-    lenses.map((lens) => lens.content.artifactId),
+    [figure.id, ...lenses.map((lens) => lens.content.artifactId)],
   );
 });
 
