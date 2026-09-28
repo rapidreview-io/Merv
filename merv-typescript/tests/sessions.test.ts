@@ -1093,21 +1093,22 @@ test('automatic leases need fresh source-bound presence, count offered capacity,
   f.advance(45_001);
   assert.equal((await f.sessions.lease(f.source, autoInput())).reason, 'runner_offline');
   await f.sessions.heartbeatRunner(f.source, presenceInput);
-  // Concurrent leases serialize on the writer lock in whatever order they reach it, so
-  // either request may win; the other must find the capacity already offered.
-  const requests = [autoInput(), autoInput()];
+  // The two leases race for the writer lock, so either may win; only one may.
+  const inputs = [autoInput(), autoInput()];
   const competing = await Promise.all(
-    requests.map((request) =>
-      Promise.resolve().then(async () => await f.sessions.lease(f.source, request)),
+    inputs.map((input) =>
+      Promise.resolve().then(async () => await f.sessions.lease(f.source, input)),
     ),
   );
   assert.equal(competing.filter((item) => item.session).length, 1);
-  const won = competing.findIndex((item) => item.session);
-  assert.equal(competing[1 - won].reason, 'capacity_full');
-  const first = requests[won];
-  assert.equal((await f.sessions.lease(f.source, first)).session!.id, competing[won].session!.id);
+  const winner = competing.findIndex((item) => item.session);
+  assert.equal(competing[1 - winner].reason, 'capacity_full');
+  assert.equal(
+    (await f.sessions.lease(f.source, inputs[winner])).session!.id,
+    competing[winner].session!.id,
+  );
   await assert.rejects(
-    async () => await f.sessions.lease(f.source, { ...first, secret: secret() }),
+    async () => await f.sessions.lease(f.source, { ...inputs[winner], secret: secret() }),
     {
       code: 'request_conflict',
     },

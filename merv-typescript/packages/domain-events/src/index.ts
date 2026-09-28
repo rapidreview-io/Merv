@@ -21,12 +21,15 @@ type Progress = {
   definition_hash: string;
 };
 
+const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
+
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
   private consumers = new Map<string, EventConsumer>();
-  private pendingIds = new Set<string>();
-  private subscriptions = new Set<Promise<void>>();
-  private admitted = new Map<EventConsumer, Promise<boolean>>();
+  /** Registrations in flight, by consumer ID; close() joins them. */
+  private registering = new Map<string, Promise<void>>();
+  /** The one delivery transaction in flight; a disposer joins it. */
+  private admitted?: { consumer: EventConsumer; transaction: Promise<boolean> };
   private handlerContext = new AsyncLocalStorage<{ consumer: EventConsumer; live: boolean }>();
   private running?: Promise<void>;
   private initialization?: Promise<void>;
@@ -58,9 +61,11 @@ export class DurableEvents implements DomainEvents {
   async subscribe(input: EventConsumer): Promise<() => void | Promise<void>> {
     check(!this.closed, 'events_closed', 'Domain Events is closed', 503);
     check(
-      /^[a-z][a-z0-9_.-]{0,127}$/.test(input.id) &&
+      typeof input.id === 'string' &&
+        NAME.test(input.id) &&
+        Array.isArray(input.types) &&
         input.types.length > 0 &&
-        input.types.every((type) => /^[a-z][a-z0-9_.-]{0,127}$/.test(type)) &&
+        input.types.every((type) => typeof type === 'string' && NAME.test(type)) &&
         new Set(input.types).size === input.types.length &&
         ['beginning', 'now'].includes(input.from) &&
         typeof input.handle === 'function',
@@ -68,14 +73,13 @@ export class DurableEvents implements DomainEvents {
       'A stable consumer ID, distinct event types and explicit starting position are required',
     );
     check(
-      !this.consumers.has(input.id) && !this.pendingIds.has(input.id),
+      !this.consumers.has(input.id) && !this.registering.has(input.id),
       'consumer_registered',
       'Consumer is already active',
       409,
     );
     const consumer = { ...input, types: [...input.types] };
     const hash = digest([...consumer.types].sort());
-    this.pendingIds.add(consumer.id);
     const registration = this.state.transaction(async (tx) => {
       const previous = await tx.get<Progress>(
         'SELECT * FROM event_consumers WHERE id=?',
@@ -96,25 +100,25 @@ export class DurableEvents implements DomainEvents {
           consumer.from === 'beginning' ? 0 : await this.state.eventHead(tx),
         );
     });
-    this.subscriptions.add(registration);
+    this.registering.set(consumer.id, registration);
     try {
       await registration;
       check(!this.closed, 'events_closed', 'Domain Events is closed', 503);
       this.consumers.set(consumer.id, consumer);
       this.wake();
     } finally {
-      this.pendingIds.delete(consumer.id);
-      this.subscriptions.delete(registration);
+      this.registering.delete(consumer.id);
     }
     return () => {
       if (this.consumers.get(consumer.id) === consumer) this.consumers.delete(consumer.id);
       // A handler may withdraw itself. It cannot wait for its own transaction to finish.
       const handler = this.handlerContext.getStore();
       if (handler?.live && handler.consumer === consumer) return;
-      return this.admitted.get(consumer)?.then(
-        () => {},
-        () => {},
-      );
+      if (this.admitted?.consumer === consumer)
+        return this.admitted.transaction.then(
+          () => {},
+          () => {},
+        );
     };
   }
 
@@ -143,47 +147,83 @@ export class DurableEvents implements DomainEvents {
     if (this.closed) return Promise.resolve();
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    this.running = Promise.resolve()
-      .then(async () => {
+    this.running = Promise.resolve().then(async () => {
+      try {
         let backlog: boolean;
         do {
           this.wakeRequested = false;
           backlog = await this.deliver();
         } while (!this.closed && (backlog || this.wakeRequested));
-      })
-      .finally(() => {
+      } finally {
+        // Cleared in the same step as the last check above: a drain() from here on starts a
+        // new pass instead of joining one that will not look for its commit.
         this.running = undefined;
         // Also discovers commits made through another State connection.
         this.wake(100);
-      });
+      }
+    });
     return this.running;
   }
 
   private async deliver(): Promise<boolean> {
+    const consumers = [...this.consumers.values()];
+    if (!consumers.length) return false;
+    // Advisory and lock-free: skip a consumer only when a snapshot taken after this pass began
+    // shows it waiting on a retry or already past every committed event. The locked
+    // transaction below still decides everything it delivers.
+    const { head, progress } = await this.state.read(async (sql) => ({
+      // Inside this read scope, eventHead reuses the same connection.
+      head: await this.state.eventHead(),
+      progress: new Map(
+        (
+          await sql.all<Pick<Progress, 'id' | 'cursor' | 'retry_at'>>(
+            'SELECT id, cursor, retry_at FROM event_consumers',
+          )
+        ).map((row) => [row.id, row]),
+      ),
+    }));
     let backlog = false;
-    for (const consumer of [...this.consumers.values()]) {
+    for (const consumer of consumers) {
+      const seen = progress.get(consumer.id);
+      if (seen && (seen.retry_at > Date.now() || seen.cursor >= head)) continue;
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
         let attemptedCursor: number | undefined;
         try {
           const transaction = this.state.transaction(async (tx) => {
-            const progress = (await tx.get<Progress>(
+            const progress = await tx.get<Progress>(
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
-            ))!;
+            );
+            // A progress row removed outside the application: deliver nothing, strand no one.
+            if (!progress || progress.retry_at > Date.now()) return false;
             attemptedCursor = progress.cursor;
-            if (progress.retry_at > Date.now()) return false;
             const event = (await this.state.eventBatch(progress.cursor, 1, tx))[0];
             if (!event) return false;
+            if (!consumer.types.includes(event.type)) {
+              // Under the writer lock every event up to the head is committed and no smaller ID
+              // can commit later, so the run of unsubscribed events is passed in one step.
+              const next = await tx.get<{ id: number | null }>(
+                `SELECT MIN(id) AS id FROM events WHERE id>? AND type IN (${consumer.types.map(() => '?').join(',')})`,
+                event.id,
+                ...consumer.types,
+              );
+              const cursor = next?.id != null ? next.id - 1 : await this.state.eventHead(tx);
+              await tx.run(
+                'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
+                cursor,
+                consumer.id,
+              );
+              // At the head: no further transaction would find anything.
+              return next?.id != null;
+            }
             // A handler owns its argument, not the dispatcher's durable progress.
             const cursor = event.id;
-            if (consumer.types.includes(event.type)) {
-              const frame = { consumer, live: true };
-              try {
-                await this.handlerContext.run(frame, () => consumer.handle(event, tx));
-              } finally {
-                frame.live = false;
-              }
+            const frame = { consumer, live: true };
+            try {
+              await this.handlerContext.run(frame, () => consumer.handle(event, tx));
+            } finally {
+              frame.live = false;
             }
             await tx.run(
               'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
@@ -192,24 +232,24 @@ export class DurableEvents implements DomainEvents {
             );
             return true;
           });
-          this.admitted.set(consumer, transaction);
+          this.admitted = { consumer, transaction };
           let advanced: boolean;
           try {
             advanced = await transaction;
           } finally {
-            this.admitted.delete(consumer);
+            this.admitted = undefined;
           }
           if (!advanced) break;
           if (count === 99) backlog = true;
         } catch (error) {
           // Failed handler effects and cursor both rolled back. Record retry separately.
           await this.state.transaction(async (tx) => {
-            const row = (await tx.get<Progress>(
+            const row = await tx.get<Progress>(
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
-            ))!;
-            if (row.cursor !== attemptedCursor) return;
-            const delay = Math.min(30_000, 100 * 2 ** Math.min(row.attempts, 8));
+            );
+            if (!row || row.cursor !== attemptedCursor) return;
+            const delay = 100 * 2 ** Math.min(row.attempts, 8);
             // Failure handling must not invoke getters or proxy traps on an
             // arbitrary thrown value and thereby strand every later consumer.
             const field =
@@ -264,7 +304,7 @@ export class DurableEvents implements DomainEvents {
     this.timer = undefined;
     this.consumers.clear();
     this.closing = Promise.allSettled([
-      ...this.subscriptions,
+      ...this.registering.values(),
       ...(this.initialization ? [this.initialization] : []),
       ...(this.running ? [this.running] : []),
     ]).then(() => {});
