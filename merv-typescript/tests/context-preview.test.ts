@@ -436,7 +436,7 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
   assert.equal(await state.eventHead(), eventHead);
 });
 
-test('preview checks project, current actor role and revocation; handles retire with their recipe or builder', async (t) => {
+test('preview checks project membership and revocation, not the work role; handles retire with their recipe or builder', async (t) => {
   const { state, scope, artifacts, builder, operator, changes } = await setup(t);
   const evidence = await artifacts.create(operator, {
     title: 'Scoped proof',
@@ -462,17 +462,11 @@ test('preview checks project, current actor role and revocation; handles retire 
     inputs: { evidence: { artifactIds: [evidence.id] } },
   };
   const before = await changes();
-  assert.equal((await work.preview(producer, input)).actorId, producer.actorId);
-  assert.equal((await review.preview(reviewer, input)).actorId, reviewer.actorId);
-  for (const [registration, caller] of [
-    [work, reviewer],
-    [review, producer],
-    [work, reader],
-    [review, reader],
-  ] as const)
-    await assert.rejects(async () => await registration.preview(caller, input), {
-      code: 'forbidden',
-    });
+  // Whether an actor may do this work or review is its consumer's assignment check; the builder
+  // only requires that the caller may read the project.
+  for (const registration of [work, review])
+    for (const caller of [producer, reviewer, reader])
+      assert.equal((await registration.preview(caller, input)).actorId, caller.actorId);
   await assert.rejects(
     async () =>
       await work.preview({ actorId: producer.actorId, projectId: other.projectId }, input),

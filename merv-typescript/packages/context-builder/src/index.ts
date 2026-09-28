@@ -286,8 +286,7 @@ export class RecipeContextBuilder implements ContextBuilder {
     check(parsed.success, 'invalid_recipe', 'Invalid context recipe definition');
     const definition = parsed.data,
       hash = digest(definition),
-      key = `${definition.name}@${definition.version}`,
-      role = definition.kind === 'review' ? 'review' : 'write';
+      key = `${definition.name}@${definition.version}`;
     check(
       new Set(definition.recipe.sections.map((s) => s.key)).size ===
         definition.recipe.sections.length,
@@ -380,7 +379,9 @@ export class RecipeContextBuilder implements ContextBuilder {
     };
     // Each call keeps its own copy of the caller, and parses its input before anything yields:
     // the parsed data is detached, so a caller changing either during authorization changes
-    // nothing. Authorization still decides first, so a refused caller never learns more.
+    // nothing. Authorization still decides first, so a refused caller never learns more. The
+    // builder asks only that the caller may read the project: whether it may do this work or
+    // review is its consumer's assignment check, which every consumer makes before rendering.
     return {
       preview: async (caller, input, tx) => {
         live();
@@ -391,7 +392,7 @@ export class RecipeContextBuilder implements ContextBuilder {
         // Authorization and metadata are read here. Bytes are read after it returns, so outside
         // a transaction they are read once its snapshot has closed.
         const { request, artifacts } = await this.reading(tx, async (tx) => {
-          await this.scope.require(caller, role, tx);
+          await this.scope.require(caller, 'read', tx);
           check(
             parsed.success,
             'invalid_context',
@@ -422,7 +423,7 @@ export class RecipeContextBuilder implements ContextBuilder {
           ? unchanged(parsed.data.preview, rendered.get(parsed.data.preview))
           : null;
         return await inTransaction(this.state, transaction, async (tx) => {
-          await this.scope.require(caller, role, tx);
+          await this.scope.require(caller, 'read', tx);
           check(
             parsed.success,
             'invalid_context',
@@ -465,7 +466,7 @@ export class RecipeContextBuilder implements ContextBuilder {
         caller = structuredClone(caller);
         const parsed = replaySchema.safeParse(input);
         return await this.reading(tx, async (tx) => {
-          await this.scope.require(caller, role, tx);
+          await this.scope.require(caller, 'read', tx);
           check(parsed.success, 'invalid_context', 'Context replay needs a subject and request ID');
           return await saved(tx, caller, parsed.data.requestId, parsed.data.subject);
         });
