@@ -7,49 +7,27 @@ import type {
   WorkflowCheckContext,
   WorkflowWorkStart,
 } from '@merv/contracts';
-import { identifier as identifierPattern, toolName } from './definition.js';
+import { toolName } from './definition.js';
 import { workflowJson } from './json.js';
 
 const text = z.string().min(1);
-const identifier = z.string().regex(identifierPattern);
 const tool = z.string().regex(toolName);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const reference = z.object({ kind: text, id: text, label: text }).strict();
+/**
+ * The context package is context-builder's: the engine checks only what it fences (whose it is,
+ * which revision it renders, that every source is the project's, and its content hash) and
+ * keeps every other field as built. A field the package gains never refuses the packet.
+ */
 const preview = z
   .object({
     projectId: text,
     actorId: text,
-    type: identifier,
-    typeVersion: z.number().int().positive().safe(),
-    recipeHash: hash,
-    subject: z
-      .object({
-        id: text,
-        revision: z.number().int().nonnegative().safe(),
-        claimId: text.optional(),
-      })
-      .strict(),
-    prompt: text,
-    sources: z.array(
-      z
-        .object({
-          id: text,
-          projectId: text,
-          createdBy: text,
-          title: text,
-          mediaType: text,
-          hash,
-          size: z.number().int().nonnegative().safe(),
-          // A large artifact's bytes live in object storage; an assignment may pin it too.
-          objectId: text.optional(),
-          createdAt: text,
-        })
-        .strict(),
-    ),
-    omitted: z.array(text),
+    subject: z.object({ id: text, revision: z.number().int().nonnegative().safe() }).passthrough(),
+    sources: z.array(z.object({ projectId: text }).passthrough()),
     hash,
   })
-  .strict();
+  .passthrough();
 const content = z
   .object({
     role: text,
