@@ -214,24 +214,20 @@ export class CredentialStore {
     return { token, credential };
   }
 
+  /** Records a hash its owner derived or wrote itself, if the ledger does not hold it yet, and
+   * returns the stored row. It never revokes, revives, renews or re-owns an existing row; use
+   * `revoke` to revoke. A row held by another owner, subject or kind is refused with 409. */
   async adopt(
-    input: Omit<CredentialInput, 'token' | 'prefix'> & {
-      tokenHash: string;
-      revokedAt?: string | null;
-    },
+    input: Omit<CredentialInput, 'token' | 'prefix'> & { tokenHash: string },
     tx?: Transaction,
   ): Promise<Credential> {
     this.input(input);
-    check(
-      validHash(input.tokenHash) && validDate(input.revokedAt ?? null),
-      'invalid_credential',
-      'Invalid credential history',
-    );
+    check(validHash(input.tokenHash), 'invalid_credential', 'Invalid credential history');
     return await this.write(tx, async (sql) => {
       const id = newId('identity_credential');
       const createdAt = this.now();
       await sql.run(
-        'INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at,expires_at,hard_deadline,revoked_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(token_hash) DO NOTHING',
+        'INSERT INTO identity_credentials(id,token_hash,owner,subject,kind,created_at,expires_at,hard_deadline,revoked_at) VALUES(?,?,?,?,?,?,?,?,NULL) ON CONFLICT(token_hash) DO NOTHING',
         id,
         input.tokenHash,
         input.owner,
@@ -240,9 +236,8 @@ export class CredentialStore {
         createdAt,
         input.expiresAt,
         input.hardDeadline ?? null,
-        input.revokedAt ?? null,
       );
-      let row = await find(sql, input.tokenHash);
+      const row = await find(sql, input.tokenHash);
       check(
         row &&
           row.owner === input.owner &&
@@ -252,13 +247,6 @@ export class CredentialStore {
         'Credential token belongs to another authority',
         409,
       );
-      // Carry a revocation the owner recorded later. Adoption never revives or extends.
-      if (input.revokedAt && row.revoked_at === null)
-        row = (await sql.get<Row>(
-          'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL RETURNING *',
-          input.revokedAt,
-          input.tokenHash,
-        ))!;
       return record(row);
     });
   }

@@ -144,7 +144,7 @@ test('owner revokes all rotations of one subject atomically', async () => {
 const conflict = (status: number) => (error: unknown) =>
   error instanceof MervError && error.status === status;
 
-test('adoption carries a later revocation once and never revives or extends', async () => {
+test('adoption is idempotent and never revives, extends or re-owns a row', async () => {
   let now = Date.parse('2026-09-26T10:00:00.000Z');
   const state = await openState();
   const store = new CredentialStore(state, () => now);
@@ -155,16 +155,21 @@ test('adoption carries a later revocation once and never revives or extends', as
     subject: 'credential-1',
     kind: 'actor',
     tokenHash: tokenDigest(token),
-    expiresAt: null,
+    expiresAt: iso(now + 60_000),
+    hardDeadline: iso(now + 60_000),
   };
   const original = await store.adopt(input);
+  assert.equal(original.revokedAt, null);
   assert.equal((await store.authenticate(token, 'actor')).id, original.id);
-  const first = iso(now + 1_000);
-  const second = iso(now + 2_000);
-  assert.equal((await store.adopt({ ...input, revokedAt: first })).revokedAt, first);
-  await assert.rejects(store.authenticate(token, 'actor'), denied);
-  for (const later of [{ revokedAt: second }, { revokedAt: null }, {}]) {
-    const adopted = await store.adopt({ ...input, ...later });
+  const later = { expiresAt: iso(now + 120_000), hardDeadline: iso(now + 120_000) };
+  const again = await store.adopt({ ...input, ...later });
+  assert.equal(again.id, original.id);
+  assert.equal(again.expiresAt, input.expiresAt);
+  const first = iso(now);
+  assert.equal((await store.revoke(input.tokenHash, 'scope'))?.revokedAt, first);
+  now += 1_000;
+  for (const repeat of [input, { ...input, ...later }]) {
+    const adopted = await store.adopt(repeat);
     assert.equal(adopted.id, original.id);
     assert.equal(adopted.revokedAt, first);
   }

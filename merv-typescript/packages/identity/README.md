@@ -53,12 +53,16 @@ Ownership rules:
 `revoke` is idempotent and keeps the first revocation time; it also revokes an
 expired row, and a hash that was never issued or adopted returns `undefined`.
 
-The additive migration adopts existing token hashes without changing client token
-formats. Adoption inserts a row if it is absent; for an existing row it can only add
-a revocation the owner recorded later, and it never extends or revives a known
-credential. `adopt`'s `revokedAt` is deprecated: it exists only for Scope's legacy
-boot loop and is removed in R2, so new callers use `revoke` instead. Legacy Scope
-keys retain their existing expiry, including explicitly nonexpiring keys. Continuing agent keys have a 30-day lifetime and a
+The ledger alone decides whether a hash can authenticate: a hash an owner's own
+tables hold but the ledger does not never authenticates, and no boot pass adopts
+such hashes (the Scope and Sessions boot loops were removed in Identity R2, after
+production showed none were left to adopt). `adopt` remains for owners that derive
+a token themselves (Pi) and for Scope's `retire`, which records a revocation even
+for a row the ledger lacks. It inserts a row if it is absent and returns the stored
+row; for an existing row it changes nothing, so it never revokes, extends, revives or
+re-owns a credential, and a mismatched owner, subject or kind is refused with 409.
+Revocation goes through `revoke`. Scope keys adopted earlier kept their existing
+expiry, including explicitly nonexpiring keys. Continuing agent keys have a 30-day lifetime and a
 source-authorized rotation route. Execution, managed-runner and Pi credentials are
 bounded by their owning lifecycle.
 
