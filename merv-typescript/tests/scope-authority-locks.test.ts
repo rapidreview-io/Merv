@@ -7,7 +7,13 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import pg from 'pg';
-import { createService, type Caller, type DelegationSource, type Principal } from '@merv/contracts';
+import {
+  createService,
+  type Caller,
+  type DelegationSource,
+  type Principal,
+  type Transaction,
+} from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { ExactToolPolicy } from '@merv/scope/tool-policy';
 import { deferred } from './fixtures/deferred.js';
@@ -55,10 +61,13 @@ async function fixture() {
     session: { id: 'session_locks' },
   };
   // Stub providers vouch for the owner. With `writes` set, the session provider also writes on
-  // the transaction it is handed, which a read decision must refuse.
-  const providers = { writes: false };
+  // the transaction it is handed, which a read decision must refuse. It records that transaction.
+  const providers: { writes: boolean; handed?: { tx: Transaction; readScope: boolean } } = {
+    writes: false,
+  };
   scope.registerSessionAuthority({
     require: async (_caller, tx) => {
+      providers.handed = { tx, readScope: state.readScope };
       if (providers.writes)
         await tx.run('UPDATE projects SET name=name WHERE id=?', boot.project.id);
       return source;
@@ -231,11 +240,8 @@ const contexts = {
 test('read decisions outside any scope never wait for the writer lock', async (t) => {
   const f = await fixture();
   for (const [name, operation] of decisions)
-    await t.test(
-      name,
-      // A managed runner's refusal comes before its provider is asked, so it never waited.
-      { todo: name.includes("'write'") ? false : 'step 3' },
-      async () => assert.equal(await whileWriterHeld(f, () => operation(f)), 'free'),
+    await t.test(name, async () =>
+      assert.equal(await whileWriterHeld(f, () => operation(f)), 'free'),
     );
 });
 
@@ -328,6 +334,77 @@ test('a provider-backed write decision still waits for the writer lock', async (
   );
 });
 
+/** Where a session decision runs, by the scope its caller is in: the rows of the step 3 table. */
+test('a provider decides on the transaction its caller is in', async (t) => {
+  const f = await fixture();
+  /** What the session provider was handed while `run` decided. */
+  const asked = async (run: () => Promise<unknown>) => {
+    f.providers.handed = undefined;
+    await run();
+    const { handed } = f.providers as Fixture['providers'];
+    assert.ok(handed, 'the session provider was asked');
+    return handed;
+  };
+  const decide = (permission: 'read' | 'write') => async () =>
+    assert.equal((await f.scope.require(f.session, permission)).id, f.worker.id);
+  await t.test('outside any scope, a read decision reads on a snapshot of its own', async () => {
+    const { readScope } = await asked(decide('read'));
+    assert.equal(readScope, true);
+  });
+  await t.test('outside any scope, a write decision takes a write transaction', async () => {
+    const { readScope } = await asked(decide('write'));
+    assert.equal(readScope, false);
+  });
+  for (const permission of ['read', 'write'] as const) {
+    await t.test(`a ${permission} decision joins an ambient transaction`, async () => {
+      await f.state.transaction(async (tx) => {
+        assert.equal((await asked(decide(permission))).tx, tx);
+      });
+    });
+    await t.test(`a ${permission} decision joins a snapshot's open read transaction`, async () => {
+      await f.state.snapshot(() =>
+        f.state.transaction(async (tx) => {
+          assert.equal((await asked(decide(permission))).tx, tx);
+        }),
+      );
+    });
+    await t.test(`a ${permission} decision in a bare snapshot reads on it`, async () => {
+      await f.state.snapshot(async () => {
+        const { tx, readScope } = await asked(decide(permission));
+        assert.ok(tx.transactionId);
+        assert.equal(readScope, true);
+      });
+    });
+    await t.test(`a ${permission} decision in a plain read takes a write transaction`, async () => {
+      await f.state.read(async () => {
+        const { tx, readScope } = await asked(decide(permission));
+        assert.ok(tx.transactionId);
+        assert.equal(readScope, false);
+      });
+    });
+  }
+  const vouched = async () =>
+    assert.equal((await f.scope.authorityActor(f.session)).id, f.owner.actorId);
+  await t.test('authorityActor outside any scope reads on a snapshot of its own', async () => {
+    assert.equal((await asked(vouched)).readScope, true);
+  });
+  await t.test('authorityActor joins an ambient transaction', async () => {
+    await f.state.transaction(async (tx) => {
+      assert.equal((await asked(vouched)).tx, tx);
+    });
+  });
+});
+
+test('a plain write decision reads without the writer lock, as before', async () => {
+  const f = await fixture();
+  assert.equal(
+    await whileWriterHeld(f, async () =>
+      assert.equal((await f.scope.require(f.owner, 'write')).id, f.owner.actorId),
+    ),
+    'free',
+  );
+});
+
 test('a provider cannot write on a read decision', async (t) => {
   const f = await fixture();
   const refused = async () => {
@@ -341,7 +418,7 @@ test('a provider cannot write on a read decision', async (t) => {
       f.providers.writes = false;
     }
   };
-  await t.test('outside any scope', { todo: 'step 3' }, refused);
+  await t.test('outside any scope', refused);
   await t.test('in a bare snapshot', async () => {
     await contexts.snapshot(f, refused);
   });

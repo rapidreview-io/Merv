@@ -1,6 +1,7 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
 import { expiry } from './expiry.js';
+import { within } from './within.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
@@ -538,13 +539,16 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     if (!caller.session) return await this.require(caller, 'read', tx);
     const registration = this.sessionAuthorityRegistration;
-    const lookup = async (sql: Sql): Promise<Actor> => {
-      if (!('transactionId' in sql)) return await this.state.transaction(lookup);
-      // The session guard and the source it vouched for are read in one transaction.
-      const { source } = await this.authorize(caller, 'read', sql as Transaction);
-      return await this.requireDelegation(source!, 'read', sql as Transaction);
-    };
-    const result = tx ? await lookup(tx) : await this.state.read(lookup);
+    const result = await within(
+      this.state,
+      tx,
+      async (sql) => {
+        // The session guard and the source it vouched for are read in one transaction.
+        const { source } = await this.authorize(caller, 'read', sql as Transaction);
+        return await this.requireDelegation(source!, 'read', sql as Transaction);
+      },
+      'read',
+    );
     this.requireAuthorityRegistration(registration);
     return result;
   }
@@ -724,8 +728,15 @@ export class ProjectScope implements Scope {
     const registration = this.sessionAuthorityRegistration;
     const managedRegistration = this.managedAuthorityRegistration;
     const conversationRegistration = this.conversationAuthorityRegistration;
-    if (tx) this.state.assertTransaction(tx);
+    const provided = caller.session || caller.managed || caller.conversation || caller.service;
     const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
+      // Unreachable: `within` hands every provider-backed decision a transaction, below.
+      check(
+        !provided || 'transactionId' in sql,
+        'scope_internal',
+        'Provider-backed authority needs a transaction',
+        500,
+      );
       const row = await sql.get<ActorRow>(
         `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
          LEFT JOIN member_actors m ON m.actor_id=a.id
@@ -761,10 +772,6 @@ export class ProjectScope implements Scope {
           'Conversations act only as their original source actor',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
         const authority = this.conversationAuthority;
         check(authority, 'conversation_unavailable', 'Conversation authority is unavailable', 503);
         source = await authority.require(caller, sql as Transaction);
@@ -790,10 +797,6 @@ export class ProjectScope implements Scope {
           'Managed runners may only use their bound execution controls',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
         const authority = this.managedAuthority;
         check(
           authority,
@@ -819,10 +822,6 @@ export class ProjectScope implements Scope {
           'Only a service of this project acts for one of its people',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
         // It acts only while the person who vouched for it may still write here.
         await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
@@ -832,14 +831,6 @@ export class ProjectScope implements Scope {
         // a permission and might usefully try something else.
         check(row.active || !own, 'session_closed', 'Session is closed', 401);
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
-        // A worker's authority is checked several times per tool call and only read, so
-        // it is read on a snapshot: outside any scope that takes no writer lock.
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction(
-              async (inner) => await this.authorize(caller, permission, inner),
-            ),
-          );
         const authority = this.sessionAuthority;
         check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
         source = await authority.require(caller, sql as Transaction, permission);
@@ -901,7 +892,11 @@ export class ProjectScope implements Scope {
       }
       return { actor: actor(row), source };
     };
-    const value = tx ? await lookup(tx) : await this.state.read(lookup);
+    // A provider decides in a transaction. A worker's authority is checked several times per tool
+    // call, so a read decision runs on a snapshot, which outside any scope takes no writer lock. A
+    // managed runner only ever succeeds with 'read', so its refusal never waits for the lock either.
+    const place = !provided ? undefined : caller.managed ? 'read' : permission;
+    const value = await within(this.state, tx, lookup, place);
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
     if (value.actor.sessionId) this.requireAuthorityRegistration(registration);
