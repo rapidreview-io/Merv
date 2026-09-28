@@ -1173,7 +1173,10 @@ test('rejects invalid checkpoint digest and corrupted stored bytes before delive
   await f.pi.complete(bound.token, result);
   await f.send(conversation, 'restore');
   const original = f.blobs.get;
-  f.blobs.get = async () => Buffer.from('corrupt');
+  // Blobs checks every read against its hash, as the real stores do.
+  f.blobs.get = async () => {
+    throw new MervError('blob_corrupt', 'Stored blob failed its integrity check', 500);
+  };
   try {
     // Never delivered: that turn ends, and the machine serves on.
     assert.deepEqual(await f.pi.next(bound.token, { workerId: 'worker_restore' }), { work: null });

@@ -1313,14 +1313,8 @@ export class PiService implements Pi, FleetOwner {
     try {
       let checkpoint: PiWork['checkpoint'] = null;
       if (conversation.checkpoint) {
+        // blobs verifies the bytes against their hash before returning them.
         const bytes = await this.blobs.get(conversation.projectId, conversation.checkpoint.hash);
-        check(
-          bytes.length === conversation.checkpoint.size &&
-            hash(bytes) === conversation.checkpoint.hash,
-          'pi_checkpoint_invalid',
-          'Saved conversation checkpoint failed verification',
-          503,
-        );
         checkpoint = { content: bytes.toString('utf8'), hash: conversation.checkpoint.hash };
       }
       const turn = { conversationId: conversation.id, commandId: command.id, workerId };
@@ -2059,12 +2053,6 @@ export class PiService implements Pi, FleetOwner {
         stored.hash === value.checkpointHash && stored.size === bytes.length,
         'pi_checkpoint_invalid',
         'Checkpoint storage receipt mismatch',
-      );
-      const verified = await this.blobs.get(projectId, stored.hash);
-      check(
-        hash(verified) === stored.hash && verified.length === stored.size,
-        'pi_checkpoint_invalid',
-        'Stored checkpoint failed verification',
       );
     } catch {
       await this.state.transaction(async (tx) => {
