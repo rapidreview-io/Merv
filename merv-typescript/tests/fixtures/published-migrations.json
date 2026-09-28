@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a.",
   "migrations": [
     {
       "component": "identity-credentials",
@@ -47,24 +47,30 @@
       "component": "artifacts",
       "version": 2,
       "hash": "eb040da5a039e77ee7225d046fa38c3cb1a48a84af11f37753579e36c5887301",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 3,
       "hash": "0215fb87cac60080b32ec7f23a22eeb2e1715850ccb226f6d7499404cb78b53d",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 4,
       "hash": "610f7bdf32320d6f1e20908589177d981f6d7ff3c155b9d599d415b97857ab70",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 5,
       "hash": "70bc1386a52005afc97a2ed1fe3f3ffd427f136756df81ac6e13b3a7e0afeac4",
+      "published": true
+    },
+    {
+      "component": "artifacts",
+      "version": 6,
+      "hash": "70aa11f1ad3915ddd5b83bc1dae9e9d1a4ef1f01676453debface011f9633289",
       "published": false
     },
     {

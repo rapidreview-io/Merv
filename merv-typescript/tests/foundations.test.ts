@@ -1,7 +1,7 @@
 import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
@@ -14,7 +14,6 @@ import { ToolRegistry } from '@merv/api';
 import type { Transaction } from '@merv/contracts';
 import { openState, stateConfig } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: any) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-foundation-'));
@@ -115,8 +114,8 @@ test('credentials enforce roles, project boundaries and revocation', async (t) =
   await assert.rejects(async () => await scope.authenticate(reviewer.token), /revoked/);
   await assert.rejects(async () => await scope.require(rc, 'read'), /cannot access/);
 });
-test('artifacts retain exact bytes, reject mutation, scope reads and detect corruption', async (t) => {
-  const { artifacts, blobs, caller, state, scope, dir } = await fixture(t);
+test('artifacts retain exact bytes, reject mutation and scope reads', async (t) => {
+  const { artifacts, blobs, caller, state, scope } = await fixture(t);
   const value = await artifacts.create(caller, { title: 'Evidence', content: 'retained content' });
   assert.equal((await artifacts.read(caller, value.id)).content, 'retained content');
   assert.equal(
@@ -177,17 +176,6 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
     content: '/w==',
     encoding: 'base64',
   });
-  // Bytes kept in the row are verified by the database; a row from before that reads through
-  // blobs, which detects tampering.
-  const legacy = await legacyArtifact(state, caller, Buffer.from('legacy content'), (bytes) =>
-    blobs.put(caller.projectId, bytes),
-  );
-  assert.equal((await artifacts.read(caller, legacy.id)).content, 'legacy content');
-  writeFileSync(
-    join(dir, 'blobs', caller.projectId, legacy.hash.slice(0, 2), legacy.hash),
-    'tampered',
-  );
-  await assert.rejects(async () => await artifacts.read(caller, legacy.id), /integrity/);
 });
 test('artifact queries retain the project checked during authorization', async (t) => {
   const { artifacts, caller, scope } = await fixture(t);
@@ -208,56 +196,42 @@ test('artifact queries retain the project checked during authorization', async (
   changing.projectId = caller.projectId;
   assert.deepEqual(await artifacts.list(changing), [own]);
 });
-test('a revocation while artifact bytes or a link are fetched is enforced by the tool registry', async (t) => {
+test('a revocation while an artifact link is signed is enforced by the tool registry', async (t) => {
   const { blobs, caller, state, scope } = await fixture(t);
-  // Only a row from before bytes were kept in it still fetches them from storage.
-  const artifact = await legacyArtifact(state, caller, Buffer.from('Retained'), (bytes) =>
-    blobs.put(caller.projectId, bytes),
-  );
-  for (const mode of ['read', 'download'] as const) {
-    const reader = await scope.issueActor(caller, { name: mode, role: 'reader' });
-    const entered = deferred();
-    const release = deferred();
-    const held = async () => {
-      entered.resolve();
-      await release.promise;
-    };
-    const store = await createService(
-      new ArtifactStore(state, scope, {
-        put: blobs.put.bind(blobs),
-        get: async (namespace, hash) => {
-          await held();
-          return await blobs.get(namespace, hash);
-        },
-        download: async () => {
-          await held();
-          return { url: 'https://storage.example/download', expiresAt: '2099-01-01T00:00:00.000Z' };
-        },
-      }),
-    );
-    // The service authorises once, at its start; the registry reauthorises every read tool
-    // after its handler, before any bytes or link reach the caller.
-    const tools = new ToolRegistry(scope, undefined, (fn) => state.snapshot(fn));
-    t.after(() => tools.close());
-    artifactToolsPlugin.apply({
-      artifacts: store,
-      tools,
-      effect: (fn: () => unknown) => fn(),
-    } as never);
-    const pending = tools.call(
-      'artifact.read',
-      { actorId: reader.actor.id, projectId: caller.projectId },
-      {
-        artifactId: artifact.id,
-        ...(mode === 'download' ? { mode } : {}),
+  const reader = await scope.issueActor(caller, { name: 'Reader', role: 'reader' });
+  const entered = deferred();
+  const release = deferred();
+  const store = await createService(
+    new ArtifactStore(state, scope, {
+      put: blobs.put.bind(blobs),
+      get: blobs.get.bind(blobs),
+      download: async () => {
+        entered.resolve();
+        await release.promise;
+        return { url: 'https://storage.example/download', expiresAt: '2099-01-01T00:00:00.000Z' };
       },
-    );
-    const rejected = assert.rejects(pending, { code: 'forbidden' }, mode);
-    await entered.promise;
-    await scope.revokeActor(caller, reader.actor.id);
-    release.resolve();
-    await rejected;
-  }
+    }),
+  );
+  const artifact = await store.create(caller, { title: 'Evidence', content: 'Retained' });
+  // The service authorises once, at its start; the registry reauthorises every read tool after
+  // its handler, before any link reaches the caller.
+  const tools = new ToolRegistry(scope, undefined, (fn) => state.snapshot(fn));
+  t.after(() => tools.close());
+  artifactToolsPlugin.apply({
+    artifacts: store,
+    tools,
+    effect: (fn: () => unknown) => fn(),
+  } as never);
+  const pending = tools.call(
+    'artifact.read',
+    { actorId: reader.actor.id, projectId: caller.projectId },
+    { artifactId: artifact.id, mode: 'download' },
+  );
+  const rejected = assert.rejects(pending, { code: 'forbidden' });
+  await entered.promise;
+  await scope.revokeActor(caller, reader.actor.id);
+  release.resolve();
+  await rejected;
 });
 test('artifact metadata, bytes and links are authorised once per call', async (t) => {
   const { blobs, caller, scope, state } = await fixture(t);

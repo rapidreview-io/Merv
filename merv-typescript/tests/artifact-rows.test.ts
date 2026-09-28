@@ -20,7 +20,6 @@ import { ProjectScope } from '@merv/scope';
 import { ArtifactStore } from '@merv/artifacts';
 import { postgresMigrations } from '@merv/artifacts/index.postgres';
 import { deferred } from './fixtures/deferred.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { openState } from './fixtures/state.js';
 
 /**
@@ -364,61 +363,20 @@ test('the content migration fills session provenance, then the guard and CHECK h
       { id: 'art_session', session_id: 'ses_before', content: null },
     ],
   );
+  // The guard refuses every UPDATE, a fill of the row's own bytes too.
   for (const sql of [
     "UPDATE artifacts SET session_id='changed' WHERE id='art_key'",
     "UPDATE artifacts SET content='\\x00'::bytea WHERE id='art_key'",
+    "UPDATE artifacts SET content=convert_to('art_key','UTF8') WHERE id='art_key'",
     "DELETE FROM artifacts WHERE id='art_key'",
   ])
     await assert.rejects(
       state.transaction((tx) => tx.run(sql)),
-      { code: 'state_constraint' },
+      (error: MervError) =>
+        error.code === 'state_constraint' &&
+        (error.cause as { sqlstate?: string }).sqlstate === '23514',
       sql,
     );
-});
-
-test('rows from before bytes were kept in them read through blobs, and are logged under a writer', async (t) => {
-  const f = await fixture(t);
-  const put = (bytes: Buffer) => f.disk.put(f.caller.projectId, bytes);
-  const legacy = await legacyArtifact(f.state, f.caller, Buffer.from('legacy bytes'), put);
-  assert.equal((await f.artifacts.read(f.caller, legacy.id)).content, 'legacy bytes');
-  assert.deepEqual(f.blobs.calls, ['get']);
-
-  const logged = t.mock.method(process.stderr, 'write', () => true);
-  const reports = () =>
-    logged.mock.calls
-      .map((call) => String(call.arguments[0]))
-      .filter((line) => line.includes('artifacts.io_in_transaction'))
-      .map((line) => JSON.parse(line) as { site: string; stack: string });
-  const fresh = await f.artifacts.create(f.caller, { title: 'New', content: 'row bytes' });
-  await f.state.transaction(async (tx) => {
-    // Bytes kept in the row are read locally: nothing to report.
-    await f.artifacts.read(f.caller, fresh.id, undefined, tx);
-    assert.equal(reports().length, 0);
-    // One report per call site, however often it fetches, whatever position it runs from.
-    for (let i = 0; i < 3; i++) await f.artifacts.read(f.caller, legacy.id, undefined, tx);
-    await Promise.all(
-      [0, 1, 2].map(async () => await f.artifacts.read(f.caller, legacy.id, undefined, tx)),
-    );
-  });
-  assert.equal(reports().length, 2);
-  // The site is the caller's frame; the stack goes with it.
-  for (const report of reports()) {
-    assert.match(report.site, /artifact-rows\.test\.ts:\d+:\d+\)?$/);
-    assert.match(report.stack, /packages\/artifacts\//);
-  }
-  // Outside a writer the fetch is not reported.
-  await f.artifacts.read(f.caller, legacy.id);
-  assert.equal(reports().length, 2);
-  logged.mock.restore();
-
-  const file = join(f.directory, 'blobs', f.caller.projectId, legacy.hash.slice(0, 2), legacy.hash);
-  await writeFile(file, 'tampered');
-  await assert.rejects(f.artifacts.read(f.caller, legacy.id), { code: 'blob_corrupt' });
-  await unlink(file);
-  await assert.rejects(f.artifacts.bytes(f.caller, legacy.id), {
-    code: 'artifact_bytes_missing',
-    status: 500,
-  });
 });
 
 test('completing a small upload copies its verified bytes into the row', async (t) => {
@@ -465,25 +423,4 @@ test('an upload over the inline limit keeps its bytes only in blobs', async (t) 
   assert.deepEqual(f.blobs.calls, []);
   assert.equal(await f.content(artifact.id), null);
   await assert.rejects(f.artifacts.read(f.caller, artifact.id), { code: 'artifact_size' });
-});
-
-test('a download under a writer is logged once, and outside one is not', async (t) => {
-  const f = await fixture(t);
-  const artifact = await f.artifacts.uploadComplete(
-    f.caller,
-    await f.upload(Buffer.from('signed')),
-  );
-  const logged = t.mock.method(process.stderr, 'write', () => true);
-  const lines = () =>
-    logged.mock.calls.filter((call) =>
-      String(call.arguments[0]).includes('artifacts.io_in_transaction'),
-    ).length;
-  await f.artifacts.download(f.caller, artifact.id);
-  assert.equal(lines(), 0);
-  await f.state.transaction(async () => {
-    const { download } = await f.artifacts.download(f.caller, artifact.id);
-    assert.equal(download.url, `https://storage.test/${f.caller.projectId}/${artifact.hash}`);
-  });
-  assert.equal(lines(), 1);
-  logged.mock.restore();
 });

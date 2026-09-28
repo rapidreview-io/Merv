@@ -1,23 +1,19 @@
 import { newId, sha256Hex, type Artifact, type Caller, type State } from '@merv/contracts';
 
 /**
- * An artifact row as it was written before bytes were kept in the row: metadata only, with its
- * bytes wherever `store` puts them. `objectId` labels a row whose bytes were in sandbox storage;
- * reads of any such row fetch from blobs.
+ * A row of at most the inline limit without its bytes, as rows were written before bytes were
+ * kept in the row: a server fault on every read, now that none is left in production.
  */
 export async function legacyArtifact(
   state: State,
   caller: Caller,
   bytes: Buffer,
-  store: (bytes: Buffer) => unknown,
-  options: { title?: string; objectId?: string } = {},
 ): Promise<Artifact> {
-  await store(bytes);
   const artifact: Artifact = {
     id: newId('art'),
     projectId: caller.projectId,
     createdBy: caller.actorId,
-    title: options.title ?? 'Legacy evidence',
+    title: 'Legacy evidence',
     mediaType: 'text/plain',
     hash: sha256Hex(bytes),
     size: bytes.length,
@@ -25,7 +21,7 @@ export async function legacyArtifact(
   };
   await state.transaction((tx) =>
     tx.run(
-      'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,object_id) VALUES(?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES(?,?,?,?,?,?,?,?)',
       artifact.id,
       artifact.projectId,
       artifact.createdBy,
@@ -34,7 +30,6 @@ export async function legacyArtifact(
       artifact.hash,
       artifact.size,
       artifact.createdAt,
-      options.objectId ?? null,
     ),
   );
   return artifact;
