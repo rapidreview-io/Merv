@@ -1,20 +1,13 @@
 /**
  * Scope's credential rows and the Identity ledger that co-decides their liveness, when the two
- * disagree: rows an older image wrote after this instance's boot pass (no ledger row yet), a
- * revocation made only in the ledger, and ledger rows that are not Scope's own. Cases that fail
- * today are marked with the plan step that turns them on.
+ * disagree: Scope rows with no ledger row (written straight to Scope's tables; no boot pass adopts
+ * them any more, so they never authenticate), a revocation made only in the ledger, and ledger
+ * rows that are not Scope's own.
  */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
-import {
-  createService,
-  MervError,
-  newId,
-  sha256Hex,
-  type Caller,
-  type Principal,
-} from '@merv/contracts';
+import { createService, newId, sha256Hex, type Caller, type Principal } from '@merv/contracts';
 import { CredentialStore } from '@merv/identity/credentials';
 import { ProjectScope } from '@merv/scope';
 import type { LedgerKind } from '@merv/scope/ledger';
@@ -200,21 +193,6 @@ for (const [name, kind, retire, authenticate] of unadopted)
     });
   });
 
-test('a restart adopts a revoked row the ledger never held as revoked', async () => {
-  const f = await fixture();
-  const revokedAt = f.time(-hour);
-  const credential = await legacyCredential(f, { revokedAt });
-  const key = await legacyKey(f, { revokedAt });
-  await f.boot();
-  for (const [legacy, kind] of [
-    [credential, 'actor'],
-    [key, 'user-key'],
-  ] as const) {
-    assert.equal((await ledgerRow(f, legacy.tokenHash))?.revoked_at, revokedAt);
-    await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
-  }
-});
-
 test('a credential revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
   await f.ledger.revoke(
@@ -375,27 +353,20 @@ test('a user key whose ledger row names another subject is refused', async () =>
   await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
 });
 
-test('a restart with nothing to adopt adopts nothing and takes no writer lock', async (t) => {
+test('a restart adopts nothing and takes no writer lock, even with rows missing from the ledger', async (t) => {
   const f = await fixture();
+  const credential = await legacyCredential(f);
+  const key = await legacyKey(f);
   const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
-  // Counts every transaction of the boot, not only the adoption pass. That is exact today because
-  // State.migrate runs its steps through the internal transact(), not transaction(); a new
-  // boot-time transaction elsewhere must be excluded here rather than tolerated.
+  // Counts every transaction of the boot. That is exact because State.migrate runs its steps
+  // through the internal transact(), not transaction(); a new boot-time transaction elsewhere
+  // must be excluded here rather than tolerated.
   const transaction = t.mock.method(f.state, 'transaction');
   await f.boot();
   assert.equal(adopt.mock.callCount(), 0);
   assert.equal(transaction.mock.callCount(), 0);
-});
-
-test('a restart adopts exactly the rows written since the last boot pass', async (t) => {
-  const f = await fixture();
-  const legacy = await legacyCredential(f);
-  const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
-  const scope = await f.boot();
-  assert.equal((await scope.authenticate(legacy.token)).credential.id, legacy.id);
-  await t.test('and only those', () => {
-    assert.equal(adopt.mock.callCount(), 1);
-  });
+  for (const legacy of [credential, key])
+    assert.equal(await ledgerRow(f, legacy.tokenHash), undefined);
 });
 
 test('a hash another authority owns does not stop a restart and stays refused', async () => {
@@ -413,20 +384,10 @@ test('a hash another authority owns does not stop a restart and stays refused', 
   await assert.rejects(scope.authenticate(token), unauthorized);
 });
 
-test('a malformed row never adopted still stops a restart', async (t) => {
+test('a malformed row missing from the ledger does not stop a restart and is refused', async () => {
   const f = await fixture();
   // Scope writes canonical timestamps; this one lacks milliseconds.
   const legacy = await legacyCredential(f, { expiresAt: '2030-01-01T00:00:00Z' });
-  await assert.rejects(f.boot(), MervError);
-  await t.test('naming the row', async () => {
-    await assert.rejects(
-      f.boot(),
-      (error: { code?: string; status?: number; message?: string }) => {
-        assert.equal(error.code, 'scope_ledger_adoption');
-        assert.equal(error.status, 500);
-        assert.match(error.message ?? '', new RegExp(legacy.id));
-        return true;
-      },
-    );
-  });
+  const scope = await f.boot();
+  await assert.rejects(scope.authenticate(legacy.token), unauthorized);
 });

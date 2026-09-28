@@ -37,7 +37,7 @@ async function fixture(path = ':memory:') {
   };
 }
 
-test('v1 migration separates digests without changing actor identities, project authority or old bearer tokens', async (t) => {
+test('v1 migration separates digests without changing actor identities or project authority, and its unledgered tokens stay refused', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-actor-credentials-v1-'));
   const path = directory;
   const state = await openState(path);
@@ -108,19 +108,22 @@ test('v1 migration separates digests without changing actor identities, project 
     event.id,
     'Schema migration creates no fabricated domain event',
   );
-  for (const value of old.filter((value) => value.active)) {
-    const authenticated = await scope.authenticate(value.token);
-    assert.equal(authenticated.id, value.id);
-    assert.equal(authenticated.projectId, value.projectId);
-    assert.equal(authenticated.role, value.role);
-    assert.equal(authenticated.credential.actorId, value.id);
-    assert.equal(authenticated.credential.projectId, value.projectId);
-    assert.equal(authenticated.credential.expiresAt, null);
-  }
-  await assert.rejects(async () => await scope.authenticate(old[2].token), {
-    code: 'unauthorized',
-  });
+  // No boot pass adopts the migrated hashes into Identity's ledger any more (Identity R2), so a
+  // token the ledger never issued is refused like any other unknown token.
+  for (const value of old)
+    await assert.rejects(async () => await scope.authenticate(value.token), {
+      code: 'unauthorized',
+    });
   const operator = { actorId: old[0].id, projectId: old[0].projectId };
+  for (const value of old.filter((value) => value.projectId === operator.projectId)) {
+    const [credential] = await scope.actorCredentials(operator, value.id);
+    assert.equal(credential.actorId, value.id);
+    assert.equal(credential.projectId, value.projectId);
+    assert.equal(credential.expiresAt, null);
+  }
+  const actors = await scope.actors(operator);
+  for (const value of old.filter((value) => value.projectId === operator.projectId))
+    assert.equal(actors.find((actor) => actor.id === value.id)?.role, value.role);
   assert.equal((await scope.actorCredentials(operator, old[1].id))[0].createdAt, event.createdAt);
   assert.equal(
     (await scope.actors(operator)).find((value) => value.id === old[2].id)?.active,

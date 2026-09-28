@@ -1,25 +1,10 @@
-import { check, MervError, type Sql, type State, type Transaction } from '@merv/contracts';
+import { check, type Sql, type Transaction } from '@merv/contracts';
 import type { Credential, CredentialStore } from '@merv/identity/credentials';
 
 /** The ledger kinds Scope owns: independent actor credentials and user keys. */
 export type LedgerKind = 'actor' | 'user-key';
 
-/** One Scope credential row as the ledger records it: `subject` is the Scope row id. */
-interface ScopeRow {
-  subject: string;
-  kind: LedgerKind;
-  token_hash: string;
-  expires_at: string | null;
-  revoked_at: string | null;
-}
-
 const denied = 'Invalid or expired credential';
-/** Scope rows whose hash the ledger does not record. A hash the ledger holds for another authority
- * is excluded too, so it cannot stop boot; `live` and `authenticate` keep it refused. */
-const missing = `SELECT x.* FROM (
-    SELECT id AS subject,'actor' AS kind,token_hash,expires_at,revoked_at FROM actor_credentials
-    UNION ALL SELECT id,'user-key',token_hash,expires_at,revoked_at FROM user_keys) x
-  WHERE NOT EXISTS (SELECT 1 FROM identity_credentials i WHERE i.token_hash=x.token_hash)`;
 
 /** Scope's only door to Identity's credential ledger. Scope rows are provenance; the ledger
  * co-decides liveness, and only for rows it records as Scope's own. */
@@ -70,10 +55,12 @@ export class Ledger {
     return credential;
   }
 
-  /** Revokes a Scope credential in the ledger, first adopting a row an older image wrote after this
-   * instance's boot pass, so the revocation is recorded even then. adopt is idempotent on the
-   * hash and refuses one another authority holds (409); revoke keeps an earlier revocation.
-   * Returns the ledger row as it was BEFORE this revocation. */
+  /** Revokes a Scope credential in the ledger. Every Scope row is issued through the ledger and no
+   * boot pass adopts rows any more, so a row missing from the ledger never authenticates; retire
+   * still adopts first so the revocation is recorded even for such a row (revoke alone ignores an
+   * unknown hash) and so it can return the ledger row as it was BEFORE this revocation, which
+   * rotation checks. adopt is idempotent on the hash and refuses one another authority holds
+   * (409); revoke keeps an earlier revocation. */
   async retire(
     kind: LedgerKind,
     row: { id: string; token_hash: string; expires_at: string | null },
@@ -92,45 +79,5 @@ export class Ledger {
     );
     await this.store.revoke(row.token_hash, 'scope', tx);
     return before;
-  }
-
-  /** The boot pass: adopts the Scope rows the ledger does not record yet, such as rows an older
-   * image wrote, with their expiry and any revocation. It runs on every boot, not once, so rows
-   * written during a rolling deploy are still picked up. It does not carry a Scope revocation onto
-   * a row the ledger already holds: every Scope revocation retires its ledger row in the same
-   * transaction, and Scope's own revoked_at is checked on every use as well. */
-  async adoptMissing(state: State): Promise<void> {
-    // Steady state: one scan with an indexed anti-join on the reader pool, and no writer lock.
-    if (!(await state.read((sql) => sql.all(missing))).length) return;
-    await state.transaction(async (tx) => {
-      // Re-read under the lock: another instance may have adopted some rows meanwhile.
-      for (const row of await tx.all<ScopeRow>(missing))
-        try {
-          await this.store.adopt(
-            {
-              owner: 'scope',
-              subject: row.subject,
-              kind: row.kind,
-              tokenHash: row.token_hash,
-              expiresAt: row.expires_at,
-              hardDeadline: row.expires_at,
-              revokedAt: row.revoked_at,
-            },
-            tx,
-          );
-        } catch (error) {
-          // Only the ledger's own validation names the row; State and connection errors pass through.
-          if (
-            error instanceof MervError &&
-            (error.code === 'invalid_credential' || error.code === 'credential_conflict')
-          )
-            throw new MervError(
-              'scope_ledger_adoption',
-              `Scope credential ${row.subject} cannot be adopted into the credential ledger: ${error.message}`,
-              500,
-            );
-          throw error;
-        }
-    });
   }
 }

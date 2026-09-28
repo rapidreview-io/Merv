@@ -140,7 +140,6 @@ export class ProjectScope implements Scope {
       await this.ledger.initialize();
       this.toolPolicy = new ExactToolPolicy(this, grants);
       await state.migrate('scope', scopeMigrations);
-      await this.ledger.adoptMissing(state);
       this.members = new Memberships(
         state,
         () => this.time(),
