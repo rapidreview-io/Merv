@@ -43,9 +43,12 @@ export async function runCanary({ state, scope, origin }) {
       projectId: boot.project.id,
       credentialId: boot.credential.id,
     };
+    // One deadline for everything the canary mints: nothing minted through an expiring actor
+    // credential may outlive it.
+    const deadline = new Date(Date.now() + 15 * 60_000).toISOString();
     const issued = await scope.issueActorCredential(first, {
       actorId: first.actorId,
-      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+      expiresAt: deadline,
     });
     source = {
       token: issued.token,
@@ -57,7 +60,7 @@ export async function runCanary({ state, scope, origin }) {
     helper = await scope.issueActor(source, {
       name: 'Canary cleanup',
       role: 'operator',
-      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+      expiresAt: deadline,
     });
     const outsider = await request(
       '/sessions/agents',
