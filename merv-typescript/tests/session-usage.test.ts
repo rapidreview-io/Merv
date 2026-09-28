@@ -468,19 +468,19 @@ test('a closure too large to walk is refused, and its budget cannot be judged', 
   await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
   await f.sessions.setDispatch(f.owner, { enabled: true });
   const root = await f.instance();
-  // 5,000 more instances the root names as children: one past the walk's bound. They are
-  // finished, so the root is the only work dispatch could offer.
+  // A descendant with ready work, and 4,999 finished ones: one past the walk's bound.
+  const live = await f.instance();
   const children = await f.state.transaction(async (tx) => {
     await tx.run(
       `INSERT INTO wf_instances (id, project_id, workflow, version, state, revision, data_json, created_at, updated_at)
-       SELECT 'bulk-' || n, ?, 'usage-fixture', 1, 'done', 0, '{}', ?, ? FROM generate_series(1, 5000) AS n`,
+       SELECT 'bulk-' || n, ?, 'usage-fixture', 1, 'done', 0, '{}', ?, ? FROM generate_series(1, 4999) AS n`,
       f.owner.projectId,
       root.createdAt,
       root.createdAt,
     );
-    return Array.from({ length: 5000 }, (_, index) => `bulk-${index + 1}`);
+    return Array.from({ length: 4999 }, (_, index) => `bulk-${index + 1}`);
   });
-  f.fanOut.set(root.id, children);
+  f.fanOut.set(root.id, [live.id, ...children]);
   await assert.rejects(async () => await f.workflows.dependencyClosure(f.owner, root.id), {
     code: 'closure_too_large',
     status: 409,
@@ -491,14 +491,21 @@ test('a closure too large to walk is refused, and its budget cannot be judged', 
   });
   const set = await f.sessions.setBudget(f.owner, { instanceId: root.id, maxWallMinutes: 60 });
   assert.deepEqual([set.exceeded, set.unavailable], [[], ['wall']]);
+  // Which instances the budget covers is unknown, so it withholds all of them, the live
+  // descendant included.
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
+  assert.equal((await f.sessions.projectStatus(f.owner)).queueTotal, 0);
 
-  // Exactly at the bound the walk is whole.
-  f.fanOut.set(root.id, children.slice(1));
+  // Exactly at the bound the walk is whole, and the budget judged on it.
+  f.fanOut.set(root.id, [live.id, ...children.slice(1)]);
   assert.equal((await f.workflows.dependencyClosure(f.owner, root.id)).length, 5000);
   const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual([judged.exceeded, judged.unavailable], [[], []]);
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  const offered = [
+    (await f.sessions.lease(f.source, auto())).session?.instanceId,
+    (await f.sessions.lease(f.source, auto())).session?.instanceId,
+  ];
+  assert.deepEqual(offered.sort(), [root.id, live.id].sort());
 });
 
 test('launches that keep failing on one revision stop being offered until dispatch is switched off and on', async (t) => {

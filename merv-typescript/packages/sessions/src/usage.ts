@@ -211,7 +211,9 @@ export async function usageTotals(
 /**
  * Every budget of the project, measured now. Nothing about being over a budget is stored:
  * raising or clearing one resumes dispatch on the next poll, with no flag to forget to clear.
- * `closure` resolves an instance scope to the instances it covers.
+ * `closure` resolves an instance scope to the instances it covers. `instanceIds` is null when
+ * the budget may cover any of the project's instances: the project's own, or an instance's
+ * whose closure is too large to walk.
  */
 export async function budgetStatuses(
   tx: Transaction,
@@ -229,17 +231,22 @@ export async function budgetStatuses(
   for (const row of rows) {
     let instanceIds: string[] | null = null;
     // A closure too large to walk leaves the instance's own usage a floor and every bound
-    // unjudged: the budget withholds that instance rather than pass the rest as unspent.
+    // unjudged. Which instances it covers is unknown too, so the budget covers them all
+    // rather than pass the rest as unspent.
     let unwalked = false;
     if (row.scope_id !== projectId)
       try {
         instanceIds = await closure(row.scope_id);
       } catch (error) {
         if (!(error instanceof MervError) || error.code !== 'closure_too_large') throw error;
-        instanceIds = [row.scope_id];
         unwalked = true;
       }
-    const { totals } = await usageTotals(tx, projectId, instanceIds, row.scope_id);
+    const { totals } = await usageTotals(
+      tx,
+      projectId,
+      unwalked ? [row.scope_id] : instanceIds,
+      row.scope_id,
+    );
     const unreportedSessions = totals.sessions - totals.reportedSessions;
     // What nobody reported is unknown, not nothing.
     const known = totals.sessions === 0 || totals.reportedSessions > 0;
@@ -270,7 +277,7 @@ export async function budgetStatuses(
     }
     result.push({
       scopeId: row.scope_id,
-      kind: instanceIds === null ? 'project' : 'instance',
+      kind: row.scope_id === projectId ? 'project' : 'instance',
       maxWallMs: row.max_wall_ms === null ? null : Number(row.max_wall_ms),
       maxCostMicros: row.max_cost_micros === null ? null : Number(row.max_cost_micros),
       maxTokens: row.max_tokens === null ? null : Number(row.max_tokens),
