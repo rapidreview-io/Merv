@@ -171,7 +171,6 @@ import type {
   WorkflowSnapshot,
   WorkflowWorkspacePolicy,
 } from './workflow-models.js';
-export { ROLES } from './workflow-models.js';
 export type {
   Role,
   WorkflowDispatchCandidate,
@@ -241,6 +240,13 @@ export const stateFault = (error: unknown): error is MervError =>
   (error.code === 'read_only_scope' ||
     error.code === 'nested_transaction' ||
     /^(transaction|state)_/.test(error.code));
+/** Every role a member, an actor or a lease may hold. */
+export const ROLES = [
+  'operator',
+  'producer',
+  'reviewer',
+  'reader',
+] as const satisfies readonly Role[];
 /** The name of an environment variable that holds a secret or setting a plugin config refers to. */
 export const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 /** The nonblank value of environment variable `name`; the refusal names the variable, never its value. */
