@@ -96,7 +96,9 @@ export class Ledger {
 
   /** The boot pass: adopts the Scope rows the ledger does not record yet, such as rows an older
    * image wrote, with their expiry and any revocation. It runs on every boot, not once, so rows
-   * written during a rolling deploy are still picked up. */
+   * written during a rolling deploy are still picked up. It does not carry a Scope revocation onto
+   * a row the ledger already holds: every Scope revocation retires its ledger row in the same
+   * transaction, and Scope's own revoked_at is checked on every use as well. */
   async adoptMissing(state: State): Promise<void> {
     // Steady state: one scan with an indexed anti-join on the reader pool, and no writer lock.
     if (!(await state.read((sql) => sql.all(missing))).length) return;
