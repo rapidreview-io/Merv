@@ -2,15 +2,12 @@ import { z } from 'zod';
 import { canonical, check, digest, executionArgument, MervError } from '@merv/contracts';
 import type {
   Data,
-  Sql,
   WorkflowAssignmentContent,
   WorkflowAssignmentRule,
   WorkflowCheckContext,
-  WorkflowDefinition,
   WorkflowExecution,
   WorkflowExecutionPolicy,
   WorkflowExecutionReferences,
-  WorkflowPolicy,
 } from '@merv/contracts';
 import { toolName } from './definition.js';
 import { DATA_LIMITS, freezeData, workflowJson } from './json.js';
@@ -136,39 +133,6 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
     ...(parsed.data.workspace === undefined ? {} : { workspace: parsed.data.workspace }),
     tools,
   }) as WorkflowExecutionPolicy;
-}
-
-/** Null is a pinned declaration too: omission must never restore dynamic dispatch grants. */
-export async function persistExecution(
-  sql: Sql,
-  definition: WorkflowDefinition,
-  policy?: WorkflowPolicy,
-): Promise<void> {
-  for (const state of definition.states.filter((state) => !definition.terminal.includes(state))) {
-    const manifest = policy?.assignments?.find((rule) => rule.state === state)?.execution ?? null;
-    const hash = executionFingerprint(manifest);
-    const previous = await sql.get<{ fingerprint: string }>(
-      'SELECT fingerprint FROM wf_execution_policies WHERE workflow=? AND version=? AND state=?',
-      definition.name,
-      definition.version,
-      state,
-    );
-    check(
-      !previous || previous.fingerprint === hash,
-      'workflow_version_conflict',
-      `Execution policy for ${definition.name}@${definition.version}/${state} changed; publish a new version`,
-      409,
-    );
-    if (!previous)
-      await sql.run(
-        'INSERT INTO wf_execution_policies(workflow,version,state,fingerprint,manifest_json) VALUES(?,?,?,?,?)',
-        definition.name,
-        definition.version,
-        state,
-        hash,
-        canonical(manifest),
-      );
-  }
 }
 
 export function executionFingerprint(policy: WorkflowExecutionPolicy | null): string {

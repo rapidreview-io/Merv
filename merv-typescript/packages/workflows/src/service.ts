@@ -18,17 +18,15 @@ import type {
   WorkflowRelations,
 } from '@merv/contracts';
 import { readBlockers, replaceBlockers } from './blockers.js';
-import { readPinned } from './pinned.js';
+import { persistExecution, persistSuccess, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
 import { readWorkStarts } from './assignments.js';
 import { limitStatus, limitStatusOf } from './limits.js';
-import { persistExecution } from './execution.js';
 import {
   attachDependencies,
   instanceRelations,
   normalizeDependencies,
-  persistSuccess,
   prerequisites,
   prerequisitesOf,
   relations,

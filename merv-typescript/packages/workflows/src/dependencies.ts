@@ -3,7 +3,6 @@ import type {
   Data,
   Sql,
   Transaction,
-  WorkflowDefinition,
   WorkflowDependency,
   WorkflowPinned,
   WorkflowRelations,
@@ -32,33 +31,6 @@ export function normalizeDependencies(value: unknown): string[] {
     `A call can name at most ${MAX_DEPENDENCIES} dependencies`,
   );
   return ids;
-}
-
-/** A version pins its success states on first registration, their absence included. */
-export async function persistSuccess(
-  sql: Sql,
-  definition: WorkflowDefinition,
-  success?: string[],
-): Promise<void> {
-  const encoded = canonical(success === undefined ? null : [...success].sort());
-  const existing = await sql.get<{ success_json: string }>(
-    'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
-    definition.name,
-    definition.version,
-  );
-  check(
-    !existing || existing.success_json === encoded,
-    'workflow_version_conflict',
-    `${definition.name}@${definition.version} success states changed; publish a new version`,
-    409,
-  );
-  if (!existing)
-    await sql.run(
-      'INSERT INTO wf_success_states (workflow,version,success_json) VALUES (?,?,?)',
-      definition.name,
-      definition.version,
-      encoded,
-    );
 }
 
 interface EdgeRow {
