@@ -1,4 +1,5 @@
 import { CredentialStore } from '@merv/identity/credentials';
+import { Ledger, type ScopeRow } from './ledger.js';
 import { expiry } from './expiry.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -97,7 +98,7 @@ export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   private members!: Memberships;
   private userKeys!: UserKeys;
-  private credentials: CredentialStore;
+  private ledger: Ledger;
   private sessionAuthority?: SessionAuthority;
   private sessionAuthorityRegistration?: symbol;
   private conversationAuthority?: ConversationAuthority;
@@ -111,9 +112,9 @@ export class ProjectScope implements Scope {
     private readonly clock: () => number = Date.now,
     grants: ToolGrant[] = [],
   ) {
-    this.credentials = new CredentialStore(state, clock);
+    this.ledger = new Ledger(new CredentialStore(state, clock));
     this.initialize = async () => {
-      await this.credentials.initialize();
+      await this.ledger.initialize();
       this.toolPolicy = new ExactToolPolicy(this, grants);
       await state.migrate('scope', [
         {
@@ -145,28 +146,10 @@ export class ProjectScope implements Scope {
         },
       ]);
       await state.transaction(async (tx) => {
-        const rows = await tx.all<{
-          subject: string;
-          kind: string;
-          token_hash: string;
-          expires_at: string | null;
-          revoked_at: string | null;
-        }>(
+        const rows = await tx.all<ScopeRow>(
           "SELECT id AS subject, 'actor' AS kind, token_hash, expires_at, revoked_at FROM actor_credentials UNION ALL SELECT id AS subject, 'user-key' AS kind, token_hash, expires_at, revoked_at FROM user_keys",
         );
-        for (const row of rows)
-          await this.credentials.adopt(
-            {
-              owner: 'scope',
-              subject: row.subject,
-              kind: row.kind,
-              tokenHash: row.token_hash,
-              expiresAt: row.expires_at,
-              hardDeadline: row.expires_at,
-              revokedAt: row.revoked_at,
-            },
-            tx,
-          );
+        for (const row of rows) await this.ledger.adopt(row, tx);
       });
       this.members = new Memberships(
         state,
@@ -175,7 +158,7 @@ export class ProjectScope implements Scope {
       );
       this.userKeys = new UserKeys(
         state,
-        this.credentials,
+        this.ledger,
         () => this.time(),
         this.members,
         async (caller, permission, tx) => await this.require(caller, permission, tx),
@@ -622,24 +605,14 @@ export class ProjectScope implements Scope {
       revokedAt: null,
       previousId,
     };
-    const { token } = await this.credentials.issue(
-      {
-        owner: 'scope',
-        subject: issued.id,
-        kind: 'actor',
-        prefix: '',
-        expiresAt,
-        hardDeadline: expiresAt,
-      },
-      tx,
-    );
+    const { token, tokenHash } = await this.ledger.issue('actor', issued.id, expiresAt, tx);
     await tx.run(
       'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at,expires_at,previous_id) VALUES(?,?,?,?,?,?,?,?)',
       issued.id,
       value.id,
       value.projectId,
       issued.kind,
-      sha256Hex(token),
+      tokenHash,
       time,
       expiresAt,
       previousId,
@@ -680,7 +653,7 @@ export class ProjectScope implements Scope {
     });
   }
   async authenticate(token: string): Promise<AuthenticatedActor> {
-    const verified = await this.credentials.authenticate(token, 'actor');
+    const verified = await this.ledger.authenticate(token, 'actor');
     const row = await this.state.read(
       async (sql) =>
         await sql.get<CredentialRow & { name: string; role: Role; active: number }>(
@@ -929,7 +902,7 @@ export class ProjectScope implements Scope {
           this.time(),
         );
         check(bound, 'forbidden', 'Credential cannot authorize this actor in this project', 403);
-        await this.credentials.authenticateHash(bound.token_hash, 'actor', sql);
+        await this.ledger.live(bound.token_hash, 'actor', bound.id, sql);
       }
       return { actor: actor(row), source };
     };
@@ -1196,7 +1169,7 @@ export class ProjectScope implements Scope {
         caller.projectId,
       );
       check(result.changes === 1, 'credential_revoked', 'Credential was already revoked', 409);
-      await this.credentials.revoke(previous.token_hash, 'scope', tx);
+      await this.ledger.revoke(previous.token_hash, tx);
       const issued = await this.issueCredential(tx, actor(target), expiresAt, previous.id, time);
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
@@ -1220,7 +1193,7 @@ export class ProjectScope implements Scope {
         'Cannot revoke the credential authenticating this call; verify another credential first',
       );
       if (target.revoked_at !== null) return;
-      await this.credentials.revoke(target.token_hash, 'scope', tx);
+      await this.ledger.revoke(target.token_hash, tx);
       const time = this.time();
       await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL',

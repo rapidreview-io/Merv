@@ -258,91 +258,75 @@ test(
   },
 );
 
-test(
-  'an actor credential whose ledger row another owner holds is refused',
-  { todo: 'step 2a' },
-  async () => {
-    const f = await fixture();
-    const id = newId('credential');
-    const { token } = await f.ledger.issue({
-      owner: 'other',
-      subject: id,
-      kind: 'actor',
-      prefix: '',
-      expiresAt: null,
-    });
-    await legacyCredential(f, { token, id });
-    await assert.rejects(f.scope.authenticate(token), unauthorized);
-    await assert.rejects(
-      f.scope.require(
-        { actorId: f.machine.actor.id, projectId: f.owner.projectId, credentialId: id },
-        'read',
-      ),
-      unauthorized,
-    );
-  },
-);
+test('an actor credential whose ledger row another owner holds is refused', async () => {
+  const f = await fixture();
+  const id = newId('credential');
+  const { token } = await f.ledger.issue({
+    owner: 'other',
+    subject: id,
+    kind: 'actor',
+    prefix: '',
+    expiresAt: null,
+  });
+  await legacyCredential(f, { token, id });
+  await assert.rejects(f.scope.authenticate(token), unauthorized);
+  await assert.rejects(
+    f.scope.require(
+      { actorId: f.machine.actor.id, projectId: f.owner.projectId, credentialId: id },
+      'read',
+    ),
+    unauthorized,
+  );
+});
 
-test(
-  'an actor credential whose ledger row names another subject is refused',
-  { todo: 'step 2a' },
-  async () => {
-    const f = await fixture();
-    const { token } = await f.ledger.issue({
-      owner: 'scope',
-      subject: newId('credential'),
-      kind: 'actor',
-      prefix: '',
-      expiresAt: null,
-    });
-    const legacy = await legacyCredential(f, { token });
-    await assert.rejects(f.scope.authenticate(token), unauthorized);
-    await assert.rejects(
-      f.scope.require(
-        { actorId: f.machine.actor.id, projectId: f.owner.projectId, credentialId: legacy.id },
-        'read',
-      ),
-      unauthorized,
-    );
-  },
-);
+test('an actor credential whose ledger row names another subject is refused', async () => {
+  const f = await fixture();
+  const { token } = await f.ledger.issue({
+    owner: 'scope',
+    subject: newId('credential'),
+    kind: 'actor',
+    prefix: '',
+    expiresAt: null,
+  });
+  const legacy = await legacyCredential(f, { token });
+  await assert.rejects(f.scope.authenticate(token), unauthorized);
+  await assert.rejects(
+    f.scope.require(
+      { actorId: f.machine.actor.id, projectId: f.owner.projectId, credentialId: legacy.id },
+      'read',
+    ),
+    unauthorized,
+  );
+});
 
-test(
-  'a user key whose ledger row another owner holds is refused',
-  { todo: 'step 2a' },
-  async () => {
-    const f = await fixture();
-    const id = newId('key');
-    const { token } = await f.ledger.issue({
-      owner: 'other',
-      subject: id,
-      kind: 'user-key',
-      prefix: 'mk_',
-      expiresAt: null,
-    });
-    const legacy = await legacyKey(f, { token, id });
-    await assert.rejects(f.scope.authenticateKey(token), unauthorized);
-    await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
-  },
-);
+test('a user key whose ledger row another owner holds is refused', async () => {
+  const f = await fixture();
+  const id = newId('key');
+  const { token } = await f.ledger.issue({
+    owner: 'other',
+    subject: id,
+    kind: 'user-key',
+    prefix: 'mk_',
+    expiresAt: null,
+  });
+  const legacy = await legacyKey(f, { token, id });
+  await assert.rejects(f.scope.authenticateKey(token), unauthorized);
+  await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
+});
 
-test(
-  'a user key whose ledger row names another subject is refused',
-  { todo: 'step 2a' },
-  async () => {
-    const f = await fixture();
-    const { token } = await f.ledger.issue({
-      owner: 'scope',
-      subject: newId('key'),
-      kind: 'user-key',
-      prefix: 'mk_',
-      expiresAt: null,
-    });
-    const legacy = await legacyKey(f, { token });
-    await assert.rejects(f.scope.authenticateKey(token), unauthorized);
-    await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
-  },
-);
+test('a user key whose ledger row names another subject is refused', async () => {
+  const f = await fixture();
+  const { token } = await f.ledger.issue({
+    owner: 'scope',
+    subject: newId('key'),
+    kind: 'user-key',
+    prefix: 'mk_',
+    expiresAt: null,
+  });
+  const legacy = await legacyKey(f, { token });
+  await assert.rejects(f.scope.authenticateKey(token), unauthorized);
+  await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
+});
 
 test(
   'a restart with nothing to adopt adopts nothing and takes no writer lock',
