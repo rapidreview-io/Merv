@@ -164,8 +164,20 @@ test('build saves only an unchanged preview this registration rendered for its c
   await assert.rejects(registration.build(operator, { requestId: 'rehashed', preview }), {
     code: 'invalid_context',
   });
-  preview.prompt = body.prompt;
   preview.hash = hash;
+  // Changed into something that cannot be copied, or cannot be hashed.
+  for (const [name, value] of [
+    ['a function', () => 'Changed'],
+    ['a bigint', 1n],
+  ] as const) {
+    Object.assign(preview, { prompt: value });
+    await assert.rejects(
+      registration.build(operator, { requestId: 'uncopyable', preview }),
+      { code: 'invalid_context' },
+      name,
+    );
+  }
+  preview.prompt = body.prompt;
   for (const save of [
     { requestId: ' ', preview },
     { requestId: 'extra', preview, inputs: input.inputs },

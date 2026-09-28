@@ -179,12 +179,19 @@ async function resolve(
     read: async (document, lenient) => await readText(artifacts, caller, document, lenient),
   };
 }
-/** A detached copy of `preview` when it still hashes to `hash`, the hash it was rendered with. */
+/**
+ * A detached copy of `preview` when it still hashes to `hash`, the hash it was rendered with. A
+ * preview changed into something that cannot be copied or hashed is changed too.
+ */
 function unchanged(preview: ContextPreview, hash: string | undefined): ContextPreview | null {
   if (hash === undefined) return null;
-  const copy = structuredClone(preview);
-  const { hash: claimed, ...body } = copy;
-  return claimed === hash && digest(body) === hash ? copy : null;
+  try {
+    const copy = structuredClone(preview);
+    const { hash: claimed, ...body } = copy;
+    return claimed === hash && digest(body) === hash ? copy : null;
+  } catch {
+    return null;
+  }
 }
 /** Media types whose bytes are worth reading as text. */
 export const textual = (mediaType: string) =>
