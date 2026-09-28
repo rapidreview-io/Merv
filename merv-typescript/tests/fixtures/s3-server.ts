@@ -16,9 +16,21 @@ const encode = (value: string) =>
     /[!'()*]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
   );
-/** Verify real SigV4 query signing, so changed project/key/response headers cannot be used. */
-function signedDownloadValid(url: URL, host: string) {
+/** What each presigned method must sign, and for how long it is valid. */
+const PRESIGNED: Record<string, { headers: string[]; expires: number }> = {
+  GET: { headers: ['host'], expires: 60 },
+  PUT: {
+    headers: ['content-length', 'host', 'if-none-match', 'x-amz-checksum-sha256'],
+    expires: 3600,
+  },
+};
+/**
+ * Verify real SigV4 query signing, so a changed project, key, response header or signed request
+ * header cannot be used. A signed header the request leaves out is signed as empty and fails.
+ */
+function signed(url: URL, method: string, headers: IncomingHttpHeaders) {
   const params = url.searchParams;
+  const rule = PRESIGNED[method];
   const date = params.get('X-Amz-Date') ?? '';
   const scope = (params.get('X-Amz-Credential') ?? '').split('/');
   const expires = Number(params.get('X-Amz-Expires'));
@@ -28,9 +40,10 @@ function signedDownloadValid(url: URL, host: string) {
   if (
     params.get('X-Amz-Algorithm') !== 'AWS4-HMAC-SHA256' ||
     scope[0] !== 'fixture-access-key' ||
-    params.get('X-Amz-SignedHeaders') !== 'host' ||
+    !rule ||
+    params.get('X-Amz-SignedHeaders') !== rule.headers.join(';') ||
     !Number.isFinite(timestamp) ||
-    expires !== 60 ||
+    expires !== rule.expires ||
     Date.now() > timestamp + expires * 1000 ||
     timestamp > Date.now() + 1000
   )
@@ -41,9 +54,14 @@ function signedDownloadValid(url: URL, host: string) {
     .sort(([a, av], [b, bv]) => (a! < b! ? -1 : a! > b! ? 1 : av!.localeCompare(bv!)))
     .map(([key, value]) => `${key}=${value}`)
     .join('&');
-  const canonical = ['GET', url.pathname, query, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD'].join(
-    '\n',
-  );
+  const canonical = [
+    method,
+    url.pathname,
+    query,
+    rule.headers.map((name) => `${name}:${String(headers[name] ?? '').trim()}\n`).join(''),
+    rule.headers.join(';'),
+    'UNSIGNED-PAYLOAD',
+  ].join('\n');
   const signing = [
     'AWS4-HMAC-SHA256',
     date,
@@ -61,6 +79,8 @@ function signedDownloadValid(url: URL, host: string) {
 /** Local HTTP protocol fixture; requests still use the real AWS SDK and SigV4 signing. */
 export async function s3Server() {
   const objects = new Map<string, Buffer>();
+  /** The Content-Encoding each object was uploaded with: stored metadata, as S3 keeps it. */
+  const encodings = new Map<string, string>();
   const requests: S3Request[] = [];
   let failure: number | undefined;
   let readOverride: { body: Buffer; chunked?: boolean; stall?: boolean } | undefined;
@@ -93,38 +113,25 @@ export async function s3Server() {
         res.writeHead(status, { 'content-type': 'application/xml' });
         res.end(`<Error><Code>${code}</Code><Message>provider-private-detail</Message></Error>`);
       };
-      if (url.searchParams.has('X-Amz-Algorithm') && !signedDownloadValid(url, req.headers.host!))
+      const presigned = url.searchParams.has('X-Amz-Algorithm');
+      if (presigned && !signed(url, req.method!, req.headers))
         return error(403, 'SignatureDoesNotMatch');
       if (failure) return error(failure, failure === 403 ? 'AccessDenied' : 'ServiceUnavailable');
       if (!url.pathname.startsWith('/merv-artifacts/')) return error(404, 'NoSuchBucket');
       if (req.method === 'PUT') {
-        const copySource = req.headers['x-amz-copy-source'];
-        if (copySource) {
-          if (
-            req.headers['if-none-match'] !== '*' &&
-            req.headers['cf-copy-destination-if-none-match'] !== '*'
-          )
-            return error(400, 'MissingCondition');
-          const source = objects.get(
-            decodeURIComponent(String(copySource)).replace(/^\/?merv-artifacts\//, ''),
-          );
-          if (!source) return error(404, 'NoSuchKey');
-          if (req.headers['x-amz-copy-source-if-match'] !== etag(source) || objects.has(key))
-            return error(412, 'PreconditionFailed');
-          objects.set(key, Buffer.from(source));
-          res.writeHead(200, { 'content-type': 'application/xml' });
-          res.end(
-            `<CopyObjectResult><ETag>${etag(source)}</ETag><LastModified>2026-09-01T00:00:00Z</LastModified></CopyObjectResult>`,
-          );
-        } else {
-          if (req.headers['if-none-match'] !== '*') return error(400, 'MissingCondition');
-          if (req.headers['content-md5'] !== createHash('md5').update(body).digest('base64'))
-            return error(400, 'BadDigest');
-          if (objects.has(key)) return error(412, 'PreconditionFailed');
-          objects.set(key, body);
-          res.writeHead(200, { etag: etag(body) });
-          res.end();
-        }
+        if (req.headers['if-none-match'] !== '*') return error(400, 'MissingCondition');
+        // A signed upload names its body's SHA-256; Blobs' own writes send its MD5.
+        const digest = presigned
+          ? req.headers['x-amz-checksum-sha256'] ===
+            createHash('sha256').update(body).digest('base64')
+          : req.headers['content-md5'] === createHash('md5').update(body).digest('base64');
+        if (!digest) return error(400, 'BadDigest');
+        if (objects.has(key)) return error(412, 'PreconditionFailed');
+        objects.set(key, body);
+        if (req.headers['content-encoding'])
+          encodings.set(key, String(req.headers['content-encoding']));
+        res.writeHead(200, { etag: etag(body) });
+        res.end();
       } else if (req.method === 'GET' || req.method === 'HEAD') {
         const stored = objects.get(key);
         const content = req.method === 'HEAD' ? stored : (readOverride?.body ?? stored);
@@ -140,6 +147,12 @@ export async function s3Server() {
             : {}),
           ...(url.searchParams.has('response-cache-control')
             ? { 'cache-control': url.searchParams.get('response-cache-control')! }
+            : {}),
+          ...(url.searchParams.has('response-content-encoding') || encodings.has(key)
+            ? {
+                'content-encoding':
+                  url.searchParams.get('response-content-encoding') ?? encodings.get(key)!,
+              }
             : {}),
           ...(req.method === 'GET' && readOverride?.chunked
             ? {}

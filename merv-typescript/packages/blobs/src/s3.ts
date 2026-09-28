@@ -36,6 +36,8 @@ export interface S3BlobOptions {
 /** Also the plugin Config defaults, which bound both values; direct callers may omit them. */
 export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
 
+/** S3 checks expiry when a request starts; resume signs again. */
+const UPLOAD_SECONDS = 3600;
 /** The HTTP status of an S3 SDK failure, when the service answered. */
 const statusOf = (error: unknown) =>
   (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
@@ -220,19 +222,64 @@ export class S3Blobs implements Blobs {
     }
   }
 
+  /** The stored size; a missing length never equals a size. */
+  private async head(key: string, signal: AbortSignal) {
+    const head = await this.request(signal, () =>
+      this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }), {
+        abortSignal: signal,
+      }),
+    );
+    return head.ContentLength ?? -1;
+  }
+
+  async stored(namespace: string, hash: string): Promise<number | null> {
+    const key = this.key(namespace, hash);
+    return this.operations.run(async () => {
+      try {
+        return await this.head(key, AbortSignal.timeout(this.timeoutMs));
+      } catch (error) {
+        if (missingHead(error)) return null;
+        throw storageError(error, 'Blob lookup failed');
+      }
+    });
+  }
+
+  async upload(namespace: string, hash: string, size: number) {
+    const key = this.key(namespace, hash);
+    transferSize(size);
+    const checksum = Buffer.from(hash, 'hex').toString('base64');
+    return this.operations.run(async () => {
+      const signingDate = new Date(Math.floor(Date.now() / 1000) * 1000);
+      const url = await getSignedUrl(
+        this.client,
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          ContentLength: size,
+          ChecksumSHA256: checksum,
+          IfNoneMatch: '*',
+        }),
+        {
+          expiresIn: UPLOAD_SECONDS,
+          signingDate,
+          unhoistableHeaders: new Set(['x-amz-checksum-sha256']),
+        },
+      );
+      return {
+        url,
+        headers: { 'x-amz-checksum-sha256': checksum, 'if-none-match': '*' },
+        expiresAt: new Date(signingDate.getTime() + UPLOAD_SECONDS * 1000).toISOString(),
+      };
+    });
+  }
+
   async download(namespace: string, hash: string, expectedSize: number) {
     const key = this.key(namespace, hash);
     transferSize(expectedSize);
     return this.operations.run(async () => {
       try {
-        const signal = AbortSignal.timeout(this.timeoutMs);
-        const head = await this.request(signal, () =>
-          this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }), {
-            abortSignal: signal,
-          }),
-        );
         check(
-          head.ContentLength === expectedSize,
+          (await this.head(key, AbortSignal.timeout(this.timeoutMs))) === expectedSize,
           'blob_corrupt',
           'Stored blob size does not match retained metadata',
           500,
@@ -246,6 +293,8 @@ export class S3Blobs implements Blobs {
             ResponseContentDisposition: `attachment; filename="${hash}"`,
             ResponseContentType: 'application/octet-stream',
             ResponseCacheControl: 'private, no-store',
+            // Whatever encoding an uploader stored, the bytes are served as they are.
+            ResponseContentEncoding: 'identity',
           }),
           { expiresIn: 60, signingDate },
         );

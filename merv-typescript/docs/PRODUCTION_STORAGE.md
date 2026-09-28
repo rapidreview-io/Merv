@@ -31,6 +31,25 @@ npm start -- --config config/production.example.json --dir .merv
 
 `--dir` still holds local application files. It does not become the authoritative database or blob store when PostgreSQL and S3 are configured. Keep database and bucket configuration stable across restarts. Application shutdown drains admitted work before releasing storage resources.
 
+## Large files
+
+Blobs keeps a file at `<MERV_BLOB_PREFIX>/<projectId>/<sha256>` and moves one larger than 2 MB only through signed URLs, up to 512 MiB (`MAX_OBJECT_BYTES`). An upload is a single PUT whose URL signs the exact `Content-Length`, the file's `x-amz-checksum-sha256` and `If-None-Match: *`, valid for one hour. The store therefore accepts only exactly the declared bytes, and only at a key that is still empty: a key never holds bytes that differ from its name, and a stored object is never overwritten. An abandoned upload stores nothing, and a completed one sits at its content address, so no lifecycle rule is needed. Downloads are signed for 60 seconds and served with the `identity` encoding whatever the uploader sent. Until the release that moves large artifacts into Blobs, artifacts still keep them in merv-sandboxes storage and nothing signs an upload.
+
+A browser PUTs straight to the bucket, so each bucket needs a CORS rule. Read the current one with `aws s3api get-bucket-cors` and merge in `AllowedOrigins` of that environment's `MERV_TS_PUBLIC_ORIGIN`, `AllowedMethods` `PUT`, `AllowedHeaders` `x-amz-checksum-sha256` and `if-none-match`, and `MaxAgeSeconds` 3600. Check it with a preflight, which must answer with those `Access-Control-Allow-*` headers:
+
+```sh
+curl -si -X OPTIONS "$MERV_BLOB_ENDPOINT_URL/$MERV_BLOB_BUCKET/merv-ts/probe" \
+  -H "Origin: $MERV_TS_PUBLIC_ORIGIN" -H 'Access-Control-Request-Method: PUT' \
+  -H 'Access-Control-Request-Headers: x-amz-checksum-sha256,if-none-match'
+```
+
+Temporarily, `scripts/move-large-objects.ts` first probes that the bucket enforces those signed conditions, then copies every artifact whose bytes are only in merv-sandboxes storage into Blobs. It reads the database only, is idempotent, prints one JSON line per probe and per artifact, and exits non-zero on any failure. The probe leaves a few 16-byte objects under `<prefix>/_probe/`. Run it in a one-off container of the current image:
+
+```sh
+MERV_TS_IMAGE=<current> docker compose -p merv-typescript run --rm --no-deps --entrypoint sh control \
+  -c 'node deploy/render-config.mjs /tmp/c.json && node dist/scripts/move-large-objects.js /tmp/c.json'
+```
+
 ## Initial operator
 
 The existing `init` and `actor` CLI commands use their local State/Scope composition and do not accept `--config`. Bootstrap a new PostgreSQL project through the selected application configuration instead. This local script starts the configured stack briefly, creates the operator, saves its credential privately, and shuts down:

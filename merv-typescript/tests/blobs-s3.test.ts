@@ -308,3 +308,74 @@ test('S3 downloads a retained zero-byte object after checking its exact HEAD len
   assert.equal((await response.arrayBuffer()).byteLength, 0);
   await assert.rejects(blobs.download('project_1', emptyHash, 1), code('blob_corrupt'));
 });
+
+test('S3 signs one write-once PUT for exactly the declared bytes, and stored reads their size', async (t) => {
+  const { blobs, server } = await fixture(t);
+  const bytes = Buffer.alloc(2_000_001, 98);
+  const bytesHash = createHash('sha256').update(bytes).digest('hex');
+  const key = `evidence/v1/project_1/${bytesHash}`;
+  assert.equal(await blobs.stored('project_1', bytesHash), null);
+  const before = Date.now();
+  const count = server.requests.length;
+  const signed = await blobs.upload('project_1', bytesHash, bytes.length);
+  assert.equal(server.requests.length, count, 'signing is local');
+  const url = new URL(signed.url);
+  assert.equal(url.pathname, `/merv-artifacts/${key}`);
+  assert.equal(
+    url.searchParams.get('X-Amz-SignedHeaders'),
+    'content-length;host;if-none-match;x-amz-checksum-sha256',
+  );
+  assert.equal(url.searchParams.get('X-Amz-Expires'), '3600');
+  assert.ok(
+    Date.parse(signed.expiresAt) >= before + 3_599_000 &&
+      Date.parse(signed.expiresAt) <= Date.now() + 3_600_000,
+  );
+  const checksum = createHash('sha256').update(bytes).digest('base64');
+  assert.deepEqual(signed.headers, { 'x-amz-checksum-sha256': checksum, 'if-none-match': '*' });
+  assert.ok(![...url.searchParams.keys()].some((name) => /checksum/i.test(name)));
+  const put = (body: Buffer, headers: Record<string, string> = signed.headers) =>
+    fetch(signed.url, { method: 'PUT', body: new Uint8Array(body), headers });
+  // Every signed header is required, and the store checks the body against the checksum.
+  assert.equal((await put(bytes, { 'x-amz-checksum-sha256': checksum })).status, 403);
+  assert.equal((await put(bytes, { 'if-none-match': '*' })).status, 403);
+  assert.equal((await put(Buffer.alloc(bytes.length, 99))).status, 400);
+  assert.equal((await put(bytes.subarray(1))).status, 403, 'another length breaks the signature');
+  assert.equal(server.objects.has(key), false);
+  assert.equal((await put(bytes)).status, 200);
+  assert.deepEqual(server.objects.get(key), bytes);
+  assert.equal(await blobs.stored('project_1', bytesHash), bytes.length);
+  assert.equal((await put(bytes)).status, 412, 'a stored object is never overwritten');
+  // Another size at the key is reported as it is, for the caller to judge.
+  server.objects.set(key, Buffer.from('short'));
+  assert.equal(await blobs.stored('project_1', bytesHash), 5);
+  await assert.rejects(
+    blobs.upload('project_1', bytesHash, 512 * 1024 * 1024 + 1),
+    code('blob_size'),
+  );
+  await assert.rejects(blobs.upload('project_1', '../hash', 1), code('invalid_hash'));
+  await assert.rejects(blobs.stored('../other', bytesHash), code('invalid_namespace'));
+  server.fail(503);
+  await assert.rejects(blobs.stored('project_1', bytesHash), code('blob_unavailable'));
+  server.fail(undefined);
+  await blobs.close();
+  await assert.rejects(blobs.upload('project_1', bytesHash, bytes.length), code('blobs_closed'));
+  await assert.rejects(blobs.stored('project_1', bytesHash), code('blobs_closed'));
+});
+
+test('S3 downloads serve the stored bytes unencoded whatever encoding they were uploaded with', async (t) => {
+  const { blobs, server } = await fixture(t);
+  const signed = await blobs.upload('project_1', hash, content.length);
+  const uploaded = await fetch(signed.url, {
+    method: 'PUT',
+    body: new Uint8Array(content),
+    headers: { ...signed.headers, 'content-encoding': 'gzip' },
+  });
+  assert.equal(uploaded.status, 200, 'an unsigned header is not refused');
+  const link = new URL((await blobs.download('project_1', hash, content.length)).url);
+  assert.equal(link.searchParams.get('response-content-encoding'), 'identity');
+  const response = await fetch(link);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-encoding'), 'identity');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
+  assert.equal(server.requests.at(-1)!.query['response-content-encoding'], 'identity');
+});

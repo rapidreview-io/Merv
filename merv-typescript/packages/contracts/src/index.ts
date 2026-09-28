@@ -686,12 +686,28 @@ export const MAX_OBJECT_BYTES = 512 * 1024 * 1024;
 export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;
-  /** Optional direct transfer capability; never expands the inline content limit. */
+  /**
+   * Signed GET valid 60 s, served as identity-encoded application/octet-stream whatever the
+   * uploader sent: `blob_not_found` when nothing is stored, `blob_corrupt` when the stored size is
+   * not expectedSize. Never expands the inline content limit.
+   */
   download?(
     namespace: string,
     hash: string,
     expectedSize: number,
   ): Promise<{ url: string; expiresAt: string }>;
+  /**
+   * Signed PUT valid 1 h, sent with `headers`. The store accepts it only for exactly `size` bytes
+   * whose SHA-256 is `hash`, and only while nothing is stored at the key. Local signing, no I/O.
+   * A provider with `upload` also has `stored`.
+   */
+  upload?(
+    namespace: string,
+    hash: string,
+    size: number,
+  ): Promise<{ url: string; headers: Record<string, string>; expiresAt: string }>;
+  /** The stored object's size (HEAD), or null when none is stored. */
+  stored?(namespace: string, hash: string): Promise<number | null>;
 }
 export type Permission = 'read' | 'write' | 'review' | 'admin';
 /**
