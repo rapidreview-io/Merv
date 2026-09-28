@@ -201,9 +201,10 @@ Reviews or artifact storage. See [the integrated contract](../../docs/SESSION_LE
 **Authority.** A caller method authorizes its caller through Scope once, at entry: reads
 need `read`; a handle's commands need `read`, and the program authorizes the action itself;
 `extendLimit` needs `admin`. The trusted provider seams (`replaceBlockers`,
-`systemPrerequisites(provider).replace`, `dependencyRelations`, `sponsoringRoots`) take a
+`systemPrerequisites(provider).replace`, `relations`, `sponsoringRoots`) take a
 `projectId` and the caller's `tx` and authorize no caller: only in-process code reaches
-them. A lease step authorizes its worker at entry. No decision is repeated after the
+them. `pinned` reads a version's frozen contract, which is no project's data, so it takes no
+caller either. A lease step authorizes its worker at entry. No decision is repeated after the
 callbacks, so a callback that revokes its own caller goes unnoticed; only
 `dispatchCandidates` and `offerLease` authorize their source again once every callback has
 run, and roll back if it was revoked.
@@ -239,6 +240,10 @@ ended outside its pinned success states fails its dependent. A system edge, whic
 provider owns, always reads `failed: false`, because its provider replans it. A handle's
 `addDependencies` is a command: it records history and bumps the revision, so a lease
 pinned to the old revision ends. A provider's system edges bump nothing.
+`relations` hands a provider one instance, with its data, and both directions of its edges;
+the instance has no edge to judge it by, so its `failed` says it ended outside success. What
+the provider makes of them, such as whether a version declares a workspace, it derives
+itself, from `pinned`.
 
 **Blockers.** A provider's blockers stay on an instance across non-terminal moves until
 the provider replaces them; they are cleared when the instance reaches a terminal state.

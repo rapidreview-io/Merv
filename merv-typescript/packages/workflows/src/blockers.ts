@@ -1,16 +1,11 @@
-import { canonical, check, mapAsync, now, visible } from '@merv/contracts';
+import { canonical, check, now, visible } from '@merv/contracts';
 import type {
   Sql,
   Transaction,
-  WorkflowDependency,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderDependency,
-  WorkflowProviderRelations,
   WorkflowReference,
 } from '@merv/contracts';
-import { instanceName, relations } from './dependencies.js';
-import type { PinnedContracts } from './pinned.js';
 
 interface BlockerRow {
   instance_id: string;
@@ -170,70 +165,4 @@ export async function readBlockers(
     since: row.since,
     updatedAt: row.updated_at,
   }));
-}
-
-/**
- * Whether a workflow version ever declared a workspace is read from its pinned execution
- * manifests, never from a loaded plugin: a provider classifying a finished dependency must
- * reach the same answer while that dependency's owner is unloaded.
- */
-async function declaresWorkspace(
-  sql: Sql,
-  contracts: PinnedContracts,
-  workflow: string,
-  version: number,
-): Promise<boolean> {
-  const pinned = await contracts.get(sql, workflow, version);
-  return Object.values(pinned?.execution ?? {}).some(
-    (manifest) => (manifest?.workspace?.mode ?? 'none') !== 'none',
-  );
-}
-
-export async function providerRelations(
-  sql: Sql,
-  contracts: PinnedContracts,
-  projectId: string,
-  instanceId: string,
-): Promise<WorkflowProviderRelations | null> {
-  const row = await sql.get<{
-    id: string;
-    workflow: string;
-    version: number;
-    state: string;
-    revision: number;
-    data_json: string;
-  }>(
-    'SELECT id,workflow,version,state,revision,data_json FROM wf_instances WHERE id=? AND project_id=?',
-    instanceId,
-    projectId,
-  );
-  if (!row) return null;
-  const extend = async (item: WorkflowDependency): Promise<WorkflowProviderDependency> => ({
-    ...item,
-    declaresWorkspace: await declaresWorkspace(sql, contracts, item.workflow, item.version),
-  });
-  const version = Number(row.version);
-  const pinned = await contracts.get(sql, row.workflow, version);
-  const data = JSON.parse(row.data_json) as { title?: unknown; name?: unknown; goal?: unknown };
-  const settled = !!pinned?.successStates?.includes(row.state);
-  const terminal = !!pinned?.definition.terminal.includes(row.state);
-  const edges = await relations(sql, contracts, projectId, instanceId);
-  return {
-    instance: {
-      ...(await extend({
-        id: row.id,
-        workflow: row.workflow,
-        version,
-        name: instanceName(data, row.workflow),
-        state: row.state,
-        revision: Number(row.revision),
-        settled,
-        terminal,
-        failed: terminal && !settled,
-      })),
-      ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
-    },
-    dependencies: await mapAsync(edges.dependencies, extend),
-    dependents: await mapAsync(edges.dependents, extend),
-  };
 }

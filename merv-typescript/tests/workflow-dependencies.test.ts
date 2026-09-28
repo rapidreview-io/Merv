@@ -642,7 +642,7 @@ test('success states are pinned per version, their absence included, and absence
     [{ settled: false, failed: false }],
   );
   const relations = await state.transaction(
-    async (tx) => await workflows.dependencyRelations(caller.projectId, source.id, tx),
+    async (tx) => await workflows.relations(caller.projectId, source.id, tx),
   );
   assert.equal(relations?.instance.settled, false);
   assert.equal(relations?.dependencies[0].id, target.id);

@@ -1,17 +1,10 @@
-import type { Sql, WorkflowDefinition, WorkflowExecutionPolicy } from '@merv/contracts';
+import type {
+  Sql,
+  WorkflowDefinition,
+  WorkflowExecutionPolicy,
+  WorkflowPinned,
+} from '@merv/contracts';
 import { freezeData } from './json.js';
-
-/** The immutable contract of one name@version, whether or not a program has it loaded. */
-export interface WorkflowPinned {
-  definition: WorkflowDefinition;
-  /** Null pins their absence. */
-  successStates: string[] | null;
-  /**
-   * Each nonterminal state's fixed execution manifest; null pins that it has none. Only a contract
-   * that is not final can lack a state.
-   */
-  execution: Record<string, WorkflowExecutionPolicy | null>;
-}
 
 /**
  * A contract as read. It is final once its success row and an execution row for every nonterminal

@@ -46,11 +46,12 @@ import type {
   WorkflowLoopLimit,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderRelations,
+  WorkflowPinned,
+  WorkflowRelations,
   ProcessGraph,
 } from '@merv/contracts';
 import { processGraph } from './process.js';
-import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
+import { clearBlockers, readBlockers, replaceBlockers } from './blockers.js';
 import { DATA_LIMITS, workflowJson } from './json.js';
 import { PinnedContracts, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
@@ -82,6 +83,7 @@ import {
 import {
   attachDependencies,
   detachDependencies,
+  instanceRelations,
   normalizeDependencies,
   persistSuccess,
   prerequisites,
@@ -309,6 +311,15 @@ export class WorkflowsService implements Workflows {
     return [...this.registrations.values()]
       .map(({ definition }) => JSON.parse(canonical(definition)) as WorkflowDefinition)
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
+  }
+
+  async pinned(
+    workflow: string,
+    version: number,
+    transaction?: Transaction,
+  ): Promise<WorkflowPinned | null> {
+    this.assertOpen();
+    return await this.read(transaction, (tx) => this.contracts.get(tx, workflow, version));
   }
 
   /**
@@ -1382,13 +1393,14 @@ export class WorkflowsService implements Workflows {
     };
   }
 
-  async dependencyRelations(
+  async relations(
     projectId: string,
     instanceId: string,
     tx: Transaction,
-  ): Promise<WorkflowProviderRelations | null> {
+  ): Promise<WorkflowRelations | null> {
     this.assertOpen();
-    return await providerRelations(tx, this.contracts, projectId, instanceId);
+    this.state.assertTransaction(tx);
+    return await instanceRelations(tx, this.contracts, projectId, instanceId);
   }
 
   /** Reads only what the instance depends on, never what depends on it. */

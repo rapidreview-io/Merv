@@ -186,8 +186,7 @@ export type {
   WorkflowBlocker,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderDependency,
-  WorkflowProviderRelations,
+  WorkflowRelations,
   WorkflowActionStatus,
   WorkflowDecision,
   WorkflowLimitStatus,
@@ -204,7 +203,7 @@ import type {
   WorkflowReference,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderRelations,
+  WorkflowRelations,
   WorkflowDecision,
   WorkflowLimitStatus,
   WorkflowOverview,
@@ -1186,6 +1185,17 @@ export interface WorkflowDefinition {
   /** While an instance is nonterminal, pause creation of these workflow types in its project. */
   blocksStarts?: string[];
 }
+/** The immutable contract of one name@version, whether or not a program has it loaded. */
+export interface WorkflowPinned {
+  definition: WorkflowDefinition;
+  /** Null pins their absence. */
+  successStates: string[] | null;
+  /**
+   * Each nonterminal state's fixed execution manifest; null pins that it has none. Only a contract
+   * that is not final can lack a state.
+   */
+  execution: Record<string, WorkflowExecutionPolicy | null>;
+}
 export interface WorkflowStart {
   workflow: string;
   version?: number;
@@ -1589,6 +1599,11 @@ export interface Workflows {
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
   catalog(): WorkflowDefinition[];
   /**
+   * The stored contract of a version, loaded or not, or null when none is stored. It is frozen
+   * and never changes, so it needs no caller.
+   */
+  pinned(workflow: string, version: number, tx?: Transaction): Promise<WorkflowPinned | null>;
+  /**
    * Derived on read from the definition and the record; never pinned, never authored. With
    * `checks: false` no program callback runs, so no edge carries a status: for a view that
    * draws only where the work stands.
@@ -1686,14 +1701,15 @@ export interface Workflows {
     ): Promise<void>;
   };
   /**
-   * The dependency edges a provider derives from, read inside its caller's transaction and
-   * under that caller's already-checked authority. Null when the project holds no such instance.
+   * The instance and the dependency edges a provider derives from, read inside its caller's
+   * transaction and under that caller's already-checked authority. Null when the project holds
+   * no such instance.
    */
-  dependencyRelations(
+  relations(
     projectId: string,
     instanceId: string,
     tx: Transaction,
-  ): Promise<WorkflowProviderRelations | null>;
+  ): Promise<WorkflowRelations | null>;
 }
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';

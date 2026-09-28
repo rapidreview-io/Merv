@@ -1,12 +1,15 @@
 import { canonical, check, now } from '@merv/contracts';
 import type {
+  Data,
   Sql,
   Transaction,
   WorkflowDefinition,
   WorkflowDependency,
+  WorkflowPinned,
+  WorkflowRelations,
   WorkflowSnapshot,
 } from '@merv/contracts';
-import type { PinnedContracts, WorkflowPinned } from './pinned.js';
+import type { PinnedContracts } from './pinned.js';
 
 /**
  * The most distinct ids one call may name. Every id is bound in each statement that reads or
@@ -81,7 +84,7 @@ const NODE = 'id,workflow,version,state,revision,data_json';
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
 
 /** What an instance is called: its title, else its name, else the workflow it runs. */
-export const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
+const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
   [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
 
 /** Without declared success states an instance never settles, so it never counts as failed. */
@@ -222,6 +225,38 @@ export async function relations(
   return {
     dependencies: await prerequisitesOf(sql, projectId, instanceId),
     dependents: (await dependents(sql, contracts, projectId, [instanceId])).get(instanceId)!,
+  };
+}
+
+/**
+ * One instance, classified against its own pinned contract, with both directions of its edges;
+ * null when the project holds no such instance.
+ */
+export async function instanceRelations(
+  sql: Sql,
+  contracts: PinnedContracts,
+  projectId: string,
+  instanceId: string,
+): Promise<WorkflowRelations | null> {
+  const node = (await nodes(sql, projectId, [instanceId])).get(instanceId);
+  if (!node) return null;
+  const version = Number(node.version);
+  const pinned = await contracts.get(sql, node.workflow, version);
+  const instance = classify(
+    node,
+    node.id,
+    node.workflow,
+    version,
+    pinned?.successStates,
+    pinned?.definition.terminal ?? [],
+  );
+  return {
+    instance: {
+      ...instance,
+      failed: instance.terminal && !instance.settled,
+      data: JSON.parse(node.data_json) as Data,
+    },
+    ...(await relations(sql, contracts, projectId, instanceId)),
   };
 }
 

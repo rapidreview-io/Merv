@@ -297,7 +297,7 @@ test('a move that does not end the work reads nothing of what waits on it; one r
   });
   const root = await f.start([], 'staged');
   for (let i = 0; i < 60; i++) await f.start([root]);
-  const relations = t.mock.method(f.workflows, 'dependencyRelations');
+  const relations = t.mock.method(f.workflows, 'relations');
   await f.move(root, 'advance');
   assert.equal(relations.mock.callCount(), 0);
   const moved = (await f.state.events(f.project.id)).filter(
