@@ -295,12 +295,13 @@ const exhibitRecipe: TaskTypeDefinition = {
   },
 };
 /**
- * The current recipes: format 2, the item renderer. The experiment record and the pinned review
- * are always embedded; the paper, the approved plan, the evidence and the feedback are embedded
- * whole, highest priority first, while they fit, and otherwise listed by one line. Figures and the
- * generated metrics exhibit are only listed.
+ * The recipes the program registers: format 2, the item renderer. The experiment record and the
+ * pinned review are always embedded; the paper, the approved plan, the evidence and the feedback
+ * are embedded whole, highest priority first, while they fit, and otherwise listed by one line.
+ * Figures and the generated metrics exhibit are only listed. The earlier, format-less versions
+ * above are retired and serve only as the text these derive from.
  */
-const itemRecipes: TaskTypeDefinition[] = [
+export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
   ...paperRecipes.filter((definition) => definition.name !== exhibitRecipe.name),
   exhibitRecipe,
 ].map((definition) => ({
@@ -317,11 +318,6 @@ const itemRecipes: TaskTypeDefinition[] = [
     format: 2 as const,
   },
 }));
-/**
- * The recipes the program registers. The earlier versions above render nothing now, since every
- * packet renders with these, so they are not registered; their rows stay in `context_recipes`.
- */
-export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = itemRecipes;
 
 /**
  * How often a design review, and a results review, may return an experiment. A design return
