@@ -829,6 +829,35 @@ test('a closure and its roots ask each version for its children at once, for no 
   assert.equal(serviceActor.mock.callCount(), 0, 'no actor is minted to ask for children');
 });
 
+test('children is asked for at most 1,000 instances at once', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const sizes: number[] = [];
+  await workflows.register(graph(), {
+    ...policy(),
+    children: ({ instanceIds }) => {
+      sizes.push(instanceIds.length);
+      return {};
+    },
+  });
+  const at = new Date().toISOString();
+  await state.transaction(
+    async (tx) =>
+      await tx.run(
+        `INSERT INTO wf_instances (id, project_id, workflow, version, state, revision, data_json, created_at, updated_at)
+         SELECT 'many-' || n, ?, 'preparation', 1, 'working', 0, '{}', ?, ? FROM generate_series(1, 2500) AS n`,
+        caller.projectId,
+        at,
+        at,
+      ),
+  );
+  const roots = await state.transaction(
+    async (tx) => await workflows.sponsoringRoots(caller.projectId, ['many-1'], tx),
+  );
+  assert.deepEqual(roots, ['many-1']);
+  assert.deepEqual(sizes, [1000, 1000, 500]);
+});
+
 test('a closure deeper than the bound is refused, not cut short', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());

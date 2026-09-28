@@ -1269,8 +1269,8 @@ export interface WorkflowPolicy {
    * The instances each of `instanceIds` fans work out to without a dependency edge, such as a
    * reflection's lenses, by instance id; one left out has none. A usage rollup over a
    * dependency closure unions them in, so the sessions they cost are not lost from the figure
-   * of the cycle that caused them. It is asked for many instances at once, never an empty
-   * list, on behalf of no caller, and only reads.
+   * of the cycle that caused them. It is asked for up to 1,000 instances at once, never an
+   * empty list, on behalf of no caller, and only reads.
    */
   children?(context: {
     projectId: string;

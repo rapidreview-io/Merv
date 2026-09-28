@@ -1556,7 +1556,7 @@ export class WorkflowsService implements Workflows {
 
   /**
    * The children each loaded policy names for the instances given, as parent to children: one
-   * call per version that declares them, with every instance of it at once.
+   * call per version that declares them and batch of its instances, keeping each answer bounded.
    */
   private async children(
     tx: Transaction,
@@ -1572,23 +1572,24 @@ export class WorkflowsService implements Workflows {
       else declaring.set(registration, [row.id]);
     }
     const found = new Map<string, string[]>();
-    for (const [registration, ids] of declaring) {
-      const named = await registration.policy!.children!({
-        projectId,
-        instanceIds: Object.freeze([...ids]),
-        tx,
-      });
-      for (const id of ids) {
-        const children = Object.hasOwn(named ?? {}, id) ? named[id] : [];
-        check(
-          Array.isArray(children) && children.every((child) => typeof child === 'string'),
-          'invalid_workflow_policy',
-          'Workflow children must be lists of instance ids',
-          500,
-        );
-        found.set(id, children);
+    for (const [registration, all] of declaring)
+      for (const ids of batches(all)) {
+        const named = await registration.policy!.children!({
+          projectId,
+          instanceIds: Object.freeze(ids),
+          tx,
+        });
+        for (const id of ids) {
+          const children = Object.hasOwn(named ?? {}, id) ? named[id] : [];
+          check(
+            Array.isArray(children) && children.every((child) => typeof child === 'string'),
+            'invalid_workflow_policy',
+            'Workflow children must be lists of instance ids',
+            500,
+          );
+          found.set(id, children);
+        }
       }
-    }
     return found;
   }
 

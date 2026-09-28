@@ -234,9 +234,10 @@ pinned to the old revision ends. A provider's system edges bump nothing.
 the provider replaces them; they are cleared when the instance reaches a terminal state.
 
 **`dependencyClosure`** walks level by level, with a fixed number of reads per level and
-one `children` call per declaring version, at most 5,000 instances, and refuses a larger
-closure with `closure_too_large` 409 rather than return part of it. `sponsoringRoots` asks
-`children` only of the versions that declare it.
+one `children` call per declaring version and 1,000 of its instances, at most 5,000
+instances, and refuses a larger closure with `closure_too_large` 409 rather than return part
+of it. `sponsoringRoots` asks `children` only of the versions that declare it, in the same
+batches.
 
 **Read schema.** Other components may read these columns directly and nothing else:
 `wf_instances(id, project_id, workflow, version, state, revision, data_json, created_at,
