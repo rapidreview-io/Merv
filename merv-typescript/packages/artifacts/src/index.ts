@@ -81,14 +81,9 @@ export class ArtifactStore implements Artifacts {
    * transaction of its own (reader pool, no writer lock). Scope's `within(…, 'read')` rule.
    */
   private async place<T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) {
-    if (tx) {
-      this.state.assertTransaction(tx);
-      return await fn(tx);
-    }
-    const ambient = this.state.ambient;
-    return ambient
-      ? await fn(ambient)
-      : await this.state.snapshot(() => this.state.transaction(fn));
+    if (tx) this.state.assertTransaction(tx);
+    const within = tx ?? this.state.ambient;
+    return within ? await fn(within) : await this.state.snapshot(() => this.state.transaction(fn));
   }
   /** A read authorised once, in the transaction it queries. */
   private async one<T>(
