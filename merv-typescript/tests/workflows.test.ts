@@ -8,7 +8,13 @@ import { Context } from 'cordis';
 import { PostgresState, statePlugin } from '@merv/state';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { WorkflowsService, workflowsPlugin } from '@merv/workflows';
-import type { Caller, Data, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
+import type {
+  Caller,
+  Data,
+  Transaction,
+  WorkflowDefinition,
+  WorkflowPolicy,
+} from '@merv/contracts';
 import { openState, stateConfig } from './fixtures/state.js';
 
 const graph = (version = 1): WorkflowDefinition => ({
@@ -455,6 +461,87 @@ test('one data cap bounds start data, transition data and input, and preflight i
     data: { note: 'small' },
   });
   assert.deepEqual(revised.data, { first: half, second: half, note: 'small' });
+});
+
+test('pinned contracts are kept in memory, immutable in storage, and found when another service adds one', async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-pinned-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const { state, workflows, caller } = await setup(folder);
+  t.after(async () => await state.close());
+  /** How many statements `run` sends to wf_definitions through the transaction it is given. */
+  const definitionReads = async (run: (tx: Transaction) => Promise<unknown>) => {
+    let reads = 0;
+    await state.transaction(async (tx) => {
+      const spied = tx as unknown as Record<'get' | 'all' | 'run', (...args: unknown[]) => unknown>;
+      for (const method of ['get', 'all', 'run'] as const) {
+        const original = spied[method].bind(tx);
+        spied[method] = (sql, ...args) => {
+          if (String(sql).includes('wf_definitions')) reads++;
+          return original(sql, ...args);
+        };
+      }
+      await run(tx);
+    });
+    return reads;
+  };
+  const initial = await workflows.start(caller, { workflow: 'approval', requestId: 'start' });
+  assert.equal(
+    await definitionReads(async (tx) => {
+      await workflows.evaluate(caller, initial.id, {}, tx);
+      await workflows.transition(
+        caller,
+        { instanceId: initial.id, action: 'submit', expectedRevision: 0, requestId: 'submit' },
+        tx,
+      );
+    }),
+    0,
+  );
+
+  // Registered by another service after this one loaded what was stored: the first read finds
+  // it, including that its program owns it, and later reads keep it.
+  const otherState = await openState(folder);
+  t.after(async () => await otherState.close());
+  const other = await createService(
+    new WorkflowsService(otherState, await createService(new ProjectScope(otherState))),
+  );
+  const program = await other.register({ ...graph(2), managed: true });
+  const late = await program.start(caller, { workflow: 'approval', requestId: 'late' });
+  assert.equal(
+    await definitionReads(async (tx) => {
+      const decision = await workflows.evaluate(caller, late.id, {}, tx);
+      assert.equal(decision.version, 2);
+      assert.equal(decision.available, false);
+    }),
+    1,
+  );
+  assert.equal(
+    await definitionReads(async (tx) => await workflows.evaluate(caller, late.id, {}, tx)),
+    0,
+  );
+  await assert.rejects(
+    async () =>
+      await workflows.transition(caller, {
+        instanceId: late.id,
+        action: 'submit',
+        expectedRevision: 0,
+        requestId: 'bypass',
+      }),
+    code('workflow_managed'),
+  );
+
+  // A version no instance uses, so only the guard can refuse its removal.
+  await workflows.register(graph(3));
+  for (const sql of [
+    'UPDATE wf_definitions SET created_at = created_at',
+    "DELETE FROM wf_definitions WHERE name = 'approval' AND version = 3",
+    'UPDATE wf_success_states SET success_json = success_json',
+    "DELETE FROM wf_success_states WHERE workflow = 'approval' AND version = 3",
+  ])
+    await assert.rejects(
+      async () => await state.transaction(async (tx) => await tx.run(sql)),
+      { code: 'state_constraint' },
+      sql,
+    );
 });
 
 test('a stored definition keeps only edge endpoints in code-unit order and refuses engine actions', async (t) => {

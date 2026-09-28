@@ -436,6 +436,12 @@ $merv$;
 CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();
 DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
+    // And workflows@9 (pinned contracts are immutable; an index on instances by version).
+    await client.query(`DROP TRIGGER wf_definitions_pinned ON wf_definitions;
+DROP TRIGGER wf_success_states_pinned ON wf_success_states;
+DROP FUNCTION wf_pinned_guard();
+DROP INDEX wf_instances_kind;
+DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)

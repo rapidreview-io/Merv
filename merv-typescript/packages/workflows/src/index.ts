@@ -53,6 +53,7 @@ import type {
 import { processGraph } from './process.js';
 import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
 import { DATA_LIMITS, workflowJson } from './json.js';
+import { PinnedContracts, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import {
   checkAssignment,
@@ -84,44 +85,10 @@ import {
   requireDependencies,
 } from './dependencies.js';
 
-const migrations = [
-  {
-    version: 1,
-    sql: postgresMigrations[1],
-  },
-  {
-    version: 2,
-    sql: postgresMigrations[2],
-  },
-  {
-    version: 3,
-    sql: postgresMigrations[3],
-  },
-  {
-    version: 4,
-    sql: postgresMigrations[4],
-  },
-  {
-    version: 5,
-    sql: postgresMigrations[5],
-  },
-  {
-    // The one workflow table that is rewritten and cleared: it mirrors what another plugin
-    // thinks now, and must stay readable and clearable while that plugin is unloaded.
-    version: 6,
-    sql: postgresMigrations[6],
-  },
-  {
-    // Deletes the instances of retired versions; see packages/workflows/README.md.
-    version: 7,
-    sql: postgresMigrations[7],
-  },
-  {
-    // Deletes the instances of retired experiment.plan tasks; see packages/workflows/README.md.
-    version: 8,
-    sql: postgresMigrations[8],
-  },
-];
+const migrations = Object.entries(postgresMigrations).map(([version, sql]) => ({
+  version: Number(version),
+  sql,
+}));
 
 /** The most instances one dependency closure is walked over. */
 const closureLimit = 5000;
@@ -169,6 +136,7 @@ const checkRevision = (revision: unknown) =>
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
+  private readonly contracts = new PinnedContracts();
   private closed = false;
 
   constructor(
@@ -179,6 +147,7 @@ export class WorkflowsService implements Workflows {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('workflows', migrations);
+    await this.state.read(async (sql) => await this.contracts.preload(sql));
   }
 
   private async admitRead(
@@ -241,7 +210,7 @@ export class WorkflowsService implements Workflows {
       409,
     );
     const hash = digest(definition);
-    await this.state.transaction(async (tx) => {
+    const pinned = await this.state.transaction(async (tx) => {
       const existing = await tx.get<{ fingerprint: string }>(
         'SELECT fingerprint FROM wf_definitions WHERE name = ? AND version = ?',
         definition.name,
@@ -264,7 +233,9 @@ export class WorkflowsService implements Workflows {
         );
       await persistSuccess(tx, definition, validatedPolicy?.successStates);
       await persistExecution(tx, definition, validatedPolicy);
+      return await readPinned(tx, definition.name, definition.version);
     });
+    this.contracts.keep(pinned!);
     this.assertOpen();
     check(
       !this.registrations.has(key),
@@ -390,14 +361,12 @@ export class WorkflowsService implements Workflows {
         409,
       );
     const installed = this.registrations.get(`${snapshot.workflow}@${snapshot.version}`);
-    const stored = await tx.get<{ definition_json: string }>(
-      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
-      snapshot.workflow,
-      snapshot.version,
-    );
-    check(stored, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+    const definition =
+      installed?.definition ??
+      (await this.contracts.get(tx, snapshot.workflow, snapshot.version))?.definition;
+    check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
     const result = await decision(
-      installed?.definition ?? JSON.parse(stored.definition_json),
+      definition,
       installed?.policy,
       readContext({
         caller,
@@ -1973,13 +1942,10 @@ export class WorkflowsService implements Workflows {
     owner: Registration | undefined,
     tx: Transaction,
   ): Promise<void> {
-    const row = await tx.get<{ definition_json: string }>(
-      'SELECT definition_json FROM wf_definitions WHERE name = ? AND version = ?',
-      snapshot.workflow,
-      snapshot.version,
-    );
-    check(row, 'workflow_unavailable', 'The pinned workflow definition is unavailable', 503);
-    const definition = JSON.parse(row.definition_json) as WorkflowDefinition;
+    const definition =
+      this.registrations.get(`${snapshot.workflow}@${snapshot.version}`)?.definition ??
+      (await this.contracts.get(tx, snapshot.workflow, snapshot.version))?.definition;
+    check(definition, 'workflow_unavailable', 'The pinned workflow definition is unavailable', 503);
     if (owner)
       check(
         owner.definition.name === snapshot.workflow &&

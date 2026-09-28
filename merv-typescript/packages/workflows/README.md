@@ -66,6 +66,10 @@ Unmanaged graph mutations require `write` permission directly. A registration ha
   and a graph may have at most 256 states and 2,048 edges.
 - A name/version has a persisted fingerprint. Changed graph definitions must use
   a new version, including after restart. An instance stays on the version it started on.
+- A version's stored definition, success states and execution policies are immutable: the
+  database refuses an UPDATE or DELETE of any of them. The service therefore loads them all
+  at startup and keeps them. It reads a version it does not hold, such as one another service
+  registered later, only once, unless that version has no success row yet.
 - Starting without a version chooses the latest installed version. Retrying that
   request returns the original response even if a newer version was installed.
 - Start data, transition data and input, and preflight input are each a JSON object of
