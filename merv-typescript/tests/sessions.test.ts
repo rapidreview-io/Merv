@@ -10,6 +10,7 @@ import {
   type WorkflowPolicy,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
+import { ExactToolPolicy } from '@merv/scope/tool-policy';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
@@ -23,6 +24,7 @@ import type { NisaPaper } from '../packages/nisa/src/types.js';
 import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import type { WebSearch } from '../packages/web/src/types.js';
+import { deferred } from './fixtures/deferred.js';
 import { openState } from './fixtures/state.js';
 import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
@@ -334,6 +336,58 @@ test('offers reserve one worker, store only the digest, bind receipts to source 
     async () => await f.sessions.offer(caller, { ...input, secret: secret(), requestId: 'nested' }),
     { code: 'nested_session' },
   );
+});
+
+test('the tool policy asks the Sessions guard once for a worker, while another writer holds the lock', async (t) => {
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const worker = await f.sessions.authenticate(token);
+  const calls = { require: 0, authorityActor: 0 };
+  const policy = new ExactToolPolicy(
+    {
+      require: async (...args) => {
+        calls.require++;
+        return await f.scope.require(...args);
+      },
+      authorityActor: async (...args) => {
+        calls.authorityActor++;
+        return await f.scope.authorityActor(...args);
+      },
+    },
+    [
+      {
+        projectId: f.source.projectId,
+        actorId: f.source.actorId,
+        mountId: 'fixture',
+        tools: ['look'],
+      },
+    ],
+  );
+  const locked = deferred(),
+    release = deferred();
+  const writer = f.state.transaction(async () => {
+    locked.resolve();
+    await release.promise;
+  });
+  await locked.promise;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    // A read decision that queued for the writer lock would not settle until the writer ends.
+    const waiting = new Promise<'queued'>((resolve) => {
+      timer = setTimeout(resolve, 5_000, 'queued');
+    });
+    assert.equal(await Promise.race([policy.allows(worker, 'fixture', 'look'), waiting]), true);
+    assert.deepEqual(calls, { require: 0, authorityActor: 1 });
+    assert.equal(
+      await Promise.race([policy.require(worker, 'fixture', 'look'), waiting]),
+      undefined,
+    );
+    assert.deepEqual(calls, { require: 0, authorityActor: 2 });
+  } finally {
+    clearTimeout(timer);
+    release.resolve();
+    await writer;
+  }
 });
 
 test('activation is metadata-only and once; active heartbeat is bounded, expiry retires only the worker and recovers its claim', async (t) => {

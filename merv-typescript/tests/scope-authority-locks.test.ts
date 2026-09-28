@@ -15,7 +15,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import type { ExactToolPolicy } from '@merv/scope/tool-policy';
+import { ExactToolPolicy } from '@merv/scope/tool-policy';
 import { deferred } from './fixtures/deferred.js';
 import { openState, postgresUrl, schemaFor, testLimits } from './fixtures/state.js';
 
@@ -430,6 +430,41 @@ test('a provider decides on the transaction its caller is in', async (t) => {
       assert.equal((await asked(vouched)).tx, tx);
     });
   });
+});
+
+test('the tool policy authorizes a session once, without the writer lock', async (t) => {
+  const f = await fixture();
+  const calls = { require: 0, authorityActor: 0 };
+  const policy = new ExactToolPolicy(
+    {
+      require: async (...args) => {
+        calls.require++;
+        return await f.scope.require(...args);
+      },
+      authorityActor: async (...args) => {
+        calls.authorityActor++;
+        return await f.scope.authorityActor(...args);
+      },
+    },
+    [
+      {
+        projectId: f.owner.projectId,
+        actorId: f.owner.actorId,
+        mountId: 'fixture',
+        tools: ['look'],
+      },
+    ],
+  );
+  const checks: [string, () => Promise<unknown>][] = [
+    ['allows', async () => assert.equal(await policy.allows(f.session, 'fixture', 'look'), true)],
+    ['require', async () => await policy.require(f.session, 'fixture', 'look')],
+  ];
+  for (const [name, check] of checks)
+    await t.test(name, async () => {
+      calls.require = calls.authorityActor = 0;
+      assert.equal(await whileWriterHeld(f, check), 'free');
+      assert.deepEqual(calls, { require: 0, authorityActor: 1 });
+    });
 });
 
 test('a plain write decision reads without the writer lock, as before', async () => {

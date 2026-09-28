@@ -33,8 +33,7 @@ export class ExactToolPolicy implements ToolPolicy {
 
   async allows(caller: Caller, mountId: string, toolName: string): Promise<boolean> {
     try {
-      await this.scope.require(caller, 'read');
-      caller = await this.authority(caller);
+      caller = await this.effective(caller);
     } catch (error) {
       if (error instanceof MervError && (error.status === 401 || error.status === 403))
         return false;
@@ -44,8 +43,7 @@ export class ExactToolPolicy implements ToolPolicy {
   }
 
   async require(caller: Caller, mountId: string, toolName: string): Promise<void> {
-    await this.scope.require(caller, 'read');
-    caller = await this.authority(caller);
+    caller = await this.effective(caller);
     check(
       this.granted.has(key(caller, mountId, toolName)),
       'tool_forbidden',
@@ -54,16 +52,18 @@ export class ExactToolPolicy implements ToolPolicy {
     );
   }
 
-  private async authority(caller: Caller): Promise<Caller> {
-    if (!caller.session) return caller;
-    check(
-      this.scope.authorityActor,
-      'session_unavailable',
-      'Session authority is unavailable',
-      503,
-    );
-    const actor = await this.scope.authorityActor(caller);
-    return { actorId: actor.id, projectId: actor.projectId };
+  /**
+   * The grant holder, authorized for read once: a worker session acts for its delegating owner,
+   * whom authorityActor checks in the same decision as the session itself.
+   */
+  private async effective(caller: Caller): Promise<Caller> {
+    if (caller.session && this.scope.authorityActor) {
+      const actor = await this.scope.authorityActor(caller);
+      return { actorId: actor.id, projectId: actor.projectId };
+    }
+    await this.scope.require(caller, 'read');
+    check(!caller.session, 'session_unavailable', 'Session authority is unavailable', 503);
+    return caller;
   }
 
   replace(grants: ToolGrant[]): void {
