@@ -386,6 +386,8 @@ test('a grant is idempotent, append-only, additive, and changes no revision', as
   const second = await f.workflows.extendLimit(f.owner, { ...grant, requestId: 'grant-2' });
   assert.deepEqual([second.granted, second.max], [4, 5]);
   assert.equal(typeof second.max, 'number');
+  // A retry is answered with what its grant recorded, not with what later grants made of it.
+  assert.deepEqual(await f.workflows.extendLimit(f.owner, grant), first);
 
   assert.deepEqual(await f.workflows.get(f.owner, instance.id), arrived);
   assert.equal((await f.workflows.history(f.owner, instance.id)).length, history);
@@ -420,7 +422,30 @@ test('a grant is idempotent, append-only, additive, and changes no revision', as
     refused('invalid_transition', 409),
   );
   // What was granted while it lived is still answered after it ended.
-  assert.equal((await f.workflows.extendLimit(f.owner, grant)).granted, 4);
+  assert.deepEqual(await f.workflows.extendLimit(f.owner, grant), first);
+  // A grant recorded before its status was kept stored the instance, and is answered live.
+  const arrivedJson = JSON.stringify(arrived);
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        "UPDATE wf_requests SET response_json=? WHERE request_id='grant-2'",
+        arrivedJson,
+      ),
+  );
+  const legacy = await f.workflows.extendLimit(f.owner, { ...grant, requestId: 'grant-2' });
+  assert.deepEqual([legacy.granted, legacy.max], [4, 5]);
+  assert.equal(
+    await f.state.read(
+      async (sql) =>
+        (
+          await sql.get<{ id: string }>(
+            "SELECT response_json::jsonb->>'id' AS id FROM wf_requests WHERE request_id='grant-1'",
+          )
+        )?.id,
+    ),
+    instance.id,
+    'The retirement migrations find a grant by its instance id',
+  );
 });
 
 test('a lower cap deployed on the same version escalates live work from its history', async (t) => {

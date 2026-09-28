@@ -1223,24 +1223,23 @@ export class WorkflowsService implements Workflows {
         `This ${snapshot.workflow} declares no limit ${input.limit}`,
         404,
       );
-      if (await this.replay(tx, caller.projectId, input.requestId, hash)) {
+      const replay = await this.replay<{ id: string; status?: WorkflowLimitStatus }>(
+        tx,
+        caller.projectId,
+        input.requestId,
+        hash,
+      );
+      if (replay) {
         this.requireActive(registered);
-        return await limitStatus(tx, limit, snapshot.id);
+        // A grant answers with what it recorded. One recorded before the status was kept
+        // stored the instance instead, and is answered with the live status.
+        return replay.status ?? (await limitStatus(tx, limit, snapshot.id));
       }
       check(
         !registered.definition.terminal.includes(snapshot.state),
         'invalid_transition',
         'Terminal workflow instances cannot be allowed more rounds',
         409,
-      );
-      // The grant has its own record. An owner's optional resume writes its own transition
-      // receipt, so retrying this request cannot advance suspended work twice.
-      await tx.run(
-        'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
-        caller.projectId,
-        input.requestId,
-        hash,
-        canonical(snapshot),
       );
       await tx.run(
         'INSERT INTO wf_limit_grants (project_id,request_id,instance_id,limit_name,additional,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
@@ -1254,6 +1253,16 @@ export class WorkflowsService implements Workflows {
         now(),
       );
       const status = await limitStatus(tx, limit, snapshot.id);
+      // The grant has its own record, keyed by the instance like every receipt (the retirement
+      // migrations match on its id). An owner's optional resume writes its own transition
+      // receipt, so retrying this request cannot advance suspended work twice.
+      await tx.run(
+        'INSERT INTO wf_requests (project_id,request_id,fingerprint,response_json) VALUES (?,?,?,?)',
+        caller.projectId,
+        input.requestId,
+        hash,
+        canonical({ id: snapshot.id, status }),
+      );
       await registered.policy?.limitExtended?.(
         { caller, snapshot, tx, input: { reason, requestId: input.requestId } },
         status,
@@ -1632,7 +1641,12 @@ export class WorkflowsService implements Workflows {
     return await inTransaction(this.state, tx, async (transaction) => {
       // Managed programs authorize their own commands, including reviewer-triggered repair.
       await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
-      const replay = await this.replay(transaction, caller.projectId, input.requestId, hash);
+      const replay = await this.replay<WorkflowSnapshot>(
+        transaction,
+        caller.projectId,
+        input.requestId,
+        hash,
+      );
       if (replay) {
         await this.checkOwnerForSnapshot(replay, owner, transaction);
         if (owner) this.requireActive(owner);
@@ -1729,7 +1743,12 @@ export class WorkflowsService implements Workflows {
       await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
       const before = await this.readSnapshot(transaction, caller.projectId, input.instanceId);
       await this.checkOwnerForSnapshot(before, owner, transaction);
-      const replay = await this.replay(transaction, caller.projectId, input.requestId, hash);
+      const replay = await this.replay<WorkflowSnapshot>(
+        transaction,
+        caller.projectId,
+        input.requestId,
+        hash,
+      );
       if (replay) {
         if (owner) this.requireActive(owner);
         return replay;
@@ -1863,7 +1882,12 @@ export class WorkflowsService implements Workflows {
       await this.scope.require(caller, owner.definition.managed ? 'read' : 'write', tx);
       const before = await this.readSnapshot(tx, caller.projectId, input.instanceId);
       await this.checkOwnerForSnapshot(before, owner, tx);
-      const replay = await this.replay(tx, caller.projectId, input.requestId, hash);
+      const replay = await this.replay<WorkflowSnapshot>(
+        tx,
+        caller.projectId,
+        input.requestId,
+        hash,
+      );
       if (replay) {
         if (owner) this.requireActive(owner);
         return replay;
@@ -2011,12 +2035,13 @@ export class WorkflowsService implements Workflows {
     );
   }
 
-  private async replay(
+  /** The response a request recorded: a snapshot for a command, `{id, status}` for a grant. */
+  private async replay<T>(
     tx: Transaction,
     projectId: string,
     requestId: string,
     hash: string,
-  ): Promise<WorkflowSnapshot | undefined> {
+  ): Promise<T | undefined> {
     const row = await tx.get<{ fingerprint: string; response_json: string }>(
       'SELECT fingerprint, response_json FROM wf_requests WHERE project_id = ? AND request_id = ?',
       projectId,
@@ -2029,7 +2054,7 @@ export class WorkflowsService implements Workflows {
       'Request id was already used for a different workflow command',
       409,
     );
-    return JSON.parse(row.response_json) as WorkflowSnapshot;
+    return JSON.parse(row.response_json) as T;
   }
 
   private async record(
