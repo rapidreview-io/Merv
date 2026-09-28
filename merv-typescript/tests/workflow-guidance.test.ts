@@ -353,7 +353,12 @@ test('task guidance follows caller, evidence, review claims, recovery, context, 
     });
     assert.ok(reviewContext.prompt.includes(JSON.stringify(await guidance(reviewer))));
     await app.ctx.scope.revokeActor(operator, reviewer.actorId);
-    assert.equal((await guidance(producer)).currentGate, 'review_recovery_pending');
+    // Reviews' consumer may already have reopened the claim.
+    assert.ok(
+      ['review_recovery_pending', 'review_required'].includes(
+        (await guidance(producer)).currentGate,
+      ),
+    );
     await assert.rejects(async () => await guidance(reviewer), { code: 'forbidden' });
     await app.ctx.domainEvents.drain();
     assert.equal((await guidance(replacement)).nextAction?.tool, 'review.start');

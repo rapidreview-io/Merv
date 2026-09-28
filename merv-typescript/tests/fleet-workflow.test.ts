@@ -1089,6 +1089,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     artifacts,
     reviews,
     tasks,
+    events,
     start: (caller: Caller, requestId = randomUUID()) =>
       workflow.start(caller, { workflow: 'hosted-bridge', requestId }),
     stopped,
@@ -1554,10 +1555,9 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   await assert.rejects(h.scope.requireDelegation(allocation.source, 'review'), {
     code: 'membership_required',
   });
-  // Its worker is refused, or its session already closed for that reason.
-  await assert.rejects(h.sessions.authenticate(machine.secret), (error: MervError) =>
-    /membership/.test(`${error.code} ${error.message}`),
-  );
+  // The role change's event closes its session, so its worker's credential no longer works.
+  await h.events.drain();
+  await assert.rejects(h.sessions.authenticate(machine.secret), { code: 'unauthorized' });
   await h.fleet.tick();
   assert.equal(h.stopped.size, 1);
 });
