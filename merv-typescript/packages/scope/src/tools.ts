@@ -3,6 +3,7 @@ import type {} from '@merv/api/types';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { projectContextUpdateSchema } from './project-context.js';
+import { roles } from './roles.js';
 export const scopeToolsPlugin = {
   name: 'merv-scope-tools',
   inject: ['scope', 'tools'],
@@ -51,7 +52,7 @@ export const scopeToolsPlugin = {
       z
         .object({
           name: z.string().min(1).max(200),
-          role: z.enum(['operator', 'producer', 'reviewer', 'reader']),
+          role: z.enum(roles),
           expiresAt: z
             .string()
             .datetime({ precision: 3 })
