@@ -244,6 +244,7 @@ test('uploads belong to their actor, and resumed part URLs are withheld after a 
   const producer = { actorId: issued.actor.id, projectId: owner.projectId };
   const keys: string[] = [];
   let failBegin = false;
+  let objectId: string | undefined;
   const entered = deferred();
   const release = deferred();
   t.after(
@@ -252,7 +253,7 @@ test('uploads belong to their actor, and resumed part URLs are withheld after a 
         if (failBegin) throw new Error('storage failed');
         keys.push(key);
         return {
-          objectId: `obj_${key}`,
+          objectId: objectId ?? `obj_${key}`,
           plan: { partSize: 10, partCount: 1, parts: [], completedParts: [], nextPart: 1 },
         };
       },
@@ -291,6 +292,30 @@ test('uploads belong to their actor, and resumed part URLs are withheld after a 
   await assert.rejects(app.ctx.artifacts.uploadResume(producer, mine.uploadId), {
     code: 'not_found',
   });
+  // A retry whose storage names another object is refused and leaves the row as it was;
+  // a retry naming the same object still succeeds.
+  objectId = 'obj_other';
+  await assert.rejects(app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'rows' }), {
+    code: 'upload_conflict',
+    status: 409,
+    message: 'Upload object changed on retry',
+  });
+  const objectOf = async () =>
+    (
+      await app.ctx.state.read((sql) =>
+        sql.get<{ object_id: string }>(
+          'SELECT object_id FROM artifact_uploads WHERE upload_id=?',
+          mine.uploadId,
+        ),
+      )
+    )?.object_id;
+  assert.equal(await objectOf(), `obj_${mine.uploadId}`);
+  objectId = undefined;
+  assert.equal(
+    (await app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'rows' })).uploadId,
+    mine.uploadId,
+  );
+  assert.equal(await objectOf(), `obj_${mine.uploadId}`);
   // An upload whose storage object was never created: the tool adds how to recover it.
   failBegin = true;
   await assert.rejects(
