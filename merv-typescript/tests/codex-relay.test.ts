@@ -2,7 +2,8 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { MervError } from '@merv/contracts';
+import { createService, MervError } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
 import {
@@ -56,6 +57,8 @@ const completed = (input: number, output: number) =>
 
 async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   const state = await openState();
+  // Fleet's model migrations reference Scope's projects table.
+  await createService(new ProjectScope(state));
   let live = true;
   const upstream: { body: Record<string, any>; authorization: string }[] = [];
   let hold: Promise<void> | undefined;
