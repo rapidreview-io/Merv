@@ -734,12 +734,18 @@ test('events and operation writes roll back together, including an existing call
     ),
     Promise.resolve().then(async () => await f.code.commit(worker.caller, input('competing-id'))),
   ]);
-  assert.deepEqual(
-    raced.map((result) => result.status),
-    ['fulfilled', 'rejected', 'rejected'],
+  // The three reach the writer lock in any order; whichever arrives first wins. A same-ID
+  // loser conflicts, and anything else waits behind the command already pending.
+  const codes = raced.map((result) =>
+    result.status === 'fulfilled' ? 'won' : (result.reason as { code?: string }).code,
   );
-  assert.equal((raced[1] as PromiseRejectedResult).reason.code, 'code_request_conflict');
-  assert.equal((raced[2] as PromiseRejectedResult).reason.code, 'code_command_pending');
+  const expected =
+    codes[2] === 'won'
+      ? ['code_command_pending', 'code_command_pending', 'won']
+      : codes[0] === 'won'
+        ? ['won', 'code_request_conflict', 'code_command_pending']
+        : ['code_request_conflict', 'won', 'code_command_pending'];
+  assert.deepEqual(codes, expected);
   assert.equal((await f.code.list(f.source)).length, 1);
   assert.equal((await f.events('queued')).length, 1);
 });
