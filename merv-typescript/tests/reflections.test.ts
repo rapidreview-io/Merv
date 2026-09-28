@@ -133,6 +133,39 @@ test('reflection lens context includes project paper goals and revision', async 
   assert.match(context.prompt, /project\.records; task\.list repeats its task records/);
   assert.match(context.prompt, /Refresh live records when needed/);
 });
+test('a submission reads each report once, and once more for its transition check', async (t) => {
+  const f = await fixture(t);
+  const reads = t.mock.method(f.app.ctx.artifacts, 'read');
+  const wave = await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' }));
+  const count = (id: string) => reads.mock.calls.filter((call) => call.arguments[1] === id).length;
+  // The command reads the report it validates; the submit transition's check reads it again.
+  assert.deepEqual(
+    wave.lenses.map((lens) => count(lens.artifact!.id)),
+    [2, 2, 2, 2, 2],
+  );
+  const report = await f.create(f.owner, 'Synthesis');
+  const spec = await f.app.ctx.artifacts.create(f.owner, {
+    title: 'Changes',
+    mediaType: 'application/json',
+    content: JSON.stringify({
+      version: 2,
+      changes: 'None.',
+      next: { decision: 'stop', reason: 'goal_met', rationale: 'The question is answered.' },
+      items: [],
+      carriedOver: [],
+      rejected: [],
+    }),
+  });
+  await f.app.ctx.reflections.submit(f.owner, {
+    reflectionId: wave.id,
+    reportArtifactId: report.id,
+    changeSpecArtifactId: spec.id,
+    expectedRevision: wave.workflow.revision,
+    requestId: 'synthesis',
+  });
+  // The plan is parsed from the text already read, not from a second read.
+  assert.deepEqual([count(report.id), count(spec.id)], [1, 2]);
+});
 test('large paper and five lens reports remain reviewable within the ranked context budget', async (t) => {
   const f = await fixture(t);
   for (const kind of ['methods', 'results'] as const)
