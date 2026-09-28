@@ -120,7 +120,7 @@ export class FeedService implements Feed {
       'Attach at most 10 distinct artifact IDs',
     );
     // Attachments may be authored by anyone in this project; access comes from Artifacts.
-    for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
+    await this.artifacts.getMany(caller, artifactIds, tx);
     const id = newId('post'),
       createdAt = now();
     const inserted = await tx.get<{ sequence: number }>(

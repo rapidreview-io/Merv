@@ -166,12 +166,12 @@ test('context requests retain their caller and assignment across authorization',
   const large = await artifacts.create(operator, { title: 'Large', content: 'x'.repeat(100) });
   const ids = [small.id, large.id];
   const modeCaller = { ...operator };
-  const lookup = artifacts.get.bind(artifacts);
-  artifacts.get = async (...args) => {
-    const artifact = await lookup(...args);
+  const lookup = artifacts.getMany.bind(artifacts);
+  artifacts.getMany = async (...args) => {
+    const found = await lookup(...args);
     ids.pop();
     Object.assign(modeCaller, other);
-    return artifact;
+    return found;
   };
   await state.transaction(async (tx) => {
     assert.equal(await builder.mode(modeCaller, ids, 50, tx), 'references');

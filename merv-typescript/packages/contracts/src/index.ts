@@ -1065,6 +1065,8 @@ export interface Scope {
 }
 /** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
 export const MAX_ARTIFACT_BYTES = 2_000_000;
+/** The most ids one `Artifacts.getMany` call looks up; `getArtifacts` takes any number. */
+export const MAX_ARTIFACT_IDS = 2000;
 export interface ArtifactInput {
   title: string;
   content: string;
@@ -1162,8 +1164,8 @@ export interface Artifacts {
    * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
-  /** One authorisation and one query for up to 2000 ids: the artifacts in input order,
-   * duplicates kept; `not_found` for the first id that is not in this project. */
+  /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: the artifacts in input
+   * order, duplicates kept; `not_found` for the first id that is not in this project. */
   getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
   /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
    * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
@@ -1191,6 +1193,23 @@ export interface Artifacts {
     query?: { before?: string; limit?: number; session?: string },
     tx?: Transaction,
   ): Promise<Artifact[]>;
+}
+/**
+ * `Artifacts.getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input
+ * order, duplicates kept; `not_found` for the first id that is not in this project.
+ */
+export async function getArtifacts(
+  artifacts: Pick<Artifacts, 'getMany'>,
+  caller: Caller,
+  ids: readonly string[],
+  tx?: Transaction,
+): Promise<Artifact[]> {
+  const found: Artifact[] = [];
+  for (let start = 0; start < ids.length; start += MAX_ARTIFACT_IDS)
+    found.push(
+      ...(await artifacts.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)),
+    );
+  return found;
 }
 export interface WorkflowDefinition {
   name: string;

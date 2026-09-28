@@ -54,9 +54,9 @@ test('Feed persists the input it validated and hashed even if its caller edits t
   const waiting = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const get = f.artifacts.get.bind(f.artifacts);
-  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
-    const result = await get(...args);
+  const getMany = f.artifacts.getMany.bind(f.artifacts);
+  t.mock.method(f.artifacts, 'getMany', async (...args: Parameters<typeof getMany>) => {
+    const result = await getMany(...args);
     enter();
     await waiting;
     return result;

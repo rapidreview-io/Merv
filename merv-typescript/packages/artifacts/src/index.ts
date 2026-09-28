@@ -12,6 +12,7 @@ import {
   now,
   inTransaction,
   MAX_ARTIFACT_BYTES,
+  MAX_ARTIFACT_IDS,
   type Artifacts,
   type Artifact,
   type ArtifactInput,
@@ -304,9 +305,9 @@ export class ArtifactStore implements Artifacts {
   async getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]> {
     caller = structuredClone(caller);
     check(
-      Array.isArray(ids) && ids.length <= 2000 && ids.every(named),
+      Array.isArray(ids) && ids.length <= MAX_ARTIFACT_IDS && ids.every(named),
       'invalid_artifact',
-      'Expected up to 2000 artifact ids',
+      `Expected up to ${MAX_ARTIFACT_IDS} artifact ids`,
     );
     ids = [...ids];
     if (!ids.length) return [];

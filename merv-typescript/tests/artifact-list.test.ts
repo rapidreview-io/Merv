@@ -3,7 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { createService, type Artifact, type Caller } from '@merv/contracts';
+import {
+  createService,
+  getArtifacts,
+  MAX_ARTIFACT_IDS,
+  type Artifact,
+  type Caller,
+} from '@merv/contracts';
 import { DiskBlobs } from '@merv/blobs';
 import { ProjectScope } from '@merv/scope';
 import { ArtifactStore } from '@merv/artifacts';
@@ -187,6 +193,22 @@ test('getMany authorises once and answers in input order, duplicates kept', asyn
       status: 400,
     });
   assert.equal((await f.artifacts.getMany(f.caller, Array(2000).fill(id(1)))).length, 2000);
+});
+
+test('getArtifacts looks up any number of ids, MAX_ARTIFACT_IDS at a time', async (t) => {
+  const f = await fixture(t);
+  await seed(f, 3);
+  const getMany = t.mock.method(f.artifacts, 'getMany');
+  const wanted = Array.from({ length: 2 * MAX_ARTIFACT_IDS + 1 }, (_, n) => id((n % 3) + 1));
+  assert.deepEqual(ids(await getArtifacts(f.artifacts, f.caller, wanted)), wanted);
+  assert.deepEqual(
+    getMany.mock.calls.map((call) => call.arguments[1].length),
+    [MAX_ARTIFACT_IDS, MAX_ARTIFACT_IDS, 1],
+  );
+  assert.deepEqual(await getArtifacts(f.artifacts, f.caller, []), []);
+  await assert.rejects(getArtifacts(f.artifacts, f.caller, [...wanted, 'art_unknown']), {
+    code: 'not_found',
+  });
 });
 
 test('artifact.list pages through the tool', async (t) => {

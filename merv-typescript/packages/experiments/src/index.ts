@@ -1,4 +1,4 @@
-import { visible, mapAsync, filterAsync } from '@merv/contracts';
+import { visible, mapAsync, getArtifacts } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -1155,10 +1155,9 @@ export class ExperimentService implements Experiments {
       );
     }
     const artifactIds = [...new Set([...evidence.map((e) => e.artifactId), ...figureIds])];
-    const pinnedInputIds = await filterAsync(
-      artifactIds,
-      async (id) => (await this.artifacts.get(caller, id, tx)).createdBy !== caller.actorId,
-    );
+    const pinnedInputIds = (await getArtifacts(this.artifacts, caller, artifactIds, tx))
+      .filter((artifact) => artifact.createdBy !== caller.actorId)
+      .map((artifact) => artifact.id);
     const moved = await (
       await this.program.handleFor(experiment.workflow.version)
     ).transition(
@@ -1220,7 +1219,7 @@ export class ExperimentService implements Experiments {
       manifestHash: digest({
         formatVersion: 1,
         evidence,
-        figures: await mapAsync(figureIds, async (id) => await this.artifacts.get(caller, id, tx)),
+        figures: await getArtifacts(this.artifacts, caller, figureIds, tx),
         ...(codeCaptureRef ? { codeCaptureRef } : {}),
       }),
       reviewId: review.id,

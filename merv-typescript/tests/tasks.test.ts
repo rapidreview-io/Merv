@@ -1662,7 +1662,7 @@ test('task checkpoints retain validated notes and artifact IDs during evidence l
     artifactIds: [evidence.id],
   };
   const input = structuredClone(original);
-  const get = f.artifacts.get.bind(f.artifacts);
+  const getMany = f.artifacts.getMany.bind(f.artifacts);
   let enter!: () => void, release!: () => void;
   const entered = new Promise<void>((resolve) => {
     enter = resolve;
@@ -1670,9 +1670,9 @@ test('task checkpoints retain validated notes and artifact IDs during evidence l
   const waiting = new Promise<void>((resolve) => {
     release = resolve;
   });
-  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
-    const result = await get(...args);
-    if (args[1] === evidence.id) {
+  t.mock.method(f.artifacts, 'getMany', async (...args: Parameters<typeof getMany>) => {
+    const result = await getMany(...args);
+    if (args[1].includes(evidence.id)) {
       enter();
       await waiting;
     }

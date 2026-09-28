@@ -3,6 +3,7 @@ import {
   excludedFromReview,
   releasedLease,
   mapAsync,
+  getArtifacts,
   boundedPaperContext,
 } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
@@ -1020,10 +1021,11 @@ export class ExperimentProgram {
         const resultEvidence = selected!.filter(
           (item) => item.role === 'result' && inputs.evidenceArtifacts.includes(item.artifactId),
         );
-        const resultArtifacts = await mapAsync(
-          resultEvidence,
-          async (item) =>
-            await this.host.artifacts.get(context.caller, item.artifactId, context.tx),
+        const resultArtifacts = await getArtifacts(
+          this.host.artifacts,
+          context.caller,
+          resultEvidence.map((item) => item.artifactId),
+          context.tx,
         );
         const inlineResultIds = resultArtifacts
           .filter(
@@ -1288,9 +1290,11 @@ export class ExperimentProgram {
             )
           : null;
         const inputs = await this.inputs(context.caller, experiment, context.tx);
-        const artifacts = await mapAsync(
+        const artifacts = await getArtifacts(
+          this.host.artifacts,
+          context.source,
           this.inputIds(inputs),
-          async (id) => await this.host.artifacts.get(context.source, id, context.tx),
+          context.tx,
         );
         const recovery = reviewing(context.snapshot.state) ? [] : this.eligibleRecovery(experiment);
         const receipt: Data = {

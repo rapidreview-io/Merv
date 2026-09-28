@@ -8,7 +8,7 @@ import {
 } from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
-import { keyId, keyKind } from '@merv/contracts';
+import { getArtifacts, keyId, keyKind } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -961,7 +961,7 @@ export class ReflectionService implements Reflections {
           };
         }
         const ids = this.inputIds(inputs);
-        for (const id of ids) await this.artifacts.get(context.source, id, context.tx);
+        await getArtifacts(this.artifacts, context.source, ids, context.tx);
         const receipt = {
           leaseId: context.leaseId,
           instanceId: context.snapshot.id,

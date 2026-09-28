@@ -1,4 +1,4 @@
-import { visible, recorded, mapAsync } from '@merv/contracts';
+import { visible, recorded, mapAsync, getArtifacts } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -355,10 +355,7 @@ export class RecipeContextBuilder implements ContextBuilder {
           'invalid_context',
           'Duplicate context artifacts',
         );
-        documents = await mapAsync(
-          value.artifactIds,
-          async (id) => await this.artifacts.get(caller, id, tx),
-        );
+        documents = await getArtifacts(this.artifacts, caller, value.artifactIds, tx);
         const mode = value.mode ?? 'text';
         const embed = (document: Artifact) =>
           mode === 'text' ||
@@ -584,7 +581,7 @@ export class RecipeContextBuilder implements ContextBuilder {
   ): Promise<'auto' | 'references'> {
     caller = structuredClone(caller);
     ids = [...ids];
-    const documents = await mapAsync(ids, async (id) => await this.artifacts.get(caller, id, tx));
+    const documents = await getArtifacts(this.artifacts, caller, ids, tx);
     const inline = documents
       .filter((a) => a.mediaType.startsWith('text/') || a.mediaType === 'application/json')
       .reduce((n, a) => n + a.size, 0);

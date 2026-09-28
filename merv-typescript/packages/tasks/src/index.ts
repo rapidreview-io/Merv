@@ -12,6 +12,7 @@ import {
   keyId,
   keyKind,
   mapAsync,
+  getArtifacts,
   MervError,
   newId,
   now,
@@ -561,10 +562,7 @@ export class TaskService implements Tasks {
       ]),
     ];
     // The authenticated source approves existing task continuity evidence exactly once.
-    const pinnedArtifacts = await mapAsync(
-      ids,
-      async (id) => await this.artifacts.get(source, id, tx),
-    );
+    const pinnedArtifacts = await getArtifacts(this.artifacts, source, ids, tx);
     const receipt: Data = {
       leaseId,
       taskId: snapshot.id,
@@ -1284,7 +1282,7 @@ export class TaskService implements Tasks {
             'context_missing',
             `Missing required context: ${section.key}`,
           );
-          for (const id of ids) await this.artifacts.get(caller, id, tx);
+          await getArtifacts(this.artifacts, caller, ids, tx);
         }
         // The brief renders the title and each check on its own numbered line.
         const line = (value: unknown) =>
@@ -1981,7 +1979,7 @@ export class TaskService implements Tasks {
             403,
           );
         }
-        for (const id of artifactIds) await this.artifacts.get(caller, id, tx);
+        await this.artifacts.getMany(caller, artifactIds, tx);
         const result: TaskCheckpoint = {
           id: newId('checkpoint'),
           taskId: task.id,
@@ -2255,10 +2253,7 @@ export class TaskService implements Tasks {
         'A confirmation sheet or commit record Merv rendered for a delivery cannot serve as evidence',
       );
     }
-    const artifacts = await mapAsync(
-      input.artifactIds,
-      async (id) => await this.artifacts.get(caller, id, tx),
-    );
+    const artifacts = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
     check(
       artifacts.every((item) => item.createdBy === caller.actorId && item.size > 0),
       'invalid_delivery',

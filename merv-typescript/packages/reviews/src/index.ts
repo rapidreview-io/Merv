@@ -4,6 +4,7 @@ import {
   canonical,
   visible,
   sourceCaller,
+  getArtifacts,
 } from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -651,10 +652,7 @@ export class ReviewService implements Reviews {
         'invalid_artifacts',
         'Review requires authored output as well as any pinned inputs',
       );
-      const manifest = await mapAsync(
-        input.artifactIds,
-        async (id) => await this.artifacts.get(caller, id, tx),
-      );
+      const manifest = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
       // Exclusions name contributors: authors of retained evidence, the record's owner, or
       // the authority that directed the submitting worker.
       const directing = (await this.scope.authorityActor(caller, tx)).id;
