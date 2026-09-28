@@ -2,8 +2,10 @@ import { recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { META, decode, fromRow, isText, meta, span, verified, view } from './content.js';
 import { Uploads } from './uploads.js';
+import { Backfill } from './backfill.js';
 import { fileURLToPath } from 'node:url';
 import type { Context } from 'cordis';
+import { z } from 'zod';
 import {
   check,
   MervError,
@@ -43,6 +45,8 @@ export class ArtifactStore implements Artifacts {
   private large?: LargeArtifactStorage;
   bindLarge(storage: LargeArtifactStorage): () => void {
     this.large = storage;
+    // Large storage binds after this service is provided: the fill then reaches its objects.
+    this.filling?.kick();
     return () => {
       if (this.large === storage) this.large = undefined;
     };
@@ -73,6 +77,7 @@ export class ArtifactStore implements Artifacts {
         { version: 2, sql: postgresMigrations[2] },
         { version: 3, sql: postgresMigrations[3] },
         { version: 4, sql: postgresMigrations[4] },
+        { version: 5, sql: postgresMigrations[5] },
       ]);
     };
   }
@@ -185,6 +190,24 @@ export class ArtifactStore implements Artifacts {
       await missing(() => storage.read(projectId, artifact.objectId!, artifact.size)),
       artifact,
     );
+  }
+  private filling?: Backfill;
+  /**
+   * Starts filling the rows written before bytes were kept in the row (temporary; the server
+   * turns it on in its config). Returns its stop, which waits for the row in hand.
+   */
+  backfill(): () => Promise<void> {
+    const fill = new Backfill(
+      this.state,
+      (artifact) => this.fetch(artifact.projectId, artifact),
+      () => !!this.large,
+    );
+    this.filling = fill;
+    fill.kick();
+    return async () => {
+      if (this.filling === fill) this.filling = undefined;
+      await fill.stop();
+    };
   }
   private sites = new Set<string>();
   /**
@@ -345,14 +368,21 @@ export class ArtifactStore implements Artifacts {
     });
   }
 }
+const configuration = z
+  .object({
+    /** Temporary: fill legacy rows' bytes into the row. Only the server's config turns it on. */
+    backfill: z.boolean().default(false),
+  })
+  .strict()
+  .default({});
 export const artifactsPlugin = {
   name: 'merv-artifacts',
   inject: ['state', 'scope', 'blobs'],
-  async apply(ctx: Context) {
-    ctx.provide(
-      'artifacts',
-      await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs)),
-    );
+  Config: configuration,
+  async apply(ctx: Context, config: z.infer<typeof configuration> = { backfill: false }) {
+    const artifacts = await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs));
+    ctx.provide('artifacts', artifacts);
+    if (config.backfill) ctx.effect(() => artifacts.backfill());
   },
 };
 export default artifactsPlugin;

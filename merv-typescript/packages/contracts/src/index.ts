@@ -1130,7 +1130,8 @@ export interface LargeArtifactStorage {
 /**
  * Immutable project files. A row implies its bytes: up to the inline limit they are kept in the
  * row, where a database CHECK verifies their size and SHA-256; rows from before that keep them in
- * blobs, and larger files in bound large storage. Bytes gone from behind a row are
+ * blobs, and larger files in bound large storage. Rows never change, except that a server
+ * configured to backfill moves such older bytes into their row. Bytes gone from behind a row are
  * `artifact_bytes_missing` (500), never a 404, and every byte returned is verified. `create`
  * never does network I/O, and neither do reads of bytes kept in the row. The one write a read
  * may cause: the first `download` of such bytes mirrors them into blobs (content-addressed).

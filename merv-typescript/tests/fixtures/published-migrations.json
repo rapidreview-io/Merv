@@ -62,6 +62,12 @@
       "published": false
     },
     {
+      "component": "artifacts",
+      "version": 5,
+      "hash": "70bc1386a52005afc97a2ed1fe3f3ffd427f136756df81ac6e13b3a7e0afeac4",
+      "published": false
+    },
+    {
       "component": "claims",
       "version": 1,
       "hash": "da705fe4a1574098d71f9a9674e7b09ce3d66216bf3c06d566d63dd23eb42a95",
