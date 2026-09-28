@@ -24,6 +24,7 @@ import {
   requireDirecting,
   reviewHistory,
   visible,
+  type Artifact,
   type Artifacts,
   type Caller,
   type CodeUnit,
@@ -1306,31 +1307,30 @@ export class TaskService implements Tasks {
           'Done-when checks must be distinct',
         );
         const checks = [...input.checks];
-        const rendered =
-          input.briefId === undefined ? renderBrief({ ...input, checks }, git) : undefined;
-        const brief =
-          input.briefId === undefined
-            ? await this.artifacts.create(
-                caller,
-                { title: clip(`Task brief: ${input.title}`, 300), content: rendered! },
-                tx,
-              )
-            : await this.artifacts.get(caller, input.briefId, tx);
-        check(
-          brief.createdBy === caller.actorId,
-          'forbidden',
-          'The brief must belong to the task producer',
-          403,
-        );
-        check(
-          brief.size > 0 && brief.mediaType.startsWith('text/'),
-          'invalid_brief',
-          'The brief must be a nonempty text document',
-        );
-        // A brief rendered here is checked as written: its input is plain text, without NUL or a
-        // lone surrogate, so it reads back unchanged. One of the producer's own is read back.
-        let content = rendered;
-        if (content === undefined) {
+        let brief: Artifact;
+        let content: string;
+        if (input.briefId === undefined) {
+          // A brief rendered here is checked as written: its input is plain text, without NUL or
+          // a lone surrogate, so it reads back unchanged. It is the producer's own text document.
+          content = renderBrief({ ...input, checks }, git);
+          brief = await this.artifacts.create(
+            caller,
+            { title: clip(`Task brief: ${input.title}`, 300), content },
+            tx,
+          );
+        } else {
+          brief = await this.artifacts.get(caller, input.briefId, tx);
+          check(
+            brief.createdBy === caller.actorId,
+            'forbidden',
+            'The brief must belong to the task producer',
+            403,
+          );
+          check(
+            brief.size > 0 && brief.mediaType.startsWith('text/'),
+            'invalid_brief',
+            'The brief must be a nonempty text document',
+          );
           const document = await this.artifacts.read(caller, brief.id, undefined, tx);
           check(
             document.encoding === 'utf8',
