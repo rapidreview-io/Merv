@@ -195,6 +195,16 @@ test('large artifact upload, replay, download and absent storage keep inline art
     code: 'artifact_size',
     message: /; use artifact\.read with mode download$/,
   });
+  // A failed hint lookup drops the hint and keeps the refusal.
+  const canDownload = app.ctx.artifacts.canDownload;
+  app.ctx.artifacts.canDownload = () => {
+    throw new Error('hint lookup failed');
+  };
+  await assert.rejects(app.ctx.tools.call('artifact.read', owner, { artifactId: artifact.id }), {
+    code: 'artifact_size',
+    message: 'Artifact exceeds the 2,000,000-byte inline limit',
+  });
+  app.ctx.artifacts.canDownload = canDownload;
   const reader = await app.ctx.scope.issueActor(owner, { name: 'Reviewer', role: 'reader' });
   const review = { actorId: reader.actor.id, projectId: owner.projectId };
   assert.equal(

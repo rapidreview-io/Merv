@@ -16,7 +16,8 @@ async function hinted<T>(
     return await run();
   } catch (error) {
     if (!(error instanceof MervError) || error.code !== code) throw error;
-    const text = await hint();
+    // The hint is extra: when it cannot be found, the original refusal still stands.
+    const text = await hint().catch(() => undefined);
     if (!text) throw error;
     throw new MervError(error.code, `${error.message}; ${text}`, error.status, error.details);
   }
