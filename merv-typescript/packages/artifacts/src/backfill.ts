@@ -2,6 +2,9 @@ import { MervError, MAX_ARTIFACT_BYTES, type Artifact, type State } from '@merv/
 import { META, fromRow } from './content.js';
 
 const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
+/** What went wrong, without a message that might quote the row. */
+const code = (error: unknown) =>
+  error instanceof MervError ? error.code : error instanceof Error ? error.name : 'unknown';
 
 /**
  * Temporary: moves the bytes of rows written before bytes were kept in the row into the row, so
@@ -40,12 +43,9 @@ export class Backfill {
     await this.running;
   }
   private async pass() {
-    let filled = 0;
-    let skipped = 0;
-    let failed = 0;
-    let stopped: string | undefined;
+    const counts = { filled: 0, skipped: 0, failed: 0 };
     try {
-      pages: for (let after = ''; ;) {
+      for (let after = ''; ;) {
         const objects = this.bound() ? '' : ' AND object_id IS NULL';
         const rows = await this.state.read((sql) =>
           sql.all(
@@ -56,10 +56,8 @@ export class Backfill {
         );
         if (!rows.length) break;
         for (const artifact of rows.map(fromRow)) {
-          if (this.stopped) {
-            stopped = 'stopped';
-            break pages;
-          }
+          // The catch below logs the pass as stopped.
+          if (this.stopped) throw new Error('stopped');
           after = artifact.id;
           try {
             const bytes = await this.fetch(artifact);
@@ -70,26 +68,21 @@ export class Backfill {
                 artifact.id,
               ),
             );
-            filled++;
+            counts.filled++;
           } catch (error) {
-            if (error instanceof MervError && error.code === 'blob_unavailable') throw error;
-            const lost = LOST.has(code(error));
-            if (lost) skipped++;
-            else failed++;
-            log({
-              event: lost ? 'artifacts.backfill_skipped' : 'artifacts.backfill_failed',
-              artifactId: artifact.id,
-              code: code(error),
-            });
+            const why = code(error);
+            if (why === 'blob_unavailable') throw error;
+            // Lost: gone from storage, or not the bytes the row declares.
+            const lost = why === 'artifact_bytes_missing' || why === 'blob_corrupt';
+            counts[lost ? 'skipped' : 'failed']++;
+            const event = lost ? 'artifacts.backfill_skipped' : 'artifacts.backfill_failed';
+            log({ event, artifactId: artifact.id, code: why });
           }
         }
       }
     } catch (error) {
-      stopped = this.stopped ? 'stopped' : code(error);
-    }
-    if (stopped) {
-      log({ event: 'artifacts.backfill_stopped', filled, skipped, failed, code: stopped });
-      return;
+      const why = this.stopped ? 'stopped' : code(error);
+      return log({ event: 'artifacts.backfill_stopped', ...counts, code: why });
     }
     const remaining = await this.state
       .read((sql) =>
@@ -100,11 +93,6 @@ export class Backfill {
       )
       .then((row) => Number(row?.count))
       .catch(() => undefined);
-    log({ event: 'artifacts.backfill', filled, skipped, failed, remaining });
+    log({ event: 'artifacts.backfill', ...counts, remaining });
   }
 }
-/** The codes of rows whose bytes are lost: gone from storage, or not the bytes the row declares. */
-const LOST = new Set(['artifact_bytes_missing', 'blob_corrupt']);
-/** What went wrong, without a message that might quote the row. */
-const code = (error: unknown) =>
-  error instanceof MervError ? error.code : error instanceof Error ? error.name : 'unknown';
