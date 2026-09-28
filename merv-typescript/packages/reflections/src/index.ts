@@ -3,6 +3,7 @@ import {
   releasedLease,
   visible,
   everyAsync,
+  itemTitle,
   sha256Hex,
   reviewHistory,
 } from '@merv/contracts';
@@ -669,7 +670,7 @@ export class ReflectionService implements Reflections {
     });
     const artifactItem = (artifact: Artifact, priority: number, note: string): ContextItem => ({
       id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(note)).slice(0, 12)}`,
-      title: artifact.title,
+      title: itemTitle(artifact),
       priority,
       body: { artifactId: artifact.id },
       note,

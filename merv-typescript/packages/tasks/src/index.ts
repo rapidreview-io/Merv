@@ -10,6 +10,7 @@ import {
   folded,
   excludedFromReview,
   inTransaction,
+  itemTitle,
   keyId,
   keyKind,
   mapAsync,
@@ -1784,7 +1785,7 @@ export class TaskService implements Tasks {
             : 'artifactIds' in input
               ? await mapAsync(input.artifactIds, async (id): Promise<ContextItem> => ({
                   id: `${key}:${id}`,
-                  title: (await this.artifacts.get(caller, id, tx)).title,
+                  title: itemTitle(await this.artifacts.get(caller, id, tx)),
                   body: { artifactId: id },
                   ...rule,
                   refs: [{ tool: 'artifact.read', input: { artifactId: id } }],

@@ -275,6 +275,31 @@ test('a format-2 review embeds large text evidence and lists a PDF without readi
   assert.deepEqual(review.omitted, []);
 });
 
+test('a format-2 context names an artifact by its ID when its title shows nothing on a line', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  // A line break the builder folds away still counts as visible to an artifact title.
+  const brief = await f.artifacts.create(f.producer, {
+    title: '\u0085',
+    content: '# Goal\nBuild an adder.\n# Done when\n- Adds two numbers.',
+  });
+  const task = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.'],
+    briefId: brief.id,
+    requestId: 'create-untitled-brief',
+  });
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-untitled-brief',
+  });
+  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@4');
+  assert.ok(work.prompt.includes(`\n### brief:${brief.id} — ${brief.id} (artifact ${brief.id}, `));
+});
+
 test('a format-2 context freezes no more of a mature paper than its budget can embed', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);
