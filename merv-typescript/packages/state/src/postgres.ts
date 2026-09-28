@@ -498,31 +498,31 @@ END $merv$;`);
     const current = this.context.getStore();
     if (current?.transaction || current?.readOnly) return await fn();
     if (current)
-      return await this.child(current, async () => {
-        const scope = this.scope(current.connection, current);
-        // The parent read may retire while this admitted snapshot drains.
-        scope.live = true;
-        scope.readOnly = true;
-        scope.isolation = { open: false };
-        return await this.within(
-          current.connection,
-          READ_BEGIN,
-          scope,
-          async () => await this.context.run(scope, fn),
-        );
-      });
+      return await this.child(current, () => this.readSnapshot(current.connection, fn, current));
     return this.operation(() =>
-      this.connect(async (connection) => {
-        const scope = this.scope(connection);
-        scope.readOnly = true;
-        scope.isolation = { open: false };
-        return await this.within(
-          connection,
-          READ_BEGIN,
-          scope,
-          async () => await this.context.run(scope, fn),
-        );
-      }, this.readers),
+      this.connect((connection) => this.readSnapshot(connection, fn), this.readers),
+    );
+  }
+
+  /**
+   * Runs `fn` in a new read-only snapshot scope on `connection`, a child of the plain read
+   * `parent` if given. The scope is live on its own: a parent read may retire while its admitted
+   * snapshot drains.
+   */
+  private async readSnapshot<T>(
+    connection: Connection,
+    fn: () => T | Promise<T>,
+    parent?: Context,
+  ): Promise<T> {
+    const scope = this.scope(connection, parent);
+    scope.live = true;
+    scope.readOnly = true;
+    scope.isolation = { open: false };
+    return await this.within(
+      connection,
+      READ_BEGIN,
+      scope,
+      async () => await this.context.run(scope, fn),
     );
   }
 
