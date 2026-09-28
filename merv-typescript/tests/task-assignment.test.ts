@@ -194,6 +194,47 @@ test('work assignment preserves operator access and fences other actors, stale r
   }
 });
 
+test('task contexts and assignments refuse a reader and the other role', async () => {
+  // Context Builder only checks that the caller may read the project; the task's own
+  // assignment check is what refuses these callers.
+  const f = await fixture();
+  try {
+    const task = await f.create();
+    const work = { taskId: task.id, purpose: 'work' as const, expectedRevision: 0 };
+    for (const caller of [f.reader.caller, f.reviewer.caller])
+      await assert.rejects(
+        async () => await f.app.ctx.tasks.context(caller, { ...work, requestId: 'work' }),
+        { code: 'forbidden' },
+      );
+    const submitted = await f.submit(task.id);
+    const claim = await f.app.ctx.reviews.start(f.reviewer.caller, submitted.reviewId!);
+    const review = {
+      taskId: task.id,
+      purpose: 'review' as const,
+      expectedRevision: 1,
+      claimId: claim.claimId!,
+    };
+    const before = await f.writes();
+    for (const caller of [f.reader.caller, f.producer.caller]) {
+      await assert.rejects(
+        async () => await f.app.ctx.tasks.context(caller, { ...review, requestId: 'review' }),
+        { code: 'forbidden' },
+      );
+      await assert.rejects(async () => await f.app.ctx.workflows.assignment(caller, task.id), {
+        code: 'forbidden',
+      });
+    }
+    assert.equal(await f.writes(), before);
+    assert.equal(
+      (await f.app.ctx.tasks.context(f.reviewer.caller, { ...review, requestId: 'review' }))
+        .actorId,
+      f.reviewer.caller.actorId,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test('review assignment can precede claim; recovery rebuilds context without rewriting first activation', async () => {
   const f = await fixture();
   try {

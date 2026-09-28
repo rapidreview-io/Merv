@@ -336,6 +336,23 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.match(packet.context!.prompt, /same held-out examples/);
 });
 
+test('an experiment assignment refuses a reader and the other role', async (t) => {
+  // Context Builder only checks that the caller may read the project; the program's own
+  // producer and reviewer checks are what refuse these callers.
+  const f = await fixture(t);
+  const [reader, producer] = [await f.issue('reader'), await f.issue('producer')];
+  const planned = await f.create();
+  for (const caller of [reader, f.reviewer])
+    await assert.rejects(async () => await f.workflows.assignment(caller, planned.id), {
+      code: 'forbidden',
+    });
+  const pending = (await f.design()).experiment;
+  for (const caller of [reader, producer])
+    await assert.rejects(async () => await f.workflows.assignment(caller, pending.id), {
+      code: 'forbidden',
+    });
+});
+
 test('a results review whose evidence outgrows the recipe lists it for the reviewer to read', async (t) => {
   const f = await fixture(t);
   const running = await f.verdict((await f.design(await f.create())).experiment, 'pass');
