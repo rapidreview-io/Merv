@@ -590,7 +590,7 @@ export class WorkflowsService implements Workflows {
             'Dispatch labels must be nonempty',
             500,
           );
-          await this.recheck(tx, row, 'Dispatch callbacks must not change the workflow instance');
+          await this.recheck(tx, [row], 'Dispatch callbacks must not change the workflow instance');
           this.requireActive(registration);
           if (
             worker &&
@@ -645,7 +645,7 @@ export class WorkflowsService implements Workflows {
     return await this.read(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       const { role, row, registration } = await this.role(source, target, tx);
-      await this.recheck(tx, row, 'Lease role callbacks must not change the workflow instance');
+      await this.recheck(tx, [row], 'Lease role callbacks must not change the workflow instance');
       this.requireActive(registration);
       return role;
     });
@@ -743,7 +743,7 @@ export class WorkflowsService implements Workflows {
       // The source is authorized again once every callback has run: one that revoked it is
       // refused here, and the offer rolls back.
       await this.scope.require(source, 'read', tx);
-      await this.recheck(tx, row, 'Lease acquisition must not transition the workflow');
+      await this.recheck(tx, [row], 'Lease acquisition must not transition the workflow');
       this.requireActive(registration);
       return { lease, assignment, execution };
     });
@@ -758,7 +758,7 @@ export class WorkflowsService implements Workflows {
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await this.read(transaction, async (tx) => {
       const { execution, row, registration } = await this.leaseStep(worker, lease, tx);
-      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
+      await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
       return execution;
     });
@@ -812,7 +812,7 @@ export class WorkflowsService implements Workflows {
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await this.write(transaction, async (tx) => {
       const { row, snapshot, registration } = await this.leaseStep(worker, lease, tx);
-      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
+      await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
       const started = await this.markStarted(worker, snapshot, tx);
       this.requireActive(registration);
       return started;
@@ -871,7 +871,7 @@ export class WorkflowsService implements Workflows {
           references[key] = [...new Set([...(references[key] as string[]), ...ids])].sort();
         }
       }
-      await this.recheck(tx, row, 'Lease callbacks must not change the workflow instance');
+      await this.recheck(tx, [row], 'Lease callbacks must not change the workflow instance');
       this.requireActive(registration);
       return this.admitRead({ ...frozen, references }, input.tool, input.input, input.read);
     });
@@ -951,7 +951,7 @@ export class WorkflowsService implements Workflows {
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const { execution, row, registration } = await this.executionStep(caller, target, tx);
-      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
+      await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
       return execution;
     });
@@ -1169,7 +1169,7 @@ export class WorkflowsService implements Workflows {
       const assignment = await this.assignmentOf(caller, step, expectedRevision !== undefined, tx);
       await this.recheck(
         tx,
-        step.row,
+        [step.row],
         'Assignment callbacks must not change the workflow instance',
       );
       this.requireActive(step.registration);
@@ -1985,7 +1985,7 @@ export class WorkflowsService implements Workflows {
       }
       await this.recheck(
         transaction,
-        row,
+        [row],
         'Transition checks must not change the workflow instance',
       );
       this.requireActive(registered);
@@ -2197,17 +2197,17 @@ export class WorkflowsService implements Workflows {
   }
 
   /**
-   * After a group of callbacks: none of them wrote to the instance. Its stored columns are
-   * compared as read, so a rewrite to equal data in other bytes is refused too. Every
-   * transaction under a snapshot root is read-only, so there nothing can have written.
+   * After a group of callbacks: none of them wrote to the instances given. Their stored
+   * columns are compared as read, so a rewrite to equal data in other bytes is refused too.
+   * Every transaction under a snapshot root is read-only, so there nothing can have written.
    */
   private async recheck(
     tx: Transaction,
-    rows: InstanceRow | readonly InstanceRow[],
+    rows: readonly InstanceRow[],
     message: string,
   ): Promise<void> {
     if (this.state.readScope) return;
-    for (const part of batches(Array.isArray(rows) ? rows : [rows as InstanceRow])) {
+    for (const part of batches(rows)) {
       const now = new Map(
         (
           await tx.all<InstanceRow>(
