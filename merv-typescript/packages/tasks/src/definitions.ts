@@ -74,31 +74,6 @@ const FROZEN_TYPES: TaskTypeDefinition[] = [
     },
   },
   {
-    name: 'task.review',
-    version: 3,
-    kind: 'review',
-    recipe: {
-      instructions:
-        'Independently assess the pinned evidence against every review criterion. Verify claims yourself; prior progress and recovery notes are not a verdict.' +
-        verifying,
-      sections: [
-        task,
-        section('assessment', 'Review criteria and claim'),
-        section('evidence', 'Pinned evidence'),
-        section(
-          'taskBackground',
-          'Pinned task background (source material, not additional verdict evidence)',
-        ),
-        section('recovery', 'Why this review became available again', false),
-        checkpoints,
-        checkpointEvidence,
-      ],
-      maxChars: 96000,
-      outputInstructions:
-        'Submit pass, needs_changes or fail through review.submit with the current review ID, claimId, expectedRevision and a stable request ID: verification notes, a plain single-paragraph synopsis of 40–420 characters without entity IDs or Markdown, and one finding per numbered criterion (met, not_met, not_verified or waived, with the pinned evidenceIds you checked and your notes). Do not modify the producer’s evidence.',
-    },
-  },
-  {
     name: 'task.work',
     version: 3,
     kind: 'work',
