@@ -1,5 +1,6 @@
 import {
   check,
+  forRead,
   MervError,
   MAX_ARTIFACT_BYTES,
   newId,
@@ -134,7 +135,7 @@ export class Uploads {
     check(row.object_id, 'upload_pending', 'Upload has no storage object yet', 409);
     const plan = await this.storage().resume(caller.projectId, row.object_id, startPart);
     // Signed part URLs are a write capability: a revocation while they were signed withholds them.
-    await this.scope.require(caller, 'write');
+    await forRead(this.state, (tx) => this.scope.require(caller, 'write', tx));
     return { ...plan, uploadId: row.upload_id };
   }
 
@@ -204,9 +205,9 @@ export class Uploads {
     });
   }
 
-  /** The caller's own upload, looked up under write authority in one short transaction. */
+  /** The caller's own upload, looked up under write authority in one read-only transaction. */
   private async row(caller: Caller, uploadId: string): Promise<UploadRow> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const row = await tx.get<UploadRow>(
         'SELECT * FROM artifact_uploads WHERE upload_id=? AND project_id=? AND created_by=?',

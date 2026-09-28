@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { Artifact, LargeArtifactStorage } from '@merv/contracts';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { Artifact, Caller, LargeArtifactStorage } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { stateConfig } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
@@ -346,4 +347,81 @@ test('uploads belong to their actor, and resumed part URLs are withheld after a 
   await app.ctx.scope.revokeActor(owner, producer.actorId);
   release.resolve();
   await rejected;
+});
+
+test('resuming an upload waits for no writer, for an owner or a session caller', async (t) => {
+  const app = await largeApp(t);
+  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
+  const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const source = await app.ctx.scope.delegationSource({
+    ...owner,
+    credentialId: boot.credential.id,
+  });
+  const worker = await app.ctx.state.transaction((tx) =>
+    app.ctx.scope.createSessionActor(
+      source,
+      { sessionId: 'session_uploads', name: 'Worker', role: 'producer' },
+      tx,
+    ),
+  );
+  const session: Caller = {
+    actorId: worker.id,
+    projectId: worker.projectId,
+    session: { id: 'session_uploads' },
+  };
+  // The session provider vouches for the owner and records whether it was asked in a read scope.
+  const handed: boolean[] = [];
+  t.after(
+    app.ctx.scope.registerSessionAuthority({
+      require: async () => {
+        handed.push(app.ctx.state.readScope);
+        return source;
+      },
+    }),
+  );
+  const plan = {
+    partSize: 10,
+    partCount: 1,
+    parts: [{ partNumber: 1, size: 10, url: 'https://bucket.example/part', headers: {} }],
+    completedParts: [],
+    nextPart: 1,
+  };
+  t.after(
+    app.ctx.artifacts.bindLarge({
+      begin: async (_projectId, key) => ({ objectId: `obj_${key}`, plan }),
+      resume: async () => plan,
+      complete: async () => assert.fail('unused'),
+      download: async () => assert.fail('unused'),
+      read: async () => assert.fail('unused'),
+    }),
+  );
+  const input = { title: 'Rows', size: 10, sha256: 'a'.repeat(64), mediaType: 'text/csv' };
+  const uploads = [
+    [owner, (await app.ctx.artifacts.uploadBegin(owner, input)).uploadId],
+    [session, (await app.ctx.artifacts.uploadBegin(session, input)).uploadId],
+  ] as const;
+  handed.length = 0;
+  const entered = deferred();
+  const release = deferred();
+  const holding = app.ctx.state.transaction(async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await entered.promise;
+  try {
+    for (const [caller, uploadId] of uploads) {
+      const resumed = await Promise.race([
+        app.ctx.artifacts.uploadResume(caller, uploadId),
+        delay(3000).then(() => assert.fail('resume waited for the writer lock')),
+      ]);
+      assert.equal(resumed.uploadId, uploadId);
+    }
+  } finally {
+    release.resolve();
+    await holding;
+  }
+  assert.ok(
+    handed.length > 0 && handed.every(Boolean),
+    'every session decision ran in a read scope',
+  );
 });
