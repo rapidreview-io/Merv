@@ -172,7 +172,8 @@ export const prerequisitesOf = async (sql: Sql, projectId: string, instanceId: s
 
 /**
  * What depends on each of several instances, in two reads however many there are, each source
- * read against its own pinned contract. A source the project no longer holds is left out.
+ * read against its own pinned contract; one not yet kept is read once per version, not per edge.
+ * A source the project no longer holds is left out.
  */
 export async function dependents(
   sql: Sql,
@@ -188,10 +189,14 @@ export async function dependents(
     projectId,
     edges.map((edge) => edge.source_id),
   );
+  const read = new Map<string, WorkflowPinned | null>();
   for (const edge of edges) {
     const source = sources.get(edge.source_id);
     if (!source) continue;
-    const pinned = await contracts.get(sql, source.workflow, Number(source.version));
+    const key = `${source.workflow}@${source.version}`;
+    if (!read.has(key))
+      read.set(key, await contracts.get(sql, source.workflow, Number(source.version)));
+    const pinned = read.get(key);
     found.get(edge.target_id)!.push({
       ...classify(
         source,
