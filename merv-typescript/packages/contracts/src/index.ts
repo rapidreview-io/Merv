@@ -22,7 +22,7 @@ export { mainAgentGuide } from './agent-guide.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
-export { boundedPaperContext, paperJsonCap } from './paper-context.js';
+export { boundedPaperContext } from './paper-context.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
 export {
   sessionWorkspaceSchema,
