@@ -460,7 +460,9 @@ test('an upload over the largest object is refused before any row or storage cal
     status: 400,
     message: 'Artifact size must be 1 byte to 512 MiB',
   });
+  // The tool's schema refuses the size before the service sees it.
   await assert.rejects(app.ctx.tools.call('artifact.upload_begin', owner, input), {
+    code: 'invalid_input',
     status: 400,
   });
   assert.deepEqual(calls, []);
