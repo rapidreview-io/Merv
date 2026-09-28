@@ -12,6 +12,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from './fixtures/app.js';
 import type { ContextInput, TaskTypeDefinition } from '@merv/contracts';
+import { buildContext } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -52,15 +53,15 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       inputs: { evidence: { artifactIds: [artifact.id] }, background: { text: 'x'.repeat(1100) } },
       requestId: 'build',
     };
-    const context = await registration.build(caller, input);
+    const context = await buildContext(registration, caller, input);
     assert.match(context.prompt, /The exact evidence/);
     assert.deepEqual(context.omitted, ['background']);
     assert.equal(context.sources[0].hash, artifact.hash);
     assert.ok(context.prompt.length <= 1200);
-    assert.deepEqual(await registration.build(caller, input), context);
+    assert.deepEqual(await buildContext(registration, caller, input), context);
     // Only the builder decides what was omitted: a caller cannot add entries.
     await assert.rejects(
-      registration.build(caller, {
+      buildContext(registration, caller, {
         ...input,
         requestId: 'carried-omissions',
         inputs: {
@@ -73,7 +74,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       }),
       { code: 'invalid_context' },
     );
-    const fitting = await registration.build(caller, {
+    const fitting = await buildContext(registration, caller, {
       ...input,
       requestId: 'fitting-background',
       inputs: { ...input.inputs, background: { text: 'Latest review feedback.' } },
@@ -82,16 +83,20 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
 
     await assert.rejects(
       async () =>
-        await registration.build(caller, { ...input, subject: { id: 'task-a', revision: 3 } }),
-      /different input/,
+        await buildContext(registration, caller, {
+          ...input,
+          subject: { id: 'task-a', revision: 3 },
+        }),
+      { code: 'request_conflict' },
     );
     await assert.rejects(
-      async () => await registration.build(caller, { ...input, inputs: {}, requestId: 'missing' }),
+      async () =>
+        await buildContext(registration, caller, { ...input, inputs: {}, requestId: 'missing' }),
       /Missing required context/,
     );
     await assert.rejects(
       async () =>
-        await registration.build(caller, {
+        await buildContext(registration, caller, {
           ...input,
           inputs: { evidence: { text: 'x'.repeat(2000) } },
           requestId: 'too-big',
@@ -99,7 +104,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       /exceeds the recipe budget/,
     );
     await assert.rejects(
-      async () => await registration.build(other, { ...input, requestId: 'cross-project' }),
+      async () => await buildContext(registration, other, { ...input, requestId: 'cross-project' }),
       /not found/i,
     );
     await assert.rejects(
@@ -112,7 +117,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
     );
     registration.dispose();
     await assert.rejects(
-      async () => await registration.build(caller, { ...input, requestId: 'disposed' }),
+      async () => await buildContext(registration, caller, { ...input, requestId: 'disposed' }),
       /not active/,
     );
     assert.deepEqual(await storedContext(state, context.id), context);
@@ -129,14 +134,14 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
       version: 2,
       recipe: { ...definition.recipe, instructions: 'Changed' },
     });
-    const updated = await version2.build(caller, { ...input, requestId: 'v2' });
+    const updated = await buildContext(version2, caller, { ...input, requestId: 'v2' });
     assert.notEqual(updated.recipeHash, context.recipeHash);
     assert.equal((await storedContext(state, context.id)).typeVersion, 1);
     const before = await state.eventHead();
     await assert.rejects(
       async () =>
         await state.transaction(async (tx) => {
-          await version2.build(caller, { ...input, requestId: 'aborted' }, tx);
+          await buildContext(version2, caller, { ...input, requestId: 'aborted' }, tx);
           throw Error('rollback');
         }),
     );
@@ -210,7 +215,7 @@ test('ranked context reserves every authorized retrieval reference before promot
       },
       requestId: 'ranked-build',
     };
-    const built = await recipe.build(caller, input);
+    const built = await buildContext(recipe, caller, input);
     assert.match(built.prompt, /HIGH_EVIDENCE/);
     assert.doesNotMatch(built.prompt, /L{100}/);
     assert.ok(built.prompt.indexOf(low.id) < built.prompt.indexOf('HIGH_EVIDENCE'));
@@ -221,9 +226,9 @@ test('ranked context reserves every authorized retrieval reference before promot
     );
     assert.deepEqual(built.omitted, [`artifact:${low.id}`]);
     assert.ok(built.prompt.length <= 1_800);
-    assert.deepEqual(await recipe.build(caller, input), built);
+    assert.deepEqual(await buildContext(recipe, caller, input), built);
     await assert.rejects(
-      recipe.build(caller, {
+      buildContext(recipe, caller, {
         ...input,
         requestId: 'foreign-ranked',
         inputs: { ...input.inputs, early: { rankedItems: [ranked(outside, 1)] } },
@@ -232,7 +237,7 @@ test('ranked context reserves every authorized retrieval reference before promot
     );
     // More references than the budget lists: the lowest-ranked are cut and counted, and the top
     // item of each required section stays listed.
-    const crowded = await recipe.build(caller, {
+    const crowded = await buildContext(recipe, caller, {
       ...input,
       requestId: 'ranked-minimum-overflow',
       inputs: {
@@ -283,7 +288,7 @@ test('ranked context reserves every authorized retrieval reference before promot
         maxChars: 30_000,
       },
     });
-    const largeContext = await wider.build(caller, {
+    const largeContext = await buildContext(wider, caller, {
       subject: { id: 'large', revision: 1 },
       inputs: { evidence: { rankedItems: [ranked(large, 10), ranked(binary, 9)] } },
       requestId: 'large-ranked-build',

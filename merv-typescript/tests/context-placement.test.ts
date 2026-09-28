@@ -26,6 +26,7 @@ import {
   type TaskTypeDefinition,
   type Transaction,
 } from '@merv/contracts';
+import { buildContext } from './fixtures/context.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -68,7 +69,7 @@ test('preview and replay outside a transaction never wait for the writer lock', 
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });
   const registration = await builder.register(definition);
   const input = { subject, inputs: { evidence: { artifactIds: [evidence.id] } } };
-  const saved = await registration.build(operator, { ...input, requestId: 'saved' });
+  const saved = await buildContext(registration, operator, { ...input, requestId: 'saved' });
   // Another instance holds this schema's writer lock.
   const holder = new pg.Client({ connectionString: postgresUrl });
   await holder.connect();
@@ -82,7 +83,7 @@ test('preview and replay outside a transaction never wait for the writer lock', 
     [`merv-state:${schema}`],
   );
   // A write does wait, and times out.
-  await assert.rejects(registration.build(operator, { ...input, requestId: 'blocked' }), {
+  await assert.rejects(buildContext(registration, operator, { ...input, requestId: 'blocked' }), {
     code: 'state_timeout',
   });
   const { id: _id, createdAt: _createdAt, ...rendered } = saved;

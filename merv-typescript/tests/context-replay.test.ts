@@ -15,6 +15,7 @@ import { TASK_WORKFLOW } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, TaskTypeDefinition } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import { buildContext } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
 
 const recipe: TaskTypeDefinition = {
@@ -58,7 +59,7 @@ test('artifact context modes retain binary references without charging blob size
     });
     const registration = await builder.register(recipe);
     const subject = { id: 'assignment', revision: 1 };
-    const result = await registration.build(caller, {
+    const result = await buildContext(registration, caller, {
       subject,
       inputs: { evidence: { artifactIds: [text.id, binary.id], mode: 'auto' } },
       requestId: 'auto',
@@ -73,7 +74,7 @@ test('artifact context modes retain binary references without charging blob size
     );
     assert.equal(result.sources[1].size, 100_000);
     assert.ok(result.prompt.length <= recipe.recipe.maxChars);
-    const reference = await registration.build(caller, {
+    const reference = await buildContext(registration, caller, {
       subject,
       inputs: { evidence: { artifactIds: [largeText.id], mode: 'references' } },
       requestId: 'references',
@@ -83,7 +84,7 @@ test('artifact context modes retain binary references without charging blob size
     assert.ok(reference.prompt.length <= recipe.recipe.maxChars);
     await assert.rejects(
       async () =>
-        await registration.build(caller, {
+        await buildContext(registration, caller, {
           subject,
           inputs: { evidence: { artifactIds: [binary.id] } },
           requestId: 'default-text',
@@ -96,7 +97,7 @@ test('artifact context modes retain binary references without charging blob size
       content: '/w==',
       encoding: 'base64',
     });
-    const smallReference = await registration.build(caller, {
+    const smallReference = await buildContext(registration, caller, {
       subject,
       inputs: { evidence: { artifactIds: [smallBinary.id] } },
       requestId: 'default-encoding',
@@ -109,7 +110,7 @@ test('artifact context modes retain binary references without charging blob size
     );
     await assert.rejects(
       async () =>
-        await registration.build(other, {
+        await buildContext(registration, other, {
           subject,
           inputs: { evidence: { artifactIds: [binary.id], mode: 'auto' } },
           requestId: 'foreign',
@@ -128,7 +129,7 @@ test('artifact context modes retain binary references without charging blob size
     );
     await assert.rejects(
       async () =>
-        await registration.build(caller, {
+        await buildContext(registration, caller, {
           subject,
           inputs: { evidence: { artifactIds: many.map((item) => item.id), mode: 'references' } },
           requestId: 'manifest-budget',
@@ -142,7 +143,7 @@ test('artifact context modes retain binary references without charging blob size
   }
 });
 
-test('owner replay pins recipe and exact assignment while ordinary context builds still reject changed inputs', async () => {
+test('owner replay and build pin recipe and exact assignment, and a reused request ID returns its saved package whatever the inputs', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-replay-owner-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
@@ -160,7 +161,7 @@ test('owner replay pins recipe and exact assignment while ordinary context build
       inputs: { evidence: { text: 'Original input.' } },
       requestId: 'receipt',
     };
-    const result = await registration.build(caller, input);
+    const result = await buildContext(registration, caller, input);
     assert.deepEqual(await registration.replay(caller, { subject, requestId: 'receipt' }), result);
     assert.equal(await registration.replay(caller, { subject, requestId: 'unknown' }), null);
     for (const changed of [
@@ -168,20 +169,25 @@ test('owner replay pins recipe and exact assignment while ordinary context build
       { ...subject, revision: 4 },
       { ...subject, claimId: 'claim-b' },
       { id: subject.id, revision: subject.revision },
-    ])
+    ]) {
       await assert.rejects(
         async () => await registration.replay(caller, { subject: changed, requestId: 'receipt' }),
         {
           code: 'request_conflict',
         },
       );
-    await assert.rejects(
-      async () =>
-        await registration.build(caller, {
-          ...input,
-          inputs: { evidence: { text: 'Changed input.' } },
-        }),
-      { code: 'request_conflict' },
+      await assert.rejects(
+        async () => await buildContext(registration, caller, { ...input, subject: changed }),
+        { code: 'request_conflict' },
+      );
+    }
+    // The request ID names the saved package: other inputs for the same recipe and subject get it.
+    assert.deepEqual(
+      await buildContext(registration, caller, {
+        ...input,
+        inputs: { evidence: { text: 'Changed input.' } },
+      }),
+      result,
     );
     const newer = await builder.register({ ...recipe, version: 2 });
     await assert.rejects(
@@ -190,6 +196,9 @@ test('owner replay pins recipe and exact assignment while ordinary context build
         code: 'request_conflict',
       },
     );
+    await assert.rejects(async () => await buildContext(newer, caller, input), {
+      code: 'request_conflict',
+    });
     registration.dispose();
     await assert.rejects(
       async () => await registration.replay(caller, { subject, requestId: 'receipt' }),
@@ -272,7 +281,7 @@ test('historical task context replays unchanged after deployment and restart, wi
     const priorOwner = await app.ctx.contextBuilder.register(
       TASK_TYPES.find((item) => item.name === 'task.work')!,
     );
-    const historical = await priorOwner.build(producer, {
+    const historical = await buildContext(priorOwner, producer, {
       subject: { id: task.id, revision: 0 },
       inputs: {
         task: { text: JSON.stringify(historicalTask) },

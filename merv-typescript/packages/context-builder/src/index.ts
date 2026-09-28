@@ -20,6 +20,7 @@ import {
   type ContextRegistration,
   type ContextBuild,
   type ContextPackage,
+  type ContextPreview,
   type Sql,
   type Transaction,
   type Artifact,
@@ -107,6 +108,12 @@ const buildSchema = z
   .strict();
 const previewSchema = buildSchema.omit({ requestId: true });
 const replaySchema = buildSchema.omit({ inputs: true });
+const saveSchema = z
+  .object({
+    requestId: buildSchema.shape.requestId,
+    preview: z.custom<ContextPreview>((value) => typeof value === 'object' && value !== null),
+  })
+  .strict();
 
 /** Permanent: these stored bytes will never read back. blob_not_found is not here (a restored blob or
  *  a fixed bucket or prefix brings it back), and neither is any transient code. */
@@ -171,6 +178,13 @@ async function resolve(
     },
     read: async (document, lenient) => await readText(artifacts, caller, document, lenient),
   };
+}
+/** A detached copy of `preview` when it still hashes to `hash`, the hash it was rendered with. */
+function unchanged(preview: ContextPreview, hash: string | undefined): ContextPreview | null {
+  if (hash === undefined) return null;
+  const copy = structuredClone(preview);
+  const { hash: claimed, ...body } = copy;
+  return claimed === hash && digest(body) === hash ? copy : null;
 }
 /** Media types whose bytes are worth reading as text. */
 export const textual = (mediaType: string) =>
@@ -313,6 +327,35 @@ export class RecipeContextBuilder implements ContextBuilder {
         'Context recipe is not active',
         503,
       );
+    // Every preview this registration returned, with the hash it was rendered with: build saves
+    // only these, so a saved package is always one this recipe rendered.
+    const rendered = new WeakMap<ContextPreview, string>();
+    // The package saved under a request ID. It must be this recipe's, for the same subject.
+    const saved = async (
+      tx: Transaction,
+      caller: Caller,
+      requestId: string,
+      subject: ContextBuild['subject'],
+    ): Promise<ContextPackage | null> => {
+      const old = await tx.get<{ package: string }>(
+        'SELECT package FROM context_packages WHERE project_id=? AND actor_id=? AND request_id=?',
+        caller.projectId,
+        caller.actorId,
+        requestId,
+      );
+      if (!old) return null;
+      const result = JSON.parse(old.package) as ContextPackage;
+      check(
+        result.type === definition.name &&
+          result.typeVersion === definition.version &&
+          result.recipeHash === hash &&
+          digest(result.subject) === digest(subject),
+        'request_conflict',
+        'Context request ID was used for a different assignment or recipe',
+        409,
+      );
+      return result;
+    };
     // Each call keeps its own copy of the caller, and parses its input before anything yields:
     // the parsed data is detached, so a caller changing either during authorization changes
     // nothing. Authorization still decides first, so a refused caller never learns more.
@@ -335,59 +378,53 @@ export class RecipeContextBuilder implements ContextBuilder {
             artifacts: await resolve(this.artifacts, caller, parsed.data, tx),
           };
         });
-        return await render(definition, hash, caller, request, artifacts);
+        const result = await render(definition, hash, caller, request, artifacts);
+        rendered.set(result, result.hash);
+        return result;
       },
       build: async (caller, input, transaction) => {
         live();
         caller = structuredClone(caller);
-        const parsed = buildSchema.safeParse(input);
+        const parsed = saveSchema.safeParse(input);
+        // Copied before anything yields, and hashed again: a copy of a preview, or one changed
+        // since it was rendered, is refused.
+        const preview = parsed.success
+          ? unchanged(parsed.data.preview, rendered.get(parsed.data.preview))
+          : null;
         return await inTransaction(this.state, transaction, async (tx) => {
           await this.scope.require(caller, role, tx);
           check(
             parsed.success,
             'invalid_context',
-            'Context needs a subject, structured inputs and request ID',
+            'Context build needs a request ID and a preview',
           );
-          const request = parsed.data;
-          const inputHash = digest({
-            definition,
-            subject: request.subject,
-            inputs: request.inputs,
-          });
-          const old = await tx.get<{ input_hash: string; package: string }>(
-            'SELECT input_hash,package FROM context_packages WHERE project_id=? AND actor_id=? AND request_id=?',
-            caller.projectId,
-            caller.actorId,
-            request.requestId,
+          check(
+            preview,
+            'invalid_context',
+            'Build saves an unchanged preview this recipe rendered',
           );
-          if (old) {
-            check(
-              old.input_hash === inputHash,
-              'request_conflict',
-              'Context request ID was used with different input',
-              409,
-            );
-            return JSON.parse(old.package);
-          }
-          const artifacts = await resolve(this.artifacts, caller, request, tx);
-          const result: ContextPackage = {
-            ...(await render(definition, hash, caller, request, artifacts)),
-            id: newId('context'),
-            createdAt: now(),
-          };
+          check(
+            preview.projectId === caller.projectId && preview.actorId === caller.actorId,
+            'invalid_context',
+            'Build saves a preview rendered for its caller',
+          );
+          const { requestId } = parsed.data;
+          const old = await saved(tx, caller, requestId, preview.subject);
+          if (old) return old;
+          const result: ContextPackage = { ...preview, id: newId('context'), createdAt: now() };
           await tx.run(
             'INSERT INTO context_packages VALUES(?,?,?,?,?,?)',
             result.id,
             caller.projectId,
             caller.actorId,
-            request.requestId,
-            inputHash,
+            requestId,
+            result.hash,
             JSON.stringify(result),
           );
           await recorded(this.state, tx, caller, 'context.built', result.id, {
             type: definition.name,
             typeVersion: definition.version,
-            subjectId: request.subject.id,
+            subjectId: result.subject.id,
             hash: result.hash,
           });
           return result;
@@ -400,24 +437,7 @@ export class RecipeContextBuilder implements ContextBuilder {
         return await this.reading(tx, async (tx) => {
           await this.scope.require(caller, role, tx);
           check(parsed.success, 'invalid_context', 'Context replay needs a subject and request ID');
-          const old = await tx.get<{ package: string }>(
-            'SELECT package FROM context_packages WHERE project_id=? AND actor_id=? AND request_id=?',
-            caller.projectId,
-            caller.actorId,
-            parsed.data.requestId,
-          );
-          if (!old) return null;
-          const result = JSON.parse(old.package) as ContextPackage;
-          check(
-            result.type === definition.name &&
-              result.typeVersion === definition.version &&
-              result.recipeHash === hash &&
-              digest(result.subject) === digest(parsed.data.subject),
-            'request_conflict',
-            'Context request ID was used for a different assignment or recipe',
-            409,
-          );
-          return result;
+          return await saved(tx, caller, parsed.data.requestId, parsed.data.subject);
         });
       },
       dispose: () => {

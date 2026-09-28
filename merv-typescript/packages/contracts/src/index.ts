@@ -1841,6 +1841,11 @@ export interface ContextPackage {
   createdAt: string;
 }
 export type ContextPreview = Omit<ContextPackage, 'id' | 'createdAt'>;
+/** The input of `build`: a preview to save under a request ID. */
+export interface ContextSave {
+  requestId: string;
+  preview: ContextPreview;
+}
 export interface ContextRegistration {
   /**
    * With `tx`, or without it inside a transaction, runs there: the caller chose the placement,
@@ -1853,7 +1858,14 @@ export interface ContextRegistration {
     input: Omit<ContextBuild, 'requestId'>,
     tx?: Transaction,
   ): Promise<ContextPreview>;
-  build(caller: Caller, input: ContextBuild, tx?: Transaction): Promise<ContextPackage>;
+  /**
+   * Saves a preview this registration returned, unchanged, once per project, actor and request
+   * ID. In-process only: a preview is recognised by object identity, so build can never be
+   * offered over HTTP or MCP. A request ID already saved returns its package when the recipe and
+   * subject match, whatever inputs produced it; any other recipe or subject fails
+   * request_conflict.
+   */
+  build(caller: Caller, input: ContextSave, tx?: Transaction): Promise<ContextPackage>;
   /** Replay an existing assignment request before rebuilding its live inputs. Placed as
    *  `preview` is: outside any transaction it reads in a read-only snapshot. */
   replay(

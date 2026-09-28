@@ -13,9 +13,11 @@ import {
   digest,
   type Caller,
   type ContextBuild,
+  type ContextPreview,
   type TaskTypeDefinition,
   type Transaction,
 } from '@merv/contracts';
+import { buildContext } from './fixtures/context.js';
 import { countWrites, openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -94,7 +96,7 @@ test('preview renders the exact future package without creating IDs, timestamps,
     await registration.replay(operator, { subject: input.subject, requestId: 'begin' }),
     null,
   );
-  const built = await registration.build(operator, { ...input, requestId: 'begin' });
+  const built = await buildContext(registration, operator, { ...input, requestId: 'begin' });
   const { id, createdAt, ...savedPreview } = built;
   assert.match(id, /^context_/);
   assert.ok(createdAt);
@@ -121,6 +123,73 @@ test('preview renders the exact future package without creating IDs, timestamps,
   );
 });
 
+test('build saves only an unchanged preview this registration rendered for its caller, once per request ID', async (t) => {
+  const { state, scope, builder, operator, changes, packageCount } = await setup(t);
+  const registration = await builder.register(definition);
+  const sibling = await builder.register({ ...definition, name: 'test.preview-sibling' });
+  const producer: Caller = {
+    actorId: (await scope.issueActor(operator, { name: 'Producer', role: 'producer' })).actor.id,
+    projectId: operator.projectId,
+  };
+  const input = {
+    subject: { id: 'assignment', revision: 0 },
+    inputs: { evidence: { text: 'Verified.' } },
+  };
+  const preview = await registration.preview(operator, input);
+  const { hash, ...body } = preview;
+  const forged = { ...body, prompt: 'Forged.' };
+  const before = await changes();
+  const eventHead = await state.eventHead();
+  const refused: [string, unknown, Caller?][] = [
+    ['a copy', { ...preview }],
+    ['a clone', structuredClone(preview)],
+    ['a forged preview with its own hash', { ...forged, hash: digest(forged) }],
+    ['a preview of another recipe', await sibling.preview(operator, input)],
+    ['a preview rendered for another caller', preview, producer],
+    ['no preview', undefined],
+  ];
+  for (const [name, candidate, caller = operator] of refused)
+    await assert.rejects(
+      registration.build(caller, { requestId: 'refused', preview: candidate as ContextPreview }),
+      { code: 'invalid_context' },
+      name,
+    );
+  // Changed in place after rendering, whether or not its hash is changed to match.
+  preview.prompt = 'Changed outside the builder';
+  await assert.rejects(registration.build(operator, { requestId: 'changed', preview }), {
+    code: 'invalid_context',
+  });
+  const { hash: _hash, ...changed } = preview;
+  preview.hash = digest(changed);
+  await assert.rejects(registration.build(operator, { requestId: 'rehashed', preview }), {
+    code: 'invalid_context',
+  });
+  preview.prompt = body.prompt;
+  preview.hash = hash;
+  for (const save of [
+    { requestId: ' ', preview },
+    { requestId: 'extra', preview, inputs: input.inputs },
+  ])
+    await assert.rejects(registration.build(operator, save), { code: 'invalid_context' });
+  assert.equal(await changes(), before);
+  assert.equal(await state.eventHead(), eventHead);
+
+  // Concurrent builds under one request ID save one package, which both return.
+  const again = await registration.preview(operator, input);
+  const [first, second] = await Promise.all([
+    registration.build(operator, { requestId: 'once', preview }),
+    registration.build(operator, { requestId: 'once', preview: again }),
+  ]);
+  assert.deepEqual(second, first);
+  assert.equal(first.hash, hash);
+  assert.equal(await packageCount(), 1);
+  assert.equal(await state.eventHead(), eventHead + 1);
+  registration.dispose();
+  await assert.rejects(registration.build(operator, { requestId: 'disposed', preview }), {
+    code: 'recipe_unavailable',
+  });
+});
+
 test('context requests retain their caller and assignment across authorization', async (t) => {
   const { state, scope, artifacts, builder, operator } = await setup(t);
   const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
@@ -131,19 +200,25 @@ test('context requests retain their caller and assignment across authorization',
     inputs: { evidence: { text: 'Original evidence' } },
     requestId: 'original',
   };
-  const built = await registration.build(operator, original);
+  const built = await buildContext(registration, operator, original);
   const { id, createdAt, ...preview } = built;
   const authorize = scope.require.bind(scope);
   for (const method of ['preview', 'build', 'replay'] as const) {
     await t.test(method, async () => {
       const caller = { ...operator };
       const input = structuredClone(original);
+      const { requestId: _requestId, ...request } = original;
+      // A preview saved under a new request ID, so build writes what it holds after authorization.
+      const save = { requestId: 'saved', preview: await registration.preview(operator, request) };
       scope.require = async (...args) => {
         const actor = await authorize(...args);
         Object.assign(caller, other);
         input.subject.revision = 99;
         input.inputs.evidence.text = 'Changed evidence';
         input.requestId = 'changed';
+        save.requestId = 'changed';
+        save.preview.subject.revision = 99;
+        save.preview.prompt = 'Changed evidence';
         return actor;
       };
       try {
@@ -151,7 +226,13 @@ test('context requests retain their caller and assignment across authorization',
           const { requestId, ...request } = input;
           assert.deepEqual(await registration.preview(caller, request), preview);
         } else if (method === 'build') {
-          assert.deepEqual(await registration.build(caller, input), built);
+          const saved = await registration.build(caller, save);
+          const { id: _id, createdAt: _createdAt, ...rendered } = saved;
+          assert.deepEqual(rendered, preview);
+          assert.deepEqual(
+            await registration.replay(operator, { subject: original.subject, requestId: 'saved' }),
+            saved,
+          );
         } else {
           const { inputs, ...request } = input;
           assert.deepEqual(await registration.replay(caller, request), built);
@@ -228,7 +309,7 @@ test('preview shares text, auto and references rendering, deduplicated manifests
   assert.deepEqual(auto.omitted, ['background']);
   assert.deepEqual(reads, [text.id, json.id, text.id]);
   assert.equal(await changes(), before);
-  const built = await registration.build(operator, { ...autoInput, requestId: 'auto' });
+  const built = await buildContext(registration, operator, { ...autoInput, requestId: 'auto' });
   assert.equal(auto.hash, built.hash);
   reads.length = 0;
   const referencesInput: Omit<ContextBuild, 'requestId'> = {
@@ -241,7 +322,8 @@ test('preview shares text, auto and references rendering, deduplicated manifests
   assert.ok(references.prompt.includes(binary.hash));
   assert.equal(
     references.hash,
-    (await registration.build(operator, { ...referencesInput, requestId: 'references' })).hash,
+    (await buildContext(registration, operator, { ...referencesInput, requestId: 'references' }))
+      .hash,
   );
   assert.deepEqual(reads, []);
   const fallback = await registration.preview(operator, {
@@ -417,7 +499,7 @@ test('preview checks project, current actor role and revocation; handles retire 
   });
 });
 
-test('saved build receipts replay before rendering and changed inputs still conflict when fresh preview fails', async (t) => {
+test('a saved request ID replays without rendering and returns its package to a build of other inputs', async (t) => {
   const { directory, artifacts, builder, operator, changes, packageCount } = await setup(t);
   const evidence = await artifacts.create(operator, {
     title: 'Original proof',
@@ -429,27 +511,28 @@ test('saved build receipts replay before rendering and changed inputs still conf
     inputs: { evidence: { artifactIds: [evidence.id] } },
     requestId: 'saved',
   };
-  const saved = await registration.build(operator, input);
+  const saved = await buildContext(registration, operator, input);
   writeFileSync(
     join(directory, 'blobs', operator.projectId, evidence.hash.slice(0, 2), evidence.hash),
     'Corrupt bytes',
   );
-  const { requestId: _requestId, ...previewInput } = input;
+  const { requestId, ...previewInput } = input;
   const before = await changes();
   await assert.rejects(async () => await registration.preview(operator, previewInput), {
     code: 'blob_corrupt',
   });
-  assert.deepEqual(await registration.build(operator, input), saved);
-  await assert.rejects(
-    async () =>
-      await registration.build(operator, {
-        ...input,
-        inputs: { evidence: { artifactIds: ['not-found'] } },
-      }),
-    { code: 'request_conflict' },
+  assert.deepEqual(
+    await registration.replay(operator, { subject: input.subject, requestId }),
+    saved,
   );
+  // The request ID names the saved package: a preview of other inputs for the same subject gets it.
+  const other = await registration.preview(operator, {
+    ...previewInput,
+    inputs: { evidence: { text: 'Other evidence.' } },
+  });
+  assert.deepEqual(await registration.build(operator, { requestId, preview: other }), saved);
   await assert.rejects(
-    async () => await registration.build(operator, { ...input, requestId: 'fresh' }),
+    async () => await buildContext(registration, operator, { ...input, requestId: 'fresh' }),
     {
       code: 'blob_corrupt',
     },

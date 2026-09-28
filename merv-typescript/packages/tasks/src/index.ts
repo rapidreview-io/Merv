@@ -1485,15 +1485,12 @@ export class TaskService implements Tasks {
         tx,
       );
       if (previous) return previous;
-      return await type.context.build(
+      const preview = await type.context.preview(
         caller,
-        {
-          subject,
-          inputs: await this.contextInputs(caller, task, input.purpose, review, tx),
-          requestId: input.requestId,
-        },
+        { subject, inputs: await this.contextInputs(caller, task, input.purpose, review, tx) },
         tx,
       );
+      return await type.context.build(caller, { requestId: input.requestId, preview }, tx);
     });
   }
 
