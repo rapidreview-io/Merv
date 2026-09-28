@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { MervError, type Caller, type LargeArtifactStorage } from '@merv/contracts';
+import { MervError, type Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { deferred } from './fixtures/deferred.js';
 import { legacyArtifact } from './fixtures/legacy-artifact.js';
@@ -41,40 +41,32 @@ test('artifact.read waits on storage holding no reader connection, and a revocat
   const issued = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
   const reader: Caller = { actorId: issued.actor.id, projectId: owner.projectId };
 
-  // Rows from before bytes were kept in them, whose bytes are in a held object store.
-  const objects = new Map<string, Buffer>();
+  // Rows from before bytes were kept in them, whose bytes are in blobs that hold every read.
   let waiting = 0;
   const all = deferred();
   const held = async () => {
     if (++waiting === 3) all.resolve();
     await gate.promise;
   };
-  const refused = async (): Promise<never> => {
-    throw new MervError('unexpected', 'Not used here', 500);
+  const blobs = app.ctx.blobs;
+  const get = blobs.get.bind(blobs);
+  t.mock.method(blobs, 'get', async (namespace: string, hash: string) => {
+    await held();
+    return await get(namespace, hash);
+  });
+  blobs.download = async (namespace, hash) => {
+    await held();
+    return {
+      url: `https://bucket.example/${namespace}/${hash}`,
+      expiresAt: new Date().toISOString(),
+    };
   };
-  const storage: LargeArtifactStorage = {
-    begin: refused,
-    resume: refused,
-    complete: refused,
-    async download(_projectId, objectId) {
-      await held();
-      return { url: `https://bucket.example/${objectId}`, expiresAt: new Date().toISOString() };
-    },
-    async read(_projectId, objectId) {
-      await held();
-      return objects.get(objectId)!;
-    },
-  };
-  app.ctx.artifacts.bindLarge(storage);
+  t.after(() => delete blobs.download);
   const rows = [];
   for (const n of [1, 2, 3])
     rows.push(
-      await legacyArtifact(
-        app.ctx.state,
-        owner,
-        Buffer.from(`object ${n}`),
-        (bytes) => objects.set(`obj_${n}`, bytes),
-        { objectId: `obj_${n}` },
+      await legacyArtifact(app.ctx.state, owner, Buffer.from(`object ${n}`), (bytes) =>
+        blobs.put(owner.projectId, bytes),
       ),
     );
 

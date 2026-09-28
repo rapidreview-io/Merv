@@ -4,20 +4,22 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { Artifact, Caller, LargeArtifactStorage } from '@merv/contracts';
+import type { Artifact, Caller } from '@merv/contracts';
 import { view } from '@merv/artifacts/content';
 import { createApp } from './fixtures/app.js';
 import { stateConfig } from './fixtures/state.js';
+import { s3Blobs } from './fixtures/s3-blobs.js';
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-content-'));
+  const { server, entry } = await s3Blobs(t);
   const app = await createApp({
     directory,
     config: {
       plugins: [
         { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
-        { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
+        entry,
         { id: 'artifacts', name: '@merv/artifacts' },
       ],
     },
@@ -28,7 +30,7 @@ async function fixture(t: TestContext) {
   });
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Content', actorName: 'Owner' });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  return { app, caller };
+  return { app, caller, server };
 }
 
 const artifact = { id: 'art_x' } as Artifact;
@@ -170,36 +172,7 @@ test('base64 without a media type is typed from its bytes', async (t) => {
 });
 
 test('create and uploadBegin refuse malformed media types and request IDs with coded errors', async (t) => {
-  const { app, caller } = await fixture(t);
-  const begun: string[] = [];
-  const storage: LargeArtifactStorage = {
-    async begin(_projectId, uploadId) {
-      begun.push(uploadId);
-      return {
-        objectId: `obj_${uploadId}`, // idempotent by key, like Sandboxes
-        plan: {
-          partSize: 10,
-          partCount: 1,
-          parts: [],
-          completedParts: [],
-          nextPart: 1,
-        },
-      };
-    },
-    async resume() {
-      throw new Error('unused');
-    },
-    async complete() {
-      throw new Error('unused');
-    },
-    async download() {
-      throw new Error('unused');
-    },
-    async read() {
-      throw new Error('unused');
-    },
-  };
-  t.after(app.ctx.artifacts.bindLarge(storage));
+  const { app, caller, server } = await fixture(t);
   const upload = { title: 'Rows', size: 10, sha256: 'a'.repeat(64), mediaType: 'text/csv' };
   for (const mediaType of [42, true, [], {}, 'text/plain; charset=utf-8', 'text']) {
     await assert.rejects(
@@ -228,7 +201,7 @@ test('create and uploadBegin refuse malformed media types and request IDs with c
       { code: 'invalid_artifact' },
       String(requestId),
     );
-  assert.deepEqual(begun, []);
+  assert.deepEqual(server.requests, []);
   // Whitespace is a request ID like any other: it is only hashed.
   const blank = await app.ctx.artifacts.uploadBegin(caller, { ...upload, requestId: '  ' });
   const again = await app.ctx.artifacts.uploadBegin(caller, { ...upload, requestId: '  ' });

@@ -1214,12 +1214,12 @@ export interface ArtifactUploadStatus {
   /** Set once the upload is complete; parts is then [] and nextPart null. */
   artifactId?: string;
 }
-/** An upload plan as large storage issues it; artifacts adds the upload ID. */
+/** Temporary, for the move script until Release N+2: an upload plan as sandbox storage issues it. */
 export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId' | 'artifactId'>;
 /**
- * Object storage for artifacts above the inline limit, implemented by @merv/sandboxes. Missing
- * bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a refused origin, a
- * forbidden grant) pass through unchanged.
+ * Temporary, for the move script until Release N+2: the merv-sandboxes storage large artifacts
+ * left for blobs. Missing bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a
+ * refused origin, a forbidden grant) pass through unchanged.
  */
 export interface LargeArtifactStorage {
   /** Idempotent by key. Objects hold opaque bytes (application/octet-stream). */
@@ -1244,28 +1244,26 @@ export interface LargeArtifactStorage {
   read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
 }
 /**
- * Immutable project files. A row implies its bytes: up to the inline limit they are kept in the
- * row, where a database CHECK verifies their size and SHA-256; rows from before that keep them in
- * blobs, and larger files in bound large storage. Rows never change, except that a server
- * configured to backfill moves such older bytes into their row. Bytes gone from behind a row are
- * `artifact_bytes_missing` (500), never a 404, and every byte returned is verified. `create`
- * never does network I/O, and neither do reads of bytes kept in the row. The one write a read
- * may cause: the first `download` of such bytes mirrors them into blobs (content-addressed).
+ * Immutable project files. A row implies its bytes: up to the inline limit they are in the row,
+ * where a database CHECK verifies their size and SHA-256; every other row's bytes are in blobs at
+ * (projectId, sha256). Rows never change, except that a server configured to backfill moves older
+ * rows' bytes into their row. Bytes gone from behind a row are `artifact_bytes_missing` (500),
+ * never a 404, and every byte returned is verified. `create` never does network I/O, and neither
+ * do reads of bytes kept in the row. The one write a read may cause: the first `download` of such
+ * bytes mirrors them into blobs (content-addressed).
  *
  * Every call authorises once, at its start. A revocation that lands while bytes or a download
  * link are fetched is enforced by the ToolRegistry, which reauthorises read tools after the
  * handler; domain callers act on bytes inside their own write transactions, which authorise
- * again. Only a write capability is rechecked after it is issued: the signed part URLs of
- * uploadBegin and uploadResume.
+ * again.
  */
 export interface Artifacts {
-  canDownload(artifact: Artifact): boolean;
+  readonly downloadAvailable: boolean;
   readonly largeUploadAvailable: boolean;
-  bindLarge(storage: LargeArtifactStorage): () => void;
   /** Idempotent per actor and requestId. After completion, begin and resume return the
    * status with `artifactId` and call no storage. */
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
-  uploadResume(caller: Caller, uploadId: string, startPart?: number): Promise<ArtifactUploadStatus>;
+  uploadResume(caller: Caller, uploadId: string): Promise<ArtifactUploadStatus>;
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact>;
   download(
     caller: Caller,

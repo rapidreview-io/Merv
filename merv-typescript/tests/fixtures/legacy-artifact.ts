@@ -2,7 +2,8 @@ import { newId, sha256Hex, type Artifact, type Caller, type State } from '@merv/
 
 /**
  * An artifact row as it was written before bytes were kept in the row: metadata only, with its
- * bytes wherever `store` puts them (blobs, or an object store). Reads of it fetch from storage.
+ * bytes wherever `store` puts them. `objectId` labels a row whose bytes were in sandbox storage;
+ * reads of any such row fetch from blobs.
  */
 export async function legacyArtifact(
   state: State,
@@ -21,7 +22,6 @@ export async function legacyArtifact(
     hash: sha256Hex(bytes),
     size: bytes.length,
     createdAt: new Date().toISOString(),
-    ...(options.objectId ? { objectId: options.objectId } : {}),
   };
   await state.transaction((tx) =>
     tx.run(

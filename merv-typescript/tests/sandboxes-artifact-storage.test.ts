@@ -1,13 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { SandboxArtifactStorage } from '../packages/sandboxes/src/artifact-storage.js';
-import { createApp } from './fixtures/app.js';
-import { stateConfig } from './fixtures/state.js';
 
 test('artifact object requests use the ML project subject and surface its storage cap', async (t) => {
   const original = globalThis.fetch;
@@ -93,47 +88,6 @@ test('artifact object requests use the ML project subject and surface its storag
     'https://bucket.example/file',
   );
   assert.ok(seen.every((entry) => entry.subject === 'project_one'));
-  const directory = await mkdtemp(join(tmpdir(), 'merv-sandbox-artifact-'));
-  const app = await createApp({
-    directory,
-    config: {
-      plugins: [
-        { id: 'state', name: '@merv/state', config: stateConfig(directory) },
-        { id: 'scope', name: '@merv/scope' },
-        { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
-        { id: 'artifacts', name: '@merv/artifacts' },
-        { id: 'tools', name: '@merv/api/tools-plugin' },
-        { id: 'artifact-tools', name: '@merv/artifacts/tools' },
-      ],
-    },
-  });
-  const unbind = app.ctx.artifacts.bindLarge(storage);
-  t.after(async () => {
-    unbind();
-    await app.stop();
-    await rm(directory, { recursive: true, force: true });
-  });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Rows', actorName: 'Owner' });
-  const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const upload = (await app.ctx.tools.call('artifact.upload_begin', owner, input)) as {
-    uploadId: string;
-  };
-  const artifact = (await app.ctx.tools.call('artifact.upload_complete', owner, {
-    uploadId: upload.uploadId,
-  })) as { id: string; objectId: string };
-  assert.equal(artifact.objectId, 'obj_one');
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.read', owner, {
-        artifactId: artifact.id,
-        mode: 'download',
-      })) as { download: { url: string } }
-    ).download.url,
-    'https://bucket.example/file',
-  );
-  assert.ok(
-    seen.some((entry) => entry.path === '/v1/storage/objects' && entry.subject === owner.projectId),
-  );
   cap = true;
   await assert.rejects(storage.begin('project_two', 'aup_two', input), {
     code: 'sandbox_storage_cap_exceeded',

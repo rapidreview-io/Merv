@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -13,7 +13,6 @@ import {
   sha256Hex,
   type Blobs,
   type Caller,
-  type LargeArtifactStorage,
   type Scope,
 } from '@merv/contracts';
 import { DiskBlobs } from '@merv/blobs';
@@ -24,7 +23,10 @@ import { deferred } from './fixtures/deferred.js';
 import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { openState } from './fixtures/state.js';
 
-/** Artifacts over disk blobs whose every call is counted and may be delayed or refused. */
+/**
+ * Artifacts over disk blobs whose put and get are counted and may be delayed or refused, and which
+ * sign uploads and downloads: a test stores an upload's bytes itself, as the signed PUT would.
+ */
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-rows-'));
   const state = await openState(directory);
@@ -33,6 +35,9 @@ async function fixture(t: TestContext) {
     await rm(directory, { recursive: true, force: true });
   });
   const disk = new DiskBlobs(join(directory, 'blobs'));
+  const file = (namespace: string, hash: string) =>
+    join(directory, 'blobs', namespace, hash.slice(0, 2), hash);
+  const signed = (namespace: string, hash: string) => `https://storage.test/${namespace}/${hash}`;
   const blobs = { calls: [] as string[], before: async () => {} };
   const counted: Blobs = {
     async put(namespace, bytes) {
@@ -45,6 +50,14 @@ async function fixture(t: TestContext) {
       await blobs.before();
       return await disk.get(namespace, hash);
     },
+    stored: async (namespace, hash) =>
+      (await stat(file(namespace, hash)).catch(() => undefined))?.size ?? null,
+    upload: async (namespace, hash) => ({
+      url: signed(namespace, hash),
+      headers: {},
+      expiresAt: now(),
+    }),
+    download: async (namespace, hash) => ({ url: signed(namespace, hash), expiresAt: now() }),
   };
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(new ArtifactStore(state, scope, counted));
@@ -56,7 +69,32 @@ async function fixture(t: TestContext) {
         sql.get<{ content: Buffer | null }>('SELECT content FROM artifacts WHERE id=?', id),
       )
     )?.content;
-  return { directory, state, disk, blobs, counted, scope, artifacts, caller, content };
+  /** Begins an upload of `bytes` as `caller` and stores them where the signed PUT would. */
+  const upload = async (bytes: Buffer, store = artifacts, as = caller) => {
+    const sha256 = sha256Hex(bytes);
+    const { uploadId } = await store.uploadBegin(as, {
+      title: 'Object',
+      size: bytes.length,
+      sha256,
+      mediaType: 'text/plain',
+    });
+    await mkdir(dirname(file(as.projectId, sha256)), { recursive: true });
+    await writeFile(file(as.projectId, sha256), bytes);
+    return uploadId;
+  };
+  return {
+    directory,
+    state,
+    disk,
+    blobs,
+    counted,
+    scope,
+    artifacts,
+    caller,
+    content,
+    file,
+    upload,
+  };
 }
 
 const outage = async () => {
@@ -214,15 +252,10 @@ test('execution outputs are what this session created as this actor, oldest firs
   const other: Caller = { ...f.caller, actorId: peer, session: { id: 'ses_first' } };
   for (const [n, caller] of [first, second, other, f.caller, first, second].entries())
     await store.create(caller, { title: `Output ${n}`, content: `bytes ${n}` });
-  const { store: large, sha256 } = objectStore(Buffer.from('uploaded'));
-  t.after(store.bindLarge(large.storage));
-  const begun = await store.uploadBegin(first, {
-    title: 'Upload',
-    size: 8,
-    sha256,
-    mediaType: 'text/plain',
-  });
-  const uploaded = await store.uploadComplete(first, begun.uploadId);
+  const uploaded = await store.uploadComplete(
+    first,
+    await f.upload(Buffer.from('uploaded'), store, first),
+  );
   // What authored() answered: rows by this actor whose creation event names this session.
   const receipts = async (caller: Caller) =>
     (
@@ -388,114 +421,58 @@ test('rows from before bytes were kept in them read through blobs, and are logge
   });
 });
 
-/** Large storage holding exactly one object, whose served bytes a test may replace. */
-function objectStore(bytes: Buffer) {
-  const sha256 = sha256Hex(bytes);
-  const store = {
-    reads: 0,
-    served: async (): Promise<Buffer> => bytes,
-    storage: {
-      async begin() {
-        return {
-          objectId: 'obj_rows',
-          plan: {
-            partSize: bytes.length,
-            partCount: 1,
-            parts: [],
-            completedParts: [1],
-            nextPart: null,
-          },
-        };
-      },
-      async resume() {
-        throw new Error('unused');
-      },
-      async complete() {
-        return { objectId: 'obj_rows', size: bytes.length, sha256, state: 'available' };
-      },
-      async download(): Promise<{ url: string; expiresAt: string }> {
-        throw new Error('unused');
-      },
-      async read(): Promise<Buffer> {
-        store.reads++;
-        return await store.served();
-      },
-    } satisfies LargeArtifactStorage,
-  };
-  return { store, sha256 };
-}
-
-async function upload(f: Awaited<ReturnType<typeof fixture>>, t: TestContext, bytes: Buffer) {
-  const { store, sha256 } = objectStore(bytes);
-  t.after(f.artifacts.bindLarge(store.storage));
-  const begun = await f.artifacts.uploadBegin(f.caller, {
-    title: 'Object',
-    size: bytes.length,
-    sha256,
-    mediaType: 'text/plain',
-  });
-  return { store, uploadId: begun.uploadId };
-}
-
 test('completing a small upload copies its verified bytes into the row', async (t) => {
   const f = await fixture(t);
   const bytes = Buffer.alloc(1000, 'k');
-  const { store, uploadId } = await upload(f, t, bytes);
-  const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
-  assert.equal(store.reads, 1);
+  const artifact = await f.artifacts.uploadComplete(f.caller, await f.upload(bytes));
+  assert.deepEqual(f.blobs.calls, ['get']);
   assert.deepEqual(await f.content(artifact.id), bytes);
   assert.equal((await f.artifacts.read(f.caller, artifact.id)).content, bytes.toString());
-  assert.equal(store.reads, 1, 'later reads are local');
+  assert.deepEqual(f.blobs.calls, ['get'], 'later reads are local');
 });
 
-test('corrupt or missing bytes at completion fail it and record no artifact', async (t) => {
+test('corrupt bytes or an outage at completion fail it and record no artifact; a retry completes', async (t) => {
   const f = await fixture(t);
-  const { store, uploadId } = await upload(f, t, Buffer.from('declared'));
-  store.served = async () => Buffer.from('replaced');
+  const bytes = Buffer.from('declared');
+  const uploadId = await f.upload(bytes);
+  const file = f.file(f.caller.projectId, sha256Hex(bytes));
+  await writeFile(file, 'replaced');
   await assert.rejects(f.artifacts.uploadComplete(f.caller, uploadId), {
     code: 'blob_corrupt',
     status: 500,
   });
-  assert.deepEqual(await f.artifacts.list(f.caller), []);
-  // An object storage reported available but cannot find is not what it claimed: never a 404.
-  store.served = async () => {
-    throw new MervError('blob_not_found', 'Blob not found', 404);
-  };
+  await unlink(file);
   await assert.rejects(f.artifacts.uploadComplete(f.caller, uploadId), {
-    code: 'upload_mismatch',
-    status: 502,
+    code: 'upload_pending',
+    status: 409,
+  });
+  await writeFile(file, bytes);
+  f.blobs.before = outage;
+  await assert.rejects(f.artifacts.uploadComplete(f.caller, uploadId), {
+    code: 'blob_unavailable',
+    status: 503,
   });
   assert.deepEqual(await f.artifacts.list(f.caller), []);
-  store.served = async () => Buffer.from('declared');
+  f.blobs.before = async () => {};
   const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
   assert.equal((await f.content(artifact.id))?.toString(), 'declared');
 });
 
-test('an outage at completion records the artifact, which reads through its object', async (t) => {
+test('an upload over the inline limit keeps its bytes only in blobs', async (t) => {
   const f = await fixture(t);
-  const { store, uploadId } = await upload(f, t, Buffer.from('through the object'));
-  store.served = outage;
+  const uploadId = await f.upload(Buffer.alloc(2_000_001, 'L'));
   const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
-  assert.equal(await f.content(artifact.id), null);
-  store.served = async () => Buffer.from('through the object');
-  assert.equal((await f.artifacts.read(f.caller, artifact.id)).content, 'through the object');
-  assert.equal(store.reads, 2);
-});
-
-test('an upload over the inline limit keeps its bytes only in its object', async (t) => {
-  const f = await fixture(t);
-  const { store, uploadId } = await upload(f, t, Buffer.alloc(2_000_001, 'L'));
-  const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
-  assert.equal(store.reads, 0);
+  assert.deepEqual(f.blobs.calls, []);
   assert.equal(await f.content(artifact.id), null);
   await assert.rejects(f.artifacts.read(f.caller, artifact.id), { code: 'artifact_size' });
 });
 
 test('a download under a writer is logged once, and outside one is not', async (t) => {
   const f = await fixture(t);
-  const { store, uploadId } = await upload(f, t, Buffer.from('signed'));
-  const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
-  store.storage.download = async () => ({ url: 'https://storage.test/obj_rows', expiresAt: now() });
+  const artifact = await f.artifacts.uploadComplete(
+    f.caller,
+    await f.upload(Buffer.from('signed')),
+  );
   const logged = t.mock.method(process.stderr, 'write', () => true);
   const lines = () =>
     logged.mock.calls.filter((call) =>
@@ -505,7 +482,7 @@ test('a download under a writer is logged once, and outside one is not', async (
   assert.equal(lines(), 0);
   await f.state.transaction(async () => {
     const { download } = await f.artifacts.download(f.caller, artifact.id);
-    assert.equal(download.url, 'https://storage.test/obj_rows');
+    assert.equal(download.url, `https://storage.test/${f.caller.projectId}/${artifact.hash}`);
   });
   assert.equal(lines(), 1);
   logged.mock.restore();

@@ -6,23 +6,29 @@ import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   MAX_OBJECT_BYTES,
+  sha256Hex,
   type Artifact,
+  type ArtifactUploadStatus,
   type Caller,
-  type LargeArtifactStorage,
 } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { stateConfig } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
+import { s3Blobs, send } from './fixtures/s3-blobs.js';
 
-async function largeApp(t: TestContext) {
+/** Artifacts and their tools over S3 blobs, or over disk blobs, which cannot sign uploads. */
+async function largeApp(t: TestContext, disk = false) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-large-artifact-'));
+  const s3 = await s3Blobs(t);
   const app = await createApp({
     directory,
     config: {
       plugins: [
         { id: 'state', name: '@merv/state', config: stateConfig(directory) },
         { id: 'scope', name: '@merv/scope' },
-        { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } },
+        disk
+          ? { id: 'blobs', name: '@merv/blobs', config: { root: join(directory, 'blobs') } }
+          : s3.entry,
         { id: 'artifacts', name: '@merv/artifacts' },
         { id: 'tools', name: '@merv/api/tools-plugin' },
         { id: 'artifact-tools', name: '@merv/artifacts/tools' },
@@ -33,334 +39,329 @@ async function largeApp(t: TestContext) {
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  return app;
-}
-
-test('large artifact upload, replay, download and absent storage keep inline artifacts working', async (t) => {
-  const app = await largeApp(t);
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
-  const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const small = await app.ctx.artifacts.create(owner, { title: 'Note', content: 'still here' });
-  assert.equal((await app.ctx.artifacts.read(owner, small.id)).content, 'still here');
-  assert.deepEqual(await app.ctx.tools.call('artifact.storage_status', owner, {}), {
-    available: false,
-  });
-  const input = {
-    title: 'Rows.csv',
-    size: 8_000_000,
-    sha256: 'a'.repeat(64),
-    mediaType: 'text/csv',
-    requestId: 'rows-one',
-  };
-  await assert.rejects(app.ctx.tools.call('artifact.upload_begin', owner, input), {
-    code: 'storage_unavailable',
-  });
-  // Unbound storage is refused before any row or lock.
-  assert.equal(
+  const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const count = async (table: string) =>
     (
       await app.ctx.state.read((sql) =>
-        sql.get<{ count: number }>('SELECT count(*)::int AS count FROM artifact_uploads'),
+        sql.get<{ count: number }>(`SELECT count(*)::int AS count FROM ${table}`),
       )
-    )?.count,
-    0,
-  );
+    )?.count;
+  return { app, owner, boot, count, ...s3 };
+}
 
-  const calls: string[] = [];
-  let digest = input.sha256;
-  const storage: LargeArtifactStorage = {
-    async begin(projectId) {
-      calls.push(`begin:${projectId}`);
-      return {
-        objectId: 'obj_rows',
-        plan: {
-          partSize: 8_000_000,
-          partCount: 1,
-          parts: [
-            { partNumber: 1, size: 8_000_000, url: 'https://bucket.example/part', headers: {} },
-          ],
-          completedParts: [],
-          nextPart: null,
-          // A stray key from an adapter never replaces the upload ID artifacts chose.
-          ...({ uploadId: 'aup_adapter' } as object),
-        },
-      };
-    },
-    async resume(_projectId, _objectId, startPart) {
-      calls.push(`resume:${startPart}`);
-      return {
-        partSize: 8_000_000,
-        partCount: 1,
-        parts: [],
-        completedParts: [1],
-        nextPart: null,
-        ...({ uploadId: 'aup_adapter' } as object),
-      };
-    },
-    async complete() {
-      calls.push('complete');
-      return { objectId: 'obj_rows', size: input.size, sha256: digest, state: 'available' };
-    },
-    async download() {
-      calls.push('download');
-      return {
-        url: 'https://bucket.example/file',
-        expiresAt: new Date(Date.now() + 50_000).toISOString(),
-      };
-    },
-    async read() {
-      throw new Error('an object over the inline limit is never read inline');
-    },
-  };
-  const unbind = app.ctx.artifacts.bindLarge(storage);
-  t.after(unbind);
-  assert.deepEqual(await app.ctx.tools.call('artifact.storage_status', owner, {}), {
+/** A file and the upload input that declares it. */
+const file = (bytes: Buffer, requestId?: string) => ({
+  bytes,
+  input: {
+    title: 'Rows.csv',
+    size: bytes.length,
+    sha256: sha256Hex(bytes),
+    mediaType: 'text/csv',
+    ...(requestId ? { requestId } : {}),
+  },
+});
+
+test('an upload is one signed PUT of exactly the declared bytes, and a stored file needs none', async (t) => {
+  const f = await largeApp(t);
+  assert.deepEqual(await f.app.ctx.tools.call('artifact.storage_status', f.owner, {}), {
     available: true,
   });
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.get', owner, { artifactId: small.id })) as {
-        downloadAvailable: boolean;
-      }
-    ).downloadAvailable,
-    false,
+  const small = file(Buffer.from('id,value\n1,2\n'), 'small');
+  const plan = (await f.app.ctx.tools.call(
+    'artifact.upload_begin',
+    f.owner,
+    small.input,
+  )) as ArtifactUploadStatus;
+  const [part] = plan.parts;
+  assert.match(
+    part!.url,
+    new RegExp(`/merv-artifacts/${f.key(f.owner.projectId, small.input.sha256)}\\?`),
   );
-  const begin = (await app.ctx.tools.call('artifact.upload_begin', owner, input)) as {
-    uploadId: string;
-  };
-  assert.notEqual(begin.uploadId, 'aup_adapter');
+  assert.deepEqual(plan, {
+    uploadId: plan.uploadId,
+    partSize: small.bytes.length,
+    partCount: 1,
+    nextPart: null,
+    parts: [
+      {
+        partNumber: 1,
+        url: part!.url,
+        size: small.bytes.length,
+        headers: {
+          'x-amz-checksum-sha256': Buffer.from(small.input.sha256, 'hex').toString('base64'),
+          'if-none-match': '*',
+        },
+      },
+    ],
+    completedParts: [],
+  });
+  // The same requestId replays the upload; changed details are refused.
   assert.equal(
-    ((await app.ctx.tools.call('artifact.upload_begin', owner, input)) as { uploadId: string })
+    ((await f.app.ctx.artifacts.uploadBegin(f.owner, small.input)) as ArtifactUploadStatus)
       .uploadId,
-    begin.uploadId,
+    plan.uploadId,
   );
-  const resumed = (await app.ctx.tools.call('artifact.upload_resume', owner, {
-    uploadId: begin.uploadId,
-  })) as { uploadId: string; completedParts: number[] };
-  assert.equal(resumed.uploadId, begin.uploadId);
-  assert.deepEqual(resumed.completedParts, [1]);
-  digest = 'b'.repeat(64);
   await assert.rejects(
-    app.ctx.tools.call('artifact.upload_complete', owner, { uploadId: begin.uploadId }),
-    { code: 'upload_mismatch' },
+    f.app.ctx.artifacts.uploadBegin(f.owner, { ...small.input, title: 'Other.csv' }),
+    { code: 'upload_conflict', status: 409 },
   );
-  digest = input.sha256;
-  const artifact = (await app.ctx.tools.call('artifact.upload_complete', owner, {
-    uploadId: begin.uploadId,
+  // Completing before the PUT records nothing, and the tool says how to go on.
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.upload_complete', f.owner, { uploadId: plan.uploadId }),
+    {
+      code: 'upload_pending',
+      status: 409,
+      message:
+        'The file has not been uploaded yet; PUT the file to the plan URL with its headers first; artifact.upload_resume signs a fresh URL',
+    },
+  );
+  assert.equal(await f.count('artifacts'), 0);
+  // The store refuses other bytes under the URL.
+  assert.equal((await send(plan, Buffer.from('id,value\n1,3\n'))).status, 400);
+  assert.equal(f.server.objects.size, 0);
+  assert.equal((await send(plan, small.bytes)).status, 200);
+  // A repeat PUT is refused: a stored object is never overwritten.
+  assert.equal((await send(plan, small.bytes)).status, 412);
+  const artifact = (await f.app.ctx.tools.call('artifact.upload_complete', f.owner, {
+    uploadId: plan.uploadId,
   })) as Artifact;
-  assert.equal(artifact.objectId, 'obj_rows');
-  assert.equal(artifact.hash, input.sha256);
+  assert.deepEqual(Object.keys(artifact).sort(), [
+    'createdAt',
+    'createdBy',
+    'hash',
+    'id',
+    'mediaType',
+    'projectId',
+    'size',
+    'title',
+  ]);
+  // A file within the inline limit is kept in its row and reads locally.
+  const reads = f.server.requests.length;
+  assert.equal(
+    (await f.app.ctx.artifacts.read(f.owner, artifact.id)).content,
+    small.bytes.toString(),
+  );
+  assert.equal(f.server.requests.length, reads);
+  // After completion, begin, resume and complete answer from the row with no storage call.
+  const again = await f.app.ctx.artifacts.uploadBegin(f.owner, small.input);
+  assert.deepEqual([again.artifactId, again.parts, again.nextPart], [artifact.id, [], null]);
+  assert.equal(
+    (await f.app.ctx.artifacts.uploadResume(f.owner, plan.uploadId)).artifactId,
+    artifact.id,
+  );
+  assert.equal((await f.app.ctx.artifacts.uploadComplete(f.owner, plan.uploadId)).id, artifact.id);
+  assert.equal(f.server.requests.length, reads);
+  // Another upload of a stored file needs no PUT.
+  const stored = await f.app.ctx.artifacts.uploadBegin(f.owner, {
+    ...small.input,
+    requestId: 'again',
+  });
+  assert.deepEqual(stored, {
+    uploadId: stored.uploadId,
+    partSize: small.bytes.length,
+    partCount: 1,
+    nextPart: null,
+    parts: [],
+    completedParts: [1],
+  });
+  assert.notEqual(
+    (await f.app.ctx.artifacts.uploadComplete(f.owner, stored.uploadId)).id,
+    artifact.id,
+  );
+});
+
+test('a file over the inline limit stays in blobs and downloads through a signed URL', async (t) => {
+  const f = await largeApp(t);
+  const large = file(Buffer.alloc(2_000_001, 'L'));
+  const plan = await f.app.ctx.artifacts.uploadBegin(f.owner, large.input);
+  assert.equal((await send(plan, large.bytes)).status, 200);
+  const artifact = await f.app.ctx.artifacts.uploadComplete(f.owner, plan.uploadId);
   assert.equal(
     (
-      (await app.ctx.tools.call('artifact.get', owner, { artifactId: artifact.id })) as {
+      await f.app.ctx.state.read((sql) =>
+        sql.get<{ content: Buffer | null }>(
+          'SELECT content FROM artifacts WHERE id=?',
+          artifact.id,
+        ),
+      )
+    )?.content,
+    null,
+  );
+  assert.equal(
+    (
+      (await f.app.ctx.tools.call('artifact.get', f.owner, { artifactId: artifact.id })) as {
         downloadAvailable: boolean;
       }
     ).downloadAvailable,
     true,
   );
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.upload_complete', owner, {
-        uploadId: begin.uploadId,
-      })) as Artifact
-    ).id,
-    artifact.id,
-  );
-  assert.equal(calls.filter((entry) => entry === 'complete').length, 2);
-  // After completion, begin and resume answer from the row with no storage call.
-  const before = calls.length;
-  const again = (await app.ctx.tools.call('artifact.upload_begin', owner, input)) as {
-    uploadId: string;
-    artifactId?: string;
-    parts: unknown[];
-    nextPart: number | null;
-  };
-  assert.deepEqual(
-    [again.uploadId, again.artifactId, again.parts, again.nextPart],
-    [begin.uploadId, artifact.id, [], null],
-  );
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.upload_resume', owner, {
-        uploadId: begin.uploadId,
-      })) as { artifactId?: string }
-    ).artifactId,
-    artifact.id,
-  );
-  assert.equal(calls.length, before);
-  assert.equal(
-    (await app.ctx.artifacts.list(owner)).filter((entry) => entry.id === artifact.id).length,
-    1,
-  );
-  await assert.rejects(app.ctx.artifacts.read(owner, artifact.id), {
-    code: 'artifact_size',
-    message: 'Artifact exceeds the 2,000,000-byte inline limit',
-    details: { artifactId: artifact.id, size: input.size },
-  });
   // The tool, not the service, says how to go on.
-  await assert.rejects(app.ctx.tools.call('artifact.read', owner, { artifactId: artifact.id }), {
-    code: 'artifact_size',
-    message: /; use artifact\.read with mode download$/,
-  });
-  // A failed hint lookup drops the hint and keeps the refusal.
-  const canDownload = app.ctx.artifacts.canDownload;
-  app.ctx.artifacts.canDownload = () => {
-    throw new Error('hint lookup failed');
-  };
-  await assert.rejects(app.ctx.tools.call('artifact.read', owner, { artifactId: artifact.id }), {
+  await assert.rejects(f.app.ctx.artifacts.read(f.owner, artifact.id), {
     code: 'artifact_size',
     message: 'Artifact exceeds the 2,000,000-byte inline limit',
+    details: { artifactId: artifact.id, size: large.bytes.length },
   });
-  app.ctx.artifacts.canDownload = canDownload;
-  const reader = await app.ctx.scope.issueActor(owner, { name: 'Reviewer', role: 'reader' });
-  const review = { actorId: reader.actor.id, projectId: owner.projectId };
-  assert.equal(
-    (
-      (await app.ctx.tools.call('artifact.read', review, {
-        artifactId: artifact.id,
-        mode: 'download',
-      })) as { download: { url: string } }
-    ).download.url,
-    'https://bucket.example/file',
-  );
   await assert.rejects(
-    app.ctx.tools.call('artifact.upload_begin', review, { ...input, requestId: 'review' }),
+    f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id }),
+    { code: 'artifact_size', message: /; use artifact\.read with mode download$/ },
+  );
+  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reviewer', role: 'reader' });
+  const review: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
+  const { download } = (await f.app.ctx.tools.call('artifact.read', review, {
+    artifactId: artifact.id,
+    mode: 'download',
+  })) as { download: { url: string } };
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), large.bytes);
+  await assert.rejects(
+    f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
     { code: 'forbidden' },
   );
-  unbind();
-  assert.deepEqual(await app.ctx.tools.call('artifact.storage_status', owner, {}), {
+});
+
+test('a stored file of another size than declared is a 409 mismatch from begin and complete', async (t) => {
+  const f = await largeApp(t);
+  const real = file(Buffer.from('twelve bytes'));
+  const wrong = { ...real.input, size: real.bytes.length + 1, requestId: 'wrong' };
+  // Declared before the file is stored: the plan signs the declared size.
+  const pending = await f.app.ctx.artifacts.uploadBegin(f.owner, wrong);
+  assert.equal(pending.parts[0]!.size, wrong.size);
+  const right = await f.app.ctx.artifacts.uploadBegin(f.owner, real.input);
+  assert.equal((await send(right, real.bytes)).status, 200);
+  for (const call of [
+    () => f.app.ctx.artifacts.uploadComplete(f.owner, pending.uploadId),
+    () => f.app.ctx.artifacts.uploadBegin(f.owner, wrong),
+    () => f.app.ctx.artifacts.uploadResume(f.owner, pending.uploadId),
+  ])
+    await assert.rejects(call(), {
+      code: 'upload_mismatch',
+      status: 409,
+      message: 'A stored file with this SHA-256 has a different size',
+    });
+  assert.equal(await f.count('artifacts'), 0);
+});
+
+test('concurrent completions record one artifact', async (t) => {
+  const f = await largeApp(t);
+  const one = file(Buffer.from('once'));
+  const plan = await f.app.ctx.artifacts.uploadBegin(f.owner, one.input);
+  await send(plan, one.bytes);
+  const done = await Promise.all(
+    [1, 2, 3].map(() => f.app.ctx.artifacts.uploadComplete(f.owner, plan.uploadId)),
+  );
+  assert.equal(new Set(done.map((artifact) => artifact.id)).size, 1);
+  assert.equal(await f.count('artifacts'), 1);
+});
+
+test('uploads belong to their actor, and a revoked writer gets no URL', async (t) => {
+  const f = await largeApp(t);
+  const issued = await f.app.ctx.scope.issueActor(f.owner, { name: 'Producer', role: 'producer' });
+  const producer: Caller = { actorId: issued.actor.id, projectId: f.owner.projectId };
+  const rows = file(Buffer.from('rows'), 'rows');
+  // One requestId, two actors: two uploads, and neither learns of the other's.
+  const mine = await f.app.ctx.artifacts.uploadBegin(f.owner, rows.input);
+  const theirs = await f.app.ctx.artifacts.uploadBegin(producer, {
+    ...rows.input,
+    title: 'Other rows',
+  });
+  assert.notEqual(theirs.uploadId, mine.uploadId);
+  for (const call of [
+    () => f.app.ctx.artifacts.uploadResume(producer, mine.uploadId),
+    () => f.app.ctx.artifacts.uploadComplete(producer, mine.uploadId),
+  ])
+    await assert.rejects(call(), { code: 'not_found' });
+  await f.app.ctx.scope.revokeActor(f.owner, producer.actorId);
+  const signed = f.server.requests.length;
+  for (const call of [
+    () => f.app.ctx.artifacts.uploadResume(producer, theirs.uploadId),
+    () => f.app.ctx.artifacts.uploadBegin(producer, { ...rows.input, requestId: 'late' }),
+  ])
+    await assert.rejects(call(), { code: 'forbidden' });
+  assert.equal(f.server.requests.length, signed);
+});
+
+test('blobs that cannot sign uploads refuse them before any row', async (t) => {
+  const f = await largeApp(t, true);
+  assert.deepEqual(await f.app.ctx.tools.call('artifact.storage_status', f.owner, {}), {
     available: false,
   });
   await assert.rejects(
-    app.ctx.tools.call('artifact.read', owner, { artifactId: artifact.id, mode: 'download' }),
-    { code: 'storage_unavailable' },
+    f.app.ctx.tools.call('artifact.upload_begin', f.owner, file(Buffer.from('x')).input),
+    { code: 'storage_unavailable', status: 503 },
   );
-  // Without a way to download it, the refusal offers none.
-  await assert.rejects(app.ctx.tools.call('artifact.read', owner, { artifactId: artifact.id }), {
-    code: 'artifact_size',
-    message: 'Artifact exceeds the 2,000,000-byte inline limit',
-  });
-  assert.equal((await app.ctx.artifacts.read(owner, small.id)).content, 'still here');
+  assert.equal(await f.count('artifact_uploads'), 0);
+  const note = await f.app.ctx.artifacts.create(f.owner, { title: 'Note', content: 'still here' });
+  assert.equal((await f.app.ctx.artifacts.read(f.owner, note.id)).content, 'still here');
+  assert.equal(
+    (
+      (await f.app.ctx.tools.call('artifact.get', f.owner, { artifactId: note.id })) as {
+        downloadAvailable: boolean;
+      }
+    ).downloadAvailable,
+    false,
+  );
 });
 
-test('uploads belong to their actor, and resumed part URLs are withheld after a revocation', async (t) => {
-  const app = await largeApp(t);
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
-  const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Producer', role: 'producer' });
-  const producer = { actorId: issued.actor.id, projectId: owner.projectId };
-  const keys: string[] = [];
-  let failBegin = false;
-  let objectId: string | undefined;
-  const entered = deferred();
-  const release = deferred();
-  t.after(
-    app.ctx.artifacts.bindLarge({
-      async begin(_projectId, key) {
-        if (failBegin) throw new Error('storage failed');
-        keys.push(key);
-        return {
-          objectId: objectId ?? `obj_${key}`,
-          plan: { partSize: 10, partCount: 1, parts: [], completedParts: [], nextPart: 1 },
-        };
-      },
-      async resume() {
-        entered.resolve();
-        await release.promise;
-        return {
-          partSize: 10,
-          partCount: 1,
-          parts: [{ partNumber: 1, size: 10, url: 'https://bucket.example/part', headers: {} }],
-          completedParts: [],
-          nextPart: 1,
-        };
-      },
-      async complete() {
-        throw new Error('unused');
-      },
-      async download() {
-        throw new Error('unused');
-      },
-      async read() {
-        throw new Error('unused');
-      },
-    }),
-  );
-  const input = { title: 'Rows', size: 10, sha256: 'a'.repeat(64), mediaType: 'text/csv' };
-  // One requestId, two actors: two uploads, and neither learns of the other's.
-  const mine = await app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'rows' });
-  const theirs = await app.ctx.artifacts.uploadBegin(producer, {
-    ...input,
-    title: 'Other rows',
-    requestId: 'rows',
-  });
-  assert.notEqual(theirs.uploadId, mine.uploadId);
-  assert.deepEqual(keys, [mine.uploadId, theirs.uploadId]);
-  await assert.rejects(app.ctx.artifacts.uploadResume(producer, mine.uploadId), {
-    code: 'not_found',
-  });
-  // A retry whose storage names another object is refused and leaves the row as it was;
-  // a retry naming the same object still succeeds.
-  objectId = 'obj_other';
-  await assert.rejects(app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'rows' }), {
-    code: 'upload_conflict',
-    status: 409,
-    message: 'Upload object changed on retry',
-  });
-  const objectOf = async () =>
-    (
-      await app.ctx.state.read((sql) =>
-        sql.get<{ object_id: string }>(
-          'SELECT object_id FROM artifact_uploads WHERE upload_id=?',
-          mine.uploadId,
-        ),
-      )
-    )?.object_id;
-  assert.equal(await objectOf(), `obj_${mine.uploadId}`);
-  objectId = undefined;
-  assert.equal(
-    (await app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'rows' })).uploadId,
-    mine.uploadId,
-  );
-  assert.equal(await objectOf(), `obj_${mine.uploadId}`);
-  // An upload whose storage object was never created: the tool adds how to recover it.
-  failBegin = true;
-  await assert.rejects(
-    app.ctx.artifacts.uploadBegin(owner, { ...input, requestId: 'no-object' }),
-    /storage failed/,
-  );
-  const stuck = await app.ctx.state.read((sql) =>
-    sql.get<{ upload_id: string }>(
-      'SELECT upload_id FROM artifact_uploads WHERE object_id IS NULL',
+test('an upload begun in sandbox storage resumes and completes through blobs', async (t) => {
+  const f = await largeApp(t);
+  const legacy = file(Buffer.from('begun before the switch'));
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO artifact_uploads(upload_id,project_id,created_by,title,media_type,hash,size,object_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+      'aup_legacy',
+      f.owner.projectId,
+      f.owner.actorId,
+      legacy.input.title,
+      legacy.input.mediaType,
+      legacy.input.sha256,
+      legacy.input.size,
+      'obj_legacy',
+      '2026-09-28T00:00:00Z',
     ),
   );
-  await assert.rejects(app.ctx.artifacts.uploadComplete(owner, stuck!.upload_id), {
+  await assert.rejects(f.app.ctx.artifacts.uploadComplete(f.owner, 'aup_legacy'), {
     code: 'upload_pending',
-    message: 'Upload has no storage object yet',
   });
-  for (const tool of ['artifact.upload_resume', 'artifact.upload_complete'])
-    await assert.rejects(app.ctx.tools.call(tool, owner, { uploadId: stuck!.upload_id }), {
-      code: 'upload_pending',
-      message:
-        'Upload has no storage object yet; retry artifact.upload_begin with the same requestId',
-    });
-  // A revocation while part URLs are signed withholds them.
-  const pending = app.ctx.tools.call('artifact.upload_resume', producer, {
-    uploadId: theirs.uploadId,
-  });
-  const rejected = assert.rejects(pending, { code: 'forbidden' });
-  await entered.promise;
-  await app.ctx.scope.revokeActor(owner, producer.actorId);
-  release.resolve();
-  await rejected;
+  const plan = await f.app.ctx.artifacts.uploadResume(f.owner, 'aup_legacy');
+  assert.equal((await send(plan, legacy.bytes)).status, 200);
+  const artifact = await f.app.ctx.artifacts.uploadComplete(f.owner, 'aup_legacy');
+  assert.equal(
+    (await f.app.ctx.artifacts.read(f.owner, artifact.id)).content,
+    legacy.bytes.toString(),
+  );
+});
+
+test('a row whose bytes were in sandbox storage downloads through blobs', async (t) => {
+  const f = await largeApp(t);
+  const bytes = Buffer.alloc(3_000_000, 'M');
+  const hash = sha256Hex(bytes);
+  // The move script put its bytes at their content address; object_id is only a label now.
+  f.server.objects.set(f.key(f.owner.projectId, hash), bytes);
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,object_id) VALUES(?,?,?,?,?,?,?,?,?)',
+      'art_moved',
+      f.owner.projectId,
+      f.owner.actorId,
+      'Moved',
+      'application/octet-stream',
+      hash,
+      bytes.length,
+      '2026-09-20T00:00:00Z',
+      'obj_moved',
+    ),
+  );
+  assert.equal('objectId' in (await f.app.ctx.artifacts.get(f.owner, 'art_moved')), false);
+  const { download } = await f.app.ctx.artifacts.download(f.owner, 'art_moved');
+  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), bytes);
 });
 
 test('resuming an upload waits for no writer, for an owner or a session caller', async (t) => {
-  const app = await largeApp(t);
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
-  const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const f = await largeApp(t);
+  const { app, owner } = f;
   const source = await app.ctx.scope.delegationSource({
     ...owner,
-    credentialId: boot.credential.id,
+    credentialId: f.boot.credential.id,
   });
   const worker = await app.ctx.state.transaction((tx) =>
     app.ctx.scope.createSessionActor(
@@ -384,23 +385,7 @@ test('resuming an upload waits for no writer, for an owner or a session caller',
       },
     }),
   );
-  const plan = {
-    partSize: 10,
-    partCount: 1,
-    parts: [{ partNumber: 1, size: 10, url: 'https://bucket.example/part', headers: {} }],
-    completedParts: [],
-    nextPart: 1,
-  };
-  t.after(
-    app.ctx.artifacts.bindLarge({
-      begin: async (_projectId, key) => ({ objectId: `obj_${key}`, plan }),
-      resume: async () => plan,
-      complete: async () => assert.fail('unused'),
-      download: async () => assert.fail('unused'),
-      read: async () => assert.fail('unused'),
-    }),
-  );
-  const input = { title: 'Rows', size: 10, sha256: 'a'.repeat(64), mediaType: 'text/csv' };
+  const input = file(Buffer.from('ten bytes!')).input;
   const uploads = [
     [owner, (await app.ctx.artifacts.uploadBegin(owner, input)).uploadId],
     [session, (await app.ctx.artifacts.uploadBegin(session, input)).uploadId],
@@ -432,46 +417,23 @@ test('resuming an upload waits for no writer, for an owner or a session caller',
 });
 
 test('an upload over the largest object is refused before any row or storage call', async (t) => {
-  const app = await largeApp(t);
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
-  const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const calls: string[] = [];
-  const refuse = async () => {
-    calls.push('storage');
-    return assert.fail('unused');
-  };
-  t.after(
-    app.ctx.artifacts.bindLarge({
-      begin: refuse,
-      resume: refuse,
-      complete: refuse,
-      download: refuse,
-      read: refuse,
-    }),
-  );
+  const f = await largeApp(t);
   const input = {
     title: 'Huge',
     size: MAX_OBJECT_BYTES + 1,
     sha256: 'a'.repeat(64),
     mediaType: 'application/octet-stream',
   };
-  await assert.rejects(app.ctx.artifacts.uploadBegin(owner, input), {
+  await assert.rejects(f.app.ctx.artifacts.uploadBegin(f.owner, input), {
     code: 'artifact_size',
     status: 400,
     message: 'Artifact size must be 1 byte to 512 MiB',
   });
   // The tool's schema refuses the size before the service sees it.
-  await assert.rejects(app.ctx.tools.call('artifact.upload_begin', owner, input), {
+  await assert.rejects(f.app.ctx.tools.call('artifact.upload_begin', f.owner, input), {
     code: 'invalid_input',
     status: 400,
   });
-  assert.deepEqual(calls, []);
-  assert.equal(
-    (
-      await app.ctx.state.read((sql) =>
-        sql.get<{ count: number }>('SELECT count(*)::int AS count FROM artifact_uploads'),
-      )
-    )?.count,
-    0,
-  );
+  assert.deepEqual(f.server.requests, []);
+  assert.equal(await f.count('artifact_uploads'), 0);
 });

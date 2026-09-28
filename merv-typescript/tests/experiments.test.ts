@@ -2,7 +2,7 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -14,13 +14,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { ExperimentService } from '@merv/experiments';
-import {
-  check,
-  MervError,
-  type Caller,
-  type LargeArtifactStorage,
-  type ReviewApplication,
-} from '@merv/contracts';
+import { check, MervError, type Blobs, type Caller, type ReviewApplication } from '@merv/contracts';
 import type {
   Experiment,
   ExperimentAttach,
@@ -40,44 +34,27 @@ test('small uploaded evidence is readable and attachable while actual oversized 
   const f = await fixture(t);
   const bytes = Buffer.from(`${plan}\n${'Evidence for the paired comparison. '.repeat(1200)}`);
   const hash = createHash('sha256').update(bytes).digest('hex');
-  let served = bytes;
+  // Disk blobs that sign uploads; the signed PUT stores the bytes where put does.
+  const blobs: Blobs = f.blobs;
+  const get = blobs.get.bind(blobs);
   let requests = 0;
-  const storage: LargeArtifactStorage = {
-    async begin() {
-      return {
-        objectId: 'obj_plan',
-        plan: {
-          partSize: bytes.length,
-          partCount: 1,
-          parts: [],
-          completedParts: [1],
-          nextPart: null,
-        },
-      };
-    },
-    async resume() {
-      throw new Error('unexpected resume');
-    },
-    async complete() {
-      return { objectId: 'obj_plan', size: bytes.length, sha256: hash, state: 'available' };
-    },
-    async download() {
-      throw new Error('unexpected download');
-    },
-    // Like the Sandboxes adapter: at most one byte more than the declared size.
-    async read(_projectId, _objectId, maxBytes) {
-      requests++;
-      return served.subarray(0, maxBytes + 1);
-    },
+  blobs.get = async (namespace, hash) => {
+    requests++;
+    return await get(namespace, hash);
   };
-  const unbind = f.artifacts.bindLarge(storage);
-  t.after(unbind);
+  blobs.stored = async (namespace, hash) =>
+    await get(namespace, hash).then(
+      (stored) => stored.length,
+      () => null,
+    );
+  blobs.upload = async () => ({ url: 'https://storage.test/put', headers: {}, expiresAt: '' });
   const begun = await f.artifacts.uploadBegin(f.producer, {
     title: 'plan.md',
     size: bytes.length,
     sha256: hash,
     mediaType: 'text/markdown',
   });
+  await blobs.put(f.producer.projectId, bytes);
   const artifact = await f.artifacts.uploadComplete(f.producer, begun.uploadId);
   // Completion copies the verified bytes into the row: the one storage read happens there.
   assert.equal(requests, 1);
@@ -102,8 +79,8 @@ test('small uploaded evidence is readable and attachable while actual oversized 
     requestId: f.id(),
   });
   assert.equal(attached.artifactId, artifact.id);
-  // Later reads never reach the object again, whatever it now serves.
-  served = Buffer.alloc(bytes.length, 97);
+  // Later reads never reach blobs again, even with the bytes gone from there.
+  unlinkSync(join(f.directory, 'blobs', f.producer.projectId, hash.slice(0, 2), hash));
   assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
   assert.equal(requests, 1);
 });

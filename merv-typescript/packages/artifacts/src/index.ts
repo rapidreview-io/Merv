@@ -1,6 +1,6 @@
 import { createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
-import { META, decode, fromRow, insert, isText, meta, span, verified, view } from './content.js';
+import { META, decode, fromRow, insert, isText, meta, span, view } from './content.js';
 import { Uploads } from './uploads.js';
 import { Backfill } from './backfill.js';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,6 @@ import {
   type ArtifactInput,
   type ArtifactUploadInput,
   type ArtifactUploadStatus,
-  type LargeArtifactStorage,
   type Caller,
   type State,
   type Scope,
@@ -40,17 +39,11 @@ const named = (id: unknown): id is string => typeof id === 'string' && id.length
 /** This package's own source, whose stack frames are never the call site that is reported. */
 const OWN = [new URL('.', import.meta.url).href, fileURLToPath(new URL('.', import.meta.url))];
 export class ArtifactStore implements Artifacts {
-  private large?: LargeArtifactStorage;
-  bindLarge(storage: LargeArtifactStorage): () => void {
-    this.large = storage;
-    // Large storage binds after this service is provided: the fill then reaches its objects.
-    this.filling?.kick();
-    return () => {
-      if (this.large === storage) this.large = undefined;
-    };
-  }
   get largeUploadAvailable(): boolean {
-    return !!this.large;
+    return typeof this.blobs.upload === 'function';
+  }
+  get downloadAvailable(): boolean {
+    return typeof this.blobs.download === 'function';
   }
   private uploads: Uploads;
   constructor(
@@ -58,11 +51,8 @@ export class ArtifactStore implements Artifacts {
     private scope: Scope,
     private blobs: Blobs,
   ) {
-    this.uploads = new Uploads(
-      state,
-      scope,
-      () => this.storage(),
-      (caller, artifactId) => this.get(caller, artifactId),
+    this.uploads = new Uploads(state, scope, blobs, (caller, artifactId) =>
+      this.get(caller, artifactId),
     );
   }
   /** Complete storage migrations before publishing this service. */
@@ -71,10 +61,6 @@ export class ArtifactStore implements Artifacts {
       'artifacts',
       Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
     );
-  }
-  private storage(): LargeArtifactStorage {
-    check(this.large, 'storage_unavailable', 'Project large-file storage is unavailable', 503);
-    return this.large;
   }
   /**
    * Where a read runs: an explicit `tx`, else the ambient transaction, else a read-only snapshot
@@ -99,12 +85,8 @@ export class ArtifactStore implements Artifacts {
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus> {
     return this.uploads.begin(caller, input);
   }
-  uploadResume(
-    caller: Caller,
-    uploadId: string,
-    startPart?: number,
-  ): Promise<ArtifactUploadStatus> {
-    return this.uploads.resume(caller, uploadId, startPart);
+  uploadResume(caller: Caller, uploadId: string): Promise<ArtifactUploadStatus> {
+    return this.uploads.resume(caller, uploadId);
   }
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact> {
     return this.uploads.complete(caller, uploadId);
@@ -134,33 +116,19 @@ export class ArtifactStore implements Artifacts {
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
-  /**
-   * The bytes behind a row created before they were kept in it: large-storage bytes are verified
-   * here, blob bytes by blobs.get.
-   */
-  private async fetch({ projectId, objectId, hash, size }: Artifact, tx?: Transaction) {
+  /** The bytes behind a row created before they were kept in it, verified by blobs.get. */
+  private async fetch({ projectId, hash }: Artifact, tx?: Transaction) {
     this.offLock(tx);
-    if (!objectId) return await missing(() => this.blobs.get(projectId, hash));
-    const storage = this.storage();
-    return verified(await missing(() => storage.read(projectId, objectId, size)), { size, hash });
+    return await missing(() => this.blobs.get(projectId, hash));
   }
-  private filling?: Backfill;
   /**
    * Starts filling the rows written before bytes were kept in the row (temporary; the server
    * turns it on in its config). Returns its stop, which waits for the row in hand.
    */
   backfill(): () => Promise<void> {
-    const fill = new Backfill(
-      this.state,
-      (artifact) => this.fetch(artifact),
-      () => !!this.large,
-    );
-    this.filling = fill;
+    const fill = new Backfill(this.state, (artifact) => this.fetch(artifact));
     fill.kick();
-    return async () => {
-      if (this.filling === fill) this.filling = undefined;
-      await fill.stop();
-    };
+    return () => fill.stop();
   }
   private sites = new Set<string>();
   /**
@@ -184,18 +152,10 @@ export class ArtifactStore implements Artifacts {
       `${JSON.stringify({ event: 'artifacts.io_in_transaction', site, stack })}\n`,
     );
   }
-  canDownload(artifact: Artifact): boolean {
-    return artifact.objectId ? !!this.large : typeof this.blobs.download === 'function';
-  }
   async download(caller: Caller, artifactId: string) {
     caller = structuredClone(caller);
     this.offLock();
     const artifact = await this.get(caller, artifactId);
-    if (artifact.objectId) {
-      const storage = this.storage();
-      const download = await missing(() => storage.download(caller.projectId, artifact.objectId!));
-      return { artifact, download };
-    }
     check(
       this.blobs.download,
       'download_unsupported',

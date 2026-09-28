@@ -10,7 +10,6 @@ import {
   MervError,
   type Blobs,
   type Caller,
-  type LargeArtifactStorage,
   type Scope,
   type State,
 } from '@merv/contracts';
@@ -50,22 +49,6 @@ function backfillLog(t: TestContext) {
   };
 }
 
-/** Large storage over a map of objects; reading an absent one is blob_not_found. */
-function objects() {
-  const stored = new Map<string, Buffer>();
-  const failing = new Map<string, MervError>();
-  const storage = {
-    async read(_projectId: string, objectId: string) {
-      const failure = failing.get(objectId);
-      if (failure) throw failure;
-      const bytes = stored.get(objectId);
-      if (!bytes) throw new MervError('blob_not_found', 'Blob not found', 404);
-      return bytes;
-    },
-  } as unknown as LargeArtifactStorage;
-  return { stored, failing, storage };
-}
-
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-backfill-'));
   const state = await openState(directory);
@@ -74,12 +57,18 @@ async function fixture(t: TestContext) {
     await rm(directory, { recursive: true, force: true });
   });
   const disk = new DiskBlobs(join(directory, 'blobs'));
-  const blobs = { gets: 0, failure: undefined as MervError | undefined };
+  /** A failure for every read, or for one hash's reads. */
+  const blobs = {
+    gets: 0,
+    failure: undefined as Error | undefined,
+    failing: new Map<string, Error>(),
+  };
   const counted: Blobs = {
     put: (namespace, bytes) => disk.put(namespace, bytes),
     async get(namespace, hash) {
       blobs.gets++;
-      if (blobs.failure) throw blobs.failure;
+      const failure = blobs.failure ?? blobs.failing.get(hash);
+      if (failure) throw failure;
       return await disk.get(namespace, hash);
     },
   };
@@ -88,17 +77,16 @@ async function fixture(t: TestContext) {
   const artifacts = await store();
   const boot = await scope.bootstrap({ projectName: 'Backfill', actorName: 'Owner' });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  const large = objects();
-  /** A row from before bytes were kept in it, its bytes in blobs or, with objectId, an object. */
+  /** A row from before bytes were kept in it, its bytes in blobs; objectId labels a moved one. */
   const legacy = (text: string, objectId?: string) =>
     legacyArtifact(
       state,
       caller,
       Buffer.from(text),
-      (bytes) => (objectId ? large.stored.set(objectId, bytes) : disk.put(caller.projectId, bytes)),
+      (bytes) => disk.put(caller.projectId, bytes),
       objectId ? { objectId } : {},
     );
-  return { directory, state, blobs, store, artifacts, caller, large, legacy };
+  return { directory, state, blobs, store, artifacts, caller, legacy };
 }
 
 const content = async (state: State, id: string) =>
@@ -134,7 +122,7 @@ test('the update guard lets only missing content be filled, with bytes the CHECK
     await assert.rejects(update(sql, ...params), { code: 'state_constraint' }, sql);
 });
 
-test('the fill moves blob bytes into rows, and object bytes once large storage binds', async (t) => {
+test('the fill moves blob bytes into rows, those moved from sandbox storage too', async (t) => {
   const f = await fixture(t);
   const log = backfillLog(t);
   const blob = await f.legacy('blob bytes');
@@ -143,25 +131,13 @@ test('the fill moves blob bytes into rows, and object bytes once large storage b
   const stop = f.artifacts.backfill();
   assert.deepEqual(await log.pass(1), {
     event: 'artifacts.backfill',
-    filled: 1,
-    skipped: 0,
-    failed: 0,
-    remaining: 1,
-  });
-  assert.equal(await content(f.state, blob.id), 'blob bytes');
-  assert.equal(await content(f.state, object.id), null);
-  const unbind = f.artifacts.bindLarge(f.large.storage);
-  assert.deepEqual(await log.pass(2), {
-    event: 'artifacts.backfill',
-    filled: 1,
+    filled: 2,
     skipped: 0,
     failed: 0,
     remaining: 0,
   });
   await stop();
-  unbind();
-  assert.equal(await content(f.state, object.id), 'object bytes');
-  // Filled rows read locally, with large storage gone and blobs down.
+  // Filled rows read locally, with blobs down.
   f.blobs.failure = new MervError('blob_unavailable', 'Blob storage is down', 503);
   const gets = f.blobs.gets;
   for (const [id, text] of [
@@ -176,62 +152,59 @@ test('the fill moves blob bytes into rows, and object bytes once large storage b
 test('the fill passes over bytes that are gone or corrupt, retries other failures, and fills the rest', async (t) => {
   const f = await fixture(t);
   const log = backfillLog(t);
-  t.after(f.artifacts.bindLarge(f.large.storage));
   const missing = await legacyArtifact(f.state, f.caller, Buffer.from('never stored'), () => {});
   const corrupt = await f.legacy('corrupt blob');
   await writeFile(
     join(f.directory, 'blobs', f.caller.projectId, corrupt.hash.slice(0, 2), corrupt.hash),
     'tampered',
   );
-  const changed = await f.legacy('declared object', 'obj_changed');
-  f.large.stored.set('obj_changed', Buffer.from('replaced object'));
   const good = [await f.legacy('good blob'), await f.legacy('good object', 'obj_good')];
-  // A failure that is not lost bytes counts apart from them, and the next pass fills the row.
-  const flaky = await f.legacy('flaky object', 'obj_flaky');
-  f.large.failing.set('obj_flaky', new MervError('sandbox_unavailable', 'Link failed', 503));
-  const stop = f.artifacts.backfill();
+  // A failure that is not lost bytes counts apart from them, and the next boot fills the row.
+  const flaky = await f.legacy('flaky blob');
+  f.blobs.failing.set(flaky.hash, new TypeError('fetch failed'));
+  let stop = f.artifacts.backfill();
   assert.deepEqual(await log.pass(1), {
     event: 'artifacts.backfill',
     filled: 2,
-    skipped: 3,
+    skipped: 2,
     failed: 1,
-    remaining: 4,
+    remaining: 3,
   });
+  await stop();
   assert.deepEqual(
     log.lines
       .filter((line) => line.event === 'artifacts.backfill_failed')
       .map(({ artifactId, code }) => ({ artifactId, code })),
-    [{ artifactId: flaky.id, code: 'sandbox_unavailable' }],
+    [{ artifactId: flaky.id, code: 'TypeError' }],
   );
-  f.large.failing.clear();
-  f.artifacts.bindLarge(f.large.storage);
+  f.blobs.failing.clear();
+  stop = (await f.store()).backfill();
   assert.deepEqual(await log.pass(2), {
     event: 'artifacts.backfill',
     filled: 1,
-    skipped: 3,
+    skipped: 2,
     failed: 0,
-    remaining: 3,
+    remaining: 2,
   });
   await stop();
-  assert.equal(await content(f.state, flaky.id), 'flaky object');
+  assert.equal(await content(f.state, flaky.id), 'flaky blob');
   assert.deepEqual(
     log.lines
       .filter((line) => line.event === 'artifacts.backfill_skipped')
-      .slice(0, 3)
+      .slice(0, 2)
       .map(({ artifactId, code }) => ({ artifactId, code }))
       .sort((a, b) => String(a.artifactId).localeCompare(String(b.artifactId))),
     [
       { artifactId: missing.id, code: 'artifact_bytes_missing' },
       { artifactId: corrupt.id, code: 'blob_corrupt' },
-      { artifactId: changed.id, code: 'blob_corrupt' },
     ].sort((a, b) => a.artifactId.localeCompare(b.artifactId)),
   );
-  for (const row of [missing, corrupt, changed]) assert.equal(await content(f.state, row.id), null);
+  for (const row of [missing, corrupt]) assert.equal(await content(f.state, row.id), null);
   assert.equal(await content(f.state, good[0].id), 'good blob');
   assert.equal(await content(f.state, good[1].id), 'good object');
 });
 
-test('an outage stops the fill until the next kick', async (t) => {
+test('an outage stops the fill until the next boot', async (t) => {
   const f = await fixture(t);
   const log = backfillLog(t);
   const rows = [await f.legacy('first'), await f.legacy('second')];
@@ -245,8 +218,9 @@ test('an outage stops the fill until the next kick', async (t) => {
     code: 'blob_unavailable',
   });
   assert.equal(f.blobs.gets, 1);
+  await stop();
   f.blobs.failure = undefined;
-  const unbind = f.artifacts.bindLarge(f.large.storage);
+  const next = (await f.store()).backfill();
   assert.deepEqual(await log.pass(2), {
     event: 'artifacts.backfill',
     filled: 2,
@@ -254,8 +228,7 @@ test('an outage stops the fill until the next kick', async (t) => {
     failed: 0,
     remaining: 0,
   });
-  await stop();
-  unbind();
+  await next();
   for (const row of rows) assert.notEqual(await content(f.state, row.id), null);
 });
 

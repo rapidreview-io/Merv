@@ -12,7 +12,6 @@ import type {
   Caller,
   ContextPackage,
   IssuedUserKey,
-  LargeArtifactStorage,
   Project,
   ReviewRequest,
   Task,
@@ -315,49 +314,15 @@ test('leased workers must deliberately range-read or download large artifacts', 
 
   // Download mode remains callable by the authenticated worker and returns its private URL.
   const url = 'https://storage.example/predictions?signature=test';
-  const storage: LargeArtifactStorage = {
-    begin: async () => ({
-      objectId: 'object_predictions',
-      plan: {
-        partSize: artifact.size,
-        partCount: 1,
-        parts: [],
-        completedParts: [],
-        nextPart: null,
-      },
-    }),
-    resume: async () => ({
-      partSize: artifact.size,
-      partCount: 1,
-      parts: [],
-      completedParts: [1],
-      nextPart: null,
-    }),
-    complete: async () => ({
-      objectId: 'object_predictions',
-      size: artifact.size,
-      sha256: artifact.hash,
-      state: 'available' as const,
-    }),
-    download: async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
-    // Completion copies an object within the inline limit into its row.
-    read: async () => Buffer.from(content),
-  };
-  const unbind = f.app.ctx.artifacts.bindLarge(storage);
-  t.after(unbind);
-  const upload = await f.app.ctx.artifacts.uploadBegin(source, {
-    title: 'Prediction download',
-    size: artifact.size,
-    sha256: artifact.hash,
-    mediaType: 'application/json',
-  });
-  const downloadable = await f.app.ctx.artifacts.uploadComplete(source, upload.uploadId);
+  const blobs = f.app.ctx.blobs;
+  blobs.download = async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  t.after(() => delete blobs.download);
   const link = await f.call<{ artifact: Artifact; download: { url: string } }>(
     worker,
     'artifact.read',
-    { artifactId: downloadable.id, mode: 'download' },
+    { artifactId: artifact.id, mode: 'download' },
   );
-  assert.equal(link.artifact.id, downloadable.id);
+  assert.equal(link.artifact.id, artifact.id);
   assert.equal(link.download.url, url);
 });
 

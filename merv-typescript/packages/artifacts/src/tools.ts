@@ -22,7 +22,8 @@ async function hinted<T>(
     throw new MervError(error.code, `${error.message}; ${text}`, error.status, error.details);
   }
 }
-const pendingHint = async () => 'retry artifact.upload_begin with the same requestId';
+const pendingHint = async () =>
+  'PUT the file to the plan URL with its headers first; artifact.upload_resume signs a fresh URL';
 export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
@@ -62,7 +63,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.upload_begin',
-      'Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.',
+      "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
       z
         .object({
           title: z.string().min(1).max(300),
@@ -78,19 +79,15 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.upload_resume',
-      'Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.',
+      'Get a fresh signed URL for a pending upload.',
       z
         .object({
           uploadId: z.string().min(1),
+          // Accepted and ignored: a plan has one part.
           startPart: z.number().int().min(1).max(10000).optional(),
         })
         .strict(),
-      async (c, i) =>
-        await hinted(
-          () => ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
-          'upload_pending',
-          pendingHint,
-        ),
+      async (c, i) => await ctx.artifacts.uploadResume(c, i.uploadId),
       false,
       () => 'secret',
     );
@@ -113,13 +110,13 @@ export const artifactToolsPlugin = {
       z.object({ artifactId: z.string().min(1) }).strict(),
       async (c, i) => {
         const artifact = await ctx.artifacts.get(c, i.artifactId);
-        return { ...artifact, downloadAvailable: ctx.artifacts.canDownload(artifact) };
+        return { ...artifact, downloadAvailable: ctx.artifacts.downloadAvailable };
       },
       true,
     );
     register(
       'artifact.storage_status',
-      'Whether this project can retain large files in Sandboxes object storage.',
+      'Whether this project can retain files up to 512 MiB.',
       z.object({}).strict(),
       async () => ({ available: ctx.artifacts.largeUploadAvailable }),
       true,
@@ -142,7 +139,7 @@ export const artifactToolsPlugin = {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
           if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {
             if (i.length === undefined || i.length > workerRangeCharacters) {
-              const downloadAvailable = ctx.artifacts.canDownload(artifact);
+              const downloadAvailable = ctx.artifacts.downloadAvailable;
               throw new MervError(
                 'artifact_read_requires_range',
                 `Artifact is ${artifact.size} bytes; no content was returned. Read a bounded range with offset and length at most ${workerRangeCharacters} characters${downloadAvailable ? ', or use artifact.read mode download and inspect the file locally' : ''}.`,
@@ -158,14 +155,11 @@ export const artifactToolsPlugin = {
             }
           }
         }
-        // Only on the error path: whether this artifact can be downloaded instead.
         return await hinted(
           () => ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
           'artifact_size',
           async () =>
-            ctx.artifacts.canDownload(await ctx.artifacts.get(c, i.artifactId))
-              ? 'use artifact.read with mode download'
-              : undefined,
+            ctx.artifacts.downloadAvailable ? 'use artifact.read with mode download' : undefined,
         );
       },
       true,
@@ -188,7 +182,7 @@ export const artifactToolsPlugin = {
       async (c, i) =>
         (await ctx.artifacts.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
           ...artifact,
-          downloadAvailable: ctx.artifacts.canDownload(artifact),
+          downloadAvailable: ctx.artifacts.downloadAvailable,
         })),
       true,
     );

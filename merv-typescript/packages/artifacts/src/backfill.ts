@@ -12,7 +12,7 @@ const code = (error: unknown) =>
  * read a page at a time; each row's bytes are fetched outside any transaction and written in a
  * short transaction of their own, which the CHECK verifies. Bytes that are gone or corrupt are
  * logged as lost and passed over; any other failure of a row is logged as failed and retried by
- * the next pass; an outage stops the pass until the next kick. Delete this, with its config key,
+ * the next pass; an outage stops the pass until the next boot. Delete this, with its config key,
  * once prod has no such row left but those logged as lost.
  */
 export class Backfill {
@@ -21,10 +21,8 @@ export class Backfill {
   private stopped = false;
   constructor(
     private state: State,
-    /** The verified bytes of a row without content, from blobs or large storage. */
+    /** The verified bytes of a row without content, from blobs. */
     private fetch: (artifact: Artifact) => Promise<Buffer>,
-    /** Whether large storage is bound; while it is not, rows of its objects wait. */
-    private bound: () => boolean,
   ) {}
   /** Starts a pass, or has the running one go again once it ends. */
   kick() {
@@ -46,10 +44,9 @@ export class Backfill {
     const counts = { filled: 0, skipped: 0, failed: 0 };
     try {
       for (let after = ''; ;) {
-        const objects = this.bound() ? '' : ' AND object_id IS NULL';
         const rows = await this.state.read((sql) =>
           sql.all(
-            `SELECT ${META} FROM artifacts WHERE content IS NULL AND size<=? AND id>?${objects} ORDER BY id LIMIT 50`,
+            `SELECT ${META} FROM artifacts WHERE content IS NULL AND size<=? AND id>? ORDER BY id LIMIT 50`,
             MAX_ARTIFACT_BYTES,
             after,
           ),

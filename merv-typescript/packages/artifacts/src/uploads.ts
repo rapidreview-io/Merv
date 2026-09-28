@@ -1,7 +1,6 @@
 import {
   check,
   forRead,
-  MervError,
   MAX_ARTIFACT_BYTES,
   MAX_OBJECT_BYTES,
   newId,
@@ -11,12 +10,12 @@ import {
   type Artifact,
   type ArtifactUploadInput,
   type ArtifactUploadStatus,
+  type Blobs,
   type Caller,
-  type LargeArtifactStorage,
   type Scope,
   type State,
 } from '@merv/contracts';
-import { META, fromRow, insert, meta, verified } from './content.js';
+import { META, fromRow, insert, meta } from './content.js';
 
 type UploadRow = {
   upload_id: string;
@@ -26,9 +25,9 @@ type UploadRow = {
   media_type: string;
   hash: string;
   size: number;
-  object_id: string | null;
   artifact_id: string | null;
 };
+type Large = Blobs & Required<Pick<Blobs, 'upload' | 'stored'>>;
 
 /** A completed upload: its artifact, and nothing left to send. */
 const done = (row: UploadRow): ArtifactUploadStatus => ({
@@ -41,14 +40,24 @@ const done = (row: UploadRow): ArtifactUploadStatus => ({
   nextPart: null,
 });
 
-/** Resumable uploads of large files into bound large storage, each owned by the actor that began it. */
+/** Resumable uploads of files into blobs by signed PUT, each owned by the actor that began it. */
 export class Uploads {
   constructor(
     private state: State,
     private scope: Scope,
-    private storage: () => LargeArtifactStorage,
+    private blobs: Blobs,
     private get: (caller: Caller, artifactId: string) => Promise<Artifact>,
   ) {}
+  /** Before any transaction: a store that cannot sign uploads writes no row. */
+  private large(): Large {
+    check(
+      this.blobs.upload && this.blobs.stored,
+      'storage_unavailable',
+      'Project large-file storage is unavailable',
+      503,
+    );
+    return this.blobs as Large;
+  }
 
   async begin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus> {
     caller = structuredClone(caller);
@@ -72,8 +81,7 @@ export class Uploads {
       'invalid_artifact',
       'requestId must be a string of 1-128 characters',
     );
-    // Before any transaction: with storage unbound there is no row and no lock.
-    const storage = this.storage();
+    this.large();
     // A retry finds its actor's upload; another actor's same requestId begins its own.
     const uploadId =
       requestId === undefined
@@ -110,74 +118,25 @@ export class Uploads {
       );
       return row;
     });
-    if (row.artifact_id) return done(row);
-    const { objectId, plan } = await storage.begin(caller.projectId, uploadId, {
-      size: input.size,
-      sha256: input.sha256,
-    });
-    // Signed part URLs are a write capability: authorise again before handing them out.
-    await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const { changes } = await tx.run(
-        'UPDATE artifact_uploads SET object_id=? WHERE upload_id=? AND (object_id IS NULL OR object_id=?)',
-        objectId,
-        uploadId,
-        objectId,
-      );
-      check(changes === 1, 'upload_conflict', 'Upload object changed on retry', 409);
-    });
-    return { ...plan, uploadId };
+    return row.artifact_id ? done(row) : await this.plan(row);
   }
 
-  async resume(caller: Caller, uploadId: string, startPart = 1): Promise<ArtifactUploadStatus> {
-    caller = structuredClone(caller);
-    const row = await this.row(caller, uploadId);
-    if (row.artifact_id) return done(row);
-    check(row.object_id, 'upload_pending', 'Upload has no storage object yet', 409);
-    const plan = await this.storage().resume(caller.projectId, row.object_id, startPart);
-    // Signed part URLs are a write capability: a revocation while they were signed withholds them.
-    await forRead(this.state, (tx) => this.scope.require(caller, 'write', tx));
-    return { ...plan, uploadId: row.upload_id };
+  async resume(caller: Caller, uploadId: string): Promise<ArtifactUploadStatus> {
+    const row = await this.row(structuredClone(caller), uploadId);
+    return row.artifact_id ? done(row) : await this.plan(row);
   }
 
   async complete(caller: Caller, uploadId: string): Promise<Artifact> {
     caller = structuredClone(caller);
     const row = await this.row(caller, uploadId);
     if (row.artifact_id) return await this.get(caller, row.artifact_id);
-    check(row.object_id, 'upload_pending', 'Upload has no storage object yet', 409);
-    const objectId = row.object_id;
+    // The store accepts only bytes hashing to row.hash: a stored object of this size is the upload.
+    check(await this.present(row), 'upload_pending', 'The file has not been uploaded yet', 409);
     const size = Number(row.size);
-    const storage = this.storage();
-    const completed = await storage.complete(caller.projectId, objectId);
-    check(
-      completed.state === 'available' &&
-        completed.objectId === objectId &&
-        completed.size === size &&
-        completed.sha256 === row.hash,
-      'upload_mismatch',
-      'Stored object differs from the declared artifact',
-      502,
-    );
-    // An object within the inline limit is copied into its row, so reading it never reaches
-    // storage again. Corrupt bytes fail the completion; an outage leaves the row reading through
-    // the object instead. An object storage has just reported available but cannot find is not
-    // what it claimed.
-    let content: Buffer | null = null;
-    if (size <= MAX_ARTIFACT_BYTES)
-      try {
-        content = verified(await storage.read(caller.projectId, objectId, size), {
-          size,
-          hash: row.hash,
-        });
-      } catch (error) {
-        if (error instanceof MervError && error.code === 'blob_not_found')
-          throw new MervError(
-            'upload_mismatch',
-            'Stored object differs from the declared artifact',
-            502,
-          );
-        if (!(error instanceof MervError && error.code === 'blob_unavailable')) throw error;
-      }
+    // Inline-size files go into their row (blobs.get and the row CHECK verify); an outage is 503,
+    // and a retry completes.
+    const content =
+      size <= MAX_ARTIFACT_BYTES ? await this.blobs.get(row.project_id, row.hash) : null;
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const current = await tx.get<{ artifact_id: string | null }>(
@@ -194,7 +153,7 @@ export class Uploads {
         this.state,
         tx,
         caller,
-        { title, mediaType, hash, size, objectId },
+        { title, mediaType, hash, size },
         content,
       );
       await tx.run(
@@ -204,6 +163,30 @@ export class Uploads {
       );
       return artifact;
     });
+  }
+
+  /**
+   * Whether the declared file is stored. A SHA-256 names one byte string: another stored size
+   * means the declaration is wrong.
+   */
+  private async present(row: UploadRow) {
+    const stored = await this.large().stored(row.project_id, row.hash);
+    check(
+      stored === null || stored === Number(row.size),
+      'upload_mismatch',
+      'A stored file with this SHA-256 has a different size',
+      409,
+    );
+    return stored !== null;
+  }
+
+  /** One signed PUT, or none when the bytes are already stored. */
+  private async plan(row: UploadRow): Promise<ArtifactUploadStatus> {
+    const size = Number(row.size);
+    const status = { uploadId: row.upload_id, partSize: size, partCount: 1, nextPart: null };
+    if (await this.present(row)) return { ...status, parts: [], completedParts: [1] };
+    const { url, headers } = await this.large().upload(row.project_id, row.hash, size);
+    return { ...status, parts: [{ partNumber: 1, url, size, headers }], completedParts: [] };
   }
 
   /** The caller's own upload, looked up under write authority in one read-only transaction. */

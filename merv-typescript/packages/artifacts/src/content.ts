@@ -4,7 +4,6 @@ import {
   newId,
   now,
   recorded,
-  sha256Hex,
   visible,
   MAX_ARTIFACT_BYTES,
   type Artifact,
@@ -20,7 +19,7 @@ const MEDIA = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
-export const META = 'id,project_id,created_by,title,media_type,hash,size,created_at,object_id';
+export const META = 'id,project_id,created_by,title,media_type,hash,size,created_at';
 export const fromRow = (row: any): Artifact => ({
   id: row.id,
   projectId: row.project_id,
@@ -30,15 +29,14 @@ export const fromRow = (row: any): Artifact => ({
   hash: row.hash,
   size: row.size,
   createdAt: row.created_at,
-  ...(row.object_id ? { objectId: row.object_id } : {}),
 });
 
-/** Inserts a new artifact row with its bytes (null: they stay in large storage) and session. */
+/** Inserts a new artifact row with its bytes (null: they are only in blobs) and session. */
 export async function insert(
   state: State,
   tx: Transaction,
   caller: Caller,
-  fields: Pick<Artifact, 'title' | 'mediaType' | 'hash' | 'size' | 'objectId'>,
+  fields: Pick<Artifact, 'title' | 'mediaType' | 'hash' | 'size'>,
   content: Buffer | null,
 ): Promise<Artifact> {
   const artifact: Artifact = {
@@ -49,7 +47,7 @@ export async function insert(
     createdAt: now(),
   };
   await tx.run(
-    `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?)`,
     artifact.id,
     artifact.projectId,
     artifact.createdBy,
@@ -58,7 +56,6 @@ export async function insert(
     artifact.hash,
     artifact.size,
     artifact.createdAt,
-    artifact.objectId ?? null,
     content,
     caller.session?.id ?? null,
   );
@@ -68,17 +65,6 @@ export async function insert(
   });
   return artifact;
 }
-
-/** Large storage returns unverified bytes; blobs.get and the row's CHECK verify their own. */
-export const verified = (bytes: Buffer, artifact: { size: number; hash: string }): Buffer => {
-  check(
-    bytes.length === artifact.size && sha256Hex(bytes) === artifact.hash,
-    'blob_corrupt',
-    'Stored artifact bytes do not match their metadata',
-    500,
-  );
-  return bytes;
-};
 
 /** Bytes read back as text. Tool input refuses NUL in text, so bytes carrying it are not text:
  * a text answer has to be one the caller could send back. */

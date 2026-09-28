@@ -50,7 +50,6 @@ async function setup(t: TestContext) {
 test('sources carry exactly an artifact’s ID, title, media type, hash and size', async (t) => {
   const { artifacts, builder, operator } = await setup(t);
   const plain = await artifacts.create(operator, { title: 'Plain', content: 'Plain bytes.' });
-  // Not textual, so no renderer reads the bytes the fake objectId would point at.
   const stored = await artifacts.create(operator, {
     title: 'Stored',
     mediaType: 'application/octet-stream',
@@ -63,7 +62,6 @@ test('sources carry exactly an artifact’s ID, title, media type, hash and size
       (artifact) =>
         ({
           ...artifact,
-          ...(artifact.id === stored.id ? { objectId: 'object_stored' } : {}),
           internal: 'not part of the schema',
         }) as Artifact,
     );
