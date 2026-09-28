@@ -360,7 +360,9 @@ test('results review embeds approved design bodies once while retaining every pi
   const assignment = await f.workflows.assignment(f.reviewer, submitted.id);
   const prompt = assignment.context!.prompt;
   const approved = prompt.split('## Exact approved plan\n')[1]!.split('## Pinned review')[0]!;
-  const evidence = prompt.split('## Selected evidence and retained work\n')[1]!.split('## ')[0]!;
+  const evidence = prompt
+    .split('\n## Selected evidence and retained work\n')[1]!
+    .split('\n## ')[0]!;
   const design = submitted.submissions.find((item) => item.stage === 'design')!;
   const planId = design.evidence.find((item) => item.role === 'plan')!.artifactId;
   const feasibilityId = design.evidence.find((item) => item.role === 'feasibility')!.artifactId;

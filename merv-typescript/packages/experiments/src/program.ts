@@ -1,11 +1,4 @@
-import {
-  requireDirecting,
-  excludedFromReview,
-  releasedLease,
-  mapAsync,
-  boundedPaperContext,
-  paperJsonCap,
-} from '@merv/contracts';
+import { requireDirecting, excludedFromReview, releasedLease, mapAsync } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -17,6 +10,7 @@ import {
   type Caller,
   type ContextBuilder,
   type ContextInput,
+  type ContextItem,
   type ContextRegistration,
   type Data,
   type ReviewApplication,
@@ -35,10 +29,10 @@ import {
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
-import type { Paper } from '@merv/paper/types';
+import type { Paper, PaperContextSection } from '@merv/paper/types';
 import type { Code, CodeCapture } from '@merv/code-research/types';
 import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
-import type { FeasibilityStatement, MetricsExhibit } from './evidence.js';
+import type { FeasibilityStatement } from './evidence.js';
 
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
@@ -225,10 +219,6 @@ const feasibilityFormat: FeasibilityStatement = {
 };
 
 /**
- * The paper is included in every frozen experiment context with revision provenance.
- */
-
-/**
  * What a worker may look at. The assignment's own tool list reads as the boundary of it: over
  * one project, 22 of 22 task and experiment workers made no project-level read, while every
  * worker whose recipe named these tools used them.
@@ -271,90 +261,62 @@ const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state)
 const attemptReviewRecipe = previousExperimentRecipes.find(
   (definition) => definition.name === 'experiment.attempt_review',
 )!;
+const paperRecipes: TaskTypeDefinition[] = previousExperimentRecipes.map((definition) => ({
+  ...definition,
+  version: 10,
+  recipe: {
+    ...definition.recipe,
+    instructions:
+      instructions[activeStates.find((state) => recipeNames[state] === definition.name)!] +
+      reading +
+      (definition.kind === 'review' ? verifying : ''),
+  },
+}));
+const exhibitRecipe: TaskTypeDefinition = {
+  ...attemptReviewRecipe,
+  version: 11,
+  recipe: {
+    ...attemptReviewRecipe.recipe,
+    instructions: instructions.experiment_review + reading + verifying,
+    sections: [
+      ...attemptReviewRecipe.recipe.sections,
+      {
+        key: 'exhibitReference',
+        title: 'Metrics exhibit (read the retained artifact to verify its source mapping)',
+        required: true,
+      },
+    ],
+  },
+};
+/**
+ * The current recipes: format 2, the item renderer. The experiment record and the pinned review
+ * are always embedded; the paper, the approved plan, the evidence and the feedback are embedded
+ * whole, highest priority first, while they fit, and otherwise listed by one line. Figures and the
+ * generated metrics exhibit are only listed.
+ */
+const itemRecipes: TaskTypeDefinition[] = [
+  ...paperRecipes.filter((definition) => definition.name !== exhibitRecipe.name),
+  exhibitRecipe,
+].map((definition) => ({
+  ...definition,
+  version: definition.version + 1,
+  recipe: {
+    ...definition.recipe,
+    instructions: `${definition.recipe.instructions} Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.`,
+    sections: [
+      definition.recipe.sections[0]!,
+      { key: 'projectPaper', title: 'Project paper and document revisions', required: false },
+      ...definition.recipe.sections.slice(1),
+    ],
+    format: 2 as const,
+  },
+}));
 export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
   ...previousExperimentRecipes,
-  ...previousExperimentRecipes.map((definition) => ({
-    ...definition,
-    version: 10,
-    recipe: {
-      ...definition.recipe,
-      instructions:
-        instructions[activeStates.find((state) => recipeNames[state] === definition.name)!] +
-        reading +
-        (definition.kind === 'review' ? verifying : ''),
-    },
-  })),
-  {
-    ...attemptReviewRecipe,
-    version: 11,
-    recipe: {
-      ...attemptReviewRecipe.recipe,
-      instructions: instructions.experiment_review + reading + verifying,
-      sections: [
-        ...attemptReviewRecipe.recipe.sections,
-        {
-          key: 'exhibitReference',
-          title: 'Metrics exhibit (read the retained artifact to verify its source mapping)',
-          required: true,
-        },
-      ],
-    },
-  },
+  ...paperRecipes,
+  exhibitRecipe,
+  ...itemRecipes,
 ];
-
-/** A generated exhibit repeats JSON result data only when every source is already inline. */
-export function redundantExhibitId(
-  selected: readonly ExperimentEvidence[],
-  inlineResultIds: readonly string[],
-  content: string,
-  experimentId: string,
-  attemptIndex: number,
-): string | null {
-  const exhibits = selected.filter((item) => item.role === 'exhibit' && item.systemGenerated);
-  if (exhibits.length !== 1) return null;
-  let exhibit: MetricsExhibit;
-  try {
-    exhibit = JSON.parse(content) as MetricsExhibit;
-  } catch {
-    return null;
-  }
-  if (
-    !exhibit ||
-    typeof exhibit !== 'object' ||
-    exhibit.kind !== 'metrics_exhibit' ||
-    exhibit.experimentId !== experimentId ||
-    exhibit.attemptIndex !== attemptIndex ||
-    !Array.isArray(exhibit.resultFiles) ||
-    exhibit.resultFiles.length === 0
-  )
-    return null;
-  const results = new Map(
-    selected
-      .filter(
-        (item) =>
-          item.role === 'result' &&
-          item.resultFormat === 'json' &&
-          inlineResultIds.includes(item.artifactId),
-      )
-      .map((item) => [item.artifactId, item]),
-  );
-  if (
-    !exhibit.resultFiles.every((file) => {
-      const source = file?.source;
-      const result = source && results.get(source.artifactId);
-      return (
-        result &&
-        Object.hasOwn(file, 'data') &&
-        source.type === 'result_file' &&
-        source.resultFormat === 'json' &&
-        source.path === result.path &&
-        source.sha256 === result.hash
-      );
-    })
-  )
-    return null;
-  return exhibits[0].artifactId;
-}
 
 /**
  * How often a design review, and a results review, may return an experiment. A design return
@@ -384,7 +346,10 @@ export interface ExperimentProgramHost {
 }
 
 interface FrozenInputs {
+  /** A lease acquired before the format-2 recipes holds its bounded paper here instead. */
   experiment: Data;
+  /** The paper, section by section. Absent from a lease acquired before the format-2 recipes. */
+  paper?: PaperContextSection[];
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
@@ -430,8 +395,6 @@ export class ExperimentProgram {
     return handle;
   }
   private contexts = new Map<ActiveState, ContextRegistration>();
-  /** Each active state's recipe budget; the paper inside its required experiment JSON is capped by it. */
-  private budgets = new Map<ActiveState, number>();
   private historicalContexts: ContextRegistration[] = [];
   private closed = false;
 
@@ -456,11 +419,12 @@ export class ExperimentProgram {
       try {
         for (const recipe of EXPERIMENT_RECIPES) {
           const registration = await host.contextBuilder.register(recipe);
-          if (recipe.version === (recipe.name === 'experiment.attempt_review' ? 11 : 10)) {
-            const state = activeStates.find((state) => recipeNames[state] === recipe.name)!;
-            this.contexts.set(state, registration);
-            this.budgets.set(state, recipe.recipe.maxChars);
-          } else this.historicalContexts.push(registration);
+          if (recipe.recipe.format === 2)
+            this.contexts.set(
+              activeStates.find((state) => recipeNames[state] === recipe.name)!,
+              registration,
+            );
+          else this.historicalContexts.push(registration);
         }
         for (const version of PROGRAM_VERSIONS)
           this.handles.set(
@@ -487,7 +451,6 @@ export class ExperimentProgram {
     for (const context of this.contexts.values()) context.dispose();
     for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
-    this.budgets.clear();
     this.historicalContexts = [];
   }
 
@@ -815,11 +778,6 @@ export class ExperimentProgram {
         ...(experiment.workspace === 'git'
           ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
           : {}),
-        paper: boundedPaperContext(
-          (await this.host.paper.read(caller, tx)).documents,
-          undefined,
-          paperJsonCap(this.budgets.get(state as ActiveState) ?? Infinity),
-        ),
         paperChangesFormat: {
           documents: [
             {
@@ -838,6 +796,7 @@ export class ExperimentProgram {
           selected.includes(evidence.artifactId),
         ),
       }),
+      paper: this.host.paper.contextSections((await this.host.paper.read(caller, tx)).documents),
       approvedArtifacts,
       evidenceArtifacts,
       historicalArtifacts,
@@ -1005,75 +964,134 @@ export class ExperimentProgram {
         ]),
       ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
     } else inputs = await this.inputs(context.caller, experiment, context.tx);
-    const evidenceMode = inputs.evidenceArtifacts.length
-      ? await this.host.contextBuilder.mode(
-          context.caller,
-          inputs.evidenceArtifacts,
-          96_000,
-          context.tx,
-        )
-      : 'auto';
-    let exhibitReference: string | null = null;
-    if (state === 'experiment_review' && evidenceMode === 'auto') {
-      const selected = (inputs.experiment as { selectedEvidence?: ExperimentEvidence[] })
-        .selectedEvidence;
-      const exhibit = selected?.find(
-        (item) =>
-          item.role === 'exhibit' &&
-          item.systemGenerated &&
-          inputs.evidenceArtifacts.includes(item.artifactId),
-      );
-      if (exhibit) {
-        const resultEvidence = selected!.filter(
-          (item) => item.role === 'result' && inputs.evidenceArtifacts.includes(item.artifactId),
-        );
-        const resultArtifacts = await mapAsync(
-          resultEvidence,
-          async (item) =>
-            await this.host.artifacts.get(context.caller, item.artifactId, context.tx),
-        );
-        const inlineResultIds = resultArtifacts
-          .filter(
-            (artifact) =>
-              resultEvidence.some(
-                (item) => item.artifactId === artifact.id && item.hash === artifact.hash,
-              ) &&
-              (artifact.mediaType.startsWith('text/') || artifact.mediaType === 'application/json'),
-          )
-          .map((artifact) => artifact.id);
-        const read = await this.host.artifacts.read(context.caller, exhibit.artifactId);
-        if (read.encoding === 'utf8' && read.artifact.hash === exhibit.hash)
-          exhibitReference = redundantExhibitId(
-            selected!,
-            inlineResultIds,
-            read.content,
-            experiment.id,
-            experiment.attempt.index,
-          );
-      }
-    }
+    const records = new Map(
+      [
+        ...experiment.submissions.flatMap((submission) => submission.evidence),
+        ...experiment.evidence,
+      ].map((evidence) => [evidence.artifactId, evidence]),
+    );
+    // Figures are images: listed for the reader to open, never read into the context.
+    const figures = new Set([
+      ...experiment.submissions.flatMap((submission) => submission.figureIds),
+      ...[...records.values()].flatMap((evidence) => evidence.figureIds),
+    ]);
+    // The generated metrics exhibit has its own section, where it is listed and never embedded.
+    const exhibit =
+      state === 'experiment_review'
+        ? (inputs.experiment as { selectedEvidence?: ExperimentEvidence[] }).selectedEvidence?.find(
+            (item) =>
+              item.role === 'exhibit' &&
+              item.systemGenerated &&
+              inputs.evidenceArtifacts.includes(item.artifactId),
+          )?.artifactId
+        : undefined;
+    const artifactItems = async (ids: string[], priority: number) =>
+      await mapAsync(ids, async (id): Promise<ContextItem> => {
+        const record = records.get(id);
+        return {
+          id: `artifact:${id}`,
+          title: (await this.host.artifacts.get(context.caller, id, context.tx)).title,
+          body: { artifactId: id },
+          priority,
+          ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
+          ...(record
+            ? { note: `${record.role} ${record.path}` }
+            : figures.has(id)
+              ? { note: 'figure' }
+              : {}),
+          refs: [
+            { tool: 'artifact.read', input: { artifactId: id } },
+            ...(id === exhibit
+              ? [{ tool: 'experiment.exhibit', input: { experimentId: experiment.id } }]
+              : []),
+          ],
+        };
+      });
+    const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
+    const evidence = inputs.evidenceArtifacts.filter((id) => id !== exhibit);
     const sources: Record<string, ContextInput> = {
-      experiment: { text: JSON.stringify(inputs.experiment) },
-      feedback: { text: JSON.stringify(inputs.feedback) },
-      ...(inputs.approvedArtifacts.length
-        ? { approvedPlan: { artifactIds: inputs.approvedArtifacts, mode: 'auto' as const } }
-        : {}),
-      ...(inputs.evidenceArtifacts.length
+      experiment: {
+        items: [
+          {
+            id: `experiment:${experiment.id}`,
+            title: experiment.name,
+            body: { text: JSON.stringify(inputs.experiment) },
+            embed: 'always',
+            refs: [stateRef],
+          },
+        ],
+      },
+      // A lease acquired before these recipes has its paper inside the experiment record.
+      ...(inputs.paper?.length
         ? {
-            evidence: {
-              artifactIds: inputs.evidenceArtifacts.filter((id) => id !== exhibitReference),
-              mode: evidenceMode,
+            projectPaper: {
+              items: inputs.paper.map(
+                ({ kind, status, id, title, text, note, refs }): ContextItem => ({
+                  id,
+                  title,
+                  body: { text },
+                  priority:
+                    kind === 'problem'
+                      ? status === 'current'
+                        ? 850
+                        : 450
+                      : status === 'current'
+                        ? 600
+                        : 250,
+                  note,
+                  refs,
+                }),
+              ),
             },
           }
         : {}),
+      feedback: {
+        items: [
+          {
+            id: `feedback:${experiment.id}`,
+            title: 'Previous reviews, interruptions and recovery',
+            body: { text: JSON.stringify(inputs.feedback) },
+            priority: 700,
+            refs: [stateRef],
+          },
+        ],
+      },
+      ...(inputs.approvedArtifacts.length
+        ? { approvedPlan: { items: await artifactItems(inputs.approvedArtifacts, 900) } }
+        : {}),
+      ...(evidence.length ? { evidence: { items: await artifactItems(evidence, 800) } } : {}),
       ...(state === 'experiment_review'
         ? {
-            exhibitReference: exhibitReference
-              ? { artifactIds: [exhibitReference], mode: 'references' as const }
-              : { text: 'Any metrics exhibit is included with the selected evidence above.' },
+            exhibitReference: {
+              items: exhibit
+                ? await artifactItems([exhibit], 0)
+                : [
+                    {
+                      id: `exhibit:${experiment.id}`,
+                      title: 'Metrics exhibit',
+                      body: {
+                        text: 'Any metrics exhibit is included with the selected evidence above.',
+                      },
+                    },
+                  ],
+            },
           }
         : {}),
-      ...(inputs.review ? { assessment: { text: JSON.stringify(inputs.review) } } : {}),
+      ...(inputs.review
+        ? {
+            assessment: {
+              items: [
+                {
+                  id: `review:${inputs.review.id}`,
+                  title: 'Pinned review and numbered criteria',
+                  body: { text: JSON.stringify(inputs.review) },
+                  embed: 'always',
+                  refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
+                },
+              ],
+            },
+          }
+        : {}),
     };
     const recipe = this.contexts.get(state);
     check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);

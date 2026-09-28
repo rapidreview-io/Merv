@@ -280,7 +280,7 @@ test('a design review cannot waive feasibility, and its finding cites the statem
   const planning = await f.app.ctx.workflows.assignment(f.owner, e.id);
   assert.match(planning.brief, /Attach it as role feasibility/);
   assert.match(planning.handoff.instruction, /Attach it as role feasibility/);
-  assert.equal(planning.context!.typeVersion, 10);
+  assert.equal(planning.context!.typeVersion, 11);
   assert.match(planning.context!.prompt, /"feasibilityFormat":\{"formatVersion":1/);
   await f.attach(e, 'plan', plan);
   const marked = statement();

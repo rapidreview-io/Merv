@@ -1786,6 +1786,30 @@
       "version": 12,
       "hash": "1701d783359547bbf0beaca318259b92b8bbe03e2ec4cf084df7c96d12e7ac77",
       "published": false
+    },
+    {
+      "type": "experiment.design",
+      "version": 11,
+      "hash": "6d3cc57dec5117cee0f3f1b39e2ff7d92177edc94afd3e34eed5da94ecf90b4b",
+      "published": false
+    },
+    {
+      "type": "experiment.design_review",
+      "version": 11,
+      "hash": "b864a70ad567710d3db67934e1cc1dadaaf8d27b798f24def6b4e9d9d6335bfc",
+      "published": false
+    },
+    {
+      "type": "experiment.execute",
+      "version": 11,
+      "hash": "70694132757b6caea1caa4af8abe68cced0476d10f2c00f50dbd759ca78b9291",
+      "published": false
+    },
+    {
+      "type": "experiment.attempt_review",
+      "version": 12,
+      "hash": "d61339f10c59085709193bbe41f0d01de6600a16264ebbe478185d2f816407f7",
+      "published": false
     }
   ]
 }

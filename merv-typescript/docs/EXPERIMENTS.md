@@ -251,6 +251,17 @@ experiment as a task, was retired on 2026-09-25. Packets include experiment meta
 the exact approved plan where applicable, numbered review criteria, selected
 evidence, interruption feedback and retained rejected assessments.
 
+The current versions (`experiment.design`, `experiment.design_review` and
+`experiment.execute` at 11, `experiment.attempt_review` at 12) are format 2,
+the item renderer. The experiment record and the pinned review are always
+embedded; the paper, section by section from `paper.contextSections`, the
+approved plan (priority 900), the evidence (800) and the feedback (700) are
+embedded whole while they fit and are otherwise listed by one line with its
+retrieval tool. Figures and the generated metrics exhibit are only listed, so
+their bytes are never read into a packet. These versions render every packet,
+including one for a lease offered earlier, whose frozen experiment record keeps
+the bounded paper it was offered with.
+
 A design rejection opens a new attempt whose `feedbackReviewIds` names only the
 review that caused it, so `feedback.previousReviews` covers the current attempt
 alone. Design and execution packets therefore also carry `feedback.history`:
