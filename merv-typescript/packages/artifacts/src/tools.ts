@@ -34,9 +34,18 @@ export const artifactToolsPlugin = {
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
       conversation?: 'never' | ((input: z.infer<S>) => 'secret' | 'propose' | undefined),
+      openWorld = false,
     ) =>
       ctx.effect(() =>
-        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+        ctx.tools.register({
+          name,
+          description,
+          inputSchema,
+          handler,
+          readOnly,
+          conversation,
+          openWorld,
+        }),
       );
     register(
       'artifact.create',
@@ -163,6 +172,9 @@ export const artifactToolsPlugin = {
       // In a Pi conversation a signed URL is shown only to the person; a leased worker may
       // request its own URL to download and inspect an artifact in its workspace.
       (i) => (i.mode === 'download' ? 'secret' : undefined),
+      // Open world: storage I/O (older rows' bytes, signing, the download mirror) waits holding
+      // no reader snapshot, since artifacts runs each database read in a short transaction.
+      true,
     );
     register(
       'artifact.list',
