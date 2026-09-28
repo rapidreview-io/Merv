@@ -59,6 +59,8 @@ test('large artifact upload, replay, download and absent storage keep inline art
           ],
           completedParts: [],
           nextPart: null,
+          // A stray key from an adapter never replaces the upload ID artifacts chose.
+          ...({ uploadId: 'aup_adapter' } as object),
         },
       };
     },
@@ -70,6 +72,7 @@ test('large artifact upload, replay, download and absent storage keep inline art
         parts: [],
         completedParts: [1],
         nextPart: null,
+        ...({ uploadId: 'aup_adapter' } as object),
       };
     },
     async complete() {
@@ -103,19 +106,17 @@ test('large artifact upload, replay, download and absent storage keep inline art
   const begin = (await app.ctx.tools.call('artifact.upload_begin', owner, input)) as {
     uploadId: string;
   };
+  assert.notEqual(begin.uploadId, 'aup_adapter');
   assert.equal(
     ((await app.ctx.tools.call('artifact.upload_begin', owner, input)) as { uploadId: string })
       .uploadId,
     begin.uploadId,
   );
-  assert.deepEqual(
-    (
-      (await app.ctx.tools.call('artifact.upload_resume', owner, { uploadId: begin.uploadId })) as {
-        completedParts: number[];
-      }
-    ).completedParts,
-    [1],
-  );
+  const resumed = (await app.ctx.tools.call('artifact.upload_resume', owner, {
+    uploadId: begin.uploadId,
+  })) as { uploadId: string; completedParts: number[] };
+  assert.equal(resumed.uploadId, begin.uploadId);
+  assert.deepEqual(resumed.completedParts, [1]);
   digest = 'b'.repeat(64);
   await assert.rejects(
     app.ctx.tools.call('artifact.upload_complete', owner, { uploadId: begin.uploadId }),

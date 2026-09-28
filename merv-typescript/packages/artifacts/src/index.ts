@@ -188,7 +188,7 @@ export class ArtifactStore implements Artifacts {
           uploadId,
         );
     });
-    return { uploadId, ...result.plan };
+    return { ...result.plan, uploadId };
   }
   async uploadResume(
     caller: Caller,
@@ -204,7 +204,7 @@ export class ArtifactStore implements Artifacts {
       'Retry artifact.upload_begin to recover the upload',
       409,
     );
-    return { uploadId, ...(await storage.resume(caller.projectId, row.object_id, startPart)) };
+    return { ...(await storage.resume(caller.projectId, row.object_id, startPart)), uploadId };
   }
   async uploadComplete(caller: Caller, uploadId: string): Promise<Artifact> {
     caller = structuredClone(caller);
