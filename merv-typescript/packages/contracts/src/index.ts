@@ -1063,11 +1063,21 @@ export interface Scope {
   actors(caller: Caller): Promise<Actor[]>;
   revokeActor(caller: Caller, actorId: string): Promise<void>;
 }
+/** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
+export const MAX_ARTIFACT_BYTES = 2_000_000;
 export interface ArtifactInput {
   title: string;
   content: string;
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
+}
+/** Artifact bytes as tool text; `offset` and `total` are set for a range. */
+export interface ArtifactContent {
+  artifact: Artifact;
+  content: string;
+  encoding: 'utf8' | 'base64';
+  offset?: number;
+  total?: number;
 }
 export interface ArtifactUploadInput {
   title: string;
@@ -1116,19 +1126,16 @@ export interface Artifacts {
   authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
-  /** With offset or length, `content` is that part of the content, in characters, and `offset`
-   * and `total` say where it starts and how long the whole is. */
+  /** The bytes as tool text: valid UTF-8 without NUL is utf8, anything else base64. A range is
+   * in UTF-16 units (utf8) or base64 characters; each boundary moves forward to the next whole
+   * code point or 4-character group, so pages at offset += length tile exactly, and so does
+   * continuing from the returned offset + content.length. `offset` is the snapped start and
+   * `total` the length of the whole. */
   read(
     caller: Caller,
     artifactId: string,
     range?: { offset?: number; length?: number },
-  ): Promise<{
-    artifact: Artifact;
-    content: string;
-    encoding: 'utf8' | 'base64';
-    offset?: number;
-    total?: number;
-  }>;
+  ): Promise<ArtifactContent>;
   list(caller: Caller): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {

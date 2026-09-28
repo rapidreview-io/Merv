@@ -1,13 +1,14 @@
-import { visible, recorded, createService, plain } from '@merv/contracts';
+import { recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
+import { decode, isText, meta, request, span, view } from './content.js';
 import type { Context } from 'cordis';
-import { isUtf8 } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import {
   check,
   newId,
   now,
   inTransaction,
+  MAX_ARTIFACT_BYTES,
   type Artifacts,
   type Artifact,
   type ArtifactInput,
@@ -92,11 +93,7 @@ export class ArtifactStore implements Artifacts {
     input = plain<ArtifactUploadInput>(input, 'invalid_artifact');
     const storage = this.storage();
     await this.scope.require(caller, 'write');
-    check(
-      typeof input.title === 'string' && visible(input.title) && input.title.length <= 300,
-      'invalid_artifact',
-      'Artifact requires a title of at most 300 characters',
-    );
+    const { title, mediaType } = meta(input.title, input.mediaType);
     check(
       Number.isSafeInteger(input.size) && input.size > 0,
       'artifact_size',
@@ -107,20 +104,13 @@ export class ArtifactStore implements Artifacts {
       'invalid_artifact',
       'Artifact requires a lowercase SHA-256 digest',
     );
-    const mediaType = input.mediaType?.toLowerCase();
-    check(
-      typeof mediaType === 'string' &&
-        /^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(mediaType) &&
-        mediaType.length <= 150,
-      'invalid_media_type',
-      'Invalid media type',
-    );
-    const uploadId = input.requestId
-      ? `aup_${createHash('sha256')
-          .update(JSON.stringify([caller.projectId, input.requestId]))
-          .digest('hex')}`
-      : newId('aup');
-    const title = input.title.trim();
+    const requestId = request(input.requestId);
+    const uploadId =
+      requestId !== undefined
+        ? `aup_${createHash('sha256')
+            .update(JSON.stringify([caller.projectId, requestId]))
+            .digest('hex')}`
+        : newId('aup');
     await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       await tx.run(
@@ -266,40 +256,11 @@ export class ArtifactStore implements Artifacts {
     // Metadata must come from the same validated input as the bytes handed to storage.
     input = plain<ArtifactInput>(input, 'invalid_artifact');
     await this.scope.require(caller, 'write', tx);
-    check(
-      typeof input.title === 'string' && input.title.length <= 300,
-      'invalid_artifact',
-      'Artifact requires a title of at most 300 characters',
-    );
-    check(
-      visible(input.title),
-      'invalid_artifact',
-      'Artifact requires a title with visible characters',
-    );
-    check(typeof input.content === 'string', 'invalid_artifact', 'Content must be a string');
-    check(
-      input.encoding === undefined || ['utf8', 'base64'].includes(input.encoding),
-      'invalid_encoding',
-      'Encoding must be utf8 or base64',
-    );
-    if (input.encoding === 'base64')
-      check(
-        /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.content),
-        'invalid_encoding',
-        'Invalid base64 content',
-      );
-    // Media types are case-insensitive; one spelling keeps every text/ test honest.
-    const mediaType = (input.mediaType ?? 'text/markdown').toLowerCase();
-    check(
-      /^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(mediaType) && mediaType.length <= 150,
-      'invalid_media_type',
-      'Invalid media type',
-    );
-    const bytes = Buffer.from(input.content, input.encoding ?? 'utf8');
-    check(
-      bytes.length > 0 && bytes.length <= 2_000_000,
-      'artifact_size',
-      'Artifact must contain 1–2,000,000 bytes',
+    const bytes = decode(input);
+    // Without a declared type, bytes that read back as text are Markdown; others are opaque.
+    const { title, mediaType } = meta(
+      input.title,
+      input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream'),
     );
     const stored = await this.blobs.put(caller.projectId, bytes);
     return await inTransaction(this.state, tx, async (tx) => {
@@ -308,7 +269,7 @@ export class ArtifactStore implements Artifacts {
         id: newId('art'),
         projectId: caller.projectId,
         createdBy: caller.actorId,
-        title: input.title.trim(),
+        title,
         mediaType,
         hash: stored.hash,
         size: stored.size,
@@ -393,9 +354,10 @@ export class ArtifactStore implements Artifacts {
   }
   async read(caller: Caller, artifactId: string, range: { offset?: number; length?: number } = {}) {
     caller = structuredClone(caller);
+    span(range);
     const artifact = await this.get(caller, artifactId);
     check(
-      artifact.size <= 2_000_000,
+      artifact.size <= MAX_ARTIFACT_BYTES,
       'artifact_size',
       'Artifact exceeds the inline limit; use artifact.read with mode download',
     );
@@ -422,7 +384,7 @@ export class ArtifactStore implements Artifacts {
           if (done) break;
           const part = Buffer.from(value);
           size += part.length;
-          if (size > 2_000_000) {
+          if (size > MAX_ARTIFACT_BYTES) {
             oversized = true;
             break;
           }
@@ -449,24 +411,7 @@ export class ArtifactStore implements Artifacts {
       bytes = await this.blobs.get(caller.projectId, artifact.hash);
     }
     await this.get(caller, artifactId);
-    // Any valid UTF-8 is text, whatever its media type. A text answer has to be one the caller
-    // could send back: tool input refuses NUL in text, so bytes carrying it come back as base64
-    // even though they decode as UTF-8; otherwise a read of this artifact could never be written
-    // again.
-    const encoding = isUtf8(bytes) && !bytes.includes(0) ? ('utf8' as const) : ('base64' as const);
-    const content = bytes.toString(encoding);
-    if (range.offset === undefined && range.length === undefined)
-      return { artifact, content, encoding };
-    // A part of a long text, in characters of the content: where it starts and the whole length.
-    const offset = Math.min(range.offset ?? 0, content.length);
-    const end = range.length === undefined ? content.length : offset + range.length;
-    return {
-      artifact,
-      content: content.slice(offset, end),
-      encoding,
-      offset,
-      total: content.length,
-    };
+    return view(artifact, bytes, range);
   }
   async list(caller: Caller): Promise<Artifact[]> {
     caller = structuredClone(caller);
