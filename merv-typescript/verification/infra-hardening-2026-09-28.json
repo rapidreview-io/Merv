@@ -1,0 +1,54 @@
+{
+  "name": "Infrastructure plugin hardening, release 1",
+  "date": "2026-09-28",
+  "sourceCommit": "ea6213dce",
+  "shipped": [
+    "state C1-C4b, C7, C8",
+    "identity R1",
+    "domain-events fixes",
+    "blobs hardening",
+    "pi checkpoint trust",
+    "codex-relay test composition",
+    "plugin map regeneration"
+  ],
+  "notShipped": ["scope plan and state C5a/C5c/C6 (release 2)", "identity R2 (release 3)"],
+  "ci": "Verify merv-typescript run 36393403809 on ea6213dce: success",
+  "localSuite": "2236 tests; only the 10 codex-relay tests (fixed after the run started) and 2 known load-flaky tests failed; all three files 3/3 green on the final commit",
+  "backup": "ResearchSuite_Control:/var/backups/merv/infra-hardening/20260928T074758Z/schema.dump (21.6 MB, 106 table-data entries, SHA256SUMS)",
+  "staging": {
+    "release": "20260928T080410Z-ea6213dc-d32825744c74",
+    "checks": "vm 200/200/401/200/403, public 200/200, assets 200",
+    "plugins": "49/52 (inactive feed, feed-tools, feed-ui; unchanged)",
+    "migrationsApplied": [
+      "identity-credentials@1 hash d2eded577c1088f84eb816a72d69be537108989daf00095cd109f60ed05f6bfb",
+      "sessions@10"
+    ],
+    "trigger": "events_no_truncate added",
+    "identityCanary": "pass",
+    "restart": "healthy in ~15 s, same plugin count",
+    "record": "f4c673290"
+  },
+  "production": {
+    "release": "20260928T080938Z-f4c67329-8b65c31eb8ea",
+    "previousImage": "merv-typescript:20260928T001110Z-7c763841-ba4fa405b7c6",
+    "checks": "vm 200/200/401/200/403, public 200/200, assets 200",
+    "plugins": "60/63 fleet+fleet-workflow+pi (inactive feed, feed-tools, feed-ui; unchanged)",
+    "censusDiff": "image and events_no_truncate trigger only; no new component_migrations rows",
+    "identityGates": { "a": 0, "bBefore": [0, 0], "bAfter": [0, 0] },
+    "identityCanary": "pass",
+    "hostedRun": "20260928T081235Z-40b42850: rebuilt image identical to deployed (contracts change is type-only); recorded",
+    "piCanary": {
+      "status": "completed",
+      "reply": true,
+      "servedByRelease": true,
+      "released": true,
+      "seconds": 26
+    },
+    "logs": "no errors, migration, JWKS, refusal or blob_unavailable lines"
+  },
+  "limitations": [
+    "Both VMs run MERV_TS_AUTH_MODE=hs256, so the new JWKS key cache is not exercised by logins",
+    "Staging composes no Fleet/Pi; Pi is covered only by the production Pi canary",
+    "Human login check pending with the owner"
+  ]
+}
