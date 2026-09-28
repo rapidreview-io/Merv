@@ -277,6 +277,36 @@ test('all project reads and mutation replays check actor scope and permission', 
     async () => await workflows.list({ actorId: producer.id, projectId: caller.projectId }),
     code('forbidden'),
   );
+  // A handle's commands ask that the caller may read the project, before any replay.
+  for (const outsider of [
+    { ...other, projectId: caller.projectId },
+    { actorId: producer.id, projectId: caller.projectId },
+  ]) {
+    await assert.rejects(
+      async () => await approval.start(outsider, { workflow: 'approval', requestId: 'start' }),
+      code('forbidden'),
+    );
+    await assert.rejects(
+      async () =>
+        await approval.transition(outsider, {
+          instanceId: initial.id,
+          action: 'submit',
+          expectedRevision: 0,
+          requestId: 'submit',
+        }),
+      code('forbidden'),
+    );
+    await assert.rejects(
+      async () =>
+        await approval.addDependencies(outsider, {
+          instanceId: initial.id,
+          expectedRevision: 0,
+          dependsOn: [],
+          requestId: 'depend',
+        }),
+      code('forbidden'),
+    );
+  }
 });
 
 test('a program handle changes only its own version and disposal preserves durable data', async (t) => {
