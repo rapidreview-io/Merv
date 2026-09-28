@@ -537,7 +537,11 @@ export class ManagedRunnerBindings {
     }
     return ids;
   }
-  async inspect(allocationId: string, epoch: number): Promise<ManagedRunnerInspection | null> {
+  async inspect(
+    allocationId: string,
+    epoch: number,
+    transaction?: Transaction,
+  ): Promise<ManagedRunnerInspection | null> {
     check(
       typeof allocationId === 'string' &&
         allocationId.length > 0 &&
@@ -546,44 +550,45 @@ export class ManagedRunnerBindings {
       'invalid_managed_allocation',
       'Managed allocation identity is invalid',
     );
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const row = await tx.get<ManagedBindingRow>(
-          'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-          allocationId,
-        );
-        if (!row || Number(row.epoch) !== epoch) return null;
-        const runner = { runnerId: row.runner_id, enrollmentExpiresAt: row.enrollment_expires_at };
-        if (!row.bound_session_id) return { ...runner, session: null };
-        const bound = await tx.get<{ session_json: string }>(
-          'SELECT session_json FROM worker_sessions WHERE id=?',
-          row.bound_session_id,
-        );
-        check(bound, 'managed_session_missing', 'Managed bound session is missing', 500);
-        const session = JSON.parse(bound.session_json) as Session;
-        const workspace = await tx.get<{ result_json: string | null }>(
-          'SELECT result_json FROM session_workspaces WHERE session_id=?',
-          row.bound_session_id,
-        );
-        const policy = effectiveWorkspace(session.execution.policy);
-        // A disposable read-only checkout has no durable workspace output to wait for.
-        // Writable and retained checkouts still require their final capture.
-        const disposableReview =
-          session.execution.policy.readOnly && policy.mode === 'ephemeral' && !policy.retain;
-        return {
-          ...runner,
-          session: {
-            id: session.id,
-            instanceId: session.instanceId,
-            expectedRevision: session.expectedRevision,
-            status: session.status,
-            closedAt: session.closedAt,
-            outcome: session.outcome ?? null,
-            releaseAcknowledged: row.runner_released_at !== null,
-            capturePending: !!workspace && workspace.result_json === null && !disposableReview,
-          },
-        };
-      }),
-    );
+    const read = async (tx: Transaction) => {
+      const row = await tx.get<ManagedBindingRow>(
+        'SELECT * FROM session_managed_runners WHERE allocation_id=?',
+        allocationId,
+      );
+      if (!row || Number(row.epoch) !== epoch) return null;
+      const runner = { runnerId: row.runner_id, enrollmentExpiresAt: row.enrollment_expires_at };
+      if (!row.bound_session_id) return { ...runner, session: null };
+      const bound = await tx.get<{ session_json: string }>(
+        'SELECT session_json FROM worker_sessions WHERE id=?',
+        row.bound_session_id,
+      );
+      check(bound, 'managed_session_missing', 'Managed bound session is missing', 500);
+      const session = JSON.parse(bound.session_json) as Session;
+      const workspace = await tx.get<{ result_json: string | null }>(
+        'SELECT result_json FROM session_workspaces WHERE session_id=?',
+        row.bound_session_id,
+      );
+      const policy = effectiveWorkspace(session.execution.policy);
+      // A disposable read-only checkout has no durable workspace output to wait for.
+      // Writable and retained checkouts still require their final capture.
+      const disposableReview =
+        session.execution.policy.readOnly && policy.mode === 'ephemeral' && !policy.retain;
+      return {
+        ...runner,
+        session: {
+          id: session.id,
+          instanceId: session.instanceId,
+          expectedRevision: session.expectedRevision,
+          status: session.status,
+          closedAt: session.closedAt,
+          outcome: session.outcome ?? null,
+          releaseAcknowledged: row.runner_released_at !== null,
+          capturePending: !!workspace && workspace.result_json === null && !disposableReview,
+        },
+      };
+    };
+    return transaction
+      ? await read(transaction)
+      : await this.state.snapshot(() => this.state.transaction(read));
   }
 }

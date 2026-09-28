@@ -390,6 +390,170 @@ test('workflow bounds created but unclaimed retries across restart without block
   assert.equal(f.allocations[4]?.owner.id, 'task_b:2');
 });
 
+test(
+  'an administrator can reopen only an exhausted exact revision with a retained idempotent grant',
+  { timeout: 15_000 },
+  async (t) => {
+    const f = await fixture(t);
+    const target = { instanceId: 'retry_target', expectedRevision: 2 };
+    const reason = 'Ranked reflection context is deployed; retry its frozen synthesis revision.';
+    await f.state.transaction(async (tx) => {
+      await tx.run(
+        'CREATE TABLE wf_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision INTEGER NOT NULL)',
+      );
+      await tx.run(
+        'INSERT INTO wf_instances(id,project_id,revision) VALUES(?,?,?)',
+        target.instanceId,
+        f.caller.projectId,
+        target.expectedRevision,
+      );
+    });
+    f.demand([target]);
+    await f.adapter.reconcile();
+    for (let index = 0; index < 2; index++) {
+      const allocation = f.allocations[index]!;
+      allocation.createAttempted = true;
+      allocation.phase = 'released';
+      allocation.updatedAt = new Date(Date.parse(allocation.createdAt)).toISOString();
+      if (index === 0) f.advance(60_000);
+      await f.adapter.reconcile();
+    }
+    assert.equal(f.allocations.length, 2, 'two failed rentals exhaust the revision');
+    assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'exhausted_cooldown');
+    await assert.rejects(
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'too-early-retry' }),
+      { code: 'fleet_retry_unavailable' },
+    );
+    f.advance(60_000);
+    assert.equal(
+      (await f.adapter.retryStatus(f.caller, [target]))[0]?.state,
+      'exhausted_unclaimed',
+    );
+    const former = await f.scope.issueActor(f.caller, {
+      name: 'Former director',
+      role: 'producer',
+    });
+    const formerCaller = {
+      projectId: f.caller.projectId,
+      actorId: former.actor.id,
+      credentialId: former.credential.id,
+    };
+    const formerSource = await f.scope.delegationSource(formerCaller);
+    for (const allocation of f.allocations) allocation.source = formerSource;
+    await f.scope.revokeActor(f.caller, former.actor.id);
+    assert.equal(
+      (await f.adapter.retryStatus(f.caller, [target]))[0]?.state,
+      'exhausted_unclaimed',
+      'the current director keeps the blocker visible after the old director is revoked',
+    );
+    const producer = await f.scope.issueActor(f.caller, {
+      name: 'Retry producer',
+      role: 'producer',
+    });
+    const producerCaller = {
+      projectId: f.caller.projectId,
+      actorId: producer.actor.id,
+      credentialId: producer.credential.id,
+    };
+    await assert.rejects(
+      f.adapter.retry(producerCaller, { ...target, reason, requestId: 'producer-retry' }),
+      { status: 403 },
+    );
+    await assert.rejects(
+      f.adapter.retry(f.caller, {
+        ...target,
+        expectedRevision: 1,
+        reason,
+        requestId: 'stale-retry',
+      }),
+      { code: 'revision_conflict' },
+    );
+    const otherProject = await f.project(f.founder, 'Other retry project');
+    await assert.rejects(
+      f.adapter.retry(otherProject.caller, { ...target, reason, requestId: 'cross-project' }),
+      { code: 'revision_conflict' },
+    );
+    const borrowed = {
+      ...f.allocations[1]!,
+      id: 'flt_borrowed',
+      owner: { kind: 'workflow', id: 'other_target:0' },
+      phase: 'running' as const,
+      createAttempted: true,
+    };
+    f.allocations.push(borrowed);
+    f.inspections.set(borrowed.id, {
+      runnerId: 'borrowed-runner',
+      enrollmentExpiresAt,
+      session: {
+        id: 'borrowed-session',
+        ...target,
+        status: 'active',
+        closedAt: null,
+        outcome: null,
+        releaseAcknowledged: false,
+        capturePending: false,
+      },
+    });
+    assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'active');
+    await assert.rejects(
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'active-retry' }),
+      { code: 'fleet_retry_unavailable' },
+    );
+    f.inspections.delete(borrowed.id);
+    f.allocations.pop();
+    const input = { ...target, reason, requestId: 'approved-retry' };
+    const grant = await f.adapter.retry(f.caller, input);
+    assert.equal(grant.priorAllocations, 2);
+    assert.deepEqual(
+      await f.adapter.retry(f.caller, input),
+      grant,
+      'same request does not create a second window',
+    );
+    await assert.rejects(
+      f.adapter.retry(f.caller, {
+        ...input,
+        reason: `${reason} Different`,
+        requestId: input.requestId,
+      }),
+      { code: 'request_conflict' },
+    );
+    await f.adapter.reconcile();
+    assert.equal(
+      f.allocations.length,
+      3,
+      'new window rents once and retains both older allocations',
+    );
+    assert.notEqual(f.allocations[2]?.requestId, f.allocations[1]?.requestId);
+    const rows = await f.state.read((sql) =>
+      sql.all<{ reason: string; prior_allocations: number }>(
+        'SELECT reason,prior_allocations FROM fleet_workflow_retry_grants',
+      ),
+    );
+    assert.deepEqual(rows, [{ reason, prior_allocations: 2 }]);
+    f.allocations[2]!.createAttempted = true;
+    f.allocations[2]!.phase = 'released';
+    f.advance(60_000);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, 4);
+    f.allocations[3]!.createAttempted = true;
+    f.allocations[3]!.phase = 'released';
+    f.advance(60_000);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, 4, 'reopened window remains capped at two failed rentals');
+    const raced = await Promise.allSettled([
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'raced-1' }),
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'raced-2' }),
+    ]);
+    assert.equal(raced.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(raced.filter((result) => result.status === 'rejected').length, 1);
+    assert.equal(
+      (await f.state.read((sql) => sql.all('SELECT id FROM fleet_workflow_retry_grants'))).length,
+      2,
+      'concurrent requests cannot open two windows',
+    );
+  },
+);
+
 test('wallet refusals pause all workflow demand, retry one target, and preserve task attempts', async (t) => {
   const f = await fixture(t, { maxAgents: 5 });
   f.demand(targets('task', 4));
@@ -914,6 +1078,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     delete process.env[modelEnv];
   });
   return {
+    state,
     scope,
     founder,
     login,
@@ -934,6 +1099,52 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     advance: (ms: number) => (now += ms),
   };
 }
+
+test(
+  'real Sessions and Fleet admit an exhausted-revision grant without nested transactions',
+  { timeout: 20_000 },
+  async (t) => {
+    const h = await hosted(t, 1);
+    const caller = await h.project('Retry integration');
+    await h.sessions.setDispatch(caller, { enabled: true });
+    const work = await h.start(caller);
+    const target = { instanceId: work.id, expectedRevision: work.revision };
+    const id = `${work.id}:${work.revision}`;
+    await h.adapter.start();
+    for (let index = 0; index < 2; index++) {
+      const attempts = (await h.fleet.listOwned(h.adapter, [id])).filter((a) => a.owner.id === id);
+      const allocation = attempts[index]!;
+      assert.ok(allocation, `rental ${index + 1} exists`);
+      const ended = {
+        ...allocation,
+        phase: 'released' as const,
+        createAttempted: true,
+        updatedAt: new Date(Date.parse(allocation.createdAt) - 60_000).toISOString(),
+      };
+      await h.state.transaction((tx) =>
+        tx.run(
+          'UPDATE fleet_allocations SET phase=?,data_json=? WHERE id=?',
+          'released',
+          JSON.stringify(ended),
+          allocation.id,
+        ),
+      );
+      h.advance(60_000);
+      await h.adapter.reconcile();
+    }
+    assert.equal((await h.adapter.retryStatus(caller, [target]))[0]?.state, 'exhausted_unclaimed');
+    const grant = await h.adapter.retry(caller, {
+      ...target,
+      reason: 'Ranked reflection context is deployed; retry the exact frozen revision.',
+      requestId: 'real-retry',
+    });
+    assert.equal(grant.priorAllocations, 2);
+    await h.adapter.reconcile();
+    const attempts = (await h.fleet.listOwned(h.adapter, [id])).filter((a) => a.owner.id === id);
+    assert.equal(attempts.length, 3);
+    assert.equal(attempts[2]?.phase, 'queued');
+  },
+);
 
 const heartbeat = (runnerId: string) => ({
   runnerId,

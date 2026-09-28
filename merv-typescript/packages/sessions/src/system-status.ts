@@ -7,6 +7,15 @@ type ModelBudget = {
   blockReason: string | null;
   resetsAt: string;
 };
+type FleetRetry = {
+  instanceId: string;
+  expectedRevision: number;
+  state: string;
+  unclaimedAttempts: number;
+  attemptLimit: number;
+  retryAvailable: boolean;
+  next: string;
+};
 const modelWait = (budget: ModelBudget | null) =>
   budget
     ? {
@@ -28,6 +37,9 @@ export async function systemStatus(
   sessions: Sessions,
   fleet?: Fleet,
   modelBudget?: () => Promise<ModelBudget | null>,
+  workflowRetries?: (
+    targets: { instanceId: string; expectedRevision: number }[],
+  ) => Promise<FleetRetry[]>,
 ) {
   if (caller.session) {
     const session = await sessions.describe(caller);
@@ -57,6 +69,9 @@ export async function systemStatus(
     fleet?.list(caller, 0) ?? Promise.resolve(null),
     modelBudget?.() ?? Promise.resolve(null),
   ]);
+  const retryStatuses = await workflowRetries?.(
+    project.queue.map(({ instanceId, expectedRevision }) => ({ instanceId, expectedRevision })),
+  ).catch(() => undefined);
   return {
     scope: 'project' as const,
     projectId: caller.projectId,
@@ -82,6 +97,19 @@ export async function systemStatus(
     fleet: {
       available: allocations !== null,
       modelBudget: modelWait(budget),
+      retryBlocked: {
+        available: retryStatuses !== undefined,
+        truncated: project.queueTotal > project.queue.length,
+        items: (retryStatuses ?? [])
+          .filter((status) => status.state.startsWith('exhausted_'))
+          .map((status) => ({
+            instanceId: status.instanceId,
+            expectedRevision: status.expectedRevision,
+            reason: `${status.unclaimedAttempts}/${status.attemptLimit} created Fleet machines ended before claiming work.`,
+            next: status.next,
+            ...(status.retryAvailable ? { tool: 'fleet.workflow_retry' } : {}),
+          })),
+      },
       allocations: (allocations ?? [])
         .filter((allocation) => allocation.phase !== 'released')
         .map((allocation) => ({

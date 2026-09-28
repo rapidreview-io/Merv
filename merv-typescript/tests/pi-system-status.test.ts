@@ -124,6 +124,31 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
     next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
   });
   assert.equal(JSON.stringify(budget).includes('20000000'), false);
+  const retry = await systemStatus(caller, sessions, fleet, undefined, async (targets) => {
+    assert.deepEqual(targets, [{ instanceId: 'task-1', expectedRevision: 2 }]);
+    return [
+      {
+        instanceId: 'task-1',
+        expectedRevision: 2,
+        state: 'exhausted_unclaimed',
+        unclaimedAttempts: 2,
+        attemptLimit: 2,
+        retryAvailable: true,
+        next: 'An administrator may retry this exact revision.',
+      },
+    ];
+  });
+  assert.equal(retry.scope, 'project');
+  if (retry.scope !== 'project') throw new Error('Expected project status');
+  assert.deepEqual(retry.fleet.retryBlocked.items, [
+    {
+      instanceId: 'task-1',
+      expectedRevision: 2,
+      reason: '2/2 created Fleet machines ended before claiming work.',
+      next: 'An administrator may retry this exact revision.',
+      tool: 'fleet.workflow_retry',
+    },
+  ]);
 });
 
 test('system.status is a read-only conversation tool and project access is checked', async () => {

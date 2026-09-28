@@ -257,7 +257,11 @@ export interface Sessions {
   /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
   managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;
   /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
-  inspectManaged(allocationId: string, epoch: number): Promise<ManagedRunnerInspection | null>;
+  inspectManaged(
+    allocationId: string,
+    epoch: number,
+    tx?: Transaction,
+  ): Promise<ManagedRunnerInspection | null>;
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
     projectId: string,

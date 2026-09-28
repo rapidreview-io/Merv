@@ -2197,9 +2197,10 @@ export class LeasedSessions implements Sessions {
   async inspectManaged(
     allocationId: string,
     epoch: number,
+    tx?: Transaction,
   ): Promise<ManagedRunnerInspection | null> {
     this.ensureOpen();
-    return await this.managed.inspect(allocationId, epoch);
+    return await this.managed.inspect(allocationId, epoch, tx);
   }
   async describe(caller: Caller): Promise<Session> {
     this.ordinary(caller);

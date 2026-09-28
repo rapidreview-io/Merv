@@ -33,7 +33,41 @@ export const blockerMigration = {
     PRIMARY KEY(person, day)
   );`,
 };
-export const modelMigrations = [usageMigration, limitsMigration, blockerMigration];
+/** Operator-authorized retry windows; old rentals remain immutable Fleet history. */
+export const workflowRetryMigration = {
+  version: 4,
+  sql: `CREATE TABLE fleet_workflow_retry_grants (
+    id BIGSERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    instance_id TEXT NOT NULL,
+    expected_revision INTEGER NOT NULL,
+    prior_allocations INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, request_id),
+    UNIQUE(project_id, instance_id, expected_revision, prior_allocations)
+  );
+  CREATE INDEX fleet_workflow_retry_target ON fleet_workflow_retry_grants
+    (project_id, instance_id, expected_revision, id DESC);
+  CREATE OR REPLACE FUNCTION fleet_workflow_retry_immutable() RETURNS trigger LANGUAGE plpgsql AS $merv$
+  BEGIN
+    RAISE EXCEPTION 'Fleet workflow retry grants are retained';
+  END;
+  $merv$;
+  CREATE TRIGGER fleet_workflow_retry_no_update BEFORE UPDATE ON fleet_workflow_retry_grants
+    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();
+  CREATE TRIGGER fleet_workflow_retry_no_delete BEFORE DELETE ON fleet_workflow_retry_grants
+    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
+};
+export const modelMigrations = [
+  usageMigration,
+  limitsMigration,
+  blockerMigration,
+  workflowRetryMigration,
+];
 
 const maxRequestBytes = 16 * 1024 * 1024;
 /** One call's output, reasoning included: well above a step's longest answer, and a bound on a
