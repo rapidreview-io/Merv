@@ -1768,6 +1768,24 @@
       "version": 10,
       "hash": "a95491c391ca0dd9bb44d034ba229918886d0786f3126831911946832003f609",
       "published": true
+    },
+    {
+      "type": "reflection.lens",
+      "version": 11,
+      "hash": "7be42f1810d27489dda6a849af4d0e75217bc6849ffee4b4a6980b7f62ccb576",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 12,
+      "hash": "181b31ff05f004de768c13066552f77b7f93590b02dd43501ff7a71b31462def",
+      "published": false
+    },
+    {
+      "type": "reflection.review",
+      "version": 12,
+      "hash": "1701d783359547bbf0beaca318259b92b8bbe03e2ec4cf084df7c96d12e7ac77",
+      "published": false
     }
   ]
 }

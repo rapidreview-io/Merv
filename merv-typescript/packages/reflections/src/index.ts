@@ -22,7 +22,7 @@ import {
   type Caller,
   type ContextBuilder,
   type ContextInput,
-  type RankedContextItem,
+  type ContextItem,
   type ContextRegistration,
   type ProcessGraph,
   type ReviewApplication,
@@ -52,6 +52,7 @@ import {
   PROJECT_PAPER_RECIPES,
   DEPENDENCY_SAFE_RECIPES,
   HIERARCHICAL_RECIPES,
+  ITEM_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
   REFLECTION_WORKFLOW_ENDABLE,
@@ -133,6 +134,50 @@ const configuration = z
   .strict()
   .default({});
 
+/**
+ * Each section's items as a format-2 input. The assignment and the review criteria are embedded
+ * whole, or the build fails; every other source is embedded while it fits.
+ */
+const embedded = (sections: Record<string, ContextItem[]>): Record<string, ContextInput> =>
+  Object.fromEntries(
+    Object.entries(sections).map(([key, items]) => [
+      key,
+      {
+        items:
+          key === 'assignment' || key === 'assessment'
+            ? items.map((item) => ({ ...item, embed: 'always' as const }))
+            : items,
+      },
+    ]),
+  );
+/**
+ * A lease acquired before format 2 froze its inputs as ranked items. They render as the items
+ * inputs() gives now: the same IDs, titles, priorities, bodies and refs, with the association as
+ * the note. The caller's text hash is dropped, since the builder hashes the body itself.
+ */
+const toItems = (inputs: Record<string, ContextInput>): Record<string, ContextInput> =>
+  embedded(
+    Object.fromEntries(
+      Object.entries(inputs).map(([key, input]) => [
+        key,
+        'items' in input
+          ? input.items
+          : 'rankedItems' in input
+            ? input.rankedItems.map(
+                ({ id, title, priority, content, association, refs }): ContextItem => ({
+                  id,
+                  title,
+                  priority,
+                  body: content,
+                  ...(association === undefined ? {} : { note: association }),
+                  refs,
+                }),
+              )
+            : [],
+      ]),
+    ),
+  );
+
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
@@ -168,6 +213,8 @@ export class ReflectionService implements Reflections {
         for (const recipe of DEPENDENCY_SAFE_RECIPES)
           this.historicalContexts.push(await contextBuilder.register(recipe));
         for (const recipe of HIERARCHICAL_RECIPES)
+          this.historicalContexts.push(await contextBuilder.register(recipe));
+        for (const recipe of ITEM_RECIPES)
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
         for (const definition of [
           LENS_WORKFLOW,
@@ -585,37 +632,28 @@ export class ReflectionService implements Reflections {
     const previousCycle = (
       lens ? await this.workflows.get(context.caller, wave.id, context.tx) : context.snapshot
     ).data.previousCycleDigestId;
-    const bucket = (rankedItems: RankedContextItem[]): ContextInput => ({ rankedItems });
     const item = (
       id: string,
       title: string,
       priority: number,
-      content: string,
-      association: string,
+      text: string,
+      note: string,
       tool: string,
       input: Record<string, string | number | boolean | null>,
-      revision?: number,
-    ): RankedContextItem => ({
+    ): ContextItem => ({
       id,
       title,
       priority,
-      content: { text: content },
-      ...(revision === undefined ? {} : { revision }),
-      hash: sha256Hex(Buffer.from(content, 'utf8')),
-      association,
+      body: { text },
+      note,
       refs: [{ tool, input }],
     });
-    const artifactItem = (
-      artifact: Artifact,
-      priority: number,
-      association: string,
-    ): RankedContextItem => ({
-      id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(association)).slice(0, 12)}`,
+    const artifactItem = (artifact: Artifact, priority: number, note: string): ContextItem => ({
+      id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(note)).slice(0, 12)}`,
       title: artifact.title,
       priority,
-      content: { artifactId: artifact.id },
-      hash: artifact.hash,
-      association,
+      body: { artifactId: artifact.id },
+      note,
       refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
     });
     const assignment = JSON.stringify({
@@ -632,36 +670,24 @@ export class ReflectionService implements Reflections {
       ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
     });
     const documents = (await this.paper.read(context.caller, context.tx)).documents;
-    const paperItems: RankedContextItem[] = [];
-    for (const [kind, document] of Object.entries(documents)) {
-      for (const [status, revision, publication] of [
-        ['current', document.current, null],
-        ['published', document.published?.document, document.published?.publication ?? null],
-      ] as const) {
-        if (!revision) continue;
-        for (const [index, section] of revision.sections.entries()) {
-          const paperItem = item(
-            `paper:${kind}:${status}:${revision.revision}:${index}:${section.id}`,
-            `${kind} ${status}: ${section.title || section.id}`,
-            kind === 'problem'
-              ? status === 'current'
-                ? 850
-                : 450
-              : status === 'current'
-                ? 600
-                : 250,
-            section.content,
-            `${kind}/${status}; section ${section.id}; updated ${revision.updatedAt ?? 'unknown'}${publication ? `; publication ${publication.id}` : ''}${status === 'published' && document.current.sections.some((current) => current.content === section.content) ? '; exact content also in current revision' : ''}`,
-            'paper.read',
-            status === 'current' ? { kind, section: section.id } : { kind, history: true },
-            revision.revision,
-          );
-          if (status === 'current')
-            paperItem.refs.push({ tool: 'paper.read', input: { kind, history: true } });
-          paperItems.push(paperItem);
-        }
-      }
-    }
+    // A published section that repeats a current one says so itself: the builder names the copy.
+    const paperItems = this.paper
+      .contextSections(documents)
+      .map(({ kind, status, id, title, text, note, refs }): ContextItem => ({
+        id,
+        title,
+        priority:
+          kind === 'problem'
+            ? status === 'current'
+              ? 850
+              : 450
+            : status === 'current'
+              ? 600
+              : 250,
+        body: { text },
+        note,
+        refs,
+      }));
     if (!paperItems.length)
       paperItems.push(
         item(
@@ -725,8 +751,8 @@ export class ReflectionService implements Reflections {
       typeof previousCycle === 'string'
         ? await this.artifacts.get(context.caller, previousCycle, context.tx)
         : null;
-    return {
-      assignment: bucket([
+    return embedded({
+      assignment: [
         item(
           `reflection:${wave.id}:${lens ? `lens:${lens.id}` : 'wave'}:${context.snapshot.revision}`,
           lens ? `${lens.perspective} lens assignment` : 'Reflection assignment',
@@ -735,13 +761,12 @@ export class ReflectionService implements Reflections {
           `reflection ${wave.id}; attempt ${wave.attempt}`,
           lens ? 'reflection.lens' : 'reflection.get',
           lens ? { lensId: lens.id } : { reflectionId: wave.id },
-          context.snapshot.revision,
         ),
-      ]),
-      projectPaper: bucket(paperItems),
-      research: bucket([]),
-      lenses: bucket(lens ? [] : lensItems),
-      submission: bucket(
+      ],
+      projectPaper: paperItems,
+      research: [],
+      lenses: lens ? [] : lensItems,
+      submission:
         review && submission
           ? [
               artifactItem(submission.report, 780, `reflection ${wave.id}; synthesis report`),
@@ -752,31 +777,28 @@ export class ReflectionService implements Reflections {
               ),
             ]
           : [],
-      ),
-      assessment: bucket(
-        review
-          ? [
-              item(
-                `review:${review.id}:assessment`,
-                'Exact independent review criteria',
-                950,
-                JSON.stringify(review),
-                `reflection ${wave.id}; current review`,
-                'review.get',
-                { reviewId: review.id },
-              ),
-            ]
-          : [],
-      ),
-      feedback: bucket(review ? reviewerFeedback : reviewItems.slice(-1)),
-      ...(!review ? { history: bucket(reviewItems.slice(0, -1)) } : {}),
-      previousCycle: bucket(
-        previousArtifact
-          ? [artifactItem(previousArtifact, 300, `predecessor cycle of reflection ${wave.id}`)]
-          : [],
-      ),
-    };
+      assessment: review
+        ? [
+            item(
+              `review:${review.id}:assessment`,
+              'Exact independent review criteria',
+              950,
+              JSON.stringify(review),
+              `reflection ${wave.id}; current review`,
+              'review.get',
+              { reviewId: review.id },
+            ),
+          ]
+        : [],
+      feedback: review ? reviewerFeedback : reviewItems.slice(-1),
+      ...(!review ? { history: reviewItems.slice(0, -1) } : {}),
+      previousCycle: previousArtifact
+        ? [artifactItem(previousArtifact, 300, `predecessor cycle of reflection ${wave.id}`)]
+        : [],
+    });
   }
+  /** Every artifact the inputs name, whichever shape a lease froze them in: they are the
+   *  worker's artifact grants and the ones its source approved at acquisition. */
   private inputIds(inputs: Record<string, ContextInput>): string[] {
     return [
       ...new Set(
@@ -787,7 +809,11 @@ export class ReflectionService implements Reflections {
               ? input.rankedItems.flatMap((item) =>
                   'artifactId' in item.content ? [item.content.artifactId] : [],
                 )
-              : [],
+              : 'items' in input
+                ? input.items.flatMap((item) =>
+                    'artifactId' in item.body ? [item.body.artifactId] : [],
+                  )
+                : [],
         ),
       ),
     ];
@@ -822,9 +848,9 @@ export class ReflectionService implements Reflections {
     const { wave, lens } = await this.current(context);
     const stage = lens ? 'lens' : context.snapshot.state === 'in_review' ? 'review' : 'synthesis';
     const inputs = context.caller.session
-      ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
+      ? toItems(JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
-    const recipe = HIERARCHICAL_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
+    const recipe = ITEM_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const preview = await this.contexts
       .get(recipe.name)!
       .preview(
@@ -944,19 +970,12 @@ export class ReflectionService implements Reflections {
         if (review) {
           const assessment = inputs.assessment;
           check(
-            assessment && 'rankedItems' in assessment && assessment.rankedItems.length === 1,
+            assessment && 'items' in assessment && assessment.items.length === 1,
             'invalid_context',
             'Reflection review assessment is missing',
           );
-          const content = JSON.stringify(review);
           inputs.assessment = {
-            rankedItems: [
-              {
-                ...assessment.rankedItems[0]!,
-                content: { text: content },
-                hash: sha256Hex(Buffer.from(content, 'utf8')),
-              },
-            ],
+            items: [{ ...assessment.items[0]!, body: { text: JSON.stringify(review) } }],
           };
         }
         const ids = this.inputIds(inputs);

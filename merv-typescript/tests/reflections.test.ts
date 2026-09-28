@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
+import type {
+  Artifact,
+  Caller,
+  ContextItem,
+  ReviewApplication,
+  ReviewHistory,
+} from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
@@ -129,7 +135,7 @@ test('reflection lens context includes project paper goals and revision', async 
   const context = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
   assert.match(context.prompt, /Project paper and document revisions/);
   assert.match(context.prompt, /Explain the project-level clustering result/);
-  assert.match(context.prompt, /"revision":1/);
+  assert.match(context.prompt, /problem\/current revision 1; section goals/);
   assert.match(context.prompt, /project\.records; task\.list repeats its task records/);
   assert.match(context.prompt, /Refresh live records when needed/);
 });
@@ -185,6 +191,113 @@ test('large paper and five lens reports remain reviewable within the ranked cont
   assert.ok(review.sources.some((source) => source.id === submitted.report!.id));
   assert.ok(review.sources.some((source) => source.id === submitted.changeSpec!.id));
   assert.ok(reports.every((report) => review.sources.some((source) => source.id === report.id)));
+});
+test('a format-2 wave embeds its assignment and review criteria beside a mature paper, lists what it cut and keeps a leased worker’s grants', async (t) => {
+  const f = await fixture(t);
+  const body = (label: string) => `${label} records a verified finding. `.repeat(20);
+  await f.app.ctx.paper.patch(f.owner, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'mature-problem',
+    changes: ['problem', 'scope', 'goals', 'constraints'].map((id) => ({ id, content: body(id) })),
+  });
+  for (const kind of ['literature', 'methods', 'results'] as const)
+    await f.app.ctx.paper.patch(f.owner, {
+      kind,
+      expectedRevision: 0,
+      requestId: `mature-${kind}`,
+      changes: Array.from({ length: 40 }, (_, n) => ({
+        id: `${kind}-${n}`,
+        title: `${kind} ${n}`,
+        content: body(`${kind} ${n}`),
+      })),
+    });
+  let wave = await f.lenses(
+    await f.app.ctx.reflections.create(f.owner, { requestId: 'mature-paper-wave' }),
+  );
+  const reports = wave.lenses.map((lens) => lens.artifact!.id);
+  const synthesis = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
+  assert.equal(synthesis.typeVersion, 12);
+  assert.ok(synthesis.prompt.length <= 32_000);
+  assert.ok(synthesis.prompt.includes(`\n### reflection:${wave.id}:wave:`));
+  assert.ok(synthesis.prompt.includes(`"reflectionId":"${wave.id}"`));
+  // A paper this size cannot all be listed: the lowest-ranked sections are cut and counted, and
+  // omitted names them beside the listed sections whose bodies did not fit.
+  const cut = synthesis.omitted.filter((id) => !synthesis.prompt.includes(id));
+  assert.ok(cut.length > 0 && cut.every((id) => id.startsWith('paper:')));
+  assert.match(
+    synthesis.prompt,
+    /lower-priority items are not listed for lack of room; retrieve them through paper\.read\.\)/,
+  );
+  assert.ok(reports.every((id) => synthesis.sources.some((source) => source.id === id)));
+
+  // A leased worker's grants still cover every lens report its items name.
+  const secret = token();
+  await f.app.ctx.sessions.registerAgent(await f.actor('Synthesis lead', 'operator'), {
+    name: 'Synthesis agent',
+    runnerId: 'external',
+    requestId: 'synthesis-agent',
+    secret,
+  });
+  const session = await f.app.ctx.sessions.assignAgent(secret, {
+    instanceId: wave.id,
+    expectedRevision: wave.workflow.revision,
+    requestId: 'assign-synthesis',
+  });
+  assert.equal(session.assignment.context!.typeVersion, 12);
+  assert.ok(reports.every((id) => session.execution.references.artifacts.includes(id)));
+  const worker = await f.app.ctx.sessions.authenticate(secret);
+  const leased = (await f.app.ctx.workflows.assignment(worker, wave.id)).context!;
+  // A lease acquired before format 2 froze ranked items; they render exactly as items do now.
+  await f.app.ctx.state.transaction(async (tx) => {
+    const { inputs } = (await tx.get<{ inputs: string }>(
+      'SELECT inputs FROM reflection_leases WHERE id=?',
+      session.id,
+    ))!;
+    const ranked = Object.fromEntries(
+      Object.entries(JSON.parse(inputs) as Record<string, { items: ContextItem[] }>).map(
+        ([key, { items }]) => [
+          key,
+          {
+            rankedItems: items.map(({ id, title, priority, body, note, refs }) => ({
+              id,
+              title,
+              priority,
+              content: body,
+              ...(note ? { association: note } : {}),
+              refs,
+            })),
+          },
+        ],
+      ),
+    );
+    await tx.run('ALTER TABLE reflection_leases DISABLE TRIGGER reflection_lease_immutable');
+    await tx.run(
+      'UPDATE reflection_leases SET inputs=? WHERE id=?',
+      JSON.stringify(ranked),
+      session.id,
+    );
+    await tx.run('ALTER TABLE reflection_leases ENABLE TRIGGER reflection_lease_immutable');
+  });
+  assert.equal(
+    (await f.app.ctx.workflows.assignment(worker, wave.id)).context!.prompt,
+    leased.prompt,
+  );
+  const grants = (
+    await f.app.ctx.workflows.execution(worker, {
+      instanceId: wave.id,
+      expectedRevision: wave.workflow.revision,
+    })
+  ).references.artifacts;
+  assert.ok(reports.every((id) => grants.includes(id)));
+  await f.app.ctx.sessions.releaseAgentAssignment(secret, session.id);
+
+  wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
+  const reviewer = await f.actor('Mature-paper reviewer', 'reviewer');
+  const review = (await f.app.ctx.workflows.assignment(reviewer, wave.id)).context!;
+  assert.ok(review.prompt.length <= 32_000);
+  assert.ok(review.prompt.includes(`\n### review:${wave.review!.id}:assessment — `));
+  assert.ok(review.prompt.includes(`\n### reflection:${wave.id}:wave:`));
 });
 test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
   const f = await fixture(t);
@@ -602,7 +715,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 10);
+  assert.equal(lensContext.typeVersion, 11);
   assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
   assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
   assert.match(lensContext.prompt, /"verdict":"needs_changes"/);

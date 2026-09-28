@@ -22,6 +22,7 @@ import { EXPERIMENT_RECIPES } from '@merv/experiments/program';
 import {
   DEPENDENCY_SAFE_RECIPES,
   HIERARCHICAL_RECIPES,
+  ITEM_RECIPES,
   LENS_RECIPE,
   PROJECT_PAPER_RECIPES,
   WORKSPACE_RECIPES,
@@ -36,6 +37,7 @@ import {
   type Caller,
   type ContextBuild,
   type ContextInput,
+  type ContextItem,
   type RankedContextItem,
   type Scope,
   type TaskTypeDefinition,
@@ -145,6 +147,7 @@ function definitions(): TaskTypeDefinition[] {
     ...PROJECT_PAPER_RECIPES,
     ...DEPENDENCY_SAFE_RECIPES,
     ...HIERARCHICAL_RECIPES,
+    ...ITEM_RECIPES,
   ]) {
     const key = `${definition.name}@${definition.version}`;
     const seen = all.get(key);
@@ -211,8 +214,120 @@ function paperItems(count: number): RankedContextItem[] {
   });
 }
 
+/** The canonical inputs for a format-2 recipe, by case name. */
+function itemCases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
+  const { sections, maxChars } = definition.recipe;
+  const first = sections.find((s) => s.required)?.key ?? sections[0].key;
+  const items = (pick: (key: string, index: number) => ContextItem[]) => ({
+    subject,
+    inputs: Object.fromEntries(sections.map((s, index) => [s.key, { items: pick(s.key, index) }])),
+  });
+  const note = (key: string, index: number): ContextItem => ({
+    id: `${key}:text`,
+    title: `${key} note`,
+    body: { text: `The ${key} note is short.` },
+    priority: 100 - index,
+    note: `from ${key}`,
+    refs: [{ tool: 'task.get', input: { id: key } }],
+  });
+  const stored = (id: string, artifact: Artifact, rest: Partial<ContextItem> = {}) => ({
+    id,
+    title: artifact.title,
+    body: { artifactId: artifact.id },
+    refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
+    ...rest,
+  });
+  const assignment = (key: string, index: number): ContextItem[] =>
+    key === first
+      ? [{ ...note(key, index), id: `${key}:assignment`, embed: 'always', priority: 1000 }]
+      : [note(key, index)];
+  const duplicate = 'The same retained paragraph, repeated under two items. '.repeat(4);
+  const all: [string, Omit<ContextBuild, 'requestId'>][] = [
+    ['items/text', items(assignment)],
+    [
+      'items/artifacts',
+      items((key, index) => [
+        ...assignment(key, index),
+        ...(key === first
+          ? [
+              stored(`${key}:text`, doc.text, { id: `${key}:markdown` }),
+              stored(`${key}:json`, doc.json),
+              stored(`${key}:png`, doc.png),
+              stored(`${key}:latin1`, doc.latin1),
+              stored(`${key}:never`, doc.json, { embed: 'never' }),
+            ]
+          : []),
+      ]),
+    ],
+    [
+      'items/duplicate',
+      items((key, index) => [
+        ...assignment(key, index),
+        ...(key === first
+          ? [
+              { ...note(key, index), id: `${key}:original`, body: { text: duplicate } },
+              { ...note(key, index), id: `${key}:copy`, body: { text: duplicate }, priority: 0 },
+            ]
+          : []),
+      ]),
+    ],
+    [
+      'items/not-fit',
+      items((key, index) => [
+        ...assignment(key, index),
+        ...(key === first
+          ? [{ ...note(key, index), id: `${key}:long`, body: { text: 'z'.repeat(maxChars) } }]
+          : []),
+      ]),
+    ],
+    // More items than the budget can list, as a mature paper gives.
+    [
+      'items/overflow',
+      items((key, index) => [
+        ...assignment(key, index),
+        ...(key === first
+          ? Array.from({ length: Math.ceil(maxChars / 150) }, (_, n) => ({
+              ...note(key, index),
+              id: `${key}:many:${n}`,
+              priority: -n,
+            }))
+          : []),
+      ]),
+    ],
+    [
+      'items/line-breaks',
+      items((key, index) =>
+        key === first
+          ? [{ ...assignment(key, index)[0]!, title: doc.forged.title, note: 'a\nb' }]
+          : [note(key, index)],
+      ),
+    ],
+  ];
+  for (const code of ['blob_corrupt', 'blob_not_found'])
+    all.push(
+      [
+        `items/read-error/${code}/fit`,
+        items((key, index) => [
+          ...assignment(key, index),
+          ...(key === first ? [stored(`${key}:unreadable`, failing(code))] : []),
+        ]),
+      ],
+      [
+        `items/read-error/${code}/always`,
+        items((key, index) => [
+          ...assignment(key, index),
+          ...(key === first
+            ? [stored(`${key}:unreadable`, failing(code), { embed: 'always' })]
+            : []),
+        ]),
+      ],
+    );
+  return all;
+}
+
 /** The canonical inputs for one recipe, by case name. */
 function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
+  if (definition.recipe.format === 2) return itemCases(definition);
   const { sections, maxChars } = definition.recipe;
   const required = sections.filter((s) => s.required),
     optional = sections.filter((s) => !s.required),
