@@ -168,7 +168,7 @@
         },
         {
           "name": "artifact.list",
-          "description": "List this project’s immutable artifacts, newest first (at most 1,000).",
+          "description": "List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID.",
           "readOnly": true
         },
         {
@@ -250,7 +250,7 @@
         },
         {
           "name": "artifact.list",
-          "description": "List this project’s immutable artifacts, newest first (at most 1,000).",
+          "description": "List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID.",
           "readOnly": true
         },
         {

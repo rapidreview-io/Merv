@@ -1162,6 +1162,9 @@ export interface Artifacts {
    * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
+  /** One authorisation and one query for up to 2000 ids: the artifacts in input order,
+   * duplicates kept; `not_found` for the first id that is not in this project. */
+  getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
   /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
    * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
   bytes(
@@ -1180,7 +1183,14 @@ export interface Artifacts {
     range?: { offset?: number; length?: number },
     tx?: Transaction,
   ): Promise<ArtifactContent>;
-  list(caller: Caller): Promise<Artifact[]>;
+  /** Newest first, at most `limit` (1-1000, default 1000). `before` is an artifact id of this
+   * project (`not_found` if it is not) and the page starts after it; `session` keeps only the
+   * artifacts created by that session. */
+  list(
+    caller: Caller,
+    query?: { before?: string; limit?: number; session?: string },
+    tx?: Transaction,
+  ): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {
   name: string;

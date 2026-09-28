@@ -178,10 +178,15 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.list',
-      'List this project’s immutable artifacts, newest first (at most 1,000).',
-      z.object({}).strict(),
-      async (c) =>
-        (await ctx.artifacts.list(c)).map((artifact) => ({
+      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID.',
+      z
+        .object({
+          before: z.string().min(1).optional(),
+          limit: z.number().int().min(1).max(1000).optional(),
+        })
+        .strict(),
+      async (c, i) =>
+        (await ctx.artifacts.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
           ...artifact,
           downloadAvailable: ctx.artifacts.canDownload(artifact),
         })),

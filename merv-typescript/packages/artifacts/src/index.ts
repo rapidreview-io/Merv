@@ -34,6 +34,8 @@ async function missing<T>(fn: () => Promise<T>): Promise<T> {
     throw error;
   }
 }
+/** An id argument: a nonempty string. */
+const named = (id: unknown): id is string => typeof id === 'string' && id.length > 0;
 /** This package's own source, whose stack frames are never the call site that is reported. */
 const OWN = [new URL('.', import.meta.url).href, fileURLToPath(new URL('.', import.meta.url))];
 export class ArtifactStore implements Artifacts {
@@ -69,6 +71,7 @@ export class ArtifactStore implements Artifacts {
         },
         { version: 2, sql: postgresMigrations[2] },
         { version: 3, sql: postgresMigrations[3] },
+        { version: 4, sql: postgresMigrations[4] },
       ]);
     };
   }
@@ -298,16 +301,67 @@ export class ArtifactStore implements Artifacts {
     const { artifact, bytes } = await this.bytes(caller, artifactId, tx);
     return view(artifact, bytes, range);
   }
-  async list(caller: Caller): Promise<Artifact[]> {
+  async getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]> {
     caller = structuredClone(caller);
-    return await this.one(caller, undefined, async (tx) =>
-      (
-        await tx.all(
-          `SELECT ${META} FROM artifacts WHERE project_id=? ORDER BY created_at DESC,id DESC LIMIT 1000`,
-          caller.projectId,
-        )
-      ).map(fromRow),
+    check(
+      Array.isArray(ids) && ids.length <= 2000 && ids.every(named),
+      'invalid_artifact',
+      'Expected up to 2000 artifact ids',
     );
+    ids = [...ids];
+    if (!ids.length) return [];
+    const rows = await this.one(caller, tx, (tx) =>
+      tx.all(
+        `SELECT ${META} FROM artifacts WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
+        caller.projectId,
+        JSON.stringify([...new Set(ids)]),
+      ),
+    );
+    const byId = new Map(rows.map((row) => [row.id as string, fromRow(row)]));
+    return ids.map((id) => {
+      const artifact = byId.get(id);
+      check(artifact, 'not_found', 'Artifact not found in this project', 404);
+      return artifact;
+    });
+  }
+  async list(
+    caller: Caller,
+    { before, limit = 1000, session }: { before?: string; limit?: number; session?: string } = {},
+    tx?: Transaction,
+  ): Promise<Artifact[]> {
+    caller = structuredClone(caller);
+    check(before === undefined || named(before), 'invalid_artifact', 'Invalid before artifact id');
+    check(session === undefined || named(session), 'invalid_artifact', 'Invalid session id');
+    check(
+      Number.isSafeInteger(limit) && limit >= 1 && limit <= 1000,
+      'invalid_artifact',
+      'limit must be 1-1000',
+    );
+    return await this.one(caller, tx, async (tx) => {
+      const where = ['project_id=?'];
+      const params: string[] = [caller.projectId];
+      if (session !== undefined) {
+        where.push('session_id=?');
+        params.push(session);
+      }
+      if (before !== undefined) {
+        const cursor = await tx.get<{ created_at: string; id: string }>(
+          'SELECT created_at,id FROM artifacts WHERE id=? AND project_id=?',
+          before,
+          caller.projectId,
+        );
+        check(cursor, 'not_found', 'Artifact not found in this project', 404);
+        where.push('(created_at,id) < (?,?)');
+        params.push(cursor.created_at, cursor.id);
+      }
+      return (
+        await tx.all(
+          `SELECT ${META} FROM artifacts WHERE ${where.join(' AND ')} ORDER BY created_at DESC,id DESC LIMIT ?`,
+          ...params,
+          limit,
+        )
+      ).map(fromRow);
+    });
   }
 }
 export const artifactsPlugin = {

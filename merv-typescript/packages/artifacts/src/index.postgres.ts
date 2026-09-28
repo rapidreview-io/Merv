@@ -44,4 +44,11 @@ ${withoutTriggers(
 ALTER TABLE artifacts ADD CONSTRAINT artifacts_content_verified
   CHECK (content IS NULL OR (octet_length(content) = size AND encode(sha256(content), 'hex') = hash));
 `,
+  // Newest-first pages of a project, and of the outputs of one session, scan an index backwards.
+  // The project index leads with project_id, so it serves every use of the one it replaces.
+  4: `
+CREATE INDEX artifacts_project_created ON artifacts(project_id, created_at, id);
+DROP INDEX artifacts_project;
+CREATE INDEX artifacts_project_session ON artifacts(project_id, session_id, created_at, id) WHERE session_id IS NOT NULL;
+`,
 };
