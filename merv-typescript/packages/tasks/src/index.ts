@@ -1305,14 +1305,13 @@ export class TaskService implements Tasks {
           'Done-when checks must be distinct',
         );
         const checks = [...input.checks];
+        const rendered =
+          input.briefId === undefined ? renderBrief({ ...input, checks }, git) : undefined;
         const brief =
           input.briefId === undefined
             ? await this.artifacts.create(
                 caller,
-                {
-                  title: clip(`Task brief: ${input.title}`, 300),
-                  content: renderBrief({ ...input, checks }, git),
-                },
+                { title: clip(`Task brief: ${input.title}`, 300), content: rendered! },
                 tx,
               )
             : await this.artifacts.get(caller, input.briefId, tx);
@@ -1327,19 +1326,25 @@ export class TaskService implements Tasks {
           'invalid_brief',
           'The brief must be a nonempty text document',
         );
-        const document = await this.artifacts.read(caller, brief.id);
-        check(
-          document.encoding === 'utf8',
-          'invalid_brief',
-          'The brief must contain valid UTF-8 text',
-        );
+        // A brief rendered here is checked as written: its input is plain text, without NUL or a
+        // lone surrogate, so it reads back unchanged. One of the producer's own is read back.
+        let content = rendered;
+        if (content === undefined) {
+          const document = await this.artifacts.read(caller, brief.id, undefined, tx);
+          check(
+            document.encoding === 'utf8',
+            'invalid_brief',
+            'The brief must contain valid UTF-8 text',
+          );
+          content = document.content;
+        }
         // The brief is embedded whole in every work context: it must leave the recipe room.
         check(
-          document.content.length <= 32_000,
+          content.length <= 32_000,
           'invalid_brief',
           'The brief (goal and checks) must fit 32,000 characters',
         );
-        const text = folded(document.content);
+        const text = folded(content);
         check(
           text.includes(folded(input.goal)) && checks.every((item) => text.includes(folded(item))),
           'invalid_brief',

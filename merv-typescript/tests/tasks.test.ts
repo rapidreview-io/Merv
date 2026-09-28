@@ -1318,6 +1318,31 @@ test('brief text rejects invalid UTF-8 while structured deliveries can cite bina
   }
 });
 
+test('a rendered brief is checked as written, without reading it back', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  t.mock.method(f.artifacts, 'read', () => assert.fail('A rendered brief is not read back'));
+  const task = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.'],
+    requestId: 'rendered',
+  });
+  assert.match((await f.artifacts.bytes(f.producer, task.briefId)).bytes.toString(), /adder/);
+  const artifacts = (await f.artifacts.list(f.producer)).length;
+  await assert.rejects(
+    async () =>
+      await f.tasks.create(f.producer, {
+        title: 'Adder',
+        goal: 'x'.repeat(32_000),
+        checks: ['Adds two numbers.'],
+        requestId: 'long',
+      }),
+    code('invalid_brief'),
+  );
+  assert.equal((await f.artifacts.list(f.producer)).length, artifacts);
+});
+
 test('review reissue recovers revoked claims, preserves evidence, fences old revisions, and checks authority', async () => {
   const f = await fixture();
   try {
