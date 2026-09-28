@@ -11,29 +11,21 @@ const code = (error: unknown) =>
  * reads of them stop reaching storage. Only a server whose config turns it on runs it. Rows are
  * read a page at a time; each row's bytes are fetched outside any transaction and written in a
  * short transaction of their own, which the CHECK verifies. Bytes that are gone or corrupt are
- * logged as lost and passed over; any other failure of a row is logged as failed and retried by
- * the next pass; an outage stops the pass until the next boot. Delete this, with its config key,
+ * logged as lost and passed over; any other failure of a row is logged as failed and retried at
+ * the next boot; an outage stops the pass until the next boot. Delete this, with its config key,
  * once prod has no such row left but those logged as lost.
  */
 export class Backfill {
   private running?: Promise<void>;
-  private again = false;
   private stopped = false;
   constructor(
     private state: State,
     /** The verified bytes of a row without content, from blobs. */
     private fetch: (artifact: Artifact) => Promise<Buffer>,
   ) {}
-  /** Starts a pass, or has the running one go again once it ends. */
-  kick() {
-    if (this.stopped) return;
-    this.again = true;
-    this.running ??= (async () => {
-      while (this.again && !this.stopped) {
-        this.again = false;
-        await this.pass();
-      }
-    })().finally(() => (this.running = undefined));
+  /** Starts this boot's one pass. */
+  start() {
+    this.running = this.pass();
   }
   /** Stops after the row in hand. */
   async stop() {

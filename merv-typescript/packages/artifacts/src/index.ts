@@ -127,7 +127,7 @@ export class ArtifactStore implements Artifacts {
    */
   backfill(): () => Promise<void> {
     const fill = new Backfill(this.state, (artifact) => this.fetch(artifact));
-    fill.kick();
+    fill.start();
     return () => fill.stop();
   }
   private sites = new Set<string>();
