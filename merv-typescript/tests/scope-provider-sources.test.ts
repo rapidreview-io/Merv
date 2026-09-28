@@ -148,7 +148,7 @@ for (const [kind, slot] of Object.entries(kinds) as [
         assert.ok(await f.scope.require(f.callers[kind], 'read'), 'a fresh call is fine');
     });
 
-  test(`${kind}: the provider's own refusal comes first`, async (t) => {
+  test(`${kind}: the provider's own refusal is passed through`, async (t) => {
     const f = await fixture(t);
     slot.register(f.scope, {
       require: async () => {
@@ -217,5 +217,31 @@ test('managed: a source whose actor was revoked is refused', async (t) => {
     code: 'managed_runner_forbidden',
     status: 403,
     message: 'Managed runner source actor is revoked',
+  });
+});
+
+test("managed: the provider's refusal wins over a revoked source actor", async (t) => {
+  const f = await fixture(t);
+  const issued = await f.scope.issueActor(f.owner, { name: 'Runner owner', role: 'producer' });
+  const source = await f.scope.delegationSource({
+    actorId: issued.actor.id,
+    projectId: issued.actor.projectId,
+    credentialId: issued.credential.id,
+  });
+  let refuse = false;
+  f.scope.registerManagedRunnerAuthority({
+    require: async () => {
+      if (refuse) throw new MervError('unauthorized', 'Provider refused', 401);
+      return source;
+    },
+  });
+  const runner: Caller = { ...f.callers.managed, actorId: issued.actor.id };
+  await f.scope.revokeActor(f.owner, issued.actor.id);
+  await assert.rejects(f.scope.require(runner, 'read'), { code: 'managed_runner_forbidden' });
+  refuse = true;
+  await assert.rejects(f.scope.require(runner, 'read'), {
+    code: 'unauthorized',
+    status: 401,
+    message: 'Provider refused',
   });
 });

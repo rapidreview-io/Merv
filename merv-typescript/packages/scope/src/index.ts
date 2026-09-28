@@ -828,6 +828,7 @@ export class ProjectScope implements Scope {
           'managed_runner_forbidden',
           'Managed runner source does not match this caller',
         );
+        // Defence in depth: the real provider's requireDelegation already refuses a revoked actor.
         check(
           row.active,
           'managed_runner_forbidden',
