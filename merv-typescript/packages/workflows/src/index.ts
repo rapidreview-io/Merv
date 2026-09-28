@@ -295,22 +295,11 @@ export class WorkflowsService implements Workflows {
       },
       start: async (caller, input, tx) => {
         this.requireActive(registration);
-        check(
-          input.workflow === definition.name &&
-            (input.version === undefined || input.version === definition.version),
-          'workflow_handle_mismatch',
-          'The program handle only owns its registered workflow version',
-        );
-        return await this.startInternal(
-          caller,
-          { ...input, version: definition.version },
-          tx,
-          registration,
-        );
+        return await this.startInternal(caller, input, registration, tx);
       },
       transition: async (caller, input, tx) => {
         this.requireActive(registration);
-        return await this.transitionInternal(caller, input, tx, registration);
+        return await this.transitionInternal(caller, input, registration, tx);
       },
       addDependencies: async (caller, input, tx) => {
         this.requireActive(registration);
@@ -1585,18 +1574,6 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  async start(caller: Caller, input: WorkflowStart, tx?: Transaction): Promise<WorkflowSnapshot> {
-    return await this.startInternal(caller, input, tx);
-  }
-
-  async transition(
-    caller: Caller,
-    input: WorkflowTransition,
-    tx?: Transaction,
-  ): Promise<WorkflowSnapshot> {
-    return await this.transitionInternal(caller, input, tx);
-  }
-
   async get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot> {
     this.assertOpen();
     caller = structuredClone(caller);
@@ -1687,22 +1664,19 @@ export class WorkflowsService implements Workflows {
   private async startInternal(
     caller: Caller,
     { ...input }: WorkflowStart,
+    owner: Registration,
     tx?: Transaction,
-    owner?: Registration,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
     caller = structuredClone(caller);
+    const { name, version } = owner.definition;
+    check(
+      input.workflow === name && (input.version === undefined || input.version === version),
+      'workflow_handle_mismatch',
+      'The program handle only owns its registered workflow version',
+      403,
+    );
     this.requestId(input.requestId);
-    check(
-      typeof input.workflow === 'string' && input.workflow.length > 0,
-      'invalid_workflow',
-      'Workflow name is required',
-    );
-    check(
-      input.version === undefined || (Number.isSafeInteger(input.version) && input.version > 0),
-      'invalid_version',
-      'Workflow version must be a positive integer',
-    );
     const data = this.data(input.data);
     const dependsOn = normalizeDependencies(input.dependsOn);
     // The fingerprint names the set asked for, so a retry in another order, or with an empty
@@ -1711,41 +1685,37 @@ export class WorkflowsService implements Workflows {
     const hash = digest({
       operation: 'start',
       actorId: caller.actorId,
-      workflow: input.workflow,
-      version: input.version ?? null,
+      workflow: name,
+      version,
       data,
       ...(sorted.length ? { dependsOn: sorted } : {}),
     });
     return await this.write(tx, async (transaction) => {
-      // Managed programs authorize their own commands, including reviewer-triggered repair.
-      await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
+      // A program authorizes its own commands, including reviewer-triggered repair.
+      await this.scope.require(caller, 'read', transaction);
+      // The fingerprint names this handle's workflow and version, so a replay is one of its own.
       const replay = await this.replay<WorkflowSnapshot>(
         transaction,
         caller.projectId,
         input.requestId,
         hash,
       );
-      if (replay) {
-        await this.checkOwnerForSnapshot(replay, owner, transaction);
-        if (owner) this.requireActive(owner);
-        return replay;
-      }
-      const registered = this.definition(input.workflow, input.version);
-      this.checkOwner(registered, owner);
-      const blocker = await openBlocker(transaction, caller.projectId, registered.definition.name);
+      this.requireActive(owner);
+      if (replay) return replay;
+      const blocker = await openBlocker(transaction, caller.projectId, name);
       check(
         !blocker,
         'workflow_creation_paused',
-        `New ${registered.definition.name} work is paused while ${blocker?.workflow} ${blocker?.id} is active. Existing work may continue.`,
+        `New ${name} work is paused while ${blocker?.workflow} ${blocker?.id} is active. Existing work may continue.`,
         409,
       );
       const time = now();
       const snapshot: WorkflowSnapshot = {
         id: newId('wf'),
         projectId: caller.projectId,
-        workflow: registered.definition.name,
-        version: registered.definition.version,
-        state: registered.definition.initial,
+        workflow: name,
+        version,
+        state: owner.definition.initial,
         revision: 0,
         data,
         createdAt: time,
@@ -1768,7 +1738,7 @@ export class WorkflowsService implements Workflows {
       await this.record(
         transaction,
         caller,
-        registered,
+        owner,
         snapshot,
         input.requestId,
         hash,
@@ -1777,7 +1747,7 @@ export class WorkflowsService implements Workflows {
         data,
         dependsOn.length ? { dependsOn } : {},
       );
-      this.requireActive(registered);
+      this.requireActive(owner);
       return snapshot;
     });
   }
@@ -1785,8 +1755,8 @@ export class WorkflowsService implements Workflows {
   private async transitionInternal(
     caller: Caller,
     { ...input }: WorkflowTransition,
+    owner: Registration,
     tx?: Transaction,
-    owner?: Registration,
   ): Promise<WorkflowSnapshot> {
     this.assertOpen();
     caller = structuredClone(caller);
@@ -1810,30 +1780,26 @@ export class WorkflowsService implements Workflows {
       ...(proposed === undefined ? {} : { input: proposed }),
     });
     return await this.write(tx, async (transaction) => {
-      // Managed programs own action-specific write/review policies; the engine still validates tenancy.
-      await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
+      // The program owns action-specific write/review policies; the engine still validates tenancy.
+      await this.scope.require(caller, 'read', transaction);
       const row = await this.readRow(transaction, caller.projectId, input.instanceId);
       const before = this.snapshot(row);
-      await this.checkOwnerForSnapshot(before, owner, transaction);
+      this.checkHandle(owner, before);
       const replay = await this.replay<WorkflowSnapshot>(
         transaction,
         caller.projectId,
         input.requestId,
         hash,
       );
-      if (replay) {
-        if (owner) this.requireActive(owner);
-        return replay;
-      }
+      this.requireActive(owner);
+      if (replay) return replay;
       check(
         before.revision === input.expectedRevision,
         'revision_conflict',
         `Expected revision ${input.expectedRevision}, found ${before.revision}`,
         409,
       );
-      const registered = this.definition(before.workflow, before.version);
-      this.checkOwner(registered, owner);
-      const edge = registered.definition.edges.find(
+      const edge = owner.definition.edges.find(
         (edge) => edge.from === before.state && edge.action === input.action,
       );
       check(
@@ -1845,13 +1811,13 @@ export class WorkflowsService implements Workflows {
       // Checked before the owning rule so the caller learns the limit, not whichever domain
       // refusal would also apply, and inside this transaction so the refusal rolls back the
       // whole command that asked for the return.
-      const limit = limitFor(registered.policy, before.state, edge.action);
+      const limit = limitFor(owner.policy, before.state, edge.action);
       if (limit) {
         const status = await limitStatus(transaction, limit, before.id);
         check(!status.exhausted, 'loop_limit_reached', limitMessage(status, before.workflow), 409);
       }
-      if (registered.policy) {
-        const rule = registered.policy.actions.find(
+      if (owner.policy) {
+        const rule = owner.policy.actions.find(
           (rule) => rule.states.includes(before.state) && rule.transitions?.includes(edge.action),
         );
         check(rule, 'invalid_workflow_policy', 'Transition has no registered guard', 500);
@@ -1872,7 +1838,7 @@ export class WorkflowsService implements Workflows {
         [row],
         'Transition checks must not change the workflow instance',
       );
-      this.requireActive(registered);
+      this.requireActive(owner);
       const after: WorkflowSnapshot = {
         ...before,
         state: edge.to,
@@ -1899,7 +1865,7 @@ export class WorkflowsService implements Workflows {
       await this.record(
         transaction,
         caller,
-        registered,
+        owner,
         after,
         input.requestId,
         hash,
@@ -1908,12 +1874,12 @@ export class WorkflowsService implements Workflows {
         data,
       );
       // Ended work waits on nothing, and the provider that spoke may not be loaded to say so.
-      if (registered.definition.terminal.includes(after.state))
+      if (owner.definition.terminal.includes(after.state))
         await clearBlockers(transaction, after.id);
       // Recorded on arrival, never from a read. A step that stays in the capped state (a
       // reissued review) is not a new arrival and says nothing new.
       if (after.state !== before.state)
-        for (const arrived of await limitStatuses(transaction, registered.policy, after))
+        for (const arrived of await limitStatuses(transaction, owner.policy, after))
           if (arrived.exhausted)
             await recorded(this.state, transaction, caller, 'workflow.escalated', after.id, {
               workflow: after.workflow,
@@ -1924,7 +1890,7 @@ export class WorkflowsService implements Workflows {
               used: arrived.used,
               max: arrived.max,
             });
-      this.requireActive(registered);
+      this.requireActive(owner);
       return after;
     });
   }
@@ -1952,20 +1918,18 @@ export class WorkflowsService implements Workflows {
       ...(drop.length ? { drop: [...drop].sort() } : {}),
     });
     return await this.write(transaction, async (tx) => {
-      // As at start and transition: a managed program authorizes its own commands.
-      await this.scope.require(caller, owner.definition.managed ? 'read' : 'write', tx);
+      // As at start and transition: the program authorizes its own commands.
+      await this.scope.require(caller, 'read', tx);
       const before = await this.readSnapshot(tx, caller.projectId, input.instanceId);
-      await this.checkOwnerForSnapshot(before, owner, tx);
+      this.checkHandle(owner, before);
       const replay = await this.replay<WorkflowSnapshot>(
         tx,
         caller.projectId,
         input.requestId,
         hash,
       );
-      if (replay) {
-        this.requireActive(owner);
-        return replay;
-      }
+      this.requireActive(owner);
+      if (replay) return replay;
       check(
         before.revision === input.expectedRevision,
         'revision_conflict',
@@ -2023,59 +1987,23 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  private definition(name: string, version?: number): Registration {
-    const registration =
-      version === undefined
-        ? [...this.registrations.values()]
-            .filter((value) => value.definition.name === name)
-            .sort((a, b) => b.definition.version - a.definition.version)[0]
-        : this.registrations.get(`${name}@${version}`);
+  private definition(name: string, version: number): Registration {
+    const registration = this.registrations.get(`${name}@${version}`);
     check(
       registration,
       'workflow_unavailable',
-      `Workflow ${name}${version === undefined ? '' : `@${version}`} is not installed`,
+      `Workflow ${name}@${version} is not installed`,
       503,
     );
     return registration;
   }
 
-  private async checkOwnerForSnapshot(
-    snapshot: WorkflowSnapshot,
-    owner: Registration | undefined,
-    tx: Transaction,
-  ): Promise<void> {
-    const definition =
-      this.registrations.get(`${snapshot.workflow}@${snapshot.version}`)?.definition ??
-      (await this.contracts.get(tx, snapshot.workflow, snapshot.version))?.definition;
-    check(definition, 'workflow_unavailable', 'The pinned workflow definition is unavailable', 503);
-    if (owner)
-      check(
-        owner.definition.name === snapshot.workflow &&
-          owner.definition.version === snapshot.version,
-        'workflow_handle_mismatch',
-        'The program handle does not own this workflow instance',
-        403,
-      );
+  /** A handle commands only the instances of its own workflow version. */
+  private checkHandle(owner: Registration, snapshot: WorkflowSnapshot): void {
     check(
-      !definition.managed || owner,
-      'workflow_managed',
-      'This workflow is managed by its program; use the program commands',
-      403,
-    );
-  }
-
-  private checkOwner(registration: Registration, owner?: Registration): void {
-    if (owner)
-      check(
-        registration === owner,
-        'workflow_handle_mismatch',
-        'The program handle does not own this workflow version',
-        403,
-      );
-    check(
-      !registration.definition.managed || owner,
-      'workflow_managed',
-      'This workflow is managed by its program; use the program commands',
+      owner.definition.name === snapshot.workflow && owner.definition.version === snapshot.version,
+      'workflow_handle_mismatch',
+      'The program handle does not own this workflow instance',
       403,
     );
   }

@@ -97,9 +97,9 @@ It maps to zero or more graph transition names. An auxiliary step such as claimi
 a review need not itself change the task graph.
 
 When a policy is supplied, every graph edge must have exactly one owning action
-rule. The engine invokes that rule again before transitioning. Programs retain
-their private managed handles, so a generic transition cannot bypass the owning
-program's command. Task verdict routing is checked before recording the verdict;
+rule. The engine invokes that rule again before transitioning. Only a program's
+private handle changes an instance, so no generic command can bypass the owning
+program's. Task verdict routing is checked before recording the verdict;
 both still commit or roll back together.
 
 `context` carries the authenticated caller, a frozen snapshot, the current

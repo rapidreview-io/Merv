@@ -75,8 +75,8 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       terminal: ['done'],
       edges: [],
     };
-    await app.ctx.workflows.register(definition);
-    const instance = await app.ctx.workflows.start(caller, {
+    const handle = await app.ctx.workflows.register(definition);
+    const instance = await handle.start(caller, {
       workflow: definition.name,
       requestId: 'before-unload',
     });

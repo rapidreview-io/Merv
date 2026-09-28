@@ -147,7 +147,6 @@ const instructions: Record<Stage, string> = {
 const definition: WorkflowDefinition = {
   name: 'research',
   version: 6,
-  managed: true,
   initial: 'defining',
   states: [...stages, 'abandoned', 'failed'],
   terminal: ['complete', 'abandoned', 'failed'],

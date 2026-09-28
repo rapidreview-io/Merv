@@ -85,12 +85,13 @@ async function fixture(t: TestContext, withUnits = true) {
   const principal = await scope.acceptVerifiedIdentity(identity('owner'));
   const project = await scope.createProject(principal, { name: 'Units', requestId: 'one' });
   const admin = await scope.caller(principal, project.id);
-  await workflows.register(definition, policy);
+  const build = await workflows.register(definition, policy);
   let sequence = 0;
   return {
     state,
     scope,
     workflows,
+    build,
     principal,
     project,
     admin,
@@ -115,7 +116,7 @@ async function fixture(t: TestContext, withUnits = true) {
 
 test('the unit tables arrive beside existing Code rows and hold their write-once sections', async (t) => {
   const f = await fixture(t, false);
-  const work = await f.workflows.start(f.admin, { workflow: 'build', requestId: 'start' });
+  const work = await f.build.start(f.admin, { workflow: 'build', requestId: 'start' });
   await f.state.transaction(
     async (tx) =>
       await tx.run(
@@ -314,7 +315,7 @@ test('only a signed-in administrator binds the repository, and main moves by com
   );
 
   // Reads are the project's own.
-  const work = await f.workflows.start(f.admin, { workflow: 'build', requestId: 'start' });
+  const work = await f.build.start(f.admin, { workflow: 'build', requestId: 'start' });
   await f.state.transaction(async (tx) => await f.code.declareUnit(f.admin, work.id, tx));
   const elsewhere = await f.scope.createProject(f.principal, {
     name: 'Elsewhere',

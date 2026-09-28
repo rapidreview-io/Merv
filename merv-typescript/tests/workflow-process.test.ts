@@ -92,8 +92,8 @@ test('the process graph is the pinned definition stamped with what the record sa
       },
     ],
   };
-  await f.app.ctx.workflows.register(definition, policy);
-  const instance = await f.app.ctx.workflows.start(author, {
+  const handle = await f.app.ctx.workflows.register(definition, policy);
+  const instance = await handle.start(author, {
     workflow: 'audit',
     requestId: 'open',
   });
@@ -103,7 +103,7 @@ test('the process graph is the pinned definition stamped with what the record sa
     content: '# Draft\nprocess-graph-marker-8fbb',
   });
   const move = async (caller: Caller, action: string, revision: number) =>
-    await f.app.ctx.workflows.transition(caller, {
+    await handle.transition(caller, {
       instanceId: instance.id,
       expectedRevision: revision,
       action,
@@ -113,7 +113,7 @@ test('the process graph is the pinned definition stamped with what the record sa
   await move(author, 'submit', 0);
   await move(reviewer, 'return', 1); // a review return
   await move(second, 'submit', 2); // and the retry it forced
-  const dependent = await f.app.ctx.workflows.start(author, {
+  const dependent = await handle.start(author, {
     workflow: 'audit',
     requestId: 'dependent',
     dependsOn: [instance.id],
@@ -271,7 +271,7 @@ test('without checks the graph is the record alone: no program callback runs and
     arguments: () => (calls.push(`arguments ${name}`), {}),
     check: () => void calls.push(`check ${name}`),
   });
-  await f.app.ctx.workflows.register(definition, {
+  const handle = await f.app.ctx.workflows.register(definition, {
     successStates: ['approved'],
     describe: () => (calls.push('describe'), { label: 'Audit', references: [] }),
     limits: [{ name: 'returns', from: 'in_review', actions: ['return'], max: 1 }],
@@ -281,8 +281,8 @@ test('without checks the graph is the record alone: no program callback runs and
       rule('verdict', ['in_review'], ['approve', 'return']),
     ],
   });
-  const first = await f.app.ctx.workflows.start(author, { workflow: 'audit', requestId: 'first' });
-  const waiting = await f.app.ctx.workflows.start(author, {
+  const first = await handle.start(author, { workflow: 'audit', requestId: 'first' });
+  const waiting = await handle.start(author, {
     workflow: 'audit',
     requestId: 'waiting',
     dependsOn: [first.id],
@@ -312,7 +312,7 @@ test('without checks the graph is the record alone: no program callback runs and
   assert.deepEqual(drawn(pending), drawn(checked), 'where the work stands reads the same');
 
   const move = async (action: string, revision: number) =>
-    await f.app.ctx.workflows.transition(author, {
+    await handle.transition(author, {
       instanceId: first.id,
       expectedRevision: revision,
       action,
@@ -352,8 +352,8 @@ test('a version whose program is not loaded is drawn from its pinned graph, with
       rule('verdict', ['in_review'], ['approve', 'return']),
     ],
   });
-  const work = await f.app.ctx.workflows.start(author, { workflow: 'audit', requestId: 'open' });
-  await f.app.ctx.workflows.transition(author, {
+  const work = await handle.start(author, { workflow: 'audit', requestId: 'open' });
+  await handle.transition(author, {
     instanceId: work.id,
     expectedRevision: 0,
     action: 'submit',

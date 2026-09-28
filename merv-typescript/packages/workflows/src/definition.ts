@@ -53,8 +53,11 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     throw new MervError('invalid_workflow_policy', 'Workflow edges must be an array');
   if (input.states.length > 256 || input.edges.length > 2048)
     throw new MervError('invalid_workflow_policy', 'Workflow graph too large');
-  if (input.managed !== undefined && typeof input.managed !== 'boolean')
-    throw new MervError('invalid_workflow_policy', 'Workflow managed must be boolean');
+  if (input.managed !== undefined && input.managed !== true)
+    throw new MervError(
+      'invalid_workflow_policy',
+      'Every workflow is managed by its program; managed may only be true',
+    );
   if (
     input.blocksStarts !== undefined &&
     (!Array.isArray(input.blocksStarts) ||
@@ -122,7 +125,9 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
     edges: input.edges
       .map(({ from, action, to }) => ({ from, action, to }))
       .sort((a, b) => byCodeUnit(`${a.from}:${a.action}`, `${b.from}:${b.action}`)),
-    managed: input.managed ?? false,
+    // Only a program's handle changes an instance. The flag stays in the stored form, and so
+    // in every published digest.
+    managed: true,
     ...(input.blocksStarts === undefined ? {} : { blocksStarts: [...input.blocksStarts].sort() }),
   };
 }

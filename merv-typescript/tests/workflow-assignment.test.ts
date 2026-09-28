@@ -108,7 +108,10 @@ async function setup(path = ':memory:') {
     ],
   };
   const registration = await workflows.register(graph, policy);
-  const instance = await workflows.start(caller, { workflow: graph.name, requestId: 'create' });
+  const instance = await registration.start(caller, {
+    workflow: graph.name,
+    requestId: 'create',
+  });
   return {
     state,
     scope,
@@ -324,7 +327,7 @@ test('start history is immutable and survives revisions, unload, termination and
     instanceId: f.instance.id,
     expectedRevision: 0,
   });
-  await f.workflows.transition(f.caller, {
+  await f.registration.transition(f.caller, {
     instanceId: f.instance.id,
     expectedRevision: 0,
     action: 'restart',
@@ -363,8 +366,8 @@ test('start history is immutable and survives revisions, unload, termination and
     { code: 'workflow_unavailable' },
   );
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), starts);
-  await f.workflows.register(graph, f.policy);
-  await f.workflows.transition(f.caller, {
+  const again = await f.workflows.register(graph, f.policy);
+  await again.transition(f.caller, {
     instanceId: f.instance.id,
     expectedRevision: 1,
     action: 'finish',
@@ -593,7 +596,7 @@ test('independent database connections converge on one first activation and reje
     ).length,
     1,
   );
-  await f.workflows.transition(f.caller, {
+  await f.registration.transition(f.caller, {
     ...input,
     action: 'restart',
     requestId: 'advance',

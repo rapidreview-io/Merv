@@ -43,7 +43,6 @@ export const approvalProgram = {
       const program = await ctx.workflows.register({
         name: 'approval',
         version: 1,
-        managed: true,
         initial: 'draft',
         states: ['draft', 'done'],
         terminal: ['done'],
@@ -57,12 +56,12 @@ export const approvalProgram = {
 };
 ```
 
-The registration handle owns exactly one name/version. With `managed: true`, the
-public engine mutation methods reject that graph, preventing generic workflow
-commands from bypassing program rules. Managed transitions validate project access;
-the program must authorize its specific action (for example `write` or `review`).
-Unmanaged graph mutations require `write` permission directly. A registration handle's
-`addDependencies` follows the same rule: `read` on a managed graph, `write` otherwise.
+The registration handle is the only way to start, move or compose an instance, and it owns
+exactly one name/version: a command naming another workflow or version, or an instance of
+one, is refused with 403 `workflow_handle_mismatch`. Every graph is therefore managed: a
+definition may say `managed: true` or nothing, and is stored with `managed: true`, so
+published digests are unchanged. A handle's commands validate project access (`read`); the
+program must authorize its specific action (for example `write` or `review`).
 
 ## Durability
 
@@ -200,12 +199,12 @@ Reviews or artifact storage. See [the integrated contract](../../docs/SESSION_LE
 ## Conventions
 
 **Authority.** A caller method authorizes its caller through Scope once, at entry: reads
-need `read`; a handle's commands need `read` on a managed graph, where the program authorizes
-the action itself, and `write` otherwise; `extendLimit` needs `admin`. The trusted provider
-seams (`replaceBlockers`, `systemPrerequisites(provider).replace`, `dependencyRelations`,
-`sponsoringRoots`) take a `projectId` and the caller's `tx` and authorize no caller: only
-in-process code reaches them. A lease step authorizes its worker at entry. No decision is
-repeated after the callbacks, so a callback that revokes its own caller goes unnoticed; only
+need `read`; a handle's commands need `read`, and the program authorizes the action itself;
+`extendLimit` needs `admin`. The trusted provider seams (`replaceBlockers`,
+`systemPrerequisites(provider).replace`, `dependencyRelations`, `sponsoringRoots`) take a
+`projectId` and the caller's `tx` and authorize no caller: only in-process code reaches
+them. A lease step authorizes its worker at entry. No decision is repeated after the
+callbacks, so a callback that revokes its own caller goes unnoticed; only
 `dispatchCandidates` and `offerLease` authorize their source again once every callback has
 run, and roll back if it was revoked.
 

@@ -82,7 +82,7 @@ test('dynamic fields follow instance state, data and caller while static fields 
         { from: 'working', action: 'annotate', to: 'working' },
       ],
     };
-    await f.app.ctx.workflows.register(graph, {
+    const handle = await f.app.ctx.workflows.register(graph, {
       actions: [
         {
           name: 'continue',
@@ -112,12 +112,12 @@ test('dynamic fields follow instance state, data and caller while static fields 
         },
       ],
     });
-    const simple = await f.app.ctx.workflows.start(f.caller, {
+    const simple = await handle.start(f.caller, {
       workflow: graph.name,
       requestId: 'simple',
       data: { strict: false },
     });
-    const strict = await f.app.ctx.workflows.start(f.caller, {
+    const strict = await handle.start(f.caller, {
       workflow: graph.name,
       requestId: 'strict',
       data: { strict: true },
@@ -143,7 +143,7 @@ test('dynamic fields follow instance state, data and caller while static fields 
     assert.equal(partial.nextAction?.status, 'needs_input');
     await assert.rejects(
       async () =>
-        await f.app.ctx.workflows.transition(f.caller, {
+        await handle.transition(f.caller, {
           instanceId: strict.id,
           expectedRevision: 0,
           action: 'advance',
@@ -153,7 +153,7 @@ test('dynamic fields follow instance state, data and caller while static fields 
       { code: 'input_required' },
     );
     assert.deepEqual(await durable(f.app, f.caller), before);
-    const moved = await f.app.ctx.workflows.transition(f.caller, {
+    const moved = await handle.transition(f.caller, {
       instanceId: strict.id,
       expectedRevision: 0,
       action: 'advance',
@@ -163,7 +163,7 @@ test('dynamic fields follow instance state, data and caller while static fields 
     assert.equal(moved.state, 'checking');
     assert.deepEqual(await fields(f.caller, strict.id), ['receipt']);
     assert.deepEqual(await fields(f.other, strict.id), ['receipt', 'explanation']);
-    const done = await f.app.ctx.workflows.transition(f.caller, {
+    const done = await handle.transition(f.caller, {
       instanceId: strict.id,
       expectedRevision: 1,
       action: 'finish',
@@ -191,8 +191,10 @@ test('runtime field lists reject invalid or duplicate names with a server policy
       ['x'.repeat(129)],
     ].entries()) {
       const graph = singleStep(`invalid_fields_${index}`);
-      await f.app.ctx.workflows.register(graph, { actions: [rule(() => fields as string[])] });
-      const instance = await f.app.ctx.workflows.start(f.caller, {
+      const handle = await f.app.ctx.workflows.register(graph, {
+        actions: [rule(() => fields as string[])],
+      });
+      const instance = await handle.start(f.caller, {
         workflow: graph.name,
         requestId: `start-${index}`,
       });
@@ -203,7 +205,7 @@ test('runtime field lists reject invalid or duplicate names with a server policy
       });
       await assert.rejects(
         async () =>
-          await f.app.ctx.workflows.transition(f.caller, {
+          await handle.transition(f.caller, {
             instanceId: instance.id,
             action: 'finish',
             expectedRevision: 0,
@@ -224,7 +226,7 @@ test('dynamic callbacks receive deeply frozen detached inputs during both guidan
   try {
     const graph = singleStep('frozen_input_context');
     const observations: WorkflowCheckContext[] = [];
-    await f.app.ctx.workflows.register(graph, {
+    const handle = await f.app.ctx.workflows.register(graph, {
       actions: [
         rule((context) => {
           observations.push(context);
@@ -253,7 +255,7 @@ test('dynamic callbacks receive deeply frozen detached inputs during both guidan
     });
     const data = { nested: { value: 'original' } };
     const input = { reading: { value: 10 } };
-    const instance = await f.app.ctx.workflows.start(f.caller, {
+    const instance = await handle.start(f.caller, {
       workflow: graph.name,
       requestId: 'start',
       data,
@@ -267,7 +269,7 @@ test('dynamic callbacks receive deeply frozen detached inputs during both guidan
         .nextAction?.status,
       'ready',
     );
-    await f.app.ctx.workflows.transition(f.caller, {
+    await handle.transition(f.caller, {
       instanceId: instance.id,
       action: 'finish',
       expectedRevision: 0,
@@ -292,14 +294,14 @@ test('async input callbacks are awaited and rejected callbacks leave no writes',
       () => Promise.resolve(['reading']),
     ].entries()) {
       const graph = singleStep(`async_fields_${index}`);
-      await f.app.ctx.workflows.register(graph, { actions: [rule(callback)] });
-      const instance = await f.app.ctx.workflows.start(f.caller, {
+      const handle = await f.app.ctx.workflows.register(graph, { actions: [rule(callback)] });
+      const instance = await handle.start(f.caller, {
         workflow: graph.name,
         requestId: `start-success-${index}`,
       });
       const decision = await f.app.ctx.workflows.evaluate(f.caller, instance.id);
       assert.deepEqual(decision.actions[0].requiredInput, ['reading']);
-      const finished = await f.app.ctx.workflows.transition(f.caller, {
+      const finished = await handle.transition(f.caller, {
         instanceId: instance.id,
         action: 'finish',
         expectedRevision: 0,
@@ -317,17 +319,17 @@ test('async input callbacks are awaited and rejected callbacks leave no writes',
     ];
     for (const [index, callback] of callbacks.entries()) {
       const graph = singleStep(`thenable_fields_${index}`);
-      await f.app.ctx.workflows.register(graph, {
+      const handle = await f.app.ctx.workflows.register(graph, {
         actions: [rule(callback as unknown as RequiredInput)],
       });
-      const instance = await f.app.ctx.workflows.start(f.caller, {
+      const instance = await handle.start(f.caller, {
         workflow: graph.name,
         requestId: `start-${index}`,
       });
       const before = await durable(f.app, f.caller);
       await assert.rejects(f.app.ctx.workflows.evaluate(f.caller, instance.id), /rejected/);
       await assert.rejects(
-        f.app.ctx.workflows.transition(f.caller, {
+        handle.transition(f.caller, {
           instanceId: instance.id,
           action: 'finish',
           expectedRevision: 0,

@@ -68,7 +68,7 @@ test(
       operation: { status: string };
     };
     assert.equal(completed.operation.status, 'completed');
-    await ctx.workflows.register({
+    const mirrorWork = await ctx.workflows.register({
       name: 'mirror-work',
       version: 1,
       initial: 'working',
@@ -76,7 +76,7 @@ test(
       terminal: ['done'],
       edges: [{ from: 'working', action: 'finish', to: 'done' }],
     });
-    const unit = await ctx.workflows.start(caller, { workflow: 'mirror-work', requestId: 'work' });
+    const unit = await mirrorWork.start(caller, { workflow: 'mirror-work', requestId: 'work' });
     await ctx.state.transaction(async (tx) => {
       await bridge.declareUnit(caller, unit.id, tx);
       await enqueueMirror(tx, caller.projectId, 'mirror-accepted', unit.id, head);

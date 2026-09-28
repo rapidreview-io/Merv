@@ -1180,7 +1180,8 @@ export interface WorkflowDefinition {
   states: string[];
   terminal: string[];
   edges: { from: string; action: string; to: string }[];
-  managed?: boolean;
+  /** Every graph is managed: only its program's handle changes an instance. */
+  managed?: true;
   /** While an instance is nonterminal, pause creation of these workflow types in its project. */
   blocksStarts?: string[];
 }
@@ -1582,12 +1583,6 @@ export interface Workflows {
       tx?: Transaction,
     ): Promise<WorkflowSnapshot>;
   }>;
-  start(caller: Caller, input: WorkflowStart, tx?: Transaction): Promise<WorkflowSnapshot>;
-  transition(
-    caller: Caller,
-    input: WorkflowTransition,
-    tx?: Transaction,
-  ): Promise<WorkflowSnapshot>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
   list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;

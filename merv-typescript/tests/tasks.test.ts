@@ -288,21 +288,6 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
         }),
       code('request_conflict'),
     );
-    await assert.rejects(
-      async () =>
-        await f.workflows.transition(f.producer, {
-          instanceId: initial.id,
-          action: 'submit_delivery',
-          expectedRevision: 0,
-          requestId: 'bypass',
-        }),
-      code('workflow_managed'),
-    );
-    await assert.rejects(
-      async () =>
-        await f.workflows.start(f.producer, { workflow: 'task', requestId: 'bypass-start' }),
-      code('workflow_managed'),
-    );
     const delivery = await f.delivery();
     const input = {
       taskId: initial.id,
@@ -858,8 +843,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
           },
         };
       },
-      start: f.workflows.start.bind(f.workflows),
-      transition: f.workflows.transition.bind(f.workflows),
       get: f.workflows.get.bind(f.workflows),
       list: f.workflows.list.bind(f.workflows),
       history: f.workflows.history.bind(f.workflows),

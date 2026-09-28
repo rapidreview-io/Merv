@@ -268,14 +268,6 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   const f = await fixture(t);
   let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
   assert.equal(wave.workflow.workflow, 'reflection');
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.workflows.start(f.owner, {
-        workflow: 'reflection.lens',
-        requestId: 'unowned-start',
-      }),
-    { code: 'workflow_managed' },
-  );
   assert.equal(wave.lenses.length, 5);
   assert.ok(wave.lenses.every((l) => l.workflow.workflow === 'reflection.lens'));
   assert.equal(

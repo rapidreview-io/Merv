@@ -117,14 +117,15 @@ async function fixture(t: TestContext) {
   const kept = await workflows.register({ ...definition, name: 'kept' }, policy(true, 'code.v2'));
   let sequence = 0;
   const request = () => `request-${++sequence}`;
+  const handles: Record<string, typeof plain> = { build: plain, coded, kept };
   const start = async (dependsOn: WorkflowSnapshot[] = [], workflow = 'build') =>
-    await workflows.start(admin, {
+    await handles[workflow]!.start(admin, {
       workflow,
       requestId: request(),
       dependsOn: dependsOn.map((item) => item.id),
     });
   const move = async (work: WorkflowSnapshot, action = 'finish') => {
-    const moved = await workflows.transition(admin, {
+    const moved = await handles[work.workflow]!.transition(admin, {
       instanceId: work.id,
       action,
       requestId: request(),
@@ -245,6 +246,7 @@ async function fixture(t: TestContext) {
     scope,
     sessions,
     workflows,
+    handles,
     code,
     admin,
     project,
@@ -278,7 +280,7 @@ test('a move that does not end the work reads nothing of what waits on it; one r
       { from: 'building', action: 'abandon', to: 'dropped' },
     ],
   };
-  await f.workflows.register(staged, {
+  f.handles.staged = await f.workflows.register(staged, {
     successStates: ['built'],
     actions: [
       ['advance', 'drafting'],

@@ -126,7 +126,6 @@ function rejectReviewReturn(input: object): void {
 export const TASK_WORKFLOW: WorkflowDefinition = {
   name: 'task',
   version: 2,
-  managed: true,
   initial: 'in_progress',
   states: ['in_progress', 'in_review', 'done', 'failed'],
   terminal: ['done', 'failed'],

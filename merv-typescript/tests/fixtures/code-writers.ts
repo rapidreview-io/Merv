@@ -64,8 +64,8 @@ export async function writerFixture(
   });
   await f.open({ finalizeGraceSeconds: grace, ...options });
   assert.equal((await f.deliver(source.bundle(root))).status, 'completed');
-  await f.workflows.register(definition, policy);
-  const unit = await f.workflows.start(f.admin, { workflow: 'build', requestId: 'unit' });
+  const build = await f.workflows.register(definition, policy);
+  const unit = await build.start(f.admin, { workflow: 'build', requestId: 'unit' });
   const runner = { runnerId: 'runner-1' };
   let commands = 0;
   const self = {

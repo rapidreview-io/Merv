@@ -444,18 +444,11 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
     await handle.addDependencies(caller, { ...replan, drop: [e.id, d.id], requestId: 'replan' }),
     replanned,
   );
-  // An unmanaged graph's handle leaves authority to the engine, which asks for write.
-  const loose = await workflows.register({ ...graph('loose'), managed: false }, policy());
-  const g = await start(loose, caller, 'loose', 'g');
+  // Every graph is its program's: no graph leaves authority to the engine.
   await assert.rejects(
     async () =>
-      await loose.addDependencies(reader, {
-        instanceId: g.id,
-        dependsOn: [d.id],
-        expectedRevision: 0,
-        requestId: 'reader-loose',
-      }),
-    { code: 'forbidden' },
+      await workflows.register({ ...graph('loose'), managed: false as unknown as true }, policy()),
+    { code: 'invalid_workflow_policy', status: 400 },
   );
 });
 

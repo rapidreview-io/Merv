@@ -40,8 +40,8 @@ test('workflow guidance preserves supported published tool names, including moun
     const names = ['_nisa.ask', '_nisa.papers.search', '7native.tool', `_nisa.${'a'.repeat(122)}`];
     for (const [index, tool] of names.entries()) {
       const graph = definition(`mounted_lookup_${index}`);
-      await app.ctx.workflows.register(graph, policy(tool));
-      const instance = await app.ctx.workflows.start(caller, {
+      const handle = await app.ctx.workflows.register(graph, policy(tool));
+      const instance = await handle.start(caller, {
         workflow: graph.name,
         requestId: graph.name,
       });

@@ -10,6 +10,7 @@ import {
   type WorkflowDefinition,
   type WorkflowLoopLimit,
   type WorkflowPolicy,
+  type WorkflowTransition,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
@@ -101,9 +102,15 @@ async function fixture(t: TestContext) {
   });
   const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  // Each test registers one graph, and moves its instances through that graph's handle.
+  let handle: Awaited<ReturnType<typeof workflows.register>> | undefined;
+  const register: typeof workflows.register = async (definition, policy) =>
+    (handle = await workflows.register(definition, policy));
+  const start = async (requestId: string) =>
+    await handle!.start(owner, { workflow: 'draft', requestId });
   let sequence = 0;
   const move = async (instanceId: string, action: string, requestId = `move-${++sequence}`) =>
-    await workflows.transition(owner, {
+    await handle!.transition(owner, {
       instanceId,
       action,
       requestId,
@@ -119,7 +126,8 @@ async function fixture(t: TestContext) {
   };
   const events = async (type: string) =>
     (await state.events(owner.projectId)).filter((event) => event.type === type);
-  return { state, scope, workflows, owner, move, loop, events };
+  const transition = async (input: WorkflowTransition) => await handle!.transition(owner, input);
+  return { state, scope, workflows, owner, register, start, move, transition, loop, events };
 }
 const refused = (code: string, status: number) => (error: unknown) =>
   error instanceof MervError && error.code === code && error.status === status;
@@ -169,11 +177,11 @@ test('a policy may only cap declared returning edges, each once, within bounds',
     refused('invalid_workflow_policy', 400),
   );
   const limits = [returns(2)];
-  await f.workflows.register(definition, policy(limits));
+  await f.register(definition, policy(limits));
   // The installed cap is a copy: changing the caller's object changes nothing.
   limits[0].max = 1;
   limits[0].actions.push('approve');
-  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  const instance = await f.start('start');
   await f.move(instance.id, 'submit');
   const [status] = (await f.workflows.evaluate(f.owner, instance.id)).limits;
   assert.deepEqual([status.base, status.actions], [2, ['return', 'restart']]);
@@ -181,8 +189,8 @@ test('a policy may only cap declared returning edges, each once, within bounds',
 
 test('a capped loop permits its rounds, refuses the next, and leaves the record untouched', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy([returns(2)]));
-  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  await f.register(definition, policy([returns(2)]));
+  const instance = await f.start('start');
   // The two actions of one limit are counted together.
   await f.move(instance.id, 'submit');
   await f.move(instance.id, 'return');
@@ -204,7 +212,7 @@ test('a capped loop permits its rounds, refuses the next, and leaves the record 
   assert.equal((await f.state.events(f.owner.projectId)).length, eventCount);
   // A retry of the last permitted return is still answered with what it recorded.
   assert.deepEqual(
-    await f.workflows.transition(f.owner, {
+    await f.transition({
       instanceId: instance.id,
       action: 'restart',
       requestId: 'last-return',
@@ -234,9 +242,9 @@ test('a capped loop permits its rounds, refuses the next, and leaves the record 
 
 test('guidance names the exhausted limit, keeps the human action, and the overview escalates', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy([returns(1)], true));
-  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
-  const open = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'open' });
+  await f.register(definition, policy([returns(1)], true));
+  const instance = await f.start('start');
+  const open = await f.start('open');
   await f.move(open.id, 'submit');
   assert.deepEqual((await f.workflows.evaluate(f.owner, instance.id)).limits, []);
   await f.move(instance.id, 'submit');
@@ -314,8 +322,8 @@ test('guidance names the exhausted limit, keeps the human action, and the overvi
 
 test('only a project admin who is not a leased worker may extend a limit', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy([returns(1)]));
-  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  await f.register(definition, policy([returns(1)]));
+  const instance = await f.start('start');
   const grant = {
     instanceId: instance.id,
     limit: 'review_returns',
@@ -344,8 +352,8 @@ test('only a project admin who is not a leased worker may extend a limit', async
 
 test('a grant is idempotent, append-only, additive, and changes no revision', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy([returns(1)]));
-  const instance = await f.workflows.start(f.owner, { workflow: 'draft', requestId: 'start' });
+  await f.register(definition, policy([returns(1)]));
+  const instance = await f.start('start');
   const arrived = await f.loop(instance.id, 1);
   const grant = {
     instanceId: instance.id,
@@ -457,11 +465,11 @@ test('a lower cap deployed on the same version escalates live work from its hist
   const workflows = await createService(new WorkflowsService(state, scope));
   const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  await workflows.register(definition, policy());
-  const instance = await workflows.start(owner, { workflow: 'draft', requestId: 'start' });
+  const draft = await workflows.register(definition, policy());
+  const instance = await draft.start(owner, { workflow: 'draft', requestId: 'start' });
   let revision = 0;
   for (const action of ['submit', 'return', 'submit', 'return', 'submit'])
-    await workflows.transition(owner, {
+    await draft.transition(owner, {
       instanceId: instance.id,
       action,
       requestId: `move-${revision}`,
@@ -480,7 +488,7 @@ test('a lower cap deployed on the same version escalates live work from its hist
     await restarted.close();
   });
   // The same definition version: a cap is policy, so nothing is republished or upgraded.
-  await next.register(definition, policy([returns(1)]));
+  const nextDraft = await next.register(definition, policy([returns(1)]));
   const decision = await next.evaluate(owner, instance.id);
   assert.equal(decision.version, 1);
   assert.equal(decision.currentGate, 'loop_limit_reached');
@@ -490,7 +498,7 @@ test('a lower cap deployed on the same version escalates live work from its hist
   );
   assert.deepEqual((await next.overview(owner)).escalated, [instance.id]);
   await assert.rejects(
-    next.transition(owner, {
+    nextDraft.transition(owner, {
       instanceId: instance.id,
       action: 'return',
       requestId: 'one-too-many',

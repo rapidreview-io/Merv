@@ -46,7 +46,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
       ],
     };
     const registration = await app.ctx.workflows.register(graph, policy);
-    const instance = await app.ctx.workflows.start(caller, {
+    const instance = await registration.start(caller, {
       workflow: graph.name,
       requestId: 'start',
     });
@@ -70,7 +70,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     instrumentReady = false;
     await assert.rejects(
       async () =>
-        await app.ctx.workflows.transition(caller, {
+        await registration.transition(caller, {
           instanceId: instance.id,
           expectedRevision: 0,
           action: 'calibrate',
@@ -85,7 +85,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     assert.equal((await evaluate()).available, false);
     assert.equal((await evaluate()).currentGate, 'workflow_unavailable');
     assert.deepEqual((await app.ctx.workflows.overview(caller)).unavailable, [instance.id]);
-    await app.ctx.workflows.register(graph, policy);
+    const reloaded = await app.ctx.workflows.register(graph, policy);
     registration.dispose(); // An old disposer cannot remove the new registration.
     instrumentReady = true;
     assert.equal((await evaluate()).available, true);
@@ -103,7 +103,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
         .workflows,
       [],
     );
-    await app.ctx.workflows.transition(caller, {
+    await reloaded.transition(caller, {
       instanceId: instance.id,
       expectedRevision: 0,
       action: 'calibrate',
@@ -128,7 +128,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     const asyncGraph = { ...graph, name: 'async_policy' };
     let description: unknown;
     let descriptionReads = 0;
-    await app.ctx.workflows.register(asyncGraph, {
+    const asyncHandle = await app.ctx.workflows.register(asyncGraph, {
       actions: [
         {
           ...policy.actions[0],
@@ -163,7 +163,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
         ) as any;
       },
     });
-    const asyncInstance = await app.ctx.workflows.start(caller, {
+    const asyncInstance = await asyncHandle.start(caller, {
       workflow: asyncGraph.name,
       requestId: 'async-start',
     });
@@ -214,10 +214,10 @@ test('a new program registers guidance and guards without engine cases; reads, p
     }
     const broken = { ...graph, name: 'broken_arguments' };
     let args: any;
-    await app.ctx.workflows.register(broken, {
+    const brokenHandle = await app.ctx.workflows.register(broken, {
       actions: [{ ...policy.actions[0], arguments: () => args }],
     });
-    const brokenInstance = await app.ctx.workflows.start(caller, {
+    const brokenInstance = await brokenHandle.start(caller, {
       workflow: broken.name,
       requestId: 'broken-start',
     });
@@ -242,7 +242,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
       );
       await assert.rejects(
         async () =>
-          await app.ctx.workflows.transition(caller, {
+          await brokenHandle.transition(caller, {
             instanceId: brokenInstance.id,
             expectedRevision: 0,
             action: 'calibrate',
@@ -280,7 +280,7 @@ test('a guard, begin check or lease role that writes under a read fails the read
       if (writer === by)
         await tx.run('UPDATE wf_instances SET updated_at=updated_at WHERE id=?', id);
     };
-    await app.ctx.workflows.register(graph, {
+    const scribbled = await app.ctx.workflows.register(graph, {
       actions: [
         {
           name: 'finish',
@@ -317,7 +317,7 @@ test('a guard, begin check or lease role that writes under a read fails the read
         },
       ],
     });
-    const instance = await app.ctx.workflows.start(caller, {
+    const instance = await scribbled.start(caller, {
       workflow: graph.name,
       requestId: 'start',
     });

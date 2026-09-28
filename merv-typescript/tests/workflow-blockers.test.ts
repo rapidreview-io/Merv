@@ -136,9 +136,9 @@ const merge: WorkflowProvidedBlockerInput = {
 
 test('a published blocker gates the read and the overview, and leaves a named action alone', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy(false));
-  const work = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'start' });
-  const free = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'free' });
+  const build = await f.workflows.register(definition, policy(false));
+  const work = await build.start(f.owner, { workflow: 'build', requestId: 'start' });
+  const free = await build.start(f.owner, { workflow: 'build', requestId: 'free' });
   assert.deepEqual((await f.workflows.overview(f.owner)).ready.sort(), [work.id, free.id].sort());
 
   await f.publish(work.id, [
@@ -196,7 +196,7 @@ test('a published blocker gates the read and the overview, and leaves a named ac
     ['second'],
   );
 
-  await f.workflows.transition(f.owner, {
+  await build.transition(f.owner, {
     instanceId: work.id,
     action: 'abandon',
     requestId: 'abandon',
@@ -226,8 +226,8 @@ test('a published blocker gates the read and the overview, and leaves a named ac
 
 test('the blocker table arrives on a populated database and keeps its identity', async (t) => {
   const f = await fixture(t, 5);
-  await f.workflows.register(definition, policy(false));
-  const work = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'start' });
+  const build = await f.workflows.register(definition, policy(false));
+  const work = await build.start(f.owner, { workflow: 'build', requestId: 'start' });
   await f.reopen();
   await f.workflows.register(definition, policy(false));
   assert.equal((await f.workflows.get(f.owner, work.id)).state, 'building');
@@ -247,16 +247,16 @@ test('the blocker table arrives on a populated database and keeps its identity',
 
 test('a provider reads dependencies with the workspace fact of each persisted version', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy(false));
+  const build = await f.workflows.register(definition, policy(false));
   const coded = await f.workflows.register({ ...definition, name: 'coded' }, policy(true));
-  const plain = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'plain' });
-  const git = await f.workflows.start(f.owner, { workflow: 'coded', requestId: 'git' });
-  const top = await f.workflows.start(f.owner, {
+  const plain = await build.start(f.owner, { workflow: 'build', requestId: 'plain' });
+  const git = await coded.start(f.owner, { workflow: 'coded', requestId: 'git' });
+  const top = await build.start(f.owner, {
     workflow: 'build',
     requestId: 'top',
     dependsOn: [plain.id, git.id],
   });
-  await f.workflows.transition(f.owner, {
+  await coded.transition(f.owner, {
     instanceId: git.id,
     action: 'finish',
     requestId: 'finish',

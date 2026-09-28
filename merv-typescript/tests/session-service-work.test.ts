@@ -34,7 +34,7 @@ async function fixture(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  await workflows.register(
+  const work = await workflows.register(
     {
       name: 'work',
       version: 1,
@@ -58,7 +58,7 @@ async function fixture(t: TestContext) {
     },
   );
   const roots = await Promise.all(
-    ['a', 'b'].map((requestId) => workflows.start(caller, { workflow: 'work', requestId })),
+    ['a', 'b'].map((requestId) => work.start(caller, { workflow: 'work', requestId })),
   );
   const input: ServiceWorkInput = {
     provider: 'fixture',
@@ -77,6 +77,7 @@ async function fixture(t: TestContext) {
     state,
     scope,
     workflows,
+    work,
     sessions,
     caller,
     roots,
@@ -189,8 +190,8 @@ test('shared wall time is charged once per project and fully to immutable roots;
 });
 test('a sponsor is found through workflow dependencies and remains charged after another root adopts it', async (t) => {
   const f = await fixture(t);
-  const waiter = await f.workflows.start(f.caller, { workflow: 'work', requestId: 'waiter' });
-  const root = await f.workflows.start(f.caller, {
+  const waiter = await f.work.start(f.caller, { workflow: 'work', requestId: 'waiter' });
+  const root = await f.work.start(f.caller, {
     workflow: 'work',
     requestId: 'root',
     dependsOn: [waiter.id],
@@ -203,7 +204,7 @@ test('a sponsor is found through workflow dependencies and remains charged after
   await f.admit(input);
   f.advance(3000);
   await f.settle(input);
-  const later = await f.workflows.start(f.caller, {
+  const later = await f.work.start(f.caller, {
     workflow: 'work',
     requestId: 'later',
     dependsOn: [root.id],
