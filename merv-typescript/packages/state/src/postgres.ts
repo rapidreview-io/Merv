@@ -6,11 +6,16 @@ import { postgresParameters } from './parameters.js';
 export interface PostgresConfig {
   connectionString: string;
   schema?: string;
+  /** The writers' pool, whose connections may queue on the state lock. */
   maxConnections?: number;
-  /** Connections kept for reads; the rest serve writers waiting on the state lock. */
+  /**
+   * A separate pool for reads, so writers queued on the state lock never starve a page. One
+   * instance opens up to `maxConnections + readConnections` connections.
+   */
   readConnections?: number;
   connectionTimeoutMs?: number;
   statementTimeoutMs?: number;
+  /** Bounds every lock wait, the writer lock included: a writer queued longer fails with state_timeout. */
   lockTimeoutMs?: number;
   ssl?: { rejectUnauthorized: true; ca?: string };
 }
@@ -37,25 +42,45 @@ function safeInteger(value: string): number {
   return number;
 }
 
-/** Do not forward connection strings, SQL parameter values or server details to clients. */
+/** What a log may keep of a PostgreSQL error: never its message or detail, which can carry row values. */
+interface DatabaseErrorCause {
+  sqlstate?: string;
+  constraint?: string;
+  table?: string;
+  column?: string;
+  routine?: string;
+  position?: string;
+}
+
+/**
+ * Do not forward connection strings, SQL parameter values or server details to clients. The
+ * sanitized cause is non-enumerable: logs show it, and JSON responses never carry it.
+ */
 function databaseError(error: unknown): MervError {
   if (error instanceof MervError) return error;
-  const code = (error as { code?: string })?.code;
-  if (code === '23505')
-    return new MervError('state_conflict', 'Database record already exists', 409);
+  const pg = (error ?? {}) as { code?: string } & Omit<DatabaseErrorCause, 'sqlstate'>;
+  const fail = (code: string, message: string, status: number) =>
+    Object.defineProperty(new MervError(code, message, status), 'cause', {
+      value: {
+        sqlstate: pg.code,
+        constraint: pg.constraint,
+        table: pg.table,
+        column: pg.column,
+        routine: pg.routine,
+        position: pg.position,
+      } satisfies DatabaseErrorCause,
+    });
+  const code = pg.code;
+  if (code === '23505') return fail('state_conflict', 'Database record already exists', 409);
   if (['23503', '23514', '23502', 'P0001'].includes(code ?? ''))
-    return new MervError('state_constraint', 'Database constraint rejected the operation', 409);
+    return fail('state_constraint', 'Database constraint rejected the operation', 409);
   if (code === '40001' || code === '40P01')
-    return new MervError(
-      'transaction_conflict',
-      'Database transaction conflicted; retry the request',
-      409,
-    );
+    return fail('transaction_conflict', 'Database transaction conflicted; retry the request', 409);
   if (code === '57014' || code === '55P03')
-    return new MervError('state_timeout', 'Database operation timed out', 503);
+    return fail('state_timeout', 'Database operation timed out', 503);
   if (/timeout exceeded when trying to connect/.test((error as Error)?.message ?? ''))
-    return new MervError('state_busy', 'Every database connection is in use; retry shortly', 503);
-  return new MervError('state_unavailable', 'PostgreSQL operation failed', 503);
+    return fail('state_busy', 'Every database connection is in use; retry shortly', 503);
+  return fail('state_unavailable', 'PostgreSQL operation failed', 503);
 }
 
 export class PostgresState extends StateStore {
@@ -165,12 +190,15 @@ END $merv$;`);
     let discard = false;
     // Sibling reads of one snapshot arrive together; one connection runs them in turn.
     let tail: Promise<unknown> = Promise.resolve();
-    const query = (sql: string, params: SqlValue[] = []): Promise<QueryResult> => {
-      const values = params.map((value) =>
+    // `exec` passes no parameters: its SQL goes over the simple protocol, where a `?` is SQL
+    // (jsonb `?`, `?|`, `?&`), not a bind marker. run/get/all always pass an array.
+    const query = (sql: string, params?: SqlValue[]): Promise<QueryResult> => {
+      const values = (params ?? []).map((value) =>
         value instanceof Uint8Array ? Buffer.from(value) : value,
       );
       const next = tail.then(
-        async () => await client.query(postgresParameters(sql, values.length), values),
+        async () =>
+          await client.query(params ? postgresParameters(sql, values.length) : sql, values),
       );
       tail = next.catch(() => undefined);
       return next.catch((error) => {

@@ -270,6 +270,108 @@ test('PostgreSQL: a write queued on the writer lock holds no reader connection',
   assert.equal(await state.eventHead(), 2);
 });
 
+test('PostgreSQL migrations run their SQL as written: a jsonb ? operator is SQL, not a bind marker', async (t) => {
+  const { state } = await fixture(t);
+  await state.migrate('jq', [
+    {
+      version: 1,
+      sql: "CREATE TABLE jq(d JSONB CHECK (d ? 'id' AND NOT d ?| array['x'] AND d ?& array['id']))",
+    },
+  ]);
+  await state.transaction((tx) => tx.run('INSERT INTO jq(d) VALUES(\'{"id":1}\'::jsonb)'));
+  await assert.rejects(
+    state.transaction((tx) => tx.run("INSERT INTO jq(d) VALUES('{}'::jsonb)")),
+    { code: 'state_constraint' },
+  );
+});
+
+test('PostgreSQL errors keep a sanitized, non-enumerable cause, and a failed migration names itself', async (t) => {
+  const { state } = await fixture(t);
+  const failure = await state.migrate('jb', [{ version: 1, sql: 'CREATE TABLE jb(' }]).then(
+    () => assert.fail('The migration must fail'),
+    (error: MervError) => error,
+  );
+  assert.ok(failure instanceof MervError);
+  assert.equal(failure.code, 'state_unavailable');
+  assert.equal(failure.status, 503);
+  assert.match(failure.message, /^Migration jb\/1 failed \(SQLSTATE 42601\)$/);
+  assert.equal((failure.cause as { sqlstate?: string }).sqlstate, '42601');
+  assert.equal(Object.keys(failure).includes('cause'), false);
+  assert.equal(JSON.stringify(failure).includes('cause'), false);
+  assert.equal(JSON.stringify(failure).includes('42601'), false);
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all("SELECT version FROM component_migrations WHERE component='jb'"),
+    ),
+    [],
+  );
+
+  await state.migrate('jc', [{ version: 1, sql: 'CREATE TABLE jc(id TEXT PRIMARY KEY)' }]);
+  await state.transaction((tx) => tx.run('INSERT INTO jc VALUES(?)', 'secret-row-value'));
+  const conflict = await state
+    .transaction((tx) => tx.run('INSERT INTO jc VALUES(?)', 'secret-row-value'))
+    .then(
+      () => assert.fail('The insert must conflict'),
+      (error: MervError) => error,
+    );
+  assert.equal(conflict.code, 'state_conflict');
+  const cause = conflict.cause as Record<string, unknown>;
+  assert.equal(cause.sqlstate, '23505');
+  assert.equal(cause.constraint, 'jc_pkey');
+  assert.equal(cause.table, 'jc');
+  assert.equal('detail' in cause, false);
+  assert.equal('message' in cause, false);
+  assert.equal(JSON.stringify(cause).includes('secret-row-value'), false);
+  assert.equal(JSON.stringify(conflict).includes('cause'), false);
+});
+
+test('State refuses malformed events, cursors and migration versions', async (t) => {
+  const { state } = await fixture(t);
+  for (const before of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])
+    await assert.rejects(state.latestEvents('project', before), { code: 'invalid_cursor' });
+  assert.deepEqual(await state.latestEvents('project', 0), []);
+  await assert.rejects(state.migrate('too-far', [{ version: 2_147_483_648, sql: 'SELECT 1' }]), {
+    code: 'invalid_migration',
+  });
+  await state.migrate('far', [{ version: 2_147_483_647, sql: 'SELECT 1' }]);
+  const { subjectId: _subjectId, ...withoutSubject } = event;
+  for (const malformed of [
+    withoutSubject,
+    { ...event, type: 7 },
+    { ...event, data: undefined },
+    { projectId: 'project', actorId: 'actor', type: 'test.created', subjectId: 'subject' },
+  ])
+    await assert.rejects(
+      state.transaction((tx) =>
+        state.appendEvent(tx, malformed as unknown as Parameters<typeof state.appendEvent>[1]),
+      ),
+      { code: 'invalid_event' },
+    );
+  await state.transaction((tx) => state.appendEvent(tx, { ...event, data: {} }));
+  assert.equal(await state.eventHead(), 1);
+});
+
+test('PostgreSQL refuses a read with state_busy when every reader connection is held', async (t) => {
+  const { state } = await fixture(t, { readConnections: 1, connectionTimeoutMs: 200 });
+  const entered = deferred(),
+    release = deferred();
+  const held = state.read(async () => {
+    entered.resolve();
+    await release.promise;
+  });
+  await entered.promise;
+  try {
+    await assert.rejects(
+      state.read((sql) => sql.get('SELECT 1')),
+      { code: 'state_busy', status: 503 },
+    );
+  } finally {
+    release.resolve();
+    await held;
+  }
+  assert.deepEqual(await state.read((sql) => sql.get('SELECT 1 AS value')), { value: 1 });
+});
+
 test('PostgreSQL boots in a pre-created owned schema without database CREATE privilege', async (t) => {
   const suffix = randomUUID().replaceAll('-', '');
   const role = `merv_role_${suffix}`;

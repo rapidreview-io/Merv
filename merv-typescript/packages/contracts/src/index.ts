@@ -545,8 +545,13 @@ export interface Transaction extends Sql {
   readonly transactionId: symbol;
 }
 export interface Migration {
+  /** A positive integer that fits PostgreSQL INTEGER. */
   version: number;
-  /** PostgreSQL text; its digest() is pinned in component_migrations.hash. */
+  /**
+   * PostgreSQL text; its digest() is pinned in component_migrations.hash. It runs inside the
+   * migration's transaction and schema, so it never issues BEGIN, COMMIT, ROLLBACK or
+   * SET search_path.
+   */
   sql: string;
 }
 export interface StoredEvent {
@@ -560,8 +565,18 @@ export interface StoredEvent {
 }
 export interface State {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
+  /**
+   * Reads on the current scope, or on a connection of its own outside one. Do not query a
+   * read's own `sql` while a transaction it started is still open: that transaction owns the
+   * connection. To join a caller's transaction without holding a read, use `ambient`.
+   */
   read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T>;
-  /** A read-only snapshot scope: nested component transactions never take the writer lock. */
+  /**
+   * A read-only snapshot scope: nested component transactions never take the writer lock.
+   * Outside any scope it opens a snapshot of its own; inside a transaction or a snapshot it
+   * runs `fn` there, which sees that transaction's uncommitted rows; inside a plain read it
+   * runs `fn` on that read, where a component transaction still takes the writer lock.
+   */
   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
   /** Whether the current async context is inside such a snapshot, where nothing may write. */
   readonly readScope: boolean;

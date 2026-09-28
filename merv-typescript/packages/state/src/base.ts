@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   check,
   digest,
+  MervError,
   now,
   plain,
   type Migration,
@@ -212,11 +213,6 @@ export abstract class StateStore implements State {
     );
   }
 
-  /**
-   * A read-only snapshot scope: component transactions opened inside it read on one
-   * snapshot, take no writer lock, and are refused if they write. Inside an existing
-   * scope it simply runs the function there.
-   */
   get readScope(): boolean {
     return !!this.context.getStore()?.readOnly;
   }
@@ -225,6 +221,12 @@ export abstract class StateStore implements State {
     return this.context.getStore()?.transaction;
   }
 
+  /**
+   * A read-only snapshot scope: component transactions opened inside it read on one
+   * snapshot, take no writer lock, and are refused if they write. Inside an existing scope it
+   * runs the function there: in a transaction or snapshot it sees that scope's own rows, and in
+   * a plain read a component transaction is still a write transaction on the read's connection.
+   */
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
     if (this.context.getStore()) return await fn();
     return this.operation(() =>
@@ -335,6 +337,8 @@ export abstract class StateStore implements State {
       check(
         Number.isSafeInteger(migration.version) &&
           migration.version > 0 &&
+          // component_migrations.version is INTEGER.
+          migration.version <= 2_147_483_647 &&
           !seen.has(migration.version),
         'invalid_migration',
         'Migration versions must be unique positive integers',
@@ -394,7 +398,22 @@ export abstract class StateStore implements State {
               'Cannot insert an older migration',
               409,
             );
-            await connection.exec(sql);
+            try {
+              await connection.exec(sql);
+            } catch (error) {
+              // Name the migration that failed, and keep the code, status and sanitized cause.
+              if (!(error instanceof MervError)) throw error;
+              const sqlstate = (error.cause as { sqlstate?: string } | undefined)?.sqlstate;
+              throw Object.defineProperty(
+                new MervError(
+                  error.code,
+                  `Migration ${component}/${migration.version} failed${sqlstate ? ` (SQLSTATE ${sqlstate})` : ''}`,
+                  error.status,
+                ),
+                'cause',
+                { value: error.cause },
+              );
+            }
             await tx.run(
               'INSERT INTO component_migrations(component,version,hash) VALUES(?,?,?)',
               component,
@@ -416,6 +435,14 @@ export abstract class StateStore implements State {
     // The returned receipt and stored row must describe one detached event, even
     // when the caller edits its object while the insert is pending.
     event = plain<typeof event>(event, 'invalid_event', { keys: 'any' });
+    // plain() drops a key whose value is undefined, so this also refuses an explicit undefined.
+    check(
+      (['projectId', 'actorId', 'type', 'subjectId'] as const).every(
+        (key) => typeof event[key] === 'string',
+      ) && event.data !== undefined,
+      'invalid_event',
+      'An event needs string projectId, actorId, type and subjectId, and data',
+    );
     const createdAt = now();
     const row = await tx.get<{ id: number }>(
       'INSERT INTO events(project_id,actor_id,type,subject_id,data_json,created_at) VALUES(?,?,?,?,?,?) RETURNING id',
@@ -483,6 +510,11 @@ export abstract class StateStore implements State {
   }
   /** The newest page (below `before`), oldest first: what a reader without a cursor wants. */
   async latestEvents(projectId: string, before = Number.MAX_SAFE_INTEGER): Promise<StoredEvent[]> {
+    check(
+      Number.isSafeInteger(before) && before >= 0,
+      'invalid_cursor',
+      'Event cursor must be a nonnegative integer',
+    );
     return this.read(async (sql) =>
       (
         await sql.all<EventRow>(
