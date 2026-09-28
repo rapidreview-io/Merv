@@ -248,41 +248,81 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   assert.ok(reports.every((id) => session.execution.references.artifacts.includes(id)));
   const worker = await f.app.ctx.sessions.authenticate(secret);
   const leased = (await f.app.ctx.workflows.assignment(worker, wave.id)).context!;
-  // A lease acquired before format 2 froze ranked items; they render exactly as items do now.
-  await f.app.ctx.state.transaction(async (tx) => {
-    const { inputs } = (await tx.get<{ inputs: string }>(
-      'SELECT inputs FROM reflection_leases WHERE id=?',
-      session.id,
-    ))!;
-    const ranked = Object.fromEntries(
-      Object.entries(JSON.parse(inputs) as Record<string, { items: ContextItem[] }>).map(
-        ([key, { items }]) => [
-          key,
-          {
-            rankedItems: items.map(({ id, title, priority, body, note, refs }) => ({
-              id,
-              title,
-              priority,
-              content: body,
-              ...(note ? { association: note } : {}),
-              refs,
-            })),
-          },
-        ],
-      ),
-    );
-    await tx.run('ALTER TABLE reflection_leases DISABLE TRIGGER reflection_lease_immutable');
-    await tx.run(
-      'UPDATE reflection_leases SET inputs=? WHERE id=?',
-      JSON.stringify(ranked),
-      session.id,
-    );
-    await tx.run('ALTER TABLE reflection_leases ENABLE TRIGGER reflection_lease_immutable');
-  });
+  const fresh = JSON.parse(
+    (await f.app.ctx.state.transaction(
+      async (tx) =>
+        await tx.get<{ inputs: string }>(
+          'SELECT inputs FROM reflection_leases WHERE id=?',
+          session.id,
+        ),
+    ))!.inputs,
+  ) as Record<string, { items: ContextItem[] }>;
+  const freeze = async (inputs: object) =>
+    await f.app.ctx.state.transaction(async (tx) => {
+      await tx.run('ALTER TABLE reflection_leases DISABLE TRIGGER reflection_lease_immutable');
+      await tx.run(
+        'UPDATE reflection_leases SET inputs=? WHERE id=?',
+        JSON.stringify(inputs),
+        session.id,
+      );
+      await tx.run('ALTER TABLE reflection_leases ENABLE TRIGGER reflection_lease_immutable');
+    });
+  // A lease of recipe 10 or 11 froze ranked items, each with a hash and revision the builder does
+  // not take; they render as the items they carry.
+  await freeze(
+    Object.fromEntries(
+      Object.entries(fresh).map(([key, { items }]) => [
+        key,
+        {
+          rankedItems: items.map(({ id, title, priority, body, note, refs }) => ({
+            id,
+            title,
+            priority,
+            content: body,
+            revision: wave.workflow.revision,
+            ...('text' in body
+              ? { hash: createHash('sha256').update(body.text).digest('hex') }
+              : {}),
+            ...(note ? { association: note } : {}),
+            refs,
+          })),
+        },
+      ]),
+    ),
+  );
   assert.equal(
     (await f.app.ctx.workflows.assignment(worker, wave.id)).context!.prompt,
     leased.prompt,
   );
+  // An earlier lease froze whole sections: texts, and artifacts named by reference only.
+  const text = (key: string) => (fresh[key]!.items[0]!.body as { text: string }).text;
+  await freeze({
+    assignment: { text: text('assignment') },
+    projectPaper: { text: JSON.stringify({ documents: 'bounded paper' }) },
+    research: { text: 'Read the live project inventory with project.records.' },
+    lenses: { artifactIds: reports, mode: 'references' },
+    feedback: { text: JSON.stringify({ previousReviews: [], recovery: null }) },
+  });
+  const sections = (await f.app.ctx.workflows.assignment(worker, wave.id)).context!;
+  assert.equal(sections.typeVersion, 12);
+  assert.ok(
+    sections.prompt.includes(
+      `\n### assignment:frozen — Exact assignment and perspective (text, ${text('assignment').length} characters)\n`,
+    ),
+  );
+  assert.ok(sections.prompt.includes(`"reflectionId":"${wave.id}"`));
+  assert.ok(sections.prompt.includes('Read the live project inventory with project.records.'));
+  for (const id of reports)
+    assert.ok(
+      sections.prompt.includes(`\n- lenses:${id} — Independent lens reports (artifact ${id}, `),
+    );
+  assert.deepEqual(sections.omitted, []);
+  // A shape no recipe reads fails loudly rather than rendering as an empty section.
+  await freeze({ ...fresh, feedback: { summary: 'unknown' } });
+  await assert.rejects(f.app.ctx.workflows.assignment(worker, wave.id), {
+    code: 'invalid_context',
+  });
+  await freeze(fresh);
   const grants = (
     await f.app.ctx.workflows.execution(worker, {
       instanceId: wave.id,
