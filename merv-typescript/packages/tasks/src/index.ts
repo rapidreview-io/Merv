@@ -29,6 +29,7 @@ import {
   type ContextBuild,
   type ContextBuilder,
   type ContextInput,
+  type ContextItem,
   type ContextPackage,
   type ContextRegistration,
   type Data,
@@ -73,7 +74,7 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
-import type { Paper } from '@merv/paper/types';
+import type { Paper, PaperContextSection } from '@merv/paper/types';
 import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
@@ -290,6 +291,26 @@ const configuration = z
   })
   .strict()
   .default({});
+
+/** A paper section's priority: the problem, the other current documents, then published revisions. */
+const paperPriority = ({ kind, status }: Pick<PaperContextSection, 'kind' | 'status'>) =>
+  kind === 'problem' ? (status === 'current' ? 850 : 450) : status === 'current' ? 600 : 250;
+/**
+ * How a format-2 recipe embeds each section's items. The task, its brief, revision feedback and
+ * the review criteria are always embedded; the rest fit while they can, highest priority first.
+ * A custom input section is fit at 500, like the task background.
+ */
+const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
+  task: { embed: 'always' },
+  brief: { embed: 'always' },
+  feedback: { embed: 'always' },
+  assessment: { embed: 'always' },
+  evidence: { priority: 800 },
+  recovery: { priority: 600 },
+  taskBackground: { priority: 500 },
+  checkpoints: { priority: 400 },
+  checkpointEvidence: { priority: 300 },
+};
 
 export class TaskService implements Tasks {
   private closed = false;
@@ -544,6 +565,7 @@ export class TaskService implements Tasks {
     }
     const review =
       purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;
+    const type = this.contextType({ type: row.type_name, typeVersion: row.type_version }, purpose);
     const checkpoints = await this.checkpointRows(
       caller,
       snapshot.id,
@@ -575,15 +597,7 @@ export class TaskService implements Tasks {
       reviewId: review?.id ?? null,
       claimId: review?.claimId ?? null,
       project: await this.projectContext(source, tx),
-      ...(this.paper
-        ? {
-            paper: await this.projectPaperContext(
-              source,
-              this.contextType({ type: row.type_name, typeVersion: row.type_version }, purpose),
-              tx,
-            ),
-          }
-        : {}),
+      ...(this.paper ? { paper: await this.paperContext(source, type, tx) } : {}),
     };
     await tx.run(
       'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1507,8 +1521,19 @@ export class TaskService implements Tasks {
     return newest;
   }
 
+  /**
+   * A task's work recipe is the version it was created with. Its review recipe follows that
+   * version's format: a format-2 work recipe is reviewed with task.review@5, any other with
+   * task.review@4, so a task already in review keeps the recipe its saved contexts were built with.
+   */
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
-    const key = purpose === 'review' ? 'task.review@4' : `${task.type}@${task.typeVersion}`;
+    const work = `${task.type}@${task.typeVersion}`;
+    const key =
+      purpose === 'work'
+        ? work
+        : this.types.get(work)?.definition.recipe.format === 2
+          ? 'task.review@5'
+          : 'task.review@4';
     const type = this.types.get(key);
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
@@ -1522,6 +1547,17 @@ export class TaskService implements Tasks {
       summary: project.summary ?? '',
       contextRevision: project.contextRevision ?? 0,
     };
+  }
+
+  /** The paper as `type`'s recipe takes it: sections for format 2, else capped JSON. */
+  private async paperContext(
+    caller: Caller,
+    type: { definition: TaskTypeDefinition },
+    tx: Transaction,
+  ): Promise<Data> {
+    return type.definition.recipe.format === 2
+      ? await this.paperSections(caller, type, tx)
+      : await this.projectPaperContext(caller, type, tx);
   }
 
   /** The paper lands in a required section of `type`'s recipe, so its JSON is capped by that recipe. */
@@ -1538,6 +1574,38 @@ export class TaskService implements Tasks {
       paperJsonCap(type.definition.recipe.maxChars),
     );
     return JSON.parse(JSON.stringify({ documents })) as Data;
+  }
+
+  /**
+   * The paper as a format-2 recipe's items use it: whole sections, highest priority first, while
+   * their distinct text fits the recipe budget, since no more could ever be embedded and a lease
+   * freezes them in its receipt, which travels with the lease. `left` names the sections past
+   * that by ID and title; both lists keep the paper's order.
+   */
+  private async paperSections(
+    caller: Caller,
+    type: { definition: TaskTypeDefinition },
+    tx: Transaction,
+  ): Promise<Data> {
+    check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
+    const sections = this.paper.contextSections((await this.paper.read(caller, tx)).documents);
+    let room = type.definition.recipe.maxChars;
+    const texts = new Set<string>(),
+      kept = new Set<PaperContextSection>();
+    for (const section of [...sections].sort((a, b) => paperPriority(b) - paperPriority(a))) {
+      if (!texts.has(section.text) && section.text.length > room) continue;
+      if (!texts.has(section.text)) room -= section.text.length;
+      texts.add(section.text);
+      kept.add(section);
+    }
+    return JSON.parse(
+      JSON.stringify({
+        sections: sections.filter((section) => kept.has(section)),
+        left: sections
+          .filter((section) => !kept.has(section))
+          .map(({ id, title }) => ({ id, title })),
+      }),
+    ) as Data;
   }
 
   /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
@@ -1559,8 +1627,8 @@ export class TaskService implements Tasks {
         ) as Data)
       : null;
     const project = receipt?.project ?? (await this.projectContext(caller, tx));
-    const paper =
-      receipt?.paper ?? (this.paper ? await this.projectPaperContext(caller, type, tx) : null);
+    const paper = receipt?.paper ?? (this.paper ? await this.paperContext(caller, type, tx) : null);
+    const items = type.definition.recipe.format === 2;
     const hasProjectPaper = type.definition.recipe.sections.some(
       (section) => section.key === 'projectPaper',
     );
@@ -1578,10 +1646,13 @@ export class TaskService implements Tasks {
       inputs = {
         task: { text: taskMetadata },
         assessment: { text: JSON.stringify(review) },
-        evidence: {
-          artifactIds: review.artifactIds,
-          mode: await this.contextBuilder.mode(caller, review.artifactIds, 48_000, tx),
-        },
+        // Format 2 decides per item what fits; the frozen review recipe decides per section.
+        evidence: items
+          ? { artifactIds: review.artifactIds }
+          : {
+              artifactIds: review.artifactIds,
+              mode: await this.contextBuilder.mode(caller, review.artifactIds, 48_000, tx),
+            },
         taskBackground: Object.values(task.contextInputs).flat().length
           ? { artifactIds: [...new Set(Object.values(task.contextInputs).flat())] }
           : { text: 'No additional task background was specified.' },
@@ -1666,7 +1737,7 @@ export class TaskService implements Tasks {
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
       if (artifactIds.length) inputs.checkpointEvidence = { artifactIds, mode: 'auto' };
     }
-    if (hasProjectPaper)
+    if (hasProjectPaper && !items)
       inputs.projectPaper = {
         text: paper
           ? JSON.stringify(paper)
@@ -1677,7 +1748,98 @@ export class TaskService implements Tasks {
         type.definition.recipe.sections.some((section) => section.key === key),
       ),
     );
-    return inputs;
+    return items ? await this.contextItems(caller, task, inputs, paper, type, tx) : inputs;
+  }
+
+  /**
+   * The inputs as a format-2 recipe takes them: each text becomes one item and each artifact one
+   * item named by its title, embedded as ITEM_RULES says, and the paper becomes its sections.
+   */
+  private async contextItems(
+    caller: Caller,
+    task: Task,
+    inputs: Record<string, ContextInput>,
+    /** What paperSections gave, frozen in a lease's receipt or read now; null without Paper. */
+    paper: unknown,
+    type: { definition: TaskTypeDefinition },
+    tx: Transaction,
+  ): Promise<Record<string, ContextInput>> {
+    const titles = new Map(type.definition.recipe.sections.map((s) => [s.key, s.title]));
+    const result: Record<string, ContextInput> = {};
+    for (const [key, input] of Object.entries(inputs)) {
+      const rule = ITEM_RULES[key] ?? { priority: 500 };
+      result[key] = {
+        items:
+          'text' in input
+            ? [
+                {
+                  id: `${key}:${task.id}`,
+                  title: titles.get(key)!,
+                  body: { text: input.text },
+                  ...rule,
+                  refs: [
+                    key === 'assessment' || key === 'recovery'
+                      ? { tool: 'review.get', input: { reviewId: task.reviewId } }
+                      : { tool: 'task.get', input: { taskId: task.id } },
+                  ],
+                },
+              ]
+            : 'artifactIds' in input
+              ? await mapAsync(input.artifactIds, async (id): Promise<ContextItem> => ({
+                  id: `${key}:${id}`,
+                  title: (await this.artifacts.get(caller, id, tx)).title,
+                  body: { artifactId: id },
+                  ...rule,
+                  refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
+                }))
+              : [],
+      };
+    }
+    if (type.definition.recipe.sections.some((section) => section.key === 'projectPaper')) {
+      const { sections = [], left = [] } = (paper ?? {}) as {
+        sections?: PaperContextSection[];
+        left?: { id: string; title: string }[];
+      };
+      const read = { tool: 'paper.read', input: {} };
+      result.projectPaper = {
+        items: [
+          ...sections.map(({ kind, status, id, title, text, note, refs }): ContextItem => ({
+            id,
+            title,
+            body: { text },
+            priority: paperPriority({ kind, status }),
+            note,
+            refs,
+          })),
+          ...(left.length
+            ? [
+                {
+                  id: 'paper:not-included',
+                  title: `${left.length} more paper section${left.length === 1 ? '' : 's'}, not included in this assignment`,
+                  body: { text: JSON.stringify(left) },
+                  priority: 0,
+                  refs: [read],
+                },
+              ]
+            : []),
+          ...(!sections.length && !left.length
+            ? [
+                {
+                  id: 'paper:none',
+                  title: 'Project paper',
+                  body: {
+                    text: paper
+                      ? 'The project paper has no written sections yet.'
+                      : 'Project paper unavailable in this assignment; read paper.read before work.',
+                  },
+                  refs: [read],
+                },
+              ]
+            : []),
+        ],
+      };
+    }
+    return result;
   }
 
   /** Admission uses domain facts only: never hydrate/evaluate here, which would recurse. */

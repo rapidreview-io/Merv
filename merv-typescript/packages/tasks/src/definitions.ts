@@ -22,8 +22,8 @@ const reading =
 const verifying =
   ' Read around the pinned evidence as well: project.records, task.get, experiment.get_state, paper.read and review.get answer for anything this project holds. Open what you are judging rather than judging the summary of it, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
 
-/** Task types own their recipes. These are definitions, not additional plugins or workflow engines. */
-export const TASK_TYPES: TaskTypeDefinition[] = [
+/** Versions whose prompts the frozen renderers give, pinned byte for byte. */
+const FROZEN_TYPES: TaskTypeDefinition[] = [
   {
     name: 'task.work',
     version: 1,
@@ -139,6 +139,38 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
     },
   },
 ];
+/**
+ * The current version of each type: format 2, the item renderer. The task, the brief, revision
+ * feedback and the review criteria are always embedded; the paper, evidence, background and saved
+ * progress are embedded whole, highest priority first, while they fit, and otherwise listed by one
+ * line naming the tool that retrieves them. The reflection type gains the paper section work
+ * version 3 introduced.
+ */
+const ITEM_TYPES = (
+  [
+    ['task.work', 3],
+    ['task.review', 4],
+    ['project.reflection', 1],
+  ] as const
+).map(([name, version]): TaskTypeDefinition => {
+  const { recipe, ...definition } = FROZEN_TYPES.find(
+    (entry) => entry.name === name && entry.version === version,
+  )!;
+  return {
+    ...definition,
+    version: version + 1,
+    recipe: {
+      ...recipe,
+      instructions: `${recipe.instructions} Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.`,
+      sections: recipe.sections.some((section) => section.key === 'projectPaper')
+        ? recipe.sections
+        : [...recipe.sections.slice(0, 2), projectPaper, ...recipe.sections.slice(2)],
+      format: 2,
+    },
+  };
+});
+/** Task types own their recipes. These are definitions, not additional plugins or workflow engines. */
+export const TASK_TYPES: TaskTypeDefinition[] = [...FROZEN_TYPES, ...ITEM_TYPES];
 export const RESERVED_CONTEXT_INPUTS = new Set([
   'task',
   'brief',

@@ -175,9 +175,10 @@ test('task work and review contexts carry the project paper with its revision', 
     expectedRevision: task.workflow.revision,
     requestId: 'work-paper',
   });
+  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@4');
   assert.match(work.prompt, /Project paper and document revisions/);
   assert.match(work.prompt, /Build a reliable arithmetic library/);
-  assert.match(work.prompt, /"revision":1/);
+  assert.match(work.prompt, /problem\/current revision 1; section goals/);
   const { pending } = await round(f, task.id, 'Paper review');
   const claimId = (await f.reviews.get(f.reviewer, pending.reviewId!)).claimId!;
   const review = await f.tasks.context(f.reviewer, {
@@ -187,8 +188,130 @@ test('task work and review contexts carry the project paper with its revision', 
     expectedRevision: pending.workflow.revision,
     requestId: 'review-paper',
   });
+  assert.equal(`${review.type}@${review.typeVersion}`, 'task.review@5');
   assert.match(review.prompt, /Build a reliable arithmetic library/);
   assert.match(review.prompt, /intermediate step/);
+});
+
+test('a task keeps the review recipe of its work recipe’s format', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const task = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.', 'Handles negative inputs.'],
+    briefId: f.brief.id,
+    requestId: 'create-frozen',
+    type: 'task.work',
+    typeVersion: 3,
+  });
+  const { pending } = await round(f, task.id, 'Frozen review');
+  const claimId = (await f.reviews.get(f.reviewer, pending.reviewId!)).claimId!;
+  const review = await f.tasks.context(f.reviewer, {
+    taskId: task.id,
+    purpose: 'review',
+    claimId,
+    expectedRevision: pending.workflow.revision,
+    requestId: 'review-frozen',
+  });
+  // A task.work@3 task is reviewed as before: task.review@4 and its frozen renderer.
+  assert.equal(`${review.type}@${review.typeVersion}`, 'task.review@4');
+  assert.match(review.prompt, /\n## Pinned evidence\nArtifact /);
+});
+
+test('a format-2 review embeds large text evidence and lists a PDF without reading it', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const task = await f.create();
+  const text = await f.artifacts.create(f.producer, {
+    title: 'Measurements',
+    content: `Adds two numbers. Handles negative inputs.\n${'add(2,3)=5 verified.\n'.repeat(3000)}`,
+  });
+  assert.ok(text.size > 60_000);
+  const pdf = await f.artifacts.create(f.producer, {
+    title: 'Signed report',
+    mediaType: 'application/pdf',
+    encoding: 'base64',
+    content: Buffer.from('%PDF-1.4 adder report').toString('base64'),
+  });
+  const pending = await f.tasks.submitDelivery(
+    f.producer,
+    confirmedDelivery(
+      {
+        taskId: task.id,
+        artifactIds: [text.id, pdf.id],
+        expectedRevision: task.workflow.revision,
+        requestId: 'deliver-large',
+      },
+      2,
+    ),
+  );
+  const claimId = (await f.reviews.start(f.reviewer, pending.reviewId!)).claimId!;
+  const read = f.artifacts.read.bind(f.artifacts);
+  const reads: string[] = [];
+  t.mock.method(f.artifacts, 'read', async (...args: Parameters<typeof f.artifacts.read>) => {
+    reads.push(args[1]);
+    return await read(...args);
+  });
+  const review = await f.tasks.context(f.reviewer, {
+    taskId: task.id,
+    purpose: 'review',
+    claimId,
+    expectedRevision: pending.workflow.revision,
+    requestId: 'review-large',
+  });
+  assert.equal(`${review.type}@${review.typeVersion}`, 'task.review@5');
+  assert.ok(review.prompt.length <= 128_000);
+  assert.ok(
+    review.prompt.includes(`\n### evidence:${text.id} — Measurements (artifact ${text.id}, `),
+  );
+  assert.ok(review.prompt.includes('add(2,3)=5 verified.\n'.repeat(3000)));
+  assert.ok(
+    review.prompt.includes(
+      `\n- evidence:${pdf.id} — Signed report (artifact ${pdf.id}, application/pdf, `,
+    ),
+  );
+  assert.ok(!reads.includes(pdf.id));
+  assert.deepEqual(review.omitted, []);
+});
+
+test('a format-2 context freezes no more of a mature paper than its budget can embed', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  for (const kind of ['literature', 'methods'] as const)
+    await f.paper.patch(f.producer, {
+      kind,
+      expectedRevision: 0,
+      requestId: `paper-${kind}`,
+      changes: Array.from({ length: 40 }, (_, index) => ({
+        id: `${kind}-${index}`,
+        title: `${kind} section ${index}`,
+        content: `${kind} finding ${index}. `.repeat(150),
+      })),
+    });
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: 'paper-goal',
+    changes: [{ id: 'goals', content: 'Build a reliable arithmetic library.' }],
+  });
+  const task = await f.create();
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-mature',
+  });
+  assert.ok(work.prompt.length <= 96_000);
+  // The goal outranks every other section, and the brief is always embedded beside it.
+  assert.ok(work.prompt.includes('\n### paper:problem:current:1:2:goals — '));
+  assert.ok(work.prompt.includes(`\n### brief:${f.brief.id} — Brief (`));
+  // The sections past the budget are named, not frozen, and paper.read reaches them.
+  const [, count] =
+    /\n(?:### |- )paper:not-included — (\d+) more paper sections, not included in this assignment/.exec(
+      work.prompt,
+    )!;
+  assert.ok(Number(count) > 0 && Number(count) < 80);
 });
 
 test('a task.work@2 context carries a mature paper capped to a third of its budget', async (t) => {
