@@ -38,7 +38,7 @@ export interface CredentialAuthority {
   authenticate(token: string, kind: string | string[], tx?: Transaction): Promise<Credential>;
   authenticateHash(tokenHash: string, kind: string | string[], sql?: Sql): Promise<Credential>;
   renew(tokenHash: string, owner: string, expiresAt: string, tx?: Transaction): Promise<Credential>;
-  revoke(tokenHash: string, owner: string, tx?: Transaction): Promise<Credential>;
+  revoke(tokenHash: string, owner: string, tx?: Transaction): Promise<Credential | undefined>;
   revokeSubject(owner: string, subject: string, kind: string, tx?: Transaction): Promise<void>;
 }
 

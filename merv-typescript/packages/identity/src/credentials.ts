@@ -4,6 +4,7 @@ import type { Credential, CredentialAuthority, CredentialInput } from './types.j
 
 export type { Credential, CredentialAuthority, CredentialInput } from './types.js';
 
+/** The one token digest. Owners store and compare only this. */
 export const tokenDigest = sha256Hex;
 
 interface Row {
@@ -61,6 +62,13 @@ CREATE TRIGGER identity_credentials_no_delete BEFORE DELETE ON identity_credenti
 FOR EACH ROW EXECUTE FUNCTION identity_credentials_no_delete();
 `;
 
+const find = async (sql: Sql, tokenHash: string) =>
+  await sql.get<Row>('SELECT * FROM identity_credentials WHERE token_hash=?', tokenHash);
+/** The one validity rule: not revoked, and neither the expiry nor the hard deadline reached. */
+const live = (row: Row, now: string) =>
+  row.revoked_at === null &&
+  (row.expires_at === null || row.expires_at > now) &&
+  (row.hard_deadline === null || row.hard_deadline > now);
 const record = (row: Row): Credential =>
   Object.freeze({
     id: row.id,
@@ -215,10 +223,7 @@ export class CredentialStore implements CredentialAuthority {
         input.hardDeadline ?? null,
         input.revokedAt ?? null,
       );
-      const row = await sql.get<Row>(
-        'SELECT * FROM identity_credentials WHERE token_hash=?',
-        input.tokenHash,
-      );
+      let row = await find(sql, input.tokenHash);
       check(
         row &&
           row.owner === input.owner &&
@@ -228,6 +233,13 @@ export class CredentialStore implements CredentialAuthority {
         'Credential token belongs to another authority',
         409,
       );
+      // Carry a revocation the owner recorded later. Adoption never revives or extends.
+      if (input.revokedAt && row.revoked_at === null)
+        row = (await sql.get<Row>(
+          'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL RETURNING *',
+          input.revokedAt,
+          input.tokenHash,
+        ))!;
       return record(row);
     });
   }
@@ -255,17 +267,9 @@ export class CredentialStore implements CredentialAuthority {
       401,
     );
     const lookup = async (reader: Sql) => {
-      const row = await reader.get<Row>(
-        'SELECT * FROM identity_credentials WHERE token_hash=?',
-        tokenHash,
-      );
-      const now = this.now();
+      const row = await find(reader, tokenHash);
       check(
-        row &&
-          kinds.includes(row.kind) &&
-          row.revoked_at === null &&
-          (row.expires_at === null || row.expires_at > now) &&
-          (row.hard_deadline === null || row.hard_deadline > now),
+        row && kinds.includes(row.kind) && live(row, this.now()),
         'unauthorized',
         'Invalid or expired credential',
         401,
@@ -287,40 +291,44 @@ export class CredentialStore implements CredentialAuthority {
       'Invalid credential renewal',
     );
     return await this.write(tx, async (sql) => {
-      const row = await sql.get<Row>(
-        'SELECT * FROM identity_credentials WHERE token_hash=?',
-        tokenHash,
-      );
+      const row = await find(sql, tokenHash);
       const now = this.now();
       check(row && row.owner === owner, 'credential_forbidden', 'Credential owner mismatch', 403);
       check(
-        row.revoked_at === null &&
-          row.expires_at !== null &&
-          row.expires_at > now &&
-          (row.hard_deadline === null || row.hard_deadline > now),
+        row.hard_deadline !== null,
+        'invalid_credential',
+        'Only a credential with a hard deadline can be renewed',
+      );
+      check(
+        live(row, now) && row.expires_at !== null,
         'unauthorized',
         'Credential cannot be renewed',
         401,
       );
       check(
-        expiresAt > now && (row.hard_deadline === null || expiresAt <= row.hard_deadline),
+        expiresAt > now && expiresAt <= row.hard_deadline,
         'invalid_credential',
         'Renewal exceeds the hard deadline',
       );
-      if (expiresAt > row.expires_at) {
-        await sql.run(
-          'UPDATE identity_credentials SET expires_at=? WHERE token_hash=? AND owner=?',
-          expiresAt,
-          tokenHash,
-          owner,
-        );
-        return record({ ...row, expires_at: expiresAt });
-      }
-      return record(row);
+      if (expiresAt <= row.expires_at) return record(row);
+      const renewed = await sql.get<Row>(
+        'UPDATE identity_credentials SET expires_at=? WHERE token_hash=? AND owner=? AND revoked_at IS NULL AND expires_at<? RETURNING *',
+        expiresAt,
+        tokenHash,
+        owner,
+        expiresAt,
+      );
+      check(renewed, 'credential_conflict', 'Credential changed during renewal', 409);
+      return record(renewed);
     });
   }
 
-  async revoke(tokenHash: string, owner: string, tx?: Transaction): Promise<Credential> {
+  /** Idempotent; keeps the first revocation time. A hash never issued or adopted returns undefined. */
+  async revoke(
+    tokenHash: string,
+    owner: string,
+    tx?: Transaction,
+  ): Promise<Credential | undefined> {
     check(
       validHash(tokenHash) && identifier(owner),
       'invalid_credential',
@@ -328,19 +336,19 @@ export class CredentialStore implements CredentialAuthority {
     );
     return await this.write(tx, async (sql) => {
       const row = await sql.get<Row>(
-        'SELECT * FROM identity_credentials WHERE token_hash=?',
-        tokenHash,
-      );
-      check(row && row.owner === owner, 'credential_forbidden', 'Credential owner mismatch', 403);
-      if (row.revoked_at !== null) return record(row);
-      const revokedAt = this.now();
-      await sql.run(
-        'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=? AND owner=? AND revoked_at IS NULL',
-        revokedAt,
+        'UPDATE identity_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE token_hash=? AND owner=? RETURNING *',
+        this.now(),
         tokenHash,
         owner,
       );
-      return record({ ...row, revoked_at: revokedAt });
+      if (row) return record(row);
+      check(
+        !(await find(sql, tokenHash)),
+        'credential_forbidden',
+        'Credential owner mismatch',
+        403,
+      );
+      return undefined;
     });
   }
 
