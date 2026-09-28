@@ -568,6 +568,51 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
   assert.ok(!JSON.stringify(dependencies).includes('PRIVATE TITLE'));
 });
 
+test('a pinned absence of success states reads like an undeclared one', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const targetProgram = await workflows.register(graph(), policy());
+  const absentProgram = await workflows.register(graph('absent_success'), {
+    ...policy(),
+    successStates: undefined,
+  });
+  await state.transaction(
+    async (tx) =>
+      await tx.run(
+        'INSERT INTO wf_success_states (workflow,version,success_json) VALUES (?,?,?) ON CONFLICT DO NOTHING',
+        'absent_success',
+        1,
+        'null',
+      ),
+  );
+  const absent = await start(absentProgram, caller, 'absent_success', 'absent');
+  await assert.rejects(
+    async () => await start(targetProgram, caller, 'preparation', 'waiter', [absent.id]),
+    { code: 'dependency_unsupported', status: 409 },
+  );
+  const target = await start(targetProgram, caller, 'preparation', 'target');
+  const source = await start(absentProgram, caller, 'absent_success', 'source', [target.id]);
+  await absentProgram.transition(caller, {
+    instanceId: source.id,
+    expectedRevision: 0,
+    action: 'withdraw',
+    requestId: 'withdraw',
+    input: { reason: 'stop' },
+  });
+  assert.deepEqual(
+    (await workflows.dependencies(caller, target.id)).dependents.map(({ settled, failed }) => ({
+      settled,
+      failed,
+    })),
+    [{ settled: false, failed: false }],
+  );
+  const relations = await state.transaction(
+    async (tx) => await workflows.dependencyRelations(caller.projectId, source.id, tx),
+  );
+  assert.equal(relations?.instance.settled, false);
+  assert.equal(relations?.dependencies[0].id, target.id);
+});
+
 test('dependency policy validation and immutable contexts prevent changing registered success or bypassing authorization', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());

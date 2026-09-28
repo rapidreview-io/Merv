@@ -10,7 +10,7 @@ import type {
   WorkflowProviderRelations,
   WorkflowReference,
 } from '@merv/contracts';
-import { instanceName, relations } from './dependencies.js';
+import { instanceName, relations, successOf } from './dependencies.js';
 
 interface BlockerRow {
   instance_id: string;
@@ -256,7 +256,7 @@ export async function providerRelations(
     Number(row.version),
   );
   const data = JSON.parse(row.data_json) as { title?: unknown; name?: unknown; goal?: unknown };
-  const settled = !!success && (JSON.parse(success.success_json) as string[]).includes(row.state);
+  const settled = !!successOf(success)?.includes(row.state);
   const edges = await relations(sql, projectId, instanceId);
   const instance = await extend({
     id: row.id,

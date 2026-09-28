@@ -18,6 +18,10 @@ export function normalizeDependencies(value: unknown): string[] {
   return [...new Set((values as string[]).map((item) => item.trim()).filter(Boolean))];
 }
 
+/** A version's pinned success states; a stored `null` pins their absence, like a missing row. */
+export const successOf = (row: { success_json: string } | undefined): string[] | undefined =>
+  row ? ((JSON.parse(row.success_json) as string[] | null) ?? undefined) : undefined;
+
 export async function persistSuccess(
   sql: Sql,
   definition: WorkflowDefinition,
@@ -150,7 +154,7 @@ export async function relations(
           source.id,
           source.workflow,
           source.version,
-          semantics ? (JSON.parse(semantics.success_json) as string[]) : undefined,
+          successOf(semantics),
           graph ? (JSON.parse(graph.definition_json) as WorkflowDefinition).terminal : [],
         ),
         ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
@@ -273,7 +277,7 @@ export async function attachDependencies(
       target.version,
     );
     check(
-      success,
+      success && successOf(success),
       'dependency_unsupported',
       `Workflow ${target.workflow}@${target.version} has no declared success states`,
       409,
