@@ -21,12 +21,15 @@ type Progress = {
   definition_hash: string;
 };
 
+const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
+
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
   private consumers = new Map<string, EventConsumer>();
-  private pendingIds = new Set<string>();
-  private subscriptions = new Set<Promise<void>>();
-  private admitted = new Map<EventConsumer, Promise<boolean>>();
+  /** Registrations in flight, by consumer ID; close() joins them. */
+  private registering = new Map<string, Promise<void>>();
+  /** The one delivery transaction in flight; a disposer joins it. */
+  private admitted?: { consumer: EventConsumer; transaction: Promise<boolean> };
   private handlerContext = new AsyncLocalStorage<{ consumer: EventConsumer; live: boolean }>();
   private running?: Promise<void>;
   private initialization?: Promise<void>;
@@ -58,9 +61,11 @@ export class DurableEvents implements DomainEvents {
   async subscribe(input: EventConsumer): Promise<() => void | Promise<void>> {
     check(!this.closed, 'events_closed', 'Domain Events is closed', 503);
     check(
-      /^[a-z][a-z0-9_.-]{0,127}$/.test(input.id) &&
+      typeof input.id === 'string' &&
+        NAME.test(input.id) &&
+        Array.isArray(input.types) &&
         input.types.length > 0 &&
-        input.types.every((type) => /^[a-z][a-z0-9_.-]{0,127}$/.test(type)) &&
+        input.types.every((type) => typeof type === 'string' && NAME.test(type)) &&
         new Set(input.types).size === input.types.length &&
         ['beginning', 'now'].includes(input.from) &&
         typeof input.handle === 'function',
@@ -68,14 +73,13 @@ export class DurableEvents implements DomainEvents {
       'A stable consumer ID, distinct event types and explicit starting position are required',
     );
     check(
-      !this.consumers.has(input.id) && !this.pendingIds.has(input.id),
+      !this.consumers.has(input.id) && !this.registering.has(input.id),
       'consumer_registered',
       'Consumer is already active',
       409,
     );
     const consumer = { ...input, types: [...input.types] };
     const hash = digest([...consumer.types].sort());
-    this.pendingIds.add(consumer.id);
     const registration = this.state.transaction(async (tx) => {
       const previous = await tx.get<Progress>(
         'SELECT * FROM event_consumers WHERE id=?',
@@ -96,25 +100,25 @@ export class DurableEvents implements DomainEvents {
           consumer.from === 'beginning' ? 0 : await this.state.eventHead(tx),
         );
     });
-    this.subscriptions.add(registration);
+    this.registering.set(consumer.id, registration);
     try {
       await registration;
       check(!this.closed, 'events_closed', 'Domain Events is closed', 503);
       this.consumers.set(consumer.id, consumer);
       this.wake();
     } finally {
-      this.pendingIds.delete(consumer.id);
-      this.subscriptions.delete(registration);
+      this.registering.delete(consumer.id);
     }
     return () => {
       if (this.consumers.get(consumer.id) === consumer) this.consumers.delete(consumer.id);
       // A handler may withdraw itself. It cannot wait for its own transaction to finish.
       const handler = this.handlerContext.getStore();
       if (handler?.live && handler.consumer === consumer) return;
-      return this.admitted.get(consumer)?.then(
-        () => {},
-        () => {},
-      );
+      if (this.admitted?.consumer === consumer)
+        return this.admitted.transaction.then(
+          () => {},
+          () => {},
+        );
     };
   }
 
@@ -227,12 +231,12 @@ export class DurableEvents implements DomainEvents {
             );
             return true;
           });
-          this.admitted.set(consumer, transaction);
+          this.admitted = { consumer, transaction };
           let advanced: boolean;
           try {
             advanced = await transaction;
           } finally {
-            this.admitted.delete(consumer);
+            this.admitted = undefined;
           }
           if (!advanced) break;
           if (count === 99) backlog = true;
@@ -244,7 +248,7 @@ export class DurableEvents implements DomainEvents {
               consumer.id,
             );
             if (!row || row.cursor !== attemptedCursor) return;
-            const delay = Math.min(30_000, 100 * 2 ** Math.min(row.attempts, 8));
+            const delay = 100 * 2 ** Math.min(row.attempts, 8);
             // Failure handling must not invoke getters or proxy traps on an
             // arbitrary thrown value and thereby strand every later consumer.
             const field =
@@ -299,7 +303,7 @@ export class DurableEvents implements DomainEvents {
     this.timer = undefined;
     this.consumers.clear();
     this.closing = Promise.allSettled([
-      ...this.subscriptions,
+      ...this.registering.values(),
       ...(this.initialization ? [this.initialization] : []),
       ...(this.running ? [this.running] : []),
     ]).then(() => {});

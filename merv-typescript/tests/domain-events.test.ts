@@ -1161,3 +1161,24 @@ test('two dispatchers deliver every committed event exactly once and in order', 
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('subscribe refuses a missing ID or non-string event types', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const valid = { id: 'valid', types: ['probe.created'], from: 'beginning' as const, handle() {} };
+  try {
+    for (const invalid of [
+      { ...valid, id: undefined },
+      { ...valid, id: null },
+      { ...valid, types: [null] },
+      { ...valid, types: 'probe.created' },
+    ])
+      await assert.rejects(events.subscribe(invalid as unknown as EventConsumer), {
+        code: 'invalid_consumer',
+      });
+    assert.deepEqual(await events.status(), []);
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
