@@ -506,19 +506,26 @@ test('a service actor is created once, then found with one read and no write tra
     f.state.transaction = transaction;
   }
   assert.equal(opened, 0);
-  const statements: string[] = [];
+  const reads: string[] = [];
+  const writes: string[] = [];
   assert.deepEqual(
     await f.state.transaction(async (tx) => {
+      const get = tx.get;
+      tx.get = (async (sql: string, ...values: unknown[]) => {
+        reads.push(sql);
+        return await get.call(tx, sql, ...(values as []));
+      }) as typeof get;
       const run = tx.run;
       tx.run = (async (sql: string, ...values: unknown[]) => {
-        statements.push(sql);
+        writes.push(sql);
         return await run.call(tx, sql, ...(values as []));
       }) as typeof run;
       return await f.scope.serviceActor('code', project, tx);
     }),
     code,
   );
-  assert.deepEqual(statements, []);
+  assert.deepEqual(reads, ['SELECT id,role FROM actors WHERE project_id=? AND service_owner=?']);
+  assert.deepEqual(writes, []);
   const rows = await f.state.read((sql) =>
     sql.all<{ service_owner: string; role: string }>(
       'SELECT service_owner,role FROM actors WHERE service_owner IS NOT NULL ORDER BY service_owner',
