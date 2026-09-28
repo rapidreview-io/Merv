@@ -158,7 +158,7 @@ export class PostgresState implements State {
     check(
       ![...url.searchParams.keys()].some((key) => /^(ssl|options$)/i.test(key)),
       'invalid_config',
-      'Configure PostgreSQL TLS through the ssl option and the schema through the schema option',
+      'Configure PostgreSQL TLS through the ssl option; the URL may not carry options',
     );
     const pool = (max: number) => {
       const created = new Pool({
