@@ -339,7 +339,7 @@ test('a listing in a transaction reads on that transaction', async () => {
   });
 });
 
-test('a repeat serviceActor never waits for the writer lock', { todo: 'step 9' }, async () => {
+test('a repeat serviceActor never waits for the writer lock', async () => {
   const f = await fixture();
   assert.equal(
     await whileWriterHeld(f, async () =>

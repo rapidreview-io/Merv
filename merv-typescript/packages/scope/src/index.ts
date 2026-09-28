@@ -96,6 +96,8 @@ const credential = (row: CredentialRow): ActorCredential => ({
   previousId: row.previous_id,
 });
 const roles = ['operator', 'producer', 'reviewer', 'reader'];
+/** A service's role follows from its provider; scope@9's trigger holds the same rule. */
+const serviceRole = (provider: string) => (provider === 'fleet-review' ? 'reviewer' : 'producer');
 const permits = (role: Role, permission: Permission): boolean =>
   permission === 'read' ||
   role === 'operator' ||
@@ -254,27 +256,42 @@ export class ProjectScope implements Scope {
     provider: string,
     projectId: string,
     tx?: Transaction,
-    role: 'producer' | 'reviewer' = 'producer',
+    role: 'producer' | 'reviewer' = serviceRole(provider),
   ): Promise<Caller> {
-    if (!tx)
-      return this.state.transaction((tx) => this.serviceActor(provider, projectId, tx, role));
-    this.state.assertTransaction(tx);
-    check(provider.trim().length > 0, 'invalid_provider', 'A service provider is required');
-    await tx.run(
-      'INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,?,1,?) ON CONFLICT DO NOTHING',
-      newId('actor'),
-      projectId,
-      `${provider} service`,
-      role,
-      provider,
+    check(
+      typeof provider === 'string' && /^[a-z][a-z0-9-]{0,62}$/.test(provider),
+      'invalid_provider',
+      'A service provider is a short lowercase slug',
     );
-    const row = await tx.get<{ id: string }>(
-      'SELECT id FROM actors WHERE project_id=? AND service_owner=?',
-      projectId,
-      provider,
-    );
-    check(row, 'service_unavailable', 'The service actor is unavailable', 503);
-    return { projectId, actorId: row.id };
+    const find = async (sql: Sql) =>
+      await sql.get<{ id: string; role: Role }>(
+        'SELECT id,role FROM actors WHERE project_id=? AND service_owner=?',
+        projectId,
+        provider,
+      );
+    // Every task, workflow and session admission asks again: once it exists, one read, no lock.
+    const found = await within(this.state, tx, find);
+    if (found?.role === role) return { projectId, actorId: found.id };
+    // A role that does not fit the provider still reaches the INSERT, whose trigger refuses it.
+    return await inTransaction(this.state, tx, async (tx) => {
+      check(
+        await tx.get('SELECT 1 FROM projects WHERE id=?', projectId),
+        'not_found',
+        'Project not found',
+        404,
+      );
+      await tx.run(
+        'INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,?,1,?) ON CONFLICT DO NOTHING',
+        newId('actor'),
+        projectId,
+        `${provider} service`,
+        role,
+        provider,
+      );
+      const row = await find(tx);
+      check(row, 'service_unavailable', 'The service actor is unavailable', 503);
+      return { projectId, actorId: row.id };
+    });
   }
 
   async acceptVerifiedIdentity(identity: VerifiedIdentity) {
@@ -477,6 +494,11 @@ export class ProjectScope implements Scope {
       ['producer', 'reviewer', 'reader'].includes(input.role) &&
         typeof input.sessionId === 'string' &&
         input.sessionId.length > 0 &&
+        input.sessionId.length <= 200 &&
+        (input.agentId === undefined ||
+          (typeof input.agentId === 'string' &&
+            input.agentId.length > 0 &&
+            input.agentId.length <= 200)) &&
         typeof input.name === 'string' &&
         visible(input.name) &&
         input.name.length <= 200,
@@ -495,7 +517,7 @@ export class ProjectScope implements Scope {
       role: input.role,
       active: true,
       sessionId: input.sessionId,
-      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
     };
     await tx.run(
       'INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id) VALUES(?,?,?,?,1,?,?)',

@@ -425,6 +425,111 @@ test('session actor creation and role updates retain the authorized delegation a
   );
 });
 
+test('session actors refuse malformed lease and agent identities before any write', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const source = await f.scope.delegationSource(f.operator);
+  const create = (input: Record<string, unknown>) =>
+    f.state.transaction((tx) =>
+      f.scope.createSessionActor(
+        source,
+        { sessionId: 'session-shape', name: 'Worker', role: 'reader', ...input } as never,
+        tx,
+      ),
+    );
+  const count = async () =>
+    (await f.state.read((sql) =>
+      sql.get<{ n: number }>('SELECT count(*)::int AS n FROM actors WHERE session_id IS NOT NULL'),
+    ))!.n;
+  for (const input of [
+    { agentId: { x: 1 } },
+    { agentId: '' },
+    { agentId: 'a'.repeat(201) },
+    { sessionId: 's'.repeat(201) },
+  ])
+    await assert.rejects(create(input), { code: 'invalid_session_actor' });
+  assert.equal(await count(), 0);
+  const plain = await create({});
+  assert.equal('agentId' in plain, false);
+  const agent = await create({ sessionId: 'session-agent', agentId: 'a'.repeat(200) });
+  assert.equal(agent.agentId, 'a'.repeat(200));
+  const stored = await f.state.read((sql) =>
+    sql.all<{ agent_id: string | null }>(
+      'SELECT agent_id FROM actors WHERE id IN (?,?) ORDER BY session_id',
+      agent.id,
+      plain.id,
+    ),
+  );
+  assert.deepEqual(
+    stored.map((row) => row.agent_id),
+    ['a'.repeat(200), null],
+  );
+});
+
+test('a service actor is created once, then found with one read and no write transaction', async (t) => {
+  const f = await fixture();
+  t.after(() => f.state.close());
+  const project = f.operator.projectId;
+  for (const provider of [' code ', '', 'Code', 'code service', 'x'.repeat(64), 7])
+    await assert.rejects(f.scope.serviceActor(provider as string, project), {
+      code: 'invalid_provider',
+    });
+  await assert.rejects(f.scope.serviceActor('code', 'project_missing'), { code: 'not_found' });
+  const code = await f.scope.serviceActor('code', project);
+  // Fleet's review director reviews without naming the role; a role the provider cannot hold is
+  // still refused by scope@9's trigger.
+  const review = await f.scope.serviceActor('fleet-review', project);
+  assert.deepEqual(
+    await f.scope.serviceActor('fleet-review', project, undefined, 'reviewer'),
+    review,
+  );
+  await assert.rejects(f.scope.serviceActor('code', project, undefined, 'reviewer'), {
+    code: 'state_constraint',
+  });
+  await assert.rejects(f.scope.serviceActor('fleet-review', project, undefined, 'producer'), {
+    code: 'state_constraint',
+  });
+  // A repeat call outside any scope opens no transaction; inside one it only reads.
+  const transaction = f.state.transaction;
+  let opened = 0;
+  f.state.transaction = ((...args: Parameters<typeof transaction>) => {
+    opened++;
+    return transaction.apply(f.state, args);
+  }) as typeof transaction;
+  try {
+    assert.deepEqual(await f.scope.serviceActor('code', project), code);
+    assert.deepEqual(
+      await f.state.snapshot(() => f.scope.serviceActor('fleet-review', project)),
+      review,
+    );
+  } finally {
+    f.state.transaction = transaction;
+  }
+  assert.equal(opened, 0);
+  const statements: string[] = [];
+  assert.deepEqual(
+    await f.state.transaction(async (tx) => {
+      const run = tx.run;
+      tx.run = (async (sql: string, ...values: unknown[]) => {
+        statements.push(sql);
+        return await run.call(tx, sql, ...(values as []));
+      }) as typeof run;
+      return await f.scope.serviceActor('code', project, tx);
+    }),
+    code,
+  );
+  assert.deepEqual(statements, []);
+  const rows = await f.state.read((sql) =>
+    sql.all<{ service_owner: string; role: string }>(
+      'SELECT service_owner,role FROM actors WHERE service_owner IS NOT NULL ORDER BY service_owner',
+    ),
+  );
+  assert.deepEqual(rows, [
+    { service_owner: 'code', role: 'producer' },
+    { service_owner: 'fleet-review', role: 'reviewer' },
+  ]);
+});
+
 test('rotation preserves identity and expiry, retains history and immediately fences old caller credentials', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());

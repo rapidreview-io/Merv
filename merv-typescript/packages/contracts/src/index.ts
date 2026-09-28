@@ -937,7 +937,8 @@ export interface Scope {
    * work until an admin chooses. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** A credential-free producer owned by a server provider, scoped to one project; only
-   * Fleet's review director, 'fleet-review', is a reviewer instead. */
+   * Fleet's review director, 'fleet-review', is a reviewer instead. `provider` is a lowercase
+   * slug, and `role` defaults to the provider's own. */
   serviceActor(
     provider: string,
     projectId: string,
