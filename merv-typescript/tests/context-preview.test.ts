@@ -1,7 +1,7 @@
 import { createService } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -11,6 +11,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import {
   digest,
+  MervError,
   type Caller,
   type ContextBuild,
   type TaskTypeDefinition,
@@ -327,10 +328,10 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
     );
     assert.equal(await changes(), before, code);
   }
-  writeFileSync(
-    join(directory, 'blobs', operator.projectId, evidence.hash.slice(0, 2), evidence.hash),
-    'Corrupt bytes',
-  );
+  // Artifacts verifies its bytes (its own suite covers how); a refusal here must write nothing.
+  artifacts.read = async () => {
+    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+  };
   await assert.rejects(
     async () =>
       await registration.preview(operator, {
@@ -432,10 +433,9 @@ test('saved build receipts replay before rendering and changed inputs still conf
     requestId: 'saved',
   };
   const saved = await registration.build(operator, input);
-  writeFileSync(
-    join(directory, 'blobs', operator.projectId, evidence.hash.slice(0, 2), evidence.hash),
-    'Corrupt bytes',
-  );
+  artifacts.read = async () => {
+    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+  };
   const { requestId: _requestId, ...previewInput } = input;
   const before = await changes();
   await assert.rejects(async () => await registration.preview(operator, previewInput), {

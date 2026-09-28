@@ -1,6 +1,7 @@
 import { isUtf8 } from 'node:buffer';
 import {
   check,
+  sha256Hex,
   visible,
   MAX_ARTIFACT_BYTES,
   type Artifact,
@@ -25,6 +26,17 @@ export const fromRow = (row: any): Artifact => ({
   createdAt: row.created_at,
   ...(row.object_id ? { objectId: row.object_id } : {}),
 });
+
+/** Large storage returns unverified bytes; blobs.get and the row's CHECK verify their own. */
+export const verified = (bytes: Buffer, artifact: { size: number; hash: string }): Buffer => {
+  check(
+    bytes.length === artifact.size && sha256Hex(bytes) === artifact.hash,
+    'blob_corrupt',
+    'Stored artifact bytes do not match their metadata',
+    500,
+  );
+  return bytes;
+};
 
 /** Bytes read back as text. Tool input refuses NUL in text, so bytes carrying it are not text:
  * a text answer has to be one the caller could send back. */

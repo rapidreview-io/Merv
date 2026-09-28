@@ -1,6 +1,6 @@
 import { recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
-import { META, decode, fromRow, isText, meta, span, view } from './content.js';
+import { META, decode, fromRow, isText, meta, span, verified, view } from './content.js';
 import { Uploads } from './uploads.js';
 import type { Context } from 'cordis';
 import {
@@ -23,16 +23,6 @@ import {
   type Blobs,
   type Transaction,
 } from '@merv/contracts';
-/** Large storage returns unverified bytes; blobs.get verifies its own. */
-const verified = (bytes: Buffer, artifact: Artifact): Buffer => {
-  check(
-    bytes.length === artifact.size && sha256Hex(bytes) === artifact.hash,
-    'blob_corrupt',
-    'Stored artifact bytes do not match their metadata',
-    500,
-  );
-  return bytes;
-};
 /** A row implies its bytes: storage that has lost them is a server fault, never a 404. */
 async function missing<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -75,6 +65,7 @@ export class ArtifactStore implements Artifacts {
           sql: postgresMigrations[1],
         },
         { version: 2, sql: postgresMigrations[2] },
+        { version: 3, sql: postgresMigrations[3] },
       ]);
     };
   }
@@ -122,17 +113,16 @@ export class ArtifactStore implements Artifacts {
   }
   async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
     caller = structuredClone(caller);
-    // Metadata must come from the same validated input as the bytes handed to storage.
     input = plain<ArtifactInput>(input, 'invalid_artifact');
-    await this.scope.require(caller, 'write', tx);
     const bytes = decode(input);
     // Without a declared type, bytes that read back as text are Markdown; others are opaque.
     const { title, mediaType } = meta(
       input.title,
       input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream'),
     );
-    const stored = await this.blobs.put(caller.projectId, bytes);
-    return await inTransaction(this.state, tx, async (tx) => {
+    const hash = sha256Hex(bytes);
+    // Database only: the bytes go in the row, so the caller's transaction does no network I/O.
+    return await inTransaction(this.state, tx ?? this.state.ambient, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const artifact: Artifact = {
         id: newId('art'),
@@ -140,12 +130,12 @@ export class ArtifactStore implements Artifacts {
         createdBy: caller.actorId,
         title,
         mediaType,
-        hash: stored.hash,
-        size: stored.size,
+        hash,
+        size: bytes.length,
         createdAt: now(),
       };
       await tx.run(
-        'INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,NULL,?,?)`,
         artifact.id,
         artifact.projectId,
         artifact.createdBy,
@@ -154,6 +144,8 @@ export class ArtifactStore implements Artifacts {
         artifact.hash,
         artifact.size,
         artifact.createdAt,
+        bytes,
+        caller.session?.id ?? null,
       );
       await recorded(this.state, tx, caller, 'artifact.created', artifact.id, {
         hash: artifact.hash,
@@ -194,13 +186,28 @@ export class ArtifactStore implements Artifacts {
       ).map(fromRow);
     });
   }
-  /** The bytes behind a row: large-storage bytes are verified here, blob bytes by blobs.get. */
-  private async fetch(projectId: string, artifact: Artifact): Promise<Buffer> {
+  /**
+   * The bytes behind a row created before they were kept in it: large-storage bytes are verified
+   * here, blob bytes by blobs.get.
+   */
+  private async fetch(projectId: string, artifact: Artifact, tx?: Transaction): Promise<Buffer> {
+    this.offLock(tx);
     if (!artifact.objectId) return await missing(() => this.blobs.get(projectId, artifact.hash));
     const storage = this.storage();
     return verified(
       await missing(() => storage.read(projectId, artifact.objectId!, artifact.size)),
       artifact,
+    );
+  }
+  private sites = new Set<string>();
+  /** Phase A: each call site that does storage I/O inside a write transaction is logged once. */
+  private offLock(tx?: Transaction) {
+    if (!(tx ?? this.state.ambient) || this.state.readScope) return;
+    const site = new Error().stack?.split('\n').slice(2).join('\n') ?? '';
+    if (this.sites.has(site)) return;
+    this.sites.add(site);
+    process.stderr.write(
+      `${JSON.stringify({ event: 'artifacts.io_in_transaction', site: site.trim() })}\n`,
     );
   }
   get downloadSupported() {
@@ -211,6 +218,7 @@ export class ArtifactStore implements Artifacts {
   }
   async download(caller: Caller, artifactId: string) {
     caller = structuredClone(caller);
+    this.offLock();
     const artifact = await this.get(caller, artifactId);
     if (artifact.objectId) {
       const storage = this.storage();
@@ -223,15 +231,40 @@ export class ArtifactStore implements Artifacts {
       'This storage provider does not support direct downloads',
       501,
     );
-    const download = await missing(() =>
-      this.blobs.download!(caller.projectId, artifact.hash, artifact.size),
+    const sign = () => this.blobs.download!(caller.projectId, artifact.hash, artifact.size);
+    try {
+      return { artifact, download: await sign() };
+    } catch (error) {
+      if (!(error instanceof MervError && error.code === 'blob_not_found')) throw error;
+    }
+    // The first download of bytes kept in the row mirrors them into blobs: content-addressed,
+    // so a repeat or a race writes the same object.
+    const row = await this.place(undefined, (tx) =>
+      tx.get<{ content: Buffer | null }>(
+        'SELECT content FROM artifacts WHERE id=? AND project_id=?',
+        artifact.id,
+        caller.projectId,
+      ),
     );
-    return { artifact, download };
+    check(row?.content, 'artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
+    await this.blobs.put(caller.projectId, row.content);
+    return { artifact, download: await missing(sign) };
   }
-  async read(caller: Caller, artifactId: string, range: { offset?: number; length?: number } = {}) {
+  async bytes(
+    caller: Caller,
+    artifactId: string,
+    tx?: Transaction,
+  ): Promise<{ artifact: Artifact; bytes: Buffer }> {
     caller = structuredClone(caller);
-    span(range);
-    const artifact = await this.get(caller, artifactId);
+    const row = await this.one(caller, tx, (tx) =>
+      tx.get<Record<string, unknown> & { content: Buffer | null }>(
+        `SELECT ${META},content FROM artifacts WHERE id=? AND project_id=?`,
+        artifactId,
+        caller.projectId,
+      ),
+    );
+    check(row, 'not_found', 'Artifact not found in this project', 404);
+    const artifact = fromRow(row);
     if (artifact.size > MAX_ARTIFACT_BYTES)
       throw new MervError(
         'artifact_size',
@@ -239,7 +272,17 @@ export class ArtifactStore implements Artifacts {
         400,
         { artifactId: artifact.id, size: artifact.size },
       );
-    return view(artifact, await this.fetch(caller.projectId, artifact), range);
+    return { artifact, bytes: row.content ?? (await this.fetch(caller.projectId, artifact, tx)) };
+  }
+  async read(
+    caller: Caller,
+    artifactId: string,
+    range: { offset?: number; length?: number } = {},
+    tx?: Transaction,
+  ) {
+    span(range);
+    const { artifact, bytes } = await this.bytes(caller, artifactId, tx);
+    return view(artifact, bytes, range);
   }
   async list(caller: Caller): Promise<Artifact[]> {
     caller = structuredClone(caller);

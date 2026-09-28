@@ -1,5 +1,7 @@
 import {
   check,
+  MervError,
+  MAX_ARTIFACT_BYTES,
   newId,
   now,
   plain,
@@ -13,7 +15,7 @@ import {
   type Scope,
   type State,
 } from '@merv/contracts';
-import { META, fromRow, meta, request } from './content.js';
+import { META, fromRow, meta, request, verified } from './content.js';
 
 type UploadRow = {
   upload_id: string;
@@ -136,16 +138,31 @@ export class Uploads {
     if (row.artifact_id) return await this.get(caller, row.artifact_id);
     check(row.object_id, 'upload_pending', 'Upload has no storage object yet', 409);
     const objectId = row.object_id;
-    const completed = await this.storage().complete(caller.projectId, objectId);
+    const size = Number(row.size);
+    const storage = this.storage();
+    const completed = await storage.complete(caller.projectId, objectId);
     check(
       completed.state === 'available' &&
         completed.objectId === objectId &&
-        completed.size === Number(row.size) &&
+        completed.size === size &&
         completed.sha256 === row.hash,
       'upload_mismatch',
       'Stored object differs from the declared artifact',
       502,
     );
+    // An object within the inline limit is copied into its row, so reading it never reaches
+    // storage again. Corrupt bytes fail the completion; an outage leaves the row reading through
+    // the object instead.
+    let content: Buffer | null = null;
+    if (size <= MAX_ARTIFACT_BYTES)
+      try {
+        content = verified(await storage.read(caller.projectId, objectId, size), {
+          size,
+          hash: row.hash,
+        });
+      } catch (error) {
+        if (!(error instanceof MervError && error.code === 'blob_unavailable')) throw error;
+      }
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const current = await tx.get<{ artifact_id: string | null }>(
@@ -164,12 +181,12 @@ export class Uploads {
         title: row.title,
         mediaType: row.media_type,
         hash: row.hash,
-        size: Number(row.size),
+        size,
         objectId,
         createdAt: now(),
       };
       await tx.run(
-        `INSERT INTO artifacts(${META}) VALUES(?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
         artifact.id,
         artifact.projectId,
         artifact.createdBy,
@@ -179,6 +196,8 @@ export class Uploads {
         artifact.size,
         artifact.createdAt,
         objectId,
+        content,
+        caller.session?.id ?? null,
       );
       await tx.run(
         'UPDATE artifact_uploads SET artifact_id=? WHERE upload_id=?',

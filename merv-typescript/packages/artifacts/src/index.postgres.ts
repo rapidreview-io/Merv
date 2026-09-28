@@ -1,3 +1,5 @@
+import { withoutTriggers } from '@merv/contracts/retired-instances';
+
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -25,5 +27,21 @@ ALTER TABLE artifacts ADD COLUMN object_id TEXT;
 CREATE UNIQUE INDEX artifacts_project_object ON artifacts(project_id, object_id) WHERE object_id IS NOT NULL;
 CREATE TABLE artifact_uploads(upload_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,created_by TEXT NOT NULL,title TEXT NOT NULL,media_type TEXT NOT NULL,hash TEXT NOT NULL,size BIGINT NOT NULL,object_id TEXT,artifact_id TEXT,created_at TEXT NOT NULL);
 CREATE INDEX artifact_uploads_project ON artifact_uploads(project_id, created_by);
+`,
+  // Bytes up to the inline limit live in the row, verified by the CHECK. The session fill runs
+  // while every content is still NULL, and the CHECK comes last, so neither hashes anything.
+  // Rollback is forward only: a code revert keeps this version registered (else migration_ahead)
+  // and keeps reading row content first, because rows written since have no blob.
+  3: `
+ALTER TABLE artifacts ADD COLUMN content BYTEA, ADD COLUMN session_id TEXT;
+${withoutTriggers(
+  'artifacts',
+  ['artifacts_immutable_update'],
+  `UPDATE artifacts a SET session_id = e.data_json::jsonb #>> '{source,sessionId}'
+  FROM events e WHERE e.project_id = a.project_id AND e.subject_id = a.id AND e.type = 'artifact.created'
+  AND (e.data_json::jsonb #>> '{source,sessionId}') IS NOT NULL;`,
+)}
+ALTER TABLE artifacts ADD CONSTRAINT artifacts_content_verified
+  CHECK (content IS NULL OR (octet_length(content) = size AND encode(sha256(content), 'hex') = hash));
 `,
 };

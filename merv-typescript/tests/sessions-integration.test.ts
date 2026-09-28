@@ -340,9 +340,8 @@ test('leased workers must deliberately range-read or download large artifacts', 
       state: 'available' as const,
     }),
     download: async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
-    read: async () => {
-      throw new Error('not used');
-    },
+    // Completion copies an object within the inline limit into its row.
+    read: async () => Buffer.from(content),
   };
   const unbind = f.app.ctx.artifacts.bindLarge(storage);
   t.after(unbind);

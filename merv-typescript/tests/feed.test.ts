@@ -87,7 +87,7 @@ test('Feed persists the input it validated and hashed even if its caller edits t
   assert.equal((await f.feed.list(f.producer)).length, 1);
 });
 
-test('artifact metadata stays bound to the input validated before asynchronous blob storage', async (t) => {
+test('artifact metadata stays bound to the input validated before asynchronous authorisation', async (t) => {
   const f = await fixture(t);
   let enter!: () => void, release!: () => void;
   const entered = new Promise<void>((resolve) => {
@@ -96,12 +96,12 @@ test('artifact metadata stays bound to the input validated before asynchronous b
   const waiting = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const put = f.blobs.put.bind(f.blobs);
-  t.mock.method(f.blobs, 'put', async (...args: Parameters<typeof put>) => {
-    const stored = await put(...args);
+  const authorize = f.scope.require.bind(f.scope);
+  t.mock.method(f.scope, 'require', async (...args: Parameters<typeof authorize>) => {
+    const actor = await authorize(...args);
     enter();
     await waiting;
-    return stored;
+    return actor;
   });
   const input = { title: 'Original title', content: 'Original bytes' };
   const pending = f.artifacts.create(f.producer, input);

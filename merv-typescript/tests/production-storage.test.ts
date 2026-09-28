@@ -10,6 +10,7 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { s3Server } from './fixtures/s3-server.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { postgresUrl, schemaFor } from './fixtures/state.js';
 
 const production = async (): Promise<ApplicationConfig> =>
@@ -141,22 +142,31 @@ test(
       (await app.ctx.artifacts.read(producer, artifact.id)).content,
       'The verified sum is 20.',
     );
+    // Bytes are kept in the row: creating and reading an artifact needs no S3 at all.
     const eventsBefore = await app.ctx.state.events(operator.projectId);
     const beforeArtifacts = await app.ctx.artifacts.list(operator);
+    const requestsBefore = f.server.requests.length;
     f.server.fail(503);
     try {
-      await assert.rejects(
-        app.ctx.artifacts.create(producer, {
-          title: 'Rejected bytes',
-          content: 'Storage has not acknowledged these bytes.',
-        }),
-        { code: 'blob_unavailable' },
+      const kept = await app.ctx.artifacts.create(producer, {
+        title: 'Kept bytes',
+        content: 'Stored while S3 is down.',
+      });
+      assert.equal(
+        (await app.ctx.artifacts.read(producer, kept.id)).content,
+        'Stored while S3 is down.',
+      );
+      assert.deepEqual(await app.ctx.artifacts.list(operator), [kept, ...beforeArtifacts]);
+      assert.deepEqual(
+        (await app.ctx.state.events(operator.projectId))
+          .slice(eventsBefore.length)
+          .map((event) => [event.type, event.subjectId]),
+        [['artifact.created', kept.id]],
       );
     } finally {
       f.server.fail();
     }
-    assert.deepEqual(await app.ctx.artifacts.list(operator), beforeArtifacts);
-    assert.deepEqual(await app.ctx.state.events(operator.projectId), eventsBefore);
+    assert.equal(f.server.requests.length, requestsBefore);
     const create = {
       title: 'Arithmetic',
       goal: 'Verify the sum.',
@@ -262,13 +272,27 @@ test(
     });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).result.content, 'The verified sum is 20.');
+    // The first download of bytes kept in the row mirrors them into S3, never overwriting.
+    const link = await fetch(`${app.ctx.api.url}/tools/artifact.read`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${identity.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ artifactId: artifact.id, mode: 'download' }),
+    });
+    assert.equal(link.status, 200);
     assert.ok(
       f.server.requests.some(
         (request) => request.method === 'PUT' && request.headers['if-none-match'] === '*',
       ),
     );
+    // Only a row from before bytes were kept in it still reads through S3.
+    const legacy = await legacyArtifact(
+      app.ctx.state,
+      operator,
+      Buffer.from('The verified sum is 20.'),
+      (bytes) => app.ctx.blobs.put(operator.projectId, bytes),
+    );
     const held = f.server.holdNext('GET');
-    const reading = app.ctx.artifacts.read(operator, artifact.id);
+    const reading = app.ctx.artifacts.read(operator, legacy.id);
     await held.started;
     let unloaded = false;
     const unloading = app.setEnabled('blobs', false).then(() => {
@@ -285,7 +309,7 @@ test(
     assert.equal(app.ctx.get('artifacts'), undefined);
     await app.setEnabled('blobs', true);
     assert.equal(
-      (await app.ctx.artifacts.read(operator, artifact.id)).content,
+      (await app.ctx.artifacts.read(operator, legacy.id)).content,
       'The verified sum is 20.',
     );
   },

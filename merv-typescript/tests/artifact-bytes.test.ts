@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { MervError, type Caller, type LargeArtifactStorage } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { stateConfig } from './fixtures/state.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-bytes-'));
@@ -32,7 +33,10 @@ async function fixture(t: TestContext) {
 
 test('bytes gone from behind an existing row are a server fault, not a missing artifact', async (t) => {
   const { app, caller, directory } = await fixture(t);
-  const artifact = await app.ctx.artifacts.create(caller, { title: 'Note', content: 'kept' });
+  // A row from before bytes were kept in it: its bytes are in blobs.
+  const artifact = await legacyArtifact(app.ctx.state, caller, Buffer.from('kept'), (bytes) =>
+    app.ctx.blobs.put(caller.projectId, bytes),
+  );
   await unlink(
     join(directory, 'blobs', caller.projectId, artifact.hash.slice(0, 2), artifact.hash),
   );
@@ -84,10 +88,15 @@ test('large-storage bytes are read through the adapter, bounded and verified', a
     mediaType: 'text/plain',
   });
   assert.equal(begun.uploadId.startsWith('aup_'), true);
+  // An outage at completion leaves the bytes only in the object, so every read reaches it.
+  served = async () => {
+    throw new MervError('blob_unavailable', 'Stored object is unreachable', 503);
+  };
   const artifact = await app.ctx.artifacts.uploadComplete(caller, begun.uploadId);
+  served = async () => bytes;
   assert.equal((await app.ctx.artifacts.read(caller, artifact.id)).content, 'ten bytes!');
   // The adapter is asked for exactly the declared size, and returns at most one byte more.
-  assert.deepEqual(asked, [bytes.length]);
+  assert.deepEqual(asked, [bytes.length, bytes.length]);
 
   served = async () => Buffer.from('ten bytes!!');
   await assert.rejects(app.ctx.artifacts.read(caller, artifact.id), {

@@ -16,6 +16,7 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ExperimentService } from '@merv/experiments';
 import {
   check,
+  MervError,
   type Caller,
   type LargeArtifactStorage,
   type ReviewApplication,
@@ -78,6 +79,8 @@ test('small uploaded evidence is readable and attachable while actual oversized 
     mediaType: 'text/markdown',
   });
   const artifact = await f.artifacts.uploadComplete(f.producer, begun.uploadId);
+  // Completion copies the verified bytes into the row: the one storage read happens there.
+  assert.equal(requests, 1);
   assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
   const outsider = await f.scope.bootstrap({
     projectName: 'Other project',
@@ -99,10 +102,10 @@ test('small uploaded evidence is readable and attachable while actual oversized 
     requestId: f.id(),
   });
   assert.equal(attached.artifactId, artifact.id);
+  // Later reads never reach the object again, whatever it now serves.
   served = Buffer.alloc(bytes.length, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('blob_corrupt'));
-  served = Buffer.alloc(2_000_001, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('blob_corrupt'));
+  assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
+  assert.equal(requests, 1);
 });
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
@@ -672,13 +675,13 @@ test('Missing bytes and invalid scoped figure references cannot seal a review', 
   );
   const attached = await f.attach(e, 'plan', plan),
     events = (await f.state.events(f.operator.projectId)).length;
-  const original = f.blobs.get.bind(f.blobs);
-  f.blobs.get = async () => Buffer.from('wrong bytes');
-  await assert.rejects(
-    async () => await f.transition(e, 'submit_design'),
-    code('artifact_hash_mismatch'),
-  );
-  f.blobs.get = original;
+  // Artifacts verifies its bytes (its own suite covers how); a refusal here must seal nothing.
+  const original = f.artifacts.read;
+  f.artifacts.read = async () => {
+    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+  };
+  await assert.rejects(async () => await f.transition(e, 'submit_design'), code('blob_corrupt'));
+  f.artifacts.read = original;
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
   assert.equal((await f.experiments.get(f.producer, e.id)).submissions.length, 0);
   assert.equal(

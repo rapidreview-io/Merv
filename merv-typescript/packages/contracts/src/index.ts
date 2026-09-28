@@ -1126,6 +1126,13 @@ export interface LargeArtifactStorage {
   read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
 }
 /**
+ * Immutable project files. A row implies its bytes: up to the inline limit they are kept in the
+ * row, where a database CHECK verifies their size and SHA-256; rows from before that keep them in
+ * blobs, and larger files in bound large storage. Bytes gone from behind a row are
+ * `artifact_bytes_missing` (500), never a 404, and every byte returned is verified. `create`
+ * never does network I/O, and neither do reads of bytes kept in the row. The one write a read
+ * may cause: the first `download` of such bytes mirrors them into blobs (content-addressed).
+ *
  * Every call authorises once, at its start. A revocation that lands while bytes or a download
  * link are fetched is enforced by the ToolRegistry, which reauthorises read tools after the
  * handler; domain callers act on bytes inside their own write transactions, which authorise
@@ -1151,8 +1158,17 @@ export interface Artifacts {
   }>;
   /** Metadata-only output receipts for the authenticated session worker. */
   authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
+  /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
+   * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
+  /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
+   * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
+  bytes(
+    caller: Caller,
+    artifactId: string,
+    tx?: Transaction,
+  ): Promise<{ artifact: Artifact; bytes: Buffer }>;
   /** The bytes as tool text: valid UTF-8 without NUL is utf8, anything else base64. A range is
    * in UTF-16 units (utf8) or base64 characters; each boundary moves forward to the next whole
    * code point or 4-character group, so pages at offset += length tile exactly, and so does
@@ -1162,6 +1178,7 @@ export interface Artifacts {
     caller: Caller,
     artifactId: string,
     range?: { offset?: number; length?: number },
+    tx?: Transaction,
   ): Promise<ArtifactContent>;
   list(caller: Caller): Promise<Artifact[]>;
 }

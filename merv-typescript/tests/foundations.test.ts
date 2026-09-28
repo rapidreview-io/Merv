@@ -14,6 +14,7 @@ import { ToolRegistry } from '@merv/api';
 import type { Transaction } from '@merv/contracts';
 import { openState, stateConfig } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: any) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-foundation-'));
@@ -176,11 +177,17 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
     content: '/w==',
     encoding: 'base64',
   });
+  // Bytes kept in the row are verified by the database; a row from before that reads through
+  // blobs, which detects tampering.
+  const legacy = await legacyArtifact(state, caller, Buffer.from('legacy content'), (bytes) =>
+    blobs.put(caller.projectId, bytes),
+  );
+  assert.equal((await artifacts.read(caller, legacy.id)).content, 'legacy content');
   writeFileSync(
-    join(dir, 'blobs', caller.projectId, value.hash.slice(0, 2), value.hash),
+    join(dir, 'blobs', caller.projectId, legacy.hash.slice(0, 2), legacy.hash),
     'tampered',
   );
-  await assert.rejects(async () => await artifacts.read(caller, value.id), /integrity/);
+  await assert.rejects(async () => await artifacts.read(caller, legacy.id), /integrity/);
 });
 test('artifact queries retain the project checked during authorization', async (t) => {
   const { artifacts, caller, scope } = await fixture(t);
@@ -202,8 +209,11 @@ test('artifact queries retain the project checked during authorization', async (
   assert.deepEqual(await artifacts.list(changing), [own]);
 });
 test('a revocation while artifact bytes or a link are fetched is enforced by the tool registry', async (t) => {
-  const { artifacts, blobs, caller, state, scope } = await fixture(t);
-  const artifact = await artifacts.create(caller, { title: 'Evidence', content: 'Retained' });
+  const { blobs, caller, state, scope } = await fixture(t);
+  // Only a row from before bytes were kept in it still fetches them from storage.
+  const artifact = await legacyArtifact(state, caller, Buffer.from('Retained'), (bytes) =>
+    blobs.put(caller.projectId, bytes),
+  );
   for (const mode of ['read', 'download'] as const) {
     const reader = await scope.issueActor(caller, { name: mode, role: 'reader' });
     const entered = deferred();

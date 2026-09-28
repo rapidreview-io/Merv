@@ -9,6 +9,7 @@ import type { Artifact, Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { s3Server } from './fixtures/s3-server.js';
 import { stateConfig } from './fixtures/state.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: TestContext, s3 = true) {
   const directory = await mkdtemp(join(tmpdir(), 'merv-artifact-download-'));
@@ -146,6 +147,39 @@ test('revocation during download preparation prevents URL issuance and later req
     { code: 'forbidden' },
   );
   assert.equal(f.server!.requests.length, count);
+});
+
+test('the first download of bytes kept in the row mirrors them into storage, once', async (t) => {
+  const { app, server } = await fixture(t);
+  const identity = await app.ctx.scope.bootstrap({ projectName: 'Mirror', actorName: 'Operator' });
+  const caller: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
+  const artifact = await app.ctx.artifacts.create(caller, {
+    title: 'Inline',
+    content: 'Mirrored on first download.',
+  });
+  assert.equal(server!.requests.length, 0);
+  const first = await app.ctx.artifacts.download(caller, artifact.id);
+  assert.deepEqual(
+    server!.requests.map((request) => request.method),
+    ['HEAD', 'PUT', 'HEAD'],
+  );
+  assert.equal(server!.requests[1].headers['if-none-match'], '*');
+  assert.equal(
+    Buffer.from(await (await fetch(first.download.url)).arrayBuffer()).toString(),
+    'Mirrored on first download.',
+  );
+  const count = server!.requests.length;
+  await app.ctx.artifacts.download(caller, artifact.id);
+  assert.deepEqual(
+    server!.requests.slice(count).map((request) => request.method),
+    ['HEAD'],
+  );
+  // A row whose bytes are neither in it nor in storage has lost them.
+  const lost = await legacyArtifact(app.ctx.state, caller, Buffer.from('lost'), () => undefined);
+  await assert.rejects(app.ctx.artifacts.download(caller, lost.id), {
+    code: 'artifact_bytes_missing',
+    status: 500,
+  });
 });
 
 test('Disk advertises no direct download capability and retains ordinary inline reading', async (t) => {
