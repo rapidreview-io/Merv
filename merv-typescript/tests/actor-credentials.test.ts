@@ -876,6 +876,15 @@ test('nothing minted through an expiring operator credential outlives it, direct
       expiresAt: deadline,
     });
     assert.equal(rotated.credential.expiresAt, deadline, name);
+    // A lasting credential of another actor may be tightened to the caller's deadline.
+    const unbounded = await f.scope.issueActorCredential(f.operator, { actorId: lasting.actor.id });
+    assert.equal(unbounded.credential.expiresAt, null, name);
+    const tightened = await f.scope.rotateCredential(caller, {
+      credentialId: unbounded.credential.id,
+      expiresAt: deadline,
+    });
+    assert.equal(tightened.credential.expiresAt, deadline, name);
+    assert.equal((await f.scope.authenticate(tightened.token)).id, lasting.actor.id, name);
   }
   // An operator on a lasting credential, and a bare in-process caller, set any deadline.
   for (const caller of [
@@ -965,6 +974,8 @@ test('the expiry rule reads no more rows: revocation costs the same and self iss
   const [revokeActor] = await count(() => f.scope.revokeActor(caller, other.actor.id));
   // The bound row authorize already read gives the limit. Before this rule the same calls made
   // 11 and 16 statements for self issuance and self rotation, and as many as now for the rest.
+  // The totals count every statement, BEGIN and COMMIT included, so a change to how State runs a
+  // transaction or to what authorize, the ledger or the event log write moves them all alike.
   assert.deepEqual(
     { issueSelf, rotateSelf, issueOther, rotateOther, create, revoke, revokeActor },
     {
