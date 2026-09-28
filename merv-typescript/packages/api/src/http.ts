@@ -241,6 +241,9 @@ const managedRoute = (method: string | undefined, path: string): boolean =>
 // A legacy random actor token is exactly 43 characters even if it starts with ms_.
 const sessionNamespace = (token: string) =>
   token.startsWith('ms_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
+/** An agent's own routes, which authenticate its key themselves. */
+const agentSelfPath = (path: string) =>
+  path === '/sessions/self' || path.startsWith('/sessions/self/');
 
 function bearer(req: IncomingMessage): string {
   const authorization = req.headers.authorization;
@@ -638,7 +641,7 @@ export class ApiServer {
     if (
       req.method === 'GET' &&
       this.options.snapshot &&
-      !path.startsWith('/sessions/self') &&
+      !agentSelfPath(path) &&
       !path.startsWith('/pi/') &&
       !path.startsWith('/code/') &&
       !this.mounted(path)
@@ -689,7 +692,7 @@ export class ApiServer {
         );
       const enrolled = await provider.enrollManaged(presented, await readJson(req, 4096));
       projectSelection(enrolled.caller.projectId, req.headers['x-merv-project-id']);
-      json(res, 200, enrolled);
+      json(res, 200, { controlToken: enrolled.controlToken });
       return;
     }
     const mounted = this.mounted(path);
@@ -698,42 +701,40 @@ export class ApiServer {
       return;
     }
     // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
-    if (path === '/sessions/self' || path.startsWith('/sessions/self/')) {
+    if (agentSelfPath(path)) {
       if ([...url.searchParams].length)
         throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
+      // The route is matched first: an unknown one costs no authentication.
+      const action = path.slice('/sessions/self'.length);
+      if (
+        req.method === 'GET'
+          ? action !== ''
+          : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
+      )
+        throw new MervError('not_found', 'Unknown agent control route', 404);
       const token = bearer(req),
         provider = this.sessions.get();
+      // The key is checked before any body is read, so a bad one never buffers a body.
       const self = await provider.agentSelf(token);
-      if (path === '/sessions/self' && req.method === 'GET') {
+      if (req.method === 'GET') {
         json(res, 200, self);
         return;
       }
-      if (req.method === 'POST') {
-        const body = await readJson(req, this.maxBodyBytes);
-        if (path === '/sessions/self/assignment') {
-          json(res, 200, { execution: await provider.assignAgent(token, body) });
-          return;
-        }
-        if (path === '/sessions/self/release') {
-          json(res, 200, {
-            execution: await provider.releaseAgentAssignment(
-              token,
-              parseInput(agentReleaseInput, body).executionId,
-            ),
-          });
-          return;
-        }
-        if (path === '/sessions/self/context-reset') {
-          json(res, 200, {
-            agent: await provider.resetAgentContext(
-              token,
-              parseInput(agentResetInput, body).reason,
-            ),
-          });
-          return;
-        }
-      }
-      throw new MervError('not_found', 'Unknown agent control route', 404);
+      const body = await readJson(req, this.maxBodyBytes);
+      if (action === '/assignment')
+        json(res, 200, { execution: await provider.assignAgent(token, body) });
+      else if (action === '/release')
+        json(res, 200, {
+          execution: await provider.releaseAgentAssignment(
+            token,
+            parseInput(agentReleaseInput, body).executionId,
+          ),
+        });
+      else
+        json(res, 200, {
+          agent: await provider.resetAgentContext(token, parseInput(agentResetInput, body).reason),
+        });
+      return;
     }
     const principal = authenticated ?? (await this.authenticate(req));
     if (path.startsWith('/pi/')) {

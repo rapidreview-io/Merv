@@ -937,6 +937,8 @@ test('an external agent explicitly changes assignments over HTTP and keeps its M
     200,
   );
   assert.equal((await f.http('/sessions/self', token)).status, 401);
+  assert.equal((await f.http('/sessions/self/release', token, { executionId: 'x' })).status, 401);
+  assert.equal((await f.http('/sessions/self/nope', token, {})).status, 404);
   assert.ok(!JSON.stringify([registered, assigned, again]).includes(token));
 });
 
