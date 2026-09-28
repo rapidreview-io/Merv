@@ -809,3 +809,376 @@ test('a continuation inherited from a completed handler can close normally', asy
     await state.close();
   }
 });
+
+test('a removed progress row neither rejects drain nor strands later consumers', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const failure = new Error('handler failed');
+  const remove = (id: string) =>
+    transaction((tx) => tx.run('DELETE FROM event_consumers WHERE id=?', id));
+  const handled: string[] = [];
+  try {
+    for (const id of ['absent', 'failing', 'healthy'])
+      await events.subscribe({
+        id,
+        types: ['probe.created'],
+        from: 'beginning',
+        async handle() {
+          if (id === 'failing') throw failure;
+          handled.push(id);
+        },
+      });
+    await remove('absent');
+    // The failed delivery rolls back; its row goes before the failure is recorded.
+    state.transaction = async (fn) => {
+      try {
+        return await transaction(fn);
+      } catch (error) {
+        if (error === failure) await remove('failing');
+        throw error;
+      }
+    };
+    const event = await emitProbe(state);
+    await events.drain();
+    assert.deepEqual(handled, ['healthy']);
+    assert.deepEqual(await events.status(), [
+      { id: 'healthy', cursor: event.id, active: true, attempts: 0, error: null, retryAt: 0 },
+    ]);
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
+test('a drain() just after a pass decides it is done still delivers a commit made before it', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-window-'));
+  const state = await openState(directory);
+  const other = await openState(directory);
+  const dispatcher = new DurableEvents(state);
+  const events = await createService(dispatcher);
+  // The pass's final check follows its last deliver() by a few microtasks; sweep across it.
+  const internals = dispatcher as unknown as {
+    deliver(): Promise<boolean>;
+    wakeRequested: boolean;
+  };
+  const deliver = internals.deliver.bind(dispatcher);
+  const seen: number[] = [];
+  const missed: number[] = [];
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle(event) {
+        seen.push(event.id);
+      },
+    });
+    for (let hops = 0; hops <= 8; hops++) {
+      let armed = true;
+      let late: Promise<void> | undefined;
+      internals.deliver = async () => {
+        const backlog = await deliver();
+        if (armed && !backlog && !internals.wakeRequested) {
+          armed = false;
+          // Through another State: this dispatcher gets no post-commit wakeup for it.
+          const { id } = await emitProbe(other);
+          late = (async () => {
+            for (let hop = 0; hop < hops; hop++) await Promise.resolve();
+            await events.drain();
+            if (!seen.includes(id)) missed.push(hops);
+          })();
+        }
+        return backlog;
+      };
+      await events.drain();
+      await late;
+    }
+    assert.deepEqual(missed, []);
+    assert.equal(seen.length, 9);
+  } finally {
+    await events.close();
+    await Promise.all([state.close(), other.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('idle consumers and consumers in backoff take no writer transactions', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state),
+    read = state.read.bind(state);
+  let transactions = 0,
+    reads = 0;
+  let failing = false;
+  try {
+    for (let i = 0; i < 6; i++)
+      await events.subscribe({
+        id: `idle-${i}`,
+        types: ['probe.created'],
+        from: 'beginning',
+        handle() {
+          if (failing) throw new Error('handler failed');
+        },
+      });
+    await emitProbe(state);
+    await events.drain();
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    state.read = (fn) => (reads++, read(fn));
+    await sleep(1000);
+    assert.equal(transactions, 0);
+    assert.ok(reads > 0, 'the safety wakeup kept looking for work');
+    state.transaction = transaction;
+    failing = true;
+    await emitProbe(state);
+    await events.drain();
+    // Far enough out that no retry falls inside the measurement.
+    await transaction((tx) => tx.run('UPDATE event_consumers SET retry_at=?', Date.now() + 60_000));
+    assert.ok((await events.status()).every((consumer) => consumer.attempts === 1));
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await sleep(1000);
+    assert.equal(transactions, 0);
+  } finally {
+    state.transaction = transaction;
+    state.read = read;
+    await events.close();
+    await state.close();
+  }
+});
+
+test('the safety wakeup delivers a commit made through another State connection', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-other-'));
+  const state = await openState(directory);
+  const other = await openState(directory);
+  const events = await createService(new DurableEvents(state));
+  const seen: number[] = [];
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle(event) {
+        seen.push(event.id);
+      },
+    });
+    await events.drain();
+    const started = Date.now();
+    const { id } = await emitProbe(other);
+    await until(() => seen.includes(id));
+    assert.ok(Date.now() - started < 1000, `delivered after ${Date.now() - started} ms`);
+  } finally {
+    await events.close();
+    await Promise.all([state.close(), other.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('failed deliveries retry on the backoff schedule and a success resets the attempts', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const attempts: { at: number; attempts: number }[] = [];
+  try {
+    await events.subscribe({
+      id: 'flaky',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle(event, tx) {
+        const row = await tx.get<{ attempts: number }>(
+          'SELECT attempts FROM event_consumers WHERE id=?',
+          'flaky',
+        );
+        attempts.push({ at: Date.now(), attempts: row!.attempts });
+        if (attempts.length <= 3) throw new Error('handler failed');
+      },
+    });
+    const event = await emitProbe(state);
+    await events.drain();
+    await until(() => attempts.length === 4);
+    await events.drain();
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.attempts),
+      [0, 1, 2, 3],
+    );
+    // 100 ms doubling per recorded failure; each retry waits for the next safety wakeup.
+    for (const [index, delay] of [100, 200, 400].entries()) {
+      const gap = attempts[index + 1]!.at - attempts[index]!.at;
+      assert.ok(gap >= delay && gap < delay + 400, `retry ${index + 1} after ${gap} ms`);
+    }
+    assert.deepEqual(await events.status(), [
+      { id: 'flaky', cursor: event.id, active: true, attempts: 0, error: null, retryAt: 0 },
+    ]);
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
+
+test('a replay passes each run of unsubscribed events in one transaction', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const append = (tx: Parameters<Parameters<typeof state.transaction>[0]>[0], type: string) =>
+    state.appendEvent(tx, { projectId: 'p', actorId: 'a', subjectId: 's', type, data: {} });
+  const wanted: number[] = [],
+    handled: number[] = [];
+  let transactions = 0;
+  try {
+    for (let run = 0; run < 4; run++)
+      await state.transaction(async (tx) => {
+        for (let i = 0; i < 500; i++) await append(tx, 'probe.noise');
+        wanted.push((await append(tx, run % 2 ? 'probe.updated' : 'probe.created')).id);
+      });
+    await state.transaction((tx) => append(tx, 'probe.noise'));
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await events.subscribe({
+      id: 'replay',
+      types: ['probe.created', 'probe.updated'],
+      from: 'beginning',
+      handle(event) {
+        handled.push(event.id);
+      },
+    });
+    await events.drain();
+    assert.deepEqual(handled, wanted);
+    // One to register, then a skip and a delivery per run, and a last skip to the head.
+    assert.ok(transactions <= 12, `${transactions} transactions`);
+    assert.equal((await events.status())[0]!.cursor, await state.eventHead());
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
+/** A small seeded generator, so a failure reproduces the same writer schedule. */
+function seeded(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('two dispatchers deliver every committed event exactly once and in order', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-random-'));
+  const states = [
+    await openState(directory),
+    await openState(directory),
+    await openState(directory),
+  ];
+  const [first, second, writerOnly] = states as [PostgresState, PostgresState, PostgresState];
+  const dispatchers = [
+    await createService(new DurableEvents(first)),
+    await createService(new DurableEvents(second)),
+  ];
+  const schedule = seeded(12345),
+    failures = seeded(54321);
+  const consumers: Record<string, string[]> = {
+    all: ['probe.a', 'probe.b', 'probe.c', 'probe.d'],
+    'only-a': ['probe.a'],
+    'b-and-c': ['probe.b', 'probe.c'],
+    'rare-d': ['probe.d'],
+    'flaky-c': ['probe.c'],
+  };
+  try {
+    await first.migrate('effects', [
+      {
+        version: 1,
+        sql: 'CREATE TABLE effects(seq BIGINT GENERATED ALWAYS AS IDENTITY, consumer TEXT, event BIGINT);',
+      },
+    ]);
+    // The same consumers run in both dispatchers; their shared cursors decide who delivers.
+    for (const events of dispatchers)
+      for (const [id, types] of Object.entries(consumers))
+        await events.subscribe({
+          id,
+          types,
+          from: 'beginning',
+          async handle(event, tx) {
+            await tx.run('INSERT INTO effects(consumer,event) VALUES (?,?)', id, event.id);
+            if (id === 'flaky-c' && failures() < 0.1) throw new Error('handler failed');
+          },
+        });
+    const pick = () => {
+      const roll = schedule();
+      return roll < 0.4 ? 'probe.a' : roll < 0.7 ? 'probe.b' : roll < 0.95 ? 'probe.c' : 'probe.d';
+    };
+    // Rolled-back batches consume identity values and leave gaps in the log.
+    await Promise.all(
+      states.map(async (state) => {
+        for (let batch = 0; batch < 30; batch++) {
+          const types = Array.from({ length: 1 + Math.floor(schedule() * 4) }, pick);
+          const rollback = schedule() < 0.25;
+          await state
+            .transaction(async (tx) => {
+              for (const type of types)
+                await state.appendEvent(tx, {
+                  projectId: 'p',
+                  actorId: 'a',
+                  subjectId: 's',
+                  type,
+                  data: {},
+                });
+              if (rollback) throw new Error('rolled back');
+            })
+            .catch((error: Error) => assert.equal(error.message, 'rolled back'));
+          if (schedule() < 0.3) void dispatchers[batch % 2]!.drain().catch(() => {});
+          await sleep(Math.floor(schedule() * 3));
+        }
+      }),
+    );
+    const head = await writerOnly.eventHead();
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      await Promise.all(dispatchers.map((events) => events.drain()));
+      const status = await dispatchers[0]!.status();
+      if (status.every((consumer) => consumer.cursor === head)) break;
+      assert.ok(Date.now() < deadline, `Delivery did not converge: ${JSON.stringify(status)}`);
+      await sleep(20);
+    }
+    const log = await writerOnly.read((sql) =>
+      sql.all<{ id: number; type: string }>('SELECT id, type FROM events ORDER BY id'),
+    );
+    assert.ok(log.length > 100 && log.at(-1)!.id > log.length, 'the log has gaps');
+    for (const [id, types] of Object.entries(consumers))
+      assert.deepEqual(
+        (
+          await writerOnly.read((sql) =>
+            sql.all<{ event: number }>(
+              'SELECT event FROM effects WHERE consumer=? ORDER BY seq',
+              id,
+            ),
+          )
+        ).map((row) => row.event),
+        log.filter((event) => types.includes(event.type)).map((event) => event.id),
+        id,
+      );
+  } finally {
+    await Promise.all(dispatchers.map((events) => events.close()));
+    await Promise.all(states.map((state) => state.close()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('subscribe refuses a missing ID or non-string event types', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const valid = { id: 'valid', types: ['probe.created'], from: 'beginning' as const, handle() {} };
+  try {
+    for (const invalid of [
+      { ...valid, id: undefined },
+      { ...valid, id: null },
+      { ...valid, types: [null] },
+      { ...valid, types: 'probe.created' },
+    ])
+      await assert.rejects(events.subscribe(invalid as unknown as EventConsumer), {
+        code: 'invalid_consumer',
+      });
+    assert.deepEqual(await events.status(), []);
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
