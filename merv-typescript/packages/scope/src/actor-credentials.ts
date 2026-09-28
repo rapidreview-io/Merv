@@ -1,11 +1,12 @@
 import { expiry } from './expiry.js';
-import { ACTOR_WITH_MEMBER, roles } from './roles.js';
+import { ACTOR_WITH_MEMBER } from './roles.js';
 import type { Ledger } from './ledger.js';
 import {
   check,
   eventSource,
   forRead,
   newId,
+  ROLES,
   visible,
   type Actor,
   type ActorCredential,
@@ -110,7 +111,7 @@ export class ActorCredentials {
       'invalid_actor',
       'Actor needs a nonblank name of at most 200 characters',
     );
-    check(roles.includes(role), 'invalid_role', 'Unknown actor role');
+    check(ROLES.includes(role), 'invalid_role', 'Unknown actor role');
     const value: Actor = { id: newId('actor'), projectId, name: name.trim(), role, active: true };
     await tx.run(
       'INSERT INTO actors(id,project_id,name,role,active) VALUES(?,?,?,?,1)',

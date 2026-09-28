@@ -247,6 +247,8 @@ export const ROLES = [
   'reviewer',
   'reader',
 ] as const satisfies readonly Role[];
+// Fails the typecheck when Role gains a role that ROLES does not list.
+true satisfies [Exclude<Role, (typeof ROLES)[number]>] extends [never] ? true : false;
 /** The name of an environment variable that holds a secret or setting a plugin config refers to. */
 export const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 /** The nonblank value of environment variable `name`; the refusal names the variable, never its value. */
