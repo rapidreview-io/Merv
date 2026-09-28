@@ -500,7 +500,7 @@
       "component": "fleet_workflow",
       "version": 4,
       "hash": "e1af171c500958572e7a2225d7603dc1f92c57e78e96f22ffc8e3cac03f6caf4",
-      "published": false
+      "published": true
     },
     {
       "component": "session_service_work",
