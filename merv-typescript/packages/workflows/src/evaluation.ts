@@ -433,9 +433,13 @@ async function ownDecision(
   };
   const rules = policy.actions.filter((rule) => rule.states.includes(snapshot.state));
   const assignment = policy.assignments?.find((rule) => rule.state === snapshot.state);
+  // A worker received its assignment with its lease and holds no workflow.begin, so begin is
+  // neither offered to it nor answered for it.
+  const beginOffered = !!assignment && !context.caller.session;
   if (query.action)
     check(
-      rules.some((rule) => rule.name === query.action) || (query.action === 'begin' && assignment),
+      rules.some((rule) => rule.name === query.action) ||
+        (query.action === 'begin' && beginOffered),
       'invalid_action',
       'Action is unavailable in this workflow state',
       409,
@@ -467,9 +471,8 @@ async function ownDecision(
   let candidates = result.actions.filter((action, index) =>
     query.action ? action.action === query.action : rules[index].suggested !== false,
   );
-  // Guidance checks admission only. Building a packet may itself read guidance. A worker
-  // received its assignment with its lease and holds no workflow.begin, so none is offered.
-  if (assignment && !context.caller.session) {
+  // Guidance checks admission only. Building a packet may itself read guidance.
+  if (assignment && beginOffered) {
     const begin: WorkflowActionStatus = {
       action: 'begin',
       tool: 'workflow.begin',

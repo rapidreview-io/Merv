@@ -285,7 +285,7 @@ export class ResearchService implements Research {
           suggested: false,
           tool: 'research.end',
           instruction:
-            'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal.',
+            'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal. While the cycle is still defining or researching, research.replan reselects its work instead.',
           requiredInput: ['outcome', 'reason'],
           arguments: (context: WorkflowCheckContext) => ({
             researchId: context.snapshot.id,

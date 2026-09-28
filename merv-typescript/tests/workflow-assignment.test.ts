@@ -113,6 +113,7 @@ async function setup(path = ':memory:') {
     state,
     scope,
     caller,
+    credentialId: credentials.credential.id,
     workflows,
     registration,
     policy,
@@ -246,6 +247,36 @@ test('every assignment and begin rechecks admission, tenant identity and current
     {
       code: 'invalid_revision',
     },
+  );
+});
+
+test('a leased worker is neither offered begin nor answered about it', async (t) => {
+  const f = await setup();
+  t.after(async () => await f.state.close());
+  const source = await f.scope.delegationSource({ ...f.caller, credentialId: f.credentialId });
+  f.scope.registerSessionAuthority({ require: async () => source });
+  const actor = await f.state.transaction(
+    async (tx) =>
+      await f.scope.createSessionActor(
+        source,
+        { sessionId: 'worker', role: 'producer', name: 'Worker' },
+        tx,
+      ),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: 'worker' },
+  };
+  const guidance = await f.workflows.evaluate(worker, f.instance.id);
+  assert.ok(!guidance.actions.some((action) => action.action === 'begin'));
+  await assert.rejects(f.workflows.evaluate(worker, f.instance.id, { action: 'begin' }), {
+    code: 'invalid_action',
+    status: 409,
+  });
+  assert.equal(
+    (await f.workflows.evaluate(f.caller, f.instance.id, { action: 'begin' })).nextAction?.tool,
+    'workflow.begin',
   );
 });
 
