@@ -1807,6 +1807,7 @@ export interface RankedContextItem {
   priority: number;
   content: { text: string } | { artifactId: string };
   revision?: number;
+  /** The sha256 of the text, or the artifact's hash; a mismatch fails invalid_context. */
   hash?: string;
   association?: string;
   refs: { tool: string; input: Record<string, string | number | boolean | null> }[];
