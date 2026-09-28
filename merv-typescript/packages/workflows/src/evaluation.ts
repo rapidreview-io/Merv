@@ -232,10 +232,10 @@ export function validatePolicy(
   };
 }
 
-/** Never hand a callback the engine's mutable state or the caller's argument object. */
 /** The engine always supplies the dependencies it has read; programs see them as optional. */
 export type EngineContext = WorkflowCheckContext & { dependencies: WorkflowDependency[] };
 
+/** Never hand a callback the engine's mutable state or the caller's argument object. */
 export function readContext<C extends WorkflowCheckContext>(context: C): C {
   const { tx, ...data } = context;
   return Object.freeze({ ...freezeData(structuredClone(data)), tx }) as unknown as C;

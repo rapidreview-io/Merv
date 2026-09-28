@@ -162,5 +162,5 @@ export async function limitStatuses(
 }
 
 export function limitMessage(status: WorkflowLimitStatus, workflow: string): string {
-  return `${status.name} is exhausted on this ${workflow} (${status.used}/${status.max}). The work is not failed and waits for a human, who may review it by hand or end it; a project admin may allow more rounds with workflow.extend_limit.`;
+  return `${status.name} is exhausted on this ${workflow} (${status.used}/${status.max}). The work is not failed and waits for a human, who may take the next step by hand or end it; a project admin may allow more rounds with workflow.extend_limit.`;
 }

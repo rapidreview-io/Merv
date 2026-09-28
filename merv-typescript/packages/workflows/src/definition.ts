@@ -110,8 +110,7 @@ export function validateDefinition(input: WorkflowDefinition): WorkflowDefinitio
       'invalid_workflow_policy',
       'All workflow states must be reachable from the initial state',
     );
-  // A sorted copy only the engine holds: a caller cannot change it after fingerprinting, and
-  // the upgrade check compares its sorted states and terminal lists.
+  // A sorted copy only the engine holds: a caller cannot change it after fingerprinting.
   return {
     name: input.name,
     version: input.version,

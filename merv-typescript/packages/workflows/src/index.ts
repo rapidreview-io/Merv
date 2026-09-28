@@ -152,7 +152,6 @@ interface Loaded {
 }
 export type { WorkflowHistoryEntry } from '@merv/contracts';
 
-/** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 /** The instance and revision a command names, checked the same way wherever one is named. */
 const checkInstance = (id: unknown) =>
   check(
@@ -167,6 +166,7 @@ const checkRevision = (revision: unknown) =>
     'Expected revision must be a nonnegative integer',
   );
 
+/** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
   private closed = false;
