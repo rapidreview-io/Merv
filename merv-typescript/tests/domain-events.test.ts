@@ -809,3 +809,45 @@ test('a continuation inherited from a completed handler can close normally', asy
     await state.close();
   }
 });
+
+test('a removed progress row neither rejects drain nor strands later consumers', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const failure = new Error('handler failed');
+  const remove = (id: string) =>
+    transaction((tx) => tx.run('DELETE FROM event_consumers WHERE id=?', id));
+  const handled: string[] = [];
+  try {
+    for (const id of ['absent', 'failing', 'healthy'])
+      await events.subscribe({
+        id,
+        types: ['probe.created'],
+        from: 'beginning',
+        async handle() {
+          if (id === 'failing') throw failure;
+          handled.push(id);
+        },
+      });
+    await remove('absent');
+    // The failed delivery rolls back; its row goes before the failure is recorded.
+    state.transaction = async (fn) => {
+      try {
+        return await transaction(fn);
+      } catch (error) {
+        if (error === failure) await remove('failing');
+        throw error;
+      }
+    };
+    const event = await emitProbe(state);
+    await events.drain();
+    assert.deepEqual(handled, ['healthy']);
+    assert.deepEqual(await events.status(), [
+      { id: 'healthy', cursor: event.id, active: true, attempts: 0, error: null, retryAt: 0 },
+    ]);
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});

@@ -167,12 +167,13 @@ export class DurableEvents implements DomainEvents {
         let attemptedCursor: number | undefined;
         try {
           const transaction = this.state.transaction(async (tx) => {
-            const progress = (await tx.get<Progress>(
+            const progress = await tx.get<Progress>(
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
-            ))!;
+            );
+            // A progress row removed outside the application: deliver nothing, strand no one.
+            if (!progress || progress.retry_at > Date.now()) return false;
             attemptedCursor = progress.cursor;
-            if (progress.retry_at > Date.now()) return false;
             const event = (await this.state.eventBatch(progress.cursor, 1, tx))[0];
             if (!event) return false;
             // A handler owns its argument, not the dispatcher's durable progress.
@@ -204,11 +205,11 @@ export class DurableEvents implements DomainEvents {
         } catch (error) {
           // Failed handler effects and cursor both rolled back. Record retry separately.
           await this.state.transaction(async (tx) => {
-            const row = (await tx.get<Progress>(
+            const row = await tx.get<Progress>(
               'SELECT * FROM event_consumers WHERE id=?',
               consumer.id,
-            ))!;
-            if (row.cursor !== attemptedCursor) return;
+            );
+            if (!row || row.cursor !== attemptedCursor) return;
             const delay = Math.min(30_000, 100 * 2 ** Math.min(row.attempts, 8));
             // Failure handling must not invoke getters or proxy traps on an
             // arbitrary thrown value and thereby strand every later consumer.
