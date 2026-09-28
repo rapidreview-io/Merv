@@ -3,6 +3,7 @@ import {
   forRead,
   MervError,
   MAX_ARTIFACT_BYTES,
+  MAX_OBJECT_BYTES,
   newId,
   now,
   plain,
@@ -54,9 +55,9 @@ export class Uploads {
     input = plain<ArtifactUploadInput>(input, 'invalid_artifact');
     const { title, mediaType } = meta(input.title, input.mediaType);
     check(
-      Number.isSafeInteger(input.size) && input.size > 0,
+      Number.isSafeInteger(input.size) && input.size > 0 && input.size <= MAX_OBJECT_BYTES,
       'artifact_size',
-      'Artifact size must be a positive safe integer',
+      'Artifact size must be 1 byte to 512 MiB',
     );
     check(
       typeof input.sha256 === 'string' && /^[0-9a-f]{64}$/.test(input.sha256),

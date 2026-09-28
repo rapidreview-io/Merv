@@ -681,6 +681,8 @@ export async function forRead<T>(state: State, fn: (tx: Transaction) => Promise<
   // With a place, `within` always hands over a transaction.
   return await within(state, undefined, (sql) => fn(sql as Transaction), 'read');
 }
+/** The most bytes Blobs moves by signed URL, and so the largest artifact. */
+export const MAX_OBJECT_BYTES = 512 * 1024 * 1024;
 export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;

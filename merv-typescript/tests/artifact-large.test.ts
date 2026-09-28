@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Artifact, Caller, LargeArtifactStorage } from '@merv/contracts';
+import {
+  MAX_OBJECT_BYTES,
+  type Artifact,
+  type Caller,
+  type LargeArtifactStorage,
+} from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { stateConfig } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
@@ -423,5 +428,48 @@ test('resuming an upload waits for no writer, for an owner or a session caller',
   assert.ok(
     handed.length > 0 && handed.every(Boolean),
     'every session decision ran in a read scope',
+  );
+});
+
+test('an upload over the largest object is refused before any row or storage call', async (t) => {
+  const app = await largeApp(t);
+  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
+  const owner = { actorId: boot.actor.id, projectId: boot.project.id };
+  const calls: string[] = [];
+  const refuse = async () => {
+    calls.push('storage');
+    return assert.fail('unused');
+  };
+  t.after(
+    app.ctx.artifacts.bindLarge({
+      begin: refuse,
+      resume: refuse,
+      complete: refuse,
+      download: refuse,
+      read: refuse,
+    }),
+  );
+  const input = {
+    title: 'Huge',
+    size: MAX_OBJECT_BYTES + 1,
+    sha256: 'a'.repeat(64),
+    mediaType: 'application/octet-stream',
+  };
+  await assert.rejects(app.ctx.artifacts.uploadBegin(owner, input), {
+    code: 'artifact_size',
+    status: 400,
+    message: 'Artifact size must be 1 byte to 512 MiB',
+  });
+  await assert.rejects(app.ctx.tools.call('artifact.upload_begin', owner, input), {
+    status: 400,
+  });
+  assert.deepEqual(calls, []);
+  assert.equal(
+    (
+      await app.ctx.state.read((sql) =>
+        sql.get<{ count: number }>('SELECT count(*)::int AS count FROM artifact_uploads'),
+      )
+    )?.count,
+    0,
   );
 });

@@ -8,7 +8,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { check, MervError, type Blobs } from '@merv/contracts';
+import { check, MAX_OBJECT_BYTES, MervError, type Blobs } from '@merv/contracts';
 import {
   BlobOperations,
   copyBytes,
@@ -36,8 +36,6 @@ export interface S3BlobOptions {
 /** Also the plugin Config defaults, which bound both values; direct callers may omit them. */
 export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
 
-/** Presigned downloads only; ordinary get/put remain limited to 2 MB. */
-const MAX_TRANSFER_BYTES = 512 * 1024 * 1024;
 /** The HTTP status of an S3 SDK failure, when the service answered. */
 const statusOf = (error: unknown) =>
   (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
@@ -49,7 +47,7 @@ const missingHead = (error: unknown) => statusOf(error) === 404;
 
 const transferSize = (size: number) =>
   check(
-    Number.isSafeInteger(size) && size >= 0 && size <= MAX_TRANSFER_BYTES,
+    Number.isSafeInteger(size) && size >= 0 && size <= MAX_OBJECT_BYTES,
     'blob_size',
     'Transfer size must be between 0 bytes and 512 MiB',
   );

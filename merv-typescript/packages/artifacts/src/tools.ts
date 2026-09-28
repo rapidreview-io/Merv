@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import { MervError, MAX_ARTIFACT_BYTES, type Caller } from '@merv/contracts';
+import { MervError, MAX_ARTIFACT_BYTES, MAX_OBJECT_BYTES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
@@ -66,7 +66,7 @@ export const artifactToolsPlugin = {
       z
         .object({
           title: z.string().min(1).max(300),
-          size: z.number().int().positive(),
+          size: z.number().int().positive().max(MAX_OBJECT_BYTES),
           sha256: z.string().regex(/^[0-9a-f]{64}$/),
           mediaType: z.string().min(3).max(150),
           requestId: z.string().min(1).max(128).optional(),
