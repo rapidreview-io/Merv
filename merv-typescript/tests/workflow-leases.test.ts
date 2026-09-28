@@ -413,6 +413,71 @@ test('a lease owner releases the lease of a session closed while its workflow wa
   });
 });
 
+test('Experiments and Reflections release a closed session lease from their own tables', async (t) => {
+  const f = await fixture(t);
+  const { state, domainEvents } = f.app.ctx;
+  const owners = [
+    {
+      consumer: 'experiments.lease-release.v1',
+      table: 'experiment_leases',
+      row: {
+        experiment_id: 'experiment',
+        attempt_index: 1,
+        state: 'planned',
+        source_actor_id: 'source',
+        recovery: '[]',
+      },
+    },
+    {
+      consumer: 'reflections.lease-release.v1',
+      table: 'reflection_leases',
+      row: { instance_id: 'reflection' },
+    },
+  ];
+  for (const { consumer, table, row } of owners) {
+    const lease = {
+      id: `lease-${table}`,
+      project_id: f.source.projectId,
+      revision: 1,
+      actor_id: `worker-${table}`,
+      receipt: '{}',
+      inputs: '{}',
+      artifacts: '[]',
+      ...row,
+    };
+    await state.transaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO ${table}(${Object.keys(lease).join(',')}) VALUES(${Object.keys(lease)
+          .map(() => '?')
+          .join(',')})`,
+        ...Object.values(lease),
+      );
+      await state.appendEvent(tx, {
+        projectId: f.source.projectId,
+        actorId: 'system:sessions',
+        type: 'session.closed',
+        subjectId: lease.id,
+        data: { reason: 'closed' },
+      });
+    });
+    await domainEvents.drain();
+    const released = await state.read(
+      async (sql) =>
+        await sql.get<{ released_at: string | null }>(
+          `SELECT released_at FROM ${table} WHERE id=?`,
+          lease.id,
+        ),
+    );
+    assert.ok(released!.released_at, table);
+    const status = (await domainEvents.status()).find((status) => status.id === consumer)!;
+    assert.deepEqual(
+      [status.active, status.error, status.cursor],
+      [true, null, await state.eventHead()],
+      consumer,
+    );
+  }
+});
+
 test('a leased status_and_next admission stays within a statement budget', async (t) => {
   const f = await fixture(t);
   const offered = await f.offer();
