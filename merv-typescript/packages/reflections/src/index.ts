@@ -1817,6 +1817,8 @@ export const reflectionsPlugin = {
       );
       yield () => service.close();
       yield ctx.provide('reflections', service);
+    });
+    await ctx.effect(async function* () {
       yield await ctx.domainEvents.subscribe(
         leaseReleaseConsumer('reflections.lease-release.v1', 'reflection_leases', ctx.reviews),
       );
