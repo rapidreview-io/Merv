@@ -352,15 +352,23 @@ test('task guidance follows caller, evidence, review claims, recovery, context, 
       requestId: 'review-context',
     });
     assert.ok(reviewContext.prompt.includes(JSON.stringify(await guidance(reviewer))));
+    // Hold Reviews' recovery consumer in a retry delay, so the claim stays with the revoked
+    // reviewer until it is released below.
+    const holdRecovery = async (until: number) =>
+      await app.ctx.state.transaction(
+        async (tx) =>
+          await tx.run(
+            "UPDATE event_consumers SET retry_at=? WHERE id='reviews.actor-revoked.v1'",
+            until,
+          ),
+      );
+    await holdRecovery(Date.now() + 60_000);
     await app.ctx.scope.revokeActor(operator, reviewer.actorId);
-    // Reviews' consumer may already have reopened the claim.
-    assert.ok(
-      ['review_recovery_pending', 'review_required'].includes(
-        (await guidance(producer)).currentGate,
-      ),
-    );
+    assert.equal((await guidance(producer)).currentGate, 'review_recovery_pending');
     await assert.rejects(async () => await guidance(reviewer), { code: 'forbidden' });
+    await holdRecovery(0);
     await app.ctx.domainEvents.drain();
+    assert.equal((await guidance(producer)).currentGate, 'review_required');
     assert.equal((await guidance(replacement)).nextAction?.tool, 'review.start');
     const fresh = await app.ctx.reviews.start(replacement, claim.id);
     const verdict = {
