@@ -73,10 +73,7 @@ export class WorkflowLeases extends WorkflowGuidance {
     transaction?: Transaction,
     worker?: string,
   ): Promise<WorkflowDispatchCandidate[]> {
-    source = structuredClone(source);
-    this.assertOpen();
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(source, 'read', tx);
+    return await this.reading(source, transaction, async (tx, source) => {
       check(!source.session, 'forbidden', 'A leased worker cannot schedule assignments', 403);
       // Only a step with a lease rule can be a candidate; finished work never is, and it is
       // most of a project's history.

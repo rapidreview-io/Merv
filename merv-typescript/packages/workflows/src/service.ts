@@ -141,37 +141,28 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   }
 
   async get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(tx, async (transaction) => {
-      await this.scope.require(caller, 'read', transaction);
-      return await this.readSnapshot(transaction, caller.projectId, instanceId);
-    });
+    return await this.reading(caller, tx, (tx, caller) =>
+      this.readSnapshot(tx, caller.projectId, instanceId),
+    );
   }
 
   async list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(tx, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return (
+    return await this.reading(caller, tx, async (tx, caller) =>
+      (
         await tx.all<InstanceRow>(
           'SELECT * FROM wf_instances WHERE project_id = ? ORDER BY created_at, id',
           caller.projectId,
         )
-      ).map(this.snapshot);
-    });
+      ).map(this.snapshot),
+    );
   }
 
   async history(
     caller: Caller,
     instanceId: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowHistoryEntry[]> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await this.historyIn(tx, caller.projectId, instanceId, true);
     });
@@ -180,12 +171,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   async workStarts(
     caller: Caller,
     instanceId: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowWorkStart[]> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await readWorkStarts(tx, caller.projectId, instanceId);
     });
@@ -195,12 +183,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     caller: Caller,
     instanceId: string,
     name: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowLimitStatus> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
       const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
         (item) => item.name === name,
@@ -213,12 +198,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   async dependencies(
     caller: Caller,
     instanceId: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): ReturnType<Workflows['dependencies']> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await relations(tx, this.contracts, caller.projectId, instanceId);
     });
@@ -227,27 +209,21 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   async prerequisites(
     caller: Caller,
     instanceIds: readonly string[],
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<Map<string, WorkflowDependency[]>> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return await prerequisites(tx, caller.projectId, [...new Set(instanceIds)]);
-    });
+    return await this.reading(caller, tx, (tx, caller) =>
+      prerequisites(tx, caller.projectId, [...new Set(instanceIds)]),
+    );
   }
 
   async limitStatusOf(
     caller: Caller,
     instanceIds: readonly string[],
     name: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>> {
-    this.assertOpen();
-    caller = structuredClone(caller);
     const ids = [...new Set(instanceIds)];
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       if (!ids.length) return new Map();
       // One read of the instances, then two per definition among them, never two per instance.
       const limits = new Map<string, { limit: WorkflowLoopLimit; ids: string[] }>();
@@ -292,12 +268,9 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   async blockers(
     caller: Caller,
     instanceId?: string,
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowProvidedBlocker[]> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
       return await readBlockers(
         tx,
@@ -359,15 +332,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   }
 
   /** Reads only what the instance depends on, never what depends on it. */
-  async checkDependencies(
-    caller: Caller,
-    instanceId: string,
-    transaction?: Transaction,
-  ): Promise<void> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+  async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
+    await this.reading(caller, tx, async (tx, caller) => {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       requireDependencies(await prerequisitesOf(tx, caller.projectId, instanceId));
     });
@@ -473,15 +439,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
    * read open. A closure past it is refused rather than cut short: every caller would act on
    * the part it was given as if it were the whole.
    */
-  async dependencyClosure(
-    caller: Caller,
-    instanceId: string,
-    transaction?: Transaction,
-  ): Promise<string[]> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+  async dependencyClosure(caller: Caller, instanceId: string, tx?: Transaction): Promise<string[]> {
+    return await this.reading(caller, tx, async (tx, caller) => {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       const seen = new Set<string>();
       let frontier = [instanceId];

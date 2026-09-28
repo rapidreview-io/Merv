@@ -1,5 +1,6 @@
 import { check, within } from '@merv/contracts';
 import type {
+  Caller,
   Data,
   Scope,
   Sql,
@@ -80,6 +81,20 @@ export class WorkflowEngine {
     protected readonly state: State,
     protected readonly scope: Scope,
   ) {}
+
+  /** A caller's read: on an open service, by a copy of the caller, authorized once at entry. */
+  protected async reading<T>(
+    caller: Caller,
+    tx: Transaction | undefined,
+    fn: (tx: Transaction, caller: Caller) => Promise<T>,
+  ): Promise<T> {
+    this.assertOpen();
+    const copy = structuredClone(caller);
+    return await this.read(tx, async (tx) => {
+      await this.scope.require(copy, 'read', tx);
+      return await fn(tx, copy);
+    });
+  }
 
   /**
    * The instance's history in revision order. A traversal reads it without `data`: a row's

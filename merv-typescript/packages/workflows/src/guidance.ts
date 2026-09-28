@@ -46,12 +46,9 @@ export class WorkflowGuidance extends WorkflowEngine {
     caller: Caller,
     instanceId: string,
     { checks = true }: { checks?: boolean } = {},
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<ProcessGraph> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       const [{ decision, facts }] = await this.guidance(
         caller,
         [await this.readRow(tx, caller.projectId, instanceId)],
@@ -81,10 +78,9 @@ export class WorkflowGuidance extends WorkflowEngine {
     caller: Caller,
     instanceId: string,
     { ...query }: WorkflowEvaluationInput = {},
-    transaction?: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowDecision> {
     this.assertOpen();
-    caller = structuredClone(caller);
     check(
       query.input === undefined || typeof query.action === 'string',
       'invalid_input',
@@ -97,8 +93,7 @@ export class WorkflowGuidance extends WorkflowEngine {
         'Action is required',
       );
     const input = query.input === undefined ? undefined : this.data(query.input);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+    return await this.reading(caller, tx, async (tx, caller) => {
       const row = await this.readRow(tx, caller.projectId, instanceId);
       if (input && Object.hasOwn(input, 'expectedRevision'))
         check(
@@ -111,11 +106,8 @@ export class WorkflowGuidance extends WorkflowEngine {
     });
   }
 
-  async overview(caller: Caller, transaction?: Transaction): Promise<WorkflowOverview> {
-    this.assertOpen();
-    caller = structuredClone(caller);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+  async overview(caller: Caller, tx?: Transaction): Promise<WorkflowOverview> {
+    return await this.reading(caller, tx, async (tx, caller) => {
       const rows = await tx.all<InstanceRow>(
         'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
         caller.projectId,
