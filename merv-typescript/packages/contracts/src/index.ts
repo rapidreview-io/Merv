@@ -781,6 +781,10 @@ export const requireDirecting = (
     'A producer or contributor cannot direct the reviewer of its own work',
     403,
   );
+/**
+ * Append a domain event stamped with the caller's source. That source is audit provenance only:
+ * authority is still rechecked by Scope inside the operation.
+ */
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
@@ -796,7 +800,6 @@ export const recorded = async (
     subjectId,
     data: { ...data, ...eventSource(caller) },
   });
-/** Audit provenance only. Authority is still rechecked by Scope inside the operation. */
 /** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
 export function checkReceipt<T extends { receipt: string }>(
   lease: T | undefined,
