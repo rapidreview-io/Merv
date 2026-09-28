@@ -604,6 +604,8 @@ export class WorkflowsService implements Workflows {
           open.map(({ row }) => row.id),
         );
         for (const { row, registration, rule } of open) {
+          const lease = rule.lease!;
+          const execution = rule.execution!;
           const snapshot = this.snapshot(row);
           // One frozen read serves every callback of the row; the recheck below closes them all.
           const context = readContext({
@@ -614,8 +616,8 @@ export class WorkflowsService implements Workflows {
           });
           try {
             const role = await leaseRoleOf(rule, context);
-            const label = rule.lease!.label
-              ? await rule.lease!.label(context)
+            const label = lease.label
+              ? await lease.label(context)
               : `${snapshot.workflow}: ${snapshot.state}`;
             check(
               typeof label === 'string' && visible(label),
@@ -624,9 +626,7 @@ export class WorkflowsService implements Workflows {
               500,
             );
             const excluded =
-              worker !== undefined &&
-              !!rule.lease!.excludes &&
-              (await rule.lease!.excludes(context, worker));
+              !!worker && !!lease.excludes && (await lease.excludes(context, worker));
             this.requireActive(registration);
             if (excluded) continue;
             candidates.push({
@@ -637,11 +637,11 @@ export class WorkflowsService implements Workflows {
               version: snapshot.version,
               state: snapshot.state,
               role,
-              readOnly: rule.execution!.readOnly,
+              readOnly: execution.readOnly,
               label,
-              policyHash: executionFingerprint(rule.execution!),
+              policyHash: executionFingerprint(execution),
               registrationId: registration.registrationId,
-              workspace: effectiveWorkspace(rule.execution!),
+              workspace: effectiveWorkspace(execution),
               updatedAt: snapshot.updatedAt,
             });
           } catch (error) {
