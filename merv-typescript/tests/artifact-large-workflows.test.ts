@@ -21,18 +21,26 @@ test('configured storage gives new producers upload grants while reviewers stay 
     allowance: null,
     offers: [],
   });
+  const run = {
+    experimentId: 'exp_missing',
+    attemptIndex: 1,
+    key: 'trial',
+    provider: 'lambda',
+    offerId: 'gpu',
+    command: 'echo',
+    minutes: 5,
+    maxUsd: 1,
+  };
+  await assert.rejects(app.ctx.tools.call('compute.run', owner, run), {
+    code: 'compute_unavailable',
+  });
+  // Compute stages no artifacts: the schema refuses inputs.
   await assert.rejects(
     app.ctx.tools.call('compute.run', owner, {
-      experimentId: 'exp_missing',
-      attemptIndex: 1,
-      key: 'trial',
-      provider: 'lambda',
-      offerId: 'gpu',
-      command: 'echo',
-      minutes: 5,
-      maxUsd: 1,
+      ...run,
+      inputs: [{ artifactId: 'art_data', path: 'data.csv' }],
     }),
-    { code: 'compute_unavailable' },
+    { code: 'invalid_input' },
   );
   const ordinary = await app.ctx.tasks.create(owner, {
     title: 'Original',

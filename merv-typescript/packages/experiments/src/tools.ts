@@ -33,12 +33,6 @@ export const experimentsToolsPlugin = {
         minutes: z.number().int().min(5).max(1380),
         maxUsd: z.number().finite().nonnegative(),
         commandId: z.string().min(1).optional(),
-        inputs: z
-          .array(
-            z.object({ artifactId: z.string().min(1), path: z.string().min(1).max(240) }).strict(),
-          )
-          .max(16)
-          .optional(),
       })
       .strict();
     const cancel = z.object({ experimentId: z.string().min(1), runId: z.string().min(1) }).strict();

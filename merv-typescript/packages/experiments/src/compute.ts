@@ -4,7 +4,6 @@ import {
   MervError,
   now,
   type Caller,
-  type Artifacts,
   type Json,
   type Scope,
   type State,
@@ -126,7 +125,6 @@ export class ExperimentCompute {
     private readonly scope: Scope,
     private readonly adapter: SandboxCompute,
     private readonly code: () => Pick<Code, 'source'> | undefined,
-    private readonly artifacts?: Artifacts,
   ) {
     this.timer = setInterval(() => void this.tick().catch(() => undefined), 60_000);
     this.timer.unref();
@@ -277,33 +275,6 @@ export class ExperimentCompute {
           'This experiment version cannot ship code',
           409,
         );
-      const objectInputs: { objectId: string; path: string }[] = [];
-      const seen = new Set<string>();
-      check(
-        (input.inputs?.length ?? 0) <= 16,
-        'invalid_compute_input',
-        'At most 16 artifact inputs are supported',
-      );
-      for (const item of input.inputs ?? []) {
-        check(
-          !!this.artifacts &&
-            /^[A-Za-z0-9._/-]{1,240}$/.test(item.path) &&
-            !item.path.startsWith('/') &&
-            !item.path.split('/').some((part) => !part || part === '.' || part === '..') &&
-            !seen.has(item.path),
-          'invalid_compute_input',
-          'Artifact input paths must be distinct safe relative paths',
-        );
-        seen.add(item.path);
-        const artifact = await this.artifacts.get(caller, item.artifactId, tx);
-        check(
-          artifact.objectId,
-          'compute_input_unavailable',
-          'Compute inputs must be stored large artifacts',
-          409,
-        );
-        objectInputs.push({ objectId: artifact.objectId, path: item.path });
-      }
       const fingerprint = digest(input);
       const old = await tx.get<ComputeRow>(
         'SELECT * FROM experiment_compute_runs WHERE experiment_id=? AND attempt_index=? AND key=?',
@@ -335,7 +306,7 @@ export class ExperimentCompute {
         input.attemptIndex,
         input.key,
         fingerprint,
-        JSON.stringify({ ...input, objectInputs }),
+        JSON.stringify(input),
         caller.actorId,
         at,
         at,
@@ -346,7 +317,7 @@ export class ExperimentCompute {
         attempt_index: input.attemptIndex,
         key: input.key,
         input_hash: fingerprint,
-        input_json: JSON.stringify({ ...input, objectInputs }),
+        input_json: JSON.stringify(input),
         run_id: null,
         state: 'submitting',
         cost: null,
@@ -470,9 +441,6 @@ export class ExperimentCompute {
         ...input,
         idempotencyKey: digest([row.project_id, row.experiment_id, row.attempt_index, row.key]),
         source,
-        objectInputs: (
-          input as ComputeInput & { objectInputs?: { objectId: string; path: string }[] }
-        ).objectInputs,
       });
       await this.update(row, 'running', runId, null, null);
       return;

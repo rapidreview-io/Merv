@@ -191,7 +191,6 @@ export interface SandboxComputeSpec {
   minutes: number;
   maxUsd: number;
   source?: { bytes: Uint8Array; sha256: string };
-  objectInputs?: { objectId: string; path: string }[];
 }
 export interface SandboxComputeRun {
   id: string;

@@ -93,13 +93,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
         },
       },
     ];
-    const inputs = [
-      ...(objectId ? [{ object_id: objectId, path: '/tmp/merv/src.tgz' }] : []),
-      ...(spec.objectInputs ?? []).map((item) => ({
-        object_id: item.objectId,
-        path: `/tmp/merv/inputs/${item.path}`,
-      })),
-    ];
+    const inputs = objectId ? [{ object_id: objectId, path: '/tmp/merv/src.tgz' }] : [];
     if (inputs.length)
       nodes.push({
         id: 'stage',

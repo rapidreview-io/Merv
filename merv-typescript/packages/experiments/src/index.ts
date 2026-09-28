@@ -278,13 +278,7 @@ export class ExperimentService implements Experiments {
   bindCompute(adapter: SandboxCompute): () => void {
     this.open();
     this.compute?.close();
-    const service = new ExperimentCompute(
-      this.state,
-      this.scope,
-      adapter,
-      () => this.code,
-      this.artifacts,
-    );
+    const service = new ExperimentCompute(this.state, this.scope, adapter, () => this.code);
     this.compute = service;
     return () => {
       if (this.compute === service) {
