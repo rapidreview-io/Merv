@@ -142,7 +142,8 @@ export class PostgresState implements State {
     this.schema = config.schema ?? POSTGRES_DEFAULTS.schema;
     check(POSTGRES_SCHEMA.test(this.schema), 'invalid_config', 'Invalid PostgreSQL schema');
     this.writeBegin = `BEGIN; SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('merv-state:${this.schema}', 0))`;
-    // URI TLS parameters override pg's ssl object. Keep TLS exclusively in the explicit config.
+    // URI parameters override pg's Pool config: TLS parameters would replace the ssl object, and
+    // `options` the search_path set below. Keep both exclusively in the explicit config.
     let url: URL;
     try {
       url = new URL(config.connectionString);
@@ -155,9 +156,9 @@ export class PostgresState implements State {
       'Invalid PostgreSQL protocol',
     );
     check(
-      ![...url.searchParams.keys()].some((key) => /^ssl/i.test(key)),
+      ![...url.searchParams.keys()].some((key) => /^(ssl|options$)/i.test(key)),
       'invalid_config',
-      'Configure PostgreSQL TLS through the ssl option',
+      'Configure PostgreSQL TLS through the ssl option and the schema through the schema option',
     );
     const pool = (max: number) => {
       const created = new Pool({
@@ -167,6 +168,9 @@ export class PostgresState implements State {
           config.connectionTimeoutMs ?? POSTGRES_DEFAULTS.connectionTimeoutMs,
         statement_timeout: config.statementTimeoutMs ?? POSTGRES_DEFAULTS.statementTimeoutMs,
         lock_timeout: config.lockTimeoutMs ?? POSTGRES_DEFAULTS.lockTimeoutMs,
+        // Set once per connection at startup, not per checkout. POSTGRES_SCHEMA admits no space,
+        // backslash or quote, so the value needs no escaping; the quotes keep a mixed-case name.
+        options: `-c search_path="${this.schema}"`,
         ssl: config.ssl ?? false,
         types: {
           getTypeParser: (oid, format) =>
@@ -248,14 +252,6 @@ END $merv$;`);
       });
     };
     try {
-      try {
-        await client.query("SELECT pg_catalog.set_config('search_path', $1, false)", [
-          `"${this.schema}"`,
-        ]);
-      } catch (error) {
-        discard = true;
-        throw databaseError(error);
-      }
       return await fn({
         run: async (sql, params) => ({ changes: (await query(sql, params)).rowCount ?? 0 }),
         get: async <R>(sql: string, params: SqlValue[]) =>

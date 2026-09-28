@@ -6,7 +6,7 @@ import { Pool } from 'pg';
 import { PostgresState, statePlugin } from '@merv/state';
 import { postgresParameters } from '@merv/state/parameters';
 import { MervError, type Migration, type Transaction } from '@merv/contracts';
-import { postgresUrl, schemaFor } from './fixtures/state.js';
+import { dropSchema, postgresUrl, schemaFor } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
 
 const connectionString = postgresUrl;
@@ -106,6 +106,54 @@ test('State config is PostgreSQL only and requires explicit verified TLS setting
       .success,
     false,
   );
+});
+
+test('PostgreSQL refuses URL parameters that would override TLS or the search_path', async () => {
+  const url = new URL(connectionString);
+  for (const [key, value] of [
+    ['sslmode', 'disable'],
+    ['SSLROOTCERT', '/tmp/ca.pem'],
+    ['options', '-c search_path=public'],
+    ['Options', '-c search_path=public'],
+  ]) {
+    const refused = new URL(url);
+    refused.searchParams.set(key!, value!);
+    await assert.rejects(
+      PostgresState.open({ connectionString: refused.href, schema: schemaFor() }),
+      { code: 'invalid_config' },
+      key,
+    );
+  }
+});
+
+test('PostgreSQL opens, migrates and reads in a mixed-case schema on both pools', async (t) => {
+  const schema = `Mixed_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  t.after(() => dropSchema(schema));
+  const state = await PostgresState.open({ connectionString, schema });
+  t.after(() => state.close());
+  await state.migrate('test', [{ version: 1, sql: 'CREATE TABLE records(id TEXT PRIMARY KEY);' }]);
+  await state.transaction(async (tx) => {
+    assert.equal(
+      (await tx.get<{ schema: string }>('SELECT current_schema() AS schema'))?.schema,
+      schema,
+    );
+    await tx.run('INSERT INTO records VALUES(?)', 'one');
+    await state.appendEvent(tx, event);
+  });
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all<{ id: string; schema: string }>('SELECT id, current_schema() AS schema FROM records'),
+    ),
+    [{ id: 'one', schema }],
+  );
+  assert.equal(await state.eventHead(), 1);
+  // The lowercase folding of the name is a different schema, and nothing landed there.
+  const admin = new Pool({ connectionString });
+  t.after(() => admin.end());
+  const { rows } = await admin.query('SELECT nspname FROM pg_namespace WHERE nspname = $1', [
+    schema.toLowerCase(),
+  ]);
+  assert.deepEqual(rows, []);
 });
 
 test('PostgreSQL retains binary parameters when a caller reuses buffers before execution', async (t) => {
