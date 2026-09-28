@@ -22,6 +22,12 @@ export interface PaperContextSection {
   title: string;
   /** The section's content, whole. */
   text: string;
+  /**
+   * Its context priority, which each consumer ranks its own items around: the problem's current
+   * sections 850, the other current sections 600, the problem's published sections 450 and the
+   * other published sections 250.
+   */
+  priority: number;
   /** Provenance: the document, status and section, when it was updated, and its publication. */
   note: string;
   /** Where the section is read again. */

@@ -292,9 +292,6 @@ const configuration = z
   .strict()
   .default({});
 
-/** A paper section's priority: the problem, the other current documents, then published revisions. */
-const paperPriority = ({ kind, status }: Pick<PaperContextSection, 'kind' | 'status'>) =>
-  kind === 'problem' ? (status === 'current' ? 850 : 450) : status === 'current' ? 600 : 250;
 /**
  * How a format-2 recipe embeds each section's items. The task, its brief, revision feedback and
  * the review criteria are always embedded; the rest fit while they can, highest priority first.
@@ -1592,7 +1589,7 @@ export class TaskService implements Tasks {
     let room = type.definition.recipe.maxChars;
     const texts = new Set<string>(),
       kept = new Set<PaperContextSection>();
-    for (const section of [...sections].sort((a, b) => paperPriority(b) - paperPriority(a))) {
+    for (const section of [...sections].sort((a, b) => b.priority - a.priority)) {
       if (!texts.has(section.text) && section.text.length > room) continue;
       if (!texts.has(section.text)) room -= section.text.length;
       texts.add(section.text);
@@ -1803,11 +1800,11 @@ export class TaskService implements Tasks {
       const read = { tool: 'paper.read', input: {} };
       result.projectPaper = {
         items: [
-          ...sections.map(({ kind, status, id, title, text, note, refs }): ContextItem => ({
+          ...sections.map(({ id, title, text, priority, note, refs }): ContextItem => ({
             id,
             title,
             body: { text },
-            priority: paperPriority({ kind, status }),
+            priority,
             note,
             refs,
           })),

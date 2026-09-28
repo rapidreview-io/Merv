@@ -422,6 +422,11 @@ test('context sections list every written current and published section whole, i
       'paper:methods:published:1:0:protocol',
     ],
   );
+  // The problem outranks the other current sections, and those outrank published revisions.
+  assert.deepEqual(
+    sections.map((s) => s.priority),
+    [850, 600, 250],
+  );
   const goals = sections[0]!;
   assert.equal(goals.text, 'Match the baseline.\n## Expected output\nNot a heading.');
   assert.equal(goals.title, 'problem current: Goals');

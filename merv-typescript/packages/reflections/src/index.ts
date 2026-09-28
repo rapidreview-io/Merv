@@ -692,17 +692,10 @@ export class ReflectionService implements Reflections {
     // A published section that repeats a current one says so itself: the builder names the copy.
     const paperItems = this.paper
       .contextSections(documents)
-      .map(({ kind, status, id, title, text, note, refs }): ContextItem => ({
+      .map(({ id, title, priority, text, note, refs }): ContextItem => ({
         id,
         title,
-        priority:
-          kind === 'problem'
-            ? status === 'current'
-              ? 850
-              : 450
-            : status === 'current'
-              ? 600
-              : 250,
+        priority,
         body: { text },
         note,
         refs,

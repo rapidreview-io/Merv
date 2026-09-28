@@ -1025,23 +1025,14 @@ export class ExperimentProgram {
       ...(inputs.paper?.length
         ? {
             projectPaper: {
-              items: inputs.paper.map(
-                ({ kind, status, id, title, text, note, refs }): ContextItem => ({
-                  id,
-                  title,
-                  body: { text },
-                  priority:
-                    kind === 'problem'
-                      ? status === 'current'
-                        ? 850
-                        : 450
-                      : status === 'current'
-                        ? 600
-                        : 250,
-                  note,
-                  refs,
-                }),
-              ),
+              items: inputs.paper.map(({ id, title, text, priority, note, refs }): ContextItem => ({
+                id,
+                title,
+                body: { text },
+                priority,
+                note,
+                refs,
+              })),
             },
           }
         : {}),
