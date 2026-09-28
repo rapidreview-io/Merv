@@ -787,7 +787,10 @@ export class WorkflowsService implements Workflows {
     { ...input }: { reason: string },
     transaction?: Transaction,
   ): Promise<void> {
-    lease = executionMetadata(lease);
+    // The same bounds as the offer that issued it: capping the whole lease as metadata refused
+    // the release of a receipt the offer had accepted.
+    lease = workflowJson(lease, 'invalid_lease', 400);
+    executionMetadata(lease.receipt);
     await inTransaction(this.state, transaction, async (tx) => {
       check(
         typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 500,

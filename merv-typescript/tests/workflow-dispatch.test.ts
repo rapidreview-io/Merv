@@ -450,3 +450,43 @@ test('Tasks contribute source-aware queue labels and recipe availability without
   await app.ctx.reviews.start(reviewer, pending.reviewId!);
   assert.deepEqual(await app.ctx.workflows.dispatchCandidates(source), []);
 });
+
+test('a lease whose receipt its offer accepted is released', async (t) => {
+  const f = await fixture(t);
+  const execution = { readOnly: false, tools: [] };
+  const policy = f.rules(execution);
+  const released: string[] = [];
+  policy.assignments![0]!.lease!.release = ({ reason }) => {
+    released.push(reason);
+  };
+  const handle = await f.workflows.register(definition('receipts'), policy);
+  const started = await handle.start(f.source, { workflow: 'receipts', requestId: 'start' });
+  const lease = {
+    leaseId: 'lease',
+    instanceId: started.id,
+    expectedRevision: started.revision,
+    projectId: f.source.projectId,
+    actorId: f.source.actorId,
+    workflow: 'receipts',
+    version: 1,
+    state: 'work',
+    policyHash: executionFingerprint(validateExecution(execution)),
+    registrationId: 'registration',
+    // Within the offer's 256,000 characters, while the whole lease is past them.
+    receipt: { blob: 'x'.repeat(255_900) },
+  };
+  await f.workflows.releaseLease(lease, { reason: 'Finished' });
+  assert.deepEqual(released, ['Finished']);
+  await assert.rejects(
+    f.workflows.releaseLease(
+      { ...lease, receipt: { blob: 'x'.repeat(256_000) } },
+      { reason: 'Finished' },
+    ),
+    { code: 'invalid_workflow_policy' },
+  );
+  await assert.rejects(
+    f.workflows.releaseLease({ ...lease, receipt: { at: new Date() } as never }, { reason: 'x' }),
+    { code: 'invalid_lease', status: 400 },
+  );
+  assert.deepEqual(released, ['Finished']);
+});
