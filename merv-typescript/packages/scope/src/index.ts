@@ -34,7 +34,7 @@ import {
   type ConversationAuthority,
   type ManagedRunnerAuthority,
 } from '@merv/contracts';
-import { identityValid, Memberships, membershipMigration } from './memberships.js';
+import { identityValid, LIVE_OPERATOR, Memberships, membershipMigration } from './memberships.js';
 import { UserKeys, userKeyMigration } from './user-keys.js';
 import {
   parseProjectContextUpdate,
@@ -193,7 +193,7 @@ export class ProjectScope implements Scope {
         issuer: string;
         subject: string;
       }>(
-        "SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM project_memberships m JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator' ORDER BY m.created_at,m.id",
+        `SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM ${LIVE_OPERATOR} ORDER BY m.created_at,m.id`,
       );
     const owners = new Map<string, DelegationSource>();
     for (const row of tx ? await read(tx) : await this.state.read(read))

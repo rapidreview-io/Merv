@@ -489,31 +489,24 @@ test('the last verified human operator is protected until another invited operat
   });
 });
 
-test(
-  'a project owner is its longest-standing signed-in operator, never an invitation',
-  { todo: 'step 1' },
-  async (t) => {
-    const f = await fixture();
-    t.after(async () => await f.state.close());
-    const alice = await f.login('alice');
-    const project = await f.scope.createProject(alice, { name: 'Owners', requestId: 'create' });
-    f.advance(1);
-    await f.scope.addMember(alice, project.id, { subject: 'invited', role: 'operator' });
-    f.advance(1);
-    await f.scope.addMember(alice, project.id, { subject: 'second', role: 'operator' });
-    const second = await f.scope.caller(await f.login('second'), project.id);
-    await f.scope.removeMember(alice, project.id, 'alice');
-    const owners = await f.scope.projectOwners();
-    assert.deepEqual(
-      owners.map((owner) => [
-        owner.projectId,
-        owner.source.kind === 'human' && owner.source.subject,
-      ]),
-      [[project.id, 'second']],
-    );
-    assert.equal((await f.scope.requireDelegation(owners[0]!.source, 'write')).id, second.actorId);
-  },
-);
+test('a project owner is its longest-standing signed-in operator, never an invitation', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const alice = await f.login('alice');
+  const project = await f.scope.createProject(alice, { name: 'Owners', requestId: 'create' });
+  f.advance(1);
+  await f.scope.addMember(alice, project.id, { subject: 'invited', role: 'operator' });
+  f.advance(1);
+  await f.scope.addMember(alice, project.id, { subject: 'second', role: 'operator' });
+  const second = await f.scope.caller(await f.login('second'), project.id);
+  await f.scope.removeMember(alice, project.id, 'alice');
+  const owners = await f.scope.projectOwners();
+  assert.deepEqual(
+    owners.map((owner) => [owner.projectId, owner.source.kind === 'human' && owner.source.subject]),
+    [[project.id, 'second']],
+  );
+  assert.equal((await f.scope.requireDelegation(owners[0]!.source, 'write')).id, second.actorId);
+});
 
 test('simultaneous self-demotions leave one verified human operator after serialized checks', async (t) => {
   const f = await fixture('member-operator-race');

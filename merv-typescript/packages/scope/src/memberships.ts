@@ -56,6 +56,12 @@ const identityPart = (value: unknown, limit: number): boolean =>
   value.trim() === value &&
   !value.includes('\0');
 
+/** Active operator memberships whose actor agrees and whose person has signed in. */
+export const LIVE_OPERATOR = `project_memberships m
+  JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id
+  JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
+  WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`;
+
 export function identityValid(identity: VerifiedIdentity, time: string): boolean {
   return (
     !!identity &&
@@ -457,9 +463,7 @@ export class Memberships {
   private async keepOperator(tx: Sql, previous: MembershipRow, nextRole?: Role): Promise<void> {
     if (previous.role !== 'operator' || nextRole === 'operator') return;
     const count = (await tx.get<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM project_memberships m JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id
-       JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
-       WHERE m.project_id=? AND m.actor_id<>? AND m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`,
+      `SELECT COUNT(*) AS count FROM ${LIVE_OPERATOR} AND m.project_id=? AND m.actor_id<>?`,
       previous.project_id,
       previous.actor_id,
     ))!.count;
