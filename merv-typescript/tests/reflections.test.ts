@@ -120,7 +120,26 @@ async function fixture(t: TestContext, reflections?: object) {
     );
     return (await app.ctx.reviews.apply(reviewer, input)) as Reflection;
   };
-  return { app, owner, actor, create, lenses, synthesize, verdict };
+  let agents = 0;
+  /** What a session offered this step is granted, read by a fresh agent that lets it go. */
+  const granted = async (instanceId: string, expectedRevision: number) => {
+    const secret = token();
+    await app.ctx.sessions.registerAgent(owner, {
+      name: `Reader ${++agents}`,
+      runnerId: 'external',
+      requestId: `reader-${agents}`,
+      secret,
+    });
+    const session = await app.ctx.sessions.assignAgent(secret, {
+      instanceId,
+      expectedRevision,
+      requestId: `read-${agents}`,
+    });
+    await app.ctx.sessions.releaseAgentAssignment(secret, session.id);
+    await app.ctx.domainEvents.drain();
+    return session.execution.references;
+  };
+  return { app, owner, actor, create, lenses, synthesize, verdict, granted };
 }
 
 test('reflection lens context includes project paper goals and revision', async (t) => {
@@ -650,11 +669,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   );
   assert.ok(!lensContext.prompt.includes(reviewer.actorId));
   assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
-  assert.deepEqual(
-    (await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 }))
-      .references.researchReviews,
-    [firstReview, secondReview],
-  );
+  assert.deepEqual((await f.granted(lens.id, 0)).researchReviews, [firstReview, secondReview]);
   assert.ok(wave.lenses.every((l) => !firstIds.includes(l.id) && l.artifact === null));
   assert.equal((await f.app.ctx.workflows.get(f.owner, firstIds[0]!)).state, 'complete');
   // No dependency edge names a lens, so the wave's policy does: a usage rollup over the
@@ -817,22 +832,15 @@ test('a standalone wave names no lineage, and a digest that does not fit is omit
   assert.ok(context.omitted.some((id) => id.includes(oversized.id)));
   assert.ok(context.prompt.includes('Predecessor cycle digest'));
   assert.doesNotMatch(context.prompt, /x{100}/);
-  assert.ok(
-    (
-      await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 })
-    ).references.artifacts.includes(oversized.id),
-  );
+  assert.ok(((await f.granted(lens.id, 0)).artifacts as string[]).includes(oversized.id));
   // The digest stays with the wave through rework: no later transition rewrites it.
   const reviewer = await f.actor('Reviewer', 'reviewer');
   wave = await f.synthesize(await f.lenses(wave));
   wave = await f.verdict(wave, reviewer, false, 'synthesizing');
   assert.ok(
-    (
-      await f.app.ctx.workflows.execution(f.owner, {
-        instanceId: wave.id,
-        expectedRevision: wave.workflow.revision,
-      })
-    ).references.artifacts.includes(oversized.id),
+    ((await f.granted(wave.id, wave.workflow.revision)).artifacts as string[]).includes(
+      oversized.id,
+    ),
   );
 });
 

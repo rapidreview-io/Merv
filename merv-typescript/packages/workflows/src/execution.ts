@@ -94,12 +94,8 @@ const referencesSchema = z.record(
 );
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-function json<T>(value: T, code: string, status: number, limit: number = DATA_LIMITS.limit): T {
-  return workflowJson(value, code, status, { ...DATA_LIMITS, limit });
-}
-
-export function dispatchInput<T>(value: T): T {
-  return json(value, 'invalid_input', 400, 4_000_000);
+function json<T>(value: T, code: string, status: number): T {
+  return workflowJson(value, code, status, DATA_LIMITS);
 }
 
 export function executionMetadata<T>(value: T): T {

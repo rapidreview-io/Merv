@@ -311,19 +311,9 @@ test(
     assert.deepEqual(unclaimed.handoff.tools, ['review.start', 'workflow.assignment']);
     // Declared permissions stay fixed; the required claim binding is unavailable until claimed.
     for (const name of ['review.submit', 'task.context']) {
-      assert.ok(unclaimed.execution.tools.some((tool) => tool.name === name));
-      await assert.rejects(
-        async () =>
-          await f.app.ctx.workflows.authorizeDispatch(reviewer.caller, {
-            instanceId: f.task.id,
-            expectedRevision: 1,
-            policyHash: unclaimed.execution.policyHash!,
-            registrationId: unclaimed.execution.registrationId!,
-            tool: name,
-            input: {},
-          }),
-        { code: 'execution_reference_unavailable' },
-      );
+      const tool = unclaimed.execution.tools.find((tool) => tool.name === name);
+      assert.ok(tool);
+      assert.equal(Object.hasOwn(tool.arguments, 'claimId'), false);
     }
     assert.deepEqual(await f.durable(), before);
     const begun = await call(client, 'workflow.begin', { ...input, expectedRevision: 1 });

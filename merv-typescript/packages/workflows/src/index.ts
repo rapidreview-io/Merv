@@ -2,7 +2,6 @@ import { visible, recorded, createService, canonical, digest } from '@merv/contr
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
-  admitDispatch,
   check,
   effectiveWorkspace,
   mapAsync,
@@ -35,8 +34,6 @@ import type {
   WorkflowExecution,
   WorkflowExecutionReferences,
   WorkflowExecutionTarget,
-  WorkflowExecutionDispatch,
-  WorkflowDispatchAdmission,
   WorkflowDispatchCandidate,
   WorkflowLease,
   WorkflowLeaseOffer,
@@ -75,7 +72,6 @@ import {
   limitStatusesOf,
 } from './limits.js';
 import {
-  dispatchInput,
   executionDisplay,
   executionFingerprint,
   executionReferences,
@@ -121,7 +117,6 @@ interface InstanceRow {
 interface Registration {
   definition: WorkflowDefinition;
   policy?: WorkflowPolicy;
-  token: symbol;
   registrationId: string;
 }
 /** One step as load() read it: the frozen context every callback of the call is given. */
@@ -291,7 +286,6 @@ export class WorkflowsService implements Workflows {
     const registration = {
       definition,
       policy: validatedPolicy,
-      token: Symbol(key),
       registrationId: newId('execution'),
     };
     this.registrations.set(key, registration);
@@ -806,16 +800,15 @@ export class WorkflowsService implements Workflows {
       403,
     );
     await this.scope.require(worker, 'read', tx);
-    const step = await this.executionStep(
-      worker,
-      {
-        instanceId: lease.instanceId,
-        expectedRevision: lease.expectedRevision,
-        policyHash: lease.policyHash,
-      },
-      tx,
-    );
+    const step = await this.load(worker, lease, 'execution', tx);
     const { snapshot, rule, registration, context } = step;
+    check(
+      lease.policyHash === executionFingerprint(rule.execution!),
+      'execution_changed',
+      'The captured execution policy does not match this workflow state',
+      409,
+    );
+    await checkAssignment(rule, context);
     check(
       snapshot.workflow === lease.workflow &&
         snapshot.version === lease.version &&
@@ -872,89 +865,6 @@ export class WorkflowsService implements Workflows {
       await rule.lease.release({ lease, reason: input.reason, tx });
       this.requireActive(registration);
     });
-  }
-
-  async execution(
-    caller: Caller,
-    target: WorkflowExecutionTarget,
-    transaction?: Transaction,
-  ): Promise<WorkflowExecution> {
-    return await this.executionInternal(caller, target, transaction);
-  }
-
-  async authorizeDispatch(
-    caller: Caller,
-    { ...dispatch }: WorkflowExecutionDispatch,
-    transaction?: Transaction,
-  ): Promise<WorkflowDispatchAdmission> {
-    caller = structuredClone(caller);
-    check(
-      typeof dispatch.policyHash === 'string' &&
-        /^[0-9a-f]{64}$/.test(dispatch.policyHash) &&
-        typeof dispatch.registrationId === 'string' &&
-        dispatch.registrationId.length > 0 &&
-        typeof dispatch.tool === 'string' &&
-        dispatch.tool.length > 0,
-      'invalid_execution_target',
-      'A captured policy hash, registration generation and tool are required',
-    );
-    dispatch.input = dispatchInput(dispatch.input);
-    return await this.read(transaction, async (tx) => {
-      const execution = await this.executionInternal(caller, dispatch, tx);
-      return admitDispatch(execution, dispatch.tool, dispatch.input, dispatch.read);
-    });
-  }
-
-  private async executionInternal(
-    caller: Caller,
-    {
-      ...target
-    }: WorkflowExecutionTarget &
-      Partial<Pick<WorkflowExecutionDispatch, 'registrationId' | 'policyHash'>>,
-    transaction?: Transaction,
-  ): Promise<WorkflowExecution> {
-    caller = structuredClone(caller);
-    this.assertOpen();
-    checkInstance(target.instanceId);
-    checkRevision(target.expectedRevision);
-    return await this.read(transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const step = await this.executionStep(caller, target, tx);
-      const execution = await this.executionOf(step);
-      await this.recheck(
-        tx,
-        [step.row],
-        'Execution callbacks must not change the workflow instance',
-      );
-      this.requireActive(step.registration);
-      return execution;
-    });
-  }
-
-  /** An admitted execution step, left for the caller's closing recheck. */
-  private async executionStep(
-    caller: Caller,
-    target: WorkflowExecutionTarget &
-      Partial<Pick<WorkflowExecutionDispatch, 'registrationId' | 'policyHash'>>,
-    tx: Transaction,
-  ): Promise<Loaded> {
-    const step = await this.load(caller, target, 'execution', tx);
-    check(
-      target.registrationId === undefined ||
-        target.registrationId === step.registration.registrationId,
-      'execution_changed',
-      'The captured workflow registration has been withdrawn',
-      409,
-    );
-    check(
-      target.policyHash === undefined ||
-        target.policyHash === executionFingerprint(step.rule.execution!),
-      'execution_changed',
-      'The captured execution policy does not match this workflow state',
-      409,
-    );
-    await checkAssignment(step.rule, step.context);
-    return step;
   }
 
   /** The execution an admitted step grants: its fixed policy and the references it names now. */
@@ -2053,7 +1963,7 @@ export class WorkflowsService implements Workflows {
         hash,
       );
       if (replay) {
-        if (owner) this.requireActive(owner);
+        this.requireActive(owner);
         return replay;
       }
       check(

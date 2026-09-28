@@ -872,8 +872,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       assignment: f.workflows.assignment.bind(f.workflows),
       begin: f.workflows.begin.bind(f.workflows),
       workStarts: f.workflows.workStarts.bind(f.workflows),
-      execution: f.workflows.execution.bind(f.workflows),
-      authorizeDispatch: f.workflows.authorizeDispatch.bind(f.workflows),
     };
     alternative = await createService(
       new TaskService(

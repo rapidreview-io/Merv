@@ -229,12 +229,7 @@ const met = (evidenceIds: string[] = []) => [
 test('A task’s workflow version carries its Git workspace and the scratch versions declare none', async (t) => {
   const f = await fixture(t);
   const policy = async (task: Task) =>
-    (
-      await f.workflows.execution(f.source, {
-        instanceId: task.id,
-        expectedRevision: task.workflow.revision,
-      })
-    ).policy;
+    (await f.workflows.assignment(f.source, task.id)).execution.policy!;
   const scratchInput = {
     title: 'Scratch',
     goal: 'Write a note.',
@@ -911,13 +906,7 @@ test('A project imported into Code while a Git task is under way lets that task 
       f.source.projectId,
     );
   });
-  const execution = await f.workflows.execution(f.source, {
-    instanceId: hosted.id,
-    expectedRevision: hosted.workflow.revision,
-  });
-  assert.deepEqual(
-    execution.policy.workspace?.mode === 'persistent' && execution.policy.workspace.driver,
-    'code.v2',
-  );
-  assert.ok(execution.policy.tools.some((tool) => tool.name === 'code.commit'));
+  const policy = (await f.workflows.assignment(f.source, hosted.id)).execution.policy!;
+  assert.deepEqual(policy.workspace?.mode === 'persistent' && policy.workspace.driver, 'code.v2');
+  assert.ok(policy.tools.some((tool) => tool.name === 'code.commit'));
 });

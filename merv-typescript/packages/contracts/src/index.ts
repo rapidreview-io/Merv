@@ -1396,14 +1396,6 @@ export interface WorkflowExecution {
   policy: WorkflowExecutionPolicy;
   references: WorkflowExecutionReferences;
 }
-export interface WorkflowExecutionDispatch extends WorkflowExecutionTarget {
-  policyHash: string;
-  registrationId: string;
-  tool: string;
-  input: Data;
-  /** The tool only reads, so the project is its bound rather than the policy. */
-  read?: boolean;
-}
 export interface WorkflowDispatchAdmission {
   tool: string;
   input: Data;
@@ -1616,17 +1608,6 @@ export interface Workflows {
   activateLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowWorkStart>;
   /** Trusted exact resource cleanup; deliberately independent of caller's expired authority. */
   releaseLease(lease: WorkflowLease, input: { reason: string }, tx?: Transaction): Promise<void>;
-  execution(
-    caller: Caller,
-    target: WorkflowExecutionTarget,
-    tx?: Transaction,
-  ): Promise<WorkflowExecution>;
-  /** Internal dispatch admission; ordinary caller credentials remain unchanged. */
-  authorizeDispatch(
-    caller: Caller,
-    dispatch: WorkflowExecutionDispatch,
-    tx?: Transaction,
-  ): Promise<WorkflowDispatchAdmission>;
   assignment(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowAssignment>;
   begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment>;
   workStarts(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowWorkStart[]>;

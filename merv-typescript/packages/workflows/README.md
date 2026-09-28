@@ -155,12 +155,12 @@ Programs register per-state assignment checks and builders alongside action rule
 ## Fixed execution declarations
 
 Assignment rules may also declare a fixed `execution` policy and a metadata-only
-`references` resolver. `execution(caller, target, tx?)` returns the current policy
-and bindings; `authorizeDispatch(caller, dispatch, tx?)` checks a proposed tool
-against them without building context. Policy hashes are pinned per version and
-state, including explicit absence. Registration generations fence unload/reload
-and restart. These internal checks do not create session credentials or restrict
-ordinary keys. See [the contract and next integration boundary](../../docs/WORKFLOW_EXECUTION.md).
+`references` resolver. A lease offer returns both, resolved for its worker, and an
+assignment shows the policy with its hash and registration generation; tool calls are
+admitted against the offered execution only (see below). Policy hashes are pinned per
+version and state, including explicit absence. Registration generations fence
+unload/reload and restart. None of this creates session credentials or restricts
+ordinary keys. See [the contract](../../docs/WORKFLOW_EXECUTION.md).
 
 ## Leased execution
 

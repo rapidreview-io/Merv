@@ -66,26 +66,26 @@ ordinary deliveries retain actor attribution. See [bounded context](SESSION_LEAS
 
 ## Internal checks
 
-`Workflows.execution(caller, { instanceId, expectedRevision }, tx?)` returns the
-fixed declaration, its hash, the current registration ID, resolved references
-and assignment attribution. It rechecks Scope, revision and assignment
-admission. It does not build context or fetch document bytes.
+`Workflows.offerLease` returns the execution a lease grants: the fixed
+declaration, its hash, the current registration ID, the references resolved for
+the worker at the offer and the assignment attribution. Sessions freezes it with
+the session. `Workflows.checkLease(worker, lease, tx?, frozen)` rechecks Scope,
+revision, the declaration's hash and assignment admission, and returns the frozen
+references, extended only in declared arrays by the lease's own outputs. It does
+not build context, resolve references again or fetch document bytes.
 
 Metadata-only behavior is a contract of trusted program code, verified for Tasks.
 Cordis plugins execute in the same process; this is not a sandbox preventing a
 misbehaving plugin from accessing another service or its captured transaction.
 
-`Workflows.authorizeDispatch(caller, { instanceId, expectedRevision, policyHash,
-registrationId, tool, input }, tx?)` repeats those checks and applies the argument
-constraints. Its result is validated input for the proposed tool. It does not
-invoke that tool, start work, reserve ownership, or authenticate the supplied
-caller. The service consumes a trusted, already authenticated caller just as
-the existing domain services do.
+Sessions compares the generation `checkLease` returns with the invocation's, then
+applies the argument constraints with `admitDispatch` from Contracts. Its result
+is validated input for the proposed tool. It does not invoke that tool, start
+work, reserve ownership, or authenticate the caller.
 
 Passing the current transaction lets the session guard validate metadata
 in the same transaction as a native write. Approval outside that transaction
-does not confer a right to commit later. Each check resolves current facts;
-the returned metadata is not a transferable or durable capability.
+does not confer a right to commit later.
 
 ## Persistence and Cordis lifecycle
 
@@ -101,7 +101,8 @@ for versioning changes to those semantics.
 
 The installed registration also has a fresh opaque generation ID. Withdrawal
 refuses new checks immediately. Reinstalling an identical policy preserves its
-durable hash but creates a different generation; an old check request fails.
+durable hash but creates a different generation; an invocation admitted under the
+old one fails.
 Application restart also creates a new generation. An absent declaration, an
 installed empty allowlist and an unavailable program have distinct meanings.
 

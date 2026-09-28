@@ -641,34 +641,8 @@ async function engineFixture(t: TestContext) {
   const handle = await workflows.register(definition, policy);
   const instance = await handle.start(caller, { workflow: definition.name, requestId: 'start' });
   const target = { instanceId: instance.id, expectedRevision: instance.revision };
-  // The execution is read for the target as it was called with, whatever the caller changes
-  // while the read is still running.
-  const requestedTarget = { ...target };
-  const pendingExecution = workflows.execution(caller, requestedTarget);
-  requestedTarget.expectedRevision = 99;
-  const execution = await pendingExecution;
-  return { state, scope, workflows, caller, instance, target, execution, controls };
+  return { state, scope, workflows, caller, instance, target, controls };
 }
-
-test('dispatch authorization acts on a snapshot of its request', async (t) => {
-  const f = await engineFixture(t);
-  const request = {
-    ...f.target,
-    registrationId: f.execution.registrationId,
-    policyHash: f.execution.policyHash,
-    tool: 'artifact.read',
-    input: { artifactId: 'own-artifact' },
-    read: false,
-  };
-  const dispatching = f.workflows.authorizeDispatch(f.caller, request);
-  request.tool = 'undeclared.write';
-  request.read = true;
-  request.input.artifactId = 'changed';
-  assert.deepEqual(await dispatching, {
-    tool: 'artifact.read',
-    input: { artifactId: 'own-artifact' },
-  });
-});
 
 test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   const f = await engineFixture(t);
