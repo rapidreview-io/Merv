@@ -41,3 +41,30 @@ test('Files enables large uploads when project storage is configured', async (t)
   await settle(5);
   assert.equal(document.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled, false);
 });
+
+test('Files refuses a file over 512 MiB before hashing or calling Main', async (t) => {
+  t.after(unmount);
+  const fetches: unknown[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    fetches.push(input);
+    return assert.fail('unused');
+  };
+  t.after(() => {
+    globalThis.fetch = real;
+  });
+  await mount(createElement(UploadForm, { available: true, close() {} }));
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const file = new File(['huge'], 'huge.bin');
+  Object.defineProperty(file, 'size', { value: 512 * 1024 * 1024 + 1 });
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  await act(async () => input.dispatchEvent(new window.Event('change', { bubbles: true })));
+  await settle(5);
+  await act(async () =>
+    document.querySelector('form')!.dispatchEvent(new window.Event('submit', { bubbles: true })),
+  );
+  await settle(5);
+  assert.match(text(), /Files up to 512 MiB can be uploaded/);
+  assert.doesNotMatch(text(), /Hashing/);
+  assert.deepEqual(fetches, []);
+});

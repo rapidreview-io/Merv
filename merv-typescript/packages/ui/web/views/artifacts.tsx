@@ -41,6 +41,8 @@ export const bytes = (n: number) =>
 
 /** artifact.create keeps a file of one byte to this many, and nothing outside that. */
 export const MAX_FILE = 2_000_000;
+/** MAX_OBJECT_BYTES in @merv/contracts: begin refuses a larger file, so it is not hashed first. */
+const MAX_UPLOAD = 512 * 1024 * 1024;
 /** What the end of a name says of a file the browser could not type. */
 const ENDING_TYPES: [RegExp, string][] = [
   [/\.(md|markdown|mdx)$/i, 'text/markdown'],
@@ -133,6 +135,7 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
         await call('artifact.create', await fileInput(file));
       } else {
         if (!available) throw new Error('Large-file storage is unavailable for this project');
+        if (file.size > MAX_UPLOAD) throw new Error('Files up to 512 MiB can be uploaded');
         let plan: UploadPlan;
         if (pending.current?.file === file) {
           plan = await call<UploadPlan>('artifact.upload_resume', {
