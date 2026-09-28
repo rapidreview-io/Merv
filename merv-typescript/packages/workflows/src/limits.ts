@@ -1,5 +1,4 @@
-import { check } from '@merv/contracts';
-import { ENGINE_ACTIONS, identifier } from './definition.js';
+import { ENGINE_ACTIONS, identifier, valid } from './definition.js';
 import type {
   Sql,
   WorkflowDefinition,
@@ -16,34 +15,30 @@ export function validateLimits(
   definition: WorkflowDefinition,
   limits: WorkflowLoopLimit[],
 ): WorkflowLoopLimit[] {
-  check(Array.isArray(limits), 'invalid_workflow_policy', 'Limits must be an array');
+  valid(Array.isArray(limits), 'Limits must be an array');
   const names = new Set<string>();
   const capped = new Set<string>();
   return limits.map((limit) => {
-    check(
+    valid(
       limit &&
         typeof limit.name === 'string' &&
         identifier.test(limit.name) &&
         !names.has(limit.name),
-      'invalid_workflow_policy',
       'Limit names must be unique identifiers',
     );
     names.add(limit.name);
-    check(
+    valid(
       definition.states.includes(limit.from) && !definition.terminal.includes(limit.from),
-      'invalid_workflow_policy',
       `Limit ${limit.name} must leave a declared nonterminal state`,
     );
-    check(
+    valid(
       Number.isSafeInteger(limit.max) && limit.max >= 1 && limit.max <= 1000,
-      'invalid_workflow_policy',
       `Limit ${limit.name} must allow between 1 and 1000 traversals`,
     );
-    check(
+    valid(
       Array.isArray(limit.actions) &&
         limit.actions.length > 0 &&
         new Set(limit.actions).size === limit.actions.length,
-      'invalid_workflow_policy',
       `Limit ${limit.name} must name distinct actions`,
     );
     for (const action of limit.actions) {
@@ -52,13 +47,12 @@ export function validateLimits(
       );
       // A limit is counted in wf_history by state and action, so one over an engine action
       // would count the engine's own bookkeeping.
-      check(
+      valid(
         edge && edge.to !== limit.from && !ENGINE_ACTIONS.includes(action),
-        'invalid_workflow_policy',
         `Limit ${limit.name} may only cap an edge that leaves ${limit.from} for another state`,
       );
       const key = `${limit.from}:${action}`;
-      check(!capped.has(key), 'invalid_workflow_policy', `Multiple limits cap ${key}`);
+      valid(!capped.has(key), `Multiple limits cap ${key}`);
       capped.add(key);
     }
     return Object.freeze({

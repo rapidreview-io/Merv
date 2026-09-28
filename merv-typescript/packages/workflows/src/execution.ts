@@ -9,7 +9,7 @@ import type {
   WorkflowExecutionPolicy,
   WorkflowExecutionReferences,
 } from '@merv/contracts';
-import { toolName } from './definition.js';
+import { toolName, valid } from './definition.js';
 import { DATA_LIMITS, freezeData, workflowJson } from './json.js';
 
 const field = z
@@ -101,31 +101,22 @@ export function executionMetadata<T>(value: T): T {
 
 export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecutionPolicy {
   const parsed = policySchema.safeParse(json(value, 'invalid_workflow_policy', 400));
-  check(parsed.success, 'invalid_workflow_policy', 'Invalid fixed execution manifest');
+  valid(parsed.success, 'Invalid fixed execution manifest');
   const names = parsed.data.tools.map((tool) => tool.name);
-  check(
-    new Set(names).size === names.length,
-    'invalid_workflow_policy',
-    'Execution tool names must be unique',
-  );
+  valid(new Set(names).size === names.length, 'Execution tool names must be unique');
   const tools = parsed.data.tools
     .map((tool) => {
       const alternatives = tool.alternatives.map((value) => JSON.parse(canonical(value)));
       const keys = alternatives.map(canonical);
-      check(
-        new Set(keys).size === keys.length,
-        'invalid_workflow_policy',
-        'Execution alternatives must be distinct',
-      );
+      valid(new Set(keys).size === keys.length, 'Execution alternatives must be distinct');
       alternatives.sort((a, b) => compare(canonical(a), canonical(b)));
       return { name: tool.name, alternatives };
     })
     .sort((a, b) => compare(a.name, b.name));
-  check(
+  valid(
     !parsed.data.readOnly ||
       parsed.data.workspace?.mode !== 'persistent' ||
       !parsed.data.workspace.advancesCentral,
-    'invalid_workflow_policy',
     'Read-only execution cannot publish a central workspace advance',
   );
   return freezeData({

@@ -16,7 +16,8 @@ export const ENGINE_ACTIONS: readonly string[] = Object.freeze([
 /** Code-unit order: the stored definition, and so its fingerprint, never depends on the locale. */
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-const valid: (ok: unknown, message: string) => asserts ok = (ok, message) =>
+/** A program's graph or policy must hold `ok`, else it is refused as invalid. */
+export const valid: (ok: unknown, message: string) => asserts ok = (ok, message) =>
   check(ok, 'invalid_workflow_policy', message);
 
 export function validateDefinition(input: WorkflowDefinition): WorkflowDefinition {
