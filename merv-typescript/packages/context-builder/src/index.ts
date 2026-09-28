@@ -1,4 +1,4 @@
-import { clip, visible, recorded, mapAsync } from '@merv/contracts';
+import { clip, visible, recorded, mapAsync, sha256Hex } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -92,7 +92,7 @@ const buildSchema = z
       .strict(),
     inputs: z.record(
       z.union([
-        z.object({ text: z.string(), omitted: z.array(z.string()).optional() }).strict(),
+        z.object({ text: z.string() }).strict(),
         z.object({ rankedItems: z.array(rankedItem) }).strict(),
         z
           .object({
@@ -135,6 +135,28 @@ const minChars = (bytes: number) => Math.ceil(bytes / 3);
 /** A document shown by its metadata instead of its bytes. */
 const reference = (document: Artifact) =>
   `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
+/** A source as the package records it: exactly the artifact schema's fields, whatever `get` returned. */
+const source = ({
+  id,
+  projectId,
+  createdBy,
+  title,
+  mediaType,
+  hash,
+  size,
+  objectId,
+  createdAt,
+}: Artifact): Artifact => ({
+  id,
+  projectId,
+  createdBy,
+  title,
+  mediaType,
+  hash,
+  size,
+  ...(objectId === undefined ? {} : { objectId }),
+  createdAt,
+});
 
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
@@ -384,7 +406,6 @@ export class RecipeContextBuilder implements ContextBuilder {
         fallback: string | null = null;
       if ('text' in value) {
         content = value.text;
-        omitted.push(...(value.omitted ?? []));
       } else if ('artifactIds' in value) {
         check(
           new Set(value.artifactIds).size === value.artifactIds.length,
@@ -395,6 +416,8 @@ export class RecipeContextBuilder implements ContextBuilder {
           value.artifactIds,
           async (id) => await this.artifacts.get(caller, id, tx),
         );
+        // Every resolved artifact is a source, whether or not the budget keeps its section.
+        sources.push(...documents.map(source));
         const mode = value.mode ?? 'text';
         // A required text section embeds its bytes or fails; every other unit keeps its reference.
         const lenient = !section.required || mode !== 'text';
@@ -445,7 +468,6 @@ export class RecipeContextBuilder implements ContextBuilder {
       }
       sections.set(section.key, text);
       size += text.length;
-      sources.push(...documents);
     }
     check(
       size <= recipe.maxChars,
@@ -461,7 +483,8 @@ export class RecipeContextBuilder implements ContextBuilder {
       subject: input.subject,
       prompt: head + recipe.sections.map((s) => sections.get(s.key) ?? '').join('') + tail,
       sources: [...new Map(sources.map((a) => [a.id, a])).values()],
-      omitted,
+      // Optional section keys in recipe order; only the builder decides what was omitted.
+      omitted: recipe.sections.map((s) => s.key).filter((key) => omitted.includes(key)),
     };
     // Keep DTOs detached from caller inputs and providers that cache artifact metadata.
     return structuredClone({ ...body, hash: digest(body) });
@@ -499,16 +522,18 @@ export class RecipeContextBuilder implements ContextBuilder {
           'artifactId' in item.content
             ? await this.artifacts.get(caller, item.content.artifactId, tx)
             : null;
+        // A given hash is verified, so the prompt never prints an unchecked sha256.
+        const sha = artifact ? artifact.hash : sha256Hex((item.content as { text: string }).text);
         check(
-          !artifact || !item.hash || item.hash === artifact.hash,
+          !item.hash || item.hash === sha,
           'invalid_context',
-          'Ranked artifact hash does not match its retained source',
+          'Ranked item hash does not match its content',
         );
         const metadata = {
           id: item.id,
           title: item.title,
           ...(item.revision === undefined ? {} : { revision: item.revision }),
-          ...(item.hash || artifact ? { sha256: item.hash ?? artifact!.hash } : {}),
+          ...(item.hash || artifact ? { sha256: sha } : {}),
           ...(item.association ? { association: item.association } : {}),
           ...(artifact
             ? { artifactId: artifact.id, mediaType: artifact.mediaType, bytes: artifact.size }
@@ -520,8 +545,11 @@ export class RecipeContextBuilder implements ContextBuilder {
           sectionIndex,
           itemIndex,
           artifact,
+          sha,
           reference,
           full: null as string | null,
+          /** Not embedded because the same content was embedded under another item. */
+          duplicate: false,
         };
       },
     );
@@ -590,13 +618,15 @@ export class RecipeContextBuilder implements ContextBuilder {
         ? await readText(this.artifacts, caller, entry.artifact, true)
         : (entry.item.content as { text: string }).text;
       if (text === null) continue;
-      const duplicate = promotedTexts.get(entry.item.hash ?? '');
-      if (text.length >= 128 && duplicate === text) continue;
+      if (text.length >= 128 && entry.item.hash && promotedTexts.get(entry.sha) === text) {
+        entry.duplicate = true;
+        continue;
+      }
       const full = `\n### ${entry.item.id}: ${entry.item.title}\n${text}\n`;
       if (full.length > room) continue;
       entry.full = full;
       size += full.length;
-      if (entry.item.hash) promotedTexts.set(entry.item.hash, text);
+      if (entry.item.hash) promotedTexts.set(entry.sha, text);
     }
     const prompt =
       head +
@@ -630,11 +660,14 @@ export class RecipeContextBuilder implements ContextBuilder {
       sources: [
         ...new Map(
           entries.flatMap((entry) =>
-            entry.artifact ? [[entry.artifact.id, entry.artifact] as const] : [],
+            entry.artifact ? [[entry.artifact.id, source(entry.artifact)] as const] : [],
           ),
         ).values(),
       ],
-      omitted: entries.filter((entry) => !entry.full).map((entry) => entry.item.id),
+      // Items without a body, except those whose content is embedded under another item.
+      omitted: entries
+        .filter((entry) => !entry.full && !entry.duplicate)
+        .map((entry) => entry.item.id),
     };
     return structuredClone({ ...body, hash: digest(body) });
   }

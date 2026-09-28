@@ -32,7 +32,7 @@
       "text/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
@@ -57,7 +57,7 @@
       "auto/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "6b6f0830c198bdf90fbb852827b16a06e63e41dd285cff6a047339f948801d50",
@@ -147,7 +147,7 @@
       },
       "ranked/duplicate": {
         "prompt": "f9864844d06a820dbe5cdccce4b9feaf2267710cb890ef56bac4f93f06f5a95e",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -855,7 +855,7 @@
       "text/over-optional": {
         "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "f5c41b1a3ff34368ab4f431996b9fa26bb906cee44c3150eb72adedb79a757f9",
@@ -880,7 +880,7 @@
       "auto/over-optional": {
         "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "f3c65a0bea0cfa89b6f2ae3b251fe2bb269b57a16437d0b63cd846177931b269",
@@ -972,7 +972,7 @@
       },
       "ranked/duplicate": {
         "prompt": "70cbd04d95672a967d35c53f86194a451c976c993b43570526436599bc1a14fe",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -1679,7 +1679,7 @@
       "text/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
@@ -1704,7 +1704,7 @@
       "auto/over-optional": {
         "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
         "omitted": ["feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "6b6f0830c198bdf90fbb852827b16a06e63e41dd285cff6a047339f948801d50",
@@ -1794,7 +1794,7 @@
       },
       "ranked/duplicate": {
         "prompt": "f9864844d06a820dbe5cdccce4b9feaf2267710cb890ef56bac4f93f06f5a95e",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -2502,7 +2502,7 @@
       "text/over-optional": {
         "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
         "omitted": ["approvedPlan", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "b5f68d07e2a127ba144eaf58e6607aeaed4114fab92cdb5b86c6d64f3a69d1f2",
@@ -2527,7 +2527,7 @@
       "auto/over-optional": {
         "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
         "omitted": ["approvedPlan", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "28908339e7aeb1e1f7ef33831087d10a15f9156ba7d762b226a884b766dd8a7d",
@@ -2617,7 +2617,7 @@
       },
       "ranked/duplicate": {
         "prompt": "b7d0d03576de592533cec0e8fe29ebab02afef7fa4f666e9ab48d59df8bd7c5f",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -3324,7 +3324,7 @@
       "text/over-optional": {
         "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
         "omitted": ["approvedPlan", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "4b8e1de953bce1965c6b382a673663d03d563e9235d323fbda4a53c2f002691a",
@@ -3349,7 +3349,7 @@
       "auto/over-optional": {
         "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
         "omitted": ["approvedPlan", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "75bc42a17826936c82f78d62a2282dc10d707e3c88d97177a8e1d5d24738339e",
@@ -3439,7 +3439,7 @@
       },
       "ranked/duplicate": {
         "prompt": "b88a9ff1e0f933f353174cff42ec943b11c6b29748e551d6ffc73cf68ee63c2f",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -4146,7 +4146,7 @@
       "text/over-optional": {
         "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "9753c9e7dab2b8d7729172bcbbc5283b5f7b24bd31550b14d865f1209243594b",
@@ -4171,7 +4171,7 @@
       "auto/over-optional": {
         "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "9b216e074d956a55321300416038dd41dfe107f82eb591cc2f8d92e75d64ac58",
@@ -4261,7 +4261,7 @@
       },
       "ranked/duplicate": {
         "prompt": "0c517a1e59567fb877114ea78b3f50d21ac7e6bf0a5f6dab0e26704fc0a30832",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -4969,7 +4969,7 @@
       "text/over-optional": {
         "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "8f017608cddde2be4a762c33501dcf38c38061157ba7537abd7bf26954a7598f",
@@ -4994,7 +4994,7 @@
       "auto/over-optional": {
         "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
         "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "a1e8b030fe0fceebe904b7eac6fcd95ac3ccf6b7b0e8c83cd3e82a800eb65527",
@@ -5084,7 +5084,7 @@
       },
       "ranked/duplicate": {
         "prompt": "f899116cc358d2898618c0dad210cbdfcafdca07f1ee65683198187cc78004ae",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -5793,7 +5793,7 @@
       "text/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
@@ -5818,7 +5818,7 @@
       "auto/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "2d35441786b06b4daf5c8888a18efda03372e3cba8df832820fdd14ea2a1f007",
@@ -5908,7 +5908,7 @@
       },
       "ranked/duplicate": {
         "prompt": "6f1a33feb7b1fd7c9b1f80108699c38586057947d73682aa9571b39510ee0347",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -6614,7 +6614,7 @@
       "text/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "auto/utf8": {
         "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
@@ -6639,7 +6639,7 @@
       "auto/over-optional": {
         "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
         "omitted": ["assessment", "evidence", "feedback"],
-        "sources": []
+        "sources": ["artifact_golden_over_160000"]
       },
       "references/utf8": {
         "prompt": "2d35441786b06b4daf5c8888a18efda03372e3cba8df832820fdd14ea2a1f007",
@@ -6729,7 +6729,7 @@
       },
       "ranked/duplicate": {
         "prompt": "6f1a33feb7b1fd7c9b1f80108699c38586057947d73682aa9571b39510ee0347",
-        "omitted": ["experiment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -7435,7 +7435,7 @@
       "text/over-optional": {
         "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
         "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "auto/utf8": {
         "prompt": "6364581128f8de40eb7988a14ea47c4a684555bff5aeadaf326a56e7a1d5a55a",
@@ -7460,7 +7460,7 @@
       "auto/over-optional": {
         "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
         "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "references/utf8": {
         "prompt": "4f6f5fe32524c9ea7fd189139a1069ae5c1183f9d6b599ed84c37faaabdc0b52",
@@ -7556,7 +7556,7 @@
       },
       "ranked/duplicate": {
         "prompt": "9b683bc04f5f6d2fb3b05ccad05cd23c606819fddc6e577798025cde52f83616",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -8025,7 +8025,7 @@
           "history",
           "previousCycle"
         ],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "0cd42935c110be247bcd636130a24fbcc5df316562e8f4a990d34fa49625b0d1",
@@ -8058,7 +8058,7 @@
           "history",
           "previousCycle"
         ],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "3624162e7fc48ff65da0622fd4ac35611e83fea564be9ead0a1192ee646710e6",
@@ -8156,7 +8156,7 @@
       },
       "ranked/duplicate": {
         "prompt": "7c797eaf17052932754630b77d0801fefcf0f521fa2544fe7f537e19559f4d63",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -8356,7 +8356,7 @@
       "text/over-optional": {
         "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "auto/utf8": {
         "prompt": "c7c6bba5de71b9fbb4332e3ae98a2208d2892470cbd4c38f645f05e9af753233",
@@ -8381,7 +8381,7 @@
       "auto/over-optional": {
         "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "references/utf8": {
         "prompt": "e4f09817eb8bdc3316a935d6644ab8cb8ca63a2365c00f2f1794014d245ea19b",
@@ -8477,7 +8477,7 @@
       },
       "ranked/duplicate": {
         "prompt": "8991c249573b3e7d92161d6e025a34525dbd6a2fedcdf1d774914db85c05813f",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -8644,7 +8644,7 @@
       "text/over-optional": {
         "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "a306bad0813fd34354fb3aebf3b1303aa80241d745c7786132b8d56c6f689218",
@@ -8669,7 +8669,7 @@
       "auto/over-optional": {
         "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
         "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "09f184ac31472aae1bc34b7d9bf8b1d0f26bfd636842c6416119935eeaedc85c",
@@ -8767,7 +8767,7 @@
       },
       "ranked/duplicate": {
         "prompt": "be04eaa2c867d1a2ba8e3185b379ad0a3674883583b3f0850ecc96a6ef12bc5f",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -8968,7 +8968,7 @@
       "text/over-optional": {
         "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "6c891f34941f8fc65803ce78cbc8ab0ff4cb609afb3e21bf655695a1aa403cb9",
@@ -8993,7 +8993,7 @@
       "auto/over-optional": {
         "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "daafe49deb4077dcc0de32fcaeb38d6cefb842030ca6c017dafb502b01af6300",
@@ -9089,7 +9089,7 @@
       },
       "ranked/duplicate": {
         "prompt": "2592e7800202f3fd4624c8ec72be681c3c3b3b116f0e9f8352723085ea3d7b4f",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -9288,7 +9288,7 @@
       "text/over-optional": {
         "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
         "omitted": ["research", "feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "1e5ec7279a2cc53565b00124d135b2f1cbe7cc955ececb8ba7e1549c84a6495f",
@@ -9313,7 +9313,7 @@
       "auto/over-optional": {
         "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
         "omitted": ["research", "feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "27a9b517d0941671c68e56269738544271225462dddf210c29ecb80c5539efb4",
@@ -9409,7 +9409,7 @@
       },
       "ranked/duplicate": {
         "prompt": "72e7a1a8baec4ede9bdc0a6f312f47d4520e3c55b29feac0d9f19d1bde39a2b7",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -9607,7 +9607,7 @@
       "text/over-optional": {
         "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "auto/utf8": {
         "prompt": "978edc19a64ad02dd7c886bf3d023786b767cab38299c97bfeae758029ae6a09",
@@ -9632,7 +9632,7 @@
       "auto/over-optional": {
         "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "references/utf8": {
         "prompt": "287e713ba5a48e4b37a41ccf3032013c25a1ac160578e457ed47d1e6933df1e0",
@@ -9726,7 +9726,7 @@
       },
       "ranked/duplicate": {
         "prompt": "3bc15d93cf62988e6ddc4081bbacbd00e416d5a091f087988ae8bc286d20ef54",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -9891,7 +9891,7 @@
       "text/over-optional": {
         "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "f8436a7e229a2c413653a7d1f0768343869f43af7dfaaa3ce16253ab00006818",
@@ -9916,7 +9916,7 @@
       "auto/over-optional": {
         "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
         "omitted": ["feedback", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "29c4185eb567f06ab89c16eb18087bbf6f4fa1ebed419fb51b1cfa3b947fd5c5",
@@ -10012,7 +10012,7 @@
       },
       "ranked/duplicate": {
         "prompt": "46f482b3b312edc7713ad88bccd63ffecf4290ce794403e246622226f716c772",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -10211,7 +10211,7 @@
       "text/over-optional": {
         "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "ffee4aefa0e7ed4811d66f8d048012a2c8abdc4020a3f7c3973a01ee5c399e9b",
@@ -10236,7 +10236,7 @@
       "auto/over-optional": {
         "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "dc6cefc5d24da77249ca5c254df352db16ad5350fe0fa27d08efd8416bbe718f",
@@ -10334,7 +10334,7 @@
       },
       "ranked/duplicate": {
         "prompt": "ceddf07796828fbfef820891fbc1c9b250abc0f9e771dcb7063400b8fd4fe54b",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -10532,7 +10532,7 @@
       "text/over-optional": {
         "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
         "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "4331f3cab0b0c275b8bf311388051740e532aa65818e4f6e33a60299fe942c59",
@@ -10557,7 +10557,7 @@
       "auto/over-optional": {
         "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
         "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "7b4601a9e18380c6aaf990cf99c0839250043c0eabd6e779c63865121f9090ba",
@@ -10655,7 +10655,7 @@
       },
       "ranked/duplicate": {
         "prompt": "275639f988cbbe30e91a3ca127dbc6fcd8cee3fcd846c0dfb66ed092424baf54",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -10855,7 +10855,7 @@
       "text/over-optional": {
         "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "auto/utf8": {
         "prompt": "c3e17bc64a27f73a3b8fe706eb3610e18bcea363837e1c463f7315e81f86aa16",
@@ -10880,7 +10880,7 @@
       "auto/over-optional": {
         "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_24000"]
       },
       "references/utf8": {
         "prompt": "34ad0f37e5eaaf3a9907269c077c17d176ba88e438c055021cf1bb8e44c18d80",
@@ -10976,7 +10976,7 @@
       },
       "ranked/duplicate": {
         "prompt": "f8ddab6b6d8ded3fc0a08bfc15d17cedf76443e6c25b17543dde7a3f9691bfa0",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -11143,7 +11143,7 @@
       "text/over-optional": {
         "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "auto/utf8": {
         "prompt": "19dac8a077f9b9d343d1371e8a69c932f489a56662617c958ef5eb553c153fb5",
@@ -11168,7 +11168,7 @@
       "auto/over-optional": {
         "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
         "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
-        "sources": []
+        "sources": ["artifact_golden_over_32000"]
       },
       "references/utf8": {
         "prompt": "b9882d922d7125e7a0726169e39ed35220f99b606548d60d193a2d164cda77f8",
@@ -11266,7 +11266,7 @@
       },
       "ranked/duplicate": {
         "prompt": "6d8122138a072085349fd1ef05563511b8906a930aea22269ab95da119a25e0f",
-        "omitted": ["assignment:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -11464,7 +11464,7 @@
       "text/over-optional": {
         "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "auto/utf8": {
         "prompt": "1868b2e05ba33d698d53f4aa3b5687f037316ddef17b3fcaad4c357c0860e3be",
@@ -11489,7 +11489,7 @@
       "auto/over-optional": {
         "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "references/utf8": {
         "prompt": "7113e43ea643348a26ab8a992bcb020b8c678ec5b24933a24caece504179b8f8",
@@ -11583,7 +11583,7 @@
       },
       "ranked/duplicate": {
         "prompt": "2db454def69550e92ceec8408989e187ecd63c2527e4fc8b4430f211d1b10c59",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -12036,7 +12036,7 @@
       "text/over-optional": {
         "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_128000"]
       },
       "auto/utf8": {
         "prompt": "3f0055cece2c8c01710c4e20e747288ec6824215bfa74b04ff1d55d64e0232d6",
@@ -12061,7 +12061,7 @@
       "auto/over-optional": {
         "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
         "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_128000"]
       },
       "references/utf8": {
         "prompt": "aa971bbc77946a6617ddfe9e26a4e5b19330458846d293d369b76a5ad42a6de3",
@@ -12157,7 +12157,7 @@
       },
       "ranked/duplicate": {
         "prompt": "c553518b622c487e5f4ad5fba769dc1097602d9068c3ee4b89b9d62247787dcd",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -12738,7 +12738,7 @@
       "text/over-optional": {
         "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_48000"]
       },
       "auto/utf8": {
         "prompt": "196adeb18a488a894290a1f581cc224988e42834ca06358ae62de35ab2148604",
@@ -12763,7 +12763,7 @@
       "auto/over-optional": {
         "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_48000"]
       },
       "references/utf8": {
         "prompt": "7c016e06584f83ad7033e97c931427edc8e11c179d821ef9ab9ae23eb89bfe16",
@@ -12853,7 +12853,7 @@
       },
       "ranked/duplicate": {
         "prompt": "32249a277a5bea00248a0a99b532fb4829d8295c74c267f29a7bde3ad029e228",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -13112,7 +13112,7 @@
       "text/over-optional": {
         "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_48000"]
       },
       "auto/utf8": {
         "prompt": "f2b829b35a872516c7b90a47844bdd51b82e48909693e9a20b3d42bb831c43c1",
@@ -13137,7 +13137,7 @@
       "auto/over-optional": {
         "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_48000"]
       },
       "references/utf8": {
         "prompt": "c07b67f16ca004d7a4e0dd7196a138102904fa08f42776430b79ce678fc9f797",
@@ -13227,7 +13227,7 @@
       },
       "ranked/duplicate": {
         "prompt": "7d46ef3690c2d4aa1a709d4148a94ee50b10d25d4fef415d54c57d333adad0ca",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {
@@ -13487,7 +13487,7 @@
       "text/over-optional": {
         "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "auto/utf8": {
         "prompt": "662914745101a897e3fdf8b3794c04e8908e8595f1b026148941e2147db43e86",
@@ -13512,7 +13512,7 @@
       "auto/over-optional": {
         "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
         "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
-        "sources": []
+        "sources": ["artifact_golden_over_96000"]
       },
       "references/utf8": {
         "prompt": "97be4fc9617729c2bdda1e9e48ccea28e2bc472c9757191b4eb7dd2f4b3508a0",
@@ -13604,7 +13604,7 @@
       },
       "ranked/duplicate": {
         "prompt": "aacaa00ad968a570c217b05951857dd5f7cf39269a3b80bb57505c659ff56a21",
-        "omitted": ["task:copy"],
+        "omitted": [],
         "sources": []
       },
       "ranked/not-fit": {

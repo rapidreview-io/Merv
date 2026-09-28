@@ -1621,10 +1621,6 @@ export class TaskService implements Tasks {
               ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +
                 JSON.stringify(earlier)
               : ''),
-          omitted: Array.from(
-            { length: earlier.omittedRounds },
-            (_, index) => `feedback:round:${index + 1}`,
-          ),
         };
       }
     }

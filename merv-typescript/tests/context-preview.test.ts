@@ -220,9 +220,10 @@ test('preview shares text, auto and references rendering, deduplicated manifests
   assert.match(auto.prompt, /"answer":42/);
   assert.ok(auto.prompt.includes(binary.hash));
   assert.match(auto.prompt, /Bytes are not included/);
+  // The omitted background's artifact is still a source: the build resolved it.
   assert.deepEqual(
     auto.sources.map((item) => item.id),
-    [text.id, json.id, binary.id],
+    [text.id, json.id, binary.id, large.id],
   );
   assert.deepEqual(auto.omitted, ['background']);
   assert.deepEqual(reads, [text.id, json.id, text.id]);

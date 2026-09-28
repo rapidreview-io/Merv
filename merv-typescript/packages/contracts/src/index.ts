@@ -1812,7 +1812,7 @@ export interface RankedContextItem {
   refs: { tool: string; input: Record<string, string | number | boolean | null> }[];
 }
 export type ContextInput =
-  | { text: string; omitted?: string[] }
+  | { text: string }
   | {
       artifactIds: string[];
       /** Text embeds every UTF-8 document; auto embeds textual media types; references never embeds

@@ -11,7 +11,7 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from './fixtures/app.js';
-import type { TaskTypeDefinition } from '@merv/contracts';
+import type { ContextInput, TaskTypeDefinition } from '@merv/contracts';
 import { openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -58,24 +58,27 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
     assert.equal(context.sources[0].hash, artifact.hash);
     assert.ok(context.prompt.length <= 1200);
     assert.deepEqual(await registration.build(caller, input), context);
-    const carried = await registration.build(caller, {
+    // Only the builder decides what was omitted: a caller cannot add entries.
+    await assert.rejects(
+      registration.build(caller, {
+        ...input,
+        requestId: 'carried-omissions',
+        inputs: {
+          ...input.inputs,
+          background: {
+            text: 'Latest review feedback.',
+            omitted: ['background:round:1'],
+          } as ContextInput,
+        },
+      }),
+      { code: 'invalid_context' },
+    );
+    const fitting = await registration.build(caller, {
       ...input,
-      requestId: 'carried-omissions',
-      inputs: {
-        ...input.inputs,
-        background: { text: 'Latest review feedback.', omitted: ['background:round:1'] },
-      },
+      requestId: 'fitting-background',
+      inputs: { ...input.inputs, background: { text: 'Latest review feedback.' } },
     });
-    assert.deepEqual(carried.omitted, ['background:round:1']);
-    const overflow = await registration.build(caller, {
-      ...input,
-      requestId: 'carried-overflow',
-      inputs: {
-        ...input.inputs,
-        background: { text: 'x'.repeat(1100), omitted: ['background:round:1'] },
-      },
-    });
-    assert.deepEqual(overflow.omitted, ['background:round:1', 'background']);
+    assert.deepEqual(fitting.omitted, []);
 
     await assert.rejects(
       async () =>
@@ -143,7 +146,7 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
         async (sql) =>
           (await sql.get<{ n: number }>('SELECT COUNT(*) AS n FROM context_packages'))!.n,
       ),
-      4,
+      3,
     );
   } finally {
     builder.close();
