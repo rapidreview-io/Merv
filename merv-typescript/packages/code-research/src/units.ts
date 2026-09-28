@@ -1054,15 +1054,9 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       .map((edge) => edge.id)
       .sort();
     if (JSON.stringify(attached) !== JSON.stringify(prerequisites))
-      await this.workflows.systemPrerequisites(PROVIDER).replace(
-        {
-          projectId,
-          instanceId: unitId,
-          dependencies: prerequisites,
-          requestId: `base:${unitId}:${relations.instance.revision}:${digest(prerequisites)}`,
-        },
-        tx,
-      );
+      await this.workflows
+        .systemPrerequisites(PROVIDER)
+        .replace({ projectId, instanceId: unitId, dependencies: prerequisites }, tx);
     await this.setBlockers(
       tx,
       projectId,

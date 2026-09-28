@@ -1384,52 +1384,31 @@ export class WorkflowsService implements Workflows {
         input = structuredClone(input);
         this.assertOpen();
         this.state.assertTransaction(tx);
-        check(
-          typeof input.requestId === 'string' && input.requestId.trim().length > 0,
-          'invalid_request',
-          'A requestId is required',
-        );
-        const fingerprint = canonical({
-          instanceId: input.instanceId,
-          dependencies: [...new Set(input.dependencies)].sort(),
-        });
-        const previous = await tx.get<{ fingerprint: string }>(
-          'SELECT fingerprint FROM wf_system_requests WHERE project_id=? AND provider=? AND request_id=?',
-          input.projectId,
-          provider,
-          input.requestId,
-        );
-        check(
-          !previous || previous.fingerprint === fingerprint,
-          'idempotency_conflict',
-          'System prerequisite request changed',
-          409,
-        );
-        if (previous) return;
+        const wanted = normalizeDependencies(input.dependencies);
         const source = await this.readSnapshot(tx, input.projectId, input.instanceId);
-        const old = await tx.all<{ target_id: string }>(
-          "SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='system' AND owner=?",
-          input.projectId,
-          input.instanceId,
+        const have = (
+          await tx.all<{ target_id: string }>(
+            "SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='system' AND owner=?",
+            input.projectId,
+            input.instanceId,
+            provider,
+          )
+        ).map((row) => row.target_id);
+        await attachDependencies(
+          tx,
+          source,
+          wanted.filter((id) => !have.includes(id)),
           provider,
         );
-        await attachDependencies(tx, source, input.dependencies, provider);
-        for (const edge of old)
-          if (!input.dependencies.includes(edge.target_id))
-            await tx.run(
-              "DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind='system' AND owner=?",
-              input.projectId,
-              input.instanceId,
-              edge.target_id,
-              provider,
-            );
-        await tx.run(
-          'INSERT INTO wf_system_requests(project_id,provider,request_id,fingerprint) VALUES (?,?,?,?)',
-          input.projectId,
-          provider,
-          input.requestId,
-          fingerprint,
-        );
+        const gone = have.filter((id) => !wanted.includes(id));
+        if (gone.length)
+          await tx.run(
+            `DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='system' AND owner=? AND target_id IN (${gone.map(() => '?').join(',')})`,
+            input.projectId,
+            input.instanceId,
+            provider,
+            ...gone,
+          );
       },
     };
   }

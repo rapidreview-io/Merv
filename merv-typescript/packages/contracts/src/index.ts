@@ -385,10 +385,10 @@ export interface Receipt<T> {
  * table keeps the recipe its stored receipts were written with.
  *
  * Receipts deliberately kept elsewhere: wf_requests has no actor (workflow requests are shared
- * by a project) and wf_system_requests belongs to a provider; a Sessions grant is its own
- * receipt, so the secret digest commits with it; createProject keys on the user, since no actor
- * exists yet; ContextBuilder replays before it rebuilds live inputs. Derived requests that one
- * command makes of another name themselves with childRequest().
+ * by a project); a Sessions grant is its own receipt, so the secret digest commits with it;
+ * createProject keys on the user, since no actor exists yet; ContextBuilder replays before it
+ * rebuilds live inputs. Derived requests that one command makes of another name themselves
+ * with childRequest().
  */
 export async function receipted<T>(
   tx: Transaction,
@@ -1548,10 +1548,14 @@ export interface Workflows {
     instanceId?: string,
     tx?: Transaction,
   ): Promise<WorkflowProvidedBlocker[]>;
-  /** Internal provider capability; never exposed through a tool or a lease. */
+  /**
+   * Internal provider capability; never exposed through a tool or a lease. `replace` makes the
+   * provider's edges from the instance exactly `dependencies`: replacing with the set already
+   * held changes nothing, so a repeat is safe without a request id.
+   */
   systemPrerequisites(provider: string): {
     replace(
-      input: { projectId: string; instanceId: string; requestId: string; dependencies: string[] },
+      input: { projectId: string; instanceId: string; dependencies: string[] },
       tx: Transaction,
     ): Promise<void>;
   };

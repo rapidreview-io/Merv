@@ -152,7 +152,6 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
         projectId: f.admin.projectId,
         instanceId: c.id,
         dependencies: [b.id],
-        requestId: 'system',
       },
       tx,
     ),
