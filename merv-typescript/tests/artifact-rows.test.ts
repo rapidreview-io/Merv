@@ -320,7 +320,7 @@ function objectStore(bytes: Buffer) {
       async complete() {
         return { objectId: 'obj_rows', size: bytes.length, sha256, state: 'available' };
       },
-      async download() {
+      async download(): Promise<{ url: string; expiresAt: string }> {
         throw new Error('unused');
       },
       async read(): Promise<Buffer> {
