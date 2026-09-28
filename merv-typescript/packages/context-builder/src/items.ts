@@ -1,5 +1,5 @@
 /**
- * Format 2, the item renderer, for recipes that declare `format: 2`. Each item is one unit, listed
+ * The item renderer (recipe format 2). Each item is one unit, listed
  * by a line or embedded as a block, and a line depends only on metadata, so the layout is decided
  * before any bytes are read and the prompt is exact in UTF-16 units. It prints no tool names of its
  * own: an item's retrieval tools are the `refs` its caller gave.
@@ -20,7 +20,7 @@ import {
 export interface ResolvedArtifacts {
   /** An artifact the input names; throws what fetching it threw. */
   get(id: string): Artifact;
-  /** The document's text, or null when it has none (see readText). */
+  /** The document's text, or null when it has none (see resolve). */
   read(document: Artifact, lenient: boolean): Promise<string | null>;
 }
 
@@ -82,9 +82,9 @@ export async function renderItems(
     'invalid_context',
     'Unknown context input',
   );
-  const items = recipe.sections.map((section) => {
-    return Object.hasOwn(input.inputs, section.key) ? input.inputs[section.key].items : [];
-  });
+  const items = recipe.sections.map((section) =>
+    Object.hasOwn(input.inputs, section.key) ? input.inputs[section.key].items : [],
+  );
   recipe.sections.forEach((section, i) =>
     check(
       !section.required || items[i].length > 0,
@@ -260,20 +260,10 @@ export async function renderItems(
     recipeHash,
     subject: input.subject,
     prompt,
+    // Each artifact once, as exactly these fields, whatever `get` returned.
     sources: [
-      ...new Map(
-        units.flatMap(({ artifact: a }) =>
-          a
-            ? [
-                [
-                  a.id,
-                  { id: a.id, title: a.title, mediaType: a.mediaType, hash: a.hash, size: a.size },
-                ] as const,
-              ]
-            : [],
-        ),
-      ).values(),
-    ],
+      ...new Map(units.flatMap(({ artifact: a }) => (a ? [[a.id, a] as const] : []))).values(),
+    ].map(({ id, title, mediaType, hash, size }) => ({ id, title, mediaType, hash, size })),
     // Units the budget kept out, in declaration order; only the builder decides what was omitted.
     omitted: units.filter((u) => u.omitted).map((u) => u.item.id),
   };

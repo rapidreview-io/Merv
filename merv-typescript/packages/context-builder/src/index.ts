@@ -1,11 +1,13 @@
-import { clip, visible, recorded } from '@merv/contracts';
-import { createService } from '@merv/contracts';
-import { postgresMigrations } from './index.postgres.js';
-import { renderItems, type ResolvedArtifacts } from './items.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
+import { postgresMigrations } from './index.postgres.js';
+import { renderItems, type ResolvedArtifacts } from './items.js';
 import {
   check,
+  clip,
+  createService,
+  recorded,
+  visible,
   digest,
   inTransaction,
   MervError,
@@ -106,23 +108,6 @@ const saveSchema = z
 /** Permanent: these stored bytes will never read back. blob_not_found is not here (a restored blob or
  *  a fixed bucket or prefix brings it back), and neither is any transient code. */
 const PERMANENT = new Set(['artifact_size', 'artifact_hash_mismatch', 'blob_corrupt']);
-/** The document's text. null when it has none (its bytes are not UTF-8), or when `lenient` and its
- *  bytes are permanently unreadable. Everything else propagates, so a pinned prompt never records
- *  an outage. */
-async function readText(
-  artifacts: Artifacts,
-  caller: Caller,
-  document: Artifact,
-  lenient: boolean,
-): Promise<string | null> {
-  try {
-    const read = await artifacts.read(caller, document.id);
-    return read.encoding === 'utf8' ? read.content : null;
-  } catch (error) {
-    if (lenient && error instanceof MervError && PERMANENT.has(error.code)) return null;
-    throw error;
-  }
-}
 /**
  * Fetches each artifact the input names once, in `tx`, for a render that reads their bytes later.
  * A refusal (a 4xx error such as `not_found`) is kept and thrown where the render asks for that
@@ -158,7 +143,17 @@ async function resolve(
       if (artifact instanceof MervError) throw artifact;
       return artifact;
     },
-    read: async (document, lenient) => await readText(artifacts, caller, document, lenient),
+    // Null when the bytes are not UTF-8, or when `lenient` and they are permanently unreadable.
+    // Everything else propagates, so a pinned prompt never records an outage.
+    read: async (document, lenient) => {
+      try {
+        const read = await artifacts.read(caller, document.id);
+        return read.encoding === 'utf8' ? read.content : null;
+      } catch (error) {
+        if (lenient && error instanceof MervError && PERMANENT.has(error.code)) return null;
+        throw error;
+      }
+    },
   };
 }
 /**
@@ -197,20 +192,10 @@ export class RecipeContextBuilder implements ContextBuilder {
     private artifacts: Artifacts,
   ) {
     this.initialize = async () => {
-      await state.migrate('context_builder', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-      ]);
+      await state.migrate(
+        'context_builder',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
     };
   }
   /** Read-only work: in the caller's transaction, else the ambient one, else a read-only snapshot
