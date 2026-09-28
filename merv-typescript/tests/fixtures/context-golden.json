@@ -1,6 +1,8 @@
 {
   "note": "Golden pins for tests/context-golden.test.ts: per registered context recipe name@version and canonical case, the sha256 digest of the rendered prompt, the omitted units and the source artifact IDs, or the error code the case fails with. A name@version prompt is immutable in practice, so a change here that alters a prompt which renders today needs a new recipe version or the owner's sign-off, recorded in signoffs with its date and the plan step. Entries that only change a former error into a render are the class-B changes the plan names. The legacy and ranked cases retire with the frozen renderers.",
-  "signoffs": [],
+  "signoffs": [
+    "2026-09-28, plan step 3 (class S), approved by the owner: frozen renderers fold line breaks in artifact titles and ranked item titles and IDs to one space, so a caller string cannot start a structural line. Only the titles/line-breaks, ranked/line-breaks and ranked/id-line-breaks prompts change, in every recipe."
+  ],
   "recipes": {
     "experiment.attempt_review@10": {
       "text": {
@@ -115,7 +117,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "216180c481f55130cbd2cbb584d951085ae906400d303f7c3e06dd014b19769d",
+        "prompt": "ad98f5cb68e065d7638f9e336ad06b7810de791455e2755d20dff4647bf65591",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -815,12 +817,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
+        "prompt": "3bcf3cbe4cf510c3bf60f2b2d8c45e42b1a15ace501bb79594eda2079425033d",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "e7d0cf5be65f2376ea10e9a3171de91ec7946f65138621ceec2d06b896c07392",
+        "prompt": "38e78c921faa2a68cabafd09e0b3589c654248bfc477c3e267cd4119fc70780b",
         "omitted": [],
         "sources": []
       }
@@ -938,7 +940,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "59a956737fe3257cc789d5d431966bd39698f4ae85da6cf58f9947cee759f0f8",
+        "prompt": "75d34b52469dbe3b2d6edcedfc6e64578b6ffeb1568e6c3333436bff4b945e76",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -1639,12 +1641,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "504eb49b9904a5c2069ba555e3625226a9a168011a40e397ad466743ee27f494",
+        "prompt": "6131603707ff218656395286a4ae8310d6e747b6ef6f8845a8c87a220d560d79",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "044dc5a0d25d1df93c6a6f2c76fe8dec015df2a6045b01226a619c5a865fe830",
+        "prompt": "184f897c733811bc92a6ba93454fe5a1c4e81c5bebdec8e1e4662bf2661e879d",
         "omitted": [],
         "sources": []
       }
@@ -1762,7 +1764,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "216180c481f55130cbd2cbb584d951085ae906400d303f7c3e06dd014b19769d",
+        "prompt": "ad98f5cb68e065d7638f9e336ad06b7810de791455e2755d20dff4647bf65591",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -2462,12 +2464,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
+        "prompt": "3bcf3cbe4cf510c3bf60f2b2d8c45e42b1a15ace501bb79594eda2079425033d",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "e7d0cf5be65f2376ea10e9a3171de91ec7946f65138621ceec2d06b896c07392",
+        "prompt": "38e78c921faa2a68cabafd09e0b3589c654248bfc477c3e267cd4119fc70780b",
         "omitted": [],
         "sources": []
       }
@@ -2585,7 +2587,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "fc319e8f4b4e64a121a73500d448c30cc7e503446860a425057b84958acb7009",
+        "prompt": "36f2c1860b531a72a93846ec986917b42a36666e9570a7232a4dfd1a1021ea7e",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -3284,12 +3286,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "fed17ceb54223489e13714d78655faced09d6e12c257b38fe5406f81c86f59f0",
+        "prompt": "a48be461be1fa7122e4afb6901cfb20237dce3efdb5a94ba18c5deed2dc3c39e",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "aa4c7379284d1055f1620b088385724c429ca0c96eaa07dc6a89b4710cf83a7d",
+        "prompt": "f6164d21f27d3ad20a296b94e0d8c1ac3a9fecad7d1498ba272a05fdee1cf376",
         "omitted": [],
         "sources": []
       }
@@ -3407,7 +3409,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "097726232d28b957805fc357e27841c395a2ca808ac282bd4799bcfa149dcb14",
+        "prompt": "c8fe2f28a6f67456398da48b4b00ef8483d0ec532aab567a9ae315217aeab9b9",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -4106,12 +4108,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "c7ea7db795cf44039fff7a95f1805ab0e4f6b1d82099789d77eafe9547249387",
+        "prompt": "22a217c071794393a7247ad8304b06d3737b31c2876d4008a79c470033be627f",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "7b0a2859ace6531a478fe590fe087857c12b5608162c2bc681689ce3ee66a5f8",
+        "prompt": "13cf877ed505e7daffc95527fa8800a66f27c933c48f518d22a49275623767d7",
         "omitted": [],
         "sources": []
       }
@@ -4229,7 +4231,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "6b1c0fd2302afcaeed8a38cfe23905f1105b8a462be2f5059f6c37b00fd09c76",
+        "prompt": "7126cd869a5181b5322ad0fa16edba22e9b0f46c79335864a8a5609dd17ddcaa",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -4929,12 +4931,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "a8ac4b0b71e7bc8e9e09f0751bf5869d3c7dc33370e27860c6abfc315024394d",
+        "prompt": "a0a5ec3bce7f77ad786e28bd73f82347b9edc96c0633af36540df9c43e7e764d",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "521cbaa1495dcad044ee5c5af9c5a632dab7aa55d13675c07ddcb2903099825c",
+        "prompt": "5b2db74c0a60621ea14918faed473579f3e3d0de88d8aa06ea15a14ce33a83e1",
         "omitted": [],
         "sources": []
       }
@@ -5052,7 +5054,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "c5ffe8f66891538c107a0aa6c8009ddcf202e8a04c4358829c24917ee1785a5d",
+        "prompt": "a9a8145f1023860478cea1f7079deb87778b1cc06644ea3e6f284ef5a95c4ea2",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -5753,12 +5755,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "46a066bb9a661e8b85703d1badc0d551ef46b42440cfb39215172c71875bb920",
+        "prompt": "7815e3955dbe40bc5dc639e21b0931008a052bcaaf16cafbbdb2b11f7474e28b",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "42c799203ccd69796e20acea3ae1d2c46b8c460e27363265bb3d7228a969b6ad",
+        "prompt": "aeba363adffbcf225d2cf1bf82aab0fe1b48b3bf1da6c112c4209dce803d1cd8",
         "omitted": [],
         "sources": []
       }
@@ -5876,7 +5878,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "fd3235dfe7a8bc700552a9aa416dfcf64059b4078a92e577e8b7959b7d110c60",
+        "prompt": "ba37e1986fabba35ab6a33c5d87713ea872be0d02e12555766b2f8c32ff2006a",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -6574,12 +6576,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
+        "prompt": "ab94edc71901ba201d3f0849b60fd70ae38534013a3d4fbb3b58c4116a58798a",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "7e81cc5cf1f168651f42a2e8c500a511a78390bb8d60a4cf79730f53f5a855ac",
+        "prompt": "b42bf33f1288461be73738485f56ab3d5734f918bc3496325d85c1a8dcb4a63a",
         "omitted": [],
         "sources": []
       }
@@ -6697,7 +6699,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "fd3235dfe7a8bc700552a9aa416dfcf64059b4078a92e577e8b7959b7d110c60",
+        "prompt": "ba37e1986fabba35ab6a33c5d87713ea872be0d02e12555766b2f8c32ff2006a",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -7395,12 +7397,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
+        "prompt": "ab94edc71901ba201d3f0849b60fd70ae38534013a3d4fbb3b58c4116a58798a",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "7e81cc5cf1f168651f42a2e8c500a511a78390bb8d60a4cf79730f53f5a855ac",
+        "prompt": "b42bf33f1288461be73738485f56ab3d5734f918bc3496325d85c1a8dcb4a63a",
         "omitted": [],
         "sources": []
       }
@@ -7518,7 +7520,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "a82c9d3e8720562a224fda1dde4982a33e541b0945b7170ec8f4360885a02843",
+        "prompt": "f7be268846f6abc76962d425499831c215a361591b2eed10b3d80ed303e504c6",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -7969,12 +7971,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "ceaddbab9a998172f47d051563c4654318026cb3f83cf976ed3e44766ace3e5c",
+        "prompt": "4a072dcea5c8e76b164a546281e4ad8467ed1be4bdb88522423ab6bffe7602c0",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "123ed1594fe66a61fc42ce8d2885491def7532f84ad757c53a6bf51bac5dc73c",
+        "prompt": "3408d6a9f94b1b4126b1cef62c72d622507bbf070d2823b921ae248850476452",
         "omitted": [],
         "sources": []
       }
@@ -8116,7 +8118,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "7b6cdbabbf361c8b627b33b059e6c400fee49f612cb1eb6d3eb37f5baa8b7554",
+        "prompt": "8e527eac4a4a25e1e74de49d28b219714181bdf5c71a907dd2f6a5a4072033a2",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -8316,12 +8318,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "351df5c45a75e69e71675767f7ad20d5efd30f822be8d2022eb53773e410d25e",
+        "prompt": "842f976ca235525b742f31d49b60e4ed2541a3a21bf098b81812be99f1622deb",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "1d5b7d4e3baec6eb9d2e3c7d7ca01a0e586643325bf0425c13fecf199465b581",
+        "prompt": "390307b14bfa35f8ea057243b1de59242245a99ec6484bd7489cfad6dda78c56",
         "omitted": [],
         "sources": []
       }
@@ -8439,7 +8441,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "5b0834fe72738f8596150a7628eeea15eadc6f9d17874e9cef6821a18e3ae343",
+        "prompt": "b966842b29d431e2e69a6b136c6faf33189200338f7731f8e17257dd6399dcd1",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -8604,12 +8606,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "b58a9de3a87a5ec9d78a7d5d606331e2c3bd85098f07d61cce922b56edce297d",
+        "prompt": "894478ad298192f6c9ea071da9a28fdac211deff39c709fcf4206f6a3b8cf58b",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "68d733a8bdd40adf8d6961c749024ff55b1576f2b22063579ecf1f3a1f8afea4",
+        "prompt": "bb200857fc2593408c29d992c98393026502e307c5828ee44142a91c969d9ff4",
         "omitted": [],
         "sources": []
       }
@@ -8727,7 +8729,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "44cca9a0c026280497f38d4bd2259ebccfd17e0b70fb6d4d1cad43215ed7ef54",
+        "prompt": "4b56772cfca6021dedb9e15378cc41e06bb4b0c80bf938a6bc52cbef8b78d370",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -8928,12 +8930,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "3b7cc06339ba94d0ab357ce7c1101073c62a35c6a16e179b2c8cb809c9690ad8",
+        "prompt": "5cde30b327fb545795b554c9f67cb6d3421b42089b985e467d8c213cecb529a5",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "db85319d438d638dbc707082ae22321d8448b7f5c49312e52a60ca1ed2b0fea1",
+        "prompt": "0ff5eb77a743bfca1dc5d1f768ec6c54dbc5767cb8f1e0c7b74a8b6ee46fc8ba",
         "omitted": [],
         "sources": []
       }
@@ -9051,7 +9053,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "f1427f3a1bbea714a8446da68a9f08e2d4869afe67f262a0e74004f8c5c7d128",
+        "prompt": "5f60df4261c5d0b89cd94372521a09bb5cebe6ea3148925e1fc0607b9a81b440",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -9248,12 +9250,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "4bb0af578c66a667373261cec6c150994241e0f49c161b6628cc2397d3667dc3",
+        "prompt": "1c533db78e779eae633d6b0f1fb303c66622cbd541345c15e6bcf8889355654a",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "c55cb32fcde619d2d8568a4008444b61a8688f4cf86fb4f6c07ea9e5a6f9d87b",
+        "prompt": "30658f4407c34e7cbf7f3778e22ffd9ad2e05e782d3d28647324761243cf88ba",
         "omitted": [],
         "sources": []
       }
@@ -9371,7 +9373,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "f0a9a2673434ff118a372f60f8f85c29430a7f5afb4c17c45db96a56ae794b88",
+        "prompt": "18042a7026008b85f68db82360d5cf8a3417c044a04b5d23ce8119e2b4d22fc9",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -9567,12 +9569,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "3ffb7dfec40d295ad09089f2d89b4e3249c359742863346cfdd2785abccf874e",
+        "prompt": "8085dd3597557382d714564225b3c49cd43327b9a47e21ab004a30ac42445a86",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "c78a1579a34d3a9657592f9e813803117e0b22e8edbeca18fc194aa4cdca61e5",
+        "prompt": "12d8debc81123eb299afd11e171eb679062d645c1bcbaf7a0830162ffbcf978b",
         "omitted": [],
         "sources": []
       }
@@ -9690,7 +9692,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "e6dc63415f6a5afde03379547383ee4a5aff024e5f6e4b41baf1080f04c24bb5",
+        "prompt": "e295a623434a79c0703aac462286be00e9e15efc88aaf171cd4020c637eb7392",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -9851,12 +9853,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "302be0add224b0f7f3b450458e5e032de39ea98e6996ce3b256851e326607bd9",
+        "prompt": "e6c40c5b482332e51572e48a290341eabed33a44f3331cb4421cad86bfda69b4",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "12f03a1864b8846a6b3242410fd46534cdb2280b9e8cf63ff06c1c72806d8eea",
+        "prompt": "e9e530ac50221a83fb946b4f6ee1fe08383c7906e3a6a82067f0d880a16a6c1d",
         "omitted": [],
         "sources": []
       }
@@ -9974,7 +9976,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "e5bb140ca3e511bb32e9630a9fe64b0e1b713f18650e9075485d1e4afb0a1bc9",
+        "prompt": "65a97f6b90eb0f66402514bf813a7a05b0e35b6faa1f4c84319bcd7c82c4da55",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -10171,12 +10173,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "837c1af48a21de060cdc4e12364601d7a6d64babc541a0d1f319bb537269149b",
+        "prompt": "77aa3ee22a34ff2aa919c6f2a7b8c09b3ae3b0cc3edc98b0931da54d7aacdb5f",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "1124007a6baeb8ed51f238eb876d620551f2c36231d631c7bdbc2449e11a8c04",
+        "prompt": "616aace75adefb56c72c662d86cff85b78b1c4edbb6396965c89581b4ff34c43",
         "omitted": [],
         "sources": []
       }
@@ -10294,7 +10296,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "ffea09932a9c5d79254e9dcb32ff3881b7bf27d9a00c31091692c51ad30783fc",
+        "prompt": "a41b8ffb43682d927bd870b661a0c4cd4cc544266c59161f27d6ac1c997b0d7e",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -10492,12 +10494,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "7b986dc11cf1ab8977214c8b5c72c4af91536347d299bfff5451b413365eea6c",
+        "prompt": "a2d061e78f60578df597046c9b94b8d9c86375fb1b36c45ee8783ca4e3e33a7a",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "3062ec73f107eb83c6155c31522049092f705f1d0cb01ebf567bc56bf6e0e479",
+        "prompt": "4466e80132c157d4f1fdcf761604611ba6e0efb5f51437d34b2a4f96987c2713",
         "omitted": [],
         "sources": []
       }
@@ -10615,7 +10617,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "5e0941274e1f97bd1161d24c2da8b4ce3eb157f1cd2359ed28e565906d9689f1",
+        "prompt": "d9eb05aa42c057f5f9de0b8e8ccc0a6389ace3a100ab277fbee21c3ec2fdf657",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -10815,12 +10817,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "7dc9761609b636a72481d774befdfbeee31b4041a7b360c2b933cc83740c9121",
+        "prompt": "0ccfd98b88432e2e7f2f9747cf3eed6741a56eb6ec4ef92c6b984e0123a70a1f",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "dd1545222f4175beee55c02beff0e5a0df11e148ea851f545f6944af08db87ff",
+        "prompt": "25e6ceb1f60278c42f1be2a0071e859778fbe0b88c1d39ea1970304bba544db7",
         "omitted": [],
         "sources": []
       }
@@ -10938,7 +10940,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "3d939a45880b73ef9fc0981a6aabedd69e5497552d05d314f6ed3b65ecb027af",
+        "prompt": "dda4fedd838c577da9e9fc875563303f9c2ff51fceb5cbc460c093711e894dea",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -11103,12 +11105,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "05f7716a672949c784f65ba7c4910015f190fe8869d4e91a53aacd64210b5d9c",
+        "prompt": "4a7104f61ce0281c11132de6f48f2057c19398cafbd4bd2838f98c7d628621ef",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "21e20bae777c7413da35fee706339df8d102c970089f6fbfe958228807901fe8",
+        "prompt": "e75c305187d5fa70c22adac12309eaf9ecac3e281f731a2c98306e92d88111c8",
         "omitted": [],
         "sources": []
       }
@@ -11226,7 +11228,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "5b683784382c388635c0c6e63c33edb355007df033fbd678184bd2aea0f62f0a",
+        "prompt": "b6660eb0b82a212b24f9e3b2f8b4f4270ba56c7aae913886853d89b8393f58bd",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -11424,12 +11426,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "a69ab290122c32cb87b33d86841a589ba72c1cb136640e07572835119b4c25c7",
+        "prompt": "23a7b4d81aff796632119bc92fd0658f5e47795c66457e65bd16bd33ddd36954",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "da4d72d3d6f9d101d91e1d922d9a6004135445ea560c9334f9788d5562f5fdfe",
+        "prompt": "5b0fbdd54d9f1bb59ab6dded5a8f25e9e57ef15d099c55dd2fc6d3a63fbc40f5",
         "omitted": [],
         "sources": []
       }
@@ -11547,7 +11549,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "eef70a6739f20af5654ab62af8b025b11f83293095a526e364732b5d1c75498f",
+        "prompt": "4a07e45de8adabf27a66859bdfb4c84a87e530c4a242ac05728df5a0c73bdf73",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -11996,12 +11998,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "354d8c24c36bb612a9d57d54ee2de2d7d248c9fd3d20e271600b54de55bd89ff",
+        "prompt": "8868dfde073d96921223cc6c4ac79c73547d64b6979d8d1d8d164e63066f20ce",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "22400568a9b6ec819c50f3eeb149821e1daa59404c21aac0e7b02a1c14a169b2",
+        "prompt": "ca125f602927e81021f7f59e1e8ebf7a7c3db2e6cf9ba7fe593ecb13f1bf9863",
         "omitted": [],
         "sources": []
       }
@@ -12119,7 +12121,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "c98c7a0eff43d85a373d32da98e3092eaaa57fe85f43ea04e347e88770f41dff",
+        "prompt": "c21fa5efe66183a6e1995ca20c0954d9c7e3e303bb80aabab186f36faa986ea0",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -12698,12 +12700,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "c3ea0cacf65bdaf0e044cfe38b9a9425eaea7f88c5c0511feabfe5a16cf058a8",
+        "prompt": "568ab01f37202617e5dc3a7ccb807892319b3d92f18a33e12c2fbf23fe512cfe",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "960a708504b074cb589d93b794323e662ba4c9b885356bb32d117c39cbf6cb1b",
+        "prompt": "b08dddfbbeae7c762d1497195da88a2ba96d789cb8900492e1085f1c42c93ded",
         "omitted": [],
         "sources": []
       }
@@ -12821,7 +12823,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "52a4343209f81f38954fea7a344d3bfd770cef0bbbd2267c11c8285418c62aea",
+        "prompt": "b9695dee3cb2471f6558a5cec5eb20cfad69e1d5acb932020a5e2a327c7732e1",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -13072,12 +13074,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "c491af273e14829e246b6bb7b2d0f54f1709e5baa4db71efe5d5b3d5ab3a296e",
+        "prompt": "295f5b0af4c528056b72eaf76e01ebd08bb20b74118cc2a98f3c4c94f7a5ab02",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "f2d5711c5ab180d9cf73242ba18809ab1a6816e13aa43a2f376020b6fafa47a5",
+        "prompt": "299542c1067b85d1e2b0df288b04568c944d71554333e98e9923e684e0f8f853",
         "omitted": [],
         "sources": []
       }
@@ -13195,7 +13197,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "2348d57252e26bdc675a187fa6b82389095654de83a639a562f3d3bc37e1cb99",
+        "prompt": "b30965eb014adfa45e9e97a1a931165da2c230702366680b4644c7218e43d142",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -13447,12 +13449,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "050e05b76b053091baf9ced74941351bc7346eac782294b5118b0eadd2d9a4e2",
+        "prompt": "c8d108b854366990186388169c9168f753bc928da745a112e4b0123ef484bed0",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "9f28382d027cc5ae51b1ed8d37ec69a9170430772351b79557b123a3fd2c5a5c",
+        "prompt": "0cf2893c410608b44f1b1dd11d6ddfbc1918c41afe8da32f067ededd56b36fae",
         "omitted": [],
         "sources": []
       }
@@ -13570,7 +13572,7 @@
         "error": "blob_not_found"
       },
       "titles/line-breaks": {
-        "prompt": "2058b494a0cd899a0c19955797efd94843ea6fc2b2650c6e3f0c28f616f36f82",
+        "prompt": "8c069931959a7dec4d271e2cc2bc5ea996604994fceb08bdc84c62dd99f7712f",
         "omitted": [],
         "sources": ["artifact_golden_forged"]
       },
@@ -14015,12 +14017,12 @@
         "sources": []
       },
       "ranked/line-breaks": {
-        "prompt": "18ba20b51412577189fc375b8cbd3a5344c0cf449bcec76ec3e6d9f7a150a047",
+        "prompt": "ec9bef2bdded6f54ac9f487f68b98b8648710b57708e8cbbfc323901ca96b72a",
         "omitted": [],
         "sources": []
       },
       "ranked/id-line-breaks": {
-        "prompt": "c017e84f556e4d28b1db9447cfcdadb9c6e22c36f9cac4f7814356fb797933db",
+        "prompt": "c12bde9287e60e29d037d2a196bbec473618fc9059bbff7ce3b6f1d2de1ea823",
         "omitted": [],
         "sources": []
       }

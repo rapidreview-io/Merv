@@ -132,9 +132,11 @@ const textual = (mediaType: string) =>
   mediaType.startsWith('text/') || mediaType === 'application/json';
 /** The fewest UTF-16 units `bytes` of UTF-8 can decode to: a unit is at most 3 bytes. */
 const minChars = (bytes: number) => Math.ceil(bytes / 3);
+/** A caller string on one line, so it can never start a structural line such as a heading. */
+const line = (text: string) => text.replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ');
 /** A document shown by its metadata instead of its bytes. */
 const reference = (document: Artifact) =>
-  `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
+  `Artifact ${document.id} (${line(document.title)}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
 /** A source as the package records it: exactly the artifact schema's fields, whatever `get` returned. */
 const source = ({
   id,
@@ -446,7 +448,7 @@ export class RecipeContextBuilder implements ContextBuilder {
                     : null;
                   return body === null
                     ? reference(document)
-                    : `Artifact ${document.id} (${document.title}; sha256 ${document.hash})\n${body}`;
+                    : `Artifact ${document.id} (${line(document.title)}; sha256 ${document.hash})\n${body}`;
                 })
               ).join('\n\n');
       } else {
@@ -539,7 +541,7 @@ export class RecipeContextBuilder implements ContextBuilder {
             ? { artifactId: artifact.id, mediaType: artifact.mediaType, bytes: artifact.size }
             : {}),
         };
-        const reference = `\n### ${item.title}\nMetadata: ${JSON.stringify(metadata)}\nRetrieve: ${JSON.stringify(item.refs)}\n`;
+        const reference = `\n### ${line(item.title)}\nMetadata: ${JSON.stringify(metadata)}\nRetrieve: ${JSON.stringify(item.refs)}\n`;
         return {
           item,
           sectionIndex,
@@ -547,6 +549,7 @@ export class RecipeContextBuilder implements ContextBuilder {
           artifact,
           sha,
           reference,
+          heading: `\n### ${line(item.id)}: ${line(item.title)}\n`,
           full: null as string | null,
           /** Not embedded because the same content was embedded under another item. */
           duplicate: false,
@@ -607,11 +610,7 @@ export class RecipeContextBuilder implements ContextBuilder {
       const room = definition.recipe.maxChars - size;
       if (entry.artifact && !textual(entry.artifact.mediaType)) continue;
       // Do not read bytes whose shortest text cannot fit.
-      if (
-        entry.artifact &&
-        minChars(entry.artifact.size) + `\n### ${entry.item.id}: ${entry.item.title}\n\n`.length >
-          room
-      )
+      if (entry.artifact && minChars(entry.artifact.size) + entry.heading.length + 1 > room)
         continue;
       // Every ranked item keeps its reference, so any unit without readable text is skipped.
       const text = entry.artifact
@@ -622,7 +621,7 @@ export class RecipeContextBuilder implements ContextBuilder {
         entry.duplicate = true;
         continue;
       }
-      const full = `\n### ${entry.item.id}: ${entry.item.title}\n${text}\n`;
+      const full = `${entry.heading}${text}\n`;
       if (full.length > room) continue;
       entry.full = full;
       size += full.length;
