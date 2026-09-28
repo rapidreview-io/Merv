@@ -177,13 +177,19 @@ test('a render looks up each named artifact once and fails in the same order as 
     ),
   );
   // Lookups the builder makes itself; artifacts.read looks its document up again inside.
-  const lookups: string[] = [];
+  const lookups: string[][] = [],
+    singles: string[] = [];
   let reading = 0;
   const get = artifacts.get.bind(artifacts),
+    getMany = artifacts.getMany.bind(artifacts),
     read = artifacts.read.bind(artifacts);
   artifacts.get = async (caller, id, tx) => {
-    if (!reading) lookups.push(id);
+    if (!reading) singles.push(id);
     return await get(caller, id, tx);
+  };
+  artifacts.getMany = async (caller, ids, tx) => {
+    if (!reading) lookups.push([...ids]);
+    return await getMany(caller, ids, tx);
   };
   artifacts.read = async (caller, id, range) => {
     reading++;
@@ -203,7 +209,8 @@ test('a render looks up each named artifact once and fails in the same order as 
       notes: { items: [item('nb', b.id), item('nc', c.id)] },
     },
   });
-  assert.deepEqual(lookups, [a.id, b.id, c.id]);
+  assert.deepEqual(lookups, [[a.id, b.id, c.id]], 'one getMany for the whole render');
+  assert.deepEqual(singles, [], 'and no single lookups');
   assert.deepEqual(
     preview.sources.map((source) => source.id),
     [a.id, b.id, c.id],
@@ -300,4 +307,21 @@ test('a session worker previews inside a snapshot, where nothing may write', asy
     await state.snapshot(() => registration.replay(session, { subject, requestId: 'none' })),
     null,
   );
+});
+
+test('a caller revoked after its artifacts are looked up is refused when their bytes are read', async (t) => {
+  const { scope, artifacts, builder, operator } = await setup(t);
+  const actor = (await scope.issueActor(operator, { name: 'Reader', role: 'reader' })).actor;
+  const reader: Caller = { projectId: operator.projectId, actorId: actor.id };
+  const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });
+  const registration = await builder.register(definition);
+  const input = { subject, inputs: { evidence: { items: [item('proof', evidence.id)] } } };
+  assert.match((await registration.preview(reader, input)).prompt, /Result: 42\./);
+  // The lookup is one snapshot; the bytes are read after it closes, and authorise again.
+  const read = artifacts.read.bind(artifacts);
+  artifacts.read = async (caller, id, range, tx) => {
+    await scope.revokeActor(operator, reader.actorId);
+    return await read(caller, id, range, tx);
+  };
+  await assert.rejects(registration.preview(reader, input), { code: 'forbidden' });
 });

@@ -514,7 +514,7 @@ test('an always binary fails context_encoding; a fit png is never read and a fit
 
 test('a permanent read error keeps a fit line, while missing blobs, outages and foreign IDs fail', async (t) => {
   const { artifacts, operator, outsider, failures, preview } = await setup(t);
-  for (const code of ['blob_corrupt', 'artifact_hash_mismatch', 'artifact_size']) {
+  for (const code of ['blob_corrupt', 'artifact_size']) {
     const corrupt = await artifacts.create(operator, { title: code, content: `Bytes ${code}.` });
     failures.set(corrupt.id, code);
     const rendered = await preview({ s0: [artifact('item', corrupt.id)] });
@@ -525,7 +525,13 @@ test('a permanent read error keeps a fit line, while missing blobs, outages and 
       code,
     });
   }
-  for (const code of ['blob_not_found', 'blob_unavailable', 'storage_unavailable']) {
+  for (const code of [
+    'artifact_bytes_missing',
+    'artifact_hash_mismatch',
+    'blob_not_found',
+    'blob_unavailable',
+    'storage_unavailable',
+  ]) {
     const unreachable = await artifacts.create(operator, {
       title: code,
       content: `Bytes ${code}.`,

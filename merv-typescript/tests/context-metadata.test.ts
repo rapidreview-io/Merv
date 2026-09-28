@@ -57,13 +57,16 @@ test('sources carry exactly an artifact’s ID, title, media type, hash and size
     content: Buffer.from([0, 1, 2]).toString('base64'),
     encoding: 'base64',
   });
-  const get = artifacts.get.bind(artifacts);
-  artifacts.get = async (caller, id, tx) =>
-    ({
-      ...(await get(caller, id, tx)),
-      ...(id === stored.id ? { objectId: 'object_stored' } : {}),
-      internal: 'not part of the schema',
-    }) as Artifact;
+  const getMany = artifacts.getMany.bind(artifacts);
+  artifacts.getMany = async (caller, ids, tx) =>
+    (await getMany(caller, ids, tx)).map(
+      (artifact) =>
+        ({
+          ...artifact,
+          ...(artifact.id === stored.id ? { objectId: 'object_stored' } : {}),
+          internal: 'not part of the schema',
+        }) as Artifact,
+    );
   const items = await builder.register(definition);
   const preview = await items.preview(operator, {
     subject,

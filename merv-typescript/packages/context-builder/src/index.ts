@@ -5,6 +5,7 @@ import { renderItems, type ResolvedArtifacts } from './items.js';
 import {
   check,
   clip,
+  getArtifacts,
   createService,
   recorded,
   visible,
@@ -105,17 +106,20 @@ const saveSchema = z
   })
   .strict();
 
-/** Permanent: these stored bytes will never read back. blob_not_found is not here (a restored blob or
- *  a fixed bucket or prefix brings it back), and neither is any transient code. */
-const PERMANENT = new Set(['artifact_size', 'artifact_hash_mismatch', 'blob_corrupt']);
+/** Permanent: these stored bytes will never read back. Artifacts reports bytes over its inline
+ *  limit as `artifact_size` and bytes that do not match their row as `blob_corrupt`, and nothing
+ *  else. Missing bytes (`artifact_bytes_missing`: a restored blob or a fixed bucket brings them
+ *  back) are not here, and neither is an outage (`blob_unavailable`) or any other code. */
+const PERMANENT = new Set(['artifact_size', 'blob_corrupt']);
 /**
- * Fetches each artifact the input names once, in `tx`, for a render that reads their bytes later.
- * A refusal (a 4xx error such as `not_found`) is kept and thrown where the render asks for that
- * ID, so it fails with the same error, in the same order, as if it fetched each artifact itself.
- * Every ID is still fetched after a refusal, because the render asks in its own order, and a check
- * it makes first (such as `context_missing`) must still win. A transient failure (5xx or not a
- * MervError) is thrown at once, before any of the render's checks: an outage fails the render
- * whatever else is wrong with its input.
+ * Fetches the artifacts the input names in one `getMany` (per MAX_ARTIFACT_IDS), in `tx`, for a
+ * render that reads their bytes later. A refusal (a 4xx error such as `not_found`) is kept and
+ * thrown where the render asks for that ID, so it fails with the same error, in the same order, as
+ * if it fetched each artifact itself: when the batch is refused, each ID is fetched on its own to
+ * learn which ones are, because the render asks in its own order, and a check it makes first (such
+ * as `context_missing`) must still win. A transient failure (5xx or not a MervError) is thrown at
+ * once, before any of the render's checks: an outage fails the render whatever else is wrong with
+ * its input.
  */
 async function resolve(
   artifacts: Artifacts,
@@ -129,14 +133,19 @@ async function resolve(
     ),
   );
   const found = new Map<string, Artifact | MervError>();
-  for (const id of ids) {
+  const fetch = async (batch: string[]) => {
     try {
-      found.set(id, await artifacts.get(caller, id, tx));
+      const fetched = await getArtifacts(artifacts, caller, batch, tx);
+      batch.forEach((id, index) => found.set(id, fetched[index]!));
+      return true;
     } catch (error) {
       if (!(error instanceof MervError) || error.status >= 500) throw error;
-      found.set(id, error);
+      if (batch.length === 1) found.set(batch[0]!, error);
+      return false;
     }
-  }
+  };
+  // The batch is refused only when an ID is: then each one learns its own answer.
+  if (!(await fetch([...ids]))) for (const id of ids) await fetch([id]);
   return {
     get: (id) => {
       const artifact = found.get(id)!;
@@ -144,7 +153,9 @@ async function resolve(
       return artifact;
     },
     // Null when the bytes are not UTF-8, or when `lenient` and they are permanently unreadable.
-    // Everything else propagates, so a pinned prompt never records an outage.
+    // Everything else propagates, so a pinned prompt never records an outage. Bytes are read by
+    // ID, which authorises again and verifies them against their row: never on the strength of
+    // metadata a caller could have built.
     read: async (document, lenient) => {
       try {
         const read = await artifacts.read(caller, document.id);
