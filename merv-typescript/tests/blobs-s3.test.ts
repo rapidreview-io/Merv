@@ -271,7 +271,10 @@ test('S3 large downloads sign one immutable key for sixty seconds with attachmen
   assert.equal(server.requests.at(-1)!.method, 'HEAD');
   const response = await fetch(url);
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-disposition'), `attachment; filename="${keyHash}"`);
+  assert.equal(
+    response.headers.get('content-disposition'),
+    `attachment; filename="${keyHash}"; filename*=UTF-8''${keyHash}`,
+  );
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal(response.headers.get('content-type'), 'application/octet-stream');
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
@@ -293,6 +296,16 @@ test('S3 large downloads sign one immutable key for sixty seconds with attachmen
     blobs.download('project_1', 'f'.repeat(64), bytes.length),
     code('blob_not_found'),
     'A missing object is not a storage outage',
+  );
+});
+
+test('S3 downloads are saved under the name asked for, with an ASCII fallback', async (t) => {
+  const { blobs, server } = await fixture(t);
+  server.objects.set(`evidence/v1/project_1/${hash}`, content);
+  const link = await blobs.download('project_1', hash, content.length, 'Résumé "v2" (100%)*.pdf');
+  assert.equal(
+    (await fetch(link.url)).headers.get('content-disposition'),
+    `attachment; filename="R_sum_ _v2_ (100_)*.pdf"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22%20%28100%25%29%2A.pdf`,
   );
 });
 

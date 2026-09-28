@@ -162,7 +162,8 @@ export class ArtifactStore implements Artifacts {
       'This storage provider does not support direct downloads',
       501,
     );
-    const sign = () => this.blobs.download!(caller.projectId, artifact.hash, artifact.size);
+    const sign = () =>
+      this.blobs.download!(caller.projectId, artifact.hash, artifact.size, artifact.title);
     try {
       return { artifact, download: await sign() };
     } catch (error) {

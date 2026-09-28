@@ -688,13 +688,15 @@ export interface Blobs {
   get(namespace: string, hash: string): Promise<Buffer>;
   /**
    * Signed GET valid 60 s, served as identity-encoded application/octet-stream whatever the
-   * uploader sent: `blob_not_found` when nothing is stored, `blob_corrupt` when the stored size is
-   * not expectedSize. Never expands the inline content limit.
+   * uploader sent, saved as `filename` (default: the hash): `blob_not_found` when nothing is
+   * stored, `blob_corrupt` when the stored size is not expectedSize. Never expands the inline
+   * content limit.
    */
   download?(
     namespace: string,
     hash: string,
     expectedSize: number,
+    filename?: string,
   ): Promise<{ url: string; expiresAt: string }>;
   /**
    * Signed PUT valid 1 h, sent with `headers`. The store accepts it only for exactly `size` bytes

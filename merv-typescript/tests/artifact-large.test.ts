@@ -212,7 +212,10 @@ test('a file over the inline limit stays in blobs and downloads through a signed
     artifactId: artifact.id,
     mode: 'download',
   })) as { download: { url: string } };
-  assert.deepEqual(Buffer.from(await (await fetch(download.url)).arrayBuffer()), large.bytes);
+  const response = await fetch(download.url);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), large.bytes);
+  // Saved under the artifact's title.
+  assert.match(response.headers.get('content-disposition')!, /^attachment; filename="Rows\.csv";/);
   await assert.rejects(
     f.app.ctx.tools.call('artifact.upload_begin', review, { ...large.input, requestId: 'r' }),
     { code: 'forbidden' },

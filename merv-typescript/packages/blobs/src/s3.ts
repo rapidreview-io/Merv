@@ -47,6 +47,16 @@ const missingKey = (error: unknown) => (error as { name?: string }).name === 'No
 /** HEAD has no error body, so a missing key and a missing bucket are both a bare 404. */
 const missingHead = (error: unknown) => statusOf(error) === 404;
 
+/** Saved as `name`: an ASCII fallback, then the exact UTF-8 name (RFC 6266). */
+const attachment = (name: string) => {
+  const ascii = name.replace(/[^\x20-\x7e]|["\\%]/g, '_');
+  const exact = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${exact}`;
+};
+
 const transferSize = (size: number) =>
   check(
     Number.isSafeInteger(size) && size >= 0 && size <= MAX_OBJECT_BYTES,
@@ -273,7 +283,7 @@ export class S3Blobs implements Blobs {
     });
   }
 
-  async download(namespace: string, hash: string, expectedSize: number) {
+  async download(namespace: string, hash: string, expectedSize: number, filename = hash) {
     const key = this.key(namespace, hash);
     transferSize(expectedSize);
     return this.operations.run(async () => {
@@ -290,7 +300,7 @@ export class S3Blobs implements Blobs {
           new GetObjectCommand({
             Bucket: this.bucket,
             Key: key,
-            ResponseContentDisposition: `attachment; filename="${hash}"`,
+            ResponseContentDisposition: attachment(filename),
             ResponseContentType: 'application/octet-stream',
             ResponseCacheControl: 'private, no-store',
             // Whatever encoding an uploader stored, the bytes are served as they are.
