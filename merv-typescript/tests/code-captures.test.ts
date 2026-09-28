@@ -14,6 +14,7 @@ import type {
 } from '@merv/contracts';
 
 import { createApp } from './fixtures/app.js';
+import { deferred } from './fixtures/deferred.js';
 import { openState } from './fixtures/state.js';
 
 const oid = (digit: string) => digit.repeat(40);
@@ -384,6 +385,34 @@ test('Capture reads compose with an existing transaction and retain legacy final
   );
   assert.equal(Object.hasOwn(result, 'parentOid'), false);
   assert.equal(result.attachedBaseOid, attachment.baseOid);
+});
+
+test('Capture reads answer while another writer holds the writer lock', async (t) => {
+  const f = await fixture(t),
+    worker = await f.offer(),
+    command = await f.queue(worker);
+  const locked = deferred(),
+    release = deferred();
+  const writer = f.app.ctx.state.transaction(async () => {
+    locked.resolve();
+    await release.promise;
+  });
+  await locked.promise;
+  try {
+    // A capture that queued for the lock would fail with state_timeout instead.
+    const [commit, final] = await Promise.all([
+      f.app.ctx.codeResearch.capture(f.reader, { kind: 'code-commit', commandId: command.id }),
+      f.app.ctx.codeResearch.capture(f.reader, {
+        kind: 'session-final',
+        sessionId: worker.session.id,
+      }),
+    ]);
+    assert.equal(commit.status, 'pending');
+    assert.equal(final.status, 'pending');
+  } finally {
+    release.resolve();
+    await writer;
+  }
 });
 
 test('A final capture of a session halted before any host attached is failed, not pending forever', async (t) => {
