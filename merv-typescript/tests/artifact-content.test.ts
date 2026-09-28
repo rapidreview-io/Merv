@@ -95,13 +95,14 @@ test('both paging styles reproduce random astral text and random base64 exactly'
         assert.equal(utf8.map((p) => p.content).join(''), text, `${size} ${style} ${text}`);
         for (const page of utf8) assert.ok(!/\p{Surrogate}/u.test(page.content), page.content);
         const base64 = pages(binary, size, style);
-        assert.equal(base64.map((p) => p.content).join(''), binary.toString('base64'));
+        const input = `${size} ${style} ${binary.toString('hex')}`;
+        assert.equal(base64.map((p) => p.content).join(''), binary.toString('base64'), input);
         assert.deepEqual(
           Buffer.concat(base64.map((p) => Buffer.from(p.content, 'base64'))),
           binary,
-          `${size} ${style}`,
+          input,
         );
-        for (const page of base64) assert.equal(page.content.length % 4, 0);
+        for (const page of base64) assert.equal(page.content.length % 4, 0, input);
       }
   }
 });
