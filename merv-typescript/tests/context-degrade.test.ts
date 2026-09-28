@@ -5,7 +5,7 @@
  * whose bytes are not UTF-8 has no text form, so it is shown as its reference in every mode. Missing
  * blobs and transient storage errors fail everywhere, so a pinned prompt never records an outage.
  */
-import { createService, MervError } from '@merv/contracts';
+import { createService, MervError, sha256Hex } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -16,7 +16,14 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import type { Artifact, Caller, ContextInput, TaskTypeDefinition } from '@merv/contracts';
+import { HIERARCHICAL_RECIPES } from '@merv/reflections/definitions';
+import type {
+  Artifact,
+  Caller,
+  ContextInput,
+  RankedContextItem,
+  TaskTypeDefinition,
+} from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -254,5 +261,135 @@ test('a required auto section that does not fit renders its references, while re
       inputs: { evidence: { artifactIds: many.map((a) => a.id), mode: 'auto' } },
     }),
     { code: 'context_too_large' },
+  );
+});
+
+/** A text item shaped as reflections builds one. */
+const textItem = (
+  id: string,
+  title: string,
+  priority: number,
+  content: string,
+  association: string,
+  refs: RankedContextItem['refs'],
+): RankedContextItem => ({
+  id,
+  title,
+  priority,
+  content: { text: content },
+  hash: sha256Hex(Buffer.from(content, 'utf8')),
+  association,
+  refs,
+});
+
+test('a mature paper no longer fails a reflection: the lowest-ranked references are cut and counted', async (t) => {
+  const { artifacts, builder, operator } = await setup(t);
+  const synthesis = HIERARCHICAL_RECIPES.find(
+    (recipe) => recipe.name === 'reflection.synthesis' && recipe.version === 11,
+  )!;
+  const registration = await builder.register(synthesis);
+  const assignment = textItem(
+    'reflection:wf_1:wave:4',
+    'Reflection assignment',
+    1000,
+    JSON.stringify({ reflectionId: 'wf_1', title: 'Wave', attempt: 1 }),
+    'reflection wf_1; attempt 1',
+    [{ tool: 'reflection.get', input: { reflectionId: 'wf_1' } }],
+  );
+  const kinds = ['problem', 'goals', 'methods', 'results'];
+  const paper = Array.from({ length: 240 }, (_, index) => {
+    const kind = kinds[index % kinds.length],
+      status = Math.floor(index / kinds.length) % 2 ? 'published' : 'current';
+    return textItem(
+      `paper:${kind}:${status}:4:${index}:s${index}`,
+      `${kind} ${status}: Section ${index}`,
+      kind === 'problem' ? (status === 'current' ? 850 : 450) : status === 'current' ? 600 : 250,
+      `The ${kind} section ${index} states finding ${index}. `.repeat(8),
+      `${kind}/${status}; section s${index}; updated 2026-01-01T00:00:00.000Z`,
+      status === 'current'
+        ? [
+            { tool: 'paper.read', input: { kind, section: `s${index}` } },
+            { tool: 'paper.read', input: { kind, history: true } },
+          ]
+        : [{ tool: 'paper.read', input: { kind, history: true } }],
+    );
+  });
+  const lenses = await Promise.all(
+    ['rigor', 'novelty', 'risk', 'scope', 'evidence'].map(async (perspective) => {
+      const report = await artifacts.create(operator, {
+        title: `${perspective} lens report`,
+        content: `The ${perspective} lens found nothing new.`,
+      });
+      return {
+        id: `artifact:${report.id}:${perspective}`,
+        title: report.title,
+        priority: 800,
+        content: { artifactId: report.id },
+        hash: report.hash,
+        association: `reflection wf_1; ${perspective} lens`,
+        refs: [{ tool: 'artifact.read', input: { artifactId: report.id } }],
+      };
+    }),
+  );
+  const preview = await registration.preview(operator, {
+    subject: { id: 'wf_1', revision: 4 },
+    inputs: {
+      assignment: { rankedItems: [assignment] },
+      projectPaper: { rankedItems: paper },
+      research: { rankedItems: [] },
+      lenses: { rankedItems: lenses },
+    },
+  });
+  assert.ok(preview.prompt.length <= synthesis.recipe.maxChars);
+  const [listing, selected] = preview.prompt.split('\n## Selected full content\n');
+  const listed = (item: RankedContextItem) => listing.includes(`"id":"${item.id}"`);
+  // The top item of each required section stays listed.
+  assert.ok(listed(assignment));
+  assert.ok(listed(paper[0]));
+  assert.ok(listed(lenses[0]));
+  const cut = [assignment, ...paper, ...lenses].filter((item) => !listed(item));
+  assert.ok(cut.length > 0);
+  for (const item of cut) assert.ok(preview.omitted.includes(item.id), item.id);
+  const cutPaper = paper.filter((item) => !listed(item)).length;
+  assert.ok(
+    listing.includes(
+      `\n(${cutPaper} lower-priority items are not listed for lack of room; retrieve them through paper.read.)\n`,
+    ),
+  );
+  // Interim: after the cut there is no room left for any body, not even the assignment's.
+  assert.deepEqual(selected.match(/^### .*$/gm), null);
+  assert.deepEqual(
+    preview.sources.map((source) => source.id),
+    lenses.map((lens) => lens.content.artifactId),
+  );
+});
+
+test('ranked references that must stay listed and do not fit still fail', async (t) => {
+  const { builder, operator } = await setup(t);
+  const registration = await builder.register({
+    ...definition,
+    name: 'test.degrade-floor',
+    recipe: {
+      ...definition.recipe,
+      sections: [
+        { key: 'evidence', title: 'Evidence', required: true },
+        { key: 'background', title: 'Background', required: true },
+      ],
+      maxChars: 1000,
+    },
+  });
+  const item = (id: string) =>
+    textItem(id, 't'.repeat(300), 10, 'Body.', 'a'.repeat(500), [
+      { tool: 'task.get', input: { id } },
+    ]);
+  await assert.rejects(
+    registration.preview(operator, {
+      subject,
+      inputs: {
+        evidence: { rankedItems: [item('first'), item('second')] },
+        background: { rankedItems: [item('third')] },
+      },
+    }),
+    { code: 'context_too_large', message: /Minimum context references exceed/ },
   );
 });

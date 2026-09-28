@@ -528,19 +528,45 @@ export class RecipeContextBuilder implements ContextBuilder {
       bodyHead.length +
       sectionHeads.reduce((n, value) => n + value.length, 0);
     size += entries.reduce((n, entry) => n + entry.reference.length, 0);
-    check(
-      size <= definition.recipe.maxChars,
-      'context_too_large',
-      `Minimum context references exceed the recipe budget (${size} > ${definition.recipe.maxChars} characters)`,
-    );
     const ranked = [...entries].sort(
       (a, b) =>
         b.item.priority - a.item.priority ||
         a.sectionIndex - b.sectionIndex ||
         a.itemIndex - b.itemIndex,
     );
+    // When every reference cannot be listed, the lowest-ranked are cut until the rest fit, keeping
+    // the top item of each required section. Each section with cuts says how to reach them.
+    const cut = sections.map((): typeof entries => []);
+    const note = (list: typeof entries) => {
+      if (!list.length) return '';
+      const n = list.length,
+        tools = [...new Set(list.flatMap((entry) => entry.item.refs.map((ref) => ref.tool)))];
+      return `\n(${n} lower-priority item${n === 1 ? ' is' : 's are'} not listed for lack of room; retrieve ${n === 1 ? 'it' : 'them'} through ${tools.sort().join(' or ')}.)\n`;
+    };
+    if (size > definition.recipe.maxChars) {
+      const keep = new Set(
+        sections.flatMap((section, sectionIndex) =>
+          section.required ? [ranked.find((entry) => entry.sectionIndex === sectionIndex)] : [],
+        ),
+      );
+      for (const entry of [...ranked].reverse()) {
+        if (size <= definition.recipe.maxChars) break;
+        if (keep.has(entry)) continue;
+        const list = cut[entry.sectionIndex];
+        size -= note(list).length + entry.reference.length;
+        list.push(entry);
+        size += note(list).length;
+      }
+    }
+    check(
+      size <= definition.recipe.maxChars,
+      'context_too_large',
+      `Minimum context references exceed the recipe budget (${size} > ${definition.recipe.maxChars} characters)`,
+    );
+    const unlisted = new Set(cut.flat());
     const promotedTexts = new Map<string, string>();
     for (const entry of ranked) {
+      if (unlisted.has(entry)) continue;
       const room = definition.recipe.maxChars - size;
       if (entry.artifact && (entry.artifact.size > 2_000_000 || entry.artifact.size > room * 4))
         continue;
@@ -572,9 +598,10 @@ export class RecipeContextBuilder implements ContextBuilder {
           (section, sectionIndex) =>
             sectionHeads[sectionIndex] +
             entries
-              .filter((entry) => entry.sectionIndex === sectionIndex)
+              .filter((entry) => entry.sectionIndex === sectionIndex && !unlisted.has(entry))
               .map((entry) => entry.reference)
-              .join(''),
+              .join('') +
+            note(cut[sectionIndex]),
         )
         .join('') +
       bodyHead +

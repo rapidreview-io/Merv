@@ -227,21 +227,37 @@ test('ranked context reserves every authorized retrieval reference before promot
       }),
       /not found/i,
     );
-    await assert.rejects(
-      recipe.build(caller, {
-        ...input,
-        requestId: 'ranked-minimum-overflow',
-        inputs: {
-          early: {
-            rankedItems: Array.from({ length: 10 }, (_, i) => ({
-              ...ranked(low, 1),
-              id: `item-${i}`,
-            })),
-          },
-          late: { rankedItems: [ranked(high, 10)] },
+    // More references than the budget lists: the lowest-ranked are cut and counted, and the top
+    // item of each required section stays listed.
+    const crowded = await recipe.build(caller, {
+      ...input,
+      requestId: 'ranked-minimum-overflow',
+      inputs: {
+        early: {
+          rankedItems: Array.from({ length: 10 }, (_, i) => ({
+            ...ranked(low, 1),
+            id: `item-${i}`,
+          })),
         },
-      }),
-      /Minimum context references exceed the recipe budget/,
+        late: { rankedItems: [ranked(high, 10)] },
+      },
+    });
+    assert.ok(crowded.prompt.length <= 1_800);
+    const listed = Array.from({ length: 10 }, (_, i) => `item-${i}`).filter((id) =>
+      crowded.prompt.includes(`"id":"${id}"`),
+    );
+    assert.equal(listed[0], 'item-0');
+    assert.ok(listed.length < 10);
+    assert.ok(crowded.prompt.includes(`"id":"artifact:${high.id}"`));
+    const cut = 10 - listed.length;
+    assert.ok(
+      crowded.prompt.includes(
+        `\n(${cut} lower-priority item${cut === 1 ? ' is' : 's are'} not listed for lack of room; retrieve ${cut === 1 ? 'it' : 'them'} through artifact.read.)\n\n## Late\n`,
+      ),
+    );
+    assert.deepEqual(
+      crowded.omitted.slice(-cut),
+      Array.from({ length: cut }, (_, i) => `item-${10 - cut + i}`),
     );
     const large = await artifacts.create(caller, {
       title: 'Large text evidence',
