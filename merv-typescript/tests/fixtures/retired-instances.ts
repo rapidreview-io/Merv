@@ -457,10 +457,19 @@ DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
       });
     }
     for (const [name, version] of retiredVersions) {
+      // Shaped like a registered definition: the service reads every stored one at startup.
+      const definition = {
+        name,
+        version,
+        initial: 'open',
+        states: ['done', 'open'],
+        terminal: ['done'],
+        edges: [{ from: 'open', action: 'finish', to: 'done' }],
+      };
       await client.query(
         `INSERT INTO wf_definitions(name,version,fingerprint,definition_json,created_at)
-         VALUES($1,$2,$3,'{}',$4) ON CONFLICT DO NOTHING`,
-        [name, version, `fixture-${name}-${version}`, at],
+         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [name, version, `fixture-${name}-${version}`, JSON.stringify(definition), at],
       );
       await client.query(
         `INSERT INTO wf_success_states(workflow,version,success_json) VALUES($1,$2,'[]')
