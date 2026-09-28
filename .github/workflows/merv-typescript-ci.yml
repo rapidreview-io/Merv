@@ -25,10 +25,11 @@ defaults:
     working-directory: merv-typescript
 
 jobs:
+  # Everything but the server test suite, which the test job runs in parallel shards.
   verify:
     name: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +71,36 @@ jobs:
             exit 1
           }
 
+      - name: Build
+        run: npm run build
+
+  # The full server suite, split into 4 shards by scripts/test-shard.mjs; each file runs in exactly
+  # one shard, and each shard has its own PostgreSQL.
+  test:
+    name: test (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: merv-typescript/.nvmrc
+          cache: npm
+          cache-dependency-path: merv-typescript/package-lock.json
+
+      # Code and the test fixtures run Git with a fixed PATH of /usr/bin:/bin and
+      # refuse anything older than 2.38 (packages/code/src/git.ts).
+      - name: Check the installed Git
+        run: /usr/bin/git --version
+
+      - name: Install the committed lockfile
+        run: npm ci
+
       # The server runs on PostgreSQL only, and so does every server test. Each test creates its
       # own schema, so the role owns the database; the suite opens far more than the default 100
       # connections.
@@ -107,8 +138,12 @@ jobs:
           echo 'PostgreSQL did not accept connections' >&2
           exit 1
 
-      - name: Run the test suite
-        run: npm test
-
-      - name: Build
-        run: npm run build
+      # Runs this shard's files exactly as npm test runs them all (scripts/test-shard.mjs).
+      - name: Run test shard ${{ matrix.shard }} of 4
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(node scripts/test-shard.mjs ${{ matrix.shard }} 4)
+          # With no files, node --test would run its default patterns instead.
+          (( ${#files[@]} > 0 )) || { echo 'Shard ${{ matrix.shard }} has no test files' >&2; exit 1; }
+          echo "${#files[@]} test files"
+          node --import tsx --test "${files[@]}"
