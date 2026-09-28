@@ -2,6 +2,7 @@ import { clip, visible, recorded, mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { render, type ResolvedArtifacts } from './legacy.js';
+import { renderItems } from './items.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -27,6 +28,14 @@ import {
 } from '@merv/contracts';
 
 const identifier = z.string().regex(/^[a-z][a-z0-9_.-]{0,127}$/);
+const refs = z.array(
+  z
+    .object({
+      tool: identifier,
+      input: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    })
+    .strict(),
+);
 const rankedItem = z
   .object({
     id: z.string().trim().min(1).max(300),
@@ -44,17 +53,27 @@ const rankedItem = z
     revision: z.number().int().nonnegative().optional(),
     hash: z.string().min(1).max(200).optional(),
     association: z.string().trim().min(1).max(500).optional(),
-    refs: z
-      .array(
-        z
-          .object({
-            tool: identifier,
-            input: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(8),
+    refs: refs.min(1).max(8),
+  })
+  .strict();
+/** Caller text on one line: every run of white space and line breaks becomes one space. */
+const oneLine = (max: number) =>
+  z
+    .string()
+    .transform((text) => clip(text.replace(/[\s\u0085]+/g, ' ').trim(), max).trim())
+    .pipe(z.string().min(1));
+const item = z
+  .object({
+    id: oneLine(300),
+    title: oneLine(200),
+    body: z.union([
+      z.object({ text: z.string() }).strict(),
+      z.object({ artifactId: z.string().min(1) }).strict(),
+    ]),
+    embed: z.enum(['always', 'fit', 'never']).optional(),
+    priority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    note: oneLine(300).optional(),
+    refs: refs.max(8).optional(),
   })
   .strict();
 const definitionSchema = z
@@ -78,6 +97,7 @@ const definitionSchema = z
           )
           .min(1),
         maxChars: z.number().int().min(1000).max(200000),
+        format: z.literal(2).optional(),
       })
       .strict(),
   })
@@ -107,6 +127,10 @@ const buildSchema = z
   })
   .strict();
 const previewSchema = buildSchema.omit({ requestId: true });
+/** A format-2 recipe accepts only items, and a frozen one never does. */
+const itemsPreviewSchema = previewSchema.extend({
+  inputs: z.record(z.object({ items: z.array(item) }).strict()),
+});
 const replaySchema = buildSchema.omit({ inputs: true });
 const saveSchema = z
   .object({
@@ -158,7 +182,11 @@ async function resolve(
           ? value.rankedItems.flatMap((item) =>
               'artifactId' in item.content ? [item.content.artifactId] : [],
             )
-          : [],
+          : 'items' in value
+            ? value.items.flatMap((item) =>
+                'artifactId' in item.body ? [item.body.artifactId] : [],
+              )
+            : [],
     ),
   );
   const found = new Map<string, Artifact | MervError>();
@@ -370,7 +398,9 @@ export class RecipeContextBuilder implements ContextBuilder {
       preview: async (caller, input, tx) => {
         live();
         caller = structuredClone(caller);
-        const parsed = previewSchema.safeParse(input);
+        const parsed = (
+          definition.recipe.format === 2 ? itemsPreviewSchema : previewSchema
+        ).safeParse(input);
         // Authorization and metadata are read here. Bytes are read after it returns, so outside
         // a transaction they are read once its snapshot has closed.
         const { request, artifacts } = await this.reading(tx, async (tx) => {
@@ -385,7 +415,13 @@ export class RecipeContextBuilder implements ContextBuilder {
             artifacts: await resolve(this.artifacts, caller, parsed.data, tx),
           };
         });
-        const result = await render(definition, hash, caller, request, artifacts);
+        const result = await (definition.recipe.format === 2 ? renderItems : render)(
+          definition,
+          hash,
+          caller,
+          request,
+          artifacts,
+        );
         rendered.set(result, result.hash);
         return result;
       },

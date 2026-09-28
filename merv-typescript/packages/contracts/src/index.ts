@@ -1791,9 +1791,17 @@ export interface TaskFailure {
 export type TaskRecord = Omit<Task, 'guidance'>;
 export interface ContextRecipe {
   instructions: string;
+  /** In format 2, a required section needs at least one item. */
   sections: { key: string; title: string; required: boolean }[];
   outputInstructions: string;
+  /** The only budget, in UTF-16 code units (JavaScript string length). */
   maxChars: number;
+  /**
+   * Absent: the frozen renderers, picked by the shape of the inputs, byte for byte. 2: the item
+   * renderer, which accepts only `{ items }` inputs. Optional, so every existing recipe hash is
+   * unchanged.
+   */
+  format?: 2;
 }
 export interface TaskTypeDefinition {
   name: string;
@@ -1812,7 +1820,27 @@ export interface RankedContextItem {
   association?: string;
   refs: { tool: string; input: Record<string, string | number | boolean | null> }[];
 }
+/** A unit of a format-2 context. Every item is listed by one line or embedded as one block. */
+export interface ContextItem {
+  /** Printed on one line, clipped to 300; two IDs equal after that fail invalid_context. */
+  id: string;
+  /** Printed on one line, clipped to 200. */
+  title: string;
+  body: { text: string } | { artifactId: string };
+  /**
+   * `always` embeds the body or fails the build; `fit` (the default) embeds it while it fits,
+   * reading an artifact only when its media type is textual; `never` lists the item only.
+   */
+  embed?: 'always' | 'fit' | 'never';
+  /** Higher first when room runs out; default 0. */
+  priority?: number;
+  /** Printed after the item's line, on one line, clipped to 300. */
+  note?: string;
+  /** At most 8, printed as given on the item's line. */
+  refs?: { tool: string; input: Record<string, string | number | boolean | null> }[];
+}
 export type ContextInput =
+  | { items: ContextItem[] }
   | { text: string }
   | {
       artifactIds: string[];
