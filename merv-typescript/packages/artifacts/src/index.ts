@@ -2,6 +2,7 @@ import { recorded, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { META, decode, fromRow, isText, meta, span, verified, view } from './content.js';
 import { Uploads } from './uploads.js';
+import { fileURLToPath } from 'node:url';
 import type { Context } from 'cordis';
 import {
   check,
@@ -33,6 +34,8 @@ async function missing<T>(fn: () => Promise<T>): Promise<T> {
     throw error;
   }
 }
+/** This package's own source, whose stack frames are never the call site that is reported. */
+const OWN = [new URL('.', import.meta.url).href, fileURLToPath(new URL('.', import.meta.url))];
 export class ArtifactStore implements Artifacts {
   private large?: LargeArtifactStorage;
   bindLarge(storage: LargeArtifactStorage): () => void {
@@ -200,14 +203,25 @@ export class ArtifactStore implements Artifacts {
     );
   }
   private sites = new Set<string>();
-  /** Phase A: each call site that does storage I/O inside a write transaction is logged once. */
+  /**
+   * Phase A: each call site that does storage I/O inside a write transaction is logged once. The
+   * site is the first frame outside this package; the whole stack goes with it as evidence.
+   */
   private offLock(tx?: Transaction) {
     if (!(tx ?? this.state.ambient) || this.state.readScope) return;
-    const site = new Error().stack?.split('\n').slice(2).join('\n') ?? '';
+    const frames = (new Error().stack?.split('\n').slice(2) ?? []).map((frame) => frame.trim());
+    const stack = frames.join('\n');
+    const site =
+      frames.find(
+        (frame) =>
+          /:\d+:\d+\)?$/.test(frame) &&
+          !frame.includes('(node:') &&
+          !OWN.some((own) => frame.includes(own)),
+      ) ?? stack;
     if (this.sites.has(site)) return;
     this.sites.add(site);
     process.stderr.write(
-      `${JSON.stringify({ event: 'artifacts.io_in_transaction', site: site.trim() })}\n`,
+      `${JSON.stringify({ event: 'artifacts.io_in_transaction', site, stack })}\n`,
     );
   }
   get downloadSupported() {

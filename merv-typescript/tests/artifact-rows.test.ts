@@ -255,22 +255,31 @@ test('rows from before bytes were kept in them read through blobs, and are logge
   assert.deepEqual(f.blobs.calls, ['get']);
 
   const logged = t.mock.method(process.stderr, 'write', () => true);
-  const lines = () =>
-    logged.mock.calls.filter((call) =>
-      String(call.arguments[0]).includes('artifacts.io_in_transaction'),
-    ).length;
+  const reports = () =>
+    logged.mock.calls
+      .map((call) => String(call.arguments[0]))
+      .filter((line) => line.includes('artifacts.io_in_transaction'))
+      .map((line) => JSON.parse(line) as { site: string; stack: string });
   const fresh = await f.artifacts.create(f.caller, { title: 'New', content: 'row bytes' });
   await f.state.transaction(async (tx) => {
     // Bytes kept in the row are read locally: nothing to report.
     await f.artifacts.read(f.caller, fresh.id, undefined, tx);
-    assert.equal(lines(), 0);
-    // One report per call site, however often it fetches.
+    assert.equal(reports().length, 0);
+    // One report per call site, however often it fetches, whatever position it runs from.
     for (let i = 0; i < 3; i++) await f.artifacts.read(f.caller, legacy.id, undefined, tx);
+    await Promise.all(
+      [0, 1, 2].map(async () => await f.artifacts.read(f.caller, legacy.id, undefined, tx)),
+    );
   });
-  assert.equal(lines(), 1);
+  assert.equal(reports().length, 2);
+  // The site is the caller's frame; the stack goes with it.
+  for (const report of reports()) {
+    assert.match(report.site, /artifact-rows\.test\.ts:\d+:\d+\)?$/);
+    assert.match(report.stack, /packages\/artifacts\//);
+  }
   // Outside a writer the fetch is not reported.
   await f.artifacts.read(f.caller, legacy.id);
-  assert.equal(lines(), 1);
+  assert.equal(reports().length, 2);
   logged.mock.restore();
 
   const file = join(f.directory, 'blobs', f.caller.projectId, legacy.hash.slice(0, 2), legacy.hash);
