@@ -514,6 +514,28 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
   );
 });
 
+test('PostgreSQL migrations apply in order in one run and refuse to insert an older one', async (t) => {
+  const { state } = await fixture(t);
+  const step = (version: number) => ({
+    version,
+    sql: `CREATE TABLE ordered_${version}(id INTEGER)`,
+  });
+  await state.migrate('ordered', [step(1), step(3), step(4)]);
+  await assert.rejects(state.migrate('ordered', [step(1), step(2), step(3), step(4)]), {
+    code: 'migration_order',
+  });
+  await assert.rejects(state.migrate('ordered', [step(1), step(3)]), { code: 'migration_ahead' });
+  await state.migrate('ordered', [step(1), step(3), step(4), step(5), step(6)]);
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all(
+        "SELECT version FROM component_migrations WHERE component='ordered' ORDER BY version",
+      ),
+    ),
+    [1, 3, 4, 5, 6].map((version) => ({ version })),
+  );
+});
+
 test('PostgreSQL serializes writers across app instances before allocating event IDs', async (t) => {
   const { state, schema } = await fixture(t);
   const other = await PostgresState.open({ connectionString, schema });

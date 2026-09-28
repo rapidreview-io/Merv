@@ -125,7 +125,6 @@ export class PostgresState implements State {
   private readonly listeners = new Set<() => void>();
   private closing?: Promise<void>;
   private closed = false;
-  private savepoints = 0;
 
   private readonly pool: Pool;
   private readonly readers: Pool;
@@ -363,6 +362,10 @@ END $merv$;`);
     return scope;
   }
 
+  private active(scope: Context): void {
+    check(scope.live && !this.closed, 'transaction_closed', 'Database scope is no longer active');
+  }
+
   private async transact<T>(
     connection: Connection,
     fn: (tx: Transaction) => T | Promise<T>,
@@ -413,11 +416,7 @@ END $merv$;`);
       // wait on the writer lock; a write attempted there is a bug and is refused. Sibling
       // reads of one page run side by side on the snapshot, each in its own async context,
       // so one part's read is never another part's nested transaction.
-      check(
-        current.live && !this.closed,
-        'transaction_closed',
-        'Database scope is no longer active',
-      );
+      this.active(current);
       const own = this.scope(current.connection, current);
       const tx: Transaction = { ...own.sql, transactionId: Symbol('read') };
       own.transaction = tx;
@@ -428,11 +427,7 @@ END $merv$;`);
       }
     }
     if (current) {
-      check(
-        current.live && !this.closed,
-        'transaction_closed',
-        'Database scope is no longer active',
-      );
+      this.active(current);
       check(
         !current.childTransaction,
         'nested_transaction',
@@ -452,11 +447,7 @@ END $merv$;`);
   async read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T> {
     const current = this.context.getStore();
     if (current) {
-      check(
-        current.live && !this.closed,
-        'transaction_closed',
-        'Database scope is no longer active',
-      );
+      this.active(current);
       return fn(current.transaction ?? current.sql);
     }
     return this.operation(() =>
@@ -523,7 +514,7 @@ END $merv$;`);
       );
       return await fn();
     }
-    check(current.live && !this.closed, 'transaction_closed', 'Database scope is no longer active');
+    this.active(current);
     const isolation = current.isolation!;
     check(
       !isolation.open,
@@ -533,7 +524,8 @@ END $merv$;`);
     );
     isolation.open = true;
     const { connection } = current;
-    const savepoint = `merv_isolated_${++this.savepoints}`;
+    // Isolated calls on one snapshot never overlap, so one name serves them all.
+    const savepoint = 'merv_isolated';
     const scope = this.scope(connection, current);
     scope.live = true;
     try {
@@ -602,44 +594,38 @@ END $merv$;`);
     return this.operation(() =>
       this.connect(async (connection) => {
         await this.transact(connection, async (tx) => {
-          const ahead = await tx.get<{ version: number | null }>(
-            'SELECT MAX(version) AS version FROM component_migrations WHERE component=? AND version>?',
-            component,
-            ordered.at(-1)?.version ?? 0,
+          // One read serves the whole run: migrations never edit their own component's rows.
+          const applied = new Map(
+            (
+              await tx.all<{ version: number; hash: string }>(
+                'SELECT version, hash FROM component_migrations WHERE component=?',
+                component,
+              )
+            ).map((row) => [row.version, row.hash]),
           );
+          let latest = Math.max(0, ...applied.keys());
           // A database that has already run migrations this code has never seen belongs to a
           // newer server. Reading that schema on the terms this code knows would be silent
           // and wrong, so a rollback that left the database behind fails here instead.
           check(
-            !ahead?.version,
+            latest <= (ordered.at(-1)?.version ?? 0),
             'migration_ahead',
-            `The database has ${component} migration ${ahead?.version}, which this server does not know`,
+            `The database has ${component} migration ${latest}, which this server does not know`,
             409,
           );
           for (const migration of ordered) {
             const sql = migration.sql;
             const hash = digest(sql);
-            const previous = await tx.get<{ hash: string }>(
-              'SELECT hash FROM component_migrations WHERE component=? AND version=?',
-              component,
-              migration.version,
-            );
-            if (previous) {
+            const previous = applied.get(migration.version);
+            if (previous !== undefined) {
               check(
-                previous.hash === hash,
+                previous === hash,
                 'migration_changed',
                 `Published migration ${component}/${migration.version} changed`,
                 409,
               );
               continue;
             }
-            const latest =
-              (
-                await tx.get<{ version: number | null }>(
-                  'SELECT MAX(version) AS version FROM component_migrations WHERE component=?',
-                  component,
-                )
-              )?.version ?? 0;
             check(
               migration.version > latest,
               'migration_order',
@@ -668,6 +654,7 @@ END $merv$;`);
               migration.version,
               hash,
             );
+            latest = migration.version;
           }
         });
       }),
@@ -716,10 +703,12 @@ END $merv$;`);
   }
 
   async eventHead(tx?: Transaction): Promise<number> {
+    // A read inside the asserted transaction reads on it.
     if (tx) this.assertTransaction(tx);
-    const read = async (sql: Sql) =>
-      (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id;
-    return tx ? read(tx) : this.read(read);
+    return this.read(
+      async (sql) =>
+        (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id,
+    );
   }
 
   async eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]> {
@@ -733,11 +722,11 @@ END $merv$;`);
       'Invalid event batch bounds',
     );
     if (tx) this.assertTransaction(tx);
-    const read = async (sql: Sql) =>
+    return this.read(async (sql) =>
       (
         await sql.all<EventRow>('SELECT * FROM events WHERE id>? ORDER BY id LIMIT ?', after, limit)
-      ).map(eventFromRow);
-    return tx ? read(tx) : this.read(read);
+      ).map(eventFromRow),
+    );
   }
 
   async events(projectId: string, after = 0): Promise<StoredEvent[]> {
