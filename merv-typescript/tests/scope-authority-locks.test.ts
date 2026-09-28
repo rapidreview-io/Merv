@@ -91,6 +91,8 @@ async function fixture() {
     managed: { allocationId: 'allocation_locks', epoch: 1, credentialHash: 'a'.repeat(64) },
   };
   const service = await scope.serviceActor('fixture', owner.projectId);
+  // Another actor of the owner's project, whose credentials the owner lists as an administrator.
+  const other = (await scope.issueActor(owner, { name: 'Other', role: 'producer' })).actor;
   const serviceSource: DelegationSource = { ...service, kind: 'service', vouchedBy: source };
   (scope.toolPolicy as ExactToolPolicy).replace([
     { projectId: owner.projectId, actorId: owner.actorId, mountId: 'fixture', tools: ['look'] },
@@ -116,6 +118,7 @@ async function fixture() {
     managed,
     service,
     serviceSource,
+    other,
     providers,
     alice,
     project,
@@ -217,6 +220,14 @@ const listings: [string, Operation][] = [
         [f.project.id],
       ),
   ],
+  [
+    'projects(key)',
+    async (f) =>
+      assert.deepEqual(
+        (await f.scope.projects(f.key)).map((value) => value.id),
+        [f.project.id],
+      ),
+  ],
   ['keys(human)', async (f) => assert.equal((await f.scope.keys(f.alice)).length, 1)],
   [
     'memberships(human)',
@@ -225,6 +236,10 @@ const listings: [string, Operation][] = [
   [
     'actorCredentials(owner)',
     async (f) => assert.equal((await f.scope.actorCredentials(f.owner)).length, 1),
+  ],
+  [
+    'actorCredentials(owner, another actor)',
+    async (f) => assert.equal((await f.scope.actorCredentials(f.owner, f.other.id)).length, 1),
   ],
 ];
 
