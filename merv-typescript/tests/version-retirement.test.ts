@@ -559,12 +559,12 @@ test('retiring the versions that can no longer start deletes their records and n
   assert.equal(git.workflow.version, 3);
   const work = await tasks.create(live, {
     ...input,
-    title: 'Work 1',
+    title: 'Work 4',
     type: 'task.work',
-    typeVersion: 1,
-    requestId: 'work-1',
+    typeVersion: 4,
+    requestId: 'work-4',
   });
-  assert.deepEqual([work.type, work.typeVersion], ['task.work', 1]);
+  assert.deepEqual([work.type, work.typeVersion], ['task.work', 4]);
   const experiment = await experiments.create(live, {
     name: 'after-the-release',
     intent: 'Still testing.',
