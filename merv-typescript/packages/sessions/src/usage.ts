@@ -1,4 +1,4 @@
-import type { Transaction } from '@merv/contracts';
+import { MervError, type Transaction } from '@merv/contracts';
 import { safeCount } from './common.js';
 import type {
   BudgetStatus,
@@ -211,7 +211,9 @@ export async function usageTotals(
 /**
  * Every budget of the project, measured now. Nothing about being over a budget is stored:
  * raising or clearing one resumes dispatch on the next poll, with no flag to forget to clear.
- * `closure` resolves an instance scope to the instances it covers.
+ * `closure` resolves an instance scope to the instances it covers. `instanceIds` is null when
+ * the budget may cover any of the project's instances: the project's own, or an instance's
+ * whose closure is too large to walk.
  */
 export async function budgetStatuses(
   tx: Transaction,
@@ -227,8 +229,24 @@ export async function budgetStatuses(
   ).filter((row) => !only || only.includes(row.scope_id));
   const result: (BudgetStatus & { instanceIds: string[] | null })[] = [];
   for (const row of rows) {
-    const instanceIds = row.scope_id === projectId ? null : await closure(row.scope_id);
-    const { totals } = await usageTotals(tx, projectId, instanceIds, row.scope_id);
+    let instanceIds: string[] | null = null;
+    // A closure too large to walk leaves the instance's own usage a floor and every bound
+    // unjudged. Which instances it covers is unknown too, so the budget covers them all
+    // rather than pass the rest as unspent.
+    let unwalked = false;
+    if (row.scope_id !== projectId)
+      try {
+        instanceIds = await closure(row.scope_id);
+      } catch (error) {
+        if (!(error instanceof MervError) || error.code !== 'closure_too_large') throw error;
+        unwalked = true;
+      }
+    const { totals } = await usageTotals(
+      tx,
+      projectId,
+      unwalked ? [row.scope_id] : instanceIds,
+      row.scope_id,
+    );
     const unreportedSessions = totals.sessions - totals.reportedSessions;
     // What nobody reported is unknown, not nothing.
     const known = totals.sessions === 0 || totals.reportedSessions > 0;
@@ -249,13 +267,17 @@ export async function budgetStatuses(
     // A bound on reported figures holds only while every closed session reported. One that
     // did not leaves the sum a floor, so the bound withholds rather than pass as unreached.
     const unavailable: BudgetStatus['unavailable'] = [];
-    if (unreportedSessions > 0) {
+    if (unwalked) {
+      if (row.max_wall_ms !== null && !exceeded.includes('wall')) unavailable.push('wall');
+      if (row.max_cost_micros !== null && !exceeded.includes('cost')) unavailable.push('cost');
+      if (row.max_tokens !== null && !exceeded.includes('tokens')) unavailable.push('tokens');
+    } else if (unreportedSessions > 0) {
       if (row.max_cost_micros !== null && !exceeded.includes('cost')) unavailable.push('cost');
       if (row.max_tokens !== null && !exceeded.includes('tokens')) unavailable.push('tokens');
     }
     result.push({
       scopeId: row.scope_id,
-      kind: instanceIds === null ? 'project' : 'instance',
+      kind: row.scope_id === projectId ? 'project' : 'instance',
       maxWallMs: row.max_wall_ms === null ? null : Number(row.max_wall_ms),
       maxCostMicros: row.max_cost_micros === null ? null : Number(row.max_cost_micros),
       maxTokens: row.max_tokens === null ? null : Number(row.max_tokens),

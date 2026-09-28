@@ -136,9 +136,9 @@ const merge: WorkflowProvidedBlockerInput = {
 
 test('a published blocker gates the read and the overview, and leaves a named action alone', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy(false));
-  const work = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'start' });
-  const free = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'free' });
+  const build = await f.workflows.register(definition, policy(false));
+  const work = await build.start(f.owner, { workflow: 'build', requestId: 'start' });
+  const free = await build.start(f.owner, { workflow: 'build', requestId: 'free' });
   assert.deepEqual((await f.workflows.overview(f.owner)).ready.sort(), [work.id, free.id].sort());
 
   await f.publish(work.id, [
@@ -196,7 +196,7 @@ test('a published blocker gates the read and the overview, and leaves a named ac
     ['second'],
   );
 
-  await f.workflows.transition(f.owner, {
+  await build.transition(f.owner, {
     instanceId: work.id,
     action: 'abandon',
     requestId: 'abandon',
@@ -226,8 +226,8 @@ test('a published blocker gates the read and the overview, and leaves a named ac
 
 test('the blocker table arrives on a populated database and keeps its identity', async (t) => {
   const f = await fixture(t, 5);
-  await f.workflows.register(definition, policy(false));
-  const work = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'start' });
+  const build = await f.workflows.register(definition, policy(false));
+  const work = await build.start(f.owner, { workflow: 'build', requestId: 'start' });
   await f.reopen();
   await f.workflows.register(definition, policy(false));
   assert.equal((await f.workflows.get(f.owner, work.id)).state, 'building');
@@ -245,18 +245,30 @@ test('the blocker table arrives on a populated database and keeps its identity',
   assert.equal((await f.workflows.blockers(f.owner)).length, 1);
 });
 
-test('a provider reads dependencies with the workspace fact of each persisted version', async (t) => {
+test('a provider reads an instance, its edges and the pinned manifests of their versions', async (t) => {
   const f = await fixture(t);
-  await f.workflows.register(definition, policy(false));
+  const build = await f.workflows.register(definition, policy(false));
   const coded = await f.workflows.register({ ...definition, name: 'coded' }, policy(true));
-  const plain = await f.workflows.start(f.owner, { workflow: 'build', requestId: 'plain' });
-  const git = await f.workflows.start(f.owner, { workflow: 'coded', requestId: 'git' });
-  const top = await f.workflows.start(f.owner, {
+  const bare = await f.workflows.register(
+    { ...definition, name: 'bare' },
+    { ...policy(false), assignments: [] },
+  );
+  const plain = await build.start(f.owner, { workflow: 'build', requestId: 'plain' });
+  const git = await coded.start(f.owner, { workflow: 'coded', requestId: 'git' });
+  const unmanifested = await bare.start(f.owner, { workflow: 'bare', requestId: 'bare' });
+  await bare.transition(f.owner, {
+    instanceId: unmanifested.id,
+    action: 'finish',
+    requestId: 'finish-bare',
+    expectedRevision: unmanifested.revision,
+  });
+  const top = await build.start(f.owner, {
     workflow: 'build',
     requestId: 'top',
-    dependsOn: [plain.id, git.id],
+    data: { goal: 'Ship the build' },
+    dependsOn: [plain.id, git.id, unmanifested.id],
   });
-  await f.workflows.transition(f.owner, {
+  await coded.transition(f.owner, {
     instanceId: git.id,
     action: 'finish',
     requestId: 'finish',
@@ -265,29 +277,41 @@ test('a provider reads dependencies with the workspace fact of each persisted ve
   // The owning registration is withdrawn: the answer comes from the stored manifests.
   coded.dispose();
   const read = await f.state.transaction(
-    async (tx) => await f.workflows.dependencyRelations(f.owner.projectId, top.id, tx),
+    async (tx) => await f.workflows.relations(f.owner.projectId, top.id, tx),
   );
   assert.ok(read);
-  assert.deepEqual(
-    [
-      read.instance.id,
-      read.instance.settled,
-      read.instance.terminal,
-      read.instance.declaresWorkspace,
-    ],
-    [top.id, false, false, false],
-  );
+  // The engine's view is domain-free: the instance carries its data, not a goal or a workspace.
+  assert.deepEqual(read.instance, {
+    id: top.id,
+    workflow: 'build',
+    version: 1,
+    name: 'build',
+    state: 'building',
+    revision: 0,
+    settled: false,
+    terminal: false,
+    failed: false,
+    data: { goal: 'Ship the build' },
+  });
   assert.deepEqual(
     Object.fromEntries(
-      read.dependencies.map((item) => [
-        item.id,
-        [item.settled, item.terminal, item.revision, item.declaresWorkspace],
-      ]),
+      read.dependencies.map((item) => [item.id, [item.settled, item.terminal, item.revision]]),
     ),
-    { [plain.id]: [false, false, 0, false], [git.id]: [true, true, 1, true] },
+    {
+      [plain.id]: [false, false, 0],
+      [git.id]: [true, true, 1],
+      [unmanifested.id]: [true, true, 1],
+    },
   );
+  assert.equal(
+    (await f.workflows.pinned('coded', 1))?.execution.building?.workspace?.mode,
+    'ephemeral',
+  );
+  assert.equal(await f.workflows.pinned('coded', 2), null);
+  // A version with no assignment pins that no state has a manifest.
+  assert.deepEqual((await f.workflows.pinned('bare', 1))?.execution, { building: null });
   const below = await f.state.transaction(
-    async (tx) => await f.workflows.dependencyRelations(f.owner.projectId, git.id, tx),
+    async (tx) => await f.workflows.relations(f.owner.projectId, git.id, tx),
   );
   assert.deepEqual(
     below?.dependents.map((item) => item.id),
@@ -295,7 +319,7 @@ test('a provider reads dependencies with the workspace fact of each persisted ve
   );
   assert.equal(
     await f.state.transaction(
-      async (tx) => await f.workflows.dependencyRelations(f.owner.projectId, 'missing', tx),
+      async (tx) => await f.workflows.relations(f.owner.projectId, 'missing', tx),
     ),
     null,
   );

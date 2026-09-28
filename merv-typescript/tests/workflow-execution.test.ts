@@ -1,6 +1,7 @@
-import { createService } from '@merv/contracts';
+import { admitDispatch, createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,12 +9,14 @@ import {
   type Caller,
   type Data,
   type WorkflowDefinition,
-  type WorkflowExecution,
   type WorkflowExecutionPolicy,
+  type WorkflowLeaseOffer,
   type WorkflowPolicy,
+  type WorkflowSnapshot,
 } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
+import type { PostgresState } from '@merv/state';
 import { WorkflowsService } from '@merv/workflows';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
@@ -120,10 +123,54 @@ function policy(
                 reviewArtifacts: ['review-b'],
                 claim: 'claim-1',
               }),
+              lease: {
+                role: async () => 'producer' as const,
+                acquire: async () => ({}),
+                check: async () => {},
+                release: async () => {},
+              },
             }),
       },
     ],
   };
+}
+/**
+ * A leased worker as Sessions makes one. Its tool calls are admitted as Sessions admits them:
+ * the lease is checked with the execution it was offered, and the call is bound by that.
+ */
+async function leasing(
+  state: PostgresState,
+  scope: ProjectScope,
+  workflows: WorkflowsService,
+  caller: Caller,
+) {
+  const source = await scope.delegationSource(caller);
+  scope.registerSessionAuthority({ require: async () => source });
+  const sessionId = `lease-${randomBytes(4).toString('hex')}`;
+  const actor = await state.transaction(
+    async (tx) =>
+      await scope.createSessionActor(source, { sessionId, role: 'producer', name: 'Worker' }, tx),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: sessionId },
+  };
+  const offer = async (instance: WorkflowSnapshot) =>
+    await workflows.offerLease(caller, worker, {
+      instanceId: instance.id,
+      expectedRevision: instance.revision,
+      leaseId: sessionId,
+    });
+  const admit = async (
+    { lease, execution }: WorkflowLeaseOffer,
+    tool: string,
+    input: Data = {},
+  ) => {
+    const { references } = await workflows.checkLease(worker, lease, undefined, execution);
+    return admitDispatch({ ...execution, references: references! }, tool, input);
+  };
+  return { worker, offer, admit };
 }
 async function fixture() {
   const state = await openState(':memory:'),
@@ -146,32 +193,19 @@ async function fixture() {
     rules,
     handle,
     instance,
+    ...(await leasing(state, scope, workflows, caller)),
     close: async () => {
       workflows.close();
       await state.close();
     },
   };
 }
-const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) => ({
-  instanceId: execution.instanceId,
-  expectedRevision: execution.revision,
-  policyHash: execution.policyHash,
-  registrationId: execution.registrationId,
-  tool,
-  input,
-});
 
-test('fixed execution is metadata-only, detached and independent of exit readiness or assignment rendering', async (t) => {
+test('a lease is offered fixed, detached execution metadata, and its calls are admitted without guidance', async (t) => {
   const f = await fixture();
   t.after(f.close);
-  const caller = { ...f.caller };
-  const resolving = f.workflows.execution(caller, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-  });
-  caller.actorId = 'replacement';
-  const initial = await resolving;
-  assert.equal(initial.actorId, f.caller.actorId);
+  const initial = (await f.offer(f.instance)).execution;
+  assert.equal(initial.actorId, f.worker.actorId);
   const assignment = await f.workflows.assignment(f.caller, f.instance.id);
   assert.deepEqual(assignment.execution.policy, initial.policy);
   assert.deepEqual(
@@ -184,74 +218,28 @@ test('fixed execution is metadata-only, detached and independent of exit readine
   f.rules.assignments![0].execution!.tools.length = 0;
   initial.policy.tools.length = 0;
   initial.references.taskArtifacts = ['unrelated'];
-  const stable = await f.workflows.execution(f.caller, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-  });
-  assert.equal(stable.policyHash, initial.policyHash);
-  assert.ok(stable.policy.tools.length > 0);
-  assert.deepEqual(stable.references.taskArtifacts, ['task-a']);
+  const stable = await f.offer(f.instance);
+  assert.equal(stable.execution.policyHash, initial.policyHash);
+  assert.ok(stable.execution.policy.tools.length > 0);
+  assert.deepEqual(stable.execution.references.taskArtifacts, ['task-a']);
   f.workflows.evaluate = async () => {
     throw new Error('No guidance during authority checks');
   };
   const head = await f.state.eventHead();
-  Object.assign(caller, f.caller);
-  const admitting = f.workflows.authorizeDispatch(caller, dispatch(stable, 'native.write'));
-  caller.actorId = 'replacement';
-  const admitted = await admitting;
-  assert.equal(admitted.input.expectedRevision, 0);
+  assert.equal((await f.admit(stable, 'native.write')).input.expectedRevision, 0);
   assert.equal(await f.state.eventHead(), head);
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), []);
-  await assert.rejects(
-    async () => await f.workflows.authorizeDispatch(f.caller, dispatch(stable, 'dynamic-tool')),
-    {
-      code: 'execution_tool_forbidden',
-    },
-  );
-});
-
-test('an overview asked of the whole project is not narrowed to the session own record', async (t) => {
-  const f = await fixture();
-  t.after(f.close);
-  const execution = await f.workflows.execution(f.caller, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-  });
-  const asked = dispatch(execution, 'workflow.status_and_next', {});
-  // Leaving the instance out asks what the whole project is doing. Filling it in from the
-  // binding would answer for this worker's own record — a different question.
-  assert.deepEqual(
-    (await f.workflows.authorizeDispatch(f.caller, { ...asked, read: true })).input,
-    {},
-  );
-  // Named, the instance still has to be this worker's own.
-  assert.deepEqual(
-    (
-      await f.workflows.authorizeDispatch(f.caller, {
-        ...dispatch(execution, 'workflow.status_and_next', { instanceId: f.instance.id }),
-        read: true,
-      })
-    ).input,
-    { instanceId: f.instance.id },
-  );
-  // Without the read mark the published binding holds, and fills what was left out.
-  assert.deepEqual((await f.workflows.authorizeDispatch(f.caller, asked)).input, {
-    instanceId: f.instance.id,
+  await assert.rejects(async () => await f.admit(stable, 'dynamic-tool'), {
+    code: 'execution_tool_forbidden',
   });
 });
 
 test('whole-value bindings inject exact fields, preserve input, and keep OR alternatives separate', async (t) => {
   const f = await fixture();
   t.after(f.close);
-  const execution = await f.workflows.execution(f.caller, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-  });
+  const offered = await f.offer(f.instance);
   const input: Data = { extra: 'retained' };
-  const result = await f.workflows.authorizeDispatch(
-    f.caller,
-    dispatch(execution, 'native.write', input),
-  );
+  const result = await f.admit(offered, 'native.write', input);
   assert.deepEqual(input, { extra: 'retained' });
   assert.deepEqual(result.input, {
     extra: 'retained',
@@ -267,134 +255,61 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
     { config: { mode: 'checked', options: ['second', 'first'] } },
   ];
   for (const wrong of badInputs)
-    await assert.rejects(
-      async () =>
-        await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'native.write', wrong)),
-      { code: 'execution_arguments_forbidden' },
-    );
+    await assert.rejects(async () => await f.admit(offered, 'native.write', wrong), {
+      code: 'execution_arguments_forbidden',
+    });
   for (const artifactId of ['task-a', 'review-b'])
     assert.equal(
-      (
-        await f.workflows.authorizeDispatch(
-          f.caller,
-          dispatch(execution, 'artifact.read', { artifactId }),
-        )
-      ).input.artifactId,
+      (await f.admit(offered, 'artifact.read', { artifactId })).input.artifactId,
       artifactId,
     );
-  // A tool marked as a read is admitted as given: a session reads whatever its project
-  // holds. Without the mark, the binding holds.
-  const unknown = dispatch(execution, 'artifact.read', { artifactId: 'unknown' });
-  assert.equal(
-    (await f.workflows.authorizeDispatch(f.caller, { ...unknown, read: true })).input.artifactId,
-    'unknown',
-  );
-  await assert.rejects(async () => await f.workflows.authorizeDispatch(f.caller, unknown), {
-    code: 'execution_arguments_forbidden',
-  });
   await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'paired', { lane: 'task', artifactId: 'review-b' }),
-      ),
-    { code: 'execution_arguments_forbidden' },
-  );
-  assert.deepEqual(
-    (
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'paired', { artifactId: 'review-b' }),
-      )
-    ).input,
-    { lane: 'review', artifactId: 'review-b' },
-  );
-  await assert.rejects(
-    async () => await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'ambiguous')),
+    async () => await f.admit(offered, 'artifact.read', { artifactId: 'unknown' }),
     {
-      code: 'execution_arguments_ambiguous',
+      code: 'execution_arguments_forbidden',
     },
   );
-  assert.equal(
-    (
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'ambiguous', { choice: 'first' }),
-      )
-    ).input.choice,
-    'first',
-  );
-  assert.deepEqual(
-    (await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'checkpoint'))).input,
-    { artifactIds: [] },
-  );
-  assert.deepEqual(
-    (
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'checkpoint', { artifactIds: [] }),
-      )
-    ).input,
-    { artifactIds: [] },
-  );
   await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'checkpoint', { artifactIds: ['review-b'] }),
-      ),
+    async () => await f.admit(offered, 'paired', { lane: 'task', artifactId: 'review-b' }),
     { code: 'execution_arguments_forbidden' },
   );
-  assert.deepEqual(
-    (
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, '_nisa.search', { query: 'cordis' }),
-      )
-    ).input,
-    { query: 'cordis' },
-  );
-});
-
-test('dispatch rechecks caller, target revision, live references and active registration even inside an existing transaction', async (t) => {
-  const f = await fixture();
-  t.after(f.close);
-  const execution = await f.workflows.execution(f.caller, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
+  assert.deepEqual((await f.admit(offered, 'paired', { artifactId: 'review-b' })).input, {
+    lane: 'review',
+    artifactId: 'review-b',
+  });
+  await assert.rejects(async () => await f.admit(offered, 'ambiguous'), {
+    code: 'execution_arguments_ambiguous',
+  });
+  assert.equal((await f.admit(offered, 'ambiguous', { choice: 'first' })).input.choice, 'first');
+  assert.deepEqual((await f.admit(offered, 'checkpoint')).input, { artifactIds: [] });
+  assert.deepEqual((await f.admit(offered, 'checkpoint', { artifactIds: [] })).input, {
+    artifactIds: [],
   });
   await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(f.caller, {
-        ...dispatch(execution, 'claim'),
-        registrationId: 'other',
-      }),
+    async () => await f.admit(offered, 'checkpoint', { artifactIds: ['review-b'] }),
+    { code: 'execution_arguments_forbidden' },
+  );
+  assert.deepEqual((await f.admit(offered, '_nisa.search', { query: 'cordis' })).input, {
+    query: 'cordis',
+  });
+});
+
+test('a lease check fences its worker, revision, policy and active registration, even inside an existing transaction', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  const offered = await f.offer(f.instance);
+  const { lease } = offered;
+  await assert.rejects(
+    async () => await f.workflows.checkLease(f.worker, { ...lease, policyHash: '0'.repeat(64) }),
     { code: 'execution_changed' },
   );
   await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(f.caller, {
-        ...dispatch(execution, 'claim'),
-        policyHash: '0'.repeat(64),
-      }),
-    { code: 'execution_changed' },
-  );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(f.caller, {
-        ...dispatch(execution, 'claim'),
-        expectedRevision: 1,
-      }),
+    async () => await f.workflows.checkLease(f.worker, { ...lease, expectedRevision: 1 }),
     { code: 'revision_conflict' },
   );
-  const reader = await f.scope.issueActor(f.caller, { name: 'Reader', role: 'reader' });
   await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(
-        { actorId: reader.actor.id, projectId: f.caller.projectId },
-        dispatch(execution, 'claim'),
-      ),
-    { code: 'forbidden' },
+    async () => await f.workflows.checkLease({ ...f.worker, actorId: f.caller.actorId }, lease),
+    { code: 'invalid_lease' },
   );
   await assert.rejects(
     async () =>
@@ -410,32 +325,45 @@ test('dispatch rechecks caller, target revision, live references and active regi
           },
           tx,
         );
-        await assert.rejects(
-          async () =>
-            await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim'), tx),
-          { code: 'revision_conflict' },
-        );
+        await assert.rejects(async () => await f.workflows.checkLease(f.worker, lease, tx), {
+          code: 'revision_conflict',
+        });
         throw new Error('Rollback');
       }),
     /Rollback/,
   );
-  assert.equal(
-    (await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim'))).input.claimId,
-    'claim-1',
+  // A record moved by the worker's own hand is the same conflict: what it means is Sessions'.
+  await assert.rejects(
+    async () =>
+      await f.state.transaction(async (tx) => {
+        await f.handle.transition(
+          f.worker,
+          {
+            instanceId: f.instance.id,
+            expectedRevision: 0,
+            action: 'finish',
+            input: { evidence: 'yes' },
+            requestId: 'handoff',
+          },
+          tx,
+        );
+        await assert.rejects(async () => await f.workflows.checkLease(f.worker, lease, tx), {
+          code: 'revision_conflict',
+        });
+        throw new Error('Rollback');
+      }),
+    /Rollback/,
   );
+  assert.equal((await f.admit(offered, 'claim')).input.claimId, 'claim-1');
   f.handle.dispose();
-  await assert.rejects(
-    async () => await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim')),
-    {
-      code: 'workflow_unavailable',
-    },
-  );
+  await assert.rejects(async () => await f.workflows.checkLease(f.worker, lease), {
+    code: 'workflow_unavailable',
+  });
   await f.workflows.register(definition, policy(f.scope));
-  await assert.rejects(
-    async () => await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim')),
-    {
-      code: 'execution_changed',
-    },
+  // A reload keeps the lease under a new generation; Sessions fences each invocation by it.
+  assert.notEqual(
+    (await f.workflows.checkLease(f.worker, lease)).registrationId,
+    lease.registrationId,
   );
 });
 
@@ -451,13 +379,14 @@ test('fixed manifests including absence are durable and immutable across registr
     rmSync(directory, { recursive: true, force: true });
   });
   const boot = await scope.bootstrap({ projectName: 'Durable', actorName: 'Owner' });
-  const caller = { projectId: boot.project.id, actorId: boot.actor.id };
+  const caller: Caller = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
   const handle = await workflows.register(definition, policy(scope));
   const instance = await handle.start(caller, { workflow: definition.name, requestId: 'start' });
-  const captured = await workflows.execution(caller, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-  });
+  const captured = (await workflows.assignment(caller, instance.id)).execution;
   workflows.close();
   await state.close();
   state = await openState(path);
@@ -472,24 +401,17 @@ test('fixed manifests including absence are durable and immutable across registr
     if (changed === undefined) {
       delete changedPolicy.assignments![0].execution;
       delete changedPolicy.assignments![0].references;
+      delete changedPolicy.assignments![0].lease;
     } else changedPolicy.assignments![0].execution = changed;
     await assert.rejects(async () => await workflows.register(definition, changedPolicy), {
       code: 'workflow_version_conflict',
     });
   }
   const current = await workflows.register(definition, policy(scope));
-  const refreshed = await workflows.execution(caller, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-  });
+  const refreshed = (await workflows.assignment(caller, instance.id)).execution;
   assert.equal(refreshed.policyHash, captured.policyHash);
+  assert.deepEqual(refreshed.policy, captured.policy);
   assert.notEqual(refreshed.registrationId, captured.registrationId);
-  await assert.rejects(
-    async () => await workflows.authorizeDispatch(caller, dispatch(captured, 'claim')),
-    {
-      code: 'execution_changed',
-    },
-  );
   await assert.rejects(
     async () =>
       await state.transaction(
@@ -506,12 +428,11 @@ test('fixed manifests including absence are durable and immutable across registr
   const noExecution = policy(scope);
   delete noExecution.assignments![0].execution;
   delete noExecution.assignments![0].references;
+  delete noExecution.assignments![0].lease;
   const missing = await workflows.register(absent, noExecution);
   const subject = await missing.start(caller, { workflow: absent.name, requestId: 'absent' });
-  await assert.rejects(
-    async () => await workflows.execution(caller, { instanceId: subject.id, expectedRevision: 0 }),
-    { code: 'execution_unavailable' },
-  );
+  // With no fixed policy the assignment shows only what the program builds, and grants nothing.
+  assert.equal((await workflows.assignment(caller, subject.id)).execution.policyHash, undefined);
   missing.dispose();
   await assert.rejects(async () => await workflows.register(absent, policy(scope)), {
     code: 'workflow_version_conflict',
@@ -521,17 +442,12 @@ test('fixed manifests including absence are durable and immutable across registr
     policy(scope, { readOnly: true, tools: [] }),
   );
   const emptySubject = await empty.start(caller, { workflow: definition.name, requestId: 'empty' });
-  const emptyExecution = await workflows.execution(caller, {
-    instanceId: emptySubject.id,
-    expectedRevision: 0,
+  const leased = await leasing(state, scope, workflows, caller);
+  const emptyOffer = await leased.offer(emptySubject);
+  assert.deepEqual(emptyOffer.execution.policy.tools, []);
+  await assert.rejects(async () => await leased.admit(emptyOffer, 'claim'), {
+    code: 'execution_tool_forbidden',
   });
-  assert.deepEqual(emptyExecution.policy.tools, []);
-  await assert.rejects(
-    async () => await workflows.authorizeDispatch(caller, dispatch(emptyExecution, 'claim')),
-    {
-      code: 'execution_tool_forbidden',
-    },
-  );
   current.dispose();
 });
 
@@ -632,11 +548,8 @@ test('manifest alternatives use locale-independent code-unit ordering', async (t
     workflow: 'code-unit-order',
     requestId: 'order',
   });
-  const current = await f.workflows.execution(f.caller, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-  });
-  assert.deepEqual(current.policy.tools[0].alternatives, [
+  const current = (await f.workflows.assignment(f.caller, instance.id)).execution;
+  assert.deepEqual(current.policy!.tools[0].alternatives, [
     { value: { kind: 'literal', value: 'z' } },
     { value: { kind: 'literal', value: 'ä' } },
   ]);
@@ -647,17 +560,22 @@ test('manifest alternatives use locale-independent code-unit ordering', async (t
     policy(f.scope, declaration),
   );
   assert.equal(
-    (await f.workflows.execution(f.caller, { instanceId: instance.id, expectedRevision: 0 }))
-      .policyHash,
+    (await f.workflows.assignment(f.caller, instance.id)).execution.policyHash,
     current.policyHash,
   );
 });
 
-test('metadata callbacks never need assignment/exit callbacks and fail closed for invalid output or withdrawal', async (t) => {
+test('references are read once, at the offer: a lease check needs no program callback beyond its own, and an offer fails closed', async (t) => {
   const f = await fixture();
   t.after(f.close);
   let references: unknown = { claim: 'first', taskArtifacts: ['a'], reviewArtifacts: [] };
   const rules = policy(f.scope);
+  rules.assignments![0].references = () => references as any;
+  const handle = await f.workflows.register({ ...definition, name: 'pure-metadata' }, rules);
+  const instance = await handle.start(f.caller, { workflow: 'pure-metadata', requestId: 'pure' });
+  const offered = await f.offer(instance);
+  const { check } = rules.actions[0];
+  const { build } = rules.assignments![0];
   rules.actions[0].check = async () => {
     throw new Error('Exit callbacks are not authority');
   };
@@ -667,26 +585,14 @@ test('metadata callbacks never need assignment/exit callbacks and fail closed fo
   rules.assignments![0].build = async () => {
     throw new Error('Prompt rendering is not authority');
   };
-  rules.assignments![0].references = () => references as any;
-  const handle = await f.workflows.register({ ...definition, name: 'pure-metadata' }, rules);
-  const instance = await handle.start(f.caller, { workflow: 'pure-metadata', requestId: 'pure' });
-  const execution = await f.workflows.execution(f.caller, {
-    instanceId: instance.id,
-    expectedRevision: 0,
-  });
   references = { claim: 'second', taskArtifacts: ['new'], reviewArtifacts: [] };
-  assert.equal(
-    (await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim'))).input.claimId,
-    'second',
-  );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(
-        f.caller,
-        dispatch(execution, 'claim', { claimId: 'first' }),
-      ),
-    { code: 'execution_arguments_forbidden' },
-  );
+  assert.equal((await f.admit(offered, 'claim')).input.claimId, 'first');
+  await assert.rejects(async () => await f.admit(offered, 'claim', { claimId: 'second' }), {
+    code: 'execution_arguments_forbidden',
+  });
+  rules.actions[0].check = check;
+  delete rules.describe;
+  rules.assignments![0].build = build;
   for (const invalid of [
     null,
     { claim: 42 },
@@ -695,19 +601,14 @@ test('metadata callbacks never need assignment/exit callbacks and fail closed fo
     Promise.resolve({ claim: 42 }),
   ]) {
     references = invalid;
-    await assert.rejects(
-      async () =>
-        await f.workflows.execution(f.caller, { instanceId: instance.id, expectedRevision: 0 }),
-      { code: 'invalid_workflow_policy' },
-    );
+    await assert.rejects(async () => await f.offer(instance), {
+      code: 'invalid_workflow_policy',
+    });
   }
   references = { taskArtifacts: [], reviewArtifacts: [] };
-  await assert.rejects(
-    async () => await f.workflows.authorizeDispatch(f.caller, dispatch(execution, 'claim')),
-    {
-      code: 'execution_reference_unavailable',
-    },
-  );
+  await assert.rejects(async () => await f.admit(await f.offer(instance), 'claim'), {
+    code: 'execution_reference_unavailable',
+  });
   let withdraw = false;
   const disappearing = policy(f.scope);
   disappearing.assignments![0].references = () => {
@@ -717,72 +618,65 @@ test('metadata callbacks never need assignment/exit callbacks and fail closed fo
   const live = await f.workflows.register({ ...definition, name: 'withdraw' }, disappearing);
   const subject = await live.start(f.caller, { workflow: 'withdraw', requestId: 'withdraw' });
   withdraw = true;
-  await assert.rejects(
-    async () =>
-      await f.workflows.execution(f.caller, { instanceId: subject.id, expectedRevision: 0 }),
-    { code: 'workflow_unavailable' },
-  );
+  await assert.rejects(async () => await f.offer(subject), { code: 'workflow_unavailable' });
 });
 
-test('Tasks use fixed producer/reviewer policies and metadata pins without rendering or checkpoint grant expansion', async (t) => {
+test('Tasks sessions are admitted by fixed producer and reviewer policies, without rendering or checkpoint grant expansion', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-execution-'));
   const app = await createApp({ directory, api: false });
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const { scope, tasks, artifacts, workflows, reviews } = app.ctx;
+  const { scope, tasks, artifacts, workflows, sessions } = app.ctx;
   const boot = await scope.bootstrap({ projectName: 'Tasks', actorName: 'Operator' });
-  const operator = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issue = async (role: 'producer' | 'reviewer') => ({
-    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
-    projectId: operator.projectId,
-  });
-  const producer = await issue('producer'),
-    reviewer = await issue('reviewer');
-  const task = await tasks.create(producer, {
+  const operator: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  let sequence = 0;
+  const offer = async (target: { id: string; workflow: { revision: number } }) => {
+    const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    const session = await sessions.offer(operator, {
+      instanceId: target.id,
+      expectedRevision: target.workflow.revision,
+      runnerId: 'test',
+      requestId: `offer-${++sequence}`,
+      secret,
+    });
+    return { session, worker: await sessions.authenticate(secret) };
+  };
+  const task = await tasks.create(operator, {
     title: 'Task',
     goal: 'Prove it.',
     checks: ['It passed.'],
     requestId: 'task',
   });
-  const initial = await workflows.execution(producer, { instanceId: task.id, expectedRevision: 0 });
-  for (const tool of ['workflow.begin', 'task.create']) {
-    await assert.rejects(
-      async () => await workflows.authorizeDispatch(producer, dispatch(initial, tool)),
-      {
-        code: 'execution_tool_forbidden',
-      },
-    );
-  }
-  const unrelated = await artifacts.create(producer, {
+  const unrelated = await artifacts.create(operator, {
     title: 'Unrelated',
     content: 'Not pinned.',
   });
-  const helper = await workflows.execution(operator, { instanceId: task.id, expectedRevision: 0 });
+  const work = await offer(task);
+  const producer = work.worker;
+  for (const tool of ['workflow.begin', 'task.create'])
+    await assert.rejects(async () => await sessions.prepare(producer, tool, {}), {
+      code: 'execution_tool_forbidden',
+    });
   await assert.rejects(
     async () =>
-      await workflows.authorizeDispatch(operator, dispatch(helper, 'task.submit_delivery')),
-    { code: 'execution_reference_unavailable' },
-  );
-  await assert.rejects(
-    async () =>
-      await workflows.authorizeDispatch(
-        producer,
-        dispatch(initial, 'task.checkpoint', { notes: 'Attach', artifactIds: [unrelated.id] }),
-      ),
+      await sessions.prepare(producer, 'task.checkpoint', {
+        notes: 'Attach',
+        artifactIds: [unrelated.id],
+      }),
     { code: 'execution_arguments_forbidden' },
   );
   assert.deepEqual(
-    (
-      await workflows.authorizeDispatch(
-        producer,
-        dispatch(initial, 'task.checkpoint', { notes: 'Text only' }),
-      )
-    ).input.artifactIds,
+    (await sessions.prepare(producer, 'task.checkpoint', { notes: 'Text only' })).input.artifactIds,
     [],
   );
-  await tasks.checkpoint(producer, {
+  // Ordinary credentials remain broad, and what they attach later grants the session nothing.
+  await tasks.checkpoint(operator, {
     taskId: task.id,
     expectedRevision: 0,
     purpose: 'work',
@@ -790,27 +684,26 @@ test('Tasks use fixed producer/reviewer policies and metadata pins without rende
     artifactIds: [unrelated.id],
     requestId: 'checkpoint',
   });
-  const after = await workflows.execution(producer, { instanceId: task.id, expectedRevision: 0 });
-  assert.equal(after.policyHash, initial.policyHash);
-  assert.ok(!(after.references.artifacts as string[]).includes(unrelated.id));
   await assert.rejects(
-    async () =>
-      await workflows.authorizeDispatch(
-        producer,
-        dispatch(after, 'artifact.read', { artifactId: unrelated.id }),
-      ),
+    async () => await sessions.prepare(producer, 'artifact.read', { artifactId: unrelated.id }),
     { code: 'execution_arguments_forbidden' },
   );
-  const proof = await artifacts.create(producer, { title: 'Proof', content: 'It passed.' });
-  const pending = await tasks.submitDelivery(
-    producer,
-    confirmedDelivery({
-      taskId: task.id,
-      expectedRevision: 0,
-      artifactIds: [proof.id],
-      requestId: 'delivery',
-    }),
+  const proof = await sessions.run(
+    await sessions.prepare(producer, 'artifact.create', { title: 'Proof', content: 'It passed.' }),
+    async (caller, input) =>
+      await artifacts.create(caller, input as unknown as { title: string; content: string }),
   );
+  const pending = await sessions.run(
+    await sessions.prepare(
+      producer,
+      'task.submit_delivery',
+      confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery' }),
+    ),
+    async (caller, input) => await tasks.submitDelivery(caller, input as never),
+  );
+  const review = await offer(pending);
+  const reviewer = review.worker;
+  assert.notEqual(review.session.execution.policyHash, work.session.execution.policyHash);
   const read = artifacts.read.bind(artifacts),
     evaluate = workflows.evaluate.bind(workflows);
   artifacts.read = async () => {
@@ -819,44 +712,16 @@ test('Tasks use fixed producer/reviewer policies and metadata pins without rende
   workflows.evaluate = async () => {
     throw new Error('No readiness-derived grants');
   };
-  const beforeClaim = await workflows.execution(reviewer, {
-    instanceId: task.id,
-    expectedRevision: 1,
-  });
+  const claimId = (await app.ctx.reviews.get(operator, pending.reviewId!)).claimId;
+  assert.ok(claimId);
+  assert.equal((await sessions.prepare(reviewer, 'review.submit', {})).input.claimId, claimId);
   assert.equal(
-    (await workflows.authorizeDispatch(reviewer, dispatch(beforeClaim, 'review.start'))).input
-      .reviewId,
-    pending.reviewId,
-  );
-  await assert.rejects(
-    async () => await workflows.authorizeDispatch(reviewer, dispatch(beforeClaim, 'review.submit')),
-    { code: 'execution_reference_unavailable' },
-  );
-  const claim = await reviews.start(reviewer, pending.reviewId!);
-  const claimed = await workflows.execution(reviewer, { instanceId: task.id, expectedRevision: 1 });
-  assert.equal(claimed.policyHash, beforeClaim.policyHash);
-  assert.deepEqual(
-    claimed.policy.tools.map((tool) => tool.name),
-    beforeClaim.policy.tools.map((tool) => tool.name),
-  );
-  assert.equal(
-    (await workflows.authorizeDispatch(reviewer, dispatch(claimed, 'review.submit'))).input.claimId,
-    claim.claimId,
-  );
-  assert.equal(
-    (
-      await workflows.authorizeDispatch(
-        reviewer,
-        dispatch(claimed, 'artifact.read', { artifactId: proof.id }),
-      )
-    ).input.artifactId,
+    (await sessions.prepare(reviewer, 'artifact.read', { artifactId: proof.id })).input.artifactId,
     proof.id,
   );
-  await assert.rejects(
-    async () =>
-      await workflows.authorizeDispatch(reviewer, dispatch(claimed, 'task.submit_delivery')),
-    { code: 'execution_tool_forbidden' },
-  );
+  await assert.rejects(async () => await sessions.prepare(reviewer, 'task.submit_delivery', {}), {
+    code: 'execution_tool_forbidden',
+  });
   artifacts.read = read;
   workflows.evaluate = evaluate;
 });

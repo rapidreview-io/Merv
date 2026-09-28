@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolutionFixture } from './fixtures/resolution.js';
 
-test('provider prerequisites gate work without declaring failure', async (t) => {
-  const f = await resolutionFixture(t);
+/** Work that finishes only once its prerequisites have succeeded, and can fail by hand. */
+async function prerequisiteWorkflow(f: Awaited<ReturnType<typeof resolutionFixture>>) {
   const handle = await f.workflows.register(
     {
       name: 'prerequisite',
@@ -43,15 +43,26 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
       ],
     },
   );
-  const start = (requestId: string) =>
-    handle.start(f.admin, { workflow: 'prerequisite', requestId });
+  return {
+    handle,
+    start: (requestId: string, title?: string) =>
+      handle.start(f.admin, {
+        workflow: 'prerequisite',
+        requestId,
+        ...(title ? { data: { title } } : {}),
+      }),
+  };
+}
+
+test('provider prerequisites gate work without declaring failure', async (t) => {
+  const f = await resolutionFixture(t);
+  const { handle, start } = await prerequisiteWorkflow(f);
   const upstream = await start('upstream'),
     waiter = await start('waiter');
   const capability = f.workflows.systemPrerequisites('code');
   const input = {
     projectId: f.admin.projectId,
     instanceId: waiter.id,
-    requestId: 'attach',
     dependencies: [upstream.id],
   };
   for (let i = 0; i < 2; i++) await f.state.transaction((tx) => capability.replace(input, tx));
@@ -62,10 +73,6 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
   await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
     code: 'dependencies_pending',
   });
-  await assert.rejects(
-    f.state.transaction((tx) => capability.replace({ ...input, dependencies: [] }, tx)),
-    { code: 'idempotency_conflict' },
-  );
   await handle.transition(f.admin, {
     instanceId: upstream.id,
     action: 'fail',
@@ -75,11 +82,14 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
   const decision = await f.workflows.evaluate(f.admin, waiter.id);
   assert.equal(decision.currentGate, 'dependencies_pending');
   assert.equal(decision.nextAction, null);
-  assert.equal(decision.dependencies[0].failed, false);
+  // The target has ended without succeeding: that is a fact on the edge, not a failure of it.
+  const { settled, terminal, failed } = decision.dependencies[0];
+  assert.deepEqual(
+    { settled, terminal, failed },
+    { settled: false, terminal: true, failed: false },
+  );
   await f.state.transaction((tx) =>
-    f.workflows
-      .systemPrerequisites('other')
-      .replace({ ...input, requestId: 'other', dependencies: [] }, tx),
+    f.workflows.systemPrerequisites('other').replace({ ...input, dependencies: [] }, tx),
   );
   assert.equal((await f.workflows.dependencies(f.admin, waiter.id)).dependencies.length, 1);
   await handle.addDependencies(f.admin, {
@@ -97,10 +107,106 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
     requestId: 'drop-declared',
   });
   assert.equal((await f.workflows.dependencies(f.admin, waiter.id)).dependencies[0].kind, 'system');
-  await f.state.transaction((tx) =>
-    capability.replace({ ...input, requestId: 'detach', dependencies: [] }, tx),
-  );
+  await f.state.transaction((tx) => capability.replace({ ...input, dependencies: [] }, tx));
   await f.workflows.checkDependencies(f.admin, waiter.id);
+});
+
+test('dependency messages judge failure over every edge and name each target once', async (t) => {
+  const f = await resolutionFixture(t);
+  const { handle, start } = await prerequisiteWorkflow(f);
+  const upstream = await start('upstream', 'Upstream'),
+    waiter = await start('waiter');
+  const input = {
+    projectId: f.admin.projectId,
+    instanceId: waiter.id,
+    dependencies: [upstream.id],
+  };
+  await f.state.transaction((tx) => f.workflows.systemPrerequisites('code').replace(input, tx));
+  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
+    code: 'dependencies_pending',
+    message:
+      'Work is waiting on unfinished dependencies: prerequisite Upstream (working, required by code).',
+  });
+  // The provider's edge comes first; the declared one to the same target is the one named.
+  await handle.addDependencies(f.admin, {
+    instanceId: waiter.id,
+    expectedRevision: 0,
+    dependsOn: [upstream.id],
+    requestId: 'declared',
+  });
+  assert.deepEqual(
+    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.map((item) => item.kind),
+    ['system', undefined],
+  );
+  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
+    code: 'dependencies_pending',
+    message: 'Work is waiting on unfinished dependencies: prerequisite Upstream (working).',
+  });
+  await handle.transition(f.admin, {
+    instanceId: upstream.id,
+    action: 'fail',
+    expectedRevision: 0,
+    requestId: 'fail',
+  });
+  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
+    code: 'dependency_failed',
+    message: 'A dependency has ended without succeeding: prerequisite Upstream (failed).',
+  });
+  const decision = await f.workflows.evaluate(f.admin, waiter.id);
+  assert.equal(decision.currentGate, 'dependency_failed');
+  assert.equal(
+    decision.instruction,
+    'A dependency has ended without succeeding: prerequisite Upstream (failed). Fail.',
+  );
+});
+
+test('provider prerequisites are a set: replacing restores it by value', async (t) => {
+  const f = await resolutionFixture(t);
+  const { handle, start } = await prerequisiteWorkflow(f);
+  const a = await start('a'),
+    b = await start('b'),
+    waiter = await start('waiter');
+  const replace = (dependencies: unknown) =>
+    f.state.transaction((tx) =>
+      f.workflows.systemPrerequisites('code').replace(
+        {
+          projectId: f.admin.projectId,
+          instanceId: waiter.id,
+          dependencies: dependencies as string[],
+        },
+        tx,
+      ),
+    );
+  const held = async () =>
+    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.map((item) => item.id);
+  // A to B and back to A at one revision: the last value wins, whatever was asked before.
+  await replace([a.id]);
+  await replace([b.id]);
+  await replace([a.id]);
+  assert.deepEqual(await held(), [a.id]);
+  assert.equal((await f.workflows.get(f.admin, waiter.id)).revision, 0);
+  await replace([` ${b.id}  `, a.id, b.id]);
+  assert.deepEqual((await held()).sort(), [a.id, b.id].sort());
+  await assert.rejects(replace(5), { code: 'invalid_dependencies', status: 400 });
+  await assert.rejects(replace([a.id, 5]), { code: 'invalid_dependencies', status: 400 });
+  assert.deepEqual((await held()).sort(), [a.id, b.id].sort());
+  // Ended work is not refused; a provider still clears what it holds.
+  await handle.transition(f.admin, {
+    instanceId: waiter.id,
+    action: 'fail',
+    expectedRevision: 0,
+    requestId: 'fail',
+  });
+  await replace([]);
+  assert.deepEqual(await held(), []);
+});
+
+test('the engine names no program in what it says', () => {
+  const source = new URL('../packages/workflows/src/', import.meta.url);
+  for (const file of readdirSync(source, { recursive: true, encoding: 'utf8' }).filter((name) =>
+    name.endsWith('.ts'),
+  ))
+    assert.doesNotMatch(readFileSync(new URL(file, source), 'utf8'), /\bresearch\./, file);
 });
 
 test('workspace-free tasks work with Code absent and task manifests retain their published hashes', async (t) => {

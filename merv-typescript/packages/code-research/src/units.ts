@@ -24,13 +24,16 @@ import {
   type StoredEvent,
   type Transaction,
   type WorkflowProvidedBlockerInput,
-  type WorkflowProviderDependency,
-  type WorkflowProviderRelations,
   type Workflows,
 } from '@merv/contracts';
 import { checkBriefSections, checkResolutionCheck } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
+import {
+  providerRelations,
+  type WorkflowProviderDependency,
+  type WorkflowProviderRelations,
+} from './relations.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
 import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
 
@@ -164,7 +167,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     caller = structuredClone(caller);
     derivationInputs = derivationInputs && [...derivationInputs];
     await this.scope.require(caller, 'read', tx);
-    const relations = await this.workflows.dependencyRelations(caller.projectId, unitId, tx);
+    const relations = await this.dependencies(tx, caller.projectId, unitId);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
     for (const id of derivationInputs ?? []) {
       const input = await this.relations(tx, caller.projectId, id);
@@ -313,7 +316,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   ): Promise<CodeUnitAcceptance> {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
-    const relations = await this.workflows.dependencyRelations(caller.projectId, input.unitId, tx);
+    const relations = await this.dependencies(tx, caller.projectId, input.unitId);
     check(
       relations &&
         relations.instance.settled &&
@@ -600,9 +603,9 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     unitId: string,
   ): Promise<WorkflowProviderRelations | null> {
     const held = this.asked.get(tx);
-    if (!held) return await this.workflows.dependencyRelations(projectId, unitId, tx);
+    if (!held) return await providerRelations(this.workflows, projectId, unitId, tx);
     const key = `${projectId}:${unitId}`;
-    const known = held.get(key) ?? this.workflows.dependencyRelations(projectId, unitId, tx);
+    const known = held.get(key) ?? providerRelations(this.workflows, projectId, unitId, tx);
     held.set(key, known);
     return await known;
   }
@@ -1054,15 +1057,9 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       .map((edge) => edge.id)
       .sort();
     if (JSON.stringify(attached) !== JSON.stringify(prerequisites))
-      await this.workflows.systemPrerequisites(PROVIDER).replace(
-        {
-          projectId,
-          instanceId: unitId,
-          dependencies: prerequisites,
-          requestId: `base:${unitId}:${relations.instance.revision}:${digest(prerequisites)}`,
-        },
-        tx,
-      );
+      await this.workflows
+        .systemPrerequisites(PROVIDER)
+        .replace({ projectId, instanceId: unitId, dependencies: prerequisites }, tx);
     await this.setBlockers(
       tx,
       projectId,
@@ -1078,7 +1075,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL',
       projectId,
     )) {
-      const relations = await this.workflows.dependencyRelations(projectId, row.unit_id, tx);
+      const relations = await this.dependencies(tx, projectId, row.unit_id);
       if (!relations || relations.instance.terminal) continue;
       const derived = await this.derive(tx, projectId, relations.instance.id);
       if (
@@ -1176,7 +1173,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     )) {
       const accepted = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
       if (!accepted.code || !base.members.includes(accepted.code.commit)) continue;
-      const facts = await this.workflows.dependencyRelations(projectId, unit.unit_id, tx);
+      const facts = await this.dependencies(tx, projectId, unit.unit_id);
       const title = facts?.instance.name ?? 'Accepted work';
       titles.set(accepted.code.commit, [...(titles.get(accepted.code.commit) ?? []), title]);
       const entries = names.get(accepted.code.commit) ?? [];
@@ -1320,7 +1317,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       // one afterwards, so a row written here would block it for good.
       if (
         (key || unit.quarantine_base_key) &&
-        !(await this.workflows.dependencyRelations(projectId, unit.unit_id, tx))?.instance.terminal
+        !(await this.dependencies(tx, projectId, unit.unit_id))?.instance.terminal
       )
         await this.setBlockers(
           tx,
@@ -1361,12 +1358,13 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   }
 
   /**
-   * The durable consumer of workflow.transition. A base changes only when work ends, so every
-   * other transition costs one read; then only what waits on the ended work is derived again,
-   * climbing past a dependent that has itself ended, because a derivation looks through those.
+   * The durable consumer of workflow.transition. A base changes only when work ends, so a move
+   * the event says did not end the work costs nothing past the base check (an event recorded
+   * before events said so is read as before); then only what waits on the ended work is derived
+   * again, climbing past a dependent that has itself ended, because a derivation looks through
+   * those.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
-    const ended = await this.workflows.dependencyRelations(event.projectId, event.subjectId, tx);
     if (
       this.bases?.enabled &&
       (await this.bases.records(tx, event.projectId)).some(
@@ -1376,6 +1374,8 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       await this.reconcileProject(tx, event.projectId);
       return;
     }
+    if (event.data.terminal === false) return;
+    const ended = await this.dependencies(tx, event.projectId, event.subjectId);
     if (!ended?.instance.terminal) return;
     const seen = new Set<string>();
     const queue = [...ended.dependents];
@@ -1386,7 +1386,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
         await this.reconcileUnit(tx, event.projectId, node.id);
         continue;
       }
-      const above = await this.workflows.dependencyRelations(event.projectId, node.id, tx);
+      const above = await this.dependencies(tx, event.projectId, node.id);
       queue.push(...(above?.dependents ?? []));
     }
   }
@@ -1398,7 +1398,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     revision: number,
     tx: Transaction,
   ) {
-    const relations = await this.workflows.dependencyRelations(caller.projectId, unitId, tx);
+    const relations = await this.dependencies(tx, caller.projectId, unitId);
     check(
       relations?.instance.settled && relations.instance.revision === revision,
       'code_acceptance_unverifiable',

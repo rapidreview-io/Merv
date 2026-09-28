@@ -1,5 +1,6 @@
 import { visible, mapAsync, filterAsync } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
+import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -1760,7 +1761,16 @@ export class ExperimentService implements Experiments {
 }
 export const experimentsPlugin = {
   name: 'merv-experiments',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'paper',
+    'domainEvents',
+  ],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const experiments = await createService(
@@ -1786,6 +1796,11 @@ export const experimentsPlugin = {
       yield () => experiments.close();
       yield ctx.provide('experiments', experiments);
       yield () => experiments.withdrawReviewOwner();
+    });
+    await ctx.effect(async function* () {
+      yield await ctx.domainEvents.subscribe(
+        leaseReleaseConsumer('experiments.lease-release.v1', 'experiment_leases', ctx.reviews),
+      );
     });
   },
 };

@@ -436,6 +436,12 @@ $merv$;
 CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();
 DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
+    // And workflows@9 (pinned contracts are immutable; an index on instances by version).
+    await client.query(`DROP TRIGGER wf_definitions_pinned ON wf_definitions;
+DROP TRIGGER wf_success_states_pinned ON wf_success_states;
+DROP FUNCTION wf_pinned_guard();
+DROP INDEX wf_instances_kind;
+DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)
@@ -451,10 +457,19 @@ DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
       });
     }
     for (const [name, version] of retiredVersions) {
+      // Shaped like a registered definition: the service reads every stored one at startup.
+      const definition = {
+        name,
+        version,
+        initial: 'open',
+        states: ['done', 'open'],
+        terminal: ['done'],
+        edges: [{ from: 'open', action: 'finish', to: 'done' }],
+      };
       await client.query(
         `INSERT INTO wf_definitions(name,version,fingerprint,definition_json,created_at)
-         VALUES($1,$2,$3,'{}',$4) ON CONFLICT DO NOTHING`,
-        [name, version, `fixture-${name}-${version}`, at],
+         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [name, version, `fixture-${name}-${version}`, JSON.stringify(definition), at],
       );
       await client.query(
         `INSERT INTO wf_success_states(workflow,version,success_json) VALUES($1,$2,'[]')

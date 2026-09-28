@@ -108,11 +108,15 @@ async function setup(path = ':memory:') {
     ],
   };
   const registration = await workflows.register(graph, policy);
-  const instance = await workflows.start(caller, { workflow: graph.name, requestId: 'create' });
+  const instance = await registration.start(caller, {
+    workflow: graph.name,
+    requestId: 'create',
+  });
   return {
     state,
     scope,
     caller,
+    credentialId: credentials.credential.id,
     workflows,
     registration,
     policy,
@@ -249,6 +253,36 @@ test('every assignment and begin rechecks admission, tenant identity and current
   );
 });
 
+test('a leased worker is neither offered begin nor answered about it', async (t) => {
+  const f = await setup();
+  t.after(async () => await f.state.close());
+  const source = await f.scope.delegationSource({ ...f.caller, credentialId: f.credentialId });
+  f.scope.registerSessionAuthority({ require: async () => source });
+  const actor = await f.state.transaction(
+    async (tx) =>
+      await f.scope.createSessionActor(
+        source,
+        { sessionId: 'worker', role: 'producer', name: 'Worker' },
+        tx,
+      ),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: 'worker' },
+  };
+  const guidance = await f.workflows.evaluate(worker, f.instance.id);
+  assert.ok(!guidance.actions.some((action) => action.action === 'begin'));
+  await assert.rejects(f.workflows.evaluate(worker, f.instance.id, { action: 'begin' }), {
+    code: 'invalid_action',
+    status: 409,
+  });
+  assert.equal(
+    (await f.workflows.evaluate(f.caller, f.instance.id, { action: 'begin' })).nextAction?.tool,
+    'workflow.begin',
+  );
+});
+
 test('failed context projection rolls back its activation event and start, including caller transactions', async (t) => {
   const f = await setup();
   t.after(async () => await f.state.close());
@@ -293,7 +327,7 @@ test('start history is immutable and survives revisions, unload, termination and
     instanceId: f.instance.id,
     expectedRevision: 0,
   });
-  await f.workflows.transition(f.caller, {
+  await f.registration.transition(f.caller, {
     instanceId: f.instance.id,
     expectedRevision: 0,
     action: 'restart',
@@ -332,8 +366,8 @@ test('start history is immutable and survives revisions, unload, termination and
     { code: 'workflow_unavailable' },
   );
   assert.deepEqual(await f.workflows.workStarts(f.caller, f.instance.id), starts);
-  await f.workflows.register(graph, f.policy);
-  await f.workflows.transition(f.caller, {
+  const again = await f.workflows.register(graph, f.policy);
+  await again.transition(f.caller, {
     instanceId: f.instance.id,
     expectedRevision: 1,
     action: 'finish',
@@ -360,16 +394,20 @@ test('start history is immutable and survives revisions, unload, termination and
 test('assignment dependencies gate entry independently of completion readiness', async (t) => {
   const f = await setup();
   t.after(async () => await f.state.close());
-  f.registration.dispose();
-  const owner = await f.workflows.register(graph, {
-    ...f.policy,
-    successStates: ['done'],
-    assignments: [{ ...f.policy.assignments![0], requiresDependencies: true }],
-  });
+  // Success states are pinned with a version, so the gated graph is a version of its own.
+  const owner = await f.workflows.register(
+    { ...graph, version: 2 },
+    {
+      ...f.policy,
+      successStates: ['done'],
+      assignments: [{ ...f.policy.assignments![0], requiresDependencies: true }],
+    },
+  );
+  const upstream = await owner.start(f.caller, { workflow: graph.name, requestId: 'upstream' });
   const downstream = await owner.start(f.caller, {
     workflow: graph.name,
     requestId: 'downstream',
-    dependsOn: [f.instance.id],
+    dependsOn: [upstream.id],
   });
   for (const action of [
     async () => await f.workflows.assignment(f.caller, downstream.id),
@@ -383,7 +421,7 @@ test('assignment dependencies gate entry independently of completion readiness',
   );
   assert.deepEqual(await f.workflows.workStarts(f.caller, downstream.id), []);
   await owner.transition(f.caller, {
-    instanceId: f.instance.id,
+    instanceId: upstream.id,
     expectedRevision: 0,
     action: 'finish',
     requestId: 'upstream-done',
@@ -558,7 +596,7 @@ test('independent database connections converge on one first activation and reje
     ).length,
     1,
   );
-  await f.workflows.transition(f.caller, {
+  await f.registration.transition(f.caller, {
     ...input,
     action: 'restart',
     requestId: 'advance',

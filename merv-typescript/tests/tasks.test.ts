@@ -470,21 +470,6 @@ test('task loop pins evidence, routes needs_changes and pass, and deduplicates m
         }),
       code('request_conflict'),
     );
-    await assert.rejects(
-      async () =>
-        await f.workflows.transition(f.producer, {
-          instanceId: initial.id,
-          action: 'submit_delivery',
-          expectedRevision: 0,
-          requestId: 'bypass',
-        }),
-      code('workflow_managed'),
-    );
-    await assert.rejects(
-      async () =>
-        await f.workflows.start(f.producer, { workflow: 'task', requestId: 'bypass-start' }),
-      code('workflow_managed'),
-    );
     const delivery = await f.delivery();
     const input = {
       taskId: initial.id,
@@ -949,7 +934,8 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       dependencyClosure: f.workflows.dependencyClosure.bind(f.workflows),
       replaceBlockers: f.workflows.replaceBlockers.bind(f.workflows),
       blockers: f.workflows.blockers.bind(f.workflows),
-      dependencyRelations: f.workflows.dependencyRelations.bind(f.workflows),
+      relations: f.workflows.relations.bind(f.workflows),
+      pinned: f.workflows.pinned.bind(f.workflows),
       prerequisites: f.workflows.prerequisites.bind(f.workflows),
       limitStatusOf: f.workflows.limitStatusOf.bind(f.workflows),
       leaseRole: f.workflows.leaseRole.bind(f.workflows),
@@ -957,7 +943,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       checkLease: f.workflows.checkLease.bind(f.workflows),
       activateLease: f.workflows.activateLease.bind(f.workflows),
       releaseLease: f.workflows.releaseLease.bind(f.workflows),
-      authorizeLeaseDispatch: f.workflows.authorizeLeaseDispatch.bind(f.workflows),
       register: async (definition, policy) => {
         const handle = await f.workflows.register(definition, policy);
         return {
@@ -968,8 +953,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
           },
         };
       },
-      start: f.workflows.start.bind(f.workflows),
-      transition: f.workflows.transition.bind(f.workflows),
       get: f.workflows.get.bind(f.workflows),
       list: f.workflows.list.bind(f.workflows),
       history: f.workflows.history.bind(f.workflows),
@@ -982,8 +965,6 @@ test('failed workflow routing rolls back verdict, request record, and events ato
       assignment: f.workflows.assignment.bind(f.workflows),
       begin: f.workflows.begin.bind(f.workflows),
       workStarts: f.workflows.workStarts.bind(f.workflows),
-      execution: f.workflows.execution.bind(f.workflows),
-      authorizeDispatch: f.workflows.authorizeDispatch.bind(f.workflows),
     };
     alternative = await createService(
       new TaskService(

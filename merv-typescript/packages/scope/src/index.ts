@@ -1,8 +1,7 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
-import { within } from './within.js';
 import { ACTOR_WITH_MEMBER, needs, permits, serviceRole, workerRoles } from './roles.js';
-import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
+import { visible, createService, receipted, sha256Hex, within } from '@merv/contracts';
 import { scopeMigrations } from './migrations.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';

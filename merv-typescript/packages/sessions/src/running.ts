@@ -312,7 +312,7 @@ const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) =>
     }),
     usage_unavailable: () => ({
       says: ['Its budget cannot be judged'],
-      who: 'An operator clears the bound that went unreported',
+      who: 'An operator clears the bound or reports the missing usage',
     }),
     awaiting_operator: () => ({
       says: ['Waits for an operator'],

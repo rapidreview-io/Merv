@@ -1,11 +1,20 @@
 import { canonical, check, now } from '@merv/contracts';
 import type {
+  Data,
   Sql,
   Transaction,
-  WorkflowDefinition,
   WorkflowDependency,
+  WorkflowPinned,
+  WorkflowRelations,
   WorkflowSnapshot,
 } from '@merv/contracts';
+import type { PinnedContracts } from './pinned.js';
+
+/**
+ * The most distinct ids one call may name. Every id is bound in each statement that reads or
+ * writes the set, ten per edge written, so this keeps them all inside PostgreSQL's 65,535.
+ */
+const MAX_DEPENDENCIES = 1000;
 
 export function normalizeDependencies(value: unknown): string[] {
   if (value === undefined || value === null) return [];
@@ -15,34 +24,13 @@ export function normalizeDependencies(value: unknown): string[] {
     'invalid_dependencies',
     'Dependencies must be a workflow id or an array of workflow ids',
   );
-  return [...new Set((values as string[]).map((item) => item.trim()).filter(Boolean))];
-}
-
-export async function persistSuccess(
-  sql: Sql,
-  definition: WorkflowDefinition,
-  success?: string[],
-): Promise<void> {
-  if (success === undefined) return;
-  const encoded = canonical([...success].sort());
-  const existing = await sql.get<{ success_json: string }>(
-    'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
-    definition.name,
-    definition.version,
-  );
+  const ids = [...new Set((values as string[]).map((item) => item.trim()).filter(Boolean))];
   check(
-    !existing || existing.success_json === encoded,
-    'workflow_version_conflict',
-    `${definition.name}@${definition.version} success states changed; publish a new version`,
-    409,
+    ids.length <= MAX_DEPENDENCIES,
+    'invalid_dependencies',
+    `A call can name at most ${MAX_DEPENDENCIES} dependencies`,
   );
-  if (!existing)
-    await sql.run(
-      'INSERT INTO wf_success_states (workflow,version,success_json) VALUES (?,?,?)',
-      definition.name,
-      definition.version,
-      encoded,
-    );
+  return ids;
 }
 
 interface EdgeRow {
@@ -60,109 +48,71 @@ interface NodeRow {
   workflow: string;
   version: number;
   state: string;
+  revision: number;
   data_json: string;
 }
 
+const NODE = 'id,workflow,version,state,revision,data_json';
+const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
+
 /** What an instance is called: its title, else its name, else the workflow it runs. */
-export const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
+const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
   [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
 
-/** Without declared success states an instance never settles, so it never counts as failed. */
+/**
+ * An instance judged against a contract; one the project no longer holds has only its id and
+ * what its edge recorded. Without declared success states it never settles, so never fails.
+ */
 function classify(
-  node: NodeRow | undefined,
-  id: string,
-  workflow: string,
-  version: number,
-  success: string[] | undefined,
-  terminal: string[],
+  node: Pick<NodeRow, 'id' | 'workflow' | 'version'> & Partial<NodeRow>,
+  success: readonly string[] | null | undefined,
+  terminal: readonly string[],
 ): WorkflowDependency {
-  const settled = !!node && !!success?.includes(node.state);
+  const { state } = node;
+  const settled = !!state && !!success?.includes(state);
+  const ended = !!state && terminal.includes(state);
   return {
-    id,
-    workflow: node?.workflow ?? workflow,
-    version: node?.version ?? version,
-    name: instanceName(node ? JSON.parse(node.data_json) : {}, node?.workflow ?? workflow),
-    state: node?.state ?? 'missing',
+    id: node.id,
+    workflow: node.workflow,
+    version: Number(node.version),
+    name: instanceName(node.data_json ? JSON.parse(node.data_json) : {}, node.workflow),
+    state: state ?? 'missing',
+    revision: Number(node.revision ?? 0),
     settled,
-    failed: !!node && success !== undefined && terminal.includes(node.state) && !settled,
+    terminal: ended,
+    failed: ended && !!success && !settled,
   };
 }
 
-/** What an edge's source depends on, read against the target as it stands now. */
-const prerequisiteOf = (edge: EdgeRow, target: NodeRow | undefined): WorkflowDependency => ({
-  ...classify(
-    target,
-    edge.target_id,
-    edge.target_workflow,
-    edge.target_version,
-    // The contract the edge pinned when it was made, whatever version the target runs now.
-    JSON.parse(edge.target_success_json) as string[],
-    JSON.parse(edge.target_terminal_json) as string[],
-  ),
-  ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
-});
-
-export async function relations(
+/** The edges of `column` naming any of `ids`, in the order they were made. */
+const edgesOf = async (
   sql: Sql,
   projectId: string,
-  instanceId: string,
-): Promise<{
-  dependencies: WorkflowDependency[];
-  dependents: WorkflowDependency[];
-}> {
-  const edges = await sql.all<EdgeRow>(
-    'SELECT * FROM wf_dependencies WHERE project_id=? AND (source_id=? OR target_id=?) ORDER BY created_at,target_id,source_id',
+  column: 'source_id' | 'target_id',
+  ids: readonly string[],
+) =>
+  await sql.all<EdgeRow>(
+    `SELECT * FROM wf_dependencies WHERE project_id=? AND ${column} IN (${marks(ids)}) ORDER BY created_at,target_id,source_id`,
     projectId,
-    instanceId,
-    instanceId,
+    ...ids,
   );
-  const dependencies: WorkflowDependency[] = [],
-    dependents: WorkflowDependency[] = [];
-  for (const edge of edges) {
-    if (edge.source_id === instanceId) {
-      const target = await sql.get<NodeRow>(
-        'SELECT id,workflow,version,state,data_json FROM wf_instances WHERE id=? AND project_id=?',
-        edge.target_id,
-        projectId,
-      );
-      dependencies.push(prerequisiteOf(edge, target));
-    }
-    if (edge.target_id === instanceId) {
-      const source = await sql.get<NodeRow>(
-        'SELECT id,workflow,version,state,data_json FROM wf_instances WHERE id=? AND project_id=?',
-        edge.source_id,
-        projectId,
-      );
-      if (!source) continue;
-      const semantics = await sql.get<{ success_json: string }>(
-        'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
-        source.workflow,
-        source.version,
-      );
-      const graph = await sql.get<{ definition_json: string }>(
-        'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
-        source.workflow,
-        source.version,
-      );
-      dependents.push({
-        ...classify(
-          source,
-          source.id,
-          source.workflow,
-          source.version,
-          semantics ? (JSON.parse(semantics.success_json) as string[]) : undefined,
-          graph ? (JSON.parse(graph.definition_json) as WorkflowDefinition).terminal : [],
-        ),
-        ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
-      });
-    }
-  }
-  return { dependencies, dependents };
+
+/** The instances named, by id; one the project does not hold is left out. */
+async function nodes(sql: Sql, projectId: string, ids: string[]): Promise<Map<string, NodeRow>> {
+  const wanted = [...new Set(ids)];
+  if (!wanted.length) return new Map();
+  const rows = await sql.all<NodeRow>(
+    `SELECT ${NODE} FROM wf_instances WHERE project_id=? AND id IN (${marks(wanted)})`,
+    projectId,
+    ...wanted,
+  );
+  return new Map(rows.map((row) => [row.id, row]));
 }
 
 /**
- * What each of several instances depends on, in two reads however many there are: the
- * `dependencies` of relations() for each, in the same order, without what depends on them.
+ * What each of several instances depends on, in two reads however many there are, each target
+ * read as it stands now against the contract its edge pinned when it was made, whatever version
+ * the target runs now. A provider's edge never fails its source: the provider re-plans it.
  */
 export async function prerequisites(
   sql: Sql,
@@ -171,37 +121,129 @@ export async function prerequisites(
 ): Promise<Map<string, WorkflowDependency[]>> {
   const found = new Map(instanceIds.map((id) => [id, [] as WorkflowDependency[]]));
   if (!found.size) return found;
-  const edges = await sql.all<EdgeRow>(
-    `SELECT * FROM wf_dependencies WHERE project_id=? AND source_id IN (${[...found.keys()].map(() => '?').join(',')}) ORDER BY created_at,target_id,source_id`,
+  const edges = await edgesOf(sql, projectId, 'source_id', [...found.keys()]);
+  const targets = await nodes(
+    sql,
     projectId,
-    ...found.keys(),
+    edges.map((edge) => edge.target_id),
   );
-  const wanted = [...new Set(edges.map((edge) => edge.target_id))];
-  const targets = wanted.length
-    ? await sql.all<NodeRow>(
-        `SELECT id,workflow,version,state,data_json FROM wf_instances WHERE project_id=? AND id IN (${wanted.map(() => '?').join(',')})`,
-        projectId,
-        ...wanted,
-      )
-    : [];
-  const byId = new Map(targets.map((target) => [target.id, target]));
   for (const edge of edges)
-    found.get(edge.source_id)?.push(prerequisiteOf(edge, byId.get(edge.target_id)));
+    found.get(edge.source_id)!.push({
+      ...classify(
+        targets.get(edge.target_id) ?? {
+          id: edge.target_id,
+          workflow: edge.target_workflow,
+          version: edge.target_version,
+        },
+        JSON.parse(edge.target_success_json) as string[],
+        JSON.parse(edge.target_terminal_json) as string[],
+      ),
+      ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner, failed: false } : {}),
+    });
   return found;
 }
 
+/** One instance's prerequisites(). */
+export const prerequisitesOf = async (sql: Sql, projectId: string, instanceId: string) =>
+  (await prerequisites(sql, projectId, [instanceId])).get(instanceId)!;
+
+/**
+ * What depends on each of several instances, in two reads however many there are, each source
+ * read against its own pinned contract; one not yet kept is read once per version, not per edge.
+ * A source the project no longer holds is left out.
+ */
+export async function dependents(
+  sql: Sql,
+  contracts: PinnedContracts,
+  projectId: string,
+  instanceIds: readonly string[],
+): Promise<Map<string, WorkflowDependency[]>> {
+  const found = new Map(instanceIds.map((id) => [id, [] as WorkflowDependency[]]));
+  if (!found.size) return found;
+  const edges = await edgesOf(sql, projectId, 'target_id', [...found.keys()]);
+  const sources = await nodes(
+    sql,
+    projectId,
+    edges.map((edge) => edge.source_id),
+  );
+  const read = new Map<string, WorkflowPinned | null>();
+  for (const edge of edges) {
+    const source = sources.get(edge.source_id);
+    if (!source) continue;
+    const key = `${source.workflow}@${source.version}`;
+    if (!read.has(key))
+      read.set(key, await contracts.get(sql, source.workflow, Number(source.version)));
+    const pinned = read.get(key);
+    found.get(edge.target_id)!.push({
+      ...classify(source, pinned?.successStates, pinned?.definition.terminal ?? []),
+      ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
+    });
+  }
+  return found;
+}
+
+/** Both directions of one instance's edges, in four reads however many there are. */
+export async function relations(
+  sql: Sql,
+  contracts: PinnedContracts,
+  projectId: string,
+  instanceId: string,
+): Promise<{ dependencies: WorkflowDependency[]; dependents: WorkflowDependency[] }> {
+  return {
+    dependencies: await prerequisitesOf(sql, projectId, instanceId),
+    dependents: (await dependents(sql, contracts, projectId, [instanceId])).get(instanceId)!,
+  };
+}
+
+/**
+ * One instance, classified against its own pinned contract, with both directions of its edges;
+ * null when the project holds no such instance.
+ */
+export async function instanceRelations(
+  sql: Sql,
+  contracts: PinnedContracts,
+  projectId: string,
+  instanceId: string,
+): Promise<WorkflowRelations | null> {
+  const node = (await nodes(sql, projectId, [instanceId])).get(instanceId);
+  if (!node) return null;
+  const pinned = await contracts.get(sql, node.workflow, Number(node.version));
+  const instance = classify(node, pinned?.successStates, pinned?.definition.terminal ?? []);
+  return {
+    instance: {
+      ...instance,
+      failed: instance.terminal && !instance.settled,
+      data: JSON.parse(node.data_json) as Data,
+    },
+    ...(await relations(sql, contracts, projectId, instanceId)),
+  };
+}
+
+/**
+ * Failure is judged over every edge, so a failed declared edge is reported even where a
+ * provider's edge to the same target came first. A target held by both is named once, by
+ * its declared edge; one held only by a provider says which provider holds it.
+ */
 export function requireDependencies(dependencies: WorkflowDependency[]): void {
   const pending = dependencies.filter((item) => !item.settled);
   if (!pending.length) return;
   const failed = pending.filter((item) => item.failed);
-  const names = (failed.length ? failed : pending)
-    .map((item) => `${item.workflow} ${item.name || item.id} (${item.state})`)
+  const named = new Map<string, WorkflowDependency>();
+  for (const item of failed.length ? failed : pending) {
+    const seen = named.get(item.id);
+    if (!seen || (seen.kind === 'system' && item.kind !== 'system')) named.set(item.id, item);
+  }
+  const names = [...named.values()]
+    .map(
+      (item) =>
+        `${item.workflow} ${item.name || item.id} (${item.state}${item.kind === 'system' ? `, required by ${item.owner}` : ''})`,
+    )
     .join(', ');
   check(
     false,
     failed.length ? 'dependency_failed' : 'dependencies_pending',
     failed.length
-      ? `A dependency has ended without succeeding: ${names}. End this work; a research cycle may reselect its work with research.replan.`
+      ? `A dependency has ended without succeeding: ${names}.`
       : `Work is waiting on unfinished dependencies: ${names}.`,
     409,
   );
@@ -229,84 +271,88 @@ export async function detachDependencies(
   return removed;
 }
 
-/** Called only inside the owner's transaction. Existing edges keep their original success contract. */
+/**
+ * Called only inside the owner's transaction. Each id is refused in the order given when it is
+ * the source, is not in the project or declares no success states; an edge already held is
+ * kept as it is, with its original contract. Only then is the whole set checked for a cycle, in
+ * one query: a `fresh` source was just minted, so nothing can lead back to it and no edge from
+ * it can exist yet.
+ */
 export async function attachDependencies(
   tx: Transaction,
+  contracts: PinnedContracts,
   source: WorkflowSnapshot,
   ids: string[],
-  owner?: string,
+  { owner, fresh = false }: { owner?: string; fresh?: boolean } = {},
 ): Promise<string[]> {
-  const added: string[] = [];
+  if (!ids.length) return [];
+  const kind = owner ? 'system' : 'declared';
+  const held = new Set(
+    fresh
+      ? []
+      : (
+          await tx.all<{ target_id: string }>(
+            `SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind=? AND owner=? AND target_id IN (${marks(ids)})`,
+            source.projectId,
+            source.id,
+            kind,
+            owner ?? '',
+            ...ids,
+          )
+        ).map((row) => row.target_id),
+  );
+  const targets = await nodes(
+    tx,
+    source.projectId,
+    ids.filter((id) => !held.has(id)),
+  );
+  const added: { id: string; target: NodeRow; pinned: WorkflowPinned }[] = [];
   for (const targetId of ids) {
     check(targetId !== source.id, 'dependency_cycle', 'A workflow cannot depend on itself', 409);
-    const existing = await tx.get<{ kind: string; owner: string | null }>(
-      'SELECT kind,owner FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind=? AND owner=?',
-      source.projectId,
-      source.id,
-      targetId,
-      owner ? 'system' : 'declared',
-      owner ?? '',
-    );
-    if (existing) continue;
-    const target = await tx.get<NodeRow>(
-      'SELECT id,workflow,version,state,data_json FROM wf_instances WHERE id=? AND project_id=?',
-      targetId,
-      source.projectId,
-    );
+    if (held.has(targetId)) continue;
+    const target = targets.get(targetId);
     check(target, 'not_found', 'Dependency not found in this project', 404);
-    const success = await tx.get<{ success_json: string }>(
-      'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
-      target.workflow,
-      target.version,
-    );
+    const pinned = await contracts.get(tx, target.workflow, Number(target.version));
     check(
-      success,
+      pinned?.successStates,
       'dependency_unsupported',
       `Workflow ${target.workflow}@${target.version} has no declared success states`,
       409,
     );
-    const definition = await tx.get<{ definition_json: string }>(
-      'SELECT definition_json FROM wf_definitions WHERE name=? AND version=?',
-      target.workflow,
-      target.version,
+    added.push({ id: targetId, target, pinned });
+  }
+  if (!added.length) return [];
+  if (!fresh)
+    check(
+      !(await tx.get(
+        `WITH RECURSIVE reached(id) AS (
+           SELECT id FROM (VALUES ${added.map(() => '(?::text)').join(',')}) AS given(id)
+           UNION SELECT d.target_id FROM wf_dependencies d JOIN reached ON d.source_id = reached.id
+           WHERE d.project_id = ?)
+         SELECT 1 AS found FROM reached WHERE id = ? LIMIT 1`,
+        ...added.map((item) => item.id),
+        source.projectId,
+        source.id,
+      )),
+      'dependency_cycle',
+      'These dependencies would create a cycle',
+      409,
     );
-    check(definition, 'dependency_unsupported', 'Dependency definition is unavailable', 409);
-    const frontier = [targetId],
-      seen = new Set<string>();
-    while (frontier.length) {
-      const current = frontier.pop()!;
-      check(
-        current !== source.id,
-        'dependency_cycle',
-        'These dependencies would create a cycle',
-        409,
-      );
-      if (seen.has(current)) continue;
-      seen.add(current);
-      frontier.push(
-        ...(
-          await tx.all<{ target_id: string }>(
-            'SELECT target_id FROM wf_dependencies WHERE project_id=? AND source_id=?',
-            source.projectId,
-            current,
-          )
-        ).map((item) => item.target_id),
-      );
-    }
-    await tx.run(
-      'INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at,kind,owner) VALUES (?,?,?,?,?,?,?,?,?,?)',
+  const time = now();
+  await tx.run(
+    `INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at,kind,owner) VALUES ${added.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`,
+    ...added.flatMap(({ id, target, pinned }) => [
       source.projectId,
       source.id,
-      targetId,
+      id,
       target.workflow,
       target.version,
-      success.success_json,
-      canonical((JSON.parse(definition.definition_json) as WorkflowDefinition).terminal),
-      now(),
-      owner ? 'system' : 'declared',
+      canonical(pinned.successStates),
+      canonical(pinned.definition.terminal),
+      time,
+      kind,
       owner ?? '',
-    );
-    added.push(targetId);
-  }
-  return added;
+    ]),
+  );
+  return added.map((item) => item.id);
 }

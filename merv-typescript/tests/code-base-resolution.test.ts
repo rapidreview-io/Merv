@@ -562,23 +562,27 @@ test('a resolution title names the contributing work on an intermediate union wi
   );
 });
 
-test('an open conflict and unchanged reconciles queue no work or prerequisite receipts', async (t) => {
+test('an open conflict and unchanged reconciles queue no work or prerequisite writes', async (t) => {
   const f = await fixture(t);
-  const count = () =>
-    f.state.read(async (sql) =>
-      Number(
-        (await sql.get<{ count: number | string }>(
-          'SELECT COUNT(*) AS count FROM wf_system_requests',
-        ))!.count,
-      ),
-    );
+  let replaced = 0;
+  const provide = f.workflows.systemPrerequisites.bind(f.workflows);
+  t.mock.method(f.workflows, 'systemPrerequisites', (provider: string) => {
+    const capability = provide(provider);
+    return {
+      replace: (...args: Parameters<typeof capability.replace>) => {
+        replaced++;
+        return capability.replace(...args);
+      },
+    };
+  });
+  const count = () => replaced;
   const ordinary = await f.waiter([f.left]);
   for (let i = 0; i < 3; i++) await f.code.reconcileAll();
-  assert.equal(await count(), 0);
+  assert.equal(count(), 0);
   await f.waiter();
   await f.bases.work(f.admin.projectId);
   assert.deepEqual(await f.bases.due(), []);
-  const receipts = await count();
+  const receipts = count();
   assert.equal(receipts, 1);
   for (let i = 0; i < 4; i++) {
     await f.state.transaction((tx) =>
@@ -587,7 +591,7 @@ test('an open conflict and unchanged reconciles queue no work or prerequisite re
     await f.code.reconcileAll();
     assert.deepEqual(await f.bases.due(), []);
   }
-  assert.equal(await count(), receipts);
+  assert.equal(count(), receipts);
 });
 
 test('accepted resolution verification runs outside transactions and recovers after creating its ref', async (t) => {
@@ -1170,7 +1174,6 @@ test('derivation ignores a system edge below a code-less success', async (t) => 
       {
         projectId: f.admin.projectId,
         instanceId: bridge.id,
-        requestId: 'bridge-system',
         dependencies: [resolutionId],
       },
       tx,

@@ -4,15 +4,18 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createService } from '@merv/contracts';
+import { admitDispatch, createService } from '@merv/contracts';
 import type {
   Caller,
   Data,
+  SessionToolPolicy,
   Task,
   TaskCheckpointInput,
   TaskContext,
   TaskDelivery,
+  Transaction,
   WorkflowDefinition,
+  WorkflowExecution,
   WorkflowPolicy,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
@@ -20,6 +23,7 @@ import type { Session } from '@merv/sessions/types';
 import { WorkflowsService } from '@merv/workflows';
 import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext) {
@@ -151,20 +155,16 @@ test('lease authority retains its source and worker during pending checks', asyn
   });
   const offered = await f.offer();
   const worker = await sessions.authenticate(offered.secret);
-  for (const method of ['checkLease', 'activateLease', 'authorizeLeaseDispatch'] as const) {
+  for (const method of ['checkLease', 'activateLease', 'checkLease with its execution'] as const) {
     await t.test(method, async () => {
       const caller = structuredClone(worker);
       const checking =
-        method === 'authorizeLeaseDispatch'
-          ? workflows.authorizeLeaseDispatch(
+        method === 'checkLease with its execution'
+          ? workflows.checkLease(
               caller,
               offered.session.lease,
+              undefined,
               offered.session.execution,
-              {
-                tool: 'workflow.status_and_next',
-                input: {},
-                read: true,
-              },
             )
           : workflows[method](caller, offered.session.lease);
       caller.actorId = 'replacement';
@@ -298,6 +298,17 @@ test('lease generations survive provider reload but old invocations and released
   await f.app.setEnabled('tasks', true);
   const live = await f.app.ctx.workflows.checkLease(worker, offered.session.lease);
   assert.notEqual(live.registrationId, oldGeneration);
+  // The execution frozen under the old generation still grants its references.
+  assert.ok(
+    (
+      await f.app.ctx.workflows.checkLease(
+        worker,
+        offered.session.lease,
+        undefined,
+        offered.session.execution,
+      )
+    ).references,
+  );
   await assert.rejects(
     f.app.ctx.sessions.run(
       invocation,
@@ -322,6 +333,194 @@ test('lease generations survive provider reload but old invocations and released
   );
   const successor = await f.offer();
   assert.notEqual(successor.session.actorId, offered.session.actorId);
+});
+
+test('a lease owner releases the lease of a session closed while its workflow was disabled', async (t) => {
+  const f = await fixture(t);
+  const { state, domainEvents } = f.app.ctx;
+  const released = async (id: string) =>
+    (await state.read(
+      async (sql) =>
+        await sql.get<{ released_at: string | null }>(
+          'SELECT released_at FROM task_leases WHERE id=?',
+          id,
+        ),
+    ))!.released_at;
+  const consumer = async (id: string) => {
+    const status = (await domainEvents.status()).find((consumer) => consumer.id === id)!;
+    return {
+      active: status.active,
+      error: status.error,
+      caughtUp: status.cursor === (await state.eventHead()),
+    };
+  };
+
+  await t.test('without the registration, closing does not stall Sessions', async () => {
+    const offered = await f.offer();
+    await f.app.setEnabled('tasks', false);
+    await f.release(offered.session);
+    assert.equal(await released(offered.session.id), null);
+    const caughtUp = { active: true, error: null, caughtUp: true };
+    assert.deepEqual(await consumer('sessions.lifecycle.v1'), caughtUp);
+    assert.equal((await consumer('tasks.lease-release.v1')).active, false);
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.ok(await released(offered.session.id));
+    assert.deepEqual(await consumer('tasks.lease-release.v1'), caughtUp);
+  });
+
+  await t.test('a close logged before the consumer existed is released', async () => {
+    const offered = await f.offer();
+    await f.app.setEnabled('tasks', false);
+    await f.release(offered.session);
+    await state.transaction(
+      async (tx) => await tx.run("DELETE FROM event_consumers WHERE id='tasks.lease-release.v1'"),
+    );
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.ok(await released(offered.session.id));
+  });
+
+  await t.test('a second release and a close without a lease row change nothing', async () => {
+    const offered = await f.offer();
+    await f.release(offered.session);
+    const first = await released(offered.session.id);
+    assert.ok(first);
+    await state.transaction(async (tx) => {
+      await state.appendEvent(tx, {
+        projectId: f.source.projectId,
+        actorId: 'system:sessions',
+        type: 'session.closed',
+        subjectId: 'no-such-lease',
+        data: { reason: 'closed' },
+      });
+    });
+    await f.app.setEnabled('tasks', false);
+    await state.transaction(
+      async (tx) =>
+        await tx.run("UPDATE event_consumers SET cursor=0 WHERE id='tasks.lease-release.v1'"),
+    );
+    const head = await state.eventHead();
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.equal(await released(offered.session.id), first);
+    assert.equal(await state.eventHead(), head);
+    assert.deepEqual(await consumer('tasks.lease-release.v1'), {
+      active: true,
+      error: null,
+      caughtUp: true,
+    });
+  });
+});
+
+test('Experiments and Reflections release a closed session lease from their own tables', async (t) => {
+  const f = await fixture(t);
+  const { state, domainEvents } = f.app.ctx;
+  const owners = [
+    {
+      consumer: 'experiments.lease-release.v1',
+      table: 'experiment_leases',
+      row: {
+        experiment_id: 'experiment',
+        attempt_index: 1,
+        state: 'planned',
+        source_actor_id: 'source',
+        recovery: '[]',
+      },
+    },
+    {
+      consumer: 'reflections.lease-release.v1',
+      table: 'reflection_leases',
+      row: { instance_id: 'reflection' },
+    },
+  ];
+  for (const { consumer, table, row } of owners) {
+    const lease = {
+      id: `lease-${table}`,
+      project_id: f.source.projectId,
+      revision: 1,
+      actor_id: `worker-${table}`,
+      receipt: '{}',
+      inputs: '{}',
+      artifacts: '[]',
+      ...row,
+    };
+    await state.transaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO ${table}(${Object.keys(lease).join(',')}) VALUES(${Object.keys(lease)
+          .map(() => '?')
+          .join(',')})`,
+        ...Object.values(lease),
+      );
+      await state.appendEvent(tx, {
+        projectId: f.source.projectId,
+        actorId: 'system:sessions',
+        type: 'session.closed',
+        subjectId: lease.id,
+        data: { reason: 'closed' },
+      });
+    });
+    await domainEvents.drain();
+    const released = await state.read(
+      async (sql) =>
+        await sql.get<{ released_at: string | null }>(
+          `SELECT released_at FROM ${table} WHERE id=?`,
+          lease.id,
+        ),
+    );
+    assert.ok(released!.released_at, table);
+    const status = (await domainEvents.status()).find((status) => status.id === consumer)!;
+    assert.deepEqual(
+      [status.active, status.error, status.cursor],
+      [true, null, await state.eventHead()],
+      consumer,
+    );
+  }
+});
+
+test('a leased status_and_next admission stays within a statement budget', async (t) => {
+  const f = await fixture(t);
+  const offered = await f.offer();
+  const worker = await f.app.ctx.sessions.authenticate(offered.secret);
+  await f.app.ctx.domainEvents.drain();
+  // Lease steps, and the execution references a step would derive: the offer froze those.
+  const engine = f.app.ctx.workflows as unknown as Record<
+    'leaseStep' | 'executionOf',
+    (...args: unknown[]) => unknown
+  >;
+  const leaseSteps = t.mock.method(engine, 'leaseStep');
+  const references = t.mock.method(engine, 'executionOf');
+  // Statements issued through the state's transactions, snapshot children included.
+  const state = f.app.ctx.state as PostgresState;
+  let statements = 0;
+  const transaction = state.transaction.bind(state);
+  t.mock.method(state, 'transaction', ((fn: (tx: Transaction) => unknown) =>
+    transaction((tx) => {
+      // Mutate in place: assertTransaction() compares the transaction object's identity.
+      const { run, get, all } = tx;
+      Object.assign(tx, {
+        run: (sql: string, ...p: never[]) => (statements++, run(sql, ...p)),
+        get: (sql: string, ...p: never[]) => (statements++, get(sql, ...p)),
+        all: (sql: string, ...p: never[]) => (statements++, all(sql, ...p)),
+      });
+      return fn(tx);
+    })) as typeof state.transaction);
+  // As the tool registry calls it, which marks a read tool.
+  const policy: SessionToolPolicy = f.app.ctx.sessions;
+  const invocation = await policy.prepare(
+    worker,
+    'workflow.status_and_next',
+    { instanceId: f.task.id },
+    true,
+  );
+  assert.equal(invocation.tool, 'workflow.status_and_next');
+  // The admission's lease check runs inside the session's own frame, so every Scope check it
+  // makes for the worker resolves from that frame instead of re-reading the session row
+  // (about 400 statements unframed, 127 framed with a second lease step, 70 now).
+  assert.ok(statements <= 100, `${statements} statements for one leased read`);
+  // The session's Scope check, and its admission.
+  assert.equal(leaseSteps.mock.callCount(), 2);
+  assert.equal(references.mock.callCount(), 0);
 });
 
 test('logical task owner can reissue worker delivery while preserving immutable review input/output provenance', async (t) => {
@@ -513,7 +712,7 @@ test('a non-Task program can reserve, activate and release through generic hooks
 /** The engine alone, with one program whose lease hooks the test controls. */
 async function engineFixture(t: TestContext) {
   const state = await openState(':memory:');
-  const controls = { outputs: () => {} };
+  const controls: { outputs: () => Record<string, string[]> | void } = { outputs: () => {} };
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
   t.after(async () => {
@@ -577,10 +776,7 @@ async function engineFixture(t: TestContext) {
             assert.equal(receipt.leaseId, context.caller.session!.id);
           },
           release: async () => {},
-          outputs: () => {
-            controls.outputs();
-            return {};
-          },
+          outputs: () => controls.outputs() ?? {},
         },
       },
     ],
@@ -588,36 +784,10 @@ async function engineFixture(t: TestContext) {
   const handle = await workflows.register(definition, policy);
   const instance = await handle.start(caller, { workflow: definition.name, requestId: 'start' });
   const target = { instanceId: instance.id, expectedRevision: instance.revision };
-  // The execution is read for the target as it was called with, whatever the caller changes
-  // while the read is still running.
-  const requestedTarget = { ...target };
-  const pendingExecution = workflows.execution(caller, requestedTarget);
-  requestedTarget.expectedRevision = 99;
-  const execution = await pendingExecution;
-  return { state, scope, workflows, caller, instance, target, execution, controls };
+  return { state, scope, workflows, caller, instance, target, controls };
 }
 
-test('dispatch authorization acts on a snapshot of its request', async (t) => {
-  const f = await engineFixture(t);
-  const request = {
-    ...f.target,
-    registrationId: f.execution.registrationId,
-    policyHash: f.execution.policyHash,
-    tool: 'artifact.read',
-    input: { artifactId: 'own-artifact' },
-    read: false,
-  };
-  const dispatching = f.workflows.authorizeDispatch(f.caller, request);
-  request.tool = 'undeclared.write';
-  request.read = true;
-  request.input.artifactId = 'changed';
-  assert.deepEqual(await dispatching, {
-    tool: 'artifact.read',
-    input: { artifactId: 'own-artifact' },
-  });
-});
-
-test('lease lifecycle calls act on a snapshot of their inputs and admit only declared reads', async (t) => {
+test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   const f = await engineFixture(t);
   assert.ok(await f.workflows.assignment(f.caller, f.instance.id));
   assert.equal((await f.workflows.dispatchCandidates(f.caller))[0]!.instanceId, f.instance.id);
@@ -658,37 +828,72 @@ test('lease lifecycle calls act on a snapshot of their inputs and admit only dec
   const activating = f.workflows.activateLease(worker, activatedLease);
   activatedLease.instanceId = 'changed';
   assert.ok(await activating);
-  assert.equal(
-    (
-      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
-        tool: 'artifact.read',
-        input: { artifactId: 'own-artifact' },
-      })
-    ).input.artifactId,
-    'own-artifact',
+  // The frozen execution is read as it was called with, whatever changes while the check runs.
+  const frozen = structuredClone(offered.execution);
+  f.controls.outputs = () => {
+    frozen.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
+    frozen.references.artifacts = ['live-artifact'];
+  };
+  assert.deepEqual(
+    (await f.workflows.checkLease(worker, offered.lease, undefined, frozen)).references,
+    { artifacts: ['own-artifact'] },
   );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeLeaseDispatch(worker, offered.lease, offered.execution, {
-        tool: 'artifact.read',
-        input: { artifactId: 'live-artifact' },
-      }),
-    { code: 'execution_arguments_forbidden' },
-  );
-  for (const change of ['policy', 'read classification']) {
-    const frozen = structuredClone(offered.execution);
-    const request = { tool: 'undeclared.write', input: {}, read: false };
-    f.controls.outputs = () => {
-      if (change === 'policy') frozen.policy.tools.push({ name: request.tool, alternatives: [{}] });
-      else request.read = true;
-    };
-    await assert.rejects(
-      () => f.workflows.authorizeLeaseDispatch(worker, offered.lease, frozen, request),
-      { code: 'execution_tool_forbidden' },
-    );
-  }
+  f.controls.outputs = () => {};
   const release = { reason: 'Completed' };
   const releasing = f.workflows.releaseLease(offered.lease, release);
   release.reason = '';
   await releasing;
+});
+
+test('a lease check with its frozen execution grants the frozen references and declared outputs', async (t) => {
+  const f = await engineFixture(t);
+  const source = await f.scope.delegationSource(f.caller);
+  f.scope.registerSessionAuthority({ require: async () => source });
+  const actor = await f.state.transaction(
+    async (tx) =>
+      await f.scope.createSessionActor(
+        source,
+        { sessionId: 'lease-test', role: 'producer', name: 'Worker' },
+        tx,
+      ),
+  );
+  const worker: Caller = {
+    projectId: actor.projectId,
+    actorId: actor.id,
+    session: { id: 'lease-test' },
+  };
+  const { lease, execution } = await f.workflows.offerLease(f.caller, worker, {
+    ...f.target,
+    leaseId: 'lease-test',
+  });
+  const granted = async (frozen: WorkflowExecution = execution) =>
+    (await f.workflows.checkLease(worker, lease, undefined, frozen)).references;
+  // Without the execution there is nothing to grant.
+  assert.deepEqual(await f.workflows.checkLease(worker, lease), {
+    registrationId: execution.registrationId,
+  });
+  const references = await granted();
+  assert.deepEqual(references, { artifacts: ['own-artifact'] });
+  const admit = (input: Data) =>
+    admitDispatch({ ...execution, references: references! }, 'artifact.read', input);
+  assert.equal(admit({ artifactId: 'own-artifact' }).input.artifactId, 'own-artifact');
+  assert.throws(() => admit({ artifactId: 'live-artifact' }), {
+    code: 'execution_arguments_forbidden',
+  });
+  // The lease's outputs extend the declared arrays, and only those.
+  f.controls.outputs = () => ({ artifacts: ['authored'] });
+  assert.deepEqual(await granted(), { artifacts: ['authored', 'own-artifact'] });
+  f.controls.outputs = () => ({ reviews: ['authored'] });
+  await assert.rejects(granted(), { code: 'invalid_workflow_policy', status: 500 });
+  f.controls.outputs = () => {};
+  // The frozen policy is fenced by its content, whatever hash it names.
+  const tampered = structuredClone(execution);
+  tampered.policy.tools.push({ name: 'undeclared.write', alternatives: [{}] });
+  await assert.rejects(granted(tampered), { code: 'execution_changed', status: 409 });
+  await assert.rejects(granted({ ...execution, revision: execution.revision + 1 }), {
+    code: 'execution_changed',
+  });
+  // The offer's generation is not fenced here: a reload keeps the lease, and Sessions fences
+  // each invocation by the generation this check returns.
+  assert.deepEqual(await granted({ ...execution, registrationId: 'reloaded' }), references);
 });

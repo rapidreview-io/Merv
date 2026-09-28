@@ -8,6 +8,7 @@ import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
 import {
+  admitDispatch,
   canonical,
   check,
   delegationEnd,
@@ -28,7 +29,9 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowDispatchAdmission,
   type WorkflowExecution,
+  type WorkflowExecutionReferences,
   type Workflows,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
@@ -271,6 +274,56 @@ const snapshotInput = (input: Data): Data =>
     undefined: 'reject',
     nullPrototype: false,
   });
+/** Refusals that say only that the policy does not bind a call, which a read does not need. */
+const unbound = [
+  'execution_tool_forbidden',
+  'execution_arguments_forbidden',
+  'execution_reference_unavailable',
+];
+/**
+ * Admits one tool call under a session's execution. With `read`, the tool only reads, and a
+ * session reads whatever its project holds (founder, 2026-09-17: no read constraints). The
+ * policy still fills in what it names, so a read called as declared is admitted as declared;
+ * one it does not name, or names differently, is admitted as given, bounded by the project
+ * alone. Every write holds as published.
+ */
+function admitCall(
+  execution: WorkflowExecution,
+  tool: string,
+  input: Data,
+  read = false,
+): WorkflowDispatchAdmission {
+  // A detached copy, bounded as the engine bounds a caller's data.
+  const encoded = canonical(
+    plain(input, 'invalid_input', {
+      depth: 32,
+      nodes: 16_000,
+      keys: 'any',
+      strings: 'json',
+      undefined: 'reject',
+      nullPrototype: false,
+    }),
+  );
+  check(encoded.length <= 4_000_000, 'invalid_input', 'Input is too large');
+  const original = JSON.parse(encoded) as Data;
+  check(
+    original && typeof original === 'object' && !Array.isArray(original),
+    'invalid_input',
+    'Tool input must be a JSON object',
+  );
+  // The project overview is asked for by leaving the instance out. A fixed binding would
+  // fill it in and answer for this worker's own record instead — a narrower question than
+  // the one asked, and the only read a session cannot otherwise express.
+  if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(original, 'instanceId'))
+    return { tool, input: original };
+  try {
+    return admitDispatch(execution, tool, original);
+  } catch (error) {
+    if (read && error instanceof MervError && unbound.includes(error.code))
+      return { tool, input: original };
+    throw error;
+  }
+}
 const text = (value: unknown, max = 200) =>
   typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
 const safeError = (error: unknown): MervError =>
@@ -462,23 +515,10 @@ export class LeasedSessions implements Sessions {
               'actor.key_revoked',
               'actor.key_rotated',
             ],
+            // Each lease owner releases its own rows from session.closed. The type stays
+            // subscribed only because a consumer's id fixes its types.
             handle: async (event, tx) => {
-              if (event.type === 'session.closed') {
-                // Sessions are never deleted, except those of retired workflow instances
-                // (sessions@6), whose leases went with them. A close that was logged but not
-                // yet consumed has nothing left to release, and must not stall this consumer.
-                const row = await tx.get<Row>(
-                  'SELECT * FROM worker_sessions WHERE id=?',
-                  event.subjectId,
-                );
-                if (!row) return;
-                const session = await this.decode(row, tx);
-                await this.workflows.releaseLease(
-                  session.lease,
-                  { reason: session.closeReason ?? 'closed' },
-                  tx,
-                );
-              } else await this.sweepTransaction(tx);
+              if (event.type !== 'session.closed') await this.sweepTransaction(tx);
             },
           }),
         );
@@ -617,7 +657,16 @@ export class LeasedSessions implements Sessions {
     if (session.agentId)
       await this.directory.require(await this.directory.get(session.agentId, tx), tx);
   }
-  private async valid(session: Session, tx: Transaction): Promise<WorkflowExecution> {
+  /**
+   * The session's lease still holds; with `frozen`, also the references its execution grants now.
+   * A record moved by this worker's own hand is its handoff landing, not a conflict: a second
+   * copy of the same call has nothing left to do.
+   */
+  private async valid(
+    session: Session,
+    tx: Transaction,
+    frozen?: Session['execution'],
+  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
     check(live(session), 'session_closed', 'Session is closed', 401);
     check(
@@ -627,16 +676,31 @@ export class LeasedSessions implements Sessions {
       401,
     );
     await this.source(session, tx);
-    const execution = await this.framed(
-      {
-        tx,
-        actorId: session.actorId,
-        sessionId: session.id,
-        source: session.source,
-        role: session.role,
-      },
-      () => this.workflows.checkLease(this.worker(session), session.lease, tx),
-    );
+    let execution: { registrationId: string; references?: WorkflowExecutionReferences };
+    try {
+      execution = await this.framed(
+        {
+          tx,
+          actorId: session.actorId,
+          sessionId: session.id,
+          source: session.source,
+          role: session.role,
+        },
+        () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
+      );
+    } catch (error) {
+      if (
+        error instanceof MervError &&
+        error.code === 'revision_conflict' &&
+        (await this.handedOff(session, tx))
+      )
+        throw new MervError(
+          'session_completed',
+          'Your handoff already moved this record; this session has ended',
+          409,
+        );
+      throw error;
+    }
     this.ensureOpen();
     check(
       session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
@@ -830,7 +894,7 @@ export class LeasedSessions implements Sessions {
       },
     });
     // The program releases the lease now while it is loaded, so the record is free the moment
-    // the halt answers; the durable event replays the same cleanup if the provider was away.
+    // the halt answers; its own consumer of session.closed releases it if the program was away.
     try {
       await this.workflows.releaseLease(session.lease, { reason }, tx);
     } catch (error) {
@@ -860,9 +924,7 @@ export class LeasedSessions implements Sessions {
       const failure = safeError(error);
       if (failure.status >= 500) return failure;
       // The record moved by this worker's own hand: that is its handoff, not a conflict.
-      const handoff =
-        failure.code === 'session_completed' ||
-        (failure.code === 'revision_conflict' && (await this.handedOff(session, tx)));
+      const handoff = failure.code === 'session_completed';
       // A poll on a read snapshot reports the closure it found; the sweep records it.
       const close = async (
         ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never
@@ -2169,7 +2231,10 @@ export class LeasedSessions implements Sessions {
     read?: boolean,
   ) {
     const session = await this.session(caller, tx);
-    const current = await this.valid(session, tx);
+    // Acknowledging a message is always admitted; it needs only a live lease. The lease
+    // is checked before the input is bounded, so when both are bad the lease error wins.
+    const ack = tool === 'session.message.ack';
+    const current = await this.valid(session, tx, ack ? undefined : session.execution);
     if (registrationId !== undefined)
       check(
         current.registrationId === registrationId,
@@ -2177,16 +2242,9 @@ export class LeasedSessions implements Sessions {
         'Workflow implementation changed during invocation',
         409,
       );
-    const admission =
-      tool === 'session.message.ack'
-        ? { tool, input: structuredClone(input) }
-        : await this.workflows.authorizeLeaseDispatch(
-            caller,
-            session.lease,
-            { ...session.execution, registrationId: registrationId ?? current.registrationId },
-            { tool, input, ...(read ? { read } : {}) },
-            tx,
-          );
+    const admission = ack
+      ? { tool, input: structuredClone(input) }
+      : admitCall({ ...session.execution, references: current.references! }, tool, input, read);
     return { admission, registrationId: current.registrationId, session };
   }
   async prepare(

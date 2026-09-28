@@ -41,7 +41,8 @@ async function fixture(t: TestContext, maxLaunchFailures?: number) {
   const fanOut = new Map<string, string[]>();
   const policy: WorkflowPolicy = {
     successStates: ['done'],
-    children: ({ instanceId }) => fanOut.get(instanceId) ?? [],
+    children: ({ instanceIds }) =>
+      Object.fromEntries(instanceIds.map((id) => [id, fanOut.get(id) ?? []])),
     actions: [
       {
         name: 'finish',
@@ -461,6 +462,52 @@ test('an instance budget withholds only the work inside its closure', async (t) 
     read.budgets.map((budget) => [budget.kind, budget.exceeded, budget.used.tokens]),
     [['instance', ['tokens'], 100]],
   );
+});
+
+test('a closure too large to walk is refused, and its budget cannot be judged', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const root = await f.instance();
+  // A descendant with ready work, and 4,999 finished ones: one past the walk's bound.
+  const live = await f.instance();
+  const children = await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO wf_instances (id, project_id, workflow, version, state, revision, data_json, created_at, updated_at)
+       SELECT 'bulk-' || n, ?, 'usage-fixture', 1, 'done', 0, '{}', ?, ? FROM generate_series(1, 4999) AS n`,
+      f.owner.projectId,
+      root.createdAt,
+      root.createdAt,
+    );
+    return Array.from({ length: 4999 }, (_, index) => `bulk-${index + 1}`);
+  });
+  f.fanOut.set(root.id, [live.id, ...children]);
+  await assert.rejects(async () => await f.workflows.dependencyClosure(f.owner, root.id), {
+    code: 'closure_too_large',
+    status: 409,
+  });
+  // A usage read of the closure would under-count it, so it is refused too.
+  await assert.rejects(async () => await f.sessions.usage(f.owner, { instanceId: root.id }), {
+    code: 'closure_too_large',
+  });
+  const set = await f.sessions.setBudget(f.owner, { instanceId: root.id, maxWallMinutes: 60 });
+  assert.deepEqual([set.exceeded, set.unavailable], [[], ['wall']]);
+  // Which instances the budget covers is unknown, so it withholds all of them, the live
+  // descendant included.
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
+  assert.equal((await f.sessions.projectStatus(f.owner)).queueTotal, 0);
+
+  // Exactly at the bound the walk is whole, and the budget judged on it. A name with no
+  // instance behind it, walked last, is not counted.
+  f.fanOut.set(root.id, ['gone', live.id, ...children.slice(1)]);
+  assert.equal((await f.workflows.dependencyClosure(f.owner, root.id)).length, 5000);
+  const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  assert.deepEqual([judged.exceeded, judged.unavailable], [[], []]);
+  const offered = [
+    (await f.sessions.lease(f.source, auto())).session?.instanceId,
+    (await f.sessions.lease(f.source, auto())).session?.instanceId,
+  ];
+  assert.deepEqual(offered.sort(), [root.id, live.id].sort());
 });
 
 test('launches that keep failing on one revision stop being offered until dispatch is switched off and on', async (t) => {

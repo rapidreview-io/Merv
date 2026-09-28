@@ -613,12 +613,14 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   const issued = await f.offer();
   const client = await f.connect(issued.secret);
   const workflows = f.app.ctx.workflows;
-  const authorize = workflows.authorizeLeaseDispatch.bind(workflows);
-  const admissions = t.mock.method(
+  const check = workflows.checkLease.bind(workflows);
+  const leaseChecks = t.mock.method(
     workflows,
-    'authorizeLeaseDispatch',
-    async (...args: Parameters<typeof authorize>) => await authorize(...args),
+    'checkLease',
+    async (...args: Parameters<typeof check>) => await check(...args),
   );
+  // An admission is the lease check that carries the frozen execution.
+  const admissions = () => leaseChecks.mock.calls.filter((call) => call.arguments[3]).length;
   // Preparation, the check after parsing, and the check after the observation is stored;
   // a read is admitted once more after its handler releases the read snapshot. Each extra
   // layer that re-admits would show here.
@@ -626,10 +628,10 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
     ['checked.echo', 3],
     ['artifact.list', 4],
   ] as const) {
-    admissions.mock.resetCalls();
+    leaseChecks.mock.resetCalls();
     const result = await client.callTool({ name, arguments: {} });
     assert.equal(result.isError, undefined, JSON.stringify(result));
-    assert.equal(admissions.mock.callCount(), expected, name);
+    assert.equal(admissions(), expected, name);
   }
 });
 

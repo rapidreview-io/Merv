@@ -603,7 +603,8 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper"
+        "paper",
+        "domainEvents"
       ],
       "optional": [
         "codeResearch",
@@ -1528,7 +1529,8 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder"
+        "contextBuilder",
+        "domainEvents"
       ],
       "optional": [],
       "kind": "service",
@@ -2167,7 +2169,7 @@
         },
         {
           "name": "usage.set_budget",
-          "description": "Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. A budget covers worker sessions only, never the charges of a remote job.",
+          "description": "Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.",
           "readOnly": false
         }
       ]
@@ -2247,7 +2249,7 @@
         },
         {
           "name": "usage.set_budget",
-          "description": "Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. A budget covers worker sessions only, never the charges of a remote job.",
+          "description": "Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes, maxCostUsd or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a cost or token budget trusts unverified self-reports and is judged only while every closed session in its scope reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.",
           "readOnly": false
         }
       ]
@@ -2381,7 +2383,8 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper"
+        "paper",
+        "domainEvents"
       ],
       "optional": [
         "codeResearch"
@@ -2583,7 +2586,7 @@
       "exposedTools": [
         {
           "name": "workflow.assignment",
-          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.",
+          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. Reading an assignment claims nothing; its handoff names the command that does.",
           "readOnly": true
         },
         {
@@ -2598,7 +2601,7 @@
         },
         {
           "name": "workflow.extend_limit",
-          "description": "Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return buys one more automated review.",
+          "description": "Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop.",
           "readOnly": false
         },
         {
@@ -2608,7 +2611,7 @@
         },
         {
           "name": "workflow.status_and_next",
-          "description": "Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
           "readOnly": true
         }
       ]
@@ -2635,7 +2638,7 @@
       "exposedTools": [
         {
           "name": "workflow.assignment",
-          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.",
+          "description": "Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. Reading an assignment claims nothing; its handoff names the command that does.",
           "readOnly": true
         },
         {
@@ -2650,7 +2653,7 @@
         },
         {
           "name": "workflow.extend_limit",
-          "description": "Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return buys one more automated review.",
+          "description": "Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop.",
           "readOnly": false
         },
         {
@@ -2660,7 +2663,7 @@
         },
         {
           "name": "workflow.status_and_next",
-          "description": "Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
           "readOnly": true
         }
       ]
@@ -2855,6 +2858,11 @@
     {
       "from": "experiments",
       "to": "paper",
+      "optional": false
+    },
+    {
+      "from": "experiments",
+      "to": "domainEvents",
       "optional": false
     },
     {
@@ -3223,6 +3231,11 @@
       "optional": false
     },
     {
+      "from": "reflections",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
       "from": "research",
       "to": "state",
       "optional": false
@@ -3499,6 +3512,11 @@
     },
     {
       "from": "tasks",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "tasks",
       "to": "codeResearch",
       "optional": true
     },
@@ -3552,7 +3570,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 176
+    "dependencies": 179
   },
   "network": [
     {

@@ -1,11 +1,5 @@
 import type { Permission, Role } from '@merv/contracts';
 
-export const roles = [
-  'operator',
-  'producer',
-  'reviewer',
-  'reader',
-] as const satisfies readonly Role[];
 /** The roles a worker session's actor or an agent may hold: never an operator's. */
 export const workerRoles: readonly Exclude<Role, 'operator'>[] = ['producer', 'reviewer', 'reader'];
 

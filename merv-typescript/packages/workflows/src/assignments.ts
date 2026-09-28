@@ -7,46 +7,27 @@ import type {
   WorkflowCheckContext,
   WorkflowWorkStart,
 } from '@merv/contracts';
-import { identifier as identifierPattern, toolName } from './definition.js';
+import { toolName } from './definition.js';
 import { workflowJson } from './json.js';
 
 const text = z.string().min(1);
-const identifier = z.string().regex(identifierPattern);
 const tool = z.string().regex(toolName);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const reference = z.object({ kind: text, id: text, label: text }).strict();
+/**
+ * The context package is context-builder's: the engine checks only what it fences (whose it is,
+ * which revision it renders, and its content hash) and keeps every other field as built.
+ * Context Builder resolved each source through Artifacts for this caller, so sources need no
+ * check here. A field the package gains never refuses the packet.
+ */
 const preview = z
   .object({
     projectId: text,
     actorId: text,
-    type: identifier,
-    typeVersion: z.number().int().positive().safe(),
-    recipeHash: hash,
-    subject: z
-      .object({
-        id: text,
-        revision: z.number().int().nonnegative().safe(),
-        claimId: text.optional(),
-      })
-      .strict(),
-    prompt: text,
-    // Context Builder resolved each through Artifacts for this caller, so each is the project's;
-    // a source carries no projectId, and a check must not require one.
-    sources: z.array(
-      z
-        .object({
-          id: text,
-          title: text,
-          mediaType: text,
-          hash,
-          size: z.number().int().nonnegative().safe(),
-        })
-        .strict(),
-    ),
-    omitted: z.array(text),
+    subject: z.object({ id: text, revision: z.number().int().nonnegative().safe() }).passthrough(),
     hash,
   })
-  .strict();
+  .passthrough();
 const content = z
   .object({
     role: text,
@@ -101,28 +82,44 @@ interface WorkStartRow {
   event_id: number;
 }
 
+const workStart = (row: WorkStartRow): WorkflowWorkStart => ({
+  instanceId: row.instance_id,
+  projectId: row.project_id,
+  workflow: row.workflow,
+  version: row.version,
+  state: row.state,
+  revision: row.revision,
+  actorId: row.actor_id,
+  startedAt: row.started_at,
+  eventId: row.event_id,
+});
+
+/** Every start of one instance, in revision order. */
 export async function readWorkStarts(
   sql: Sql,
   projectId: string,
   instanceId: string,
-  revision?: number,
 ): Promise<WorkflowWorkStart[]> {
   return (
     await sql.all<WorkStartRow>(
-      `SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id=?${revision === undefined ? '' : ' AND revision=?'} ORDER BY revision`,
+      'SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id=? ORDER BY revision',
       projectId,
       instanceId,
-      ...(revision === undefined ? [] : [revision]),
     )
-  ).map((row) => ({
-    instanceId: row.instance_id,
-    projectId: row.project_id,
-    workflow: row.workflow,
-    version: row.version,
-    state: row.state,
-    revision: row.revision,
-    actorId: row.actor_id,
-    startedAt: row.started_at,
-    eventId: row.event_id,
-  }));
+  ).map(workStart);
+}
+
+/** The start at each instance's revision, where there is one, in one read however many. */
+export async function workStartsAt(
+  sql: Sql,
+  projectId: string,
+  instances: readonly { id: string; revision: number }[],
+): Promise<Map<string, WorkflowWorkStart>> {
+  if (!instances.length) return new Map();
+  const rows = await sql.all<WorkStartRow>(
+    `SELECT * FROM wf_work_starts WHERE project_id=? AND (instance_id,revision) IN (${instances.map(() => '(?,?)').join(',')})`,
+    projectId,
+    ...instances.flatMap(({ id, revision }) => [id, revision]),
+  );
+  return new Map(rows.map((row) => [row.instance_id, workStart(row)]));
 }

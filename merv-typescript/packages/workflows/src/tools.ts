@@ -13,7 +13,7 @@ export const workflowToolsPlugin = {
       ctx.tools.register({
         name: 'workflow.status_and_next',
         description:
-          'Start or resume here. With instanceId (the task ID for a task), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
+          'Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.',
         readOnly: true,
         inputSchema: z
           .object({
@@ -57,7 +57,7 @@ export const workflowToolsPlugin = {
       ctx.tools.register({
         name: 'workflow.assignment',
         description:
-          'Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. An eligible reviewer can inspect an open review assignment; claim it through review.start before saving review context or submitting a verdict.',
+          'Read your current node assignment: brief, context, evidence references, declared tools and handoff. Assignment guards are checked without recording a work start or saving a context package. Reading an assignment claims nothing; its handoff names the command that does.',
         readOnly: true,
         inputSchema: z.object({ instanceId: z.string().min(1) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) =>
@@ -96,7 +96,7 @@ export const workflowToolsPlugin = {
         name: 'workflow.extend_limit',
         conversation: 'propose',
         description:
-          'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return buys one more automated review.',
+          'Allow one workflow instance more rounds of a loop limit it has exhausted (gate loop_limit_reached). Project admins only, never a leased worker. Pass the limit name from status_and_next limits, how many additional returns to allow, a reason and a stable requestId. The grant is recorded and adds to earlier grants; the instance keeps its state and revision. Each additional return allows one more pass through the capped loop.',
         readOnly: false,
         inputSchema: z
           .object({

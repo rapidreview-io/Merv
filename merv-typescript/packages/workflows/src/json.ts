@@ -1,5 +1,8 @@
 import { canonical, check, MervError, plain, type Limits } from '@merv/contracts';
 
+/** Bounds on caller-supplied data: nesting depth, JSON values, and canonical encoded length. */
+export const DATA_LIMITS = { depth: 32, nodes: 16_000, limit: 256_000 } as const;
+
 /** Reject accessors, cycles and values JSON would silently erase at this provider boundary. */
 export function workflowJson<T>(
   value: T,

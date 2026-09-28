@@ -92,8 +92,8 @@ test('the process graph is the pinned definition stamped with what the record sa
       },
     ],
   };
-  await f.app.ctx.workflows.register(definition, policy);
-  const instance = await f.app.ctx.workflows.start(author, {
+  const handle = await f.app.ctx.workflows.register(definition, policy);
+  const instance = await handle.start(author, {
     workflow: 'audit',
     requestId: 'open',
   });
@@ -103,7 +103,7 @@ test('the process graph is the pinned definition stamped with what the record sa
     content: '# Draft\nprocess-graph-marker-8fbb',
   });
   const move = async (caller: Caller, action: string, revision: number) =>
-    await f.app.ctx.workflows.transition(caller, {
+    await handle.transition(caller, {
       instanceId: instance.id,
       expectedRevision: revision,
       action,
@@ -113,7 +113,7 @@ test('the process graph is the pinned definition stamped with what the record sa
   await move(author, 'submit', 0);
   await move(reviewer, 'return', 1); // a review return
   await move(second, 'submit', 2); // and the retry it forced
-  const dependent = await f.app.ctx.workflows.start(author, {
+  const dependent = await handle.start(author, {
     workflow: 'audit',
     requestId: 'dependent',
     dependsOn: [instance.id],
@@ -206,7 +206,9 @@ test('the process graph is the pinned definition stamped with what the record sa
         version: 1,
         name: 'audit',
         state: 'in_review',
+        revision: 3,
         settled: false,
+        terminal: false,
         failed: false,
       },
     ],
@@ -269,7 +271,7 @@ test('without checks the graph is the record alone: no program callback runs and
     arguments: () => (calls.push(`arguments ${name}`), {}),
     check: () => void calls.push(`check ${name}`),
   });
-  await f.app.ctx.workflows.register(definition, {
+  const handle = await f.app.ctx.workflows.register(definition, {
     successStates: ['approved'],
     describe: () => (calls.push('describe'), { label: 'Audit', references: [] }),
     limits: [{ name: 'returns', from: 'in_review', actions: ['return'], max: 1 }],
@@ -279,8 +281,8 @@ test('without checks the graph is the record alone: no program callback runs and
       rule('verdict', ['in_review'], ['approve', 'return']),
     ],
   });
-  const first = await f.app.ctx.workflows.start(author, { workflow: 'audit', requestId: 'first' });
-  const waiting = await f.app.ctx.workflows.start(author, {
+  const first = await handle.start(author, { workflow: 'audit', requestId: 'first' });
+  const waiting = await handle.start(author, {
     workflow: 'audit',
     requestId: 'waiting',
     dependsOn: [first.id],
@@ -310,7 +312,7 @@ test('without checks the graph is the record alone: no program callback runs and
   assert.deepEqual(drawn(pending), drawn(checked), 'where the work stands reads the same');
 
   const move = async (action: string, revision: number) =>
-    await f.app.ctx.workflows.transition(author, {
+    await handle.transition(author, {
       instanceId: first.id,
       expectedRevision: revision,
       action,
@@ -329,4 +331,48 @@ test('without checks the graph is the record alone: no program callback runs and
     ['in_review', 'loop_limit_reached', 1],
     'every return used is read from the record, without asking the program',
   );
+});
+
+test('a version whose program is not loaded is drawn from its pinned graph, with no status on any edge', async (t) => {
+  const f = await fixture(t);
+  const author = await f.actor('Author');
+  const rule = (name: string, states: string[], transitions: string[]) => ({
+    name,
+    states,
+    transitions,
+    tool: `audit.${name}`,
+    instruction: `Take ${name}.`,
+    check: () => {},
+  });
+  const handle = await f.app.ctx.workflows.register(definition, {
+    successStates: ['approved'],
+    actions: [
+      rule('submit', ['drafting'], ['submit']),
+      rule('abandon', ['drafting'], ['abandon']),
+      rule('verdict', ['in_review'], ['approve', 'return']),
+    ],
+  });
+  const work = await handle.start(author, { workflow: 'audit', requestId: 'open' });
+  await handle.transition(author, {
+    instanceId: work.id,
+    expectedRevision: 0,
+    action: 'submit',
+    requestId: 'submit',
+  });
+  const loaded = await f.process(author, work.id);
+  handle.dispose();
+  const unloaded = await f.process(author, work.id);
+  assert.equal(unloaded.currentGate, 'workflow_unavailable');
+  assert.deepEqual(
+    unloaded.nodes.find((node) => node.current)?.blockers.map((blocker) => blocker.code),
+    ['workflow_unavailable'],
+  );
+  assert.ok(unloaded.edges.every((edge) => edge.status === null && edge.tool === null));
+  // The ladder and what the record says happened on it are the same as while loaded.
+  const ladder = (graph: ProcessGraph) => ({
+    nodes: graph.nodes.map(({ blockers: _, ...node }) => node),
+    edges: graph.edges.map(({ status: _, tool: __, blockers: ___, ...edge }) => edge),
+  });
+  assert.deepEqual(ladder(unloaded), ladder(loaded));
+  assert.equal(unloaded.edges.find((edge) => edge.action === 'submit')?.traversals.length, 1);
 });

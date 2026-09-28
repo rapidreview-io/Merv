@@ -31,7 +31,6 @@ export const REFLECTION_WORKFLOW: WorkflowDefinition = {
   name: 'reflection',
   version: 3,
   blocksStarts: ['task', 'experiment'],
-  managed: true,
   initial: 'reflecting',
   states: ['reflecting', 'synthesizing', 'in_review', 'approved'],
   terminal: ['approved'],
@@ -46,7 +45,6 @@ export const REFLECTION_WORKFLOW: WorkflowDefinition = {
 export const LENS_WORKFLOW: WorkflowDefinition = {
   name: 'reflection.lens',
   version: 2,
-  managed: true,
   initial: 'reflecting',
   states: ['reflecting', 'complete'],
   terminal: ['complete'],

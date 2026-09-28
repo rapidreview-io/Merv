@@ -6,7 +6,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
-import { check, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
+import {
+  check,
+  type Caller,
+  type Transaction,
+  type WorkflowDefinition,
+  type WorkflowPolicy,
+} from '@merv/contracts';
 
 test('a new program registers guidance and guards without engine cases; reads, preflight, disposal and revision fences agree', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-program-'));
@@ -40,7 +46,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
       ],
     };
     const registration = await app.ctx.workflows.register(graph, policy);
-    const instance = await app.ctx.workflows.start(caller, {
+    const instance = await registration.start(caller, {
       workflow: graph.name,
       requestId: 'start',
     });
@@ -64,7 +70,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     instrumentReady = false;
     await assert.rejects(
       async () =>
-        await app.ctx.workflows.transition(caller, {
+        await registration.transition(caller, {
           instanceId: instance.id,
           expectedRevision: 0,
           action: 'calibrate',
@@ -79,7 +85,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     assert.equal((await evaluate()).available, false);
     assert.equal((await evaluate()).currentGate, 'workflow_unavailable');
     assert.deepEqual((await app.ctx.workflows.overview(caller)).unavailable, [instance.id]);
-    await app.ctx.workflows.register(graph, policy);
+    const reloaded = await app.ctx.workflows.register(graph, policy);
     registration.dispose(); // An old disposer cannot remove the new registration.
     instrumentReady = true;
     assert.equal((await evaluate()).available, true);
@@ -97,7 +103,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
         .workflows,
       [],
     );
-    await app.ctx.workflows.transition(caller, {
+    await reloaded.transition(caller, {
       instanceId: instance.id,
       expectedRevision: 0,
       action: 'calibrate',
@@ -122,7 +128,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
     const asyncGraph = { ...graph, name: 'async_policy' };
     let description: unknown;
     let descriptionReads = 0;
-    await app.ctx.workflows.register(asyncGraph, {
+    const asyncHandle = await app.ctx.workflows.register(asyncGraph, {
       actions: [
         {
           ...policy.actions[0],
@@ -157,7 +163,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
         ) as any;
       },
     });
-    const asyncInstance = await app.ctx.workflows.start(caller, {
+    const asyncInstance = await asyncHandle.start(caller, {
       workflow: asyncGraph.name,
       requestId: 'async-start',
     });
@@ -208,10 +214,10 @@ test('a new program registers guidance and guards without engine cases; reads, p
     }
     const broken = { ...graph, name: 'broken_arguments' };
     let args: any;
-    await app.ctx.workflows.register(broken, {
+    const brokenHandle = await app.ctx.workflows.register(broken, {
       actions: [{ ...policy.actions[0], arguments: () => args }],
     });
-    const brokenInstance = await app.ctx.workflows.start(caller, {
+    const brokenInstance = await brokenHandle.start(caller, {
       workflow: broken.name,
       requestId: 'broken-start',
     });
@@ -236,7 +242,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
       );
       await assert.rejects(
         async () =>
-          await app.ctx.workflows.transition(caller, {
+          await brokenHandle.transition(caller, {
             instanceId: brokenInstance.id,
             expectedRevision: 0,
             action: 'calibrate',
@@ -248,6 +254,95 @@ test('a new program registers guidance and guards without engine cases; reads, p
       assert.equal(callbacks, 0);
     }
     assert.equal((await app.ctx.workflows.get(caller, brokenInstance.id)).revision, 0);
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a guard, begin check or lease role that writes under a read fails the read instead of blocking the work', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-fault-'));
+  const app = await createApp({ directory });
+  try {
+    const a = await app.ctx.scope.bootstrap({ projectName: 'Faults', actorName: 'Operator' });
+    const caller = { actorId: a.actor.id, projectId: a.project.id };
+    const graph: WorkflowDefinition = {
+      name: 'scribbling',
+      version: 1,
+      initial: 'open',
+      states: ['open', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'open', action: 'finish', to: 'done' }],
+    };
+    /** Which callback writes. */
+    let writer: 'guard' | 'begin' | 'role' | null = null;
+    const scribble = async (by: typeof writer, tx: Transaction, id: string) => {
+      if (writer === by)
+        await tx.run('UPDATE wf_instances SET updated_at=updated_at WHERE id=?', id);
+    };
+    const scribbled = await app.ctx.workflows.register(graph, {
+      actions: [
+        {
+          name: 'finish',
+          states: ['open'],
+          transitions: ['finish'],
+          tool: 'scribble.finish',
+          instruction: 'Finish.',
+          check: async ({ tx, snapshot }) => await scribble('guard', tx, snapshot.id),
+        },
+      ],
+      assignments: [
+        {
+          state: 'open',
+          check: async ({ tx, snapshot }) => await scribble('begin', tx, snapshot.id),
+          build: () => ({
+            role: 'producer',
+            label: 'Scribble',
+            brief: 'Scribble',
+            references: [],
+            handoff: { instruction: 'Finish', tools: ['scribble.finish'] },
+            execution: { readOnly: true, tools: [] },
+            context: null,
+          }),
+          execution: { readOnly: true, tools: [] },
+          lease: {
+            role: async ({ tx, snapshot }) => {
+              await scribble('role', tx, snapshot.id);
+              return 'producer' as const;
+            },
+            acquire: ({ leaseId }) => ({ leaseId }),
+            check: () => {},
+            release: () => {},
+          },
+        },
+      ],
+    });
+    const instance = await scribbled.start(caller, {
+      workflow: graph.name,
+      requestId: 'start',
+    });
+    const read = async <T>(fn: () => Promise<T>) => await app.ctx.state.snapshot(fn);
+    // Unfaulted, the work is offered and dispatchable.
+    assert.equal(
+      (await read(() => app.ctx.workflows.evaluate(caller, instance.id))).nextAction?.action,
+      'begin',
+    );
+    assert.equal((await read(() => app.ctx.workflows.dispatchCandidates(caller))).length, 1);
+    // State refuses each write with a 409, which a callback's refusal would be read as: the
+    // work would show as blocked, or be skipped, because of its own program's bug.
+    for (const by of ['guard', 'begin'] as const) {
+      writer = by;
+      await assert.rejects(
+        async () => await read(() => app.ctx.workflows.evaluate(caller, instance.id)),
+        { code: 'invalid_workflow_policy', status: 500 },
+        by,
+      );
+    }
+    writer = 'role';
+    await assert.rejects(
+      async () => await read(() => app.ctx.workflows.dispatchCandidates(caller)),
+      { code: 'invalid_workflow_policy', status: 500 },
+    );
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

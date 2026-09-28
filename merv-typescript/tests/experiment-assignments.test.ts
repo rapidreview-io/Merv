@@ -14,7 +14,6 @@ import type {
   ReviewHistory,
   TaskDelivery,
   TaskReview,
-  WorkflowExecution,
 } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
@@ -252,15 +251,6 @@ async function fixture(t: TestContext) {
     },
   };
 }
-const dispatch = (execution: WorkflowExecution, tool: string, input: Data = {}) => ({
-  instanceId: execution.instanceId,
-  expectedRevision: execution.revision,
-  policyHash: execution.policyHash,
-  registrationId: execution.registrationId,
-  tool,
-  input,
-});
-
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
   const prerequisite = await f.tasks.create(f.source, {
@@ -468,50 +458,16 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   const f = await fixture(t);
   const experiment = await f.create();
   await f.attach(experiment, 'plan', 'INCOMPLETE_DRAFT_KEEP_WORKING');
-  const reader = t.mock.method(f.artifacts, 'read', () => {
-    assert.fail('Metadata admission must not read artifact bytes');
-  });
-  const evaluate = t.mock.method(f.workflows, 'evaluate', () => {
-    assert.fail('Metadata admission must not evaluate exit guidance');
-  });
-  const execution = await f.workflows.execution(f.source, {
-    instanceId: experiment.id,
-    expectedRevision: 0,
-  });
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
     ),
   );
-  assert.equal(
-    (
-      await f.workflows.authorizeDispatch(
-        f.source,
-        dispatch(execution, 'experiment.transition', { transition: 'submit_design' }),
-      )
-    ).input.expectedRevision,
-    0,
-  );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(
-        f.source,
-        dispatch(execution, 'experiment.transition', { transition: 'submit_results' }),
-      ),
-    { code: 'execution_arguments_forbidden' },
-  );
-  await assert.rejects(
-    async () =>
-      await f.workflows.authorizeDispatch(f.source, dispatch(execution, 'workflow.begin')),
-    { code: 'execution_tool_forbidden' },
-  );
-  reader.mock.restore();
-  evaluate.mock.restore();
   const offered = await f.offer(experiment);
   assert.match(offered.session.assignment.context!.prompt, /INCOMPLETE_DRAFT_KEEP_WORKING/);
   assert.equal(offered.session.assignment.workStart, null);
   t.mock.method(f.artifacts, 'read', () => {
-    assert.fail('Activation must not rebuild context');
+    assert.fail('Activation and admission must not read artifact bytes');
   });
   const worker = await f.sessions.authenticate(offered.secret);
   assert.deepEqual(await f.sessions.authenticate(offered.secret), worker);
@@ -521,6 +477,25 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
     null,
     'Planning activation is not execution',
   );
+  t.mock.method(f.workflows, 'evaluate', () => {
+    assert.fail('Metadata admission must not evaluate exit guidance');
+  });
+  assert.equal(
+    (
+      await f.sessions.prepare(worker, 'experiment.transition', {
+        transition: 'submit_design',
+      })
+    ).input.expectedRevision,
+    0,
+  );
+  await assert.rejects(
+    async () =>
+      await f.sessions.prepare(worker, 'experiment.transition', { transition: 'submit_results' }),
+    { code: 'execution_arguments_forbidden' },
+  );
+  await assert.rejects(async () => await f.sessions.prepare(worker, 'workflow.begin', {}), {
+    code: 'execution_tool_forbidden',
+  });
 });
 
 test('project evidence can be saved without an experiment worker, while a lease fences association', async (t) => {
@@ -834,10 +809,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   const again = await f.sessions.authenticate(offered.secret);
   assert.equal(again.actorId, worker.actorId);
   assert.equal((await f.workflows.workStarts(f.source, pending.id)).length, 1);
-  const current = await f.workflows.execution(again, {
-    instanceId: pending.id,
-    expectedRevision: pending.workflow.revision,
-  });
+  const current = await f.workflows.checkLease(again, offered.session.lease);
   assert.notEqual(current.registrationId, generation);
   await assert.rejects(
     async () =>
@@ -958,13 +930,10 @@ test('a design rejected three times gives the fourth attempt every earlier round
     })),
   );
   assert.ok(!JSON.stringify(feedback.history).includes(f.reviewer.actorId));
-  const references = (
-    await f.workflows.execution(f.source, {
-      instanceId: experiment.id,
-      expectedRevision: experiment.workflow.revision,
-    })
-  ).references;
+  const leased = await f.offer(experiment);
+  const references = leased.session.execution.references;
   assert.ok(rejected.every((id) => (references.reviews as string[]).includes(id)));
+  await f.release(leased.session.id);
   // A reviewer judges the submission in front of them and is shown no earlier attempts' verdicts.
   experiment = (await f.design(experiment)).experiment;
   assert.doesNotMatch(
@@ -1199,13 +1168,10 @@ test('Git experiments retain the central-base protocol and wait for their exact 
     requestId: f.request(),
   };
   const old = await f.experiments.create(f.source, oldInput);
-  const oldPolicy = await f.workflows.execution(f.source, {
-    instanceId: old.id,
-    expectedRevision: 0,
-  });
+  const oldPolicy = (await f.workflows.assignment(f.source, old.id)).execution;
   assert.equal(old.workflow.version, 9);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
-  assert.deepEqual(oldPolicy.policy.workspace, { mode: 'none' });
+  assert.deepEqual(oldPolicy.policy!.workspace, { mode: 'none' });
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
   const experiment = await f.create([], 'git');
   assert.equal(experiment.workflow.version, 10);
@@ -1213,8 +1179,7 @@ test('Git experiments retain the central-base protocol and wait for their exact 
   assert.equal(await f.experiments.codeUnit(f.source, experiment.id), null);
   const pendingDesign = (await f.design(experiment)).experiment;
   assert.deepEqual(
-    (await f.workflows.execution(f.reviewer, { instanceId: experiment.id, expectedRevision: 1 }))
-      .policy.workspace,
+    (await f.workflows.assignment(f.reviewer, experiment.id)).execution.policy!.workspace,
     { mode: 'none' },
   );
   const running = await f.verdict(pendingDesign, 'pass');
@@ -1295,7 +1260,7 @@ test('Git experiments retain the central-base protocol and wait for their exact 
     'Legacy semantic replay has not acquired a new default field',
   );
   assert.equal(
-    (await f.workflows.execution(f.source, { instanceId: old.id, expectedRevision: 0 })).policyHash,
+    (await f.workflows.assignment(f.source, old.id)).execution.policyHash,
     oldPolicy.policyHash,
   );
   const noBytes = t.mock.method(f.artifacts, 'read', () => {

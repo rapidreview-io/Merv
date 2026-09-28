@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import type { Artifact, Caller, ReviewApplication, ReviewHistory } from '@merv/contracts';
+import type {
+  Artifact,
+  Caller,
+  ReviewApplication,
+  ReviewHistory,
+  Transaction,
+} from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
@@ -114,7 +120,26 @@ async function fixture(t: TestContext, reflections?: object) {
     );
     return (await app.ctx.reviews.apply(reviewer, input)) as Reflection;
   };
-  return { app, owner, actor, create, lenses, synthesize, verdict };
+  let agents = 0;
+  /** What a session offered this step is granted, read by a fresh agent that lets it go. */
+  const granted = async (instanceId: string, expectedRevision: number) => {
+    const secret = token();
+    await app.ctx.sessions.registerAgent(owner, {
+      name: `Reader ${++agents}`,
+      runnerId: 'external',
+      requestId: `reader-${agents}`,
+      secret,
+    });
+    const session = await app.ctx.sessions.assignAgent(secret, {
+      instanceId,
+      expectedRevision,
+      requestId: `read-${agents}`,
+    });
+    await app.ctx.sessions.releaseAgentAssignment(secret, session.id);
+    await app.ctx.domainEvents.drain();
+    return session.execution.references;
+  };
+  return { app, owner, actor, create, lenses, synthesize, verdict, granted };
 }
 
 test('reflection lens context includes project paper goals and revision', async (t) => {
@@ -240,14 +265,6 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   });
   assert.equal(session.assignment.context!.typeVersion, 12);
   assert.ok(reports.every((id) => session.execution.references.artifacts.includes(id)));
-  const worker = await f.app.ctx.sessions.authenticate(secret);
-  const grants = (
-    await f.app.ctx.workflows.execution(worker, {
-      instanceId: wave.id,
-      expectedRevision: wave.workflow.revision,
-    })
-  ).references.artifacts;
-  assert.ok(reports.every((id) => grants.includes(id)));
   await f.app.ctx.sessions.releaseAgentAssignment(secret, session.id);
 
   wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
@@ -314,14 +331,6 @@ test('reflection uses live research, joins five independent ordinary workflows, 
   const f = await fixture(t);
   let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
   assert.equal(wave.workflow.workflow, 'reflection');
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.workflows.start(f.owner, {
-        workflow: 'reflection.lens',
-        requestId: 'unowned-start',
-      }),
-    { code: 'workflow_managed' },
-  );
   assert.equal(wave.lenses.length, 5);
   assert.ok(wave.lenses.every((l) => l.workflow.workflow === 'reflection.lens'));
   assert.equal(
@@ -715,11 +724,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   );
   assert.ok(!lensContext.prompt.includes(reviewer.actorId));
   assert.ok(Buffer.byteLength(lensContext.prompt) < 16 * 1024);
-  assert.deepEqual(
-    (await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 }))
-      .references.researchReviews,
-    [firstReview, secondReview],
-  );
+  assert.deepEqual((await f.granted(lens.id, 0)).researchReviews, [firstReview, secondReview]);
   assert.ok(wave.lenses.every((l) => !firstIds.includes(l.id) && l.artifact === null));
   assert.equal((await f.app.ctx.workflows.get(f.owner, firstIds[0]!)).state, 'complete');
   // No dependency edge names a lens, so the wave's policy does: a usage rollup over the
@@ -882,22 +887,15 @@ test('a standalone wave names no lineage, and a digest that does not fit is omit
   assert.ok(context.omitted.some((id) => id.includes(oversized.id)));
   assert.ok(context.prompt.includes('Predecessor cycle digest'));
   assert.doesNotMatch(context.prompt, /x{100}/);
-  assert.ok(
-    (
-      await f.app.ctx.workflows.execution(f.owner, { instanceId: lens.id, expectedRevision: 0 })
-    ).references.artifacts.includes(oversized.id),
-  );
+  assert.ok(((await f.granted(lens.id, 0)).artifacts as string[]).includes(oversized.id));
   // The digest stays with the wave through rework: no later transition rewrites it.
   const reviewer = await f.actor('Reviewer', 'reviewer');
   wave = await f.synthesize(await f.lenses(wave));
   wave = await f.verdict(wave, reviewer, false, 'synthesizing');
   assert.ok(
-    (
-      await f.app.ctx.workflows.execution(f.owner, {
-        instanceId: wave.id,
-        expectedRevision: wave.workflow.revision,
-      })
-    ).references.artifacts.includes(oversized.id),
+    ((await f.granted(wave.id, wave.workflow.revision)).artifacts as string[]).includes(
+      oversized.id,
+    ),
   );
 });
 
@@ -1624,4 +1622,84 @@ test('standalone Reflections can create and complete its own work without Resear
   );
   assert.equal(approved.workflow.state, 'approved');
   assert.equal((await f.app.ctx.reflections.approved(f.owner, wave.id)).id, wave.id);
+});
+
+test('an open reflection of either published version pauses new tasks and experiments, and ended ones cost nothing', async (t) => {
+  const f = await fixture(t);
+  const state = f.app.ctx.state;
+  // Rows only, as the engine reads them: the pause is the engine's, whatever else a wave holds.
+  const seed = async (version: number, at: string, count: number, prefix: string) =>
+    await state.transaction(
+      async (tx) =>
+        await tx.run(
+          `INSERT INTO wf_instances (id,project_id,workflow,version,state,revision,data_json,created_at,updated_at)
+           SELECT ? || n, ?, 'reflection', ?, ?, 0, '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+           FROM generate_series(1, ?::int) AS n`,
+          prefix,
+          f.owner.projectId,
+          version,
+          at,
+          count,
+        ),
+    );
+  await seed(3, 'approved', 20_000, 'wf_ended_');
+  await state.transaction(async (tx) => await tx.run('ANALYZE wf_instances'));
+  // The pause query as a start sends it, run again under EXPLAIN ANALYZE.
+  const pauses: { sql: string; params: unknown[] }[] = [];
+  const transaction = state.transaction.bind(state);
+  t.mock.method(state, 'transaction', ((fn: (tx: Transaction) => unknown) =>
+    transaction((tx) => {
+      const { get } = tx;
+      Object.assign(tx, {
+        get: (sql: string, ...params: never[]) => {
+          if (sql.startsWith('SELECT id,workflow FROM wf_instances WHERE project_id=? AND ('))
+            pauses.push({ sql, params });
+          return get(sql, ...params);
+        },
+      });
+      return fn(tx);
+    })) as typeof state.transaction);
+  const task = (requestId: string) =>
+    f.app.ctx.tasks.create(f.owner, {
+      title: requestId,
+      goal: 'Starts unless a wave is open',
+      checks: ['Recorded'],
+      requestId,
+    });
+  const experiment = (requestId: string) =>
+    f.app.ctx.experiments.create(f.owner, { name: requestId, intent: 'Test', requestId });
+  await task('after-ended-waves');
+  assert.equal(pauses.length, 1);
+  const [{ 'QUERY PLAN': plan }] = await transaction(
+    async (tx) =>
+      await tx.all<{ 'QUERY PLAN': unknown }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${pauses[0].sql}`,
+        ...(pauses[0].params as never[]),
+      ),
+  );
+  let touched = 0;
+  const walk = (node: Record<string, unknown>) => {
+    touched += Number(node['Actual Rows'] ?? 0) + Number(node['Rows Removed by Filter'] ?? 0);
+    for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child);
+  };
+  walk((plan as { Plan: Record<string, unknown> }[])[0].Plan);
+  assert.equal(touched, 0, 'the pause reads no ended instance');
+  await experiment('after-ended-waves');
+
+  for (const [version, ended] of [
+    [3, 'approved'],
+    [4, 'abandoned'],
+  ] as const) {
+    await seed(version, 'in_review', 1, `wf_open_${version}_`);
+    await assert.rejects(task(`paused-task-${version}`), { code: 'workflow_creation_paused' });
+    await assert.rejects(experiment(`paused-experiment-${version}`), {
+      code: 'workflow_creation_paused',
+    });
+    await state.transaction(
+      async (tx) =>
+        await tx.run(`UPDATE wf_instances SET state=? WHERE id=?`, ended, `wf_open_${version}_1`),
+    );
+    await task(`resumed-task-${version}`);
+    await experiment(`resumed-experiment-${version}`);
+  }
 });

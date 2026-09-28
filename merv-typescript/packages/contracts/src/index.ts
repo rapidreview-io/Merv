@@ -162,7 +162,7 @@ export type {
 import type { Data, Json } from './data.js';
 import type { Artifact } from './artifact-models.js';
 export type { Artifact } from './artifact-models.js';
-import { visible } from './text.js';
+import { clip, visible } from './text.js';
 import type {
   Role,
   WorkflowDispatchCandidate,
@@ -185,8 +185,7 @@ export type {
   WorkflowBlocker,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderDependency,
-  WorkflowProviderRelations,
+  WorkflowRelations,
   WorkflowActionStatus,
   WorkflowDecision,
   WorkflowLimitStatus,
@@ -203,7 +202,7 @@ import type {
   WorkflowReference,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
-  WorkflowProviderRelations,
+  WorkflowRelations,
   WorkflowDecision,
   WorkflowLimitStatus,
   WorkflowOverview,
@@ -231,6 +230,25 @@ export function check(
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
 }
+/**
+ * Whether State raised this error about its own scope, transaction or store, rather than an
+ * operation refusing its input: a write under a read, a nested or closed transaction, a
+ * conflict, timeout or outage. A caller that turns refusals into answers must not turn these.
+ */
+export const stateFault = (error: unknown): error is MervError =>
+  error instanceof MervError &&
+  (error.code === 'read_only_scope' ||
+    error.code === 'nested_transaction' ||
+    /^(transaction|state)_/.test(error.code));
+/** Every role a member, an actor or a lease may hold. */
+export const ROLES = [
+  'operator',
+  'producer',
+  'reviewer',
+  'reader',
+] as const satisfies readonly Role[];
+// Fails the typecheck when Role gains a role that ROLES does not list.
+true satisfies [Exclude<Role, (typeof ROLES)[number]>] extends [never] ? true : false;
 /** The name of an environment variable that holds a secret or setting a plugin config refers to. */
 export const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 /** The nonblank value of environment variable `name`; the refusal names the variable, never its value. */
@@ -385,10 +403,10 @@ export interface Receipt<T> {
  * table keeps the recipe its stored receipts were written with.
  *
  * Receipts deliberately kept elsewhere: wf_requests has no actor (workflow requests are shared
- * by a project) and wf_system_requests belongs to a provider; a Sessions grant is its own
- * receipt, so the secret digest commits with it; createProject keys on the user, since no actor
- * exists yet; ContextBuilder replays before it rebuilds live inputs. Derived requests that one
- * command makes of another name themselves with childRequest().
+ * by a project); a Sessions grant is its own receipt, so the secret digest commits with it;
+ * createProject keys on the user, since no actor exists yet; ContextBuilder replays before it
+ * rebuilds live inputs. Derived requests that one command makes of another name themselves
+ * with childRequest().
  */
 export async function receipted<T>(
   tx: Transaction,
@@ -631,6 +649,38 @@ export async function inTransaction<T>(
   }
   return await state.transaction(fn);
 }
+/**
+ * Where one component read or command runs, chosen in one place.
+ * - An explicit `tx` is used as it is, once asserted.
+ * - Inside a transaction, a snapshot's open read transaction included, that one is reused.
+ * - Without `place`, a plain read runs on `state.read`.
+ * - With `place` the work needs a transaction. For 'read' it is a snapshot's read-only one, which
+ *   takes no writer lock and refuses writes; for any other permission a write transaction. Inside
+ *   a bare snapshot both are read-only transactions of that snapshot. Inside a plain read both run
+ *   on the read's own connection, a 'read' one as a read-only snapshot of its own.
+ */
+export async function within<T>(
+  state: State,
+  tx: Transaction | undefined,
+  fn: (sql: Sql) => Promise<T>,
+  place?: Permission,
+): Promise<T> {
+  if (tx) {
+    state.assertTransaction(tx);
+    return await fn(tx);
+  }
+  const ambient = state.ambient;
+  if (ambient) return await fn(ambient);
+  if (!place) return await state.read(fn);
+  return place === 'read'
+    ? await state.snapshot(() => state.transaction(fn))
+    : await state.transaction(fn);
+}
+/** A pure read that needs a transaction: it runs wherever a read decision would run. */
+export async function forRead<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  // With a place, `within` always hands over a transaction.
+  return await within(state, undefined, (sql) => fn(sql as Transaction), 'read');
+}
 export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;
@@ -731,6 +781,10 @@ export const requireDirecting = (
     'A producer or contributor cannot direct the reviewer of its own work',
     403,
   );
+/**
+ * Append a domain event stamped with the caller's source. That source is audit provenance only:
+ * authority is still rechecked by Scope inside the operation.
+ */
 export const recorded = async (
   state: Pick<State, 'appendEvent'>,
   tx: Transaction,
@@ -746,11 +800,6 @@ export const recorded = async (
     subjectId,
     data: { ...data, ...eventSource(caller) },
   });
-/** Audit provenance only. Authority is still rechecked by Scope inside the operation. */
-/**
- * Release a domain's lease row by its exact ownership receipt: the worker's review claim goes
- * back with it, and a row already released is left alone. `where` adds the domain's columns.
- */
 /** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
 export function checkReceipt<T extends { receipt: string }>(
   lease: T | undefined,
@@ -764,6 +813,20 @@ export function checkReceipt<T extends { receipt: string }>(
     409,
   );
 }
+/** The columns every domain's lease table shares. */
+export interface LeaseRow {
+  id: string;
+  project_id: string;
+  actor_id: string;
+  receipt: string;
+  released_at: string | null;
+  review_id: string | null;
+  claim_id: string | null;
+}
+/**
+ * Release a domain's lease row by its exact ownership receipt. `where` adds the domain's
+ * columns. A missing row or another receipt is a stale lease.
+ */
 export async function releasedLease(
   tx: Transaction,
   reviews: Pick<Reviews, 'releaseClaim'>,
@@ -779,21 +842,27 @@ export async function releasedLease(
     actor_id: lease.actorId,
     ...where,
   };
-  const row = await tx.get<{
-    id: string;
-    project_id: string;
-    actor_id: string;
-    receipt: string;
-    released_at: string | null;
-    review_id: string | null;
-    claim_id: string | null;
-  }>(
+  const row = await tx.get<LeaseRow>(
     `SELECT * FROM ${table} WHERE ${Object.keys(match)
       .map((column) => `${column}=?`)
       .join(' AND ')}`,
     ...Object.values(match),
   );
   checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
+  await releaseLeaseRow(tx, reviews, table, row, reason);
+}
+/**
+ * Release a domain's lease row the caller already trusts: the worker's review claim goes back
+ * with it, and a row already released is left alone. It checks no receipt, so it never fails
+ * as stale.
+ */
+export async function releaseLeaseRow(
+  tx: Transaction,
+  reviews: Pick<Reviews, 'releaseClaim'>,
+  table: string,
+  row: LeaseRow,
+  reason: string,
+): Promise<void> {
   if (row.released_at) return;
   if (row.review_id && row.claim_id)
     await reviews.releaseClaim(
@@ -812,6 +881,35 @@ export async function releasedLease(
     row.id,
   );
 }
+/**
+ * A lease owner's durable release: when a worker session closes, release the lease row it names.
+ * A session's id is its lease's id, so the row is found without the workflow registration or a
+ * receipt. A close logged while the owner was unloaded, or before this consumer existed, is
+ * released when it next runs; a row already released, or gone with a retired instance, is left.
+ */
+export const leaseReleaseConsumer = (
+  id: string,
+  table: string,
+  reviews: Pick<Reviews, 'releaseClaim'>,
+): EventConsumer => ({
+  id,
+  types: ['session.closed'],
+  from: 'beginning',
+  handle: async (event, tx) => {
+    const row = await tx.get<LeaseRow>(
+      `SELECT * FROM ${table} WHERE id=? AND released_at IS NULL`,
+      event.subjectId,
+    );
+    if (row)
+      await releaseLeaseRow(
+        tx,
+        reviews,
+        table,
+        row,
+        clip(String(event.data.reason ?? 'closed'), 500),
+      );
+  },
+});
 /** A plugin entry's lifecycle state as the composition root reports it. */
 export type PluginRunState =
   'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
@@ -1138,9 +1236,21 @@ export interface WorkflowDefinition {
   states: string[];
   terminal: string[];
   edges: { from: string; action: string; to: string }[];
-  managed?: boolean;
+  /** Every graph is managed: only its program's handle changes an instance. */
+  managed?: true;
   /** While an instance is nonterminal, pause creation of these workflow types in its project. */
   blocksStarts?: string[];
+}
+/** The immutable contract of one name@version, whether or not a program has it loaded. */
+export interface WorkflowPinned {
+  definition: WorkflowDefinition;
+  /** Null pins their absence. */
+  successStates: string[] | null;
+  /**
+   * Each nonterminal state's fixed execution manifest; null pins that it has none. Only a contract
+   * that is not final can lack a state.
+   */
+  execution: Record<string, WorkflowExecutionPolicy | null>;
 }
 export interface WorkflowStart {
   workflow: string;
@@ -1215,20 +1325,26 @@ export interface WorkflowPolicy {
   limits?: WorkflowLoopLimit[];
   /** The owner may resume suspended work in the same transaction as a human's allowance. */
   limitExtended?(context: WorkflowCheckContext, status: WorkflowLimitStatus): Promise<void>;
-  /** Immutable per version; only these terminal states satisfy downstream work. */
+  /**
+   * Immutable per version, their absence included: the first registration of a version pins
+   * them, or pins that there are none. Only these terminal states satisfy downstream work, and
+   * work of a version without them cannot be depended on.
+   */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
   /**
-   * Instances this one fans work out to without a dependency edge, such as a reflection's
-   * lenses. A usage rollup over a dependency closure unions them in, so the sessions they
-   * cost are not lost from the figure of the cycle that caused them. It only reads.
+   * The instances each of `instanceIds` fans work out to without a dependency edge, such as a
+   * reflection's lenses, by instance id; one left out has none. A usage rollup over a
+   * dependency closure unions them in, so the sessions they cost are not lost from the figure
+   * of the cycle that caused them. It is asked for up to 1,000 instances at once, never an
+   * empty list, on behalf of no caller, and only reads.
    */
   children?(context: {
-    caller: Caller;
-    instanceId: string;
+    projectId: string;
+    instanceIds: readonly string[];
     tx: Transaction;
-  }): string[] | Promise<string[]>;
+  }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext):
     | {
         label: string;
@@ -1348,17 +1464,106 @@ export interface WorkflowExecution {
   policy: WorkflowExecutionPolicy;
   references: WorkflowExecutionReferences;
 }
-export interface WorkflowExecutionDispatch extends WorkflowExecutionTarget {
-  policyHash: string;
-  registrationId: string;
-  tool: string;
-  input: Data;
-  /** The tool only reads, so the project is its bound rather than the policy. */
-  read?: boolean;
-}
 export interface WorkflowDispatchAdmission {
   tool: string;
   input: Data;
+}
+/** The value a fixed binding gives its argument; a oneOf or subset choice gives none. */
+export function executionArgument(
+  binding: WorkflowExecutionBinding,
+  execution: WorkflowExecution,
+): unknown {
+  if (binding.kind === 'literal') return binding.value;
+  if (binding.kind === 'target') return execution[binding.field];
+  if (binding.kind === 'reference') {
+    const reference = Object.hasOwn(execution.references, binding.name)
+      ? execution.references[binding.name]
+      : undefined;
+    check(
+      typeof reference === 'string',
+      'execution_reference_unavailable',
+      `Execution reference ${binding.name} is unavailable`,
+      409,
+    );
+    return reference;
+  }
+  return undefined;
+}
+/**
+ * Admits one tool call under an execution: a declared tool, with arguments its bindings allow
+ * and fill in. The input is a detached JSON object its caller has bounded; each alternative
+ * binds its own copy.
+ */
+export function admitDispatch(
+  execution: WorkflowExecution,
+  tool: string,
+  original: Data,
+): WorkflowDispatchAdmission {
+  const grant = execution.policy.tools.find((grant) => grant.name === tool);
+  check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
+  const matches = new Map<string, Data>();
+  const errors: MervError[] = [];
+  for (const alternative of grant.alternatives) {
+    try {
+      const result = structuredClone(original);
+      for (const [field, binding] of Object.entries(alternative)) {
+        if (binding.kind === 'oneOf' || binding.kind === 'subset') {
+          const values = Object.hasOwn(execution.references, binding.name)
+            ? execution.references[binding.name]
+            : undefined;
+          check(
+            Array.isArray(values),
+            'execution_reference_unavailable',
+            `Execution reference ${binding.name} is unavailable`,
+            409,
+          );
+          // Omitting a subset means selecting no resources, never all available resources.
+          if (binding.kind === 'subset' && !Object.hasOwn(result, field)) result[field] = [];
+          // A choice among one reference is no choice: an omitted field takes it.
+          if (binding.kind === 'oneOf' && !Object.hasOwn(result, field) && values.length === 1)
+            result[field] = values[0]!;
+          check(
+            Object.hasOwn(result, field),
+            'execution_arguments_forbidden',
+            `Choose ${field} from the declared execution references`,
+            403,
+          );
+          const actual = result[field];
+          check(
+            binding.kind === 'oneOf'
+              ? typeof actual === 'string' && values.includes(actual)
+              : Array.isArray(actual) &&
+                  actual.every((value) => typeof value === 'string' && values.includes(value)),
+            'execution_arguments_forbidden',
+            `${field} is outside the declared execution references`,
+            403,
+          );
+        } else {
+          const expected = executionArgument(binding, execution);
+          if (Object.hasOwn(result, field))
+            check(
+              canonical(result[field]) === canonical(expected),
+              'execution_arguments_forbidden',
+              `${field} conflicts with this workflow assignment`,
+              403,
+            );
+          else result[field] = structuredClone(expected) as Data[string];
+        }
+      }
+      matches.set(canonical(result), result);
+    } catch (error) {
+      if (!(error instanceof MervError)) throw error;
+      errors.push(error);
+    }
+  }
+  check(
+    matches.size <= 1,
+    'execution_arguments_ambiguous',
+    'Supply the fixed fields needed to select one execution alternative',
+  );
+  if (!matches.size)
+    throw errors.find((error) => error.code === 'execution_arguments_forbidden') ?? errors[0]!;
+  return { tool, input: [...matches.values()][0]! };
 }
 export interface WorkflowAssignmentContent {
   role: string;
@@ -1410,28 +1615,20 @@ export interface Workflows {
     target: WorkflowExecutionTarget & { leaseId: string },
     tx?: Transaction,
   ): Promise<WorkflowLeaseOffer>;
-  checkLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowExecution>;
-  authorizeLeaseDispatch(
+  /**
+   * The lease still holds, under the returned registration generation. With `frozen`, the
+   * execution the lease was offered, it also returns the references that execution grants
+   * now: the frozen ones, extended by the lease's own outputs.
+   */
+  checkLease(
     worker: Caller,
     lease: WorkflowLease,
-    frozen: WorkflowExecution,
-    input: { tool: string; input: Data; read?: boolean },
     tx?: Transaction,
-  ): Promise<WorkflowDispatchAdmission>;
+    frozen?: WorkflowExecution,
+  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }>;
   activateLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowWorkStart>;
   /** Trusted exact resource cleanup; deliberately independent of caller's expired authority. */
   releaseLease(lease: WorkflowLease, input: { reason: string }, tx?: Transaction): Promise<void>;
-  execution(
-    caller: Caller,
-    target: WorkflowExecutionTarget,
-    tx?: Transaction,
-  ): Promise<WorkflowExecution>;
-  /** Internal dispatch admission; ordinary caller credentials remain unchanged. */
-  authorizeDispatch(
-    caller: Caller,
-    dispatch: WorkflowExecutionDispatch,
-    tx?: Transaction,
-  ): Promise<WorkflowDispatchAdmission>;
   assignment(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowAssignment>;
   begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment>;
   workStarts(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowWorkStart[]>;
@@ -1453,16 +1650,16 @@ export interface Workflows {
       tx?: Transaction,
     ): Promise<WorkflowSnapshot>;
   }>;
-  start(caller: Caller, input: WorkflowStart, tx?: Transaction): Promise<WorkflowSnapshot>;
-  transition(
-    caller: Caller,
-    input: WorkflowTransition,
-    tx?: Transaction,
-  ): Promise<WorkflowSnapshot>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
   list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
   catalog(): WorkflowDefinition[];
+  /**
+   * The stored contract of a version, loaded or not, or null when none is stored. It never
+   * changes, so it needs no caller. The object returned is shared and deeply frozen: a caller
+   * that needs to change it copies it first.
+   */
+  pinned(workflow: string, version: number, tx?: Transaction): Promise<WorkflowPinned | null>;
   /**
    * Derived on read from the definition and the record; never pinned, never authored. With
    * `checks: false` no program callback runs, so no edge carries a status: for a view that
@@ -1472,6 +1669,7 @@ export interface Workflows {
     caller: Caller,
     instanceId: string,
     options?: { checks?: boolean },
+    tx?: Transaction,
   ): Promise<ProcessGraph>;
   evaluate(
     caller: Caller,
@@ -1479,7 +1677,7 @@ export interface Workflows {
     input?: WorkflowEvaluationInput,
     tx?: Transaction,
   ): Promise<WorkflowDecision>;
-  overview(caller: Caller): Promise<WorkflowOverview>;
+  overview(caller: Caller, tx?: Transaction): Promise<WorkflowOverview>;
   /** Only a project admin who is not a leased worker may allow a capped loop more rounds. */
   extendLimit(
     caller: Caller,
@@ -1490,7 +1688,7 @@ export interface Workflows {
     caller: Caller,
     instanceId: string,
     name: string,
-    tx: Transaction,
+    tx?: Transaction,
   ): Promise<WorkflowLimitStatus>;
   dependencies(
     caller: Caller,
@@ -1508,7 +1706,7 @@ export interface Workflows {
   prerequisites(
     caller: Caller,
     instanceIds: readonly string[],
-    tx: Transaction,
+    tx?: Transaction,
   ): Promise<Map<string, WorkflowDependency[]>>;
   /**
    * limitStatus of one limit for each of several instances, in a fixed number of reads per
@@ -1518,7 +1716,7 @@ export interface Workflows {
     caller: Caller,
     instanceIds: readonly string[],
     name: string,
-    tx: Transaction,
+    tx?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>>;
   checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void>;
   /**
@@ -1548,22 +1746,27 @@ export interface Workflows {
     instanceId?: string,
     tx?: Transaction,
   ): Promise<WorkflowProvidedBlocker[]>;
-  /** Internal provider capability; never exposed through a tool or a lease. */
+  /**
+   * Internal provider capability; never exposed through a tool or a lease. `replace` makes the
+   * provider's edges from the instance exactly `dependencies`: replacing with the set already
+   * held changes nothing, so a repeat is safe without a request id.
+   */
   systemPrerequisites(provider: string): {
     replace(
-      input: { projectId: string; instanceId: string; requestId: string; dependencies: string[] },
+      input: { projectId: string; instanceId: string; dependencies: string[] },
       tx: Transaction,
     ): Promise<void>;
   };
   /**
-   * The dependency edges a provider derives from, read inside its caller's transaction and
-   * under that caller's already-checked authority. Null when the project holds no such instance.
+   * The instance and the dependency edges a provider derives from, read inside its caller's
+   * transaction and under that caller's already-checked authority. Null when the project holds
+   * no such instance.
    */
-  dependencyRelations(
+  relations(
     projectId: string,
     instanceId: string,
     tx: Transaction,
-  ): Promise<WorkflowProviderRelations | null>;
+  ): Promise<WorkflowRelations | null>;
 }
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';

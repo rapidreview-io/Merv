@@ -134,7 +134,6 @@ export const TERMINAL = ['complete', 'abandoned', 'failed'] as const;
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
   version: 1,
-  managed: true,
   initial: 'planned',
   states: [...activeStates, ...TERMINAL],
   terminal: [...TERMINAL],

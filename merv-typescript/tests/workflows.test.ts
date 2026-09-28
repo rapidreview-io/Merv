@@ -8,7 +8,14 @@ import { Context } from 'cordis';
 import { PostgresState, statePlugin } from '@merv/state';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { WorkflowsService, workflowsPlugin } from '@merv/workflows';
-import type { Caller, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
+import type {
+  Caller,
+  Data,
+  Transaction,
+  WorkflowDefinition,
+  WorkflowPolicy,
+} from '@merv/contracts';
+import { PinnedContracts } from '../packages/workflows/src/pinned.js';
 import { openState, stateConfig } from './fixtures/state.js';
 
 const graph = (version = 1): WorkflowDefinition => ({
@@ -32,21 +39,22 @@ async function setup(path = ':memory:', given?: PostgresState) {
   });
   const caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
   const workflows = await createService(new WorkflowsService(state, scope));
-  await workflows.register(graph());
-  return { state, scope, workflows, caller };
+  // Every instance changes through its graph's handle.
+  const approval = await workflows.register(graph());
+  return { state, scope, workflows, approval, caller };
 }
 const code = (expected: string) => (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 
 test('durable graph transitions record exact command responses, history, and events once', async (t) => {
-  const { state, scope, workflows, caller } = await setup();
+  const { state, scope, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
   const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
     .actor;
   const pendingCaller = { ...caller };
   const start = { workflow: 'approval', requestId: 'start-1', data: { title: 'A', untouched: 1 } };
   const requestedStart = structuredClone(start);
-  const starting = workflows.start(pendingCaller, start);
+  const starting = approval.start(pendingCaller, start);
   pendingCaller.actorId = replacement.id;
   Object.assign(start, { workflow: 'changed', requestId: 'changed' });
   start.data.title = 'Changed';
@@ -62,7 +70,7 @@ test('durable graph transitions record exact command responses, history, and eve
   };
   const requestedTransition = structuredClone(command);
   Object.assign(pendingCaller, caller);
-  const transitioning = workflows.transition(pendingCaller, command);
+  const transitioning = approval.transition(pendingCaller, command);
   pendingCaller.actorId = replacement.id;
   Object.assign(command, { action: 'changed', requestId: 'changed', expectedRevision: 99 });
   command.data.submitted = false;
@@ -70,15 +78,15 @@ test('durable graph transitions record exact command responses, history, and eve
   Object.assign(command, requestedTransition);
   assert.equal(submitted.state, 'review');
   assert.deepEqual(submitted.data, { title: 'A', untouched: 1, submitted: true });
-  const finished = await workflows.transition(caller, {
+  const finished = await approval.transition(caller, {
     instanceId: initial.id,
     expectedRevision: 1,
     action: 'accept',
     requestId: 'accept-1',
   });
   assert.equal(finished.state, 'done');
-  assert.deepEqual(await workflows.start(caller, start), initial);
-  assert.deepEqual(await workflows.transition(caller, command), submitted);
+  assert.deepEqual(await approval.start(caller, start), initial);
+  assert.deepEqual(await approval.transition(caller, command), submitted);
   assert.equal((await workflows.get(caller, initial.id)).revision, 2);
   assert.equal((await workflows.history(caller, initial.id)).length, 3);
   assert.deepEqual(
@@ -92,19 +100,19 @@ test('durable graph transitions record exact command responses, history, and eve
   );
   await assert.rejects(
     async () =>
-      await workflows.transition(caller, { ...command, requestId: 'new', expectedRevision: 2 }),
+      await approval.transition(caller, { ...command, requestId: 'new', expectedRevision: 2 }),
     code('invalid_transition'),
   );
   await assert.rejects(
-    async () => await workflows.transition(caller, { ...command, data: { changed: true } }),
+    async () => await approval.transition(caller, { ...command, data: { changed: true } }),
     code('request_conflict'),
   );
   await assert.rejects(
-    async () => await workflows.start(caller, { ...start, data: { title: 'Different' } }),
+    async () => await approval.start(caller, { ...start, data: { title: 'Different' } }),
     code('request_conflict'),
   );
   await assert.rejects(
-    async () => await workflows.transition(caller, { ...command, requestId: 'start-1' }),
+    async () => await approval.transition(caller, { ...command, requestId: 'start-1' }),
     code('request_conflict'),
   );
 });
@@ -114,16 +122,15 @@ test('versions are pinned and changed declarations are rejected across restart',
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = folder;
   const first = await setup(path);
-  const initial = await first.workflows.start(first.caller, {
+  const initial = await first.approval.start(first.caller, {
     workflow: 'approval',
     requestId: 'start',
   });
   const secondGraph = graph(2);
   secondGraph.edges[0].action = 'send';
-  await first.workflows.register(secondGraph);
+  const second = await first.workflows.register(secondGraph);
   assert.equal(
-    (await first.workflows.start(first.caller, { workflow: 'approval', requestId: 'start-v2' }))
-      .version,
+    (await second.start(first.caller, { workflow: 'approval', requestId: 'start-v2' })).version,
     2,
   );
   await first.state.close();
@@ -139,11 +146,11 @@ test('versions are pinned and changed declarations are rejected across restart',
     async () => await workflows.register(changed),
     code('workflow_version_conflict'),
   );
-  await workflows.register(graph());
+  const approval = await workflows.register(graph());
   await workflows.register(secondGraph);
   assert.equal(
     (
-      await workflows.transition(first.caller, {
+      await approval.transition(first.caller, {
         instanceId: initial.id,
         action: 'submit',
         expectedRevision: 0,
@@ -153,7 +160,7 @@ test('versions are pinned and changed declarations are rejected across restart',
     1,
   );
   assert.deepEqual(
-    await workflows.start(first.caller, { workflow: 'approval', requestId: 'start' }),
+    await approval.start(first.caller, { workflow: 'approval', requestId: 'start' }),
     initial,
   );
   assert.equal((await workflows.history(first.caller, initial.id)).length, 2);
@@ -163,17 +170,17 @@ test('competing connections reject stale revisions and transaction rollback incl
   const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-cas-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));
   const path = folder;
-  const { state, scope, workflows, caller } = await setup(path);
+  const { state, scope, workflows, approval, caller } = await setup(path);
   t.after(async () => await state.close());
   const state2 = await openState(path);
   t.after(async () => await state2.close());
   const other = await createService(
     new WorkflowsService(state2, await createService(new ProjectScope(state2))),
   );
-  await other.register(graph());
-  const initial = await workflows.start(caller, { workflow: 'approval', requestId: 'start' });
+  const otherApproval = await other.register(graph());
+  const initial = await approval.start(caller, { workflow: 'approval', requestId: 'start' });
   const stale = await other.get(caller, initial.id);
-  await workflows.transition(caller, {
+  await approval.transition(caller, {
     instanceId: initial.id,
     action: 'submit',
     expectedRevision: 0,
@@ -181,7 +188,7 @@ test('competing connections reject stale revisions and transaction rollback incl
   });
   await assert.rejects(
     async () =>
-      await other.transition(caller, {
+      await otherApproval.transition(caller, {
         instanceId: initial.id,
         action: 'submit',
         expectedRevision: stale.revision,
@@ -199,7 +206,7 @@ test('competing connections reject stale revisions and transaction rollback incl
   await assert.rejects(
     async () =>
       await state.transaction(async (tx) => {
-        await workflows.transition(caller, retry, tx);
+        await approval.transition(caller, retry, tx);
         throw new Error('Caller-owned operation failed');
       }),
     /Caller-owned operation failed/,
@@ -207,7 +214,7 @@ test('competing connections reject stale revisions and transaction rollback incl
   assert.equal((await workflows.get(caller, initial.id)).revision, 1);
   assert.equal((await workflows.history(caller, initial.id)).length, 2);
   assert.equal((await state.events(caller.projectId)).length, eventCount);
-  assert.equal((await workflows.transition(caller, retry)).revision, 2);
+  assert.equal((await approval.transition(caller, retry)).revision, 2);
   await assert.rejects(
     async () => await state2.transaction(async (tx) => await workflows.get(caller, initial.id, tx)),
     code('invalid_transaction'),
@@ -216,9 +223,9 @@ test('competing connections reject stale revisions and transaction rollback incl
 });
 
 test('all project reads and mutation replays check actor scope and permission', async (t) => {
-  const { state, scope, workflows, caller } = await setup();
+  const { state, scope, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
-  const initial = await workflows.start(caller, { workflow: 'approval', requestId: 'start' });
+  const initial = await approval.start(caller, { workflow: 'approval', requestId: 'start' });
   const foreign = await scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
   const other: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
   for (const method of [
@@ -256,14 +263,10 @@ test('all project reads and mutation replays check actor scope and permission', 
   const reader = (await scope.issueActor(caller, { name: 'Reader', role: 'reader' })).actor;
   const readerCaller = { actorId: reader.id, projectId: caller.projectId };
   assert.equal((await workflows.get(readerCaller, initial.id)).id, initial.id);
-  await assert.rejects(
-    async () => await workflows.start(readerCaller, { workflow: 'approval', requestId: 'start' }),
-    code('forbidden'),
-  );
   const producer = (await scope.issueActor(caller, { name: 'Producer', role: 'producer' })).actor;
   await assert.rejects(
     async () =>
-      await workflows.start(
+      await approval.start(
         { actorId: producer.id, projectId: caller.projectId },
         { workflow: 'approval', requestId: 'start' },
       ),
@@ -274,40 +277,68 @@ test('all project reads and mutation replays check actor scope and permission', 
     async () => await workflows.list({ actorId: producer.id, projectId: caller.projectId }),
     code('forbidden'),
   );
+  // A handle's commands ask that the caller may read the project, before any replay.
+  for (const outsider of [
+    { ...other, projectId: caller.projectId },
+    { actorId: producer.id, projectId: caller.projectId },
+  ]) {
+    await assert.rejects(
+      async () => await approval.start(outsider, { workflow: 'approval', requestId: 'start' }),
+      code('forbidden'),
+    );
+    await assert.rejects(
+      async () =>
+        await approval.transition(outsider, {
+          instanceId: initial.id,
+          action: 'submit',
+          expectedRevision: 0,
+          requestId: 'submit',
+        }),
+      code('forbidden'),
+    );
+    await assert.rejects(
+      async () =>
+        await approval.addDependencies(outsider, {
+          instanceId: initial.id,
+          expectedRevision: 0,
+          dependsOn: [],
+          requestId: 'depend',
+        }),
+      code('forbidden'),
+    );
+  }
 });
 
-test('managed program handles prevent bypass and disposal preserves durable data', async (t) => {
-  const { state, scope, workflows, caller } = await setup();
+test('a program handle changes only its own version and disposal preserves durable data', async (t) => {
+  const { state, scope, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
-  const definition = { ...graph(), name: 'owned', managed: true };
+  const definition = { ...graph(), name: 'owned' };
   const program = await workflows.register(definition);
   const initial = await program.start(caller, { workflow: 'owned', requestId: 'owned-start' });
-  await assert.rejects(
-    async () => await workflows.start(caller, { workflow: 'owned', requestId: 'bypass-start' }),
-    code('workflow_managed'),
-  );
-  await assert.rejects(
-    async () =>
-      await workflows.transition(caller, {
-        instanceId: initial.id,
-        action: 'submit',
-        expectedRevision: 0,
-        requestId: 'bypass-transition',
-      }),
-    code('workflow_managed'),
-  );
-  await assert.rejects(
-    async () =>
-      await program.transition(caller, {
-        instanceId: (
-          await workflows.start(caller, { workflow: 'approval', requestId: 'other-start' })
-        ).id,
-        action: 'submit',
-        expectedRevision: 0,
-        requestId: 'other-transition',
-      }),
-    code('workflow_handle_mismatch'),
-  );
+  for (const other of [
+    { workflow: 'approval' },
+    { workflow: 'owned', version: 2 },
+    { workflow: undefined as unknown as string },
+  ])
+    await assert.rejects(
+      async () => await program.start(caller, { ...other, requestId: 'other-start' }),
+      { code: 'workflow_handle_mismatch', status: 403 },
+    );
+  const unowned = await approval.start(caller, { workflow: 'approval', requestId: 'other-start' });
+  for (const [handle, instanceId] of [
+    [program, unowned.id],
+    [approval, initial.id],
+  ] as const)
+    await assert.rejects(
+      async () =>
+        await handle.transition(caller, {
+          instanceId,
+          action: 'submit',
+          expectedRevision: 0,
+          requestId: 'other-transition',
+        }),
+      { code: 'workflow_handle_mismatch', status: 403 },
+    );
   await program.transition(caller, {
     instanceId: initial.id,
     action: 'submit',
@@ -315,7 +346,7 @@ test('managed program handles prevent bypass and disposal preserves durable data
     requestId: 'owned-submit',
   });
   const reviewer = (await scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' })).actor;
-  // A program may authorize a reviewer for its own action; generic engine writes remain forbidden.
+  // A program authorizes its own actions: the engine asks only that the caller may read.
   const reviewerCaller = { actorId: reviewer.id, projectId: caller.projectId };
   await scope.require(reviewerCaller, 'review');
   const accepted = await program.transition(reviewerCaller, {
@@ -339,19 +370,26 @@ test('managed program handles prevent bypass and disposal preserves durable data
   );
   program.dispose(); // An old disposer cannot remove the replacement.
   assert.ok(workflows.catalog().some((item) => item.name === 'owned'));
+  // Every graph is managed, and says so in its stored form.
+  assert.ok(workflows.catalog().every((item) => item.managed === true));
+  await assert.rejects(
+    async () =>
+      await workflows.register({ ...graph(), name: 'loose', managed: false as unknown as true }),
+    { code: 'invalid_workflow_policy', status: 400 },
+  );
 });
 
 test('graph validation and defensive copies prevent changing installed behavior', async (t) => {
-  const { state, workflows, caller } = await setup();
+  const { state, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
   const mutable = { ...graph(), name: 'mutable' };
-  await workflows.register(mutable);
+  const handle = await workflows.register(mutable);
   mutable.edges[0].action = 'sneaky';
   workflows.catalog().find((item) => item.name === 'mutable')!.edges[0].action = 'another';
-  const initial = await workflows.start(caller, { workflow: 'mutable', requestId: 'start' });
+  const initial = await handle.start(caller, { workflow: 'mutable', requestId: 'start' });
   assert.equal(
     (
-      await workflows.transition(caller, {
+      await handle.transition(caller, {
         instanceId: initial.id,
         action: 'submit',
         expectedRevision: 0,
@@ -374,7 +412,7 @@ test('graph validation and defensive copies prevent changing installed behavior'
     /reachable/,
   );
   await assert.rejects(
-    async () => await workflows.start(caller, { workflow: 'approval', requestId: '', data: {} }),
+    async () => await approval.start(caller, { workflow: 'approval', requestId: '', data: {} }),
     code('invalid_request'),
   );
   let callbacks = 0;
@@ -391,12 +429,329 @@ test('graph validation and defensive copies prevent changing installed behavior'
   ]) {
     await assert.rejects(
       async () =>
-        await workflows.start(caller, { workflow: 'approval', requestId: 'invalid-data', data }),
+        await approval.start(caller, { workflow: 'approval', requestId: 'invalid-data', data }),
       { code: 'invalid_data', status: 400 },
     );
     assert.equal(callbacks, 0);
   }
   assert.equal(await state.eventHead(), before);
+});
+
+test('one data cap bounds start data, transition data and input, and preflight input', async (t) => {
+  const { state, workflows, approval, caller } = await setup();
+  t.after(async () => await state.close());
+  const large = { text: 'x'.repeat(300_000) };
+  let deep: Data = { leaf: true };
+  for (let level = 0; level < 40; level++) deep = { next: deep };
+  const half = 'x'.repeat(200_000);
+  const initial = await approval.start(caller, {
+    workflow: 'approval',
+    requestId: 'start',
+    data: { first: half },
+  });
+  const before = await state.eventHead();
+  for (const data of [large, deep]) {
+    await assert.rejects(
+      async () => await approval.start(caller, { workflow: 'approval', requestId: 'big', data }),
+      { code: 'invalid_data', status: 400 },
+    );
+    const command = {
+      instanceId: initial.id,
+      action: 'submit',
+      expectedRevision: 0,
+      requestId: 'big',
+    };
+    await assert.rejects(async () => await approval.transition(caller, { ...command, data }), {
+      code: 'invalid_data',
+      status: 400,
+    });
+    await assert.rejects(
+      async () => await approval.transition(caller, { ...command, input: data }),
+      { code: 'invalid_data', status: 400 },
+    );
+    // A preview and the transition it previews are held to the same cap.
+    await assert.rejects(
+      async () => await workflows.evaluate(caller, initial.id, { action: 'submit', input: data }),
+      { code: 'invalid_data', status: 400 },
+    );
+  }
+  assert.equal(await state.eventHead(), before);
+  // Only what a caller sends is capped: the merged record may grow past it, and an instance
+  // above the cap still moves with a small delta.
+  const submitted = await approval.transition(caller, {
+    instanceId: initial.id,
+    action: 'submit',
+    expectedRevision: 0,
+    requestId: 'submit',
+    data: { second: half },
+  });
+  const revised = await approval.transition(caller, {
+    instanceId: initial.id,
+    action: 'revise',
+    expectedRevision: submitted.revision,
+    requestId: 'revise',
+    data: { note: 'small' },
+  });
+  assert.deepEqual(revised.data, { first: half, second: half, note: 'small' });
+});
+
+test('a version pauses starts while an instance is in one of its nonterminal states', async (t) => {
+  const { state, workflows, approval, caller } = await setup();
+  t.after(async () => await state.close());
+  const pausing = (name: string, states: string[], terminal: string[]): WorkflowDefinition => ({
+    name,
+    version: 1,
+    initial: states[0],
+    states,
+    terminal,
+    edges: [],
+    blocksStarts: ['approval'],
+  });
+  // With no nonterminal state an instance is over as it starts, so it pauses nothing.
+  const instant = await workflows.register(pausing('instant', ['over'], ['over']));
+  await instant.start(caller, { workflow: 'instant', requestId: 'instant' });
+  await approval.start(caller, { workflow: 'approval', requestId: 'after-instant' });
+  // With no terminal state every instance stays open, so one pauses starts for good.
+  const standing = await workflows.register(pausing('standing', ['on'], []));
+  await standing.start(caller, { workflow: 'standing', requestId: 'standing' });
+  await assert.rejects(
+    async () => await approval.start(caller, { workflow: 'approval', requestId: 'paused' }),
+    code('workflow_creation_paused'),
+  );
+  // Only the workflows it names are paused, and a retry of a committed start still replays.
+  await instant.start(caller, { workflow: 'instant', requestId: 'unnamed' });
+  await approval.start(caller, { workflow: 'approval', requestId: 'after-instant' });
+});
+
+test('pinned contracts are kept in memory, immutable in storage, and found when another service adds one', async (t) => {
+  const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-pinned-'));
+  t.after(() => rmSync(folder, { recursive: true, force: true }));
+  const { state, workflows, approval, caller } = await setup(folder);
+  t.after(async () => await state.close());
+  /** How many statements `run` sends to wf_definitions through the transaction it is given. */
+  const definitionReads = async (run: (tx: Transaction) => Promise<unknown>) => {
+    let reads = 0;
+    await state.transaction(async (tx) => {
+      const spied = tx as unknown as Record<'get' | 'all' | 'run', (...args: unknown[]) => unknown>;
+      for (const method of ['get', 'all', 'run'] as const) {
+        const original = spied[method].bind(tx);
+        spied[method] = (sql, ...args) => {
+          if (String(sql).includes('wf_definitions')) reads++;
+          return original(sql, ...args);
+        };
+      }
+      await run(tx);
+    });
+    return reads;
+  };
+  const initial = await approval.start(caller, { workflow: 'approval', requestId: 'start' });
+  assert.equal(
+    await definitionReads(async (tx) => {
+      await workflows.evaluate(caller, initial.id, {}, tx);
+      await approval.transition(
+        caller,
+        { instanceId: initial.id, action: 'submit', expectedRevision: 0, requestId: 'submit' },
+        tx,
+      );
+    }),
+    0,
+  );
+
+  // Registered by another service after this one loaded what was stored: the first read finds
+  // it, and later reads keep it.
+  const otherState = await openState(folder);
+  t.after(async () => await otherState.close());
+  const other = await createService(
+    new WorkflowsService(otherState, await createService(new ProjectScope(otherState))),
+  );
+  const program = await other.register(graph(2));
+  const late = await program.start(caller, { workflow: 'approval', requestId: 'late' });
+  assert.equal(
+    await definitionReads(async (tx) => {
+      const decision = await workflows.evaluate(caller, late.id, {}, tx);
+      assert.equal(decision.version, 2);
+      assert.equal(decision.available, false);
+    }),
+    1,
+  );
+  assert.equal(
+    await definitionReads(async (tx) => await workflows.evaluate(caller, late.id, {}, tx)),
+    0,
+  );
+  await assert.rejects(
+    async () =>
+      await approval.transition(caller, {
+        instanceId: late.id,
+        action: 'submit',
+        expectedRevision: 0,
+        requestId: 'bypass',
+      }),
+    code('workflow_handle_mismatch'),
+  );
+
+  // A version no instance uses, so only the guard can refuse its removal.
+  await workflows.register(graph(3));
+  for (const sql of [
+    'UPDATE wf_definitions SET created_at = created_at',
+    "DELETE FROM wf_definitions WHERE name = 'approval' AND version = 3",
+    'UPDATE wf_success_states SET success_json = success_json',
+    "DELETE FROM wf_success_states WHERE workflow = 'approval' AND version = 3",
+  ])
+    await assert.rejects(
+      async () => await state.transaction(async (tx) => await tx.run(sql)),
+      { code: 'state_constraint' },
+      sql,
+    );
+});
+
+test('a pinned contract is kept only once its success and every execution row are stored', async (t) => {
+  const { state } = await setup();
+  t.after(async () => await state.close());
+  // A version stored before migrations 2 and 4: a later registration of it still adds its rows.
+  const store = async (sql: string, ...params: string[]) =>
+    await state.transaction(async (tx) => await tx.run(sql, ...params));
+  await store(
+    "INSERT INTO wf_definitions (name, version, fingerprint, definition_json, created_at) VALUES ('legacy', 1, 'legacy', ?, '2026-01-01T00:00:00.000Z')",
+    JSON.stringify({ ...graph(), name: 'legacy' }),
+  );
+  const contracts = new PinnedContracts();
+  let reads = 0;
+  const read = async () =>
+    await state.read(
+      async (sql) =>
+        await contracts.get(
+          {
+            ...sql,
+            all: async (text, ...params) => {
+              reads++;
+              return await sql.all(text, ...params);
+            },
+          } as typeof sql,
+          'legacy',
+          1,
+        ),
+    );
+  assert.equal((await read())!.successStates, null);
+  await read();
+  assert.equal(reads, 2);
+  await store(
+    "INSERT INTO wf_success_states (workflow, version, success_json) VALUES ('legacy', 1, 'null')",
+  );
+  // 'review' has no execution row yet, so a later registration could still add it.
+  await store(
+    "INSERT INTO wf_execution_policies (workflow, version, state, fingerprint, manifest_json) VALUES ('legacy', 1, 'draft', 'draft', 'null')",
+  );
+  assert.deepEqual((await read())!.execution, { draft: null });
+  await read();
+  assert.equal(reads, 4);
+  await store(
+    "INSERT INTO wf_execution_policies (workflow, version, state, fingerprint, manifest_json) VALUES ('legacy', 1, 'review', 'review', 'null')",
+  );
+  assert.deepEqual((await read())!.execution, { draft: null, review: null });
+  await read();
+  assert.equal(reads, 5);
+});
+
+test('a stored definition keeps only edge endpoints in code-unit order and refuses engine actions', async (t) => {
+  const { state, workflows, approval, caller } = await setup();
+  t.after(async () => await state.close());
+  // A function, BigInt or Date on an edge would otherwise reach definition_json, where it is
+  // unencodable, or encodes as something no reader can parse back.
+  const extras = { note: () => 'extra', size: 1n, at: new Date(0) };
+  const edge = (from: string, action: string, to: string) =>
+    ({ from, action, to, ...extras }) as WorkflowDefinition['edges'][number];
+  // Code-unit order differs from every locale's collation here: 'B' < 'aa' < 'z', where most
+  // locales put 'aa' first and Danish puts it after 'z'.
+  const handle = await workflows.register({
+    name: 'ordered',
+    version: 1,
+    initial: 'z',
+    states: ['z', 'aa', 'B', 'done'],
+    terminal: ['done'],
+    edges: [edge('z', 'next', 'aa'), edge('aa', 'next', 'B'), edge('B', 'next', 'done')],
+  });
+  const stored = await state.read(
+    async (sql) =>
+      await sql.get<{ definition_json: string }>(
+        "SELECT definition_json FROM wf_definitions WHERE name = 'ordered'",
+      ),
+  );
+  assert.deepEqual(JSON.parse(stored!.definition_json).edges, [
+    { from: 'B', action: 'next', to: 'done' },
+    { from: 'aa', action: 'next', to: 'B' },
+    { from: 'z', action: 'next', to: 'aa' },
+  ]);
+  assert.deepEqual(
+    workflows.catalog().find((item) => item.name === 'ordered')!.edges,
+    JSON.parse(stored!.definition_json).edges,
+  );
+  const ordered = await handle.start(caller, { workflow: 'ordered', requestId: 'ordered' });
+  assert.equal(
+    (
+      await handle.transition(caller, {
+        instanceId: ordered.id,
+        action: 'next',
+        expectedRevision: 0,
+        requestId: 'next',
+      })
+    ).state,
+    'aa',
+  );
+  assert.equal(
+    (await approval.start(caller, { workflow: 'approval', requestId: 'other' })).state,
+    'draft',
+  );
+  for (const action of ['start', 'add_dependencies', 'replan_dependencies'])
+    await assert.rejects(
+      async () =>
+        await workflows.register({
+          ...graph(),
+          name: `reserved-${action}`,
+          edges: [...graph().edges, { from: 'review', action, to: 'draft' }],
+        }),
+      {
+        code: 'invalid_workflow_policy',
+        status: 400,
+        message: `${action} is reserved by the engine`,
+      },
+    );
+  const chain = (count: number) => Array.from({ length: count }, (_, i) => `s${i}`);
+  await assert.rejects(
+    async () =>
+      await workflows.register({
+        name: 'wide',
+        version: 1,
+        initial: 's0',
+        states: chain(257),
+        terminal: [],
+        edges: chain(256).map((from, i) => ({ from, action: 'next', to: `s${i + 1}` })),
+      }),
+    { code: 'invalid_workflow_policy', status: 400, message: 'Workflow graph too large' },
+  );
+  await assert.rejects(
+    async () =>
+      await workflows.register({
+        name: 'dense',
+        version: 1,
+        initial: 's0',
+        states: chain(2),
+        terminal: [],
+        edges: Array.from({ length: 2049 }, (_, i) => ({ from: 's0', action: `a${i}`, to: 's1' })),
+      }),
+    { code: 'invalid_workflow_policy', status: 400, message: 'Workflow graph too large' },
+  );
+  // At the bounds a graph registers.
+  await workflows.register({
+    name: 'bounded',
+    version: 1,
+    initial: 's0',
+    states: chain(256),
+    terminal: [],
+    edges: [
+      ...chain(255).map((from, i) => ({ from, action: 'next', to: `s${i + 1}` })),
+      ...Array.from({ length: 1793 }, (_, i) => ({ from: 's0', action: `a${i}`, to: 's1' })),
+    ],
+  });
 });
 
 test('real Cordis dependency activation and disposal preserve database state', async (t) => {
@@ -416,8 +771,8 @@ test('real Cordis dependency activation and disposal preserve database state', a
   const credential = await scope.bootstrap({ projectName: 'Cordis', actorName: 'Operator' });
   const caller = { actorId: credential.actor.id, projectId: credential.project.id };
   const service = ctx.workflows;
-  await service.register(graph());
-  const initial = await service.start(caller, { workflow: 'approval', requestId: 'cordis' });
+  const approval = await service.register(graph());
+  const initial = await approval.start(caller, { workflow: 'approval', requestId: 'cordis' });
   await scopeFiber.dispose();
   assert.equal(ctx.get('workflows'), undefined);
   await assert.rejects(
@@ -463,7 +818,6 @@ test('awaited transition checks share the writer and withdrawal rolls back the e
   const definition: WorkflowDefinition = {
     name: 'awaited_guard',
     version: 1,
-    managed: true,
     initial: 'work',
     states: ['work', 'done'],
     terminal: ['done'],
@@ -578,7 +932,7 @@ test('an awaited assignment provider cannot survive its own withdrawal', async (
     ],
   };
   const first = await workflows.register(definition, policy);
-  const instance = await workflows.start(caller, {
+  const instance = await first.start(caller, {
     workflow: definition.name,
     requestId: 'assignment-start',
   });

@@ -50,7 +50,7 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   const project = await f.scope.createProject(principal, { name: 'Rebind', requestId: 'project' });
   const human = await f.scope.caller(principal, project.id);
   // The identity behind that administrator, for the key that must still be refused.
-  await f.workflows.register(definition, policy);
+  const build = await f.workflows.register(definition, policy);
   const paths = f.pathsOf(human.projectId);
   const bind = async (mainOid: string, expectedMainOid?: string) =>
     await f.code.bindLocal(human, {
@@ -108,13 +108,13 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
       }),
     /** A declared unit of a workflow instance, so a dependent of it derives against it. */
     unit: async (requestId: string, dependsOn: string[] = []) => {
-      const started = await f.workflows.start(human, { workflow: 'build', requestId, dependsOn });
+      const started = await build.start(human, { workflow: 'build', requestId, dependsOn });
       await f.state.transaction((tx) => f.code.declareUnit(human, started.id, tx));
       return started;
     },
     /** Carry an instance to its terminal state, so what depends on it is no longer waiting. */
     finish: async (instanceId: string, expectedRevision: number) =>
-      await f.workflows.transition(human, {
+      await build.transition(human, {
         instanceId,
         expectedRevision,
         action: 'finish',

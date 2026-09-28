@@ -25,7 +25,9 @@ semantics. Unknown, cross-project and malformed targets are rejected atomically.
 The task ID is its workflow instance ID. Public task dependencies are set at
 creation; no dependency-editing tool is exposed. `task.get` and `task.list` return
 both `dependencies` (waits on) and `dependents` (unblocks). Each row carries its
-ID, workflow, current version, name, state, and `settled`/`failed` flags. The task
+ID, workflow, current version, name, state, revision, and `settled`/`terminal`/`failed`
+flags: `terminal` is the fact that the row has ended, `failed` whether that fails the
+dependent (never for a provider's edge, which the provider re-plans). The task
 UI displays both directions and links task prerequisites to their task pages.
 
 | Prerequisite condition        | Downstream task behavior                                                                                          |
@@ -68,7 +70,8 @@ its original workflow version and an empty dependency list.
 A program declares terminal `successStates` when registering a workflow policy.
 Tasks declares `done`. Another program can declare `complete` or another terminal
 state; Workflows does not contain a switch on task or experiment types. Success
-declarations are durable and immutable per workflow name/version. Each new edge
+declarations are durable and immutable per workflow name/version, and so is their
+absence: a version first registered without them can never gain them. Each new edge
 pins the target’s success and terminal-state criteria, so provider removal or a
 later version upgrade cannot silently rewrite an existing dependency’s meaning.
 

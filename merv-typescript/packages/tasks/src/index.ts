@@ -18,6 +18,7 @@ import {
   plain,
   receipted,
   recorded,
+  leaseReleaseConsumer,
   releasedLease,
   requireDirecting,
   reviewHistory,
@@ -127,7 +128,6 @@ function rejectReviewReturn(input: object): void {
 export const TASK_WORKFLOW: WorkflowDefinition = {
   name: 'task',
   version: 2,
-  managed: true,
   initial: 'in_progress',
   states: ['in_progress', 'in_review', 'done', 'failed'],
   terminal: ['done', 'failed'],
@@ -2946,7 +2946,16 @@ export class TaskService implements Tasks {
 
 export const tasksPlugin = {
   name: 'merv-tasks',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'paper',
+    'domainEvents',
+  ],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const tasks = await createService(
@@ -2971,6 +2980,11 @@ export const tasksPlugin = {
       // Generic review.submit lives outside this provider's consumer graph. Stop
       // accepting new routed work before withdrawing Tasks and draining its tools.
       yield () => tasks.withdrawReviewOwner();
+    });
+    await ctx.effect(async function* () {
+      yield await ctx.domainEvents.subscribe(
+        leaseReleaseConsumer('tasks.lease-release.v1', 'task_leases', ctx.reviews),
+      );
     });
   },
 };

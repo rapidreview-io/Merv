@@ -236,8 +236,14 @@ test('discovery uses the real source authority and transaction; revoked or cross
   });
   const handle = await f.workflows.register(definition('caller-revoked-mid-scan'), malicious);
   await handle.start(f.source, { workflow: 'caller-revoked-mid-scan', requestId: 'mid-scan' });
+  // In the caller's transaction the revocation lands, and the closing decision refuses it.
+  await assert.rejects(
+    f.state.transaction(async (tx) => await f.workflows.dispatchCandidates(f.source, tx)),
+    { code: 'forbidden' },
+  );
+  // On its own, discovery is a read: State refuses the write itself.
   await assert.rejects(async () => await f.workflows.dispatchCandidates(f.source), {
-    code: 'forbidden',
+    code: 'invalid_workflow_policy',
   });
   await assert.doesNotReject(
     async () => await f.scope.require(f.source, 'read'),
@@ -276,6 +282,133 @@ test('invalid metadata callbacks fail visibly; asynchronous labels read metadata
   const asyncHandle = await f.workflows.register(definition('async-label'), asynchronous);
   await asyncHandle.start(f.source, { workflow: 'async-label', requestId: 'async-label' });
   assert.equal((await f.workflows.dispatchCandidates(f.source))[0].label, 'Async async-label');
+});
+
+/** The statements `run` sends through the transaction it is given, as their SQL. */
+async function statements(
+  state: Awaited<ReturnType<typeof openState>>,
+  run: (tx: Transaction) => Promise<unknown>,
+): Promise<string[]> {
+  const sent: string[] = [];
+  await state.transaction(async (tx) => {
+    const spied = tx as unknown as Record<'get' | 'all' | 'run', (...args: unknown[]) => unknown>;
+    for (const method of ['get', 'all', 'run'] as const) {
+      const original = spied[method].bind(tx);
+      spied[method] = (sql, ...args) => {
+        sent.push(String(sql));
+        return original(sql, ...args);
+      };
+    }
+    await run(tx);
+  });
+  return sent;
+}
+
+test('discovery costs the same however many candidates it finds, and every callback reads the prerequisites', async (t) => {
+  const f = await fixture(t);
+  const policy = f.rules({ readOnly: false, tools: [] });
+  policy.limits = [{ name: 'rounds', from: 'work', actions: ['finish'], max: 3 }];
+  const lease = policy.assignments![0].lease!;
+  const seen: string[][] = [];
+  const settled = ({ dependencies }: { dependencies?: { id: string; settled: boolean }[] }) =>
+    (dependencies ?? []).filter((item) => item.settled).map((item) => item.id);
+  lease.role = (context) => (seen.push(settled(context)), 'producer');
+  lease.label = (context) => (seen.push(settled(context)), 'Counted');
+  lease.excludes = (context) => (seen.push(settled(context)), false);
+  const handle = await f.workflows.register(definition('counted'), policy);
+  const prerequisite = await handle.start(f.source, { workflow: 'counted', requestId: 'first' });
+  await handle.transition(f.source, {
+    instanceId: prerequisite.id,
+    expectedRevision: 0,
+    action: 'finish',
+    requestId: 'finish',
+  });
+  let made = 0;
+  const add = async (count: number) => {
+    for (let i = 0; i < count; i++)
+      await handle.start(f.source, {
+        workflow: 'counted',
+        requestId: `work-${made++}`,
+        dependsOn: [prerequisite.id],
+      });
+  };
+  const cost = async () => {
+    let found = 0;
+    const sent = await statements(f.state, async (tx) => {
+      found = (await f.workflows.dispatchCandidates(f.source, tx, 'worker')).length;
+    });
+    return { statements: sent.length, found };
+  };
+  await add(1);
+  const one = await cost();
+  assert.equal(one.found, 1);
+  await add(24);
+  assert.deepEqual(await cost(), { statements: one.statements, found: 25 });
+  // Role, label and excludes each saw the settled prerequisite, for every candidate.
+  assert.equal(seen.length, 3 * 26);
+  assert.ok(seen.every((ids) => ids.length === 1 && ids[0] === prerequisite.id));
+});
+
+test('a dispatch callback that moves the instance fails the scan, excluded or refused', async (t) => {
+  const f = await fixture(t);
+  const move = async (tx: Transaction, id: string) =>
+    await tx.run(`UPDATE wf_instances SET data_json='{"moved":true}' WHERE id=?`, id);
+  const excluding = f.rules({ readOnly: false, tools: [] });
+  excluding.assignments![0].lease!.role = () => 'producer';
+  excluding.assignments![0].lease!.excludes = async ({ snapshot, tx }) => {
+    await move(tx, snapshot.id);
+    return true;
+  };
+  const first = await f.workflows.register(definition('moved-by-excludes'), excluding);
+  const excluded = await first.start(f.source, {
+    workflow: 'moved-by-excludes',
+    requestId: 'excluded',
+  });
+  // In the caller's transaction the write lands, and the recheck after every row refuses it;
+  // on its own, discovery is a read and State refuses the write itself.
+  await assert.rejects(
+    f.state.transaction(async (tx) => await f.workflows.dispatchCandidates(f.source, tx, 'w')),
+    { code: 'invalid_workflow_policy', status: 500 },
+  );
+  await assert.rejects(f.workflows.dispatchCandidates(f.source, undefined, 'w'), {
+    code: 'invalid_workflow_policy',
+    status: 500,
+  });
+  // Without a worker nothing is excluded, so the callback never runs.
+  assert.deepEqual(
+    (await f.workflows.dispatchCandidates(f.source)).map((item) => item.instanceId),
+    [excluded.id],
+  );
+  first.dispose();
+  // A refusal still skips the row, but not a write made before it.
+  const refusing = f.rules({ readOnly: false, tools: [] });
+  refusing.assignments![0].lease!.role = async ({ snapshot, tx }): Promise<'producer'> => {
+    await move(tx, snapshot.id);
+    check(false, 'not_ready', 'Inputs are not ready', 409);
+    return 'producer';
+  };
+  const second = await f.workflows.register(definition('moved-then-refused'), refusing);
+  await second.start(f.source, { workflow: 'moved-then-refused', requestId: 'refused' });
+  await assert.rejects(
+    f.state.transaction(async (tx) => await f.workflows.dispatchCandidates(f.source, tx)),
+    { code: 'invalid_workflow_policy', status: 500 },
+  );
+  await assert.rejects(f.workflows.dispatchCandidates(f.source), {
+    code: 'invalid_workflow_policy',
+    status: 500,
+  });
+  const stored = await f.state.read(
+    async (sql) =>
+      await sql.all<{ data_json: string }>(
+        'SELECT data_json FROM wf_instances WHERE workflow IN (?,?)',
+        'moved-by-excludes',
+        'moved-then-refused',
+      ),
+  );
+  assert.ok(
+    stored.every((row) => !row.data_json.includes('moved')),
+    'failed scans roll back',
+  );
 });
 
 test('workspace declarations are strict, immutable and version-pinned while absent old policies stay unchanged', async (t) => {
@@ -450,4 +583,44 @@ test('Tasks contribute source-aware queue labels and recipe availability without
   );
   await app.ctx.reviews.start(reviewer, pending.reviewId!);
   assert.deepEqual(await app.ctx.workflows.dispatchCandidates(source), []);
+});
+
+test('a lease whose receipt its offer accepted is released', async (t) => {
+  const f = await fixture(t);
+  const execution = { readOnly: false, tools: [] };
+  const policy = f.rules(execution);
+  const released: string[] = [];
+  policy.assignments![0]!.lease!.release = ({ reason }) => {
+    released.push(reason);
+  };
+  const handle = await f.workflows.register(definition('receipts'), policy);
+  const started = await handle.start(f.source, { workflow: 'receipts', requestId: 'start' });
+  const lease = {
+    leaseId: 'lease',
+    instanceId: started.id,
+    expectedRevision: started.revision,
+    projectId: f.source.projectId,
+    actorId: f.source.actorId,
+    workflow: 'receipts',
+    version: 1,
+    state: 'work',
+    policyHash: executionFingerprint(validateExecution(execution)),
+    registrationId: 'registration',
+    // Within the offer's 256,000 characters, while the whole lease is past them.
+    receipt: { blob: 'x'.repeat(255_900) },
+  };
+  await f.workflows.releaseLease(lease, { reason: 'Finished' });
+  assert.deepEqual(released, ['Finished']);
+  await assert.rejects(
+    f.workflows.releaseLease(
+      { ...lease, receipt: { blob: 'x'.repeat(256_000) } },
+      { reason: 'Finished' },
+    ),
+    { code: 'invalid_workflow_policy' },
+  );
+  await assert.rejects(
+    f.workflows.releaseLease({ ...lease, receipt: { at: new Date() } as never }, { reason: 'x' }),
+    { code: 'invalid_lease', status: 400 },
+  );
+  assert.deepEqual(released, ['Finished']);
 });

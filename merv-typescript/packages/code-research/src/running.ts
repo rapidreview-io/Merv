@@ -531,7 +531,7 @@ export class CodeRunningReader {
       const members = await mapAsync(unitsOf(check, accepted), async (unitId) => ({
         unitId,
         name:
-          (await this.workflows.dependencyRelations(caller.projectId, unitId, tx))?.instance.name ??
+          (await this.workflows.relations(caller.projectId, unitId, tx))?.instance.name ??
           'Accepted work',
       }));
       return checkPanel(check, command, members, Date.now());

@@ -3,7 +3,9 @@ import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
   digest,
+  forRead,
   newId,
+  ROLES,
   type Actor,
   type Caller,
   type HumanPrincipal,
@@ -20,8 +22,6 @@ import {
   type VerifiedIdentity,
 } from '@merv/contracts';
 import { projectValue, type ProjectRow } from './project-context.js';
-import { roles } from './roles.js';
-import { forRead } from './within.js';
 
 export const membershipMigration: Migration = {
   version: 3,
@@ -413,7 +413,7 @@ export class Memberships {
     { subject, role }: { subject: string; role: Role },
   ): Promise<ProjectMembership> {
     this.input(subject);
-    check(roles.includes(role), 'invalid_role', 'Unknown member role');
+    check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const issuer = caller.human!.issuer;
@@ -481,7 +481,7 @@ export class Memberships {
     { subject, role }: { subject: string; role: Role },
   ): Promise<ProjectMembership> {
     this.input(subject);
-    check(roles.includes(role), 'invalid_role', 'Unknown member role');
+    check(ROLES.includes(role), 'invalid_role', 'Unknown member role');
     return await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const previous = await this.active(tx, projectId, caller.human!.issuer, subject);

@@ -124,6 +124,8 @@ $merv$;
 CREATE TRIGGER wf_limit_grants_no_delete BEFORE DELETE ON wf_limit_grants
 FOR EACH ROW EXECUTE FUNCTION wf_limit_grants_no_delete_guard();
 `,
+  // The one workflow table that is rewritten and cleared: it mirrors what another plugin
+  // thinks now, and must stay readable and clearable while that plugin is unloaded.
   6: `
 CREATE TABLE wf_blockers (
     project_id TEXT NOT NULL, instance_id TEXT NOT NULL, provider TEXT NOT NULL,
@@ -212,4 +214,13 @@ ${withoutTriggers(
 )}
 DELETE FROM wf_history WHERE instance_id IN (${retiredPlanTaskIds});
 DELETE FROM wf_instances WHERE id IN (${retiredPlanTaskIds});`,
+  // Pinned contracts become immutable, as execution policies already are, so a service may keep
+  // them in memory; and one version's instances in given states are found by index.
+  9: `
+CREATE INDEX wf_instances_kind ON wf_instances(project_id, workflow, version, state);
+CREATE FUNCTION wf_pinned_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN RAISE EXCEPTION USING MESSAGE='Pinned workflow contracts are immutable', ERRCODE='23514'; END; $merv$;
+CREATE TRIGGER wf_definitions_pinned BEFORE UPDATE OR DELETE ON wf_definitions FOR EACH ROW EXECUTE FUNCTION wf_pinned_guard();
+CREATE TRIGGER wf_success_states_pinned BEFORE UPDATE OR DELETE ON wf_success_states FOR EACH ROW EXECUTE FUNCTION wf_pinned_guard();
+`,
 };

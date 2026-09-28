@@ -3,6 +3,7 @@ import { postgresMigrations } from './user-keys.postgres.js';
 import {
   visible,
   check,
+  forRead,
   newId,
   sha256Hex,
   type Actor,
@@ -18,7 +19,6 @@ import {
   type UserKey,
 } from '@merv/contracts';
 import type { Ledger } from './ledger.js';
-import { forRead } from './within.js';
 import type { Memberships } from './memberships.js';
 import { projectValue, type ProjectRow } from './project-context.js';
 

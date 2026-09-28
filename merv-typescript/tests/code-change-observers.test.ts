@@ -44,7 +44,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
     requestId: 'project',
   });
   const caller = await ctx.scope.caller(principal, project.id);
-  await ctx.workflows.register(
+  const observed = await ctx.workflows.register(
     {
       name: 'observed',
       version: 1,
@@ -67,7 +67,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
       ],
     },
   );
-  const workflow = await ctx.workflows.start(caller, { workflow: 'observed', requestId: 'work' });
+  const workflow = await observed.start(caller, { workflow: 'observed', requestId: 'work' });
   const bind = (head: string, expected?: string, stored = false) =>
     ctx.code.units.bindLocal(
       caller,
@@ -86,6 +86,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
     ctx,
     caller,
     unitId: workflow.id,
+    observed,
     bind,
     blockers: () => ctx.workflows.blockers(caller, workflow.id),
   };
@@ -248,7 +249,7 @@ test('writer fencing preserves the accepted unit publication warning', async (t)
       new Date().toISOString(),
       f.unitId,
     );
-    const ended = await f.ctx.workflows.transition(
+    const ended = await f.observed.transition(
       f.caller,
       {
         instanceId: f.unitId,

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, mapAsync, MervError } from '@merv/contracts';
+import { check, mapAsync, MervError, stateFault } from '@merv/contracts';
 import type {
   WorkflowActionRule,
   WorkflowActionStatus,
@@ -14,7 +14,7 @@ import type {
   WorkflowAssignmentRule,
   WorkflowWorkStart,
 } from '@merv/contracts';
-import { identifier, toolName } from './definition.js';
+import { identifier, toolName, valid } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
 import { validateExecution } from './execution.js';
@@ -30,11 +30,7 @@ const descriptionSchema = z.object({
 });
 
 function callback(value: unknown): void {
-  check(
-    typeof value === 'function',
-    'invalid_workflow_policy',
-    'Workflow callbacks must be functions',
-  );
+  valid(typeof value === 'function', 'Workflow callbacks must be functions');
 }
 
 function inputFields(value: unknown, status = 400): asserts value is string[] {
@@ -54,58 +50,51 @@ export function validatePolicy(
   policy?: WorkflowPolicy,
 ): WorkflowPolicy | undefined {
   if (!policy) return;
-  check(Array.isArray(policy.actions), 'invalid_workflow_policy', 'Workflow actions are required');
+  valid(Array.isArray(policy.actions), 'Workflow actions are required');
   if (policy.successStates !== undefined)
-    check(
+    valid(
       Array.isArray(policy.successStates) &&
         policy.successStates.length > 0 &&
         new Set(policy.successStates).size === policy.successStates.length &&
         policy.successStates.every((state) => definition.terminal.includes(state)),
-      'invalid_workflow_policy',
       'Success states must be distinct declared terminal states',
     );
   const names = new Set<string>();
   const guarded = new Set<string>();
   const actions = policy.actions.map((action) => {
-    check(
+    valid(
       typeof action.name === 'string' && identifier.test(action.name) && !names.has(action.name),
-      'invalid_workflow_policy',
       'Action names must be unique identifiers',
     );
     names.add(action.name);
-    check(
+    valid(
       typeof action.tool === 'string' &&
         toolName.test(action.tool) &&
         typeof action.instruction === 'string' &&
         action.instruction.trim(),
-      'invalid_workflow_policy',
       'Each action needs a tool and instructions',
     );
-    check(
+    valid(
       Array.isArray(action.states) &&
         action.states.length &&
         new Set(action.states).size === action.states.length &&
         action.states.every(
           (state) => definition.states.includes(state) && !definition.terminal.includes(state),
         ),
-      'invalid_workflow_policy',
       'Action states must be declared nonterminal states',
     );
-    check(
+    valid(
       action.suggested === undefined || typeof action.suggested === 'boolean',
-      'invalid_workflow_policy',
       'suggested must be boolean',
     );
-    check(
+    valid(
       action.requiresDependencies === undefined || typeof action.requiresDependencies === 'boolean',
-      'invalid_workflow_policy',
       'requiresDependencies must be boolean',
     );
     const transitions = action.transitions ?? [];
     const requiredInput = action.requiredInput ?? [];
-    check(
+    valid(
       Array.isArray(transitions) && new Set(transitions).size === transitions.length,
-      'invalid_workflow_policy',
       'Transition mappings must be unique',
     );
     if (typeof requiredInput === 'function') callback(requiredInput);
@@ -114,10 +103,10 @@ export function validatePolicy(
       const edges = definition.edges.filter(
         (edge) => edge.action === transition && action.states.includes(edge.from),
       );
-      check(edges.length, 'invalid_workflow_policy', `Unknown transition mapping: ${transition}`);
+      valid(edges.length, `Unknown transition mapping: ${transition}`);
       for (const edge of edges) {
         const key = `${edge.from}:${edge.action}`;
-        check(!guarded.has(key), 'invalid_workflow_policy', `Multiple rules own ${key}`);
+        valid(!guarded.has(key), `Multiple rules own ${key}`);
         guarded.add(key);
       }
     }
@@ -130,42 +119,37 @@ export function validatePolicy(
       requiredInput: typeof requiredInput === 'function' ? requiredInput : [...requiredInput],
     };
   });
-  check(
+  valid(
     definition.edges.every((edge) => guarded.has(`${edge.from}:${edge.action}`)),
-    'invalid_workflow_policy',
     'A registered policy must guard every graph transition',
   );
   if (policy.describe) callback(policy.describe);
   if (policy.children) callback(policy.children);
-  check(
+  valid(
     policy.assignments === undefined || Array.isArray(policy.assignments),
-    'invalid_workflow_policy',
     'Assignments must be an array',
   );
   const assignmentStates = new Set<string>();
   const assignments = policy.assignments?.map((assignment) => {
-    check(
+    valid(
       assignment &&
         definition.states.includes(assignment.state) &&
         !definition.terminal.includes(assignment.state) &&
         !assignmentStates.has(assignment.state),
-      'invalid_workflow_policy',
       'Assignments must name distinct declared nonterminal states',
     );
     assignmentStates.add(assignment.state);
-    check(
+    valid(
       assignment.requiresDependencies === undefined ||
         typeof assignment.requiresDependencies === 'boolean',
-      'invalid_workflow_policy',
       'requiresDependencies must be boolean',
     );
     callback(assignment.check);
     callback(assignment.build);
     if (assignment.references !== undefined) callback(assignment.references);
     if (assignment.lease !== undefined) {
-      check(
+      valid(
         assignment.lease && typeof assignment.lease === 'object',
-        'invalid_workflow_policy',
         'Lease hooks must be an object',
       );
       callback(assignment.lease.role);
@@ -174,20 +158,15 @@ export function validatePolicy(
       callback(assignment.lease.check);
       if (assignment.lease.outputs) callback(assignment.lease.outputs);
       callback(assignment.lease.release);
-      check(
-        assignment.execution !== undefined,
-        'invalid_workflow_policy',
-        'Leasing requires fixed execution authority',
-      );
+      valid(assignment.execution !== undefined, 'Leasing requires fixed execution authority');
     }
     const execution =
       assignment.execution === undefined ? undefined : validateExecution(assignment.execution);
-    check(
+    valid(
       assignment.references === undefined || execution !== undefined,
-      'invalid_workflow_policy',
       'Execution references require a fixed execution manifest',
     );
-    check(
+    valid(
       !execution?.tools.some((tool) =>
         tool.alternatives.some((alternative) =>
           Object.values(alternative).some((binding) =>
@@ -195,7 +174,6 @@ export function validatePolicy(
           ),
         ),
       ) || assignment.references !== undefined,
-      'invalid_workflow_policy',
       'Named execution bindings require a metadata reference resolver',
     );
     return {
@@ -204,14 +182,12 @@ export function validatePolicy(
       ...(assignment.lease ? { lease: { ...assignment.lease } } : {}),
     };
   });
-  check(
+  valid(
     !assignments?.length || !names.has('begin'),
-    'invalid_workflow_policy',
     'The begin action is reserved for workflow assignments',
   );
-  check(
+  valid(
     policy.dependencyFailureAction === undefined || names.has(policy.dependencyFailureAction),
-    'invalid_workflow_policy',
     'Dependency failure action must name a registered action',
   );
   const limits =
@@ -232,13 +208,27 @@ export function validatePolicy(
   };
 }
 
-/** Never hand a callback the engine's mutable state or the caller's argument object. */
 /** The engine always supplies the dependencies it has read; programs see them as optional. */
 export type EngineContext = WorkflowCheckContext & { dependencies: WorkflowDependency[] };
 
+/** Never hand a callback the engine's mutable state or the caller's argument object. */
 export function readContext<C extends WorkflowCheckContext>(context: C): C {
   const { tx, ...data } = context;
   return Object.freeze({ ...freezeData(structuredClone(data)), tx }) as unknown as C;
+}
+
+/**
+ * A callback's refusal is read as a blocker; a State fault never is. A write under a read is a
+ * broken program, and a conflicting, busy or closed store says nothing about the work.
+ */
+export function throwStateFault(error: MervError): void {
+  if (error.code === 'read_only_scope')
+    throw new MervError(
+      'invalid_workflow_policy',
+      'Workflow callbacks must not write while the workflow is read',
+      500,
+    );
+  if (stateFault(error)) throw error;
 }
 
 export async function evaluateAction(
@@ -291,6 +281,7 @@ export async function evaluateAction(
     }
   } catch (error) {
     if (!(error instanceof MervError) || error.status >= 500) throw error;
+    throwStateFault(error);
     result.status = 'blocked';
     result.blockers.push({ code: error.code, message: error.message, status: error.status });
   }
@@ -433,9 +424,12 @@ async function ownDecision(
   };
   const rules = policy.actions.filter((rule) => rule.states.includes(snapshot.state));
   const assignment = policy.assignments?.find((rule) => rule.state === snapshot.state);
+  // A worker received its assignment with its lease and holds no workflow.begin, so begin is
+  // neither offered to it nor answered for it.
+  const beginRule = context.caller.session ? undefined : assignment;
   if (query.action)
     check(
-      rules.some((rule) => rule.name === query.action) || (query.action === 'begin' && assignment),
+      rules.some((rule) => rule.name === query.action) || (query.action === 'begin' && beginRule),
       'invalid_action',
       'Action is unavailable in this workflow state',
       409,
@@ -467,9 +461,8 @@ async function ownDecision(
   let candidates = result.actions.filter((action, index) =>
     query.action ? action.action === query.action : rules[index].suggested !== false,
   );
-  // Guidance checks admission only. Building a packet may itself read guidance. A worker
-  // received its assignment with its lease and holds no workflow.begin, so none is offered.
-  if (assignment && !context.caller.session) {
+  // Guidance checks admission only. Building a packet may itself read guidance.
+  if (beginRule) {
     const begin: WorkflowActionStatus = {
       action: 'begin',
       tool: 'workflow.begin',
@@ -480,11 +473,12 @@ async function ownDecision(
       blockers: [],
     };
     try {
-      await checkAssignment(assignment, context);
+      await checkAssignment(beginRule, context);
     } catch (error) {
       // Unavailable assignment resources are a blocker, not a failure to read the task.
       if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))
         throw error;
+      throwStateFault(error);
       begin.status = 'blocked';
       begin.blockers = [{ code: error.code, message: error.message, status: error.status }];
     }
