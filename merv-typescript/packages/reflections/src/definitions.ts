@@ -130,9 +130,9 @@ const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage
   },
 }));
 
-export const LENS_RECIPE = RECIPES.find((recipe) => recipe.name === 'reflection.lens')!;
+const LENS_RECIPE = RECIPES.find((recipe) => recipe.name === 'reflection.lens')!;
 /** Synthesis and review for reflection@3 and @4, whose plans declare a workspace per item. */
-export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
+const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
   (recipe) => recipe.name !== 'reflection.lens',
 ).map((recipe) => ({
   ...recipe,
@@ -149,8 +149,8 @@ export const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
   },
 }));
 
-/** Current assignments carry the project paper; published earlier recipes remain registered. */
-export const PROJECT_PAPER_RECIPES: TaskTypeDefinition[] = [LENS_RECIPE, ...WORKSPACE_RECIPES].map(
+/** Assignments carry the project paper. */
+const PROJECT_PAPER_RECIPES: TaskTypeDefinition[] = [LENS_RECIPE, ...WORKSPACE_RECIPES].map(
   (definition) => ({
     ...definition,
     version: 9,
@@ -168,18 +168,17 @@ export const PROJECT_PAPER_RECIPES: TaskTypeDefinition[] = [LENS_RECIPE, ...WORK
 );
 
 /** Keep published recipe hashes intact while teaching new plans the prerequisite boundary. */
-export const DEPENDENCY_SAFE_RECIPES: TaskTypeDefinition[] = PROJECT_PAPER_RECIPES.map(
-  (definition) =>
-    definition.name === 'reflection.lens'
-      ? definition
-      : {
-          ...definition,
-          version: 10,
-          recipe: {
-            ...definition.recipe,
-            instructions: `${definition.recipe.instructions} In a next-wave plan, each task's Done-when checks must be achievable and independently reviewable before any work that depends on it starts. A dependent experiment's design submission and review belong to that experiment's own gate; do not require them for acceptance of its prerequisite task. Check this ordering in the change specification before submitting or approving it.`,
-          },
+const DEPENDENCY_SAFE_RECIPES: TaskTypeDefinition[] = PROJECT_PAPER_RECIPES.map((definition) =>
+  definition.name === 'reflection.lens'
+    ? definition
+    : {
+        ...definition,
+        version: 10,
+        recipe: {
+          ...definition.recipe,
+          instructions: `${definition.recipe.instructions} In a next-wave plan, each task's Done-when checks must be achievable and independently reviewable before any work that depends on it starts. A dependent experiment's design submission and review belong to that experiment's own gate; do not require them for acceptance of its prerequisite task. Check this ordering in the change specification before submitting or approving it.`,
         },
+      },
 );
 
 /** How a worker reaches the live records behind its context, whichever way the context lists them. */

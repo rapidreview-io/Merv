@@ -19,14 +19,7 @@ import { join } from 'node:path';
 
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { EXPERIMENT_RECIPES } from '@merv/experiments/program';
-import {
-  DEPENDENCY_SAFE_RECIPES,
-  HIERARCHICAL_RECIPES,
-  ITEM_RECIPES,
-  LENS_RECIPE,
-  PROJECT_PAPER_RECIPES,
-  WORKSPACE_RECIPES,
-} from '@merv/reflections/definitions';
+import { ITEM_RECIPES } from '@merv/reflections/definitions';
 import { TASK_TYPES } from '@merv/tasks/definitions';
 import {
   createService,
@@ -136,19 +129,10 @@ const artifacts = {
 } as unknown as Artifacts;
 const scope = { async require() {} } as unknown as Scope;
 
-/** Every recipe version the consumers export, once each; the app must register exactly these. */
+/** Every recipe version the consumers register, once each; the app must register exactly these. */
 function definitions(): TaskTypeDefinition[] {
   const all = new Map<string, TaskTypeDefinition>();
-  for (const definition of [
-    ...TASK_TYPES,
-    ...EXPERIMENT_RECIPES,
-    LENS_RECIPE,
-    ...WORKSPACE_RECIPES,
-    ...PROJECT_PAPER_RECIPES,
-    ...DEPENDENCY_SAFE_RECIPES,
-    ...HIERARCHICAL_RECIPES,
-    ...ITEM_RECIPES,
-  ]) {
+  for (const definition of [...TASK_TYPES, ...EXPERIMENT_RECIPES, ...ITEM_RECIPES]) {
     const key = `${definition.name}@${definition.version}`;
     const seen = all.get(key);
     assert.ok(

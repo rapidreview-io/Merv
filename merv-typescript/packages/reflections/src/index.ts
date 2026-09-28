@@ -47,13 +47,8 @@ import { waveNode, wavePanel, type WaveFacts } from './running.js';
 import {
   CHANGE_SPEC_CRITERION,
   LENSES,
-  LENS_RECIPE,
   LENS_WORKFLOW,
   LENS_WORKFLOW_ENDABLE,
-  WORKSPACE_RECIPES,
-  PROJECT_PAPER_RECIPES,
-  DEPENDENCY_SAFE_RECIPES,
-  HIERARCHICAL_RECIPES,
   ITEM_RECIPES,
   REFLECTION_CRITERIA,
   REFLECTION_WORKFLOW,
@@ -204,7 +199,6 @@ export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
   private handles = new Map<string, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<string, ContextRegistration>();
-  private historicalContexts: ContextRegistration[] = [];
   private releaseOwner?: () => void;
   private closed = false;
   /** Complete storage migrations before publishing this service. */
@@ -225,16 +219,8 @@ export class ReflectionService implements Reflections {
         Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
       );
       try {
-        for (const recipe of [LENS_RECIPE, ...WORKSPACE_RECIPES])
-          this.historicalContexts.push(await contextBuilder.register(recipe));
-        for (const recipe of PROJECT_PAPER_RECIPES.filter(
-          (entry) => entry.name !== 'reflection.lens',
-        ))
-          this.historicalContexts.push(await contextBuilder.register(recipe));
-        for (const recipe of DEPENDENCY_SAFE_RECIPES)
-          this.historicalContexts.push(await contextBuilder.register(recipe));
-        for (const recipe of HIERARCHICAL_RECIPES)
-          this.historicalContexts.push(await contextBuilder.register(recipe));
+        // Every assignment renders with these, a leased one too, so earlier versions render
+        // nothing and are not registered; their rows stay in context_recipes.
         for (const recipe of ITEM_RECIPES)
           this.contexts.set(recipe.name, await contextBuilder.register(recipe));
         for (const definition of [
@@ -273,9 +259,7 @@ export class ReflectionService implements Reflections {
     for (const handle of this.handles.values()) handle.dispose();
     this.handles.clear();
     for (const context of this.contexts.values()) context.dispose();
-    for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
-    this.historicalContexts = [];
   }
   private async read(caller: Caller, tx: Transaction): Promise<void> {
     check(!this.closed, 'reflection_unavailable', 'Reflection program is unavailable', 503);
