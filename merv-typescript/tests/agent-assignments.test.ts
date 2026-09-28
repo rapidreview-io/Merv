@@ -137,3 +137,63 @@ test('one agent can produce successive tasks and review other work, but cannot r
     'A bound claim is not a stale one',
   );
 });
+
+test('a format-2 task lease freezes a paper of many multibyte sections within its packet', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-paper-receipt-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const boot = await app.ctx.scope.bootstrap({ projectName: 'Paper receipt', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  // 300 sections whose text all fits task.work@4's 96,000 characters, but at three bytes a
+  // character, with long titles and IDs repeated in each note and ref, whose JSON is near 1 MB.
+  for (const kind of ['literature', 'methods', 'results'] as const)
+    await app.ctx.paper.patch(owner, {
+      kind,
+      expectedRevision: 0,
+      requestId: `paper-${kind}`,
+      changes: Array.from({ length: 100 }, (_, index) => ({
+        id: `${kind}-${index}-`.padEnd(150, 'x'),
+        title: `${index} ${'節'.repeat(290)}`,
+        content: '結果'.repeat(160),
+      })),
+    });
+  const task = await app.ctx.tasks.create(owner, {
+    title: 'Survey',
+    goal: 'Summarize the paper.',
+    checks: ['Cites every section it relies on.'],
+    requestId: 'create-survey',
+  });
+  const token = secret();
+  await app.ctx.sessions.registerAgent(owner, {
+    name: 'Paper agent',
+    runnerId: 'external',
+    requestId: 'register-paper-agent',
+    secret: token,
+  });
+  const session = await app.ctx.sessions.assignAgent(token, {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-survey',
+  });
+  const context = session.assignment.context!;
+  assert.equal(`${context.type}@${context.typeVersion}`, 'task.work@4');
+  const { receipt } = (await app.ctx.state.transaction(
+    async (tx) =>
+      await tx.get<{ receipt: string }>('SELECT receipt FROM task_leases WHERE task_id=?', task.id),
+  ))!;
+  assert.ok(Buffer.byteLength(receipt) <= 400 * 1024);
+  // The sections that fit are frozen whole, and the rest are named or counted for paper.read.
+  const paper = (
+    JSON.parse(receipt) as { paper: { sections: unknown[]; left: unknown[]; more: number } }
+  ).paper;
+  assert.ok(paper.sections.length > 0 && paper.more > 0);
+  assert.equal(paper.sections.length + paper.left.length + paper.more, 300);
+  assert.ok(context.prompt.includes('\n### paper:literature:current:1:0:literature-0-'));
+});

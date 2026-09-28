@@ -294,6 +294,11 @@ const configuration = z
   .default({});
 
 /**
+ * The most a lease receipt's paper may take, in UTF-8 bytes of its JSON. A session packet holds
+ * 512 KiB, and the rest of the receipt, the project Introduction included, is far smaller.
+ */
+const PAPER_RECEIPT_BYTES = 384 * 1024;
+/**
  * How a format-2 recipe embeds each section's items. The task, its brief, revision feedback and
  * the review criteria are always embedded; the rest fit while they can, highest priority first.
  * A custom input section is fit at 500, like the task background.
@@ -1576,9 +1581,10 @@ export class TaskService implements Tasks {
 
   /**
    * The paper as a format-2 recipe's items use it: whole sections, highest priority first, while
-   * their distinct text fits the recipe budget, since no more could ever be embedded and a lease
-   * freezes them in its receipt, which travels with the lease. `left` names the sections past
-   * that by ID and title; both lists keep the paper's order.
+   * their distinct text fits the recipe budget, since no more could ever be embedded, and while
+   * their JSON fits PAPER_RECEIPT_BYTES, since a lease freezes them in its receipt. `left` names
+   * the sections past that by ID and title while those fit too, and `more` counts the rest; both
+   * lists keep the paper's order.
    */
   private async paperSections(
     caller: Caller,
@@ -1587,21 +1593,32 @@ export class TaskService implements Tasks {
   ): Promise<Data> {
     check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
     const sections = this.paper.contextSections((await this.paper.read(caller, tx)).documents);
-    let room = type.definition.recipe.maxChars;
+    // Each entry's JSON and the comma after it.
+    const size = (entry: object) => Buffer.byteLength(JSON.stringify(entry)) + 1;
+    let room = type.definition.recipe.maxChars,
+      bytes = PAPER_RECEIPT_BYTES;
     const texts = new Set<string>(),
       kept = new Set<PaperContextSection>();
     for (const section of [...sections].sort((a, b) => b.priority - a.priority)) {
-      if (!texts.has(section.text) && section.text.length > room) continue;
-      if (!texts.has(section.text)) room -= section.text.length;
+      const copy = texts.has(section.text);
+      if ((!copy && section.text.length > room) || size(section) > bytes) continue;
+      if (!copy) room -= section.text.length;
+      bytes -= size(section);
       texts.add(section.text);
       kept.add(section);
+    }
+    const left: { id: string; title: string }[] = [],
+      rest = sections.filter((section) => !kept.has(section));
+    for (const { id, title } of rest) {
+      if (size({ id, title }) > bytes) break;
+      bytes -= size({ id, title });
+      left.push({ id, title });
     }
     return JSON.parse(
       JSON.stringify({
         sections: sections.filter((section) => kept.has(section)),
-        left: sections
-          .filter((section) => !kept.has(section))
-          .map(({ id, title }) => ({ id, title })),
+        left,
+        more: rest.length - left.length,
       }),
     ) as Data;
   }
@@ -1794,10 +1811,16 @@ export class TaskService implements Tasks {
       };
     }
     if (type.definition.recipe.sections.some((section) => section.key === 'projectPaper')) {
-      const { sections = [], left = [] } = (paper ?? {}) as {
+      const {
+        sections = [],
+        left = [],
+        more = 0,
+      } = (paper ?? {}) as {
         sections?: PaperContextSection[];
         left?: { id: string; title: string }[];
+        more?: number;
       };
+      const missing = left.length + more;
       const read = { tool: 'paper.read', input: {} };
       result.projectPaper = {
         items: [
@@ -1809,18 +1832,19 @@ export class TaskService implements Tasks {
             note,
             refs,
           })),
-          ...(left.length
+          ...(missing
             ? [
                 {
                   id: 'paper:not-included',
-                  title: `${left.length} more paper section${left.length === 1 ? '' : 's'}, not included in this assignment`,
+                  title: `${missing} more paper section${missing === 1 ? '' : 's'}, not included in this assignment`,
                   body: { text: JSON.stringify(left) },
                   priority: 0,
+                  ...(more ? { note: `${more} of them not named here for lack of room` } : {}),
                   refs: [read],
                 },
               ]
             : []),
-          ...(!sections.length && !left.length
+          ...(!sections.length && !missing
             ? [
                 {
                   id: 'paper:none',
