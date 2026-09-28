@@ -267,8 +267,8 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
       );
       await tx.run('ALTER TABLE reflection_leases ENABLE TRIGGER reflection_lease_immutable');
     });
-  // A lease of recipe 10 or 11 froze ranked items, each with a hash and revision the builder does
-  // not take; they render as the items they carry.
+  // A lease of the ranked recipes (lens 10, synthesis and review 11) froze ranked items, each
+  // with a hash and revision the builder does not take; they render as the items they carry.
   await freeze(
     Object.fromEntries(
       Object.entries(fresh).map(([key, { items }]) => [

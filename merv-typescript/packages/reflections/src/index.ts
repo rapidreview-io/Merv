@@ -153,11 +153,12 @@ const embedded = (sections: Record<string, ContextItem[]>): Record<string, Conte
     ]),
   );
 /**
- * A lease's frozen inputs as format-2 items. A lease of recipe 10 or 11 froze ranked items: each
- * keeps its ID, title, priority, body and refs, with its association as its note; its text hash
- * and revision are dropped, since the builder hashes the body itself. An earlier lease froze whole
- * sections: a text becomes one item and each artifact one item, titled by their section and ranked
- * in section order, and an artifact the section named by reference only is listed, never embedded.
+ * A lease's frozen inputs as format-2 items. A lease of the ranked recipes (lens 10, synthesis and
+ * review 11) froze ranked items: each keeps its ID, title, priority, body and refs, with its
+ * association as its note; its text hash and revision are dropped, since the builder hashes the
+ * body itself. An earlier lease froze whole sections: a text becomes one item and each artifact
+ * one item, titled by their section and ranked in section order, and an artifact the section named
+ * by reference only is listed, never embedded.
  */
 const toItems = (
   inputs: Record<string, ContextInput>,
