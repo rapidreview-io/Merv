@@ -63,8 +63,15 @@ import {
   type EngineContext,
   validatePolicy,
 } from './evaluation.js';
-import { buildAssignment, readWorkStarts } from './assignments.js';
-import { limitFor, limitMessage, limitStatus, limitStatusOf, limitStatuses } from './limits.js';
+import { buildAssignment, readWorkStarts, workStartsAt } from './assignments.js';
+import {
+  limitFor,
+  limitMessage,
+  limitStatus,
+  limitStatusOf,
+  limitStatuses,
+  limitStatusesOf,
+} from './limits.js';
 import {
   admitDispatch,
   dispatchInput,
@@ -92,6 +99,12 @@ const migrations = Object.entries(postgresMigrations).map(([version, sql]) => ({
 
 /** The most instances one dependency closure is walked over. */
 const closureLimit = 5000;
+/** The most instances one statement reads facts for, or rechecks, keeping its binds bounded. */
+const batchSize = 1000;
+const batches = <T>(items: readonly T[]): T[][] =>
+  Array.from({ length: Math.ceil(items.length / batchSize) }, (_, index) =>
+    items.slice(index * batchSize, (index + 1) * batchSize),
+  );
 
 interface InstanceRow {
   id: string;
@@ -118,6 +131,17 @@ interface Loaded {
   registration: Registration;
   rule: WorkflowAssignmentRule;
   context: EngineContext;
+}
+/** What one decision reads besides the instance, read for many instances at once. */
+interface Facts {
+  /** Whose callbacks decide, resolved once so the limits read and the decision agree. */
+  registration?: Registration;
+  /** The installed graph, else the pinned one: guidance still draws an unloaded version. */
+  definition: WorkflowDefinition;
+  dependencies: WorkflowDependency[];
+  workStart: WorkflowWorkStart | null;
+  limits: WorkflowLimitStatus[];
+  blockers: WorkflowProvidedBlocker[];
 }
 export type { WorkflowHistoryEntry } from '@merv/contracts';
 
@@ -339,6 +363,8 @@ export class WorkflowsService implements Workflows {
    * With `checks: false` no program callback runs: the edges out of the current state carry
    * no status, and the gate is what the record says by itself. A view that draws only where
    * the work stands reads it so, because an action's check may read a submission's bytes.
+   * A version whose program is not loaded is drawn from its pinned graph, with no status on
+   * any edge.
    */
   async process(
     caller: Caller,
@@ -350,9 +376,13 @@ export class WorkflowsService implements Workflows {
     caller = structuredClone(caller);
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const decision = await this.decideIn(caller, instanceId, {}, tx, checks);
-      const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
-      check(registration, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+      const [{ decision, facts }] = await this.guidance(
+        caller,
+        [await this.readRow(tx, caller.projectId, instanceId)],
+        {},
+        tx,
+        checks,
+      );
       const { dependencies, dependents } = await relations(
         tx,
         this.contracts,
@@ -361,8 +391,8 @@ export class WorkflowsService implements Workflows {
       );
       const history = await this.historyIn(tx, caller.projectId, instanceId, false);
       return processGraph({
-        definition: registration.definition,
-        rules: registration.policy?.actions ?? [],
+        definition: facts.definition,
+        rules: facts.registration?.policy?.actions ?? [],
         history,
         decision,
         dependencies,
@@ -393,54 +423,107 @@ export class WorkflowsService implements Workflows {
     const input = query.input === undefined ? undefined : this.data(query.input);
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      return await this.decideIn(caller, instanceId, { ...query, input }, tx, true);
+      const row = await this.readRow(tx, caller.projectId, instanceId);
+      if (input && Object.hasOwn(input, 'expectedRevision'))
+        check(
+          input.expectedRevision === row.revision,
+          'revision_conflict',
+          'Workflow changed; refresh guidance before acting',
+          409,
+        );
+      return (await this.guidance(caller, [row], { ...query, input }, tx, true))[0].decision;
     });
   }
 
-  /** The decision for an authorized caller, rechecked after its callbacks. */
-  private async decideIn(
+  /**
+   * What guidance reads besides each instance, for all of them at once: prerequisites in two
+   * reads, the work starts at their revisions in one, published blockers in one, and each
+   * loaded limit in two however many instances stand where it counts.
+   */
+  private async facts(
+    tx: Transaction,
+    projectId: string,
+    rows: readonly InstanceRow[],
+  ): Promise<Map<string, Facts>> {
+    const found = new Map<string, Facts>();
+    for (const part of batches(rows)) {
+      const ids = part.map((row) => row.id);
+      const registered = part.map((row) =>
+        this.registrations.get(`${row.workflow}@${row.version}`),
+      );
+      const dependencies = await prerequisites(tx, projectId, ids);
+      const starts = await workStartsAt(tx, projectId, part);
+      const blockers = new Map(ids.map((id) => [id, [] as WorkflowProvidedBlocker[]]));
+      for (const item of await readBlockers(tx, projectId, ids))
+        blockers.get(item.instanceId)!.push(item);
+      const limits = await limitStatusesOf(
+        tx,
+        part.map((row, index) => ({
+          id: row.id,
+          state: row.state,
+          policy: registered[index]?.policy,
+        })),
+      );
+      for (const [index, row] of part.entries()) {
+        const registration = registered[index];
+        const definition =
+          registration?.definition ??
+          (await this.contracts.get(tx, row.workflow, row.version))?.definition;
+        check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
+        found.set(row.id, {
+          registration,
+          definition,
+          dependencies: dependencies.get(row.id)!,
+          workStart: starts.get(row.id) ?? null,
+          limits: limits.get(row.id)!,
+          blockers: blockers.get(row.id)!,
+        });
+      }
+    }
+    return found;
+  }
+
+  /**
+   * The decision for each of several instances an authorized caller read: their facts at once,
+   * then each one's callbacks in turn, and one recheck after all of them.
+   */
+  private async guidance(
     caller: Caller,
-    instanceId: string,
+    rows: readonly InstanceRow[],
     query: WorkflowEvaluationInput,
     tx: Transaction,
     checks: boolean,
-  ): Promise<WorkflowDecision> {
-    const { input } = query;
-    const row = await this.readRow(tx, caller.projectId, instanceId);
-    const snapshot = this.snapshot(row);
-    if (input && Object.hasOwn(input, 'expectedRevision'))
-      check(
-        input.expectedRevision === snapshot.revision,
-        'revision_conflict',
-        'Workflow changed; refresh guidance before acting',
-        409,
-      );
-    const installed = this.registrations.get(`${snapshot.workflow}@${snapshot.version}`);
-    const definition =
-      installed?.definition ??
-      (await this.contracts.get(tx, snapshot.workflow, snapshot.version))?.definition;
-    check(definition, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-    const result = await decision(
-      definition,
-      installed?.policy,
-      readContext({
+  ): Promise<{ decision: WorkflowDecision; facts: Facts }[]> {
+    const facts = await this.facts(tx, caller.projectId, rows);
+    const decided = await mapAsync(rows, async (row) => {
+      const known = facts.get(row.id)!;
+      const context = readContext({
         caller,
-        snapshot,
+        snapshot: this.snapshot(row),
         tx,
-        dependencies: await prerequisitesOf(tx, caller.projectId, snapshot.id),
-      }),
-      query,
-      (await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null,
-      await limitStatuses(tx, installed?.policy, snapshot),
-      await readBlockers(tx, caller.projectId, snapshot.id),
-      checks,
-    );
+        dependencies: known.dependencies,
+      });
+      return {
+        facts: known,
+        decision: await decision(
+          known.definition,
+          known.registration?.policy,
+          context,
+          query,
+          known.workStart,
+          known.limits,
+          known.blockers,
+          checks,
+        ),
+      };
+    });
     // Without a registration no program callback ran.
-    if (installed) {
-      await this.recheck(tx, row, 'Guidance callbacks must not change the workflow instance');
-      this.requireActive(installed);
-    } else this.assertOpen();
-    return result;
+    const installed = new Set(decided.flatMap(({ facts }) => facts.registration ?? []));
+    if (installed.size)
+      await this.recheck(tx, rows, 'Guidance callbacks must not change the workflow instance');
+    for (const registration of installed) this.requireActive(registration);
+    this.assertOpen();
+    return decided;
   }
 
   async assignment(
@@ -1034,9 +1117,7 @@ export class WorkflowsService implements Workflows {
     snapshot: WorkflowSnapshot,
     tx: Transaction,
   ): Promise<WorkflowWorkStart> {
-    const previous = (
-      await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision)
-    )[0];
+    const previous = (await workStartsAt(tx, caller.projectId, [snapshot])).get(snapshot.id);
     if (previous) return previous;
     const event = await recorded(this.state, tx, caller, 'workflow.work_started', snapshot.id, {
       workflow: snapshot.workflow,
@@ -1110,7 +1191,7 @@ export class WorkflowsService implements Workflows {
     const { snapshot, rule, context } = step;
     const workStart = begin
       ? await this.markStarted(caller, snapshot, tx)
-      : ((await readWorkStarts(tx, caller.projectId, snapshot.id, snapshot.revision))[0] ?? null);
+      : ((await workStartsAt(tx, caller.projectId, [snapshot])).get(snapshot.id) ?? null);
     // A context provider may read guidance. It must see the marker this call is committing.
     const content = await buildAssignment(rule, context);
     if (rule.execution)
@@ -1133,13 +1214,12 @@ export class WorkflowsService implements Workflows {
     caller = structuredClone(caller);
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const rows = await tx.all<{ id: string }>(
-        'SELECT id FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
+      const rows = await tx.all<InstanceRow>(
+        'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
         caller.projectId,
       );
-      const workflows = await mapAsync(
-        rows,
-        async (row) => await this.decideIn(caller, row.id, {}, tx, true),
+      const workflows = (await this.guidance(caller, rows, {}, tx, true)).map(
+        (item) => item.decision,
       );
       // Work whose prerequisite ended without succeeding: the engine resolves that gate
       // itself, to the ending action its program declares. Such a record is not ready for
@@ -1401,7 +1481,11 @@ export class WorkflowsService implements Workflows {
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
-      return await readBlockers(tx, caller.projectId, instanceId);
+      return await readBlockers(
+        tx,
+        caller.projectId,
+        instanceId === undefined ? undefined : [instanceId],
+      );
     });
   }
 
@@ -2061,23 +2145,38 @@ export class WorkflowsService implements Workflows {
    * compared as read, so a rewrite to equal data in other bytes is refused too. Every
    * transaction under a snapshot root is read-only, so there nothing can have written.
    */
-  private async recheck(tx: Transaction, row: InstanceRow, message: string): Promise<void> {
+  private async recheck(
+    tx: Transaction,
+    rows: InstanceRow | readonly InstanceRow[],
+    message: string,
+  ): Promise<void> {
     if (this.state.readScope) return;
-    const now = await tx.get<Pick<InstanceRow, 'revision' | 'state' | 'data_json' | 'updated_at'>>(
-      'SELECT revision,state,data_json,updated_at FROM wf_instances WHERE id=? AND project_id=?',
-      row.id,
-      row.project_id,
-    );
-    check(
-      !!now &&
-        now.revision === row.revision &&
-        now.state === row.state &&
-        now.data_json === row.data_json &&
-        now.updated_at === row.updated_at,
-      'invalid_workflow_policy',
-      message,
-      500,
-    );
+    for (const part of batches(Array.isArray(rows) ? rows : [rows as InstanceRow])) {
+      const now = new Map(
+        (
+          await tx.all<InstanceRow>(
+            `SELECT id,project_id,revision,state,data_json,updated_at FROM wf_instances WHERE id IN (${part.map(() => '?').join(',')})`,
+            ...part.map((row) => row.id),
+          )
+        ).map((row) => [row.id, row]),
+      );
+      check(
+        part.every((row) => {
+          const stored = now.get(row.id);
+          return (
+            !!stored &&
+            stored.project_id === row.project_id &&
+            stored.revision === row.revision &&
+            stored.state === row.state &&
+            stored.data_json === row.data_json &&
+            stored.updated_at === row.updated_at
+          );
+        }),
+        'invalid_workflow_policy',
+        message,
+        500,
+      );
+    }
   }
 
   private requireActive(registration: Registration): void {

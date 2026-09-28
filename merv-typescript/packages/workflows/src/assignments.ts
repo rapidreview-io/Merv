@@ -83,28 +83,44 @@ interface WorkStartRow {
   event_id: number;
 }
 
+const workStart = (row: WorkStartRow): WorkflowWorkStart => ({
+  instanceId: row.instance_id,
+  projectId: row.project_id,
+  workflow: row.workflow,
+  version: row.version,
+  state: row.state,
+  revision: row.revision,
+  actorId: row.actor_id,
+  startedAt: row.started_at,
+  eventId: row.event_id,
+});
+
+/** Every start of one instance, in revision order. */
 export async function readWorkStarts(
   sql: Sql,
   projectId: string,
   instanceId: string,
-  revision?: number,
 ): Promise<WorkflowWorkStart[]> {
   return (
     await sql.all<WorkStartRow>(
-      `SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id=?${revision === undefined ? '' : ' AND revision=?'} ORDER BY revision`,
+      'SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id=? ORDER BY revision',
       projectId,
       instanceId,
-      ...(revision === undefined ? [] : [revision]),
     )
-  ).map((row) => ({
-    instanceId: row.instance_id,
-    projectId: row.project_id,
-    workflow: row.workflow,
-    version: row.version,
-    state: row.state,
-    revision: row.revision,
-    actorId: row.actor_id,
-    startedAt: row.started_at,
-    eventId: row.event_id,
-  }));
+  ).map(workStart);
+}
+
+/** The start at each instance's revision, where there is one, in one read however many. */
+export async function workStartsAt(
+  sql: Sql,
+  projectId: string,
+  instances: readonly { id: string; revision: number }[],
+): Promise<Map<string, WorkflowWorkStart>> {
+  if (!instances.length) return new Map();
+  const rows = await sql.all<WorkStartRow>(
+    `SELECT * FROM wf_work_starts WHERE project_id=? AND (instance_id,revision) IN (${instances.map(() => '(?,?)').join(',')})`,
+    projectId,
+    ...instances.flatMap(({ id, revision }) => [id, revision]),
+  );
+  return new Map(rows.map((row) => [row.instance_id, workStart(row)]));
 }

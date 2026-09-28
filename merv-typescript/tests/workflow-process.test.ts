@@ -332,3 +332,47 @@ test('without checks the graph is the record alone: no program callback runs and
     'every return used is read from the record, without asking the program',
   );
 });
+
+test('a version whose program is not loaded is drawn from its pinned graph, with no status on any edge', async (t) => {
+  const f = await fixture(t);
+  const author = await f.actor('Author');
+  const rule = (name: string, states: string[], transitions: string[]) => ({
+    name,
+    states,
+    transitions,
+    tool: `audit.${name}`,
+    instruction: `Take ${name}.`,
+    check: () => {},
+  });
+  const handle = await f.app.ctx.workflows.register(definition, {
+    successStates: ['approved'],
+    actions: [
+      rule('submit', ['drafting'], ['submit']),
+      rule('abandon', ['drafting'], ['abandon']),
+      rule('verdict', ['in_review'], ['approve', 'return']),
+    ],
+  });
+  const work = await f.app.ctx.workflows.start(author, { workflow: 'audit', requestId: 'open' });
+  await f.app.ctx.workflows.transition(author, {
+    instanceId: work.id,
+    expectedRevision: 0,
+    action: 'submit',
+    requestId: 'submit',
+  });
+  const loaded = await f.process(author, work.id);
+  handle.dispose();
+  const unloaded = await f.process(author, work.id);
+  assert.equal(unloaded.currentGate, 'workflow_unavailable');
+  assert.deepEqual(
+    unloaded.nodes.find((node) => node.current)?.blockers.map((blocker) => blocker.code),
+    ['workflow_unavailable'],
+  );
+  assert.ok(unloaded.edges.every((edge) => edge.status === null && edge.tool === null));
+  // The ladder and what the record says happened on it are the same as while loaded.
+  const ladder = (graph: ProcessGraph) => ({
+    nodes: graph.nodes.map(({ blockers: _, ...node }) => node),
+    edges: graph.edges.map(({ status: _, tool: __, blockers: ___, ...edge }) => edge),
+  });
+  assert.deepEqual(ladder(unloaded), ladder(loaded));
+  assert.equal(unloaded.edges.find((edge) => edge.action === 'submit')?.traversals.length, 1);
+});

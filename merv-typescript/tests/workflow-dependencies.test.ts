@@ -724,6 +724,64 @@ test('dependency policy validation and immutable contexts prevent changing regis
   assert.equal((await workflows.evaluate(caller, guarded.id)).nextAction?.action, 'finish');
 });
 
+test('an overview reads each fact once for every instance and runs each callback once per instance', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  let described = 0;
+  const handle = await workflows.register(graph(), {
+    ...policy(),
+    describe: ({ snapshot }) => {
+      described++;
+      return { label: String(snapshot.data.title), references: [] };
+    },
+    limits: [{ name: 'finishes', from: 'working', actions: ['finish'], max: 3 }],
+  });
+  const upstream = await start(handle, caller, 'preparation', 'upstream');
+  let made = 0;
+  const add = async (count: number) => {
+    for (let i = 0; i < count; i++)
+      await start(handle, caller, 'preparation', `work-${made++}`, [upstream.id]);
+  };
+  await add(9);
+  const done = await start(handle, caller, 'preparation', 'done');
+  await handle.transition(caller, {
+    instanceId: done.id,
+    action: 'finish',
+    expectedRevision: 0,
+    requestId: 'finish-done',
+  });
+  await state.transaction(
+    async (tx) =>
+      await workflows.replaceBlockers(
+        {
+          projectId: caller.projectId,
+          instanceId: upstream.id,
+          provider: 'probe',
+          blockers: [{ key: 'held', code: 'held', message: 'Held.', status: 409, next: 'Wait.' }],
+        },
+        tx,
+      ),
+  );
+  const cost = async () => {
+    described = 0;
+    const read = await statements(state, async (tx) => await workflows.overview(caller, tx));
+    return { statements: read.length, described };
+  };
+  const small = await cost();
+  assert.equal(small.described, 11);
+  await add(90);
+  const large = await cost();
+  assert.deepEqual(large, { statements: small.statements, described: 101 });
+  // Read together, each instance is decided exactly as it is on its own.
+  const overview = await workflows.overview(caller);
+  assert.equal(overview.workflows.length, 101);
+  for (const decided of overview.workflows)
+    assert.deepEqual(decided, await workflows.evaluate(caller, decided.instanceId));
+  const held = overview.workflows.find((item) => item.instanceId === upstream.id)!;
+  assert.deepEqual([held.currentGate, held.limits[0]?.name], ['held', 'finishes']);
+  assert.equal(overview.workflows.find((item) => item.instanceId === done.id)!.label, 'done');
+});
+
 test('dependency reads and attaching cost the same however many edges there are', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());

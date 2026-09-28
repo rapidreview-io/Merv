@@ -146,15 +146,17 @@ export async function clearBlockers(tx: Transaction, instanceId: string): Promis
   await tx.run('DELETE FROM wf_blockers WHERE instance_id=?', instanceId);
 }
 
+/** Published blockers of the instances named, or of the whole project when none are. */
 export async function readBlockers(
   sql: Sql,
   projectId: string,
-  instanceId?: string,
+  instanceIds?: readonly string[],
 ): Promise<WorkflowProvidedBlocker[]> {
+  if (instanceIds && !instanceIds.length) return [];
   const rows = await sql.all<BlockerRow>(
-    `SELECT * FROM wf_blockers WHERE project_id=?${instanceId === undefined ? '' : ' AND instance_id=?'} ORDER BY since,instance_id,provider,blocker_key`,
+    `SELECT * FROM wf_blockers WHERE project_id=?${instanceIds ? ` AND instance_id IN (${instanceIds.map(() => '?').join(',')})` : ''} ORDER BY since,instance_id,provider,blocker_key`,
     projectId,
-    ...(instanceId === undefined ? [] : [instanceId]),
+    ...(instanceIds ?? []),
   );
   return rows.map((row) => ({
     instanceId: row.instance_id,

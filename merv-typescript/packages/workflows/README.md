@@ -13,9 +13,12 @@ them.
 
 `await register(definition, policy)` registers awaited domain checks, action/tool
 descriptions and optional argument/reference builders. `evaluate` returns the
-current decision and supports read-only action preflight; `overview` evaluates all
-instances in the caller's project and sorts them into `ready`, `blocked`, `stalled`,
-`escalated`, `terminal` and `unavailable`. A supplied policy must guard every graph edge.
+current decision and supports read-only action preflight; `overview` decides every
+instance in the caller's project, reading what they wait on in a fixed number of queries
+however many there are, and sorts them into `ready`, `blocked`, `stalled`, `escalated`,
+`terminal` and `unavailable`. `process` draws one instance's graph with the traversals its
+history records; a version whose program is not loaded is drawn from its pinned graph, with
+no status on any edge. A supplied policy must guard every graph edge.
 A policy may also declare `limits` on its loop edges: they are deployed policy rather than
 fingerprinted graph, are counted from history, refuse the capped edge at commit with
 `loop_limit_reached`, and are raised for one instance by `extendLimit`

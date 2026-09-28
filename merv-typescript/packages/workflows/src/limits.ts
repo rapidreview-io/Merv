@@ -133,17 +133,42 @@ export async function limitStatusOf(
 export const limitStatus = async (sql: Sql, limit: WorkflowLoopLimit, instanceId: string) =>
   (await limitStatusOf(sql, limit, [instanceId])).get(instanceId)!;
 
-/** The limits leaving the instance's current state. Reads only, so guards stay pure. */
-export async function limitStatuses(
+/**
+ * The limits leaving each instance's current state, two reads per limit however many instances
+ * stand at it. Reads only, so guards stay pure.
+ */
+export async function limitStatusesOf(
+  sql: Sql,
+  instances: readonly { id: string; state: string; policy?: WorkflowPolicy }[],
+): Promise<Map<string, WorkflowLimitStatus[]>> {
+  const leaving = ({ state, policy }: (typeof instances)[number]) =>
+    (policy?.limits ?? []).filter((limit) => limit.from === state);
+  const waiting = new Map<WorkflowLoopLimit, string[]>();
+  for (const instance of instances)
+    for (const limit of leaving(instance)) {
+      const ids = waiting.get(limit);
+      if (ids) ids.push(instance.id);
+      else waiting.set(limit, [instance.id]);
+    }
+  const read = new Map<WorkflowLoopLimit, Map<string, WorkflowLimitStatus>>();
+  for (const [limit, ids] of waiting) read.set(limit, await limitStatusOf(sql, limit, ids));
+  return new Map(
+    instances.map((instance) => [
+      instance.id,
+      leaving(instance).map((limit) => read.get(limit)!.get(instance.id)!),
+    ]),
+  );
+}
+
+/** limitStatusesOf for one instance. */
+export const limitStatuses = async (
   sql: Sql,
   policy: WorkflowPolicy | undefined,
   snapshot: WorkflowSnapshot,
-): Promise<WorkflowLimitStatus[]> {
-  const statuses: WorkflowLimitStatus[] = [];
-  for (const limit of policy?.limits ?? [])
-    if (limit.from === snapshot.state) statuses.push(await limitStatus(sql, limit, snapshot.id));
-  return statuses;
-}
+) =>
+  (await limitStatusesOf(sql, [{ id: snapshot.id, state: snapshot.state, policy }])).get(
+    snapshot.id,
+  )!;
 
 export function limitMessage(status: WorkflowLimitStatus, workflow: string): string {
   return `${status.name} is exhausted on this ${workflow} (${status.used}/${status.max}). The work is not failed and waits for a human, who may take the next step by hand or end it; a project admin may allow more rounds with workflow.extend_limit.`;
