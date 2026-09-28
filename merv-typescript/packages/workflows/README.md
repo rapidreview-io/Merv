@@ -55,10 +55,14 @@ The registration handle owns exactly one name/version. With `managed: true`, the
 public engine mutation methods reject that graph, preventing generic workflow
 commands from bypassing program rules. Managed transitions validate project access;
 the program must authorize its specific action (for example `write` or `review`).
-Unmanaged graph mutations require `write` permission directly.
+Unmanaged graph mutations require `write` permission directly. A registration handle's
+`addDependencies` follows the same rule: `read` on a managed graph, `write` otherwise.
 
 ## Durability
 
+- A definition keeps only each edge's `from`, `action` and `to`. Edges may not use the
+  actions the engine records itself (`start`, `add_dependencies`, `replan_dependencies`),
+  and a graph may have at most 256 states and 2,048 edges.
 - A name/version has a persisted fingerprint. Changed graph definitions must use
   a new version, including after restart. An instance stays on the version it started on.
 - Starting without a version chooses the latest installed version. Retrying that
