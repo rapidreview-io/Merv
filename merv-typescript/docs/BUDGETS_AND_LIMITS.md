@@ -119,7 +119,8 @@ up the project. With `instanceId` it rolls up that instance, everything it trans
 depends on, and the children their policies declare: a reflection names its lenses of
 every attempt, which no dependency edge does. A research cycle's id therefore gives the
 cycle. `includeDependencies: false` reads the one instance alone. `scope.instanceCount`
-says how many instances were covered (the walk stops at 5000).
+says how many instances were covered; a closure of more than 5,000 is refused with
+`closure_too_large` rather than counted in part.
 
 The result carries `totals`, `byWorkflow`, `byInstance` (the fifty with the most
 wall-clock), `liveSessions`, the `budgets` in force for the scope, and `accounting`.

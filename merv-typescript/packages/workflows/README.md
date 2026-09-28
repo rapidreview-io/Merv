@@ -23,7 +23,9 @@ A policy may also declare `limits` on its loop edges: they are deployed policy r
 fingerprinted graph, are counted from history, refuse the capped edge at commit with
 `loop_limit_reached`, and are raised for one instance by `extendLimit`
 ([loop limits](../../docs/BUDGETS_AND_LIMITS.md)). Its optional `children` callback names
-instances it fans out to without a dependency edge, which `dependencyClosure` unions in.
+instances it fans out to without a dependency edge, which `dependencyClosure` and
+`sponsoringRoots` union in. It is asked for many instances of its version at once, as
+instance id to child ids, on behalf of no caller.
 The same checks run before a transition commits. See [the complete contract,
 task integration and lifecycle behavior](../../docs/WORKFLOW_GUIDANCE.md).
 
@@ -231,8 +233,10 @@ pinned to the old revision ends. A provider's system edges bump nothing.
 **Blockers.** A provider's blockers stay on an instance across non-terminal moves until
 the provider replaces them; they are cleared when the instance reaches a terminal state.
 
-**`dependencyClosure`** walks at most 5,000 instances and refuses a larger closure with
-`closure_too_large` 409 rather than return part of it.
+**`dependencyClosure`** walks level by level, with a fixed number of reads per level and
+one `children` call per declaring version, at most 5,000 instances, and refuses a larger
+closure with `closure_too_large` 409 rather than return part of it. `sponsoringRoots` asks
+`children` only of the versions that declare it.
 
 **Read schema.** Other components may read these columns directly and nothing else:
 `wf_instances(id, project_id, workflow, version, state, revision, data_json, created_at,

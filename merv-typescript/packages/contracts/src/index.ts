@@ -1266,15 +1266,17 @@ export interface WorkflowPolicy {
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;
   /**
-   * Instances this one fans work out to without a dependency edge, such as a reflection's
-   * lenses. A usage rollup over a dependency closure unions them in, so the sessions they
-   * cost are not lost from the figure of the cycle that caused them. It only reads.
+   * The instances each of `instanceIds` fans work out to without a dependency edge, such as a
+   * reflection's lenses, by instance id; one left out has none. A usage rollup over a
+   * dependency closure unions them in, so the sessions they cost are not lost from the figure
+   * of the cycle that caused them. It is asked for many instances at once, never an empty
+   * list, on behalf of no caller, and only reads.
    */
   children?(context: {
-    caller: Caller;
-    instanceId: string;
+    projectId: string;
+    instanceIds: readonly string[];
     tx: Transaction;
-  }): string[] | Promise<string[]>;
+  }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext):
     | {
         label: string;

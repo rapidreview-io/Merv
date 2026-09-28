@@ -782,6 +782,79 @@ test('an overview reads each fact once for every instance and runs each callback
   assert.equal(overview.workflows.find((item) => item.instanceId === done.id)!.label, 'done');
 });
 
+test('a closure and its roots ask each version for its children at once, for no caller', async (t) => {
+  const { state, scope, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const asked: string[][] = [];
+  const fanOut = new Map<string, string[]>();
+  const handle = await workflows.register(graph(), {
+    ...policy(),
+    children: (context) => {
+      assert.deepEqual(Object.keys(context).sort(), ['instanceIds', 'projectId', 'tx']);
+      asked.push([...context.instanceIds].sort());
+      return Object.fromEntries(
+        context.instanceIds.filter((id) => fanOut.has(id)).map((id) => [id, fanOut.get(id)!]),
+      );
+    },
+  });
+  const [first, second, third] = [
+    await start(handle, caller, 'preparation', 'first'),
+    await start(handle, caller, 'preparation', 'second'),
+    await start(handle, caller, 'preparation', 'third'),
+  ];
+  const left = await start(handle, caller, 'preparation', 'left'),
+    right = await start(handle, caller, 'preparation', 'right');
+  const root = await start(handle, caller, 'preparation', 'root', [left.id, right.id]);
+  fanOut.set(left.id, [first.id, second.id]);
+  fanOut.set(right.id, [second.id, third.id, 'gone']);
+  const serviceActor = t.mock.method(scope, 'serviceActor');
+
+  assert.deepEqual(
+    (await workflows.dependencyClosure(caller, root.id)).sort(),
+    [root.id, left.id, right.id, first.id, second.id, third.id].sort(),
+  );
+  // One call per level of the walk, each with the whole level.
+  assert.deepEqual(asked, [
+    [root.id],
+    [left.id, right.id].sort(),
+    [first.id, second.id, third.id].sort(),
+  ]);
+
+  asked.length = 0;
+  const roots = await state.transaction(
+    async (tx) => await workflows.sponsoringRoots(caller.projectId, [second.id], tx),
+  );
+  assert.deepEqual(roots, [root.id]);
+  assert.deepEqual(asked, [[first.id, second.id, third.id, left.id, right.id, root.id].sort()]);
+  assert.equal(serviceActor.mock.callCount(), 0, 'no actor is minted to ask for children');
+});
+
+test('a closure deeper than the bound is refused, not cut short', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  await workflows.register(graph(), policy());
+  const at = new Date().toISOString();
+  await state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO wf_instances (id, project_id, workflow, version, state, revision, data_json, created_at, updated_at)
+       SELECT 'link-' || n, ?, 'preparation', 1, 'working', 0, '{}', ?, ? FROM generate_series(1, 5200) AS n`,
+      caller.projectId,
+      at,
+      at,
+    );
+    await tx.run(
+      `INSERT INTO wf_dependencies (project_id, source_id, target_id, target_workflow, target_version, target_success_json, target_terminal_json, created_at, kind, owner)
+       SELECT ?, 'link-' || n, 'link-' || (n + 1), 'preparation', 1, '["done"]', '["done","failed"]', ?, 'declared', '' FROM generate_series(1, 5199) AS n`,
+      caller.projectId,
+      at,
+    );
+  });
+  await assert.rejects(async () => await workflows.dependencyClosure(caller, 'link-1'), {
+    code: 'closure_too_large',
+    status: 409,
+  });
+});
+
 test('dependency reads and attaching cost the same however many edges there are', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());

@@ -41,7 +41,8 @@ async function fixture(t: TestContext, maxLaunchFailures?: number) {
   const fanOut = new Map<string, string[]>();
   const policy: WorkflowPolicy = {
     successStates: ['done'],
-    children: ({ instanceId }) => fanOut.get(instanceId) ?? [],
+    children: ({ instanceIds }) =>
+      Object.fromEntries(instanceIds.map((id) => [id, fanOut.get(id) ?? []])),
     actions: [
       {
         name: 'finish',
