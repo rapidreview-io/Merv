@@ -15,6 +15,7 @@ import type {
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
+import { PinnedContracts } from '../packages/workflows/src/pinned.js';
 import { openState, stateConfig } from './fixtures/state.js';
 
 const graph = (version = 1): WorkflowDefinition => ({
@@ -542,6 +543,54 @@ test('pinned contracts are kept in memory, immutable in storage, and found when 
       { code: 'state_constraint' },
       sql,
     );
+});
+
+test('a pinned contract is kept only once its success and every execution row are stored', async (t) => {
+  const { state } = await setup();
+  t.after(async () => await state.close());
+  // A version stored before migrations 2 and 4: a later registration of it still adds its rows.
+  const store = async (sql: string, ...params: string[]) =>
+    await state.transaction(async (tx) => await tx.run(sql, ...params));
+  await store(
+    "INSERT INTO wf_definitions (name, version, fingerprint, definition_json, created_at) VALUES ('legacy', 1, 'legacy', ?, '2026-01-01T00:00:00.000Z')",
+    JSON.stringify({ ...graph(), name: 'legacy' }),
+  );
+  const contracts = new PinnedContracts();
+  let reads = 0;
+  const read = async () =>
+    await state.read(
+      async (sql) =>
+        await contracts.get(
+          {
+            ...sql,
+            all: async (text, ...params) => {
+              reads++;
+              return await sql.all(text, ...params);
+            },
+          } as typeof sql,
+          'legacy',
+          1,
+        ),
+    );
+  assert.equal((await read())!.successStates, null);
+  await read();
+  assert.equal(reads, 2);
+  await store(
+    "INSERT INTO wf_success_states (workflow, version, success_json) VALUES ('legacy', 1, 'null')",
+  );
+  // 'review' has no execution row yet, so a later registration could still add it.
+  await store(
+    "INSERT INTO wf_execution_policies (workflow, version, state, fingerprint, manifest_json) VALUES ('legacy', 1, 'draft', 'draft', 'null')",
+  );
+  assert.deepEqual((await read())!.execution, { draft: null });
+  await read();
+  assert.equal(reads, 4);
+  await store(
+    "INSERT INTO wf_execution_policies (workflow, version, state, fingerprint, manifest_json) VALUES ('legacy', 1, 'review', 'review', 'null')",
+  );
+  assert.deepEqual((await read())!.execution, { draft: null, review: null });
+  await read();
+  assert.equal(reads, 5);
 });
 
 test('a stored definition keeps only edge endpoints in code-unit order and refuses engine actions', async (t) => {

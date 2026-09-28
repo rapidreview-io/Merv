@@ -69,7 +69,8 @@ Unmanaged graph mutations require `write` permission directly. A registration ha
 - A version's stored definition, success states and execution policies are immutable: the
   database refuses an UPDATE or DELETE of any of them. The service therefore loads them all
   at startup and keeps them. It reads a version it does not hold, such as one another service
-  registered later, only once, unless that version has no success row yet.
+  registered later, only once, unless that version still lacks its success row or an
+  execution row for a nonterminal state, which a later registration would add.
 - Starting without a version chooses the latest installed version. Retrying that
   request returns the original response even if a newer version was installed.
 - Start data, transition data and input, and preflight input are each a JSON object of

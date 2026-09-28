@@ -6,14 +6,17 @@ export interface WorkflowPinned {
   definition: WorkflowDefinition;
   /** Null pins their absence. */
   successStates: string[] | null;
-  /** Each nonterminal state's fixed execution manifest; null pins that it has none. */
+  /**
+   * Each nonterminal state's fixed execution manifest; null pins that it has none. Only a contract
+   * that is not final can lack a state.
+   */
   execution: Record<string, WorkflowExecutionPolicy | null>;
 }
 
 /**
- * A contract as read. It is final once its success row exists. A version stored before success
- * states were pinned has none: that reads as their absence, but a later registration of the
- * version still writes the row.
+ * A contract as read. It is final once its success row and an execution row for every nonterminal
+ * state exist. A version stored before either was pinned lacks them: that reads as their absence,
+ * but a later registration of the version still writes the rows.
  */
 export interface PinnedRead {
   pinned: WorkflowPinned;
@@ -60,7 +63,13 @@ async function load(sql: Sql, only?: { name: string; version: number }): Promise
         row.manifest_json,
       ) as WorkflowExecutionPolicy | null;
   }
-  for (const entry of read.values()) freezeData(entry.pinned);
+  for (const entry of read.values()) {
+    const { definition, execution } = entry.pinned;
+    entry.final &&= definition.states.every(
+      (state) => definition.terminal.includes(state) || Object.hasOwn(execution, state),
+    );
+    freezeData(entry.pinned);
+  }
   return [...read.values()];
 }
 
