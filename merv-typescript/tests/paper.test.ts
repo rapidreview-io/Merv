@@ -383,7 +383,7 @@ test('historical producer proposals remain readable without changing the current
   assert.equal(read.documents.results.current.sections[0].id, 'current');
 });
 
-test('context sections list every current and published section whole, in the paper’s order', async (t) => {
+test('context sections list every written current and published section whole, in the paper’s order', async (t) => {
   const f = await fixture(t);
   await f.paper.patch(f.producer, {
     kind: 'problem',
@@ -413,26 +413,24 @@ test('context sections list every current and published section whole, in the pa
   );
   const documents = (await f.paper.read(f.reader)).documents;
   const sections = f.paper.contextSections(documents);
+  // The problem's other sections are still empty, so there is nothing of theirs to list.
   assert.deepEqual(
     sections.map((s) => s.id),
     [
-      'paper:problem:current:1:0:problem',
-      'paper:problem:current:1:1:scope',
       'paper:problem:current:1:2:goals',
-      'paper:problem:current:1:3:constraints',
       'paper:methods:current:1:0:protocol',
       'paper:methods:published:1:0:protocol',
     ],
   );
-  const goals = sections[2]!;
+  const goals = sections[0]!;
   assert.equal(goals.text, 'Match the baseline.\n## Expected output\nNot a heading.');
   assert.equal(goals.title, 'problem current: Goals');
   assert.deepEqual(goals.refs, [
     { tool: 'paper.read', input: { kind: 'problem', section: 'goals' } },
     { tool: 'paper.read', input: { kind: 'problem', history: true } },
   ]);
-  assert.match(goals.note, /^problem\/current; section goals; updated \d{4}-/);
-  const published = sections[5]!;
+  assert.match(goals.note, /^problem\/current revision 1; section goals; updated \d{4}-/);
+  const published = sections[2]!;
   assert.deepEqual(
     { kind: published.kind, status: published.status, revision: published.revision },
     { kind: 'methods', status: 'published', revision: 1 },
