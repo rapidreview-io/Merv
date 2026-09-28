@@ -1085,19 +1085,19 @@ test('the expiry rule reads no more rows: revocation costs the same and self iss
   const [revoke] = await count(() => f.scope.revokeCredential(caller, fresh.credential.id));
   const [revokeActor] = await count(() => f.scope.revokeActor(caller, other.actor.id));
   // The bound row authorize already read gives the limit. Before this rule the same calls made
-  // 11 and 16 statements for self issuance and self rotation, and as many as now for the rest.
+  // 10 and 15 statements for self issuance and self rotation, and as many as now for the rest.
   // The totals count every statement, BEGIN and COMMIT included, so a change to how State runs a
   // transaction or to what authorize, the ledger or the event log write moves them all alike.
   assert.deepEqual(
     { issueSelf, rotateSelf, issueOther, rotateOther, create, revoke, revokeActor },
     {
-      issueSelf: 10,
-      rotateSelf: 15,
-      issueOther: 10,
-      rotateOther: 15,
-      create: 10,
-      revoke: 13,
-      revokeActor: 9,
+      issueSelf: 9,
+      rotateSelf: 14,
+      issueOther: 9,
+      rotateOther: 14,
+      create: 9,
+      revoke: 12,
+      revokeActor: 8,
     },
   );
 });
