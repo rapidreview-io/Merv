@@ -1791,14 +1791,18 @@ export class WorkflowsService implements Workflows {
         input.requestId,
         hash,
       );
-      this.requireActive(owner);
-      if (replay) return replay;
+      if (replay) {
+        this.requireActive(owner);
+        return replay;
+      }
       check(
         before.revision === input.expectedRevision,
         'revision_conflict',
         `Expected revision ${input.expectedRevision}, found ${before.revision}`,
         409,
       );
+      // A stale revision is named before a withdrawn handle, as when the registry was read here.
+      this.requireActive(owner);
       const edge = owner.definition.edges.find(
         (edge) => edge.from === before.state && edge.action === input.action,
       );
@@ -1928,8 +1932,10 @@ export class WorkflowsService implements Workflows {
         input.requestId,
         hash,
       );
-      this.requireActive(owner);
-      if (replay) return replay;
+      if (replay) {
+        this.requireActive(owner);
+        return replay;
+      }
       check(
         before.revision === input.expectedRevision,
         'revision_conflict',
