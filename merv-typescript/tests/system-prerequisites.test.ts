@@ -198,7 +198,9 @@ test('provider prerequisites are a set: replacing restores it by value', async (
 
 test('the engine names no program in what it says', () => {
   const source = new URL('../packages/workflows/src/', import.meta.url);
-  for (const file of readdirSync(source).filter((name) => name.endsWith('.ts')))
+  for (const file of readdirSync(source, { recursive: true, encoding: 'utf8' }).filter((name) =>
+    name.endsWith('.ts'),
+  ))
     assert.doesNotMatch(readFileSync(new URL(file, source), 'utf8'), /\bresearch\./, file);
 });
 

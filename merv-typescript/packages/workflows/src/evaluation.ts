@@ -472,6 +472,7 @@ async function ownDecision(
     query.action ? action.action === query.action : rules[index].suggested !== false,
   );
   // Guidance checks admission only. Building a packet may itself read guidance.
+  // beginOffered implies an assignment; testing both narrows `assignment` for the packet below.
   if (assignment && beginOffered) {
     const begin: WorkflowActionStatus = {
       action: 'begin',
