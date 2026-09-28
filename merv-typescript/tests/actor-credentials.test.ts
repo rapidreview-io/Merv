@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import pg from 'pg';
 
 import { ProjectScope } from '@merv/scope';
 import type { Caller, IssuedActorCredential } from '@merv/contracts';
@@ -794,6 +795,187 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
     authorized.credential.expiresAt,
     null,
     'Another operator can explicitly authorize an extension',
+  );
+});
+
+test('nothing minted through an expiring operator credential outlives it, directly or through a conversation', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const deadline = new Date(start + 2000).toISOString();
+  const limited = await f.scope.issueActor(f.operator, {
+    name: 'Limited operator',
+    role: 'operator',
+    expiresAt: deadline,
+  });
+  const lasting = await f.scope.issueActor(f.operator, { name: 'Lasting', role: 'producer' });
+  const conversation: Caller = {
+    actorId: limited.actor.id,
+    projectId: limited.actor.projectId,
+    conversation: {
+      id: 'conversation_limited',
+      epoch: 1,
+      commandId: 'command_limited',
+      runtimeId: 'runtime_limited',
+    },
+  };
+  const source = await f.scope.delegationSource(asCaller(limited));
+  t.after(f.scope.registerConversationAuthority({ require: async () => structuredClone(source) }));
+  assert.equal((await f.scope.delegationSource(conversation)).kind, 'actor');
+  for (const [name, caller] of [
+    ['credential', asCaller(limited)],
+    ['conversation', conversation],
+  ] as const) {
+    const actors = await f.scope.actors(f.operator);
+    const credentials = await f.scope.actorCredentials(f.operator, lasting.actor.id);
+    const head = await f.state.eventHead();
+    for (const expiresAt of [null, new Date(start + 2001).toISOString()]) {
+      await assert.rejects(
+        f.scope.issueActor(caller, { name: 'Unbounded', role: 'producer', expiresAt }),
+        { code: 'self_expiry_extension', status: 403 },
+        name,
+      );
+      await assert.rejects(
+        f.scope.issueActorCredential(caller, { actorId: lasting.actor.id, expiresAt }),
+        { code: 'self_expiry_extension', status: 403 },
+        name,
+      );
+    }
+    // The default keeps the old credential's null deadline, which the caller cannot grant.
+    await assert.rejects(
+      f.scope.rotateCredential(caller, { credentialId: lasting.credential.id }),
+      { code: 'self_expiry_extension', status: 403 },
+      name,
+    );
+    assert.deepEqual(await f.scope.actors(f.operator), actors, name);
+    assert.deepEqual(
+      await f.scope.actorCredentials(f.operator, lasting.actor.id),
+      credentials,
+      name,
+    );
+    assert.equal(await f.state.eventHead(), head, name);
+    assert.equal((await f.scope.authenticate(lasting.token)).id, lasting.actor.id, name);
+    // An omitted expiry inherits the caller's deadline; an explicit one may reach it.
+    const created = await f.scope.issueActor(caller, { name: `${name} actor`, role: 'reader' });
+    assert.equal(created.credential.expiresAt, deadline, name);
+    const issued = await f.scope.issueActorCredential(caller, { actorId: lasting.actor.id });
+    assert.equal(issued.credential.expiresAt, deadline, name);
+    const earlier = new Date(start + 1000).toISOString();
+    assert.equal(
+      (
+        await f.scope.issueActor(caller, {
+          name: `${name} earlier`,
+          role: 'reader',
+          expiresAt: earlier,
+        })
+      ).credential.expiresAt,
+      earlier,
+      name,
+    );
+    const rotated = await f.scope.rotateCredential(caller, {
+      credentialId: issued.credential.id,
+      expiresAt: deadline,
+    });
+    assert.equal(rotated.credential.expiresAt, deadline, name);
+  }
+  // An operator on a lasting credential, and a bare in-process caller, set any deadline.
+  for (const caller of [
+    f.operator,
+    { actorId: f.operator.actorId, projectId: f.operator.projectId },
+  ])
+    assert.equal(
+      (await f.scope.issueActor(caller, { name: 'Unbounded', role: 'reader' })).credential
+        .expiresAt,
+      null,
+    );
+  assert.equal(
+    (
+      await f.scope.rotateCredential(f.operator, {
+        credentialId: lasting.credential.id,
+        expiresAt: null,
+      })
+    ).credential.expiresAt,
+    null,
+  );
+});
+
+test('a human operator mints unbounded credentials: a login lifetime is not a credential lifetime', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const alice = await f.scope.acceptVerifiedIdentity({
+    issuer: 'https://identity.example/auth/v1',
+    subject: 'alice',
+    expiresAt: new Date(start + 60_000).toISOString(),
+  });
+  const project = await f.scope.createProject(alice, { name: 'Human', requestId: 'human' });
+  const caller = await f.scope.caller(alice, project.id);
+  const created = await f.scope.issueActor(caller, { name: 'Machine', role: 'producer' });
+  assert.equal(created.credential.expiresAt, null);
+  const later = new Date(start + 3_600_000).toISOString();
+  assert.equal(
+    (await f.scope.issueActorCredential(caller, { actorId: created.actor.id, expiresAt: later }))
+      .credential.expiresAt,
+    later,
+  );
+  assert.equal(
+    (await f.scope.rotateCredential(caller, { credentialId: created.credential.id })).credential
+      .expiresAt,
+    null,
+  );
+});
+
+test('the expiry rule reads no more rows: revocation costs the same and self issuance one read less', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const limited = await f.scope.issueActor(f.operator, {
+    name: 'Limited operator',
+    role: 'operator',
+    expiresAt: new Date(start + 2000).toISOString(),
+  });
+  const caller = asCaller(limited);
+  const own = await f.scope.issueActorCredential(caller, { actorId: caller.actorId });
+  const other = await f.scope.issueActor(f.operator, { name: 'Other', role: 'producer' });
+  const query = pg.Client.prototype.query;
+  let statements = 0;
+  t.mock.method(pg.Client.prototype, 'query', function (this: pg.Client, ...args: unknown[]) {
+    statements++;
+    return (query as (...args: unknown[]) => unknown).apply(this, args);
+  });
+  const count = async <T>(operation: () => Promise<T>) => {
+    statements = 0;
+    const value = await operation();
+    return [statements, value] as const;
+  };
+  const [issueSelf, fresh] = await count(() =>
+    f.scope.issueActorCredential(caller, { actorId: caller.actorId }),
+  );
+  const [rotateSelf] = await count(() =>
+    f.scope.rotateCredential(caller, { credentialId: own.credential.id }),
+  );
+  const [issueOther] = await count(() =>
+    f.scope.issueActorCredential(caller, { actorId: other.actor.id }),
+  );
+  const [rotateOther] = await count(() =>
+    f.scope.rotateCredential(caller, {
+      credentialId: other.credential.id,
+      expiresAt: new Date(start + 1000).toISOString(),
+    }),
+  );
+  const [create] = await count(() => f.scope.issueActor(caller, { name: 'New', role: 'reader' }));
+  const [revoke] = await count(() => f.scope.revokeCredential(caller, fresh.credential.id));
+  const [revokeActor] = await count(() => f.scope.revokeActor(caller, other.actor.id));
+  // The bound row authorize already read gives the limit. Before this rule the same calls made
+  // 11 and 16 statements for self issuance and self rotation, and as many as now for the rest.
+  assert.deepEqual(
+    { issueSelf, rotateSelf, issueOther, rotateOther, create, revoke, revokeActor },
+    {
+      issueSelf: 10,
+      rotateSelf: 15,
+      issueOther: 10,
+      rotateOther: 15,
+      create: 10,
+      revoke: 13,
+      revokeActor: 9,
+    },
   );
 });
 

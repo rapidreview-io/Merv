@@ -68,6 +68,12 @@ interface CredentialRow {
   revoked_at: string | null;
   previous_id: string | null;
 }
+/** An allowed decision. `lifetime` is the deadline of the actor credential it rested on, if any. */
+interface Decision {
+  actor: Actor;
+  source?: DelegationSource;
+  lifetime?: string | null;
+}
 const actor = (row: ActorRow): Actor => ({
   id: row.id,
   projectId: row.project_id,
@@ -565,11 +571,11 @@ export class ProjectScope implements Scope {
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
-  private selfExpiry(expiresAt: string | null, limit: string | null): void {
+  private notBeyond(expiresAt: string | null, limit: string | null): void {
     check(
       limit === null || (expiresAt !== null && expiresAt <= limit),
       'self_expiry_extension',
-      'A self-issued credential cannot extend its existing expiry; another operator must authorize that extension',
+      'A credential cannot outlive the credential that authorized or preceded it; another operator must authorize a longer one',
       403,
     );
   }
@@ -578,7 +584,8 @@ export class ProjectScope implements Scope {
     projectId: string,
     name: string,
     role: Role,
-    expiresAt?: string | null,
+    expiresAt: string | null | undefined,
+    limit: string | null,
   ): Promise<IssuedActorCredential> {
     check(
       typeof name === 'string' && visible(name) && name.length <= 200,
@@ -595,7 +602,7 @@ export class ProjectScope implements Scope {
       role,
     );
     const time = this.time();
-    return await this.issueCredential(tx, value, expiry(expiresAt, time), null, time);
+    return await this.issueCredential(tx, value, expiry(expiresAt, time), null, time, limit);
   }
   private async issueCredential(
     tx: Transaction,
@@ -603,7 +610,10 @@ export class ProjectScope implements Scope {
     expiresAt: string | null,
     previousId: string | null,
     time: string,
+    limit: string | null,
   ): Promise<IssuedActorCredential> {
+    // Nothing minted through an expiring credential outlives it.
+    this.notBeyond(expiresAt, limit);
     const issued: ActorCredential = {
       id: newId('credential'),
       actorId: value.id,
@@ -650,7 +660,7 @@ export class ProjectScope implements Scope {
         value.name,
         value.createdAt,
       );
-      const credential = await this.issue(tx, value.id, input.actorName, 'operator');
+      const credential = await this.issue(tx, value.id, input.actorName, 'operator', null, null);
       await this.state.appendEvent(tx, {
         projectId: value.id,
         actorId: credential.actor.id,
@@ -728,12 +738,13 @@ export class ProjectScope implements Scope {
   async require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor> {
     return (await this.authorize(caller, permission, tx)).actor;
   }
-  /** require(), also returning the delegation source that a worker's session authority vouched for. */
+  /** require(), also returning the delegation source that a worker's session authority vouched for
+   * and, for a caller with an actor credential, that credential's deadline. */
   private async authorize(
     caller: Caller,
     permission: Permission,
     tx?: Transaction,
-  ): Promise<{ actor: Actor; source?: DelegationSource }> {
+  ): Promise<Decision> {
     caller = structuredClone(caller);
     const registration = this.sessions.token;
     const managedRegistration = this.managed.token;
@@ -755,7 +766,7 @@ export class ProjectScope implements Scope {
         message,
         403,
       );
-    const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
+    const lookup = async (sql: Sql): Promise<Decision> => {
       // Unreachable: `within` hands every provider-backed decision a transaction, below.
       check(
         !provided || 'transactionId' in sql,
@@ -791,6 +802,7 @@ export class ProjectScope implements Scope {
         403,
       );
       let source: DelegationSource | undefined;
+      let lifetime: string | null | undefined;
       if (caller.conversation) {
         check(
           !row.session_id,
@@ -913,8 +925,9 @@ export class ProjectScope implements Scope {
         );
         check(bound, 'forbidden', 'Credential cannot authorize this actor in this project', 403);
         await this.ledger.live(bound.token_hash, 'actor', bound.id, sql);
+        lifetime = bound.expires_at;
       }
-      return { actor: actor(row), source };
+      return { actor: actor(row), source, lifetime };
     };
     // A provider decides in a transaction. A worker's authority is checked several times per tool
     // call, so a read decision runs on a snapshot, which outside any scope takes no writer lock. A
@@ -1055,13 +1068,14 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      await this.administer(caller, tx);
+      const { limit } = await this.administer(caller, tx);
       const result = await this.issue(
         tx,
         caller.projectId,
         input.name,
         input.role,
-        input.expiresAt,
+        input.expiresAt === undefined ? limit : input.expiresAt,
+        limit,
       );
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
@@ -1096,21 +1110,13 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      const { credentialId } = await this.administer(caller, tx);
+      const { limit } = await this.administer(caller, tx);
       const target = await this.actorRow(tx, caller.projectId, input.actorId);
       this.machineActor(target);
       check(target.active, 'actor_revoked', 'Cannot issue credentials for an inactive actor', 409);
-      const current =
-        target.id === caller.actorId && credentialId !== undefined
-          ? await this.credentialRow(tx, caller.projectId, credentialId)
-          : undefined;
       const time = this.time();
-      const expiresAt = expiry(
-        input.expiresAt === undefined ? current?.expires_at : input.expiresAt,
-        time,
-      );
-      if (current) this.selfExpiry(expiresAt, current.expires_at);
-      const issued = await this.issueCredential(tx, actor(target), expiresAt, null, time);
+      const expiresAt = expiry(input.expiresAt === undefined ? limit : input.expiresAt, time);
+      const issued = await this.issueCredential(tx, actor(target), expiresAt, null, time, limit);
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
         actorId: caller.actorId,
@@ -1128,7 +1134,7 @@ export class ProjectScope implements Scope {
     caller = structuredClone(caller);
     input = structuredClone(input);
     return await this.state.transaction(async (tx) => {
-      const { credentialId } = await this.administer(caller, tx);
+      const { credentialId, limit } = await this.administer(caller, tx);
       const previous = await this.credentialRow(tx, caller.projectId, input.credentialId);
       check(
         previous.id !== credentialId,
@@ -1150,15 +1156,9 @@ export class ProjectScope implements Scope {
         input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
         time,
       );
-      // A self-rotation extends neither the credential it replaces nor the one making the call.
-      if (target.id === caller.actorId) {
-        this.selfExpiry(expiresAt, previous.expires_at);
-        if (credentialId !== undefined)
-          this.selfExpiry(
-            expiresAt,
-            (await this.credentialRow(tx, caller.projectId, credentialId)).expires_at,
-          );
-      }
+      // A self-rotation never extends the credential it replaces. Nor does any rotation outlive
+      // the credential making the call, which issueCredential checks.
+      if (target.id === caller.actorId) this.notBeyond(expiresAt, previous.expires_at);
       const result = await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND project_id=? AND revoked_at IS NULL',
         time,
@@ -1173,7 +1173,14 @@ export class ProjectScope implements Scope {
         'Credential was revoked in the credential ledger',
         409,
       );
-      const issued = await this.issueCredential(tx, actor(target), expiresAt, previous.id, time);
+      const issued = await this.issueCredential(
+        tx,
+        actor(target),
+        expiresAt,
+        previous.id,
+        time,
+        limit,
+      );
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
         actorId: caller.actorId,
@@ -1238,9 +1245,12 @@ export class ProjectScope implements Scope {
   /** Admin authority over independent actors and their credentials, which a user key or a worker
    * session never holds, nor a conversation started with a key. Returns the credential the call
    * rests on (a conversation's source credential), which the self-revoke and self-rotate checks
-   * name. */
-  private async administer(caller: Caller, tx: Transaction): Promise<{ credentialId?: string }> {
-    const { source } = await this.authorize(caller, 'admin', tx);
+   * name, and that credential's deadline, which bounds anything the call mints. */
+  private async administer(
+    caller: Caller,
+    tx: Transaction,
+  ): Promise<{ credentialId?: string; limit: string | null }> {
+    const { source, lifetime } = await this.authorize(caller, 'admin', tx);
     const via = caller.conversation ? source : undefined;
     check(
       caller.key === undefined && caller.session === undefined && via?.kind !== 'key',
@@ -1248,13 +1258,16 @@ export class ProjectScope implements Scope {
       'User keys and worker sessions cannot administer independent actor credentials or actors',
       403,
     );
-    return {
-      credentialId: via
-        ? via.kind === 'actor'
-          ? via.credentialId
-          : undefined
-        : caller.credentialId,
-    };
+    // A conversation rests on its actor source, whose expiresAt requireDelegation has just matched
+    // to the row. Humans, bare in-process callers and non-expiring credentials impose no limit. (A
+    // service-sourced conversation cannot reach here: a service actor is never an operator.)
+    if (via)
+      return via.kind === 'actor'
+        ? { credentialId: via.credentialId, limit: via.expiresAt }
+        : { limit: null };
+    if (caller.credentialId === undefined) return { limit: null };
+    check(lifetime !== undefined, 'scope_internal', 'Credential lifetime unavailable', 500);
+    return { credentialId: caller.credentialId, limit: lifetime };
   }
   private async credentialRow(
     sql: Sql,

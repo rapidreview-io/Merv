@@ -47,7 +47,7 @@ export const scopeToolsPlugin = {
     );
     register(
       'actor.create',
-      'Operator: create an actor and its first project-bound token. Return this token only to that actor.',
+      'Operator: create an actor and its first project-bound token. Return this token only to that actor. Nothing you create can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.',
       z
         .object({
           name: z.string().min(1).max(200),
@@ -74,7 +74,7 @@ export const scopeToolsPlugin = {
     );
     register(
       'actor.issue_token',
-      'Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.',
+      'Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Nothing you issue can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.',
       z
         .object({
           actorId: z.string().min(1),
@@ -92,7 +92,7 @@ export const scopeToolsPlugin = {
     );
     register(
       'actor.rotate_token',
-      'Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.',
+      'Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline, and never beyond the deadline of the credential authenticating it.',
       z
         .object({
           credentialId: z.string().min(1),
