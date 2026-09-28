@@ -132,6 +132,10 @@ async function readText(
  * Fetches each artifact the input names once, in `tx`, for a render that reads their bytes later.
  * A refusal (a 4xx error such as `not_found`) is kept and thrown where the render asks for that
  * ID, so it fails with the same error, in the same order, as if it fetched each artifact itself.
+ * Every ID is still fetched after a refusal, because the render asks in its own order, and a check
+ * it makes first (such as `context_missing`) must still win. A transient failure (5xx or not a
+ * MervError) is thrown at once, before any of the render's checks: an outage fails the render
+ * whatever else is wrong with its input.
  */
 async function resolve(
   artifacts: Artifacts,
