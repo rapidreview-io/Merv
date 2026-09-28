@@ -1,4 +1,4 @@
-import { canonical, check, digest, newId, now } from '@merv/contracts';
+import { canonical, check, newId } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type {
   Caller,
@@ -18,7 +18,7 @@ import type {
   WorkflowRelations,
 } from '@merv/contracts';
 import { readBlockers, replaceBlockers } from './blockers.js';
-import { persistExecution, persistSuccess, readPinned } from './pinned.js';
+import { persistContract, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
 import { readWorkStarts } from './assignments.js';
@@ -65,30 +65,8 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       `${key} is already registered`,
       409,
     );
-    const hash = digest(definition);
     const pinned = await this.state.transaction(async (tx) => {
-      const existing = await tx.get<{ fingerprint: string }>(
-        'SELECT fingerprint FROM wf_definitions WHERE name = ? AND version = ?',
-        definition.name,
-        definition.version,
-      );
-      check(
-        !existing || existing.fingerprint === hash,
-        'workflow_version_conflict',
-        `${key} changed; publish a new version`,
-        409,
-      );
-      if (!existing)
-        await tx.run(
-          'INSERT INTO wf_definitions (name, version, fingerprint, definition_json, created_at) VALUES (?, ?, ?, ?, ?)',
-          definition.name,
-          definition.version,
-          hash,
-          canonical(definition),
-          now(),
-        );
-      await persistSuccess(tx, definition, validatedPolicy?.successStates);
-      await persistExecution(tx, definition, validatedPolicy);
+      await persistContract(tx, definition, validatedPolicy);
       return await readPinned(tx, definition.name, definition.version);
     });
     this.contracts.keep(pinned!);

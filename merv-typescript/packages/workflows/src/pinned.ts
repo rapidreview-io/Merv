@@ -1,4 +1,4 @@
-import { canonical, check } from '@merv/contracts';
+import { canonical, check, digest, now } from '@merv/contracts';
 import type {
   Sql,
   WorkflowDefinition,
@@ -107,62 +107,75 @@ export class PinnedContracts {
   }
 }
 
-/** A version pins its success states on first registration, their absence included. */
-export async function persistSuccess(
+/** Writes one pinned row, once: a later registration must bring the same value. */
+async function pin(
   sql: Sql,
-  definition: WorkflowDefinition,
-  success?: string[],
+  table: string,
+  key: Record<string, string | number>,
+  [column, value]: [string, string],
+  rest: Record<string, string>,
+  what: string,
 ): Promise<void> {
-  const encoded = canonical(success === undefined ? null : [...success].sort());
-  const existing = await sql.get<{ success_json: string }>(
-    'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
-    definition.name,
-    definition.version,
+  const existing = await sql.get<{ value: string }>(
+    `SELECT ${column} AS value FROM ${table} WHERE ${Object.keys(key)
+      .map((name) => `${name}=?`)
+      .join(' AND ')}`,
+    ...Object.values(key),
   );
   check(
-    !existing || existing.success_json === encoded,
+    !existing || existing.value === value,
     'workflow_version_conflict',
-    `${definition.name}@${definition.version} success states changed; publish a new version`,
+    `${what} changed; publish a new version`,
     409,
   );
-  if (!existing)
-    await sql.run(
-      'INSERT INTO wf_success_states (workflow,version,success_json) VALUES (?,?,?)',
-      definition.name,
-      definition.version,
-      encoded,
-    );
+  if (existing) return;
+  const row = { ...key, [column]: value, ...rest };
+  await sql.run(
+    `INSERT INTO ${table} (${Object.keys(row).join(',')}) VALUES (${Object.keys(row)
+      .map(() => '?')
+      .join(',')})`,
+    ...Object.values(row),
+  );
 }
 
-/** Null is a pinned declaration too: omission must never restore dynamic dispatch grants. */
-export async function persistExecution(
+/**
+ * Pins a version on its first registration: its definition, its success states (their absence
+ * included), and each nonterminal state's execution manifest, where null is pinned too, so that
+ * omission never restores dynamic dispatch grants.
+ */
+export async function persistContract(
   sql: Sql,
   definition: WorkflowDefinition,
   policy?: WorkflowPolicy,
 ): Promise<void> {
+  const { name, version } = definition;
+  const at = `${name}@${version}`;
+  await pin(
+    sql,
+    'wf_definitions',
+    { name, version },
+    ['fingerprint', digest(definition)],
+    { definition_json: canonical(definition), created_at: now() },
+    at,
+  );
+  const success = policy?.successStates;
+  await pin(
+    sql,
+    'wf_success_states',
+    { workflow: name, version },
+    ['success_json', canonical(success === undefined ? null : [...success].sort())],
+    {},
+    `${at} success states`,
+  );
   for (const state of definition.states.filter((state) => !definition.terminal.includes(state))) {
     const manifest = policy?.assignments?.find((rule) => rule.state === state)?.execution ?? null;
-    const hash = executionFingerprint(manifest);
-    const previous = await sql.get<{ fingerprint: string }>(
-      'SELECT fingerprint FROM wf_execution_policies WHERE workflow=? AND version=? AND state=?',
-      definition.name,
-      definition.version,
-      state,
+    await pin(
+      sql,
+      'wf_execution_policies',
+      { workflow: name, version, state },
+      ['fingerprint', executionFingerprint(manifest)],
+      { manifest_json: canonical(manifest) },
+      `Execution policy for ${at}/${state}`,
     );
-    check(
-      !previous || previous.fingerprint === hash,
-      'workflow_version_conflict',
-      `Execution policy for ${definition.name}@${definition.version}/${state} changed; publish a new version`,
-      409,
-    );
-    if (!previous)
-      await sql.run(
-        'INSERT INTO wf_execution_policies(workflow,version,state,fingerprint,manifest_json) VALUES(?,?,?,?,?)',
-        definition.name,
-        definition.version,
-        state,
-        hash,
-        canonical(manifest),
-      );
   }
 }
