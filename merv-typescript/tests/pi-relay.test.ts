@@ -4,6 +4,9 @@ import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ApiServer } from '../packages/api/src/http.js';
+import type { Tools } from '../packages/api/src/types.js';
+import type { Scope } from '@merv/contracts';
 import {
   piModelRelay,
   type PiRelayConfig,
@@ -979,4 +982,54 @@ test('streams complete SSE frames incrementally but sanitizes upstream SSE error
   }
   assert.match(rest, /relay_interrupted/);
   assert.doesNotMatch(rest, /private provider details/);
+});
+
+test('API shutdown ends an open relay stream after its drain window, as a disconnect', async (t) => {
+  const failures: PiRelayFailureRecord[] = [];
+  const signals: AbortSignal[] = [];
+  const api = new ApiServer({} as Scope, {} as Tools, { drainMs: 200 });
+  const unmount = api.mountModelRelay(
+    '/pi-model',
+    piModelRelay({
+      enabled: true,
+      models: [{ id: 'test-model', effort: 'none' }],
+      providerKey: () => 'private-provider-key',
+      authority: { authorize: async () => grant(), validate: async () => {} },
+      fetchImpl: async (_url, init) => {
+        signals.push(init!.signal!);
+        return new Response(
+          new ReadableStream({
+            start(stream) {
+              stream.enqueue(new TextEncoder().encode('data: first\n\n'));
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      },
+      onFailure: (record) => {
+        failures.push(record);
+      },
+    }),
+  );
+  t.after(unmount);
+  const url = await api.start();
+  const response = await fetch(`${url}/pi-model/responses`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const reader = response.body!.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
+  const started = Date.now();
+  await api.stop();
+  assert.ok(Date.now() - started < 1000, `stop() took ${Date.now() - started} ms`);
+  await assert.rejects(async () => {
+    while (!(await reader.read()).done);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(signals[0]?.aborted, true);
+  assert.deepEqual(
+    failures.map(({ code }) => code),
+    ['disconnected'],
+  );
 });

@@ -857,3 +857,286 @@ for (const endpoint of ['http', 'mcp'] as const) {
     );
   });
 }
+
+/** Stops `api` or reports that it hung, so a regression cannot hang the runner. */
+async function stopWithin(api: ApiServer, ms: number): Promise<number> {
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      api.stop().then(() => 'stopped'),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve('hung'), ms);
+      }),
+    ]);
+    assert.equal(result, 'stopped', `stop() must finish within ${ms} ms`);
+  } finally {
+    clearTimeout(timer);
+  }
+  return Date.now() - started;
+}
+
+/** Captures the API's stderr lines while `fn` runs. */
+async function stderrOf(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    lines.push(...String(chunk).split('\n').filter(Boolean));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = write;
+  }
+  return lines.filter((line) => line.includes('"api_error"'));
+}
+
+test('a result that cannot be serialized answers 500 once, logs no message, and never hangs shutdown', async () => {
+  const { scope, tools } = fixture();
+  tools.register({
+    name: 'big',
+    description: 'Returns a value JSON cannot hold',
+    inputSchema: z.object({}).strict(),
+    handler: () => ({ n: 1n }),
+  });
+  tools.register({
+    name: 'broken',
+    description: 'Fails with a database-shaped cause',
+    inputSchema: z.object({}).strict(),
+    handler: () => {
+      throw Object.assign(new Error('password=hunter2'), {
+        cause: { sqlstate: 1n, table: 'secrets', constraint: { toString: () => 'pk' } },
+      });
+    },
+  });
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  const post = (name: string) =>
+    fetch(`${url}/tools/${name}`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer alice-token', 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(2000),
+    });
+  let responses: Response[] = [];
+  const logged = await stderrOf(async () => {
+    responses = [await post('big'), await post('broken')];
+  });
+  for (const response of responses) {
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), {
+      error: { code: 'internal_error', message: 'Internal server error' },
+    });
+  }
+  assert.equal(logged.length, 2);
+  assert.ok(logged.every((line) => !line.includes('password')));
+  const failure = JSON.parse(logged[1]!);
+  assert.equal(failure.where, 'POST /tools/broken');
+  assert.deepEqual(
+    [failure.status, failure.code, failure.name, failure.sqlstate, failure.table],
+    [500, 'internal_error', 'Error', '1', 'secrets'],
+  );
+  assert.equal(failure.constraint, 'pk');
+  assert.ok(failure.at.length > 0 && failure.at.length <= 3);
+  await stopWithin(api, 1000);
+  await tools.close();
+});
+
+test('a response that fails after its head resets the connection', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  api.mount('/partial', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.write('started');
+    throw new Error('failed mid-response');
+  });
+  const url = await api.start();
+  const logged = await stderrOf(async () => {
+    const response = await fetch(`${url}/partial`, { signal: AbortSignal.timeout(2000) });
+    assert.equal(response.status, 200);
+    await assert.rejects(response.text(), (error: Error) => error.name !== 'TimeoutError');
+  });
+  assert.equal(logged.length, 1);
+  await stopWithin(api, 1000);
+  await tools.close();
+});
+
+test('stop() lets a written response reach a slow reader whole', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  const payload = Buffer.alloc(4 * 1024 * 1024, 7);
+  let returned!: () => void;
+  const handled = new Promise<void>((resolve) => {
+    returned = resolve;
+  });
+  api.mount('/large', (_req, res) => {
+    res.writeHead(200, { 'content-length': payload.length });
+    res.end(payload);
+    returned();
+  });
+  const url = await api.start();
+  const received = new Promise<number>((resolve, reject) => {
+    httpRequest(`${url}/large`, (response) => {
+      response.pause();
+      let size = 0;
+      // Start reading only once shutdown has begun, well after the handler returned.
+      setTimeout(() => {
+        response.on('data', (chunk: Buffer) => (size += chunk.length));
+        response.once('end', () => resolve(size));
+        response.once('error', reject);
+        response.resume();
+      }, 200);
+    })
+      .on('error', reject)
+      .end();
+  });
+  await handled;
+  const stopping = stopWithin(api, 5000);
+  assert.equal(await received, payload.length);
+  await stopping;
+  await tools.close();
+});
+
+test('stop() cuts a response that never ends after drainMs', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools, { drainMs: 200 });
+  let opened!: () => void;
+  const streaming = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  let ended = false;
+  api.mount('/stream', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: open\n\n');
+    opened();
+    // A stream ends when its response closes, as the relay and conversation streams do.
+    return new Promise<void>((resolve) =>
+      res.once('close', () => {
+        ended = true;
+        resolve();
+      }),
+    );
+  });
+  const url = await api.start();
+  const response = await fetch(`${url}/stream`);
+  await streaming;
+  const elapsed = await stopWithin(api, 2000);
+  assert.ok(elapsed < 1000, `stop() took ${elapsed} ms`);
+  assert.equal(ended, true);
+  await assert.rejects(response.text());
+  await tools.close();
+});
+
+test('stop() closes a keep-alive connection as soon as its request completes', async () => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  let started!: () => void;
+  const inFlight = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  api.mount('/slow', async (_req, res) => {
+    started();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    res.end('done');
+  });
+  const url = await api.start();
+  // Open the keep-alive connection with one request first, then reuse it.
+  await (await fetch(`${url}/health`)).text();
+  const response = fetch(`${url}/slow`).then(async (answer) => {
+    const text = await answer.text();
+    return { text, at: Date.now() };
+  });
+  await inFlight;
+  const stopping = api.stop().then(() => Date.now());
+  const { text, at } = await response;
+  assert.equal(text, 'done');
+  const stoppedAt = await stopping;
+  assert.ok(stoppedAt - at < 1000, `stop() finished ${stoppedAt - at} ms after the response`);
+  await tools.close();
+});
+
+test('MCP tools/list failures are JSON-RPC errors without internal text', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const list = async () =>
+    (
+      await fetch(`${url}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer alice-token',
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      })
+    ).json() as Promise<{ error: { code: number; message: string; data?: unknown } }>;
+  const describe = t.mock.method(tools, 'describe', async () => {
+    throw new Error('connect ECONNREFUSED password=x');
+  });
+  let internal!: Awaited<ReturnType<typeof list>>;
+  const logged = await stderrOf(async () => {
+    internal = await list();
+  });
+  assert.equal(internal.error.code, -32603);
+  assert.equal(internal.error.message, 'Internal server error');
+  assert.equal(logged.length, 1);
+  assert.ok(!logged[0]!.includes('password'));
+  assert.equal(JSON.parse(logged[0]!).where, 'mcp');
+  describe.mock.mockImplementation(async () => {
+    throw new MervError('forbidden', 'Project access denied', 403);
+  });
+  const forbidden = await list();
+  assert.equal(forbidden.error.code, -32600);
+  assert.deepEqual(forbidden.error.data, { code: 'forbidden', message: 'Project access denied' });
+});
+
+test('a 401 names its Bearer scheme, and JSON bodies accept any media-type case', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const refused = await fetch(`${url}/tools`);
+  assert.equal(refused.status, 401);
+  assert.equal(refused.headers.get('www-authenticate'), 'Bearer');
+  assert.equal((await fetch(`${url}/health`)).headers.get('www-authenticate'), null);
+  const accepted = await fetch(`${url}/tools/echo`, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer alice-token',
+      'content-type': 'Application/JSON; charset=utf-8',
+    },
+    body: JSON.stringify({ message: 'hi' }),
+  });
+  assert.equal(accepted.status, 200);
+});
+
+test('mounted GETs run outside the read snapshot', async (t) => {
+  const { scope, tools } = fixture();
+  let snapshots = 0;
+  const api = new ApiServer(scope, tools, {
+    snapshot: (fn) => {
+      snapshots++;
+      return fn();
+    },
+  });
+  api.mount('/static', (_req, res) => void res.end('asset'));
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  assert.equal(await (await fetch(`${url}/static/app.js`)).text(), 'asset');
+  assert.equal(snapshots, 0);
+  const listed = await fetch(`${url}/tools`, { headers: { authorization: 'Bearer alice-token' } });
+  assert.equal(listed.status, 200);
+  assert.equal(snapshots, 1);
+});
