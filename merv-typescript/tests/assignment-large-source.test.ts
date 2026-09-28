@@ -47,3 +47,62 @@ test('an assignment may pin a large artifact, whose bytes live in object storage
   const packet = await buildAssignment(rule, context);
   assert.equal(packet.context?.sources[0]?.objectId, 'obj_rows');
 });
+
+test('an assignment may carry narrowed context sources, still fenced to the project', async () => {
+  const packet = (sources: unknown[]) => {
+    const body = {
+      projectId: 'project_a',
+      actorId: 'actor_reviewer',
+      type: 'task.review',
+      typeVersion: 5,
+      recipeHash: 'b'.repeat(64),
+      subject: { id: 'wf_task', revision: 1 },
+      prompt: 'Review the retained archive.',
+      sources,
+      omitted: [],
+    };
+    return {
+      build: async () => ({
+        role: 'reviewer',
+        label: 'Task: in_review',
+        brief: 'Review the retained archive.',
+        references: [],
+        handoff: { instruction: 'Claim the review.', tools: ['review.start'] },
+        execution: { readOnly: true, tools: [] },
+        context: { ...body, hash: digest(body) },
+      }),
+    } as unknown as WorkflowAssignmentRule;
+  };
+  const context = {
+    caller: { projectId: 'project_a', actorId: 'actor_reviewer' },
+    snapshot: { id: 'wf_task', revision: 1 },
+  } as unknown as WorkflowCheckContext;
+  const narrowed = {
+    id: 'art_large',
+    title: 'cities1000.zip',
+    mediaType: 'application/zip',
+    hash: 'a'.repeat(64),
+    size: 11_051_618,
+  };
+  assert.deepEqual((await buildAssignment(packet([narrowed]), context)).context?.sources, [
+    narrowed,
+  ]);
+  await assert.rejects(
+    buildAssignment(packet([{ ...narrowed, createdBy: 'actor_producer' }]), context),
+    { code: 'invalid_workflow_policy' },
+  );
+  await assert.rejects(
+    buildAssignment(
+      packet([
+        {
+          ...narrowed,
+          projectId: 'project_b',
+          createdBy: 'actor_producer',
+          createdAt: '2026-09-25T23:26:08.778Z',
+        },
+      ]),
+      context,
+    ),
+    { code: 'invalid_workflow_policy' },
+  );
+});
