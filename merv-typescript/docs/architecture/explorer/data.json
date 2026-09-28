@@ -173,7 +173,7 @@
         },
         {
           "name": "artifact.read",
-          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.",
           "readOnly": true
         },
         {
@@ -183,7 +183,7 @@
         },
         {
           "name": "artifact.upload_begin",
-          "description": "Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "description": "Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
           "readOnly": false
         },
         {
@@ -255,7 +255,7 @@
         },
         {
           "name": "artifact.read",
-          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it.",
+          "description": "Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.",
           "readOnly": true
         },
         {
@@ -265,7 +265,7 @@
         },
         {
           "name": "artifact.upload_begin",
-          "description": "Begin a project large-file upload. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "description": "Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
           "readOnly": false
         },
         {
@@ -635,7 +635,7 @@
         },
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Attached JSON or Markdown evidence must be valid UTF-8 and at most 64,000 bytes; compact JSON before upload without dropping run-level evidence. Larger supplementary files can remain standalone artifacts. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
@@ -700,7 +700,7 @@
         },
         {
           "name": "experiment.attach",
-          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
+          "description": "Associate a retained artifact with this experiment at the exact current attemptIndex and expectedRevision. Attached JSON or Markdown evidence must be valid UTF-8 and at most 64,000 bytes; compact JSON before upload without dropping run-level evidence. Larger supplementary files can remain standalone artifacts. Artifact retention itself does not require joining or claiming an experiment; use artifact.create to save project evidence independently. An unleased experiment accepts association from its owner or a project administrator without a worker session. While a worker holds the experiment lease, only that worker may associate evidence. During planning use role plan, and role feasibility for the one JSON feasibility statement a design is submitted with: {formatVersion:1, resources:[{kind: data|compute|time, name, unit, required, available, basis}], dependencies:[{name, present, basis}], blockers:[]}, with at least one data resource and every basis naming the record the number was measured from. During execution use result or report. Selecting what the report covers is the authorship; do not hide known rework. A new version replaces the logical role/path slot while preserving earlier evidence. The associating actor must own the evidence or have the exact frozen recovery input. Results explicitly distinguish JSON from qualitative evidence. The metrics exhibit is system-generated.",
           "readOnly": false
         },
         {
@@ -1025,7 +1025,7 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read all project tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read all project tasks and experiments, including terminal work, as metadata. Its tasks array is the same record list returned by task.list. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
@@ -1055,7 +1055,7 @@
       "exposedTools": [
         {
           "name": "project.records",
-          "description": "Read all project tasks and experiments, including terminal work, as metadata. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
+          "description": "Read all project tasks and experiments, including terminal work, as metadata. Its tasks array is the same record list returned by task.list. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.",
           "readOnly": true
         },
         {
@@ -1614,7 +1614,7 @@
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Before a long hosted cycle, read code.status for known publication blockers and tell the operator about any repository automation or canary setup it needs; research can proceed while publication waits, and only the operator can attest a canary. This preflight does not verify live GitHub rules. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -1674,7 +1674,7 @@
         },
         {
           "name": "research.create",
-          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
+          "description": "Start an outer research cycle around selected existing workflow IDs. It coordinates project definition, research and reflection; after reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is integrated by one consolidation task and published to main, and the cycle completes once main holds it. Before a long hosted cycle, read code.status for known publication blockers and tell the operator about any repository automation or canary setup it needs; research can proceed while publication waits, and only the operator can attest a canary. This preflight does not verify live GitHub rules. Name a complete, abandoned or failed cycle as previousCycleId to follow it: its digest of what was decided is composed if missing and handed to this cycle's reflection, and a cycle is followed by at most one other. Paper edits are reviewed within scientific workflows. Set automatic: true to advance on completion events and create approved next waves without manual advances; maxCycles bounds the run (default 10). Failed and abandoned work still reaches reflection.",
           "readOnly": false
         },
         {
@@ -1947,7 +1947,7 @@
       "exposedTools": [
         {
           "name": "actor.create",
-          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor.",
+          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor. Nothing you create can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
           "readOnly": false
         },
         {
@@ -1957,7 +1957,7 @@
         },
         {
           "name": "actor.issue_token",
-          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.",
+          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Nothing you issue can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
           "readOnly": false
         },
         {
@@ -1977,7 +1977,7 @@
         },
         {
           "name": "actor.rotate_token",
-          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.",
+          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline, and never beyond the deadline of the credential authenticating it.",
           "readOnly": false
         },
         {
@@ -1987,7 +1987,7 @@
         },
         {
           "name": "project.context.update",
-          "description": "Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
           "readOnly": false
         },
         {
@@ -2017,7 +2017,7 @@
       "exposedTools": [
         {
           "name": "actor.create",
-          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor.",
+          "description": "Operator: create an actor and its first project-bound token. Return this token only to that actor. Nothing you create can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
           "readOnly": false
         },
         {
@@ -2027,7 +2027,7 @@
         },
         {
           "name": "actor.issue_token",
-          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Self-issued credentials cannot outlive the authenticating credential.",
+          "description": "Operator: issue an additional project-bound token for an existing actor, returning its secret once. Existing credentials stay valid. For your own rotation, verify this new token works before revoking the old one. Nothing you issue can outlive the credential authenticating you; an omitted expiresAt inherits its deadline.",
           "readOnly": false
         },
         {
@@ -2047,7 +2047,7 @@
         },
         {
           "name": "actor.rotate_token",
-          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline.",
+          "description": "Operator: replace a project-bound actor token without changing its identity or work. To replace the token authenticating this request, use actor.issue_token followed by actor.revoke_token. Supply the old credentialId; it is revoked atomically and can only be rotated once. The new token is returned once. Omitted expiresAt preserves the old deadline. Only another actor’s operator may extend or remove a finite deadline, and never beyond the deadline of the credential authenticating it.",
           "readOnly": false
         },
         {
@@ -2057,7 +2057,7 @@
         },
         {
           "name": "project.context.update",
-          "description": "Replace the project Introduction using its exact previously read summary. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
           "readOnly": false
         },
         {
@@ -2157,7 +2157,7 @@
         },
         {
           "name": "system.status",
-          "description": "Read this project’s automatic dispatch state, Fleet allocations when Fleet is installed, runners, sessions, caller-admissible waiting work and blockers. The server checks project access; blockers include work whose workspace driver cannot run on available machines.",
+          "description": "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session and model-budget wait status.",
           "readOnly": true
         },
         {
@@ -2237,7 +2237,7 @@
         },
         {
           "name": "system.status",
-          "description": "Read this project’s automatic dispatch state, Fleet allocations when Fleet is installed, runners, sessions, caller-admissible waiting work and blockers. The server checks project access; blockers include work whose workspace driver cannot run on available machines.",
+          "description": "Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session and model-budget wait status.",
           "readOnly": true
         },
         {
