@@ -1,0 +1,3946 @@
+{
+  "note": "Golden pins for tests/context-golden.test.ts: per registered context recipe name@version and canonical case, the sha256 digest of the rendered prompt, the omitted units and the source artifact IDs, or the error code the case fails with. A name@version prompt is immutable in practice, so a change here that alters a prompt which renders today needs a new recipe version or the owner's sign-off, recorded in signoffs with its date and the plan step. Entries that only change a former error into a render are the class-B changes the plan names. The legacy and ranked cases retire with the frozen renderers.",
+  "signoffs": [],
+  "recipes": {
+    "experiment.attempt_review@10": {
+      "text": {
+        "prompt": "b70feb2fde112cf5a497705efb9f42a9f994badf6a6593c0cbf9b7f69f4eaff6",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "81fabb7b39e3ebe93c5bd5b9b97363c95e82334baf15155c10eeb73972b58ccc",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "6b6f0830c198bdf90fbb852827b16a06e63e41dd285cff6a047339f948801d50",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "3618ae7102fd8ba3f30115858ade28170414a85094696a0dcb15321bcbc5559e",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "a4e7ba02fedaffa485e178e3cf9213def0d1d673c8bd7cfcefc989d97fbdf6b7",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "dd25a28d1afeb32071e76397a751507217605f1dd70703fa4ae1c10411bebf56",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "216180c481f55130cbd2cbb584d951085ae906400d303f7c3e06dd014b19769d",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "c658dc50f2d83d0b0c7a2c5a26ad8fadd2205bacbab62dc74c34c6edf1f24caa",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "b3644140cf870d8e07e0b6ec00191903f20a0b7b94baac0eb11c6cbaa77af688",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "5a318b9fdd074cae6605562791b41e7e9bc861ec3a6372da17d87bdc6f897d54",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "f9864844d06a820dbe5cdccce4b9feaf2267710cb890ef56bac4f93f06f5a95e",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "6d3f6d2231c453abef5783ea92593c1218ab4984daed463f2a50f5fef573f13e",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "7e9783f8b2d7379adc5b7c349c5b12c42bebd3e8aa3fd7c3b06fb90d5f5df098",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.attempt_review@11": {
+      "text": {
+        "prompt": "c6f13bff493eb26d2fa5cdffe318993c666f7314defcb26808f3bbfd0e47f747",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "f5c41b1a3ff34368ab4f431996b9fa26bb906cee44c3150eb72adedb79a757f9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "f5c41b1a3ff34368ab4f431996b9fa26bb906cee44c3150eb72adedb79a757f9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "0ec4361da12de2e5f45d0ca739fec4492d0969632c5b28ef9658d93d8e152d76",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "6886a795314c8cfd51702dbe84529694cdf8ff3090d87de2535a53dece5f70dd",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "f3c65a0bea0cfa89b6f2ae3b251fe2bb269b57a16437d0b63cd846177931b269",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "e852f14736503e8cdcc4af9b7f894622752bdfbcfa0d93b07b20d16ec1bae0df",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "abe30fe32a4faad24ac8286435a6247644b8ecc45b9efc55249345e6d1e3fc77",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "26d42e041437ea94f602ac445d1f3c011b2745090a2e3bb934022b49f0ac9189",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "59a956737fe3257cc789d5d431966bd39698f4ae85da6cf58f9947cee759f0f8",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "079c923bbfda77aa582975b08502333e13f2ffa0d083b75e04d3cdbf824be77f",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "87ac0f318b898d228dd26278b668f0cac0c87a58dec31372a14e94c25f25ce26",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "2dee791451420ac52ebce17291fe777078cc47d7f5587e89edba3555d3dc3f50",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "exhibitReference:png",
+          "exhibitReference:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "70cbd04d95672a967d35c53f86194a451c976c993b43570526436599bc1a14fe",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "02a005ef67ab8ee5890decbc2a21970bfbef9f79311cefff5171409d7ae0321b",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "9bdcaf7b49823b4ba8430b442ef921251441f1481d59c3728b7e87d6949d7941",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "504eb49b9904a5c2069ba555e3625226a9a168011a40e397ad466743ee27f494",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.attempt_review@9": {
+      "text": {
+        "prompt": "b70feb2fde112cf5a497705efb9f42a9f994badf6a6593c0cbf9b7f69f4eaff6",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "5d939377cb225b854258c1c0208fdc913516348708212323fa0f4f97f77eb466",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "81fabb7b39e3ebe93c5bd5b9b97363c95e82334baf15155c10eeb73972b58ccc",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "0beeff31955fa8b4a094a393767114eb5b2ec8fde0a700e4b5693b913c3e4e4d",
+        "omitted": ["feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "6b6f0830c198bdf90fbb852827b16a06e63e41dd285cff6a047339f948801d50",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "3618ae7102fd8ba3f30115858ade28170414a85094696a0dcb15321bcbc5559e",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "a4e7ba02fedaffa485e178e3cf9213def0d1d673c8bd7cfcefc989d97fbdf6b7",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "dd25a28d1afeb32071e76397a751507217605f1dd70703fa4ae1c10411bebf56",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "216180c481f55130cbd2cbb584d951085ae906400d303f7c3e06dd014b19769d",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "c658dc50f2d83d0b0c7a2c5a26ad8fadd2205bacbab62dc74c34c6edf1f24caa",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "b3644140cf870d8e07e0b6ec00191903f20a0b7b94baac0eb11c6cbaa77af688",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "5a318b9fdd074cae6605562791b41e7e9bc861ec3a6372da17d87bdc6f897d54",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "f9864844d06a820dbe5cdccce4b9feaf2267710cb890ef56bac4f93f06f5a95e",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "6d3f6d2231c453abef5783ea92593c1218ab4984daed463f2a50f5fef573f13e",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "7e9783f8b2d7379adc5b7c349c5b12c42bebd3e8aa3fd7c3b06fb90d5f5df098",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "b9870d718e4c302a71744ffbd3dd0a95472f4029ea04e4dcc89b7ee09a4213bb",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.design_review@10": {
+      "text": {
+        "prompt": "720ef930df2fef981372a50fc02715cf84e3d7acdaabc374b13f97f639f07974",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "b5f68d07e2a127ba144eaf58e6607aeaed4114fab92cdb5b86c6d64f3a69d1f2",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "b5f68d07e2a127ba144eaf58e6607aeaed4114fab92cdb5b86c6d64f3a69d1f2",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "030f270f36a449c76473b9b586bd4f6dc4380061fe8a6a0aac8544d7cb01d18a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "dbaef3fcb67beff50acc67087bf4afcf1bd7043d7065654dad6166342b99dc39",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "28908339e7aeb1e1f7ef33831087d10a15f9156ba7d762b226a884b766dd8a7d",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "5292987b93559ccf33b00a4384b1b6ec890b490de836020cc3af0a4284dba70a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "fbc7f6ffef97cc1d746d0596ab5cdeecaa9a6099da1cb8d280f1f13cc6b2f012",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "2af03756af59a03a39386450c01ccb443d071a7d84c770ae2055f2959b38cfb6",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "fc319e8f4b4e64a121a73500d448c30cc7e503446860a425057b84958acb7009",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "d633bd47a3ddf47db90f552e338bcef96e85c22040bc9d70e20cbbc763f9b22c",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "bf51f6df7fc90faec33f2d4d26cf58a64a00a83fdaa5485ebe9923365093c59a",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "807b49cd704db14e5fe56d1e8605bacdb31607b70689adf25ebe93ec5736d1fb",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "b7d0d03576de592533cec0e8fe29ebab02afef7fa4f666e9ab48d59df8bd7c5f",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "712c34faeb785648008ac78284d9ab9003ebddac43aa19b3c46121a68675060e",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "332847a0ad761d36289688a874e5b3a2b2d01d6e805342c9b3fbc048ac4fe962",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "fed17ceb54223489e13714d78655faced09d6e12c257b38fe5406f81c86f59f0",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.design_review@9": {
+      "text": {
+        "prompt": "6ea7b143ca3b035b0abc63822acaefcd8cccb2c81c23914cc3c86fa7b5f218b5",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "4b8e1de953bce1965c6b382a673663d03d563e9235d323fbda4a53c2f002691a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "4b8e1de953bce1965c6b382a673663d03d563e9235d323fbda4a53c2f002691a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "6bfaf27455558f5c8bb09f92b64b87247592b8a55b4de78f7fe5499ff3960989",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "7e22fb7954a71286a0a217d392b0936a0d2fdf3f0173c7e580f4adad4bfaf9af",
+        "omitted": ["approvedPlan", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "75bc42a17826936c82f78d62a2282dc10d707e3c88d97177a8e1d5d24738339e",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "9312b8030b70b34cf451e08f24042a7d3604b3d250559c95531b09932a8907fb",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "4e36eda7a26b50e779d4be83bb301d45577b33497109e07137f493562c711438",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "0f035900ebcaf9d3d661dbdffbb275479e8e29f624190a3039a8cbc149f05453",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "097726232d28b957805fc357e27841c395a2ca808ac282bd4799bcfa149dcb14",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "77d560b311506df24ea8cf9133299f14ced761f7a533f50f4cf471100d6f028d",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "220372dfc6f183c8cc8c3ad7a1f296cbb40cf26a22a650587b4a4bb219dcd102",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "fe337c126c86da031eb9fff2a762b85ce38de7e7723016454ab2598153eaf3f4",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "b88a9ff1e0f933f353174cff42ec943b11c6b29748e551d6ffc73cf68ee63c2f",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "6c4f62188c0ee1ab5112b00c79fa491a57ae24a731a59d79b7fff3add99be4e4",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "23778325103b0c8dd8ed8844fb825f7800167768f9115f462d535970d911d4fc",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "c7ea7db795cf44039fff7a95f1805ab0e4f6b1d82099789d77eafe9547249387",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.design@10": {
+      "text": {
+        "prompt": "4943155c3d876b222715f9113b32f33c38e475e7d232b4a992c87c6c1f76348a",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "9753c9e7dab2b8d7729172bcbbc5283b5f7b24bd31550b14d865f1209243594b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "9753c9e7dab2b8d7729172bcbbc5283b5f7b24bd31550b14d865f1209243594b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "412d48a608d82303e80f0cf21901cccef267717dac92f2aa2d2eca3f9117494f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "24833e9e2d971193f82d53441d71d7ded3191bc0834e691f7a13d8c29b6ddfae",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "9b216e074d956a55321300416038dd41dfe107f82eb591cc2f8d92e75d64ac58",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "b85ac2576daf25ffb16ddac6468e95eaa7dc575605c075f48972665b83b47f5d",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "e4e2089b9cd00e99bf12671454ecfd0a29eb80e400c8717e4628b4286a4c16c6",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "a7dcfb56749cf55767980f91a25a1df651a2b04544022e39d0ab25fc9ba3024e",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "6b1c0fd2302afcaeed8a38cfe23905f1105b8a462be2f5059f6c37b00fd09c76",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "aebbe09cd946834709115dd6361d326c1ef8dd66e7151726a2cb672c0e00527a",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "44c6a329d096c67e3e56dc1d64325f321aad6960de5921e13a6409d5641f7adf",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "160d0f23a7e6d36a324073c5911f854d8af23540bd45fbb4097e85737502aadc",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "0c517a1e59567fb877114ea78b3f50d21ac7e6bf0a5f6dab0e26704fc0a30832",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "83c2370d5b2e18ad6f94b22f04bc909ca89d6dc4f1abaf4791016ec1fa75b7db",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "ccb23ee3edf3fc5d8eaa5185a9b528ab3ea3d60862b62e6bff5212c42c30ab58",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "a8ac4b0b71e7bc8e9e09f0751bf5869d3c7dc33370e27860c6abfc315024394d",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.design@9": {
+      "text": {
+        "prompt": "634f96ebdc9fe1c402c4f18f1519a5da8e31094fd793e219d0d77696d0875d52",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "8f017608cddde2be4a762c33501dcf38c38061157ba7537abd7bf26954a7598f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "8f017608cddde2be4a762c33501dcf38c38061157ba7537abd7bf26954a7598f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "a5281837d7f0cf9d91295cbd88a065562d21d06e06da6a5c4b40d975d08cc815",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "c72577683eb84ec3c6a12f337ffc1379cb9cc98a4ef9f4ac5a14e24a02f192b2",
+        "omitted": ["approvedPlan", "assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "a1e8b030fe0fceebe904b7eac6fcd95ac3ccf6b7b0e8c83cd3e82a800eb65527",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "2cff9258cf1a284f17e6afe320ff0beaf69a9bd7df635e50f42359370b455c30",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "c4aad75d7c0110a3241115daed0378cf124a8d1b371356151b8924b807325516",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "2ba42318daf0fd4fbfd044e53b300c120747b0cb22490ff359e5c61a4702eee9",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "c5ffe8f66891538c107a0aa6c8009ddcf202e8a04c4358829c24917ee1785a5d",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "5068b131c9ba2d602f15aee6b11302c97bbc2cf83a5f36d9d3de16d824cc0527",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "99be47d056e5a3cd590fd192ac07de81985eb3e5b6aaadb93204cedf4d4ac4b3",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "b843b24f24114fd7f08474b9c8f807c224a8731ae27dfda644f213b4e02887b8",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "f899116cc358d2898618c0dad210cbdfcafdca07f1ee65683198187cc78004ae",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "00f76d6970519d971ba4f1476f49ec4dc5ed8d4cb888b1109ba9f90c21c917de",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "87874d0c383a3b0a47937ed38f329f01cf50485ceeb11b6604aa9cf2a13f25df",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "46a066bb9a661e8b85703d1badc0d551ef46b42440cfb39215172c71875bb920",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.execute@10": {
+      "text": {
+        "prompt": "7c153b0b96efcb8652f9c7e5116a9812939abb0d38e7ab5a7e08b50e52025b46",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "64c619ab9f66dad000d4993797a67bef0d441ddda4ab1608bab080a40b28cb6b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "2d35441786b06b4daf5c8888a18efda03372e3cba8df832820fdd14ea2a1f007",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "375f5f142d49c169f868a0cc5749e0e6148dccbf07d833bf2c9b46d177a37565",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "506d0e11842caec3df22dbad9856224c2fc65cdd3149943994bd72148fefe957",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "df30a7686e2e6f9194cde83bf204eeb4bc0efdc446afce114b7f41c3d525d18b",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "fd3235dfe7a8bc700552a9aa416dfcf64059b4078a92e577e8b7959b7d110c60",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "976195bddefaf16b21f3837e709c0c77db519edea3b069aaf1a3eeb3e23061e7",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "8936f6ba72d593c4c64b1e7b0a28a5e343f2dd20fd8c4ac3154307c3bcbfaf03",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "664c38156a02a1a0074fac8c31eb4e4a911073958b59b9c111625dc5eebe2837",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "6f1a33feb7b1fd7c9b1f80108699c38586057947d73682aa9571b39510ee0347",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "cf1d490249a546966f2782bf88c64a080038c0eabd5519b8424367728134b8a5",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "6d6e847158e45a44d3374447be5cb7f483a47b8bd5bf7f4c756541d5078f092a",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "experiment.execute@9": {
+      "text": {
+        "prompt": "7c153b0b96efcb8652f9c7e5116a9812939abb0d38e7ab5a7e08b50e52025b46",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "43b9f7a6e9cd877d82fec04aa5cfbf54458249b9054fdb3f9c76db3b8fcf7bb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "64c619ab9f66dad000d4993797a67bef0d441ddda4ab1608bab080a40b28cb6b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "b4e6700e7de0c35bfe23e60025f98a0bd4de1455cff19970be2b3bbc76ec7c35",
+        "omitted": ["assessment", "evidence", "feedback"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "2d35441786b06b4daf5c8888a18efda03372e3cba8df832820fdd14ea2a1f007",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "375f5f142d49c169f868a0cc5749e0e6148dccbf07d833bf2c9b46d177a37565",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "506d0e11842caec3df22dbad9856224c2fc65cdd3149943994bd72148fefe957",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "references/over-optional": {
+        "prompt": "df30a7686e2e6f9194cde83bf204eeb4bc0efdc446afce114b7f41c3d525d18b",
+        "omitted": [],
+        "sources": ["artifact_golden_over_160000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "fd3235dfe7a8bc700552a9aa416dfcf64059b4078a92e577e8b7959b7d110c60",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "976195bddefaf16b21f3837e709c0c77db519edea3b069aaf1a3eeb3e23061e7",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "8936f6ba72d593c4c64b1e7b0a28a5e343f2dd20fd8c4ac3154307c3bcbfaf03",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "664c38156a02a1a0074fac8c31eb4e4a911073958b59b9c111625dc5eebe2837",
+        "omitted": [
+          "experiment:png",
+          "experiment:latin1",
+          "approvedPlan:png",
+          "approvedPlan:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "feedback:png",
+          "feedback:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "6f1a33feb7b1fd7c9b1f80108699c38586057947d73682aa9571b39510ee0347",
+        "omitted": ["experiment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "cf1d490249a546966f2782bf88c64a080038c0eabd5519b8424367728134b8a5",
+        "omitted": ["experiment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "6d6e847158e45a44d3374447be5cb7f483a47b8bd5bf7f4c756541d5078f092a",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "fc2832e4982d100bbbe0c51482e3f9a4f3359cc3d87fc0327309070f473d6c04",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "project.reflection@1": {
+      "text": {
+        "prompt": "a89b15b7636e1151bc269b736b0bfbbf3076907c9cfedb86c1b0a92cd24b2f19",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
+        "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "6364581128f8de40eb7988a14ea47c4a684555bff5aeadaf326a56e7a1d5a55a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
+        "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "6364581128f8de40eb7988a14ea47c4a684555bff5aeadaf326a56e7a1d5a55a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "7ae974014d95b72426cd56bcc8be2b4a88ed0c7debf7872fd0963e12994fad5b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "01946b32bb67df8d451e96025c44306a7850429faea5243ec8a6667f315a958f",
+        "omitted": ["previousReflection", "feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "4f6f5fe32524c9ea7fd189139a1069ae5c1183f9d6b599ed84c37faaabdc0b52",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "a27b590a8f8a38dfe37d8a59bf70035b3f527426f684cd5ebfcd5c0af51851ad",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "d6fdb8135e42cf433bdeccddffefb713b852ab354c701d0eb92c59aeef27fa48",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-optional": {
+        "prompt": "534e81e3558de652cc4fbf6cd221ad0d898ff8e377b726febaf0dd04bf4f6945",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "a82c9d3e8720562a224fda1dde4982a33e541b0945b7170ec8f4360885a02843",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "024842b50e92f112929d5c72f61fdf4f1646c9967d408a0459ed366e7bb37fdb",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "275dc4d8f7a61d8fe620449df85d2086f2481ba303eba5d755b87a29317cc6b5",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "25e7c71049c65a89ff2a4ed394460cdb1b14422cd8efb0d02fc23febf6c844eb",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "brief:png",
+          "brief:latin1",
+          "experiments:png",
+          "experiments:latin1",
+          "projectKnowledge:png",
+          "projectKnowledge:latin1",
+          "previousReflection:png",
+          "previousReflection:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "9b683bc04f5f6d2fb3b05ccad05cd23c606819fddc6e577798025cde52f83616",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "9e0377ad45f86d0643499fe5b54c37cb97bd1ddef72949f96f1de5862d2be9c4",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "b470520c1c2703fd67f26b18c7209a45a5cbd11bf24bb958b1eff910a714368f",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "ceaddbab9a998172f47d051563c4654318026cb3f83cf976ed3e44766ace3e5c",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.lens@10": {
+      "text": {
+        "prompt": "577b6bae653b3e39720d49d017acb626d8cef5fbf5c6509dbf113d96396a6c8c",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "c332ac61705779aca5128663b650d6839d59815da24b29dab79b343d90252060",
+        "omitted": [
+          "research",
+          "lenses",
+          "submission",
+          "assessment",
+          "feedback",
+          "history",
+          "previousCycle"
+        ],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "0cd42935c110be247bcd636130a24fbcc5df316562e8f4a990d34fa49625b0d1",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "c332ac61705779aca5128663b650d6839d59815da24b29dab79b343d90252060",
+        "omitted": [
+          "research",
+          "lenses",
+          "submission",
+          "assessment",
+          "feedback",
+          "history",
+          "previousCycle"
+        ],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "0cd42935c110be247bcd636130a24fbcc5df316562e8f4a990d34fa49625b0d1",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "1996f4fe7429286cedaa0fd804836a49b9979390b5cefb98380e0950aba220a4",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "c332ac61705779aca5128663b650d6839d59815da24b29dab79b343d90252060",
+        "omitted": [
+          "research",
+          "lenses",
+          "submission",
+          "assessment",
+          "feedback",
+          "history",
+          "previousCycle"
+        ],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "3624162e7fc48ff65da0622fd4ac35611e83fea564be9ead0a1192ee646710e6",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "3aa4a8751c7b95f0f3fb88ad659aace8bef6be592d85f37c784f4dc3b3c4bbb7",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "bfa58caabc9af1bb9adf91456ca3694b63be579dfa0b839a090e72f5e54db518",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "58a99c27a5026ad184b8483e4fa7fceb0dd001b790b0f5dd3c583212aa8fba7c",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "7b6cdbabbf361c8b627b33b059e6c400fee49f612cb1eb6d3eb37f5baa8b7554",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "67724bbcc27433cd5ed83f59c969f811629ad712db23352aa080f34556c5352d",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "a7e9a5e268c5ea66692c01197d2638495b535cc5b66edc1aa63300040fb3fa88",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "a52153b6c566291252113da500995cd373f6f17f304203ddba9c28ad18d82861",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "7c797eaf17052932754630b77d0801fefcf0f521fa2544fe7f537e19559f4d63",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "84e65fdf5a6fb5eced3d6a0f0373b62d0ba49559798b4d7500a5d08bd39a36ca",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "82ee0a88611d4e060c7552b50cc25bceb47bc159d96c4038f2530a4302ee1411",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "351df5c45a75e69e71675767f7ad20d5efd30f822be8d2022eb53773e410d25e",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.lens@7": {
+      "text": {
+        "prompt": "7d298c6e138bb3e9fadbc17f0346588d6d0484af509d315764359bf1c4d31b16",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "c7c6bba5de71b9fbb4332e3ae98a2208d2892470cbd4c38f645f05e9af753233",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "c7c6bba5de71b9fbb4332e3ae98a2208d2892470cbd4c38f645f05e9af753233",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "55bcf9b026c30d5e8bb7c8a6bdf57a9273c8591b6ddd3740339e4fd65d90257e",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "98ede2b5f0fb33332d6b3b62a5c7cbb5c46bbcd6685f3134f2988233fa03a039",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "e4f09817eb8bdc3316a935d6644ab8cb8ca63a2365c00f2f1794014d245ea19b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "1c0678242fa2f5ebac6cfe9fc095643488e0acfcbb10bc4602c93b1b1fddb81f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "31161016bad83afec1b4219055792a6bd135c3bb29d08e46bb3ad31d81fa26bb",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-optional": {
+        "prompt": "4c724b6b5f95947454ce896809c4c49e86ad82cf7f0a8a61f82bdf4434516aca",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "5b0834fe72738f8596150a7628eeea15eadc6f9d17874e9cef6821a18e3ae343",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "3d020648dd788d2b4dda7cc23a30931de41237ac9829580615fd38e4aaf8ff3e",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "adb7fec18d45a0a8c96942960f3cc3a8e807030262477cf77cfd5cb73b19658e",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "3cd47fb592ab4298284a288f3ec4f615438d6ba4ade6b1ec3000fa18787efc73",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "8991c249573b3e7d92161d6e025a34525dbd6a2fedcdf1d774914db85c05813f",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "c3584ec58aad018036123075a544a5b03ecd7c60b05d96fda448264b77fdb366",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "71277f0d1d1f1a6f32b3115b2c0fb41843bf6ecd7637495c4e0a770d42248772",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "b58a9de3a87a5ec9d78a7d5d606331e2c3bd85098f07d61cce922b56edce297d",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.lens@9": {
+      "text": {
+        "prompt": "646923964a746f17b94e875030044df8994812901facaa5847cc2335f6892747",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "a306bad0813fd34354fb3aebf3b1303aa80241d745c7786132b8d56c6f689218",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "a306bad0813fd34354fb3aebf3b1303aa80241d745c7786132b8d56c6f689218",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "796f52bd2f671a62b28454eba709030153bf800bd090b1ee20bf867062073a28",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "70a06fc6391cf6bb8c5ab8a43db1dd420badaffc28ee2139fafc6727927f602c",
+        "omitted": ["lenses", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "09f184ac31472aae1bc34b7d9bf8b1d0f26bfd636842c6416119935eeaedc85c",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "73c6a623586a975ba1b6650fb0434d6c62d1cc951cb5c7cc05be897ec6857035",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "a10215e3a54cd135d33bcdd0efe3688848c76588b4a015dd0f5d6597fe10bb32",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "81ca5a96d490827ba03aa748c93f33a77d3f112d7c440d5a6446d3b2748fe91f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "44cca9a0c026280497f38d4bd2259ebccfd17e0b70fb6d4d1cad43215ed7ef54",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "53b8b7ca6715cb91d7e9810710aac85fba1a5bb5351a00b48afcbadfb5713eb5",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "76629fd637472fbf26a5e40caaa619bcc8bb4ada95cfe7ed9efc9fccaf3dedc3",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "7cd5b44720c2a22e93f2f23f13047df8405c59b45ac1fd662bb0005a926c9974",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "be04eaa2c867d1a2ba8e3185b379ad0a3674883583b3f0850ecc96a6ef12bc5f",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "13b508a03f21884ce56a8d95fdff20d2d0a95ef8b1b2490134a814fa17bfab0a",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "33c9fa56af3b8101d5b8214e36d5d5f124aa64483d8c6079f42933965a166b65",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "3b7cc06339ba94d0ab357ce7c1101073c62a35c6a16e179b2c8cb809c9690ad8",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.review@10": {
+      "text": {
+        "prompt": "d1f9e3aaf0622d802c641e0e3442e794c2240e76f01ad34b1fda1d90e6a87d82",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "6c891f34941f8fc65803ce78cbc8ab0ff4cb609afb3e21bf655695a1aa403cb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "6c891f34941f8fc65803ce78cbc8ab0ff4cb609afb3e21bf655695a1aa403cb9",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "18439b62a971a89c07db1eec695c5461af496bebc1fe7ba6adf435a6f0747bb7",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "1a77f6db8465836e16a264ba3d3b0fc5ff160671e3621cd33b0ddb7bdb394f02",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "daafe49deb4077dcc0de32fcaeb38d6cefb842030ca6c017dafb502b01af6300",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "2579257cde4882f1b6850c005736d0c114153df68a0356cde4bfe2ea1058447a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "b68cbc0a14c8d9ffe4781ad79721a6354e2cc08ba1f1298850096b375c287a0b",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "ad56cfcbdb1e10b0d1c2929dce3808169d2519ce39d12f233233dcc37e57d0cf",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "f1427f3a1bbea714a8446da68a9f08e2d4869afe67f262a0e74004f8c5c7d128",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "11c427e9fcc9eafa23f1aa67118b6265fbf16964f4608872390b8be1d757fe99",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "f30fde83bab621fca0a0c6cac67bdc10d521d574774d934bbe837d238fe0d5db",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "6ac3b7613a5812c5bcebda5162cd40c783083553b8dd3cc381ed5eed718186e0",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "2592e7800202f3fd4624c8ec72be681c3c3b3b116f0e9f8352723085ea3d7b4f",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "de9f7e99068f226aa9882f475621ffe476cc27b72a2f8a4076d6903e4b7169a0",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "4644a4ee7d82bf7b4ab626fef92b73cf623cecf8add90ce005f7ca54a7731ba4",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "4bb0af578c66a667373261cec6c150994241e0f49c161b6628cc2397d3667dc3",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.review@11": {
+      "text": {
+        "prompt": "e3141d350832d446f437813f92f20b4ab3da0d98690d48223c3a42f2db03ba44",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
+        "omitted": ["research", "feedback", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "1e5ec7279a2cc53565b00124d135b2f1cbe7cc955ececb8ba7e1549c84a6495f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
+        "omitted": ["research", "feedback", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "1e5ec7279a2cc53565b00124d135b2f1cbe7cc955ececb8ba7e1549c84a6495f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "773fa518e739606c6d22790824712b94b8fad3dbdffd9c26782a69d2b77d6c69",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "15f63e8417e77b4f41e5e82cee15770dc1040a015f189dbbb7f6dcd37b8fc01e",
+        "omitted": ["research", "feedback", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "27a9b517d0941671c68e56269738544271225462dddf210c29ecb80c5539efb4",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "6b27d69e182c627b808f1b846d63b810e54747c65c0c2a48f41347220af1032c",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "e626f9fd6c2a039e96a4f251f32f341b95503767765ac677eeb94dc82dad2615",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "f70f7d8b8888ed518fb35fb1010f99bc4e0a22ea1da569696a6b822e7903f3d5",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "f0a9a2673434ff118a372f60f8f85c29430a7f5afb4c17c45db96a56ae794b88",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "0272142ab03f2a3819aae9651a77b26d7d141fd0134014b9a33d33369a468368",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "a34777e40aba76196949c959ea074f85131bf99127e80ace69b13d207136b656",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "ca50dd35ce3d12ce6b07a0052b04b21e3f7eb02c60384933a9b0a52497231523",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "72e7a1a8baec4ede9bdc0a6f312f47d4520e3c55b29feac0d9f19d1bde39a2b7",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "65183c107e94686b791b3d5070a758339df36dc7fc7bf041c0602b6ac61a101f",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "fc3d0673b0f5ca2bf559939b8d49ad8dfec5cbe5d1a784e4ef8b061cb3d585d0",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "3ffb7dfec40d295ad09089f2d89b4e3249c359742863346cfdd2785abccf874e",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.review@8": {
+      "text": {
+        "prompt": "3c7befaef385365272db04dee913b59caaa5646c19cade3b3385e26965139290",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "978edc19a64ad02dd7c886bf3d023786b767cab38299c97bfeae758029ae6a09",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "978edc19a64ad02dd7c886bf3d023786b767cab38299c97bfeae758029ae6a09",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "85b2104b95af1e55861d764dfc1bf21216ad971f570557fc1593a9528572fa00",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "17842457e0e2867f05ef93b9d43adacf96fec0b2de53653929bfb953ae65cd3f",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "287e713ba5a48e4b37a41ccf3032013c25a1ac160578e457ed47d1e6933df1e0",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "f79d4c65a443a8b504813af30a438da391cca8aa018c9962c81b2e778668e2dd",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "383f12126bebe46c926304a2a620240d377743458074dd88606882be012c20bf",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-optional": {
+        "prompt": "72bb035ee91127338f2ca153458156bafa3e8b97c98ca4ab817208e77ab59fbf",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "e6dc63415f6a5afde03379547383ee4a5aff024e5f6e4b41baf1080f04c24bb5",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "bace62aba9784b1ecb809434511f48b8c76cd3e48a825591a5fdbd74dc4ac3c2",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "53fc7957cf55415d749b4cc5a4eca9911e028b6880e763390f1b25946dcf1437",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "24bee2a0d38191fc1569a77b675da7add427d03abfb77582cb0896a90893124a",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "3bc15d93cf62988e6ddc4081bbacbd00e416d5a091f087988ae8bc286d20ef54",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "bc391030ba56466b27f1d55fbb5bc051cec030f763942af6aa59f33534d1a7f8",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "5645301426cb246e882cf3de5ce0a6ee6fdbfccc8b16402dc222cd4a10801934",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "302be0add224b0f7f3b450458e5e032de39ea98e6996ce3b256851e326607bd9",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.review@9": {
+      "text": {
+        "prompt": "49cb6afedbe56b5a201003eb67a5517696d7854e8e06165fe8da05441be21213",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "f8436a7e229a2c413653a7d1f0768343869f43af7dfaaa3ce16253ab00006818",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "f8436a7e229a2c413653a7d1f0768343869f43af7dfaaa3ce16253ab00006818",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "abd15d6cfb38fe1cff13e92bc9d44e417078a785f8e27120cb67af54d4349c0f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "2a14fd0b624f249222c044e51bbcaa359ed8a2fdd50126804c2bce91d6d956f9",
+        "omitted": ["feedback", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "29c4185eb567f06ab89c16eb18087bbf6f4fa1ebed419fb51b1cfa3b947fd5c5",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "89476269d0e945ce3082eeaad9c76ec6045b99848fa232527716f0cdf1306938",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "071d9185d9a818a6fb58dbe8b1edef71405f12f775dfbd3eac5495f5fa10e2f9",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "9b8ea5c3a982f1415e9627f226ab4cd5952f5dbbde77617b2a504fee55cb5225",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "e5bb140ca3e511bb32e9630a9fe64b0e1b713f18650e9075485d1e4afb0a1bc9",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "3e66fdfdbc430e3e4fa4aa8b44a7d15a8c916402a77283a29e1b9c0739e35fab",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "ae718ac00d45b6dc4e1b2cb2cabc716520220424eb44449cf1712c8ff51d2d2f",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "c6cf5c5ca823de54ee2858dee2fced7cdf6641fb2508c88a34177e82cfdca451",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "46f482b3b312edc7713ad88bccd63ffecf4290ce794403e246622226f716c772",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "37a44945da030816a3796b83a1273e9cc9fbd8195d5d43fdd4b79f196781a17e",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "e97baf0f1cb10c716965b3963dcdd7b3c20e427c92bcaa1b9b5e14f0259d3ffa",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "837c1af48a21de060cdc4e12364601d7a6d64babc541a0d1f319bb537269149b",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.synthesis@10": {
+      "text": {
+        "prompt": "5b0689c4985728210e4c569cb5a62ee5b0b652bc8467329ffb10c59118d0a541",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "ffee4aefa0e7ed4811d66f8d048012a2c8abdc4020a3f7c3973a01ee5c399e9b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "ffee4aefa0e7ed4811d66f8d048012a2c8abdc4020a3f7c3973a01ee5c399e9b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "4a6d9d0f25c03232567ef8b6b523006fa749c661d72a70dac851c7a75203d0ac",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "9deae472dfb1082813ce22173690e35f68ab5f2ab51d19c6cc8b8452ed689b73",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "dc6cefc5d24da77249ca5c254df352db16ad5350fe0fa27d08efd8416bbe718f",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "2503491488471f4bc0deccc351d7d6ec4badfd77c36561e7a36b2c27c1b7ff1a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "b5bebbbb5997f75919323afbb8b38efbb331c5b9ebf155268f1bfb57020cc89f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "0d633eb92f7ab9ed620675d2e16a8b508d8c7c3677b8f086b00c16c3d143624d",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "ffea09932a9c5d79254e9dcb32ff3881b7bf27d9a00c31091692c51ad30783fc",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "a3bb1796cf7e57fe91782c165771f167e1ae089b0c51341ab4b040b6052de629",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "f1fcfe50c3dff318dd5b03f929082764e0ac00ccd492e5df7a38e0da7eca815e",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "7697193e781e1c46d8243fb2233368cb24664944ece20bb02b6b6c4b111dcfa9",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "ceddf07796828fbfef820891fbc1c9b250abc0f9e771dcb7063400b8fd4fe54b",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "3d30816e6b86ca9b4590833bfb6390c0c0e1a21615a9adcfd265b6bb339fe980",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "1e722ab7a2b18d9e4c103ca3591941ef7c4c1156e60289af7c5ec0619ec0e45c",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "7b986dc11cf1ab8977214c8b5c72c4af91536347d299bfff5451b413365eea6c",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.synthesis@11": {
+      "text": {
+        "prompt": "0525242def49b738a50c0a4e1b9dd8de911008e87836707b0f9a58eafb504d17",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
+        "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "4331f3cab0b0c275b8bf311388051740e532aa65818e4f6e33a60299fe942c59",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
+        "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "4331f3cab0b0c275b8bf311388051740e532aa65818e4f6e33a60299fe942c59",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "f6d91ad546eba6f61d2d963635d98372499759c22fdd19d1f9f0f7397019d7b4",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "241be6185001810c2e6abe4691c128b2895208ade7301ac482f39cd495cd0148",
+        "omitted": ["research", "submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "7b4601a9e18380c6aaf990cf99c0839250043c0eabd6e779c63865121f9090ba",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "2f8c54c455dc830cd50784f92a663858972ce2ded377dee249f4bdad7e30fe34",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "530c8eccb41706a9ab83abe871e9390ba9a4d43e6587a260c93e77436bf62f46",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "da3780e3e592b3fee4c35dd04af18bb3d123ea3b20e75e168a29f26ba8c3c2cb",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "5e0941274e1f97bd1161d24c2da8b4ce3eb157f1cd2359ed28e565906d9689f1",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "784eab7fa174fcc7012e43ee02abac5dd43620301fd26da64d168c40362b7d98",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "4a9e1a5d7a9f951f54b3b36030b12a282c9348e0c9b56283a52f294f8c46b216",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "0166de61c03703173b094d7c1b995fc4707a994eecc32bbf3f9b5d9623e3ccbd",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "275639f988cbbe30e91a3ca127dbc6fcd8cee3fcd846c0dfb66ed092424baf54",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "922b30310206ee211b311332f82b4777bbcc17f20b965d45b5c93b603b0a851e",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "ed97f66b66c7c4e92d6d099a30fce7c0a7d2e64f8ea1a61844070dccd7a642e5",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "7dc9761609b636a72481d774befdfbeee31b4041a7b360c2b933cc83740c9121",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.synthesis@8": {
+      "text": {
+        "prompt": "d92f0724b515f48d3fd8f88d160b9f0924fe4fb84b61f4eb206ac5d814bf41b7",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "c3e17bc64a27f73a3b8fe706eb3610e18bcea363837e1c463f7315e81f86aa16",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "c3e17bc64a27f73a3b8fe706eb3610e18bcea363837e1c463f7315e81f86aa16",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "3c36850eadf44f3433babe19f7c6d1df4ea3c7db31fce62706ee0f35e7eb372c",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "888b2d0d0f4ce970b7d1e286c685883f1817d7ca8a4c75110caae4e992425e1d",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "34ad0f37e5eaaf3a9907269c077c17d176ba88e438c055021cf1bb8e44c18d80",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "dc91965508b12c8330ae36744d970af67ed6260fce2a059cf8879dc7bf949b5a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "79391d0b39d74d418576eab0811f71b69bfc893731785586fa29e6e57e7d8fc5",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "references/over-optional": {
+        "prompt": "a3a93a132004d757b6572e4c32c62305022b050c4119db1eb1a781ccbd7d25bc",
+        "omitted": [],
+        "sources": ["artifact_golden_over_24000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "3d939a45880b73ef9fc0981a6aabedd69e5497552d05d314f6ed3b65ecb027af",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "5e5a38b1606d7d2178e4a56c574638e8b51a347d2d178525d95283146a50c722",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "cab23c6b4037d07db3403eb3e1ceb107d0ddeeaee8113a9fd75165dc77a3cf09",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "c548f271b8ac4c1c1f11cecbc9bae2abacaf66839311f9f7aa5e8f9d055924e6",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "f8ddab6b6d8ded3fc0a08bfc15d17cedf76443e6c25b17543dde7a3f9691bfa0",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "4f583f6804b217b2b08b85d7dd6b9ea86be90a97e1d4d9271893750ffccdc8ff",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "bf06d438159b6a47a5672a17d3d200dcd9b9a56cd638fa2812561c7d81905fa0",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "05f7716a672949c784f65ba7c4910015f190fe8869d4e91a53aacd64210b5d9c",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "reflection.synthesis@9": {
+      "text": {
+        "prompt": "68fafc4ed5c3cd72c59a6c6ea6ed8747ac885fe7c4d605b645012574280a5548",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "19dac8a077f9b9d343d1371e8a69c932f489a56662617c958ef5eb553c153fb5",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "19dac8a077f9b9d343d1371e8a69c932f489a56662617c958ef5eb553c153fb5",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "154864c3706fd29ed00562741e593c907af482e9bbe06d732f5aeb13f357a12a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "e8b9b9c67c6e7c32d0f4976090732cc9ac2244a5c5d9c670c6355c1b0a7aadc1",
+        "omitted": ["submission", "assessment", "feedback", "history", "previousCycle"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "b9882d922d7125e7a0726169e39ed35220f99b606548d60d193a2d164cda77f8",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "c23169a6de2672d7988fec70f8355279f754434b48570f8b415919cb2e8796c5",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "9207135f0e9ee6231abb5497d19cba78fa448eef944dd1df37fd67c2b5915c96",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "references/over-optional": {
+        "prompt": "dac51d5bdefda6ff58681aae5500eeb219970b2dc68d9f603fba2d88b3adde72",
+        "omitted": [],
+        "sources": ["artifact_golden_over_32000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "5b683784382c388635c0c6e63c33edb355007df033fbd678184bd2aea0f62f0a",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "76b58efb347e6aeec6933e753438cac76d2cbd6efffbd96ee76e2bb6387c977d",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "774035df054ae56fd062f2429a17ad06494108dd6acdf9b9802a299bce6a383a",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "85bf3b0d9f3daf5e82b8772780ea263eecdb28a437015a6cb926fdc119cc3e56",
+        "omitted": [
+          "assignment:png",
+          "assignment:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "research:png",
+          "research:latin1",
+          "lenses:png",
+          "lenses:latin1",
+          "submission:png",
+          "submission:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "history:png",
+          "history:latin1",
+          "previousCycle:png",
+          "previousCycle:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "6d8122138a072085349fd1ef05563511b8906a930aea22269ab95da119a25e0f",
+        "omitted": ["assignment:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "c293026c1fe08110c0b908da8c8bf416a16a6358fa4afc116706333068b15c1d",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "3887f1d33305507a4e4acc72229e70f626bc1295a60828cb4c7f525d1b8d02ec",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "a69ab290122c32cb87b33d86841a589ba72c1cb136640e07572835119b4c25c7",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "task.review@3": {
+      "text": {
+        "prompt": "dc3a6ee59d6b83aa068dad4465987933d962007c6fefc99132b23b87216708cb",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "1868b2e05ba33d698d53f4aa3b5687f037316ddef17b3fcaad4c357c0860e3be",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "1868b2e05ba33d698d53f4aa3b5687f037316ddef17b3fcaad4c357c0860e3be",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "3f3198e9e02bfcd2605f1c93e3dc3587f9ff0de246a18847affda36dc9a32923",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "d0a1be3c8b0e4a44881c98510040fc1444d52a6f30c9e37f9cacc85c00c7a169",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "7113e43ea643348a26ab8a992bcb020b8c678ec5b24933a24caece504179b8f8",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "0d0d1c21fa6649b517b8398a7e6f6992b632b02895b2e81ae63cd00d53262a72",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "3bfef91aa3a64aeb70ba4e2138a51b9f3ca56c6bab684cb4d452d4328aeee677",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-optional": {
+        "prompt": "5e12da652fcea5078e5f342b4f3f60ef21d30c0381c992a410d41eb914ccad9f",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "eef70a6739f20af5654ab62af8b025b11f83293095a526e364732b5d1c75498f",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "4eb9bb099f7cffdbd7ec87935678590f090183cce95e30f5c3e4a73f36ed8a30",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "7cc4a358a4795f9a43df29266bf2c169264f095f1d92f57c325198ad1a387d8e",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "8cad7862bc5b5a17bc855cfffe3bd54d5d5db4e2cad5558dd4b6b48af9029223",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "taskBackground:png",
+          "taskBackground:latin1",
+          "recovery:png",
+          "recovery:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "2db454def69550e92ceec8408989e187ecd63c2527e4fc8b4430f211d1b10c59",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "16e515b83cf70d7edcfa4e4115d3508a276682cbf74fa6abb7932b0056de9908",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "ebee4a59b2a56dbf3987e5fbe46b520c612349f29256cfdcb153bbf9903ea567",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "354d8c24c36bb612a9d57d54ee2de2d7d248c9fd3d20e271600b54de55bd89ff",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "task.review@4": {
+      "text": {
+        "prompt": "4eadba67507dc5c0aa94787868c6f6be9875e91f39138cfbfe4268dae7b2a0a6",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "3f0055cece2c8c01710c4e20e747288ec6824215bfa74b04ff1d55d64e0232d6",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "3f0055cece2c8c01710c4e20e747288ec6824215bfa74b04ff1d55d64e0232d6",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "5c11d9f0809236eed6122c1ad12254419161b010ef8044d8fc3df473e890f13d",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "8287a9e1c30fef2c21be116deaec094518470d4d52f8f6f26a229dc278d02d51",
+        "omitted": ["recovery", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "aa971bbc77946a6617ddfe9e26a4e5b19330458846d293d369b76a5ad42a6de3",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "7a1d4994f6284595803a0b02cd750f8bb0ee4e6682df3abbedeb489682807140",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "4c7cf844f0b5a1ae47fe8bb5d04718ed61d2d9a49f813c5fa2556330c0ea08ca",
+        "omitted": [],
+        "sources": ["artifact_golden_over_128000"]
+      },
+      "references/over-optional": {
+        "prompt": "6d2563da21bf30f152a50c41fb15d9632016d6ce8f25f77dca96fdb5f5103b02",
+        "omitted": [],
+        "sources": ["artifact_golden_over_128000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "c98c7a0eff43d85a373d32da98e3092eaaa57fe85f43ea04e347e88770f41dff",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "9d537a8908f98dd9baa4db8e30e916159331b103ea30e55a89cb9a05d5711215",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "1303252479150db3394a976b8ab7bb81a71dd7fd2aaeee825dd576963afeaeab",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "32029d2f2bf12de654d3a0949a38b7f7820399b7809fe4c3a4567fe9fa7d1a02",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "assessment:png",
+          "assessment:latin1",
+          "evidence:png",
+          "evidence:latin1",
+          "taskBackground:png",
+          "taskBackground:latin1",
+          "recovery:png",
+          "recovery:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "c553518b622c487e5f4ad5fba769dc1097602d9068c3ee4b89b9d62247787dcd",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "becf92ce6bf759f943ff9b2ff5f2740c15fdf9af440699b872ab3e93966aae3b",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "aac81156e6c37d4cc7c59e9341f6501bacbd093c5b662fc6d79a01013bfe2d9e",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "c3ea0cacf65bdaf0e044cfe38b9a9425eaea7f88c5c0511feabfe5a16cf058a8",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "task.work@1": {
+      "text": {
+        "prompt": "7eaa16ca76075dfa1bfe46c114dc09dea1bf2065e23fcb667b979af583584285",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "196adeb18a488a894290a1f581cc224988e42834ca06358ae62de35ab2148604",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "196adeb18a488a894290a1f581cc224988e42834ca06358ae62de35ab2148604",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "2c6d65d964b28746d2791061af49c5799c6cc3dee9ec70abd753b81c0e501740",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "8b9e73df54bfd60e892c2a398780f5848c74aa7a95fc5dfad3219b6d3814104a",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "7c016e06584f83ad7033e97c931427edc8e11c179d821ef9ab9ae23eb89bfe16",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "1cdefa472957770475afb8ee39eef09d24be041bcd602261131d19d03ecd392b",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "54cbb846a205ff526ff92f7629a6ddd7c5c57dfaa6112cf059e0c9f2659d39f0",
+        "omitted": [],
+        "sources": ["artifact_golden_over_48000"]
+      },
+      "references/over-optional": {
+        "prompt": "8a6d3ad1dc16eb71d0b900022f0176416808fdb72853fc88f6b05a6917e23dbb",
+        "omitted": [],
+        "sources": ["artifact_golden_over_48000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "52a4343209f81f38954fea7a344d3bfd770cef0bbbd2267c11c8285418c62aea",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "c948369f2c4eea8ad9ba57035257543d70f1e430f37161411314acbd1b21ad28",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "1ba7963bd381d6dd7e7ce743920c1ce96e21f28c16dfc23f9756ac443f900ea7",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "8e48753756a7de3a2b7a5b613667041f03592aa24945f9136dc2d8687569f055",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "brief:png",
+          "brief:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "32249a277a5bea00248a0a99b532fb4829d8295c74c267f29a7bde3ad029e228",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "5c43169c47d6a6c75863d700c86d36196be6aa0711b09a28824ea6d820e72055",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "4aa9d7983b3d394d3102a0d8dc1822c3c8c55088c05bc5d8587950882ae5a6c9",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "c491af273e14829e246b6bb7b2d0f54f1709e5baa4db71efe5d5b3d5ab3a296e",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "task.work@2": {
+      "text": {
+        "prompt": "9819d34f84b799d3de86d5dcc190c3ae858de3be3613a74f436e409d1f31c798",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "f2b829b35a872516c7b90a47844bdd51b82e48909693e9a20b3d42bb831c43c1",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "f2b829b35a872516c7b90a47844bdd51b82e48909693e9a20b3d42bb831c43c1",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "bd9f00db81a3d5aa548c77b17ead8cff40b8a81ed87906638bdd8bdbbc7ffc96",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "ad8fc13d07a0be39527c96f743d57352c4df345d0ff137c157f105c696556974",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "c07b67f16ca004d7a4e0dd7196a138102904fa08f42776430b79ce678fc9f797",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "69e2c3fd1cd5fd08dc0d7c471b6e27ff9e8cd69715ce0d9bf7a73bed1f18ee40",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "340c3c2542719b700ab6fc2c3bfcb6be748c7e6d6edba54c675899a3ea750c38",
+        "omitted": [],
+        "sources": ["artifact_golden_over_48000"]
+      },
+      "references/over-optional": {
+        "prompt": "cd484fc4ceae52b2f45d0e70898337aba7fc73d6fc4b50752399bda8a299db3c",
+        "omitted": [],
+        "sources": ["artifact_golden_over_48000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "2348d57252e26bdc675a187fa6b82389095654de83a639a562f3d3bc37e1cb99",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "7a905c3c87b8c4a1532b5c7929602f12229e60f16755f0f2fb6b2f2c01f72dac",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "da165f8c10285d036b4718f8d937ae317209b5c00c9526f2100f2782a410ea3b",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "f5550403cdada6da258c55b643ddb5009951fefec5b6e9ba2af2909698cf8300",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "brief:png",
+          "brief:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "7d46ef3690c2d4aa1a709d4148a94ee50b10d25d4fef415d54c57d333adad0ca",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "49e3b16df1e983a52fbe93ed6cf58de6e6e720b63e17084d4efb2913c932b018",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "e15e41699baf073ddbe2f53c49e35accce02ec941b18b65d73e260cf8d0c2a50",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "050e05b76b053091baf9ced74941351bc7346eac782294b5118b0eadd2d9a4e2",
+        "omitted": [],
+        "sources": []
+      }
+    },
+    "task.work@3": {
+      "text": {
+        "prompt": "da7cedd6d2defb606b2449e1438fd78eeb1a898f112697a0d0f193a15bdcab4b",
+        "omitted": [],
+        "sources": []
+      },
+      "text/optional-overflow": {
+        "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "text/utf8": {
+        "prompt": "662914745101a897e3fdf8b3794c04e8908e8595f1b026148941e2147db43e86",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "text/binary": {
+        "error": "context_encoding"
+      },
+      "text/over-required": {
+        "error": "context_too_large"
+      },
+      "text/over-optional": {
+        "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "auto/utf8": {
+        "prompt": "662914745101a897e3fdf8b3794c04e8908e8595f1b026148941e2147db43e86",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "auto/binary": {
+        "prompt": "ccf5e45e0b0cbff7881de258be35c9f1a513345412266e86aeadfa89dffc0b5a",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "auto/over-required": {
+        "error": "context_too_large"
+      },
+      "auto/over-optional": {
+        "prompt": "167e7156863450c2c964a1d5f25862f9ae1d79e325b5c9f2fa7f7f6567b7f06c",
+        "omitted": ["feedback", "checkpoints", "checkpointEvidence"],
+        "sources": []
+      },
+      "references/utf8": {
+        "prompt": "97be4fc9617729c2bdda1e9e48ccea28e2bc472c9757191b4eb7dd2f4b3508a0",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_json"]
+      },
+      "references/binary": {
+        "prompt": "9e171969e3b674f747232eb0f8d775ff988273086c96e97b43929100d1309ada",
+        "omitted": [],
+        "sources": ["artifact_golden_text", "artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "references/over-required": {
+        "prompt": "2c654c4c1c98826929ce3bb493afdcd09a4f2e19c2a589b83824b0a15d1cdc20",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "references/over-optional": {
+        "prompt": "2c4e170781b1a9bf12fe44dfbcefeca4d87af0cdcfa53a4f4d9a3ca15160279c",
+        "omitted": [],
+        "sources": ["artifact_golden_over_96000"]
+      },
+      "read-error/blob_corrupt/required-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/optional-text": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/required-auto": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_corrupt/ranked": {
+        "error": "blob_corrupt"
+      },
+      "read-error/blob_not_found/required-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/optional-text": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/required-auto": {
+        "error": "blob_not_found"
+      },
+      "read-error/blob_not_found/ranked": {
+        "error": "blob_not_found"
+      },
+      "titles/line-breaks": {
+        "prompt": "2058b494a0cd899a0c19955797efd94843ea6fc2b2650c6e3f0c28f616f36f82",
+        "omitted": [],
+        "sources": ["artifact_golden_forged"]
+      },
+      "ranked/text": {
+        "prompt": "3106f61db00259694c6cb31e88fd437b26e6974347c00ea2568ec61c57f9f66d",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/artifact-text": {
+        "prompt": "a6e419c1d615e64824a38bb6bbdaea94c823d5e9ef1363618d07187ff7174903",
+        "omitted": [],
+        "sources": ["artifact_golden_text"]
+      },
+      "ranked/artifact-binary": {
+        "prompt": "f39ed5841928433f6bbdf3b67a2933063f87e2ced1b7d106a07f7af5e704c6c7",
+        "omitted": [
+          "task:png",
+          "task:latin1",
+          "brief:png",
+          "brief:latin1",
+          "projectPaper:png",
+          "projectPaper:latin1",
+          "feedback:png",
+          "feedback:latin1",
+          "checkpoints:png",
+          "checkpoints:latin1",
+          "checkpointEvidence:png",
+          "checkpointEvidence:latin1"
+        ],
+        "sources": ["artifact_golden_png", "artifact_golden_latin1"]
+      },
+      "ranked/duplicate": {
+        "prompt": "aacaa00ad968a570c217b05951857dd5f7cf39269a3b80bb57505c659ff56a21",
+        "omitted": ["task:copy"],
+        "sources": []
+      },
+      "ranked/not-fit": {
+        "prompt": "c0b67c90018c8a538b49fa3e439e9bbccdae17d7b2b70826bd8e6ff0edaad383",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "ranked/paper": {
+        "prompt": "6840f617be29979a0ef3a6dd95cadceb640f63e0e110471a93d02795c45ab8f4",
+        "omitted": [],
+        "sources": []
+      },
+      "ranked/paper-overflow": {
+        "error": "context_too_large"
+      },
+      "ranked/long-title": {
+        "error": "invalid_context"
+      },
+      "ranked/line-breaks": {
+        "prompt": "18ba20b51412577189fc375b8cbd3a5344c0cf449bcec76ec3e6d9f7a150a047",
+        "omitted": [],
+        "sources": []
+      }
+    }
+  }
+}
