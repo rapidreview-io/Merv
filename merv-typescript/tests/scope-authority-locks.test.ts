@@ -17,7 +17,7 @@ import {
 import { ProjectScope } from '@merv/scope';
 import type { ExactToolPolicy } from '@merv/scope/tool-policy';
 import { deferred } from './fixtures/deferred.js';
-import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
+import { openState, postgresUrl, schemaFor, testLimits } from './fixtures/state.js';
 
 let observer: pg.Client | undefined;
 after(async () => await observer?.end());
@@ -351,10 +351,37 @@ test('a provider decides on the transaction its caller is in', async (t) => {
     const { readScope } = await asked(decide('read'));
     assert.equal(readScope, true);
   });
-  await t.test('outside any scope, a write decision takes a write transaction', async () => {
-    const { readScope } = await asked(decide('write'));
-    assert.equal(readScope, false);
-  });
+  await t.test(
+    'outside any scope, a write decision takes a write transaction of its own',
+    async () => {
+      // Every reader connection is held, so a write transaction nested in a plain read would wait.
+      const release = deferred();
+      const reads: Promise<unknown>[] = [];
+      for (let n = 0; n < testLimits.readConnections; n++) {
+        const held = deferred();
+        reads.push(
+          f.state.read(async () => {
+            held.resolve();
+            await release.promise;
+          }),
+        );
+        await held.promise;
+      }
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        const waiting = new Promise<'waiting for a reader'>((resolve) => {
+          timer = setTimeout(resolve, 5_000, 'waiting for a reader');
+        });
+        const handed = await Promise.race([asked(decide('write')), waiting]);
+        if (handed === 'waiting for a reader') assert.fail('The decision waited for a reader');
+        assert.equal(handed.readScope, false);
+      } finally {
+        clearTimeout(timer);
+        release.resolve();
+        await Promise.all(reads);
+      }
+    },
+  );
   for (const permission of ['read', 'write'] as const) {
     await t.test(`a ${permission} decision joins an ambient transaction`, async () => {
       await f.state.transaction(async (tx) => {
