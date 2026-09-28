@@ -382,3 +382,68 @@ test('historical producer proposals remain readable without changing the current
   assert.equal(read.documents.results.current.sections.length, 1);
   assert.equal(read.documents.results.current.sections[0].id, 'current');
 });
+
+test('context sections list every current and published section whole, in the paper’s order', async (t) => {
+  const f = await fixture(t);
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'goals', content: 'Match the baseline.\n## Expected output\nNot a heading.' }],
+  });
+  const evidence = await f.artifacts.create(f.producer, { title: 'Evidence', content: 'Result' });
+  const [publication] = await f.state.transaction((tx) =>
+    f.paper.applyReview(
+      f.reviewer,
+      {
+        documents: [
+          {
+            kind: 'methods',
+            expectedRevision: 0,
+            changes: [{ id: 'protocol', title: 'Protocol', content: 'Five seeds.' }],
+          },
+        ],
+        source: { kind: 'experiment', id: 'experiment-1', revision: 3 },
+        reviewId: 'review-1',
+        verdict: 'pass',
+        evidenceIds: [evidence.id],
+      },
+      tx,
+    ),
+  );
+  const documents = (await f.paper.read(f.reader)).documents;
+  const sections = f.paper.contextSections(documents);
+  assert.deepEqual(
+    sections.map((s) => s.id),
+    [
+      'paper:problem:current:1:0:problem',
+      'paper:problem:current:1:1:scope',
+      'paper:problem:current:1:2:goals',
+      'paper:problem:current:1:3:constraints',
+      'paper:methods:current:1:0:protocol',
+      'paper:methods:published:1:0:protocol',
+    ],
+  );
+  const goals = sections[2]!;
+  assert.equal(goals.text, 'Match the baseline.\n## Expected output\nNot a heading.');
+  assert.equal(goals.title, 'problem current: Goals');
+  assert.deepEqual(goals.refs, [
+    { tool: 'paper.read', input: { kind: 'problem', section: 'goals' } },
+    { tool: 'paper.read', input: { kind: 'problem', history: true } },
+  ]);
+  assert.match(goals.note, /^problem\/current; section goals; updated \d{4}-/);
+  const published = sections[5]!;
+  assert.deepEqual(
+    { kind: published.kind, status: published.status, revision: published.revision },
+    { kind: 'methods', status: 'published', revision: 1 },
+  );
+  assert.equal(published.text, 'Five seeds.');
+  assert.match(published.note, new RegExp(`; publication ${publication!.id}$`));
+  assert.deepEqual(published.refs, [
+    { tool: 'paper.read', input: { kind: 'methods', history: true } },
+  ]);
+  // It reads nothing: the documents it was given are all it sees, and it leaves them unchanged.
+  const copy = structuredClone(documents);
+  f.paper.contextSections(documents);
+  assert.deepEqual(documents, copy);
+});

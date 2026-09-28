@@ -15,6 +15,7 @@ import {
 import type {
   Paper,
   PaperCitation,
+  PaperContextSection,
   PaperCite,
   PaperKind,
   PaperPatch,
@@ -26,6 +27,7 @@ import type {
   PaperEdit,
 } from './types.js';
 import { citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
+import { contextSections } from './context.js';
 import { migratePaper } from './storage.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
@@ -385,6 +387,9 @@ export class PaperService implements Paper {
   }
   async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
     return await this.reviewed(this.capture(caller), parse(reviewSchema, input), tx);
+  }
+  contextSections(documents: PaperWorkspace['documents']): PaperContextSection[] {
+    return contextSections(documents);
   }
   /** The documents a parsed review would publish, before and after its edits. */
   private async reviewed(caller: Caller, changes: PaperReview, tx: Transaction) {
