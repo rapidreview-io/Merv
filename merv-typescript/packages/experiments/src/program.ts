@@ -487,6 +487,7 @@ export class ExperimentProgram {
     for (const context of this.contexts.values()) context.dispose();
     for (const context of this.historicalContexts) context.dispose();
     this.contexts.clear();
+    this.budgets.clear();
     this.historicalContexts = [];
   }
 
