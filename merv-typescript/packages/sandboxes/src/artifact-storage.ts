@@ -166,16 +166,13 @@ export class SandboxArtifactStorage implements LargeArtifactStorage {
       expiresAt: new Date(Number.isFinite(expires) ? expires : Date.now() + 50_000).toISOString(),
     };
   }
+  /**
+   * GETs a signed object link, reading at most maxBytes + 1 bytes: one byte more than asked is
+   * enough for the caller to see the object is not what its metadata says.
+   */
   async read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer> {
     // The link has passed signed(): https, or loopback http, on a configured storage origin.
     const { url } = await this.download(projectId, objectId);
-    return await this.#fetch(url, maxBytes);
-  }
-  /**
-   * GET a signed object link, reading at most maxBytes + 1 bytes: one byte more than asked is
-   * enough for the caller to see the object is not what its metadata says.
-   */
-  async #fetch(url: string, maxBytes: number): Promise<Buffer> {
     let response: Response;
     try {
       response = await fetch(url, {
