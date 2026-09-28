@@ -5,7 +5,6 @@ import {
   newId,
   now,
   plain,
-  recorded,
   sha256Hex,
   type Artifact,
   type ArtifactUploadInput,
@@ -15,7 +14,7 @@ import {
   type Scope,
   type State,
 } from '@merv/contracts';
-import { META, fromRow, meta, request, verified } from './content.js';
+import { META, fromRow, insert, meta, request, verified } from './content.js';
 
 type UploadRow = {
   upload_id: string;
@@ -181,40 +180,19 @@ export class Uploads {
         return fromRow(
           await tx.get(`SELECT ${META} FROM artifacts WHERE id=?`, current.artifact_id),
         );
-      const artifact: Artifact = {
-        id: newId('art'),
-        projectId: caller.projectId,
-        createdBy: caller.actorId,
-        title: row.title,
-        mediaType: row.media_type,
-        hash: row.hash,
-        size,
-        objectId,
-        createdAt: now(),
-      };
-      await tx.run(
-        `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-        artifact.id,
-        artifact.projectId,
-        artifact.createdBy,
-        artifact.title,
-        artifact.mediaType,
-        artifact.hash,
-        artifact.size,
-        artifact.createdAt,
-        objectId,
+      const { title, media_type: mediaType, hash } = row;
+      const artifact = await insert(
+        this.state,
+        tx,
+        caller,
+        { title, mediaType, hash, size, objectId },
         content,
-        caller.session?.id ?? null,
       );
       await tx.run(
         'UPDATE artifact_uploads SET artifact_id=? WHERE upload_id=?',
         artifact.id,
         uploadId,
       );
-      await recorded(this.state, tx, caller, 'artifact.created', artifact.id, {
-        hash: artifact.hash,
-        size: artifact.size,
-      });
       return artifact;
     });
   }

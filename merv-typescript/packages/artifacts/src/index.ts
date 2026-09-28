@@ -1,6 +1,6 @@
-import { recorded, createService, plain } from '@merv/contracts';
+import { createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
-import { META, decode, fromRow, isText, meta, span, verified, view } from './content.js';
+import { META, decode, fromRow, insert, isText, meta, span, verified, view } from './content.js';
 import { Uploads } from './uploads.js';
 import { Backfill } from './backfill.js';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +9,7 @@ import { z } from 'zod';
 import {
   check,
   MervError,
-  newId,
   sha256Hex,
-  now,
   inTransaction,
   MAX_ARTIFACT_BYTES,
   MAX_ARTIFACT_IDS,
@@ -121,42 +119,12 @@ export class ArtifactStore implements Artifacts {
     input = plain<ArtifactInput>(input, 'invalid_artifact');
     const bytes = decode(input);
     // Without a declared type, bytes that read back as text are Markdown; others are opaque.
-    const { title, mediaType } = meta(
-      input.title,
-      input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream'),
-    );
-    const hash = sha256Hex(bytes);
+    const type = input.mediaType ?? (isText(bytes) ? 'text/markdown' : 'application/octet-stream');
+    const fields = { ...meta(input.title, type), hash: sha256Hex(bytes), size: bytes.length };
     // Database only: the bytes go in the row, so the caller's transaction does no network I/O.
     return await inTransaction(this.state, tx ?? this.state.ambient, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const artifact: Artifact = {
-        id: newId('art'),
-        projectId: caller.projectId,
-        createdBy: caller.actorId,
-        title,
-        mediaType,
-        hash,
-        size: bytes.length,
-        createdAt: now(),
-      };
-      await tx.run(
-        `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,NULL,?,?)`,
-        artifact.id,
-        artifact.projectId,
-        artifact.createdBy,
-        artifact.title,
-        artifact.mediaType,
-        artifact.hash,
-        artifact.size,
-        artifact.createdAt,
-        bytes,
-        caller.session?.id ?? null,
-      );
-      await recorded(this.state, tx, caller, 'artifact.created', artifact.id, {
-        hash: artifact.hash,
-        size: artifact.size,
-      });
-      return artifact;
+      return await insert(this.state, tx, caller, fields, bytes);
     });
   }
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {

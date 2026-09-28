@@ -1,12 +1,18 @@
 import { isUtf8 } from 'node:buffer';
 import {
   check,
+  newId,
+  now,
+  recorded,
   sha256Hex,
   visible,
   MAX_ARTIFACT_BYTES,
   type Artifact,
   type ArtifactContent,
   type ArtifactInput,
+  type Caller,
+  type State,
+  type Transaction,
 } from '@merv/contracts';
 
 // Media types are case-insensitive and stored lowercase; parameters are refused.
@@ -26,6 +32,42 @@ export const fromRow = (row: any): Artifact => ({
   createdAt: row.created_at,
   ...(row.object_id ? { objectId: row.object_id } : {}),
 });
+
+/** Inserts a new artifact row with its bytes (null: they stay in large storage) and session. */
+export async function insert(
+  state: State,
+  tx: Transaction,
+  caller: Caller,
+  fields: Pick<Artifact, 'title' | 'mediaType' | 'hash' | 'size' | 'objectId'>,
+  content: Buffer | null,
+): Promise<Artifact> {
+  const artifact: Artifact = {
+    id: newId('art'),
+    projectId: caller.projectId,
+    createdBy: caller.actorId,
+    ...fields,
+    createdAt: now(),
+  };
+  await tx.run(
+    `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    artifact.id,
+    artifact.projectId,
+    artifact.createdBy,
+    artifact.title,
+    artifact.mediaType,
+    artifact.hash,
+    artifact.size,
+    artifact.createdAt,
+    artifact.objectId ?? null,
+    content,
+    caller.session?.id ?? null,
+  );
+  await recorded(state, tx, caller, 'artifact.created', artifact.id, {
+    hash: artifact.hash,
+    size: artifact.size,
+  });
+  return artifact;
+}
 
 /** Large storage returns unverified bytes; blobs.get and the row's CHECK verify their own. */
 export const verified = (bytes: Buffer, artifact: { size: number; hash: string }): Buffer => {
