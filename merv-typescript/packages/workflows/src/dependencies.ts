@@ -8,6 +8,12 @@ import type {
 } from '@merv/contracts';
 import type { PinnedContracts, WorkflowPinned } from './pinned.js';
 
+/**
+ * The most distinct ids one call may name. Every id is bound in each statement that reads or
+ * writes the set, ten per edge written, so this keeps them all inside PostgreSQL's 65,535.
+ */
+const MAX_DEPENDENCIES = 1000;
+
 export function normalizeDependencies(value: unknown): string[] {
   if (value === undefined || value === null) return [];
   const values = typeof value === 'string' ? [value] : value;
@@ -16,7 +22,13 @@ export function normalizeDependencies(value: unknown): string[] {
     'invalid_dependencies',
     'Dependencies must be a workflow id or an array of workflow ids',
   );
-  return [...new Set((values as string[]).map((item) => item.trim()).filter(Boolean))];
+  const ids = [...new Set((values as string[]).map((item) => item.trim()).filter(Boolean))];
+  check(
+    ids.length <= MAX_DEPENDENCIES,
+    'invalid_dependencies',
+    `A call can name at most ${MAX_DEPENDENCIES} dependencies`,
+  );
+  return ids;
 }
 
 /** A version pins its success states on first registration, their absence included. */
@@ -67,8 +79,6 @@ interface NodeRow {
 
 const NODE = 'id,workflow,version,state,revision,data_json';
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
-/** Edges written per statement, well inside PostgreSQL's 65,535 bind parameters. */
-const INSERT_ROWS = 1000;
 
 /** What an instance is called: its title, else its name, else the workflow it runs. */
 export const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
@@ -330,23 +340,20 @@ export async function attachDependencies(
       409,
     );
   const time = now();
-  for (let at = 0; at < added.length; at += INSERT_ROWS) {
-    const rows = added.slice(at, at + INSERT_ROWS);
-    await tx.run(
-      `INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at,kind,owner) VALUES ${rows.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`,
-      ...rows.flatMap(({ id, target, pinned }) => [
-        source.projectId,
-        source.id,
-        id,
-        target.workflow,
-        target.version,
-        canonical(pinned.successStates),
-        canonical(pinned.definition.terminal),
-        time,
-        kind,
-        owner ?? '',
-      ]),
-    );
-  }
+  await tx.run(
+    `INSERT INTO wf_dependencies (project_id,source_id,target_id,target_workflow,target_version,target_success_json,target_terminal_json,created_at,kind,owner) VALUES ${added.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`,
+    ...added.flatMap(({ id, target, pinned }) => [
+      source.projectId,
+      source.id,
+      id,
+      target.workflow,
+      target.version,
+      canonical(pinned.successStates),
+      canonical(pinned.definition.terminal),
+      time,
+      kind,
+      owner ?? '',
+    ]),
+  );
   return added.map((item) => item.id);
 }

@@ -251,6 +251,8 @@ test('dependency creation normalizes inputs, rejects unsupported or out-of-scope
     [123, 'invalid_dependencies'],
     [{}, 'invalid_dependencies'],
     [['ok', 3], 'invalid_dependencies'],
+    // Every id is bound in each statement over the set, so one call names at most 1,000.
+    [Array.from({ length: 1001 }, (_, i) => `missing-${i}`), 'invalid_dependencies'],
     ['missing', 'not_found'],
     [foreign.id, 'not_found'],
     [unsupported.id, 'dependency_unsupported'],

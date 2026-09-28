@@ -129,6 +129,7 @@ transitions read only what an instance depends on, in a fixed number of queries;
 on it is read only when asked for. Attaching at start never walks the graph, because the new
 id cannot be reached; `addDependencies` and a provider's `replace` refuse a cycle with one
 recursive query, after every named target has been found and checked in the order given.
+One call names at most 1,000 distinct ids (`invalid_dependencies` otherwise).
 Only actions with `requiresDependencies: true` enforce that guard automatically.
 Programs call it for assignment/execution gates as needed. A policy may name an
 authorized `dependencyFailureAction`; this changes guidance, never state.
