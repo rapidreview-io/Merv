@@ -367,12 +367,17 @@ test('JWKS keeps the last good set when a refresh returns nothing usable', async
   const signed = await new SignJWT(claims({ exp: start / 1000 + 86_400 }))
     .setProtectedHeader({ alg: 'ES256', kid: 'good' })
     .sign(pair.privateKey);
+  const other = await generateKeyPair('ES256', { extractable: true });
+  const next = { ...(await exportJWK(other.publicKey)), kid: 'next' };
+  const nextToken = await new SignJWT(claims({ exp: start / 1000 + 86_400 }))
+    .setProtectedHeader({ alg: 'ES256', kid: 'next' })
+    .sign(other.privateKey);
   const responses = [
     () => Response.json({ keys: [] }),
     () => Response.json({ keys: [privateKey] }),
     () => Response.json({ keys: [{ kty: 'oct', k: 'shared-secret' }] }),
     () => new Response('<html>maintenance</html>', { headers: { 'content-type': 'text/html' } }),
-    () => new Response(JSON.stringify({ keys: [good], pad: 'x'.repeat(65_536) })),
+    () => new Response(JSON.stringify({ keys: [next], pad: 'x'.repeat(65_536) })),
     () => new Response('unavailable', { status: 503 }),
   ];
   let respond = () => Response.json({ keys: [good] });
@@ -393,6 +398,10 @@ test('JWKS keeps the last good set when a refresh returns nothing usable', async
     time += 300_001;
     assert.equal((await provider.verify(signed)).subject, 'shared-user');
     await settled();
+    assert.equal(calls, i + 2);
+    // The refused response was discarded: the old key still verifies and its key does not.
+    assert.equal((await provider.verify(signed)).subject, 'shared-user');
+    await assert.rejects(provider.verify(nextToken), denied);
     assert.equal(calls, i + 2);
   }
   await provider.verify(signed);
@@ -517,9 +526,17 @@ test('JWKS single flight clears after the timeout even when a fetcher ignores it
   assert.equal(calls, 2);
   hang = true;
   time += 300_001;
-  const started = performance.now();
-  await Promise.all([provider.verify(signed), provider.verify(signed)]);
-  assert.ok(performance.now() - started < 200, 'No request waits on a hung background refresh');
+  // The fetcher hangs until the abort below, so a request that waited on it would lose
+  // this race; the 2 s bound only keeps a regression from hanging the test.
+  let bound!: NodeJS.Timeout;
+  const outcome = await Promise.race([
+    Promise.all([provider.verify(signed), provider.verify(signed)]).then(() => 'verified'),
+    new Promise((resolve) => {
+      bound = setTimeout(() => resolve('waited'), 2_000);
+    }),
+  ]);
+  clearTimeout(bound);
+  assert.equal(outcome, 'verified', 'No request waits on a hung background refresh');
   assert.equal(calls, 3);
   controller.abort();
   await settled();
@@ -630,7 +647,43 @@ test('JWKS timeout bounds a stalled response body and cancels its reader', async
   assert.equal(cancelCount, 1);
 });
 
-test('JWKS refreshes leave no unhandled rejections', async () => {
+test('JWKS refreshes leave no unhandled rejections', async (t) => {
+  // Earlier tests' real 5 s timeouts fire after this file finishes, so fire the timeout
+  // here: once after the fetch won the race and once while a fetcher rejects on abort.
+  const controllers: AbortController[] = [];
+  t.mock.method(AbortSignal, 'timeout', () => {
+    const controller = new AbortController();
+    controllers.push(controller);
+    return controller.signal;
+  });
+  const pair = await generateKeyPair('ES256', { extractable: true });
+  const key = { ...(await exportJWK(pair.publicKey)), kid: 'key' };
+  const signed = await new SignJWT(claims())
+    .setProtectedHeader({ alg: 'ES256', kid: 'key' })
+    .sign(pair.privateKey);
+  const answered = new SupabaseIdentity(
+    { supabaseUrl: url },
+    { clock: () => start, fetch: fetching(async () => Response.json({ keys: [key] })) },
+  );
+  assert.equal((await answered.verify(signed)).subject, 'shared-user');
+  const aborted = new SupabaseIdentity(
+    { supabaseUrl: url },
+    {
+      clock: () => start,
+      fetch: fetching(
+        (_url, options) =>
+          new Promise<Response>((_resolve, reject) =>
+            options!.signal!.addEventListener('abort', () =>
+              setImmediate(() => reject(new Error('synthetic-abort'))),
+            ),
+          ),
+      ),
+    },
+  );
+  const pending = aborted.verify(signed);
+  await settled();
+  for (const controller of controllers) controller.abort();
+  await assert.rejects(pending, denied);
   await settled();
   assert.deepEqual(unhandled, []);
 });

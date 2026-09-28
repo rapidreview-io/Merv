@@ -294,6 +294,9 @@ test('the ledger trigger refuses raw un-revoke, shortened expiry, deadline chang
   const live = await store.issue(input);
   const revoked = await store.issue({ ...input, subject: 'slot-2' });
   await store.revoke(revoked.credential.tokenHash, 'pi');
+  // Without a hard deadline the CHECK constraint allows a NULL expiry, so only the
+  // trigger can refuse lifting it.
+  const unbounded = await store.issue({ ...input, subject: 'slot-3', hardDeadline: undefined });
   const refusals: [string, ...string[]][] = [
     [
       'UPDATE identity_credentials SET revoked_at=NULL WHERE token_hash=?',
@@ -306,7 +309,7 @@ test('the ledger trigger refuses raw un-revoke, shortened expiry, deadline chang
     ],
     [
       'UPDATE identity_credentials SET expires_at=NULL WHERE token_hash=?',
-      live.credential.tokenHash,
+      unbounded.credential.tokenHash,
     ],
     [
       'UPDATE identity_credentials SET hard_deadline=? WHERE token_hash=?',
@@ -321,6 +324,7 @@ test('the ledger trigger refuses raw un-revoke, shortened expiry, deadline chang
       (error: unknown) => error instanceof MervError && error.code === 'state_constraint',
     );
   assert.equal((await store.authenticate(live.token, 'pi-worker')).expiresAt, input.expiresAt);
+  assert.equal((await store.authenticate(unbounded.token, 'pi-worker')).expiresAt, input.expiresAt);
   await assert.rejects(store.authenticate(revoked.token, 'pi-worker'), denied);
   await state.close();
 });
