@@ -4,11 +4,12 @@ A Cordis service for durable, project-scoped declarative state machines. It depe
 only on `state` and `scope`; it has no artifact, review, or task dependencies.
 
 Install `workflowsPlugin` after (or before) its providers. Cordis activates it when
-both services are available. Its tool adapter exposes `workflow.status_and_next`
-for caller-specific gate guidance or a project overview. Programs such as Tasks
-register their checks and retain their own commands. Trusted in-process code can
-also inspect the engine through its catalog, get, list and history methods; those
-four generic tools remain unexposed.
+both services are available. Its tool adapter exposes six tools:
+`workflow.status_and_next` (caller-specific gate guidance, or a project overview),
+`workflow.catalog`, `workflow.assignment`, `workflow.process`, `workflow.begin` and
+`workflow.extend_limit`. Programs such as Tasks register their checks and retain their
+own commands. `get`, `list` and `history` are in-process methods only; no tool exposes
+them.
 
 `await register(definition, policy)` registers awaited domain checks, action/tool
 descriptions and optional argument/reference builders. `evaluate` returns the
@@ -156,3 +157,50 @@ policy and opaque receipt. `activateLease` records first-start using metadata on
 uses frozen inputs plus explicitly owned outputs. Sessions owns credentials,
 expiry and source authority; Workflows still has no dependency on Sessions, Tasks,
 Reviews or artifact storage. See [the integrated contract](../../docs/SESSION_LEASES.md).
+
+## Conventions
+
+**Authority.** A caller method authorizes its caller through Scope: reads need `read`;
+a handle's commands need `read` on a managed graph, where the program authorizes the
+action itself, and `write` otherwise; `extendLimit` needs `admin`. The trusted provider
+seams (`replaceBlockers`, `systemPrerequisites(provider).replace`, `dependencyRelations`,
+`sponsoringRoots`) take a `projectId` and the caller's `tx` and authorize no caller: only
+in-process code reaches them. A lease step authorizes its worker at entry.
+
+**Transactions.** A method given a `tx` asserts that it belongs to State and runs in it;
+otherwise it opens its own transaction, which is read-only inside a `state.snapshot`.
+
+**Callbacks.** Every program callback (guards, `describe`, lease hooks, builders) is
+awaited in the engine's transaction and must not write to `wf_instances`: after each
+group of callbacks the engine rereads the instance and refuses any change as
+`invalid_workflow_policy` 500, and rechecks the caller's authority and the registration.
+A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
+`nested_transaction`, `transaction_*`, `state_*`) never is, and a write under a read is
+`invalid_workflow_policy` 500.
+
+**Lease hooks.** `lease.role` answers for the source, at discovery and at offer, whether
+the node may be leased now and which role its worker needs; it never runs once a lease
+exists. `lease.check` answers for the worker, at offer and on every admission for the
+lease's life, whether the program's reservation (its receipt) still holds. Source
+admission belongs in `role`, reservation validity in `check`.
+
+**Dependencies.** A dependency's `failed` is a gating fact: a declared edge whose target
+ended outside its pinned success states fails its dependent. A system edge, which a
+provider owns, always reads `failed: false`, because its provider replans it. A handle's
+`addDependencies` is a command: it records history and bumps the revision, so a lease
+pinned to the old revision ends. A provider's system edges bump nothing.
+
+**Blockers.** A provider's blockers stay on an instance across non-terminal moves until
+the provider replaces them; they are cleared when the instance reaches a terminal state.
+
+**`dependencyClosure`** walks at most 5,000 instances and refuses a larger closure with
+`closure_too_large` 409 rather than return part of it.
+
+**Read schema.** Other components may read these columns directly and nothing else:
+`wf_instances(id, project_id, workflow, version, state, revision, data_json, created_at,
+updated_at)` and `wf_history(instance_id, project_id, revision, action, actor_id,
+request_id, from_state, to_state, data_json, created_at)`. `data_json` of an instance is
+its merged data. `data_json` of a history row depends on its action: the start data for
+`start`, the delta a transition merged for a program action, and `{dependsOn, dropped}`
+for `add_dependencies` and `replan_dependencies`, which leave the instance data unchanged.
+Only the engine writes either table.
