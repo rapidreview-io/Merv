@@ -138,8 +138,6 @@ const capabilities: Record<string, readonly string[]> = {
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
   api: ['sessions', 'codeResearch'],
-  // Sandboxes alone bridges its optional object store into Artifacts; Artifacts never imports it.
-  sandboxes: ['artifacts'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],
