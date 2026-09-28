@@ -394,3 +394,23 @@ test('an upload over the inline limit keeps its bytes only in its object', async
   assert.equal(await f.content(artifact.id), null);
   await assert.rejects(f.artifacts.read(f.caller, artifact.id), { code: 'artifact_size' });
 });
+
+test('a download under a writer is logged once, and outside one is not', async (t) => {
+  const f = await fixture(t);
+  const { store, uploadId } = await upload(f, t, Buffer.from('signed'));
+  const artifact = await f.artifacts.uploadComplete(f.caller, uploadId);
+  store.storage.download = async () => ({ url: 'https://storage.test/obj_rows', expiresAt: now() });
+  const logged = t.mock.method(process.stderr, 'write', () => true);
+  const lines = () =>
+    logged.mock.calls.filter((call) =>
+      String(call.arguments[0]).includes('artifacts.io_in_transaction'),
+    ).length;
+  await f.artifacts.download(f.caller, artifact.id);
+  assert.equal(lines(), 0);
+  await f.state.transaction(async () => {
+    const { download } = await f.artifacts.download(f.caller, artifact.id);
+    assert.equal(download.url, 'https://storage.test/obj_rows');
+  });
+  assert.equal(lines(), 1);
+  logged.mock.restore();
+});
