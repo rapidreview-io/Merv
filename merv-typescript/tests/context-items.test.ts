@@ -117,7 +117,7 @@ test('the layout lists each unit by one line or embeds it as one fenced block, i
     recipe(2000),
     {
       s0: [
-        text('brief', 'Hello ~~~ world', { embed: 'always' }),
+        text('brief', 'Hello ~~~ world', { embed: 'always', note: 'pinned at creation' }),
         artifact('fig', 'figure', {
           note: 'from the review',
           refs: [{ tool: 'artifact.read', input: { artifactId: 'figure', line: 'a\u2028b' } }],
@@ -132,7 +132,8 @@ test('the layout lists each unit by one line or embeds it as one fenced block, i
     head +
       '\n## Section 0\n' +
       `- fig — Title fig (artifact figure, image/png, 9 bytes, sha256 ${figure.artifact.hash}) — from the review — retrieve: artifact.read {"artifactId":"figure","line":"a\\u2028b"}\n` +
-      '\n### brief — Title brief (text, 15 characters)\n~~~~\nHello ~~~ world\n~~~~\n' +
+      // A note heads the block too: it says what the body is wherever it is shown.
+      '\n### brief — Title brief (text, 15 characters) — pinned at creation\n~~~~\nHello ~~~ world\n~~~~\n' +
       '\n## Section 1\n' +
       '- aside — Title aside (text, 4 characters)\n' +
       tail,

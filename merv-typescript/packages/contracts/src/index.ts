@@ -1834,7 +1834,7 @@ export interface ContextItem {
   embed?: 'always' | 'fit' | 'never';
   /** Higher first when room runs out; default 0. */
   priority?: number;
-  /** Printed on the item's line (not on an embedded block), folded to one line, clipped to 300. */
+  /** Printed on the item's line or its block's heading, folded to one line, clipped to 300. */
   note?: string;
   /** At most 8, printed as given on the item's line. */
   refs?: { tool: string; input: Record<string, string | number | boolean | null> }[];
