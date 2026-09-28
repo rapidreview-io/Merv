@@ -21,7 +21,7 @@ import {
   retirementLedgerSql,
   retirementPreconditionsSql,
 } from '@merv/contracts/retired-instances';
-import { StateStore } from '@merv/state/base';
+import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 import {
@@ -250,15 +250,15 @@ test('the census embeds the ledger text the migrations run, and reports their re
 /** Captures the migration texts the app runs, by `component@version`, until restored. */
 function recordMigrations(t: TestContext) {
   const recorded = new Map<string, string>();
-  const original = StateStore.prototype.migrate;
-  StateStore.prototype.migrate = async function (component: string, migrations: Migration[]) {
+  const original = PostgresState.prototype.migrate;
+  PostgresState.prototype.migrate = async function (component: string, migrations: Migration[]) {
     for (const migration of migrations)
       recorded.set(key(component, migration.version), migration.sql);
     return await original.call(this, component, migrations);
   };
   let restored = false;
   const restore = () => {
-    if (!restored) StateStore.prototype.migrate = original;
+    if (!restored) PostgresState.prototype.migrate = original;
     restored = true;
   };
   t.after(restore);

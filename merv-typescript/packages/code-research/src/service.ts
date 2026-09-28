@@ -301,9 +301,8 @@ export class CodeService extends CodeCommandService implements Code {
       if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
       return super.completeCommand(caller, input);
     };
-    return this.storage.read((sql) =>
-      'transactionId' in sql ? complete(sql as Transaction) : this.storage.transaction(complete),
-    );
+    const tx = this.storage.ambient;
+    return tx ? complete(tx) : this.storage.transaction(complete);
   }
   async seal(
     caller: Caller,

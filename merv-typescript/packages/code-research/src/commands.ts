@@ -80,9 +80,8 @@ export class CodeCommandService implements CodeCommands {
 
   private async transaction<T>(fn: (tx: Transaction) => T): Promise<T> {
     check(!this.closed, 'code_unavailable', 'Code commands are unavailable', 503);
-    return await this.state.read(async (sql) =>
-      'transactionId' in sql ? fn(sql as Transaction) : await this.state.transaction(fn),
-    );
+    const tx = this.state.ambient;
+    return tx ? await fn(tx) : await this.state.transaction(fn);
   }
   private decode(row: Row): CodeCommandRecord {
     return {
