@@ -10,11 +10,11 @@
   "apiEntries": 34,
   "serverPlugins": 64,
   "machinePlugins": 1,
-  "directDependencyCount": 179,
-  "optionalDependencyCount": 18,
+  "directDependencyCount": 178,
+  "optionalDependencyCount": 17,
   "directConsumers": {
     "api": 3,
-    "artifacts": 13,
+    "artifacts": 12,
     "blobs": 2,
     "code": 1,
     "codeResearch": 7,
@@ -737,9 +737,7 @@
         "sandboxes"
       ],
       "requires": [],
-      "optional": [
-        "artifacts"
-      ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false

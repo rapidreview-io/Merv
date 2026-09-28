@@ -178,12 +178,12 @@
         },
         {
           "name": "artifact.storage_status",
-          "description": "Whether this project can retain large files in Sandboxes object storage.",
+          "description": "Whether this project can retain files up to 512 MiB.",
           "readOnly": true
         },
         {
           "name": "artifact.upload_begin",
-          "description": "Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "description": "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
           "readOnly": false
         },
         {
@@ -193,7 +193,7 @@
         },
         {
           "name": "artifact.upload_resume",
-          "description": "Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.",
+          "description": "Get a fresh signed URL for a pending upload.",
           "readOnly": false
         }
       ]
@@ -260,12 +260,12 @@
         },
         {
           "name": "artifact.storage_status",
-          "description": "Whether this project can retain large files in Sandboxes object storage.",
+          "description": "Whether this project can retain files up to 512 MiB.",
           "readOnly": true
         },
         {
           "name": "artifact.upload_begin",
-          "description": "Begin a project large-file upload. For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives signed part URLs; PUT each exact part directly from your machine, then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
+          "description": "Begin a project file upload (up to 512 MiB). For each final on-disk file, measure its exact byte count with wc -c < FILE and SHA-256 with sha256sum FILE (or shasum -a 256 FILE); never estimate size or reuse another file’s metadata. Keep the file unchanged through upload_complete. The answer gives at most one signed URL, valid 1 hour: PUT the whole file to parts[0].url sending exactly parts[0].headers, e.g. curl -fsS -T FILE -H 'x-amz-checksum-sha256: <value>' -H 'If-None-Match: *' '<url>'. Storage refuses any other bytes. Empty parts, or HTTP 412, mean the file is already stored. Then call artifact.upload_complete. Reuse requestId after an uncertain begin.",
           "readOnly": false
         },
         {
@@ -275,7 +275,7 @@
         },
         {
           "name": "artifact.upload_resume",
-          "description": "Get fresh signed URLs for a pending multipart upload, starting at one-based startPart.",
+          "description": "Get a fresh signed URL for a pending upload.",
           "readOnly": false
         }
       ]
@@ -1853,9 +1853,7 @@
         "sandboxes"
       ],
       "requires": [],
-      "optional": [
-        "artifacts"
-      ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": false,
@@ -3351,11 +3349,6 @@
       "optional": false
     },
     {
-      "from": "sandboxes",
-      "to": "artifacts",
-      "optional": true
-    },
-    {
       "from": "merv-sandboxes-tools",
       "to": "sandboxes",
       "optional": false
@@ -3570,7 +3563,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 179
+    "dependencies": 178
   },
   "network": [
     {
