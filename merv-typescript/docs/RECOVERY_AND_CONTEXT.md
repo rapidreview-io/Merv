@@ -106,7 +106,7 @@ A replacement reviewer claims the released review, calls `task.context` with the
 
 The dispatcher runs in-process and awaits each handler, with persisted per-consumer progress, isolated retries and explicit starting positions. A handler’s effects and its cursor commit in one transaction. State retains the full event history. Status is available through `ctx.domainEvents.status()`. Remote cancellation, agent spawning, time-based work leases, OAuth and shared-login rollout are not part of this implementation. Access revocation blocks new dispatches; an already-dispatched remote operation may finish.
 
-Recipe versions and complete context packages are retained in SQLite. Context assembly reads pinned UTF-8 artifacts; version 2 task review/checkpoint evidence can also include retained binary references through explicit auto mode; it does not automatically capture an agent's conversation, unsaved files or private reasoning. Recipes use explicit character budgets rather than unverified token estimates.
+Recipe versions and complete context packages are retained in PostgreSQL. Context assembly reads pinned UTF-8 artifacts; version 2 task review/checkpoint evidence can also include retained binary references through explicit auto mode; it does not automatically capture an agent's conversation, unsaved files or private reasoning. Recipes use explicit character budgets rather than unverified token estimates.
 
 No Fable consultation was performed for this implementation, following the user's instruction.
 
