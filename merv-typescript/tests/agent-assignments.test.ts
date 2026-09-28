@@ -86,6 +86,15 @@ test('one agent can produce successive tasks and review other work, but cannot r
   const outputs = executionOutputs(app.ctx.artifacts, changingCaller);
   changingCaller.session!.id = callerA.session!.id;
   assert.deepEqual(await outputs, [], 'Previous execution output is not automatically authorized');
+  // Scope, inside the listing, refuses a session caller whose actor is another session's worker.
+  await assert.rejects(
+    executionOutputs(app.ctx.artifacts, { ...callerB, session: { id: 'ses_elsewhere' } }),
+    {
+      code: 'forbidden',
+      status: 403,
+      message: 'Worker actors require their live session authority',
+    },
+  );
   await app.ctx.sessions.releaseAgentAssignment(token, b.id);
   // Another producer submits separate work. The same agent may now become a reviewer; had its
   // own source delivered it, the agent would be that source's hand and could not.
