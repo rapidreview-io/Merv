@@ -1,7 +1,10 @@
-import { createService } from '@merv/contracts';
+import { createService, MervError } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { Context } from 'cordis';
 import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -20,8 +23,12 @@ import {
 import { CredentialServer } from './fixtures/credential-server.js';
 import { openState } from './fixtures/state.js';
 
-async function until(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
-  const end = Date.now() + 4000;
+async function until(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+  milliseconds = 4000,
+): Promise<void> {
+  const end = Date.now() + milliseconds;
   while (!(await predicate())) {
     if (Date.now() >= end) throw new Error(message);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -84,6 +91,24 @@ async function mounted(
 }
 const names = async (registry: ToolRegistry) =>
   (await registry.describe()).map((tool) => tool.name);
+const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+/** Counts replace() calls on the next catalog; the first `reject` nonempty ones fail to compile. */
+function replacements(t: TestContext, registry: ToolRegistry, reject = 0) {
+  const counts = { all: 0, nonempty: 0 };
+  const create = registry.createCatalog.bind(registry);
+  t.mock.method(registry, 'createCatalog', (mountId: string) => {
+    const catalog = create(mountId);
+    const replace = catalog.replace.bind(catalog);
+    catalog.replace = async (definitions) => {
+      counts.all++;
+      if (definitions.length > 0 && counts.nonempty++ < reject)
+        throw new MervError('invalid_schema', 'Synthetic schema failure', 400);
+      await replace(definitions);
+    };
+    return catalog;
+  });
+  return counts;
+}
 
 test(
   'queued explicit reconnect retries discovery after the preceding refresh fails',
@@ -643,46 +668,111 @@ test('invalid mount configuration acquires no catalog namespaces', async (t) => 
 });
 
 test(
-  'discovery disconnect during final credential resolution cannot republish a stale catalog',
+  'an unchanged upstream catalog is published once across polls',
+  { timeout: 10000 },
+  async (t) => {
+    const services = await local(t);
+    const counts = replacements(t, services.registry);
+    const upstream = await remote(t);
+    const { manager } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
+    ]);
+    await sleep(500);
+    assert.ok(upstream.requests.filter((request) => request.method === 'tools/list').length > 3);
+    assert.equal(counts.all, 1, 'Unchanged polls must not replace the catalog');
+    assert.equal(manager.status()[0].state, 'ready');
+  },
+);
+
+test('a failed connect counts once, so the first retry waits one backoff step', async (t) => {
+  const services = await local(t);
+  const attempts: number[] = [];
+  const server = createServer((request, response) => {
+    attempts.push(performance.now());
+    request.resume();
+    response.writeHead(500).end();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const R = 100;
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+  const { manager } = await mounted(t, services, [
+    { id: 'fixture', url, tools: ['media'], timeoutMs: 1000, reconnectMs: R },
+  ]);
+  assert.equal(manager.status()[0].state, 'failed');
+  await until(() => attempts.length >= 2, 'Discovery did not retry');
+  const gap = attempts[1] - attempts[0];
+  assert.ok(gap >= 2 * R && gap < 4 * R, `The first retry came after ${gap} ms`);
+});
+
+test(
+  'a held call does not stall discovery: a removed tool withdraws within three polls',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
     const upstream = await remote(t);
-    let discovery: Client | undefined;
-    const connect = Client.prototype.connect;
-    t.mock.method(
-      Client.prototype,
-      'connect',
-      function (this: Client, ...args: Parameters<Client['connect']>) {
-        discovery = this;
-        return connect.apply(this, args);
-      },
-    );
-    const resolve = services.credentials.resolve.bind(services.credentials);
-    let resolutions = 0;
-    t.mock.method(services.credentials, 'resolve', async (...args: Parameters<typeof resolve>) => {
-      const credential = await resolve(...args);
-      // Discovery resolves once before connecting and once after collection, before publication.
-      if (++resolutions === 2) await discovery!.close();
-      return credential;
-    });
-    const manager = new MountManager(services.registry, services.credentials, services.access, {
-      mounts: [
-        {
-          id: 'fixture',
-          url: upstream.url,
-          tools: ['media'],
-          discovery: services.caller,
-          timeoutMs: 1000,
-          reconnectMs: 60000,
-        },
-      ],
-    });
-    t.after(() => manager.close());
-    await manager.start();
-    assert.equal(resolutions, 2);
-    assert.equal(manager.status()[0].toolCount, 0);
-    assert.equal(manager.status()[0].errorCode, 'mount_disconnected');
+    const R = 100;
+    await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: R },
+    ]);
+    const held = upstream.holdNextCall('media');
+    const call = services.registry.call('_fixture.media', services.caller, {});
+    try {
+      await held.entered;
+      await sleep(2 * R); // unchanged polls run while the call is held
+      upstream.setTools(representativeTools.filter((tool) => tool.name !== 'media'));
+      await until(
+        async () => !(await names(services.registry)).includes('_fixture.media'),
+        'A removed tool stayed published behind a held call',
+        3 * R,
+      );
+    } finally {
+      held.release();
+    }
+    assert.deepEqual(await call, representativeResult);
+  },
+);
+
+test(
+  'an unchanged catalog is published again after a failed round',
+  { timeout: 10000 },
+  async (t) => {
+    const services = await local(t);
+    const upstream = await remote(t);
+    const { manager } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 50 },
+    ]);
+    upstream.holdNextList();
+    await until(() => manager.status()[0].toolCount === 0, 'A stalled list did not fail the round');
     assert.deepEqual(await names(services.registry), ['native']);
+    await until(
+      async () => (await names(services.registry)).includes('_fixture.media'),
+      'The unchanged catalog was not republished after the failure',
+    );
+    assert.equal(manager.status()[0].state, 'ready');
+  },
+);
+
+test(
+  'a rejected catalog replacement is retried on the next round',
+  { timeout: 10000 },
+  async (t) => {
+    const services = await local(t);
+    const counts = replacements(t, services.registry, 1);
+    const upstream = await remote(t);
+    const { manager } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
+    ]);
+    assert.equal(manager.status()[0].errorCode, 'invalid_schema');
+    await until(
+      () => manager.status()[0].state === 'ready',
+      'The rejected catalog was not retried',
+    );
+    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+    assert.equal(counts.nonempty, 2);
   },
 );

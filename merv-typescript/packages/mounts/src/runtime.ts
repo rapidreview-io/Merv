@@ -37,6 +37,8 @@ export class MountRuntime {
   private readonly timeoutMs: number;
   private readonly reconnectMs: number;
   private snapshot: MountStatus;
+  /** JSON of the descriptions now in the registry; a key-order change only republishes. */
+  private published?: string;
   private client?: Client;
   private discoveryIdentity?: string;
   private discoveryAbort?: AbortController;
@@ -161,7 +163,12 @@ export class MountRuntime {
       };
     });
     // Registry compilation only sees the selected subset and swaps the entire generation atomically.
-    await this.catalog.replace(selected);
+    // An unchanged catalog is not replaced: no schema compile, and no drain of admitted calls.
+    const next = JSON.stringify(selected); // handlers are functions: stringify drops them
+    if (next !== this.published) {
+      await this.catalog.replace(selected);
+      this.published = next;
+    }
     if (this.stopping || this.client !== client) return;
     this.snapshot = {
       id: this.config.id,
@@ -183,13 +190,6 @@ export class MountRuntime {
     client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
       if (!this.stopping && this.client === client) void this.refresh().catch(() => undefined);
     });
-    client.onclose = () => {
-      if (this.stopping || this.client !== client) return;
-      this.client = undefined;
-      controller.abort(new MervError('mount_disconnected', 'Discovery connection closed', 503));
-      this.failed(new MervError('mount_disconnected', 'Discovery connection closed', 503));
-      if (!this.current) this.schedule();
-    };
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
       ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
       fetch: async (address, init) => {
@@ -238,12 +238,10 @@ export class MountRuntime {
 
   private failed(error: unknown): void {
     this.failures++;
+    this.published = undefined; // the replace([]) below withdraws it
     this.snapshot = {
       ...this.snapshot,
-      state:
-        this.snapshot.state === 'ready' || this.snapshot.state === 'disconnected'
-          ? 'disconnected'
-          : 'failed',
+      state: this.snapshot.state === 'ready' ? 'disconnected' : 'failed',
       toolCount: 0,
       errorCode: safeCode(error),
     };
