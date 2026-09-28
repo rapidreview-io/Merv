@@ -1,6 +1,6 @@
 /**
- * A key or credential delegation source holds only with the deadline its row still has, and that
- * deadline comes from the row the decision itself authorized.
+ * A key or credential delegation source holds only with the deadline its row still has, and the
+ * check reads that deadline without a statement of its own.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';

@@ -725,7 +725,7 @@ export class ProjectScope implements Scope {
     return (await this.authorize(caller, permission, tx)).actor;
   }
   /** require(), also returning the delegation source that a worker's session authority vouched for
-   * and, for a caller with an actor credential, that credential's deadline. */
+   * and the deadline of the actor credential or user key the decision rested on, if any. */
   private async authorize(
     caller: Caller,
     permission: Permission,
