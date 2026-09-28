@@ -37,6 +37,8 @@ interface Worker {
   cwd: string;
   assignment: Data;
   tool<T = Data>(name: string, input: Data): Promise<T>;
+  /** A tool call that closes this worker's session by handing off; see `step`. */
+  handoff(name: string, input: Data): Promise<Data>;
   write(path: string, content: string | null): Promise<void>;
   read(path: string): Promise<string | null>;
   git(...args: string[]): Promise<string>;
@@ -99,10 +101,14 @@ function machine(
     else process.env[credentialEnv] = previous;
   });
   const seen = new Set<string>();
-  const until = async <T>(what: string, found: () => T | undefined | Promise<T | undefined>) => {
+  const until = async <T>(
+    what: string,
+    found: () => T | undefined | Promise<T | undefined>,
+    { tick = true } = {},
+  ) => {
     const deadline = Date.now() + waitMs;
     for (;;) {
-      await runner.tick();
+      if (tick) await runner.tick();
       const value = await found();
       if (value !== undefined) return value;
       assert.ok(
@@ -139,7 +145,7 @@ function machine(
         assignment: Data;
       };
       let steps = 0;
-      const step = async <T>(input: Data): Promise<T> => {
+      const step = async <T>(input: Data, { handoff = false } = {}): Promise<T> => {
         const number = ++steps;
         // The worker polls for this file and reads it whole. A plain write is visible from the
         // moment it is created, so under load its reader beats its bytes; the step arrives as
@@ -148,18 +154,31 @@ function machine(
         const handover = join(directory, `step-${number}.json`);
         writeFileSync(`${handover}.part`, JSON.stringify(input));
         renameSync(`${handover}.part`, handover);
-        const result = await until(`step ${JSON.stringify(input).slice(0, 120)}`, () => {
-          const file = join(directory, `step-${number}.result.json`);
-          return existsSync(file)
-            ? (JSON.parse(readFileSync(file, 'utf8')) as { ok: boolean; value: T; error?: string })
-            : undefined;
-        });
+        // A handoff closes the session as it commits, before its reply reaches the worker. A
+        // tick that saw the session closed would stop this 'claude'-harness launch at once
+        // (handoffGraceMs is 0 for it), which may kill the worker before it writes the reply.
+        // So the runner does not tick until the reply is in; nothing on the server waits on it.
+        const result = await until(
+          `step ${JSON.stringify(input).slice(0, 120)}`,
+          () => {
+            const file = join(directory, `step-${number}.result.json`);
+            return existsSync(file)
+              ? (JSON.parse(readFileSync(file, 'utf8')) as {
+                  ok: boolean;
+                  value: T;
+                  error?: string;
+                })
+              : undefined;
+          },
+          { tick: !handoff },
+        );
         assert.ok(result.ok, `${name}: ${JSON.stringify(input).slice(0, 200)}: ${result.error}`);
         return result.value;
       };
       return {
         ...ready,
         tool: (tool, input) => step({ kind: 'tool', name: tool, input }),
+        handoff: (tool, input) => step({ kind: 'tool', name: tool, input }, { handoff: true }),
         write: (path, content) => step({ kind: 'write', path, content }),
         read: (path) => step({ kind: 'read', path }),
         git: (...args) => step({ kind: 'git', args }),
@@ -273,7 +292,7 @@ test(
         title: `Evidence ${requestId}`,
         content: 'The harness ran end to end.',
       });
-      await worker.tool('task.submit_delivery', {
+      await worker.handoff('task.submit_delivery', {
         taskId: task.id,
         artifactIds: [evidence.id],
         commandId,
@@ -287,7 +306,7 @@ test(
     const verdict = async (worker: Worker, value: 'pass' | 'needs_changes') => {
       const current = await tasks.get(owner, task.id);
       const review = await reviews.get(owner, current.reviewId!);
-      await worker.tool('review.submit', {
+      await worker.handoff('review.submit', {
         ...reviewedFindings(review),
         reviewId: review.id,
         claimId: review.claimId!,
