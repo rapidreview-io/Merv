@@ -195,15 +195,30 @@ export class DurableEvents implements DomainEvents {
             attemptedCursor = progress.cursor;
             const event = (await this.state.eventBatch(progress.cursor, 1, tx))[0];
             if (!event) return false;
+            if (!consumer.types.includes(event.type)) {
+              // Under the writer lock every event up to the head is committed and no smaller ID
+              // can commit later, so the run of unsubscribed events is passed in one step.
+              const next = await tx.get<{ id: number | null }>(
+                `SELECT MIN(id) AS id FROM events WHERE id>? AND type IN (${consumer.types.map(() => '?').join(',')})`,
+                event.id,
+                ...consumer.types,
+              );
+              const cursor = next?.id != null ? next.id - 1 : await this.state.eventHead(tx);
+              await tx.run(
+                'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
+                cursor,
+                consumer.id,
+              );
+              // At the head: no further transaction would find anything.
+              return next?.id != null;
+            }
             // A handler owns its argument, not the dispatcher's durable progress.
             const cursor = event.id;
-            if (consumer.types.includes(event.type)) {
-              const frame = { consumer, live: true };
-              try {
-                await this.handlerContext.run(frame, () => consumer.handle(event, tx));
-              } finally {
-                frame.live = false;
-              }
+            const frame = { consumer, live: true };
+            try {
+              await this.handlerContext.run(frame, () => consumer.handle(event, tx));
+            } finally {
+              frame.live = false;
             }
             await tx.run(
               'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',

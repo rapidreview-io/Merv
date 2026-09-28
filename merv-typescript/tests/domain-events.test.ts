@@ -1013,3 +1013,151 @@ test('failed deliveries retry on the backoff schedule and a success resets the a
     await state.close();
   }
 });
+
+test('a replay passes each run of unsubscribed events in one transaction', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const append = (tx: Parameters<Parameters<typeof state.transaction>[0]>[0], type: string) =>
+    state.appendEvent(tx, { projectId: 'p', actorId: 'a', subjectId: 's', type, data: {} });
+  const wanted: number[] = [],
+    handled: number[] = [];
+  let transactions = 0;
+  try {
+    for (let run = 0; run < 4; run++)
+      await state.transaction(async (tx) => {
+        for (let i = 0; i < 500; i++) await append(tx, 'probe.noise');
+        wanted.push((await append(tx, run % 2 ? 'probe.updated' : 'probe.created')).id);
+      });
+    await state.transaction((tx) => append(tx, 'probe.noise'));
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await events.subscribe({
+      id: 'replay',
+      types: ['probe.created', 'probe.updated'],
+      from: 'beginning',
+      handle(event) {
+        handled.push(event.id);
+      },
+    });
+    await events.drain();
+    assert.deepEqual(handled, wanted);
+    // One to register, then a skip and a delivery per run, and a last skip to the head.
+    assert.ok(transactions <= 12, `${transactions} transactions`);
+    assert.equal((await events.status())[0]!.cursor, await state.eventHead());
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
+/** A small seeded generator, so a failure reproduces the same writer schedule. */
+function seeded(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('two dispatchers deliver every committed event exactly once and in order', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-random-'));
+  const states = [
+    await openState(directory),
+    await openState(directory),
+    await openState(directory),
+  ];
+  const [first, second, writerOnly] = states as [PostgresState, PostgresState, PostgresState];
+  const dispatchers = [
+    await createService(new DurableEvents(first)),
+    await createService(new DurableEvents(second)),
+  ];
+  const schedule = seeded(12345),
+    failures = seeded(54321);
+  const consumers: Record<string, string[]> = {
+    all: ['probe.a', 'probe.b', 'probe.c', 'probe.d'],
+    'only-a': ['probe.a'],
+    'b-and-c': ['probe.b', 'probe.c'],
+    'rare-d': ['probe.d'],
+    'flaky-c': ['probe.c'],
+  };
+  try {
+    await first.migrate('effects', [
+      {
+        version: 1,
+        sql: 'CREATE TABLE effects(seq BIGINT GENERATED ALWAYS AS IDENTITY, consumer TEXT, event BIGINT);',
+      },
+    ]);
+    // The same consumers run in both dispatchers; their shared cursors decide who delivers.
+    for (const events of dispatchers)
+      for (const [id, types] of Object.entries(consumers))
+        await events.subscribe({
+          id,
+          types,
+          from: 'beginning',
+          async handle(event, tx) {
+            await tx.run('INSERT INTO effects(consumer,event) VALUES (?,?)', id, event.id);
+            if (id === 'flaky-c' && failures() < 0.1) throw new Error('handler failed');
+          },
+        });
+    const pick = () => {
+      const roll = schedule();
+      return roll < 0.4 ? 'probe.a' : roll < 0.7 ? 'probe.b' : roll < 0.95 ? 'probe.c' : 'probe.d';
+    };
+    // Rolled-back batches consume identity values and leave gaps in the log.
+    await Promise.all(
+      states.map(async (state) => {
+        for (let batch = 0; batch < 30; batch++) {
+          const types = Array.from({ length: 1 + Math.floor(schedule() * 4) }, pick);
+          const rollback = schedule() < 0.25;
+          await state
+            .transaction(async (tx) => {
+              for (const type of types)
+                await state.appendEvent(tx, {
+                  projectId: 'p',
+                  actorId: 'a',
+                  subjectId: 's',
+                  type,
+                  data: {},
+                });
+              if (rollback) throw new Error('rolled back');
+            })
+            .catch((error: Error) => assert.equal(error.message, 'rolled back'));
+          if (schedule() < 0.3) void dispatchers[batch % 2]!.drain().catch(() => {});
+          await sleep(Math.floor(schedule() * 3));
+        }
+      }),
+    );
+    const head = await writerOnly.eventHead();
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      await Promise.all(dispatchers.map((events) => events.drain()));
+      const status = await dispatchers[0]!.status();
+      if (status.every((consumer) => consumer.cursor === head)) break;
+      assert.ok(Date.now() < deadline, `Delivery did not converge: ${JSON.stringify(status)}`);
+      await sleep(20);
+    }
+    const log = await writerOnly.read((sql) =>
+      sql.all<{ id: number; type: string }>('SELECT id, type FROM events ORDER BY id'),
+    );
+    assert.ok(log.length > 100 && log.at(-1)!.id > log.length, 'the log has gaps');
+    for (const [id, types] of Object.entries(consumers))
+      assert.deepEqual(
+        (
+          await writerOnly.read((sql) =>
+            sql.all<{ event: number }>(
+              'SELECT event FROM effects WHERE consumer=? ORDER BY seq',
+              id,
+            ),
+          )
+        ).map((row) => row.event),
+        log.filter((event) => types.includes(event.type)).map((event) => event.id),
+        id,
+      );
+  } finally {
+    await Promise.all(dispatchers.map((events) => events.close()));
+    await Promise.all(states.map((state) => state.close()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
