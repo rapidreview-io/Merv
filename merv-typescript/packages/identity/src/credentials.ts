@@ -1,11 +1,30 @@
 import { randomBytes } from 'node:crypto';
 import { check, newId, sha256Hex, type Sql, type State, type Transaction } from '@merv/contracts';
-import type { Credential, CredentialAuthority, CredentialInput } from './types.js';
-
-export type { Credential, CredentialAuthority, CredentialInput } from './types.js';
 
 /** The one token digest. Owners store and compare only this. */
 export const tokenDigest = sha256Hex;
+
+export interface Credential {
+  id: string;
+  tokenHash: string;
+  owner: string;
+  subject: string;
+  kind: string;
+  createdAt: string;
+  expiresAt: string | null;
+  hardDeadline: string | null;
+  revokedAt: string | null;
+}
+
+export interface CredentialInput {
+  owner: string;
+  subject: string;
+  kind: string;
+  token?: string;
+  prefix?: string;
+  expiresAt: string | null;
+  hardDeadline?: string | null;
+}
 
 interface Row {
   id: string;
@@ -94,7 +113,7 @@ const validDate = (value: string | null) =>
     new Date(value).toISOString() === value);
 
 /** A shared hash-only credential ledger. Lifecycle services remain responsible for live authority. */
-export class CredentialStore implements CredentialAuthority {
+export class CredentialStore {
   constructor(
     private readonly state: State,
     private readonly clock: () => number = Date.now,

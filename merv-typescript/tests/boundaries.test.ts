@@ -89,7 +89,7 @@ const capabilities: Record<string, readonly string[]> = {
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
   feed: ['state', 'scope', 'artifacts'],
-  identity: ['state'],
+  identity: [],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope'],
   codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],

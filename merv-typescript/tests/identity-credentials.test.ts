@@ -13,16 +13,13 @@ import { openState } from './fixtures/state.js';
 const iso = (time: number) => new Date(time).toISOString();
 const denied = (error: unknown) => error instanceof MervError && error.status === 401;
 
-test('Identity plugin publishes credentials after State migration', async () => {
-  const state = await openState();
+test('Identity plugin loads without State and publishes no credential store', async () => {
   const ctx = new Context();
-  ctx.provide('state', state);
   const plugin = ctx.plugin(identityPlugin);
   await plugin.await();
-  assert.ok(ctx.identity.credentials);
+  assert.equal('credentials' in ctx.identity, false);
   assert.deepEqual(ctx.identity.configuration(), { enabled: false });
   await ctx.fiber.dispose();
-  await state.close();
 });
 
 test('issued secrets remain valid across restart and only their digests are stored', async (t) => {

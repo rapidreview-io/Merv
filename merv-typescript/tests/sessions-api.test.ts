@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
+import { CredentialStore } from '@merv/identity/credentials';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { createApp } from './fixtures/app.js';
@@ -674,7 +675,7 @@ test('session route and credential namespaces stay reserved when the Sessions pr
       createHash('sha256').update(collision).digest('hex'),
       new Date().toISOString(),
     );
-    await f.app.ctx.identity.credentials!.adopt(
+    await new CredentialStore(f.app.ctx.state).adopt(
       {
         owner: 'scope',
         subject: 'legacy-prefix-collision',

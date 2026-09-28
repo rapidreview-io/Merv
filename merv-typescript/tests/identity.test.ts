@@ -2,6 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
+import { Context } from 'cordis';
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { MervError } from '@merv/contracts';
 import { SupabaseIdentity, identityPlugin } from '../packages/identity/src/index.js';
@@ -44,11 +45,18 @@ const settled = async () => {
 const unhandled: unknown[] = [];
 process.on('unhandledRejection', (reason) => unhandled.push(reason));
 
-test('disabled Supabase verifier is independent of State and Scope', async () => {
+test('disabled identity is independent and Cordis provides it without State or Scope', async (t) => {
   const provider = new SupabaseIdentity();
   assert.deepEqual(provider.configuration(), { enabled: false });
   await assert.rejects(provider.verify(await token()), denied);
-  assert.deepEqual(identityPlugin.inject, ['state']);
+  const ctx = new Context();
+  const entry = ctx.plugin(identityPlugin);
+  await entry.await();
+  assert.deepEqual(ctx.identity.configuration(), { enabled: false });
+  assert.deepEqual(identityPlugin.inject, []);
+  t.after(async () => {
+    await ctx.fiber.dispose();
+  });
 });
 
 test('HS256 verifies only signed account identity and rechecks expiry after asynchronous verification', async (t) => {
