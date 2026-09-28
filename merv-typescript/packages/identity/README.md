@@ -56,8 +56,9 @@ expired row, and a hash that was never issued or adopted returns `undefined`.
 The additive migration adopts existing token hashes without changing client token
 formats. Adoption inserts a row if it is absent; for an existing row it can only add
 a revocation the owner recorded later, and it never extends or revives a known
-credential. Legacy Scope keys retain their existing expiry, including explicitly
-nonexpiring keys. Continuing agent keys have a 30-day lifetime and a
+credential. `adopt`'s `revokedAt` is deprecated: it exists only for Scope's legacy
+boot loop and is removed in R2, so new callers use `revoke` instead. Legacy Scope
+keys retain their existing expiry, including explicitly nonexpiring keys. Continuing agent keys have a 30-day lifetime and a
 source-authorized rotation route. Execution, managed-runner and Pi credentials are
 bounded by their owning lifecycle.
 
