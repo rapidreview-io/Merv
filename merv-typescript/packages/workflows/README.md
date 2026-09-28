@@ -68,6 +68,9 @@ Unmanaged graph mutations require `write` permission directly. A registration ha
   a new version, including after restart. An instance stays on the version it started on.
 - Starting without a version chooses the latest installed version. Retrying that
   request returns the original response even if a newer version was installed.
+- Start data, transition data and input, and preflight input are each a JSON object of
+  at most 256,000 encoded characters, 16,000 values and 32 levels of nesting; anything
+  larger is `invalid_data` 400. The merged instance data is not capped.
 - Request IDs are scoped to the project. Reuse requires identical actor and command
   content; replay returns the original snapshot, not the current instance state.
 - Every mutation commits instance state, command response, history, and its durable

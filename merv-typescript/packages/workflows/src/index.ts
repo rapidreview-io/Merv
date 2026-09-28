@@ -52,7 +52,7 @@ import type {
 } from '@merv/contracts';
 import { processGraph } from './process.js';
 import { clearBlockers, providerRelations, readBlockers, replaceBlockers } from './blockers.js';
-import { workflowJson } from './json.js';
+import { DATA_LIMITS, workflowJson } from './json.js';
 import { validateDefinition } from './definition.js';
 import {
   checkAssignment,
@@ -2139,8 +2139,9 @@ export class WorkflowsService implements Workflows {
     );
   }
 
+  /** The one validator for start data, transition data and input, and preflight input. */
   private data(value?: Data): Data {
-    const data = workflowJson(value ?? {}, 'invalid_data', 400);
+    const data = workflowJson(value ?? {}, 'invalid_data', 400, DATA_LIMITS);
     check(
       typeof data === 'object' && data !== null && !Array.isArray(data),
       'invalid_data',

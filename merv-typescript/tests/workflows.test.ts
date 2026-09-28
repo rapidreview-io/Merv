@@ -8,7 +8,7 @@ import { Context } from 'cordis';
 import { PostgresState, statePlugin } from '@merv/state';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { WorkflowsService, workflowsPlugin } from '@merv/workflows';
-import type { Caller, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
+import type { Caller, Data, WorkflowDefinition, WorkflowPolicy } from '@merv/contracts';
 import { openState, stateConfig } from './fixtures/state.js';
 
 const graph = (version = 1): WorkflowDefinition => ({
@@ -397,6 +397,64 @@ test('graph validation and defensive copies prevent changing installed behavior'
     assert.equal(callbacks, 0);
   }
   assert.equal(await state.eventHead(), before);
+});
+
+test('one data cap bounds start data, transition data and input, and preflight input', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const large = { text: 'x'.repeat(300_000) };
+  let deep: Data = { leaf: true };
+  for (let level = 0; level < 40; level++) deep = { next: deep };
+  const half = 'x'.repeat(200_000);
+  const initial = await workflows.start(caller, {
+    workflow: 'approval',
+    requestId: 'start',
+    data: { first: half },
+  });
+  const before = await state.eventHead();
+  for (const data of [large, deep]) {
+    await assert.rejects(
+      async () => await workflows.start(caller, { workflow: 'approval', requestId: 'big', data }),
+      { code: 'invalid_data', status: 400 },
+    );
+    const command = {
+      instanceId: initial.id,
+      action: 'submit',
+      expectedRevision: 0,
+      requestId: 'big',
+    };
+    await assert.rejects(async () => await workflows.transition(caller, { ...command, data }), {
+      code: 'invalid_data',
+      status: 400,
+    });
+    await assert.rejects(
+      async () => await workflows.transition(caller, { ...command, input: data }),
+      { code: 'invalid_data', status: 400 },
+    );
+    // A preview and the transition it previews are held to the same cap.
+    await assert.rejects(
+      async () => await workflows.evaluate(caller, initial.id, { action: 'submit', input: data }),
+      { code: 'invalid_data', status: 400 },
+    );
+  }
+  assert.equal(await state.eventHead(), before);
+  // Only what a caller sends is capped: the merged record may grow past it, and an instance
+  // above the cap still moves with a small delta.
+  const submitted = await workflows.transition(caller, {
+    instanceId: initial.id,
+    action: 'submit',
+    expectedRevision: 0,
+    requestId: 'submit',
+    data: { second: half },
+  });
+  const revised = await workflows.transition(caller, {
+    instanceId: initial.id,
+    action: 'revise',
+    expectedRevision: submitted.revision,
+    requestId: 'revise',
+    data: { note: 'small' },
+  });
+  assert.deepEqual(revised.data, { first: half, second: half, note: 'small' });
 });
 
 test('a stored definition keeps only edge endpoints in code-unit order and refuses engine actions', async (t) => {
