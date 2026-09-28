@@ -427,22 +427,29 @@ END $merv$;`);
         own.live = false;
       }
     }
-    if (current) {
-      this.active(current);
-      check(
-        !current.childTransaction,
-        'nested_transaction',
-        'A transaction is already using this read scope',
-      );
-      const child = this.transact(current.connection, fn);
-      current.childTransaction = child;
-      try {
-        return await child;
-      } finally {
-        current.childTransaction = undefined;
-      }
-    }
+    if (current) return await this.child(current, () => this.transact(current.connection, fn));
     return this.operation(() => this.connect((connection) => this.transact(connection, fn)));
+  }
+
+  /**
+   * Runs one transaction on a plain read's connection. The read owns that connection until the
+   * transaction ends, so a second one at the same time is refused, and the read's own end waits
+   * for it.
+   */
+  private async child<T>(current: Context, start: () => Promise<T>): Promise<T> {
+    this.active(current);
+    check(
+      !current.childTransaction,
+      'nested_transaction',
+      'A transaction is already using this read scope',
+    );
+    const child = start();
+    current.childTransaction = child;
+    try {
+      return await child;
+    } finally {
+      current.childTransaction = undefined;
+    }
   }
 
   async read<T>(fn: (sql: Sql) => T | Promise<T>): Promise<T> {
@@ -474,12 +481,27 @@ END $merv$;`);
 
   /**
    * A read-only snapshot scope: component transactions opened inside it read on one
-   * snapshot, take no writer lock, and are refused if they write. Inside an existing scope it
-   * runs the function there: in a transaction or snapshot it sees that scope's own rows, and in
-   * a plain read a component transaction is still a write transaction on the read's connection.
+   * snapshot, take no writer lock, and are refused if they write. Inside a transaction or a
+   * snapshot it runs the function there, which sees that scope's own rows. Inside a plain read
+   * it opens the snapshot on the read's own connection, as that read's one transaction.
    */
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
-    if (this.context.getStore()) return await fn();
+    const current = this.context.getStore();
+    if (current?.transaction || current?.readOnly) return await fn();
+    if (current)
+      return await this.child(current, async () => {
+        const scope = this.scope(current.connection, current);
+        // The parent read may retire while this admitted snapshot drains.
+        scope.live = true;
+        scope.readOnly = true;
+        scope.isolation = { open: false };
+        return await this.within(
+          current.connection,
+          READ_BEGIN,
+          scope,
+          async () => await this.context.run(scope, fn),
+        );
+      });
     return this.operation(() =>
       this.connect(async (connection) => {
         const scope = this.scope(connection);

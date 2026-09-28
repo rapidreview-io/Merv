@@ -281,9 +281,9 @@ test('read decisions use the scope their caller is already in', async (t) => {
         );
       },
     );
-    // A plain read scope gets a child write transaction on its own connection, as before.
-    await t.test(`${name} in a plain read`, async () => {
-      await contexts.read(f, () => operation(f));
+    // A plain read opens a read-only snapshot on its own connection.
+    await t.test(`${name} in a plain read, without the writer lock`, async () => {
+      assert.equal(await whileWriterHeld(f, () => contexts.read(f, () => operation(f))), 'free');
     });
   }
 });
@@ -321,9 +321,8 @@ test('listings and caller resolution never wait for the writer lock', async (t) 
         'free',
       );
     });
-    // A plain read scope gets a child write transaction on its own connection, as before.
     await t.test(`${name} in a plain read`, async () => {
-      await contexts.read(f, () => operation(f));
+      assert.equal(await whileWriterHeld(f, () => contexts.read(f, () => operation(f))), 'free');
     });
   }
 });
@@ -427,18 +426,28 @@ test('a provider decides on the transaction its caller is in', async (t) => {
         assert.equal(readScope, true);
       });
     });
-    await t.test(`a ${permission} decision in a plain read takes a write transaction`, async () => {
-      await f.state.read(async () => {
-        const { tx, readScope } = await asked(decide(permission));
-        assert.ok(tx.transactionId);
-        assert.equal(readScope, false);
-      });
-    });
+    // Both on the read's own connection: a read decision on a read-only snapshot of its own.
+    await t.test(
+      `a ${permission} decision in a plain read takes a ${permission === 'read' ? 'read-only' : 'write'} transaction`,
+      async () => {
+        await f.state.read(async () => {
+          const { tx, readScope } = await asked(decide(permission));
+          assert.ok(tx.transactionId);
+          assert.equal(readScope, permission === 'read');
+        });
+      },
+    );
   }
+  await t.test('a write decision in a plain read waits for the writer lock', async () => {
+    assert.equal(await whileWriterHeld(f, () => f.state.read(decide('write'))), 'queued');
+  });
   const vouched = async () =>
     assert.equal((await f.scope.authorityActor(f.session)).id, f.owner.actorId);
   await t.test('authorityActor outside any scope reads on a snapshot of its own', async () => {
     assert.equal((await asked(vouched)).readScope, true);
+  });
+  await t.test('authorityActor in a plain read reads on a snapshot of its own', async () => {
+    await f.state.read(async () => assert.equal((await asked(vouched)).readScope, true));
   });
   await t.test('authorityActor joins an ambient transaction', async () => {
     await f.state.transaction(async (tx) => {

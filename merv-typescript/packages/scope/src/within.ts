@@ -7,8 +7,8 @@ import type { Permission, Sql, State, Transaction } from '@merv/contracts';
  * - Without `place`, a plain read runs on `state.read`.
  * - With `place` the work needs a transaction. For 'read' it is a snapshot's read-only one, which
  *   takes no writer lock and refuses writes; for any other permission a write transaction. Inside
- *   a bare snapshot both are read-only transactions of that snapshot, and inside a plain read both
- *   are write transactions on the read's own connection.
+ *   a bare snapshot both are read-only transactions of that snapshot. Inside a plain read both run
+ *   on the read's own connection, a 'read' one as a read-only snapshot of its own.
  */
 export async function within<T>(
   state: State,

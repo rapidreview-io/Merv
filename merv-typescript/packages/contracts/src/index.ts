@@ -575,7 +575,7 @@ export interface State {
    * A read-only snapshot scope: nested component transactions never take the writer lock.
    * Outside any scope it opens a snapshot of its own; inside a transaction or a snapshot it
    * runs `fn` there, which sees that transaction's uncommitted rows; inside a plain read it
-   * runs `fn` on that read, where a component transaction still takes the writer lock.
+   * opens the snapshot on that read's connection, as the one transaction the read may have open.
    */
   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
   /** Whether the current async context is inside such a snapshot, where nothing may write. */
