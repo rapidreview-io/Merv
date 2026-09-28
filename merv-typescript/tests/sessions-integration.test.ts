@@ -316,10 +316,9 @@ test('leased workers must deliberately range-read or download large artifacts', 
   // Download mode remains callable by the authenticated worker and returns its private URL.
   const url = 'https://storage.example/predictions?signature=test';
   const storage: LargeArtifactStorage = {
-    begin: async (_projectId, uploadId) => ({
+    begin: async () => ({
       objectId: 'object_predictions',
-      status: {
-        uploadId,
+      plan: {
         partSize: artifact.size,
         partCount: 1,
         parts: [],
@@ -328,7 +327,6 @@ test('leased workers must deliberately range-read or download large artifacts', 
       },
     }),
     resume: async () => ({
-      uploadId: '',
       partSize: artifact.size,
       partCount: 1,
       parts: [],
@@ -342,6 +340,8 @@ test('leased workers must deliberately range-read or download large artifacts', 
       state: 'available' as const,
     }),
     download: async () => ({ url, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    // Completion copies an object within the inline limit into its row.
+    read: async () => Buffer.from(content),
   };
   const unbind = f.app.ctx.artifacts.bindLarge(storage);
   t.after(unbind);

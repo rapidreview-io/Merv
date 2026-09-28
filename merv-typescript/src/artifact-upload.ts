@@ -3,9 +3,14 @@ import { createHash } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { check, MervError, type Artifact, type ArtifactInput } from '@merv/contracts';
+import {
+  check,
+  MervError,
+  MAX_ARTIFACT_BYTES,
+  type Artifact,
+  type ArtifactInput,
+} from '@merv/contracts';
 
-const maxBytes = 2_000_000;
 const mediaTypes: Record<string, string> = {
   '.md': 'text/markdown',
   '.txt': 'text/plain',
@@ -24,18 +29,22 @@ export function artifactFile(file: string, title?: string, mediaType?: string): 
   try {
     const stat = fstatSync(fd);
     check(
-      stat.isFile() && stat.size > 0 && stat.size <= maxBytes,
+      stat.isFile() && stat.size > 0 && stat.size <= MAX_ARTIFACT_BYTES,
       'artifact_file',
       'Choose a regular nonempty file of at most 2 MB',
     );
-    const bytes = Buffer.alloc(maxBytes + 1);
+    const bytes = Buffer.alloc(MAX_ARTIFACT_BYTES + 1);
     let size = 0,
       count = 0;
     do {
       count = readSync(fd, bytes, size, bytes.length - size, null);
       size += count;
     } while (count && size < bytes.length);
-    check(size > 0 && size <= maxBytes, 'artifact_file', 'Artifact file exceeds the 2 MB limit');
+    check(
+      size > 0 && size <= MAX_ARTIFACT_BYTES,
+      'artifact_file',
+      'Artifact file exceeds the 2 MB limit',
+    );
     return {
       title: title ?? basename(file),
       content: bytes.subarray(0, size).toString('base64'),

@@ -6,8 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
@@ -18,6 +16,7 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ExperimentService } from '@merv/experiments';
 import {
   check,
+  MervError,
   type Caller,
   type LargeArtifactStorage,
   type ReviewApplication,
@@ -43,24 +42,11 @@ test('small uploaded evidence is readable and attachable while actual oversized 
   const hash = createHash('sha256').update(bytes).digest('hex');
   let served = bytes;
   let requests = 0;
-  const server = createServer((_request, response) => {
-    requests++;
-    response.end(served);
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
-  });
-  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/evidence`;
   const storage: LargeArtifactStorage = {
-    async begin(_projectId, uploadId) {
+    async begin() {
       return {
         objectId: 'obj_plan',
-        status: {
-          uploadId,
+        plan: {
           partSize: bytes.length,
           partCount: 1,
           parts: [],
@@ -76,7 +62,12 @@ test('small uploaded evidence is readable and attachable while actual oversized 
       return { objectId: 'obj_plan', size: bytes.length, sha256: hash, state: 'available' };
     },
     async download() {
-      return { url, expiresAt: new Date(Date.now() + 50_000).toISOString() };
+      throw new Error('unexpected download');
+    },
+    // Like the Sandboxes adapter: at most one byte more than the declared size.
+    async read(_projectId, _objectId, maxBytes) {
+      requests++;
+      return served.subarray(0, maxBytes + 1);
     },
   };
   const unbind = f.artifacts.bindLarge(storage);
@@ -88,6 +79,8 @@ test('small uploaded evidence is readable and attachable while actual oversized 
     mediaType: 'text/markdown',
   });
   const artifact = await f.artifacts.uploadComplete(f.producer, begun.uploadId);
+  // Completion copies the verified bytes into the row: the one storage read happens there.
+  assert.equal(requests, 1);
   assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
   const outsider = await f.scope.bootstrap({
     projectName: 'Other project',
@@ -109,10 +102,10 @@ test('small uploaded evidence is readable and attachable while actual oversized 
     requestId: f.id(),
   });
   assert.equal(attached.artifactId, artifact.id);
+  // Later reads never reach the object again, whatever it now serves.
   served = Buffer.alloc(bytes.length, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_hash_mismatch'));
-  served = Buffer.alloc(2_000_001, 97);
-  await assert.rejects(f.artifacts.read(f.producer, artifact.id), code('artifact_size'));
+  assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
+  assert.equal(requests, 1);
 });
 async function fixture(t: TestContext, limits?: { designRounds: number; resultRounds: number }) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
@@ -684,13 +677,13 @@ test('Missing bytes and invalid scoped figure references cannot seal a review', 
   );
   const attached = await f.attach(e, 'plan', plan),
     events = (await f.state.events(f.operator.projectId)).length;
-  const original = f.blobs.get.bind(f.blobs);
-  f.blobs.get = async () => Buffer.from('wrong bytes');
-  await assert.rejects(
-    async () => await f.transition(e, 'submit_design'),
-    code('artifact_hash_mismatch'),
-  );
-  f.blobs.get = original;
+  // Artifacts verifies its bytes (its own suite covers how); a refusal here must seal nothing.
+  const original = f.artifacts.bytes;
+  f.artifacts.bytes = async () => {
+    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+  };
+  await assert.rejects(async () => await f.transition(e, 'submit_design'), code('blob_corrupt'));
+  f.artifacts.bytes = original;
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
   assert.equal((await f.experiments.get(f.producer, e.id)).submissions.length, 0);
   assert.equal(

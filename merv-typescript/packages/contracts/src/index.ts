@@ -1161,11 +1161,23 @@ export interface Scope {
   actors(caller: Caller): Promise<Actor[]>;
   revokeActor(caller: Caller, actorId: string): Promise<void>;
 }
+/** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
+export const MAX_ARTIFACT_BYTES = 2_000_000;
+/** The most ids one `Artifacts.getMany` call looks up; `getArtifacts` takes any number. */
+export const MAX_ARTIFACT_IDS = 2000;
 export interface ArtifactInput {
   title: string;
   content: string;
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
+}
+/** Artifact bytes as tool text; `offset` and `total` are set for a range. */
+export interface ArtifactContent {
+  artifact: Artifact;
+  content: string;
+  encoding: 'utf8' | 'base64';
+  offset?: number;
+  total?: number;
 }
 export interface ArtifactUploadInput {
   title: string;
@@ -1181,25 +1193,59 @@ export interface ArtifactUploadStatus {
   parts: { partNumber: number; url: string; size: number; headers: Record<string, string> }[];
   completedParts: number[];
   nextPart: number | null;
+  /** Set once the upload is complete; parts is then [] and nextPart null. */
+  artifactId?: string;
 }
+/** An upload plan as large storage issues it; artifacts adds the upload ID. */
+export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId' | 'artifactId'>;
+/**
+ * Object storage for artifacts above the inline limit, implemented by @merv/sandboxes. Missing
+ * bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a refused origin, a
+ * forbidden grant) pass through unchanged.
+ */
 export interface LargeArtifactStorage {
+  /** Idempotent by key. Objects hold opaque bytes (application/octet-stream). */
   begin(
     projectId: string,
-    uploadId: string,
-    input: ArtifactUploadInput,
-  ): Promise<{ objectId: string; status: ArtifactUploadStatus }>;
-  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadStatus>;
+    key: string,
+    expect: { size: number; sha256: string },
+  ): Promise<{ objectId: string; plan: ArtifactUploadPlan }>;
+  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadPlan>;
+  /** The adapter validates the response shape (`sandbox_unavailable` 502 otherwise). */
   complete(
     projectId: string,
     objectId: string,
   ): Promise<{ objectId: string; size: number; sha256: string; state: string }>;
+  /** A missing object is `blob_not_found`, an outage `blob_unavailable`. */
   download(projectId: string, objectId: string): Promise<{ url: string; expiresAt: string }>;
+  /**
+   * Reads at most maxBytes + 1 bytes, with the same error mapping as download; the caller
+   * verifies size and hash. An object's bytes are readable only while an equivalent binding
+   * (same namespace and subject) is present; Merv never migrates objects.
+   */
+  read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
 }
+/**
+ * Immutable project files. A row implies its bytes: up to the inline limit they are kept in the
+ * row, where a database CHECK verifies their size and SHA-256; rows from before that keep them in
+ * blobs, and larger files in bound large storage. Rows never change, except that a server
+ * configured to backfill moves such older bytes into their row. Bytes gone from behind a row are
+ * `artifact_bytes_missing` (500), never a 404, and every byte returned is verified. `create`
+ * never does network I/O, and neither do reads of bytes kept in the row. The one write a read
+ * may cause: the first `download` of such bytes mirrors them into blobs (content-addressed).
+ *
+ * Every call authorises once, at its start. A revocation that lands while bytes or a download
+ * link are fetched is enforced by the ToolRegistry, which reauthorises read tools after the
+ * handler; domain callers act on bytes inside their own write transactions, which authorise
+ * again. Only a write capability is rechecked after it is issued: the signed part URLs of
+ * uploadBegin and uploadResume.
+ */
 export interface Artifacts {
-  readonly downloadSupported: boolean;
   canDownload(artifact: Artifact): boolean;
   readonly largeUploadAvailable: boolean;
   bindLarge(storage: LargeArtifactStorage): () => void;
+  /** Idempotent per actor and requestId. After completion, begin and resume return the
+   * status with `artifactId` and call no storage. */
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
   uploadResume(caller: Caller, uploadId: string, startPart?: number): Promise<ArtifactUploadStatus>;
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact>;
@@ -1210,24 +1256,84 @@ export interface Artifacts {
     artifact: Artifact;
     download: { url: string; expiresAt: string };
   }>;
-  /** Metadata-only output receipts for the authenticated session worker. */
-  authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
+  /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
+   * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
-  /** With offset or length, `content` is that part of the content, in characters, and `offset`
-   * and `total` say where it starts and how long the whole is. */
+  /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: the artifacts in input
+   * order, duplicates kept; `not_found` for the first id that is not in this project. */
+  getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
+  /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
+   * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
+  bytes(
+    caller: Caller,
+    artifactId: string,
+    tx?: Transaction,
+  ): Promise<{ artifact: Artifact; bytes: Buffer }>;
+  /** The bytes as tool text: valid UTF-8 without NUL is utf8, anything else base64. A range is
+   * in UTF-16 units (utf8) or base64 characters; each boundary moves forward to the next whole
+   * code point or 4-character group, so pages at offset += length tile exactly, and so does
+   * continuing from the returned offset + content.length. `offset` is the snapped start and
+   * `total` the length of the whole. */
   read(
     caller: Caller,
     artifactId: string,
     range?: { offset?: number; length?: number },
-  ): Promise<{
-    artifact: Artifact;
-    content: string;
-    encoding: 'utf8' | 'base64';
-    offset?: number;
-    total?: number;
-  }>;
-  list(caller: Caller): Promise<Artifact[]>;
+    tx?: Transaction,
+  ): Promise<ArtifactContent>;
+  /** Newest first, at most `limit` (1-1000, default 1000). `before` is an artifact id of this
+   * project (`not_found` if it is not) and the page starts after it; `session` keeps only the
+   * artifacts created by that session. */
+  list(
+    caller: Caller,
+    query?: { before?: string; limit?: number; session?: string },
+    tx?: Transaction,
+  ): Promise<Artifact[]>;
+}
+/**
+ * `Artifacts.getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input
+ * order, duplicates kept; `not_found` for the first id that is not in this project.
+ */
+export async function getArtifacts(
+  artifacts: Pick<Artifacts, 'getMany'>,
+  caller: Caller,
+  ids: readonly string[],
+  tx?: Transaction,
+): Promise<Artifact[]> {
+  const found: Artifact[] = [];
+  for (let start = 0; start < ids.length; start += MAX_ARTIFACT_IDS)
+    found.push(
+      ...(await artifacts.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)),
+    );
+  return found;
+}
+/**
+ * The outputs of the calling session worker's execution: the artifacts its session created as
+ * this actor, oldest first, metadata only. Scope refuses a session caller whose actor is not
+ * that session's worker; any other caller is refused here.
+ */
+export async function executionOutputs(
+  artifacts: Pick<Artifacts, 'list'>,
+  caller: Caller,
+  tx?: Transaction,
+): Promise<Artifact[]> {
+  // The session and actor are read after awaits.
+  caller = structuredClone(caller);
+  check(
+    caller.session,
+    'forbidden',
+    'Output receipts require an authenticated session worker',
+    403,
+  );
+  const outputs: Artifact[] = [];
+  const limit = 1000;
+  let page: Artifact[] = [];
+  do {
+    const before = page.at(-1)?.id;
+    page = await artifacts.list(caller, { session: caller.session.id, before, limit }, tx);
+    outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
+  } while (page.length === limit);
+  return outputs.reverse();
 }
 export interface WorkflowDefinition {
   name: string;

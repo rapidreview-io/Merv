@@ -9,8 +9,12 @@ import { statePlugin } from '@merv/state';
 import { DiskBlobs, blobsPlugin } from '@merv/blobs';
 import { ProjectScope, scopePlugin } from '@merv/scope';
 import { ArtifactStore, artifactsPlugin } from '@merv/artifacts';
+import { artifactToolsPlugin } from '@merv/artifacts/tools';
+import { ToolRegistry } from '@merv/api';
 import type { Transaction } from '@merv/contracts';
 import { openState, stateConfig } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 async function fixture(t: any) {
   const dir = mkdtempSync(join(tmpdir(), 'merv-foundation-'));
@@ -173,11 +177,17 @@ test('artifacts retain exact bytes, reject mutation, scope reads and detect corr
     content: '/w==',
     encoding: 'base64',
   });
+  // Bytes kept in the row are verified by the database; a row from before that reads through
+  // blobs, which detects tampering.
+  const legacy = await legacyArtifact(state, caller, Buffer.from('legacy content'), (bytes) =>
+    blobs.put(caller.projectId, bytes),
+  );
+  assert.equal((await artifacts.read(caller, legacy.id)).content, 'legacy content');
   writeFileSync(
-    join(dir, 'blobs', caller.projectId, value.hash.slice(0, 2), value.hash),
+    join(dir, 'blobs', caller.projectId, legacy.hash.slice(0, 2), legacy.hash),
     'tampered',
   );
-  await assert.rejects(async () => await artifacts.read(caller, value.id), /integrity/);
+  await assert.rejects(async () => await artifacts.read(caller, legacy.id), /integrity/);
 });
 test('artifact queries retain the project checked during authorization', async (t) => {
   const { artifacts, caller, scope } = await fixture(t);
@@ -198,31 +208,79 @@ test('artifact queries retain the project checked during authorization', async (
   changing.projectId = caller.projectId;
   assert.deepEqual(await artifacts.list(changing), [own]);
 });
-test('artifact reads cannot replace a revoked caller while storage is pending', async (t) => {
-  const { artifacts, blobs, caller, state, scope } = await fixture(t);
-  const artifact = await artifacts.create(caller, { title: 'Evidence', content: 'Retained' });
+test('a revocation while artifact bytes or a link are fetched is enforced by the tool registry', async (t) => {
+  const { blobs, caller, state, scope } = await fixture(t);
+  // Only a row from before bytes were kept in it still fetches them from storage.
+  const artifact = await legacyArtifact(state, caller, Buffer.from('Retained'), (bytes) =>
+    blobs.put(caller.projectId, bytes),
+  );
   for (const mode of ['read', 'download'] as const) {
     const reader = await scope.issueActor(caller, { name: mode, role: 'reader' });
-    const changing = { actorId: reader.actor.id, projectId: caller.projectId };
-    const replace = async () => {
-      await scope.revokeActor(caller, reader.actor.id);
-      changing.actorId = caller.actorId;
+    const entered = deferred();
+    const release = deferred();
+    const held = async () => {
+      entered.resolve();
+      await release.promise;
     };
     const store = await createService(
       new ArtifactStore(state, scope, {
         put: blobs.put.bind(blobs),
         get: async (namespace, hash) => {
-          const bytes = await blobs.get(namespace, hash);
-          await replace();
-          return bytes;
+          await held();
+          return await blobs.get(namespace, hash);
         },
         download: async () => {
-          await replace();
+          await held();
           return { url: 'https://storage.example/download', expiresAt: '2099-01-01T00:00:00.000Z' };
         },
       }),
     );
-    await assert.rejects(store[mode](changing, artifact.id), { code: 'forbidden' });
+    // The service authorises once, at its start; the registry reauthorises every read tool
+    // after its handler, before any bytes or link reach the caller.
+    const tools = new ToolRegistry(scope, undefined, (fn) => state.snapshot(fn));
+    t.after(() => tools.close());
+    artifactToolsPlugin.apply({
+      artifacts: store,
+      tools,
+      effect: (fn: () => unknown) => fn(),
+    } as never);
+    const pending = tools.call(
+      'artifact.read',
+      { actorId: reader.actor.id, projectId: caller.projectId },
+      {
+        artifactId: artifact.id,
+        ...(mode === 'download' ? { mode } : {}),
+      },
+    );
+    const rejected = assert.rejects(pending, { code: 'forbidden' }, mode);
+    await entered.promise;
+    await scope.revokeActor(caller, reader.actor.id);
+    release.resolve();
+    await rejected;
+  }
+});
+test('artifact metadata, bytes and links are authorised once per call', async (t) => {
+  const { blobs, caller, scope, state } = await fixture(t);
+  const store = await createService(
+    new ArtifactStore(state, scope, {
+      put: blobs.put.bind(blobs),
+      get: blobs.get.bind(blobs),
+      download: async () => ({
+        url: 'https://storage.example/download',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+    }),
+  );
+  const artifact = await store.create(caller, { title: 'Evidence', content: 'Retained' });
+  const require = t.mock.method(scope, 'require');
+  for (const call of [
+    () => store.get(caller, artifact.id),
+    () => store.read(caller, artifact.id),
+    () => store.download(caller, artifact.id),
+  ]) {
+    require.mock.resetCalls();
+    await call();
+    assert.equal(require.mock.callCount(), 1);
   }
 });
 test('Cordis activates independent components from declared dependencies and unwinds provider withdrawal', async (t) => {

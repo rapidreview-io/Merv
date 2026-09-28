@@ -10,7 +10,7 @@ import {
 } from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
-import { keyId, keyKind } from '@merv/contracts';
+import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -20,6 +20,7 @@ import {
   MervError,
   now,
   type Artifact,
+  type ArtifactContent,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -775,7 +776,7 @@ export class ReflectionService implements Reflections {
         ...new Set([
           ...this.inputIds(inputs),
           ...(context.caller.session
-            ? (await this.artifacts.authored(context.caller, context.tx)).map((a) => a.id)
+            ? (await executionOutputs(this.artifacts, context.caller, context.tx)).map((a) => a.id)
             : []),
         ]),
       ],
@@ -920,7 +921,7 @@ export class ReflectionService implements Reflections {
           };
         }
         const ids = this.inputIds(inputs);
-        for (const id of ids) await this.artifacts.get(context.source, id, context.tx);
+        await getArtifacts(this.artifacts, context.source, ids, context.tx);
         const receipt = {
           leaseId: context.leaseId,
           instanceId: context.snapshot.id,
@@ -963,7 +964,9 @@ export class ReflectionService implements Reflections {
       outputs: async (context) => {
         await this.lease(context);
         return {
-          artifacts: (await this.artifacts.authored(context.caller, context.tx)).map((a) => a.id),
+          artifacts: (await executionOutputs(this.artifacts, context.caller, context.tx)).map(
+            (a) => a.id,
+          ),
         };
       },
       release: async ({ lease, reason, tx }) =>
@@ -1120,12 +1123,9 @@ export class ReflectionService implements Reflections {
                   // written by somebody else, or has no Summary is an answer about nothing.
                   const artifactId = c.input?.artifactId;
                   if (typeof artifactId === 'string' && artifactId) {
-                    const artifact = await this.author(c.caller, artifactId, c.tx);
+                    const report = await this.author(c.caller, artifactId, c.tx);
                     check(
-                      markdownSection(
-                        (await this.artifacts.read(c.caller, artifact.id)).content,
-                        'Summary',
-                      ),
+                      markdownSection(report.content, 'Summary'),
                       'reflection_summary_required',
                       'Lens report requires a nonempty Summary section',
                     );
@@ -1149,12 +1149,17 @@ export class ReflectionService implements Reflections {
                 check: async (c: WorkflowCheckContext) => {
                   await this.admit(c);
                   if (typeof c.input?.changeSpecArtifactId === 'string') {
-                    const artifact = await this.author(
+                    const changeSpec = await this.author(
                       c.caller,
                       c.input.changeSpecArtifactId,
                       c.tx,
                     );
-                    await this.plan(c.caller, artifact, c.tx, c.snapshot.data.requirePlan === true);
+                    await this.plan(
+                      c.caller,
+                      changeSpec,
+                      c.tx,
+                      c.snapshot.data.requirePlan === true,
+                    );
                   }
                 },
               },
@@ -1223,7 +1228,8 @@ export class ReflectionService implements Reflections {
       ],
     };
   }
-  private async author(caller: Caller, id: string, tx: Transaction): Promise<Artifact> {
+  /** The caller's own text evidence, with the text it holds. */
+  private async author(caller: Caller, id: string, tx: Transaction): Promise<ArtifactContent> {
     const artifact = await this.artifacts.get(caller, id, tx);
     check(
       artifact.createdBy === caller.actorId,
@@ -1233,18 +1239,18 @@ export class ReflectionService implements Reflections {
     );
     if (caller.session)
       check(
-        (await this.artifacts.authored(caller, tx)).some((a) => a.id === id),
+        (await executionOutputs(this.artifacts, caller, tx)).some((a) => a.id === id),
         'artifact_execution_required',
         'Evidence must be authored in this execution',
         403,
       );
-    const read = await this.artifacts.read(caller, id);
+    const read = await this.artifacts.read(caller, id, undefined, tx);
     check(
       read.encoding === 'utf8' && visible(read.content),
       'reflection_text_required',
       'Reflection evidence must be nonempty UTF-8 text',
     );
-    return artifact;
+    return read;
   }
   /**
    * The plan a JSON change specification states. The media type is the author's declaration:
@@ -1252,18 +1258,18 @@ export class ReflectionService implements Reflections {
    */
   private async plan(
     caller: Caller,
-    changeSpec: Artifact,
+    { artifact, content }: ArtifactContent,
     tx: Transaction,
     required = false,
   ): Promise<ChangeSpec | undefined> {
     check(
-      !required || changeSpec.mediaType === 'application/json',
+      !required || artifact.mediaType === 'application/json',
       'reflection_plan_required',
       'Automatic research requires an application/json change specification with a continue or stop decision',
       409,
     );
-    if (changeSpec.mediaType !== 'application/json') return undefined;
-    const plan = parseChangeSpec((await this.artifacts.read(caller, changeSpec.id)).content);
+    if (artifact.mediaType !== 'application/json') return undefined;
+    const plan = parseChangeSpec(content);
     // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
     for (const { workflowId } of plan.carriedOver) {
       const carried = await this.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
@@ -1297,10 +1303,9 @@ export class ReflectionService implements Reflections {
           'Lens changed; refresh its assignment',
           409,
         );
-        const artifact = await this.author(caller, input.artifactId, tx);
-        const text = (await this.artifacts.read(caller, artifact.id)).content;
+        const { artifact, content } = await this.author(caller, input.artifactId, tx);
         check(
-          markdownSection(text, 'Summary'),
+          markdownSection(content, 'Summary'),
           'reflection_summary_required',
           'Lens report requires a nonempty Summary section',
         );
@@ -1376,17 +1381,14 @@ export class ReflectionService implements Reflections {
           'distinct_evidence_required',
           'Report and change specification must be distinct artifacts',
         );
+        const report = await this.author(caller, input.reportArtifactId, tx);
+        const changeSpec = await this.author(caller, input.changeSpecArtifactId, tx);
         const submission: Submission = {
-          report: await this.author(caller, input.reportArtifactId, tx),
-          changeSpec: await this.author(caller, input.changeSpecArtifactId, tx),
+          report: report.artifact,
+          changeSpec: changeSpec.artifact,
           producerId: caller.actorId,
         };
-        const plan = await this.plan(
-          caller,
-          submission.changeSpec,
-          tx,
-          snapshot.data.requirePlan === true,
-        );
+        const plan = await this.plan(caller, changeSpec, tx, snapshot.data.requirePlan === true);
         if (plan) submission.plan = plan;
         const lenses = await this.lensRows(wave, tx);
         check(

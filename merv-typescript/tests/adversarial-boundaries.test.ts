@@ -10,6 +10,7 @@ import { ToolRegistry } from '../packages/api/src/registry.js';
 import { createService } from '../packages/contracts/src/index.js';
 import { openState } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
+import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -223,10 +224,13 @@ for (const mode of ['inline', 'download'] as const)
       actorId: issued.actor.id,
       credentialId: issued.credential.id,
     };
-    const artifact = await artifacts.create(operator, {
-      title: 'Private evidence',
-      content: 'private evidence',
-    });
+    // Only a row from before bytes were kept in it still fetches them from storage.
+    const artifact = await legacyArtifact(
+      state,
+      operator,
+      Buffer.from('private evidence'),
+      () => undefined,
+    );
     // This is the exact snapshot wrapper used by the shipped toolsPlugin.
     const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
     t.after(() => tools.close());

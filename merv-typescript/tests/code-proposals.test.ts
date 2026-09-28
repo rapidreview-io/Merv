@@ -2,11 +2,12 @@ import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   canonical,
+  MervError,
   type Caller,
   type CodeCommitCommand,
   type CodeCommitReceipt,
@@ -526,11 +527,10 @@ test('requires authored output and trusted explicit pinned inputs; checks eviden
     f.seal(worker.caller, { ...input, artifactIds: [input.artifactIds[0], input.artifactIds[0]] }),
     { code: 'invalid_code_input' },
   );
-  const art = await f.artifacts.get(f.source, input.artifactIds[0]);
-  writeFileSync(
-    join(f.directory, 'blobs', f.source.projectId, art.hash.slice(0, 2), art.hash),
-    'corrupted bytes',
-  );
+  // Artifacts verifies its bytes (its own suite covers how); a refusal here must seal nothing.
+  f.artifacts.bytes = async () => {
+    throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
+  };
   await assert.rejects(f.seal(worker.caller, input), { code: 'blob_corrupt' });
   assert.equal((await f.events()).length, 0);
 });
@@ -664,7 +664,7 @@ test('project reads remain scoped and metadata-only, support borrowed transactio
   f.sessions.describe = async () => {
     throw new Error('Metadata read must not recursively describe a session');
   };
-  f.artifacts.read = async () => {
+  f.artifacts.bytes = async () => {
     throw new Error('Metadata read must not fetch artifact bytes');
   };
   assert.equal((await f.proposals.proposals(f.source)).length, 100);
@@ -821,12 +821,12 @@ test('commit metadata must match the exact assignment revision and attached repo
     await assert.rejects(f.seal(worker.caller, input), { code: 'code_proposal_binding' });
   }
   f.commands.operation = operation;
-  const read = f.artifacts.read.bind(f.artifacts);
-  f.artifacts.read = async (caller, id) => ({
-    ...(await read(caller, id)),
-    content: 'substituted bytes',
-  });
-  await assert.rejects(f.seal(worker.caller, input), { code: 'code_proposal_artifact' });
-  f.artifacts.read = read;
+  // Evidence whose bytes are gone is refused, as Artifacts reports it.
+  const bytes = f.artifacts.bytes;
+  f.artifacts.bytes = async () => {
+    throw new MervError('artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
+  };
+  await assert.rejects(f.seal(worker.caller, input), { code: 'artifact_bytes_missing' });
+  f.artifacts.bytes = bytes;
   assert.equal((await f.events()).length, 0);
 });

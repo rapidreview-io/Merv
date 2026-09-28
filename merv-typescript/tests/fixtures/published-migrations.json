@@ -50,6 +50,24 @@
       "published": false
     },
     {
+      "component": "artifacts",
+      "version": 3,
+      "hash": "0215fb87cac60080b32ec7f23a22eeb2e1715850ccb226f6d7499404cb78b53d",
+      "published": false
+    },
+    {
+      "component": "artifacts",
+      "version": 4,
+      "hash": "610f7bdf32320d6f1e20908589177d981f6d7ff3c155b9d599d415b97857ab70",
+      "published": false
+    },
+    {
+      "component": "artifacts",
+      "version": 5,
+      "hash": "70bc1386a52005afc97a2ed1fe3f3ffd427f136756df81ac6e13b3a7e0afeac4",
+      "published": false
+    },
+    {
       "component": "claims",
       "version": 1,
       "hash": "da705fe4a1574098d71f9a9674e7b09ce3d66216bf3c06d566d63dd23eb42a95",

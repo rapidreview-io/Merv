@@ -366,7 +366,7 @@ test('review requests retain the validated evidence list while artifact lookup y
   const f = await fixture(t);
   const input = f.input(),
     original = structuredClone(input);
-  const get = f.artifacts.get.bind(f.artifacts);
+  const getMany = f.artifacts.getMany.bind(f.artifacts);
   let enter!: () => void, release!: () => void;
   const entered = new Promise<void>((resolve) => {
     enter = resolve;
@@ -375,8 +375,8 @@ test('review requests retain the validated evidence list while artifact lookup y
     release = resolve;
   });
   let first = true;
-  t.mock.method(f.artifacts, 'get', async (...args: Parameters<typeof get>) => {
-    const result = await get(...args);
+  t.mock.method(f.artifacts, 'getMany', async (...args: Parameters<typeof getMany>) => {
+    const result = await getMany(...args);
     if (first) {
       first = false;
       enter();

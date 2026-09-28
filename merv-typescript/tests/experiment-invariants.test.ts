@@ -343,7 +343,7 @@ test('figure attachment rejects missing, foreign-project and post-offer images w
     worker,
     `${plan}\n![Outside frozen scope](${lateImage.id})`,
   );
-  const reads = t.mock.method(f.artifacts, 'read');
+  const reads = t.mock.method(f.artifacts, 'bytes');
   const before = await f.state.eventHead();
   await assert.rejects(
     async () =>

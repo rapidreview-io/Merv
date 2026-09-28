@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Artifact, Caller, Task } from '@merv/contracts';
+import { executionOutputs, type Artifact, type Caller, type Task } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -83,9 +83,18 @@ test('one agent can produce successive tasks and review other work, but cannot r
   // It reads the earlier proof like anything else in the project; it did not author it.
   assert.ok(await app.ctx.tools.call('artifact.read', callerB, { artifactId: proof.id }));
   const changingCaller = structuredClone(callerB);
-  const outputs = app.ctx.artifacts.authored(changingCaller);
+  const outputs = executionOutputs(app.ctx.artifacts, changingCaller);
   changingCaller.session!.id = callerA.session!.id;
   assert.deepEqual(await outputs, [], 'Previous execution output is not automatically authorized');
+  // Scope, inside the listing, refuses a session caller whose actor is another session's worker.
+  await assert.rejects(
+    executionOutputs(app.ctx.artifacts, { ...callerB, session: { id: 'ses_elsewhere' } }),
+    {
+      code: 'forbidden',
+      status: 403,
+      message: 'Worker actors require their live session authority',
+    },
+  );
   await app.ctx.sessions.releaseAgentAssignment(token, b.id);
   // Another producer submits separate work. The same agent may now become a reviewer; had its
   // own source delivered it, the agent would be that source's hand and could not.

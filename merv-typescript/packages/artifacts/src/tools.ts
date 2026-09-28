@@ -1,11 +1,28 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
-import { MervError, type Caller } from '@merv/contracts';
+import { MervError, MAX_ARTIFACT_BYTES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
 
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
 const workerInlineBytes = 64_000;
 const workerRangeCharacters = 8_192;
+/** Service errors name no tools; the tool adds how to go on after a refusal with this code. */
+async function hinted<T>(
+  run: () => Promise<T>,
+  code: string,
+  hint: () => Promise<string | undefined>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!(error instanceof MervError) || error.code !== code) throw error;
+    // The hint is extra: when it cannot be found, the original refusal still stands.
+    const text = await hint().catch(() => undefined);
+    if (!text) throw error;
+    throw new MervError(error.code, `${error.message}; ${text}`, error.status, error.details);
+  }
+}
+const pendingHint = async () => 'retry artifact.upload_begin with the same requestId';
 export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
@@ -17,13 +34,22 @@ export const artifactToolsPlugin = {
       handler: (caller: Caller, input: z.infer<S>) => unknown,
       readOnly = false,
       conversation?: 'never' | ((input: z.infer<S>) => 'secret' | 'propose' | undefined),
+      openWorld = false,
     ) =>
       ctx.effect(() =>
-        ctx.tools.register({ name, description, inputSchema, handler, readOnly, conversation }),
+        ctx.tools.register({
+          name,
+          description,
+          inputSchema,
+          handler,
+          readOnly,
+          conversation,
+          openWorld,
+        }),
       );
     register(
       'artifact.create',
-      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries.',
+      'Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.',
       z
         .object({
           title: z.string().min(1).max(300),
@@ -59,7 +85,12 @@ export const artifactToolsPlugin = {
           startPart: z.number().int().min(1).max(10000).optional(),
         })
         .strict(),
-      async (c, i) => await ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
+      async (c, i) =>
+        await hinted(
+          () => ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
+          'upload_pending',
+          pendingHint,
+        ),
       false,
       () => 'secret',
     );
@@ -67,7 +98,12 @@ export const artifactToolsPlugin = {
       'artifact.upload_complete',
       'Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.',
       z.object({ uploadId: z.string().min(1) }).strict(),
-      async (c, i) => await ctx.artifacts.uploadComplete(c, i.uploadId),
+      async (c, i) =>
+        await hinted(
+          () => ctx.artifacts.uploadComplete(c, i.uploadId),
+          'upload_pending',
+          pendingHint,
+        ),
       false,
       () => 'propose',
     );
@@ -91,7 +127,7 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in characters of the content, and the answer then gives offset and total. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.',
+      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.',
       z
         .object({
           artifactId: z.string().min(1),
@@ -104,7 +140,7 @@ export const artifactToolsPlugin = {
         if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId);
         if (c.session) {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
-          if (artifact.size > workerInlineBytes && artifact.size <= 2_000_000) {
+          if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {
             if (i.length === undefined || i.length > workerRangeCharacters) {
               const downloadAvailable = ctx.artifacts.canDownload(artifact);
               throw new MervError(
@@ -122,22 +158,35 @@ export const artifactToolsPlugin = {
             }
           }
         }
-        return await ctx.artifacts.read(c, i.artifactId, {
-          offset: i.offset,
-          length: i.length,
-        });
+        // Only on the error path: whether this artifact can be downloaded instead.
+        return await hinted(
+          () => ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
+          'artifact_size',
+          async () =>
+            ctx.artifacts.canDownload(await ctx.artifacts.get(c, i.artifactId))
+              ? 'use artifact.read with mode download'
+              : undefined,
+        );
       },
       true,
       // In a Pi conversation a signed URL is shown only to the person; a leased worker may
       // request its own URL to download and inspect an artifact in its workspace.
       (i) => (i.mode === 'download' ? 'secret' : undefined),
+      // Open world: storage I/O (older rows' bytes, signing, the download mirror) waits holding
+      // no reader snapshot, since artifacts runs each database read in a short transaction.
+      true,
     );
     register(
       'artifact.list',
-      'List this project’s immutable artifacts, newest first (at most 1,000).',
-      z.object({}).strict(),
-      async (c) =>
-        (await ctx.artifacts.list(c)).map((artifact) => ({
+      'List this project’s immutable artifacts, newest first: at most limit (default and maximum 1,000). For the next page, pass before with the last artifact’s ID.',
+      z
+        .object({
+          before: z.string().min(1).optional(),
+          limit: z.number().int().min(1).max(1000).optional(),
+        })
+        .strict(),
+      async (c, i) =>
+        (await ctx.artifacts.list(c, { before: i.before, limit: i.limit })).map((artifact) => ({
           ...artifact,
           downloadAvailable: ctx.artifacts.canDownload(artifact),
         })),

@@ -4,6 +4,8 @@ import {
   itemTitle,
   releasedLease,
   mapAsync,
+  getArtifacts,
+  executionOutputs,
 } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
@@ -706,7 +708,9 @@ export class ExperimentProgram {
       return [
         ...new Set([
           ...(JSON.parse(lease.artifacts) as Artifact[]).map((artifact) => artifact.id),
-          ...(await this.host.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
+          ...(await executionOutputs(this.host.artifacts, caller, tx)).map(
+            (artifact) => artifact.id,
+          ),
         ]),
       ].sort();
     }
@@ -977,27 +981,30 @@ export class ExperimentProgram {
           )?.artifactId
         : undefined;
     const artifactItems = async (ids: string[], priority: number) =>
-      await mapAsync(ids, async (id): Promise<ContextItem> => {
-        const record = records.get(id);
-        return {
-          id: `artifact:${id}`,
-          title: itemTitle(await this.host.artifacts.get(context.caller, id, context.tx)),
-          body: { artifactId: id },
-          priority,
-          ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
-          ...(record
-            ? { note: `${record.role} ${record.path}` }
-            : figures.has(id)
-              ? { note: 'figure' }
-              : {}),
-          refs: [
-            { tool: 'artifact.read', input: { artifactId: id } },
-            ...(id === exhibit
-              ? [{ tool: 'experiment.exhibit', input: { experimentId: experiment.id } }]
-              : []),
-          ],
-        };
-      });
+      (await getArtifacts(this.host.artifacts, context.caller, ids, context.tx)).map(
+        (artifact): ContextItem => {
+          const id = artifact.id;
+          const record = records.get(id);
+          return {
+            id: `artifact:${id}`,
+            title: itemTitle(artifact),
+            body: { artifactId: id },
+            priority,
+            ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
+            ...(record
+              ? { note: `${record.role} ${record.path}` }
+              : figures.has(id)
+                ? { note: 'figure' }
+                : {}),
+            refs: [
+              { tool: 'artifact.read', input: { artifactId: id } },
+              ...(id === exhibit
+                ? [{ tool: 'experiment.exhibit', input: { experimentId: experiment.id } }]
+                : []),
+            ],
+          };
+        },
+      );
     const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
     const evidence = inputs.evidenceArtifacts.filter((id) => id !== exhibit);
     const sources: Record<string, ContextInput> = {
@@ -1294,9 +1301,11 @@ export class ExperimentProgram {
             )
           : null;
         const inputs = await this.inputs(context.caller, experiment, context.tx);
-        const artifacts = await mapAsync(
+        const artifacts = await getArtifacts(
+          this.host.artifacts,
+          context.source,
           this.inputIds(inputs),
-          async (id) => await this.host.artifacts.get(context.source, id, context.tx),
+          context.tx,
         );
         const recovery = reviewing(context.snapshot.state) ? [] : this.eligibleRecovery(experiment);
         const receipt: Data = {
@@ -1337,7 +1346,7 @@ export class ExperimentProgram {
       outputs: async (context) => {
         await this.lease(context.caller, await this.admit(context), context.tx);
         return {
-          artifacts: (await this.host.artifacts.authored(context.caller, context.tx)).map(
+          artifacts: (await executionOutputs(this.host.artifacts, context.caller, context.tx)).map(
             (artifact) => artifact.id,
           ),
         };

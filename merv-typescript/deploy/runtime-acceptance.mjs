@@ -69,7 +69,7 @@ export async function exerciseRuntime(start) {
     const running = () =>
       app.status().every((entry) => ['active', 'disabled'].includes(entry.state));
     assert.ok(running(), 'Every enabled default plugin must activate');
-    assert.ok(app.ctx.artifacts.downloadSupported, 'Acceptance requires the actual S3 provider');
+    assert.ok(app.ctx.blobs.download, 'Acceptance requires the actual S3 provider');
     const pluginCount = app.status().length;
     const page = await fetch(`${app.ctx.api.url}/ui/`, { signal: AbortSignal.timeout(30_000) });
     assert.equal(page.status, 200, 'Compiled UI entrypoint must be served');

@@ -1,4 +1,4 @@
-import { recorded, mapAsync } from '@merv/contracts';
+import { recorded, mapAsync, getArtifacts } from '@merv/contracts';
 import { createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
@@ -414,10 +414,9 @@ export class PaperService implements Paper {
     caller = this.capture(caller);
     input = parse(reviewSchema, input);
     const documents = await this.reviewed(caller, input, tx);
-    const evidence = await mapAsync(unique(input.evidenceIds), async (id) => {
-      const artifact = await this.artifacts.get(caller, id, tx);
-      return { id, hash: artifact.hash };
-    });
+    const evidence = (
+      await getArtifacts(this.artifacts, caller, unique(input.evidenceIds), tx)
+    ).map(({ id, hash }) => ({ id, hash }));
     const publications = await mapAsync(documents, async ({ before, after, edit }) => {
       after.review = { id: input.reviewId, source: input.source, verdict: input.verdict };
       await this.revision(caller, before, after, tx);
