@@ -138,14 +138,11 @@ export class ArtifactStore implements Artifacts {
    * The bytes behind a row created before they were kept in it: large-storage bytes are verified
    * here, blob bytes by blobs.get.
    */
-  private async fetch(projectId: string, artifact: Artifact, tx?: Transaction): Promise<Buffer> {
+  private async fetch({ projectId, objectId, hash, size }: Artifact, tx?: Transaction) {
     this.offLock(tx);
-    if (!artifact.objectId) return await missing(() => this.blobs.get(projectId, artifact.hash));
+    if (!objectId) return await missing(() => this.blobs.get(projectId, hash));
     const storage = this.storage();
-    return verified(
-      await missing(() => storage.read(projectId, artifact.objectId!, artifact.size)),
-      artifact,
-    );
+    return verified(await missing(() => storage.read(projectId, objectId, size)), { size, hash });
   }
   private filling?: Backfill;
   /**
@@ -155,7 +152,7 @@ export class ArtifactStore implements Artifacts {
   backfill(): () => Promise<void> {
     const fill = new Backfill(
       this.state,
-      (artifact) => this.fetch(artifact.projectId, artifact),
+      (artifact) => this.fetch(artifact),
       () => !!this.large,
     );
     this.filling = fill;
@@ -246,7 +243,7 @@ export class ArtifactStore implements Artifacts {
         400,
         { artifactId: artifact.id, size: artifact.size },
       );
-    return { artifact, bytes: row.content ?? (await this.fetch(caller.projectId, artifact, tx)) };
+    return { artifact, bytes: row.content ?? (await this.fetch(artifact, tx)) };
   }
   async read(
     caller: Caller,
