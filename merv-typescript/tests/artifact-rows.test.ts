@@ -7,6 +7,7 @@ import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   createService,
+  executionOutputs,
   MervError,
   now,
   sha256Hex,
@@ -189,9 +190,101 @@ test('a session create records its session, and metadata answers carry no bytes'
   ]);
   assert.deepEqual(Object.keys(await store.get(worker, artifact.id)).sort(), keys);
   for (const listed of await store.list(worker)) assert.deepEqual(Object.keys(listed).sort(), keys);
-  const authored = await store.authored(worker);
-  assert.deepEqual(authored, [artifact]);
-  assert.deepEqual(Object.keys(authored[0]).sort(), keys);
+  const outputs = await executionOutputs(store, worker);
+  assert.deepEqual(outputs, [artifact]);
+  assert.deepEqual(Object.keys(outputs[0]).sort(), keys);
+});
+
+/** Session authority is Sessions'; this stub grants it so a test can drive session callers. */
+async function sessionStore(f: Awaited<ReturnType<typeof fixture>>) {
+  const scope = { require: async () => ({}) } as unknown as Scope;
+  return await createService(new ArtifactStore(f.state, scope, f.counted));
+}
+
+test('execution outputs are what this session created as this actor, oldest first', async (t) => {
+  const f = await fixture(t);
+  const store = await sessionStore(f);
+  const peer = (await f.scope.issueActor(f.caller, { name: 'Peer', role: 'producer' })).actor.id;
+  // One agent's two sessions, and another actor working under the first session's id.
+  const first: Caller = { ...f.caller, session: { id: 'ses_first' } };
+  const second: Caller = {
+    ...f.caller,
+    session: { id: 'ses_second', agentSessionId: 'ses_agent' },
+  };
+  const other: Caller = { ...f.caller, actorId: peer, session: { id: 'ses_first' } };
+  for (const [n, caller] of [first, second, other, f.caller, first, second].entries())
+    await store.create(caller, { title: `Output ${n}`, content: `bytes ${n}` });
+  const { store: large, sha256 } = objectStore(Buffer.from('uploaded'));
+  t.after(store.bindLarge(large.storage));
+  const begun = await store.uploadBegin(first, {
+    title: 'Upload',
+    size: 8,
+    sha256,
+    mediaType: 'text/plain',
+  });
+  const uploaded = await store.uploadComplete(first, begun.uploadId);
+  // What authored() answered: rows by this actor whose creation event names this session.
+  const receipts = async (caller: Caller) =>
+    (
+      await f.state.read((sql) =>
+        sql.all<{ id: string }>(
+          `SELECT id FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`,
+          caller.projectId,
+          caller.actorId,
+          caller.session!.id,
+        ),
+      )
+    ).map((row) => row.id);
+  const outputs = async (caller: Caller) =>
+    (await executionOutputs(store, caller)).map((artifact) => artifact.id);
+  for (const caller of [first, second, other])
+    assert.deepEqual(await outputs(caller), await receipts(caller));
+  assert.equal((await outputs(first)).length, 3);
+  assert.equal((await outputs(first)).at(-1), uploaded.id);
+  assert.equal((await outputs(second)).length, 2);
+  assert.equal((await outputs(other)).length, 1);
+
+  const list = t.mock.method(store, 'list');
+  await assert.rejects(executionOutputs(store, f.caller), { code: 'forbidden', status: 403 });
+  assert.equal(list.mock.callCount(), 0);
+});
+
+test('execution outputs page through every output with the caller they started with', async (t) => {
+  const f = await fixture(t);
+  const store = await sessionStore(f);
+  const peer = (await f.scope.issueActor(f.caller, { name: 'Peer', role: 'producer' })).actor.id;
+  // 1,205 rows of this session, ten to a second so pages cross ties on created_at; every fifth
+  // was created by another actor.
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,session_id)
+       SELECT 'art_' || lpad(n::text, 5, '0'), ?, CASE WHEN n % 5 = 0 THEN ? ELSE ? END, 'Row ' || n,
+         'text/plain', repeat('0', 64), 1,
+         to_char(timestamp '2026-09-01' + (n / 10) * interval '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+         'ses_worker'
+       FROM generate_series(1, 1205) n`,
+      f.caller.projectId,
+      peer,
+      f.caller.actorId,
+    ),
+  );
+  const expected = Array.from({ length: 1205 }, (_, i) => i + 1)
+    .filter((n) => n % 5 !== 0)
+    .map((n) => `art_${String(n).padStart(5, '0')}`);
+  const worker: Caller = { ...f.caller, session: { id: 'ses_worker' } };
+  const list = store.list.bind(store);
+  const pages = t.mock.method(store, 'list', async (...args: Parameters<typeof list>) => {
+    const page = await list(...args);
+    // Whatever the caller's object becomes after the first page, the pages keep its start.
+    Object.assign(worker, { actorId: peer, session: { id: 'ses_other' } });
+    return page;
+  });
+  const outputs = await executionOutputs(store, worker);
+  assert.deepEqual(
+    outputs.map((artifact) => artifact.id),
+    expected,
+  );
+  assert.equal(pages.mock.callCount(), 2);
 });
 
 test('the content migration fills session provenance, then the guard and CHECK hold', async (t) => {

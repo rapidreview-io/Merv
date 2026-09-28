@@ -1158,8 +1158,6 @@ export interface Artifacts {
     artifact: Artifact;
     download: { url: string; expiresAt: string };
   }>;
-  /** Metadata-only output receipts for the authenticated session worker. */
-  authored(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
   /** Database only: the bytes are stored in the row, in `tx`, else the ambient transaction, else
    * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
@@ -1210,6 +1208,34 @@ export async function getArtifacts(
       ...(await artifacts.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)),
     );
   return found;
+}
+/**
+ * The outputs of the calling session worker's execution: the artifacts its session created as
+ * this actor, oldest first, metadata only. Scope refuses a session caller whose actor is not
+ * that session's worker; any other caller is refused here.
+ */
+export async function executionOutputs(
+  artifacts: Pick<Artifacts, 'list'>,
+  caller: Caller,
+  tx?: Transaction,
+): Promise<Artifact[]> {
+  // The session and actor are read after awaits.
+  caller = structuredClone(caller);
+  check(
+    caller.session,
+    'forbidden',
+    'Output receipts require an authenticated session worker',
+    403,
+  );
+  const outputs: Artifact[] = [];
+  const limit = 1000;
+  let page: Artifact[] = [];
+  do {
+    const before = page.at(-1)?.id;
+    page = await artifacts.list(caller, { session: caller.session.id, before, limit }, tx);
+    outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
+  } while (page.length === limit);
+  return outputs.reverse();
 }
 export interface WorkflowDefinition {
   name: string;

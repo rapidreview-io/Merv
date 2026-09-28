@@ -8,7 +8,7 @@ import {
 } from '@merv/contracts';
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
-import { getArtifacts, keyId, keyKind } from '@merv/contracts';
+import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -809,7 +809,7 @@ export class ReflectionService implements Reflections {
         ...new Set([
           ...this.inputIds(inputs),
           ...(context.caller.session
-            ? (await this.artifacts.authored(context.caller, context.tx)).map((a) => a.id)
+            ? (await executionOutputs(this.artifacts, context.caller, context.tx)).map((a) => a.id)
             : []),
         ]),
       ],
@@ -1004,7 +1004,9 @@ export class ReflectionService implements Reflections {
       outputs: async (context) => {
         await this.lease(context);
         return {
-          artifacts: (await this.artifacts.authored(context.caller, context.tx)).map((a) => a.id),
+          artifacts: (await executionOutputs(this.artifacts, context.caller, context.tx)).map(
+            (a) => a.id,
+          ),
         };
       },
       release: async ({ lease, reason, tx }) =>
@@ -1275,7 +1277,7 @@ export class ReflectionService implements Reflections {
     );
     if (caller.session)
       check(
-        (await this.artifacts.authored(caller, tx)).some((a) => a.id === id),
+        (await executionOutputs(this.artifacts, caller, tx)).some((a) => a.id === id),
         'artifact_execution_required',
         'Evidence must be authored in this execution',
         403,

@@ -1,4 +1,4 @@
-import { visible, mapAsync, getArtifacts } from '@merv/contracts';
+import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -847,7 +847,9 @@ export class ExperimentService implements Experiments {
     tx: Transaction,
   ): Promise<boolean> {
     return caller.session
-      ? (await this.artifacts.authored(caller, tx)).some((output) => output.id === artifact.id)
+      ? (await executionOutputs(this.artifacts, caller, tx)).some(
+          (output) => output.id === artifact.id,
+        )
       : artifact.createdBy === caller.actorId;
   }
   private async text(caller: Caller, id: string, tx: Transaction): Promise<string> {

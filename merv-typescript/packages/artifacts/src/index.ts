@@ -173,26 +173,6 @@ export class ArtifactStore implements Artifacts {
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
-  async authored(caller: Caller, tx?: Transaction): Promise<Artifact[]> {
-    caller = structuredClone(caller);
-    return await this.place(tx, async (tx) => {
-      const actor = await this.scope.require(caller, 'read', tx);
-      check(
-        caller.session && actor.sessionId === (caller.session.agentSessionId ?? caller.session.id),
-        'forbidden',
-        'Output receipts require an authenticated session worker',
-        403,
-      );
-      return (
-        await tx.all(
-          `SELECT ${META} FROM artifacts a WHERE a.project_id=? AND a.created_by=? AND EXISTS(SELECT 1 FROM events e WHERE e.project_id=a.project_id AND e.subject_id=a.id AND e.type='artifact.created' AND (e.data_json::jsonb #>> '{source,sessionId}')=?) ORDER BY a.created_at,a.id`,
-          caller.projectId,
-          caller.actorId,
-          caller.session.id,
-        )
-      ).map(fromRow);
-    });
-  }
   /**
    * The bytes behind a row created before they were kept in it: large-storage bytes are verified
    * here, blob bytes by blobs.get.

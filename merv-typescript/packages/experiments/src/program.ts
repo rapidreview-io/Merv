@@ -4,6 +4,7 @@ import {
   releasedLease,
   mapAsync,
   getArtifacts,
+  executionOutputs,
   boundedPaperContext,
 } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
@@ -750,7 +751,9 @@ export class ExperimentProgram {
       return [
         ...new Set([
           ...(JSON.parse(lease.artifacts) as Artifact[]).map((artifact) => artifact.id),
-          ...(await this.host.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
+          ...(await executionOutputs(this.host.artifacts, caller, tx)).map(
+            (artifact) => artifact.id,
+          ),
         ]),
       ].sort();
     }
@@ -1335,7 +1338,7 @@ export class ExperimentProgram {
       outputs: async (context) => {
         await this.lease(context.caller, await this.admit(context), context.tx);
         return {
-          artifacts: (await this.host.artifacts.authored(context.caller, context.tx)).map(
+          artifacts: (await executionOutputs(this.host.artifacts, context.caller, context.tx)).map(
             (artifact) => artifact.id,
           ),
         };

@@ -13,6 +13,7 @@ import {
   keyKind,
   mapAsync,
   getArtifacts,
+  executionOutputs,
   MervError,
   newId,
   now,
@@ -428,7 +429,9 @@ export class TaskService implements Tasks {
       outputs: async ({ caller, snapshot, tx }) => {
         await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
         return {
-          artifacts: (await this.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
+          artifacts: (await executionOutputs(this.artifacts, caller, tx)).map(
+            (artifact) => artifact.id,
+          ),
         };
       },
       release: async ({ lease, reason, tx }) =>
@@ -601,7 +604,7 @@ export class TaskService implements Tasks {
     return [
       ...new Set([
         ...pinned.map((artifact) => artifact.id),
-        ...(await this.artifacts.authored(caller, tx)).map((artifact) => artifact.id),
+        ...(await executionOutputs(this.artifacts, caller, tx)).map((artifact) => artifact.id),
       ]),
     ].sort();
   }
