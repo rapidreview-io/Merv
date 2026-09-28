@@ -545,11 +545,12 @@ export class RecipeContextBuilder implements ContextBuilder {
     // When every reference cannot be listed, the lowest-ranked are cut until the rest fit, keeping
     // the top item of each required section. Each section with cuts says how to reach them.
     const cut = sections.map((): typeof entries => []);
-    const note = (list: typeof entries) => {
-      if (!list.length) return '';
-      const n = list.length,
-        tools = [...new Set(list.flatMap((entry) => entry.item.refs.map((ref) => ref.tool)))];
-      return `\n(${n} lower-priority item${n === 1 ? ' is' : 's are'} not listed for lack of room; retrieve ${n === 1 ? 'it' : 'them'} through ${tools.sort().join(' or ')}.)\n`;
+    const cutTools = sections.map(() => new Set<string>());
+    const note = (sectionIndex: number) => {
+      const n = cut[sectionIndex].length;
+      if (!n) return '';
+      const tools = [...cutTools[sectionIndex]].sort().join(' or ');
+      return `\n(${n} lower-priority item${n === 1 ? ' is' : 's are'} not listed for lack of room; retrieve ${n === 1 ? 'it' : 'them'} through ${tools}.)\n`;
     };
     if (size > definition.recipe.maxChars) {
       const keep = new Set(
@@ -560,10 +561,10 @@ export class RecipeContextBuilder implements ContextBuilder {
       for (const entry of [...ranked].reverse()) {
         if (size <= definition.recipe.maxChars) break;
         if (keep.has(entry)) continue;
-        const list = cut[entry.sectionIndex];
-        size -= note(list).length + entry.reference.length;
-        list.push(entry);
-        size += note(list).length;
+        size -= note(entry.sectionIndex).length + entry.reference.length;
+        cut[entry.sectionIndex].push(entry);
+        for (const ref of entry.item.refs) cutTools[entry.sectionIndex].add(ref.tool);
+        size += note(entry.sectionIndex).length;
       }
     }
     check(
@@ -607,7 +608,7 @@ export class RecipeContextBuilder implements ContextBuilder {
               .filter((entry) => entry.sectionIndex === sectionIndex && !unlisted.has(entry))
               .map((entry) => entry.reference)
               .join('') +
-            note(cut[sectionIndex]),
+            note(sectionIndex),
         )
         .join('') +
       bodyHead +
