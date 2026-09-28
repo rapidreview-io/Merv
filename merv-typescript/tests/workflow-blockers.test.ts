@@ -9,7 +9,6 @@ import {
   type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { providerRelations } from '@merv/code-research/relations';
 import { WorkflowsService } from '@merv/workflows';
 import { openState } from './fixtures/state.js';
 
@@ -246,7 +245,7 @@ test('the blocker table arrives on a populated database and keeps its identity',
   assert.equal((await f.workflows.blockers(f.owner)).length, 1);
 });
 
-test('a provider reads an instance and its edges, and composes the workspace fact from pinned versions', async (t) => {
+test('a provider reads an instance, its edges and the pinned manifests of their versions', async (t) => {
   const f = await fixture(t);
   const build = await f.workflows.register(definition, policy(false));
   const coded = await f.workflows.register({ ...definition, name: 'coded' }, policy(true));
@@ -309,21 +308,8 @@ test('a provider reads an instance and its edges, and composes the workspace fac
     'ephemeral',
   );
   assert.equal(await f.workflows.pinned('coded', 2), null);
-
-  const provider = await f.state.transaction(
-    async (tx) => await providerRelations(f.workflows, f.owner.projectId, top.id, tx),
-  );
-  assert.ok(provider);
-  assert.deepEqual(
-    [provider.instance.id, provider.instance.goal, provider.instance.declaresWorkspace],
-    [top.id, 'Ship the build', false],
-  );
-  assert.equal('data' in provider.instance, false);
-  // A terminal dependency whose version has no manifest declares no workspace.
-  assert.deepEqual(
-    Object.fromEntries(provider.dependencies.map((item) => [item.id, item.declaresWorkspace])),
-    { [plain.id]: false, [git.id]: true, [unmanifested.id]: false },
-  );
+  // A version with no assignment pins that no state has a manifest.
+  assert.deepEqual((await f.workflows.pinned('bare', 1))?.execution, { building: null });
   const below = await f.state.transaction(
     async (tx) => await f.workflows.relations(f.owner.projectId, git.id, tx),
   );
@@ -334,12 +320,6 @@ test('a provider reads an instance and its edges, and composes the workspace fac
   assert.equal(
     await f.state.transaction(
       async (tx) => await f.workflows.relations(f.owner.projectId, 'missing', tx),
-    ),
-    null,
-  );
-  assert.equal(
-    await f.state.transaction(
-      async (tx) => await providerRelations(f.workflows, f.owner.projectId, 'missing', tx),
     ),
     null,
   );
