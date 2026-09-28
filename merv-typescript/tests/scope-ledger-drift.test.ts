@@ -177,7 +177,7 @@ for (const [name, retire, authenticate] of unadopted)
   test(`${name} of a row the ledger has not adopted succeeds and stays revoked`, async (t) => {
     const f = await fixture();
     const legacy = await retire(f);
-    await t.test('the ledger records the revocation at once', { todo: 'step 2b' }, async () => {
+    await t.test('the ledger records the revocation at once', async () => {
       assert.notEqual((await ledgerRow(f, legacy.tokenHash))?.revoked_at ?? null, null);
     });
     await t.test('a restarted Scope still refuses the token', async () => {
@@ -185,7 +185,7 @@ for (const [name, retire, authenticate] of unadopted)
     });
   });
 
-test('a credential revoked only in the ledger cannot be rotated', { todo: 'step 2b' }, async () => {
+test('a credential revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
   await f.ledger.revoke(
     (await f.state.read((sql) =>
@@ -203,7 +203,7 @@ test('a credential revoked only in the ledger cannot be rotated', { todo: 'step 
   assert.equal(await scopeRevokedAt(f, 'actor_credentials', f.machine.credential.id), null);
 });
 
-test('a key revoked only in the ledger cannot be rotated', { todo: 'step 2b' }, async () => {
+test('a key revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
   const { key, token } = await f.scope.createKey(f.alice, { projectId: f.project.id });
   await f.ledger.revoke(sha256Hex(token), 'scope');
@@ -237,26 +237,22 @@ test('an expired credential or key is still renewed with an explicit expiry', as
   assert.equal((await f.scope.authenticateKey(rotated.token)).id, rotated.key.id);
 });
 
-test(
-  'revoking a hash another authority owns is refused as a conflict',
-  { todo: 'step 2b' },
-  async () => {
-    const f = await fixture();
-    const foreign = await f.ledger.issue({
-      owner: 'other',
-      subject: 'other_subject',
-      kind: 'other',
-      prefix: '',
-      expiresAt: null,
-    });
-    const legacy = await legacyCredential(f, { token: foreign.token });
-    await assert.rejects(f.scope.revokeCredential(f.owner, legacy.id), {
-      code: 'credential_conflict',
-      status: 409,
-    });
-    assert.equal(await scopeRevokedAt(f, 'actor_credentials', legacy.id), null);
-  },
-);
+test('revoking a hash another authority owns is refused as a conflict', async () => {
+  const f = await fixture();
+  const foreign = await f.ledger.issue({
+    owner: 'other',
+    subject: 'other_subject',
+    kind: 'other',
+    prefix: '',
+    expiresAt: null,
+  });
+  const legacy = await legacyCredential(f, { token: foreign.token });
+  await assert.rejects(f.scope.revokeCredential(f.owner, legacy.id), {
+    code: 'credential_conflict',
+    status: 409,
+  });
+  assert.equal(await scopeRevokedAt(f, 'actor_credentials', legacy.id), null);
+});
 
 test('an actor credential whose ledger row another owner holds is refused', async () => {
   const f = await fixture();

@@ -1169,7 +1169,13 @@ export class ProjectScope implements Scope {
         caller.projectId,
       );
       check(result.changes === 1, 'credential_revoked', 'Credential was already revoked', 409);
-      await this.ledger.revoke(previous.token_hash, tx);
+      // Only a revocation counts here, never expiry: renewing an expired credential is intended.
+      check(
+        (await this.ledger.retire('actor', previous, tx)).revokedAt === null,
+        'credential_revoked',
+        'Credential was revoked in the credential ledger',
+        409,
+      );
       const issued = await this.issueCredential(tx, actor(target), expiresAt, previous.id, time);
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
@@ -1193,7 +1199,7 @@ export class ProjectScope implements Scope {
         'Cannot revoke the credential authenticating this call; verify another credential first',
       );
       if (target.revoked_at !== null) return;
-      await this.ledger.revoke(target.token_hash, tx);
+      await this.ledger.retire('actor', target, tx);
       const time = this.time();
       await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL',

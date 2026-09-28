@@ -64,9 +64,28 @@ export class Ledger {
     return credential;
   }
 
-  /** Revokes a Scope row in the ledger. A hash the ledger never recorded is left as it is. */
-  async revoke(tokenHash: string, tx: Transaction): Promise<void> {
-    await this.store.revoke(tokenHash, 'scope', tx);
+  /** Revokes a Scope credential in the ledger, first adopting a row an older image wrote after this
+   * instance's boot pass, so the revocation is recorded even then. adopt is idempotent on the
+   * hash and refuses one another authority holds (409); revoke keeps an earlier revocation.
+   * Returns the ledger row as it was BEFORE this revocation. */
+  async retire(
+    kind: LedgerKind,
+    row: { id: string; token_hash: string; expires_at: string | null },
+    tx: Transaction,
+  ): Promise<Credential> {
+    const before = await this.store.adopt(
+      {
+        owner: 'scope',
+        subject: row.id,
+        kind,
+        tokenHash: row.token_hash,
+        expiresAt: row.expires_at,
+        hardDeadline: row.expires_at,
+      },
+      tx,
+    );
+    await this.store.revoke(row.token_hash, 'scope', tx);
+    return before;
   }
 
   /** Records one Scope row in the ledger, with its expiry and any revocation (the boot pass). */

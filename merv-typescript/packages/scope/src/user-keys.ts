@@ -357,7 +357,13 @@ export class UserKeys {
         previous.id,
       );
       check(changed.changes === 1, 'key_revoked', 'User key is already revoked or rotated', 409);
-      await this.ledger.revoke(previous.token_hash, tx);
+      // Only a revocation counts here, never expiry: renewing an expired key is intended.
+      check(
+        (await this.ledger.retire('user-key', previous, tx)).revokedAt === null,
+        'key_revoked',
+        'User key was revoked in the credential ledger',
+        409,
+      );
       const issued = await this.issue(
         tx,
         { ...hydrate(previous), expiresAt, previousId: previous.id },
@@ -388,7 +394,7 @@ export class UserKeys {
       const ownerActorId = await this.ownerActor(tx, selected);
       const time = this.time();
       for (const key of descendants) {
-        await this.ledger.revoke(key.token_hash, tx);
+        await this.ledger.retire('user-key', key, tx);
         await tx.run(
           'UPDATE user_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
           time,
