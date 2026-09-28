@@ -69,7 +69,8 @@ interface CredentialRow {
   revoked_at: string | null;
   previous_id: string | null;
 }
-/** An allowed decision. `lifetime` is the deadline of the actor credential it rested on, if any. */
+/** An allowed decision. `lifetime` is the deadline of the actor credential or user key it rested
+ * on, if any. */
 interface Decision {
   actor: Actor;
   source?: DelegationSource;
@@ -372,39 +373,32 @@ export class ProjectScope implements Scope {
       'A worker session cannot delegate another session',
       403,
     );
+    const { source, lifetime } = await this.authorize(caller, 'read', tx);
     // A conversation acts with exactly its person's authority: the source it was given.
-    if (caller.conversation) return (await this.authorize(caller, 'read', tx)).source!;
-    await this.require(caller, 'read', tx);
+    if (caller.conversation) return source!;
     const base = { actorId: caller.actorId, projectId: caller.projectId };
     if (caller.service) return { ...base, kind: 'service', vouchedBy: caller.service.vouchedBy };
     if (caller.human) {
       const { issuer, subject, membershipId } = caller.human;
       return { ...base, kind: 'human', issuer, subject, membershipId };
     }
-    const lookup = async (sql: Sql): Promise<DelegationSource> => {
-      if (caller.key) {
-        const key = (await sql.get<{ expires_at: string | null }>(
-          'SELECT expires_at FROM user_keys WHERE id=?',
-          caller.key.id,
-        ))!;
-        return {
+    check(
+      caller.key || caller.credentialId,
+      'delegation_required',
+      'Delegation requires an authenticated source credential',
+      403,
+    );
+    // The authorization above just read the key or credential row, and with it the deadline.
+    check(lifetime !== undefined, 'scope_internal', 'Credential lifetime unavailable', 500);
+    return caller.key
+      ? {
           ...base,
           kind: 'key',
           keyId: caller.key.id,
           membershipId: caller.key.membershipId,
-          expiresAt: key.expires_at,
-        };
-      }
-      check(
-        caller.credentialId,
-        'delegation_required',
-        'Delegation requires an authenticated source credential',
-        403,
-      );
-      const row = await this.credentialRow(sql, caller.projectId, caller.credentialId);
-      return { ...base, kind: 'actor', credentialId: row.id, expiresAt: row.expires_at };
-    };
-    return await within(this.state, tx, lookup);
+          expiresAt: lifetime,
+        }
+      : { ...base, kind: 'actor', credentialId: caller.credentialId!, expiresAt: lifetime };
   }
   async requireDelegation(
     source: DelegationSource,
@@ -452,26 +446,16 @@ export class ProjectScope implements Scope {
       );
       caller = { ...base, credentialId: source.credentialId };
     }
-    const value = await this.require(caller, permission, tx);
+    const { actor: value, lifetime } = await this.authorize(caller, permission, tx);
     check(!value.sessionId, 'nested_session', 'A session cannot be a delegation source', 403);
-    // A service lapses with its voucher, whose lifetime its authorization already checked.
-    if (source.kind === 'service') return value;
-    {
-      const lookup = async (sql: Sql) =>
-        await sql.get<{ expires_at: string | null }>(
-          source.kind === 'key'
-            ? 'SELECT expires_at FROM user_keys WHERE id=?'
-            : 'SELECT expires_at FROM actor_credentials WHERE id=?',
-          source.kind === 'key' ? source.keyId : source.credentialId,
-        );
-      const row = await within(this.state, tx, lookup);
-      check(
-        row && row.expires_at === source.expiresAt,
-        'invalid_delegation',
-        'Delegation credential lifetime changed',
-        403,
-      );
-    }
+    // A key or credential source holds only while its row keeps the deadline it was given. A
+    // service lapses with its voucher, whose lifetime its authorization already checked.
+    check(
+      source.kind === 'service' || lifetime === source.expiresAt,
+      'invalid_delegation',
+      'Delegation credential lifetime changed',
+      403,
+    );
     return value;
   }
   async createSessionActor(
@@ -873,7 +857,7 @@ export class ProjectScope implements Scope {
       } else if (caller.session) {
         check(false, 'forbidden', 'Session authority cannot select another actor', 403);
       } else if (row.user_issuer && caller.key !== undefined) {
-        await this.userKeys.authorize(caller, sql);
+        lifetime = await this.userKeys.authorize(caller, sql);
       } else if (row.user_issuer) {
         check(
           caller.human !== undefined,

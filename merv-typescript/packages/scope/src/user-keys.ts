@@ -111,7 +111,8 @@ export class UserKeys {
     return row;
   }
 
-  async authorize(caller: Caller, sql: Sql): Promise<void> {
+  /** Checks a user key caller against its stored key and membership; returns the key's deadline. */
+  async authorize(caller: Caller, sql: Sql): Promise<string | null> {
     check(
       caller.key &&
         typeof caller.key.membershipId === 'string' &&
@@ -144,6 +145,7 @@ export class UserKeys {
       'An active current membership belonging to the key owner is required',
       403,
     );
+    return key.expires_at;
   }
 
   async caller(
