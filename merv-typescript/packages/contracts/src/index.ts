@@ -641,6 +641,14 @@ export interface Blobs {
   ): Promise<{ url: string; expiresAt: string }>;
 }
 export type Permission = 'read' | 'write' | 'review' | 'admin';
+/**
+ * Who a call acts as. At most one authority field may be set. A bare `{ actorId, projectId }`
+ * names an independent machine actor or a producing service actor directly: it is trusted
+ * in-process authority, carries that actor's full role and checks no credential's liveness, so
+ * transports never build one (they attach `credentialId`, `human`, `key`, `session`,
+ * `conversation` or `managed`). A member actor still needs its person's `human` or `key`
+ * authority, and a worker its session.
+ */
 export interface Caller {
   actorId: string;
   projectId: string;
@@ -960,6 +968,9 @@ export interface Scope {
     input: { sessionId: string; agentId?: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor>;
+  /** Changes an agent's role within what `source` may delegate. Scope does not know who owns an
+   * agent: the caller must already have proven it controls this one (Sessions:
+   * `AgentDirectory.controlled`). */
   setAgentRole(
     source: DelegationSource,
     actorId: string,
@@ -998,18 +1009,24 @@ export interface Scope {
   projects(principal: Principal): Promise<Project[]>;
   createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
   memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
+  /** Membership administration names subjects of the operator's own identity issuer only. */
   addMember(
     principal: Principal,
     projectId: string,
     input: { subject: string; role: Role },
   ): Promise<ProjectMembership>;
+  /** A role change ends the membership and starts a new one. Every delegation source and resolved
+   * caller naming the old membership, a worker's lease source included, stops working with it. */
   changeMemberRole(
     principal: Principal,
     projectId: string,
     input: { subject: string; role: Role },
   ): Promise<ProjectMembership>;
   removeMember(principal: Principal, projectId: string, subject: string): Promise<void>;
-  /** Local administrator migration only. This is deliberately absent from HTTP/MCP. */
+  /** Host-authority break-glass for the local CLI only, deliberately absent from HTTP/MCP. It
+   * makes a verified person the operator of a project with no membership history; with a
+   * `repairReason` it restores their operator membership whatever the project's members say,
+   * and records why. */
   adoptProject(
     principal: HumanPrincipal,
     projectId: string,

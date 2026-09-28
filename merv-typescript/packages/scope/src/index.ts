@@ -1308,7 +1308,10 @@ export class ProjectScope implements Scope {
         'self_revoke',
         'Cannot revoke your own operator credential',
       );
-      // Revoking twice records nothing twice.
+      // Deactivating the actor ends every credential of it, since authentication and every
+      // decision require an active actor. Its credential rows, and their ledger rows, are left
+      // as they are on purpose (actor-credentials.test.ts pins it); listings still show them
+      // unrevoked. Revoking twice records nothing twice.
       const r = await tx.run(
         'UPDATE actors SET active=0 WHERE id=? AND project_id=? AND active=1',
         actorId,
