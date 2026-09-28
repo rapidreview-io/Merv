@@ -95,17 +95,74 @@ const permits = (role: Role, permission: Permission): boolean =>
   role === 'operator' ||
   (permission === 'write' && role === 'producer') ||
   (permission === 'review' && role === 'reviewer');
+/** The one installed provider of a kind of caller authority, and the registration it came with. */
+class AuthoritySlot<T> {
+  #value?: T;
+  #token?: symbol;
+  constructor(
+    private readonly code: { registered: string; unavailable: string },
+    private readonly text: { installed: string; unavailable: string; changed: string },
+  ) {}
+  /** Throws at once when a provider is installed; the disposer withdraws only this registration. */
+  install(value: T): () => void {
+    check(!this.#value, this.code.registered, this.text.installed, 409);
+    const token = Symbol(this.code.registered);
+    this.#value = value;
+    this.#token = token;
+    return () => {
+      if (this.#token !== token) return;
+      this.#value = this.#token = undefined;
+    };
+  }
+  /** The current registration, captured before a decision awaits anything. */
+  get token(): symbol | undefined {
+    return this.#token;
+  }
+  /** The installed provider, which a decision asks for only once it needs it. */
+  provider(): T {
+    const value = this.#value;
+    check(value, this.code.unavailable, this.text.unavailable, 503);
+    return value;
+  }
+  /** Refuses a decision whose provider was withdrawn, or installed again, while it was pending. */
+  fence(token: symbol | undefined): void {
+    check(
+      token !== undefined && this.#token === token,
+      this.code.unavailable,
+      this.text.changed,
+      503,
+    );
+  }
+}
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   private members!: Memberships;
   private userKeys!: UserKeys;
   private ledger: Ledger;
-  private sessionAuthority?: SessionAuthority;
-  private sessionAuthorityRegistration?: symbol;
-  private conversationAuthority?: ConversationAuthority;
-  private conversationAuthorityRegistration?: symbol;
-  private managedAuthority?: ManagedRunnerAuthority;
-  private managedAuthorityRegistration?: symbol;
+  private sessions = new AuthoritySlot<SessionAuthority>(
+    { registered: 'session_authority_registered', unavailable: 'session_unavailable' },
+    {
+      installed: 'Session authority is already installed',
+      unavailable: 'Session authority is unavailable',
+      changed: 'Session authority changed during authorization; retry with the current provider',
+    },
+  );
+  private conversations = new AuthoritySlot<ConversationAuthority>(
+    { registered: 'conversation_authority_registered', unavailable: 'conversation_unavailable' },
+    {
+      installed: 'Conversation authority is already installed',
+      unavailable: 'Conversation authority is unavailable',
+      changed: 'Conversation authority changed during authorization',
+    },
+  );
+  private managed = new AuthoritySlot<ManagedRunnerAuthority>(
+    { registered: 'managed_authority_registered', unavailable: 'managed_runner_unavailable' },
+    {
+      installed: 'Managed runner authority is already installed',
+      unavailable: 'Managed runner authority is unavailable',
+      changed: 'Managed runner authority changed during authorization',
+    },
+  );
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -277,60 +334,13 @@ export class ProjectScope implements Scope {
     return await this.members.adoptProject(principal, projectId, options);
   }
   registerSessionAuthority(authority: SessionAuthority): () => void {
-    check(
-      !this.sessionAuthority,
-      'session_authority_registered',
-      'Session authority is already installed',
-      409,
-    );
-    this.sessionAuthority = authority;
-    const registration = Symbol('session-authority');
-    this.sessionAuthorityRegistration = registration;
-    return () => {
-      if (this.sessionAuthorityRegistration !== registration) return;
-      this.sessionAuthorityRegistration = undefined;
-      this.sessionAuthority = undefined;
-    };
+    return this.sessions.install(authority);
   }
   registerConversationAuthority(authority: ConversationAuthority): () => void {
-    check(
-      !this.conversationAuthority,
-      'conversation_authority_registered',
-      'Conversation authority is already installed',
-      409,
-    );
-    const registration = Symbol('conversation-authority');
-    this.conversationAuthority = authority;
-    this.conversationAuthorityRegistration = registration;
-    return () => {
-      if (this.conversationAuthorityRegistration !== registration) return;
-      this.conversationAuthority = undefined;
-      this.conversationAuthorityRegistration = undefined;
-    };
-  }
-  private requireAuthorityRegistration(registration: symbol | undefined): void {
-    check(
-      registration !== undefined && this.sessionAuthorityRegistration === registration,
-      'session_unavailable',
-      'Session authority changed during authorization; retry with the current provider',
-      503,
-    );
+    return this.conversations.install(authority);
   }
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void {
-    check(
-      !this.managedAuthority,
-      'managed_authority_registered',
-      'Managed runner authority is already installed',
-      409,
-    );
-    const registration = Symbol('managed-runner-authority');
-    this.managedAuthority = authority;
-    this.managedAuthorityRegistration = registration;
-    return () => {
-      if (this.managedAuthorityRegistration !== registration) return;
-      this.managedAuthority = undefined;
-      this.managedAuthorityRegistration = undefined;
-    };
+    return this.managed.install(authority);
   }
   async delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource> {
     caller = structuredClone(caller);
@@ -538,7 +548,7 @@ export class ProjectScope implements Scope {
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);
     if (!caller.session) return await this.require(caller, 'read', tx);
-    const registration = this.sessionAuthorityRegistration;
+    const registration = this.sessions.token;
     const result = await within(
       this.state,
       tx,
@@ -549,7 +559,7 @@ export class ProjectScope implements Scope {
       },
       'read',
     );
-    this.requireAuthorityRegistration(registration);
+    this.sessions.fence(registration);
     return result;
   }
   private time(): string {
@@ -725,10 +735,26 @@ export class ProjectScope implements Scope {
     tx?: Transaction,
   ): Promise<{ actor: Actor; source?: DelegationSource }> {
     caller = structuredClone(caller);
-    const registration = this.sessionAuthorityRegistration;
-    const managedRegistration = this.managedAuthorityRegistration;
-    const conversationRegistration = this.conversationAuthorityRegistration;
+    const registration = this.sessions.token;
+    const managedRegistration = this.managed.token;
+    const conversationRegistration = this.conversations.token;
     const provided = caller.session || caller.managed || caller.conversation || caller.service;
+    // A provider's own refusals come first. Then the source it vouched for must belong to this
+    // project and, unless it is a worker's delegator, be this very caller.
+    const vouched = (
+      source: DelegationSource | undefined,
+      sameActor: boolean,
+      code: string,
+      message: string,
+    ) =>
+      check(
+        !!source &&
+          source.projectId === caller.projectId &&
+          (!sameActor || source.actorId === caller.actorId),
+        code,
+        message,
+        403,
+      );
     const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
       // Unreachable: `within` hands every provider-backed decision a transaction, below.
       check(
@@ -772,14 +798,12 @@ export class ProjectScope implements Scope {
           'Conversations act only as their original source actor',
           403,
         );
-        const authority = this.conversationAuthority;
-        check(authority, 'conversation_unavailable', 'Conversation authority is unavailable', 503);
-        source = await authority.require(caller, sql as Transaction);
-        check(
-          source && source.actorId === caller.actorId && source.projectId === caller.projectId,
+        source = await this.conversations.provider().require(caller, sql as Transaction);
+        vouched(
+          source,
+          true,
           'conversation_forbidden',
           'Conversation source does not match this caller',
-          403,
         );
         // The person's live role, and a key's own limits, decide every permission.
         const original = await this.requireDelegation(source, permission, sql as Transaction);
@@ -797,18 +821,17 @@ export class ProjectScope implements Scope {
           'Managed runners may only use their bound execution controls',
           403,
         );
-        const authority = this.managedAuthority;
-        check(
-          authority,
-          'managed_runner_unavailable',
-          'Managed runner authority is unavailable',
-          503,
-        );
-        source = await authority.require(caller, sql as Transaction);
-        check(
-          source.actorId === caller.actorId && source.projectId === caller.projectId,
+        source = await this.managed.provider().require(caller, sql as Transaction);
+        vouched(
+          source,
+          true,
           'managed_runner_forbidden',
           'Managed runner source does not match this caller',
+        );
+        check(
+          row.active,
+          'managed_runner_forbidden',
+          'Managed runner source actor is revoked',
           403,
         );
       } else if (caller.service) {
@@ -831,9 +854,9 @@ export class ProjectScope implements Scope {
         // a permission and might usefully try something else.
         check(row.active || !own, 'session_closed', 'Session is closed', 401);
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
-        const authority = this.sessionAuthority;
-        check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
-        source = await authority.require(caller, sql as Transaction, permission);
+        source = await this.sessions.provider().require(caller, sql as Transaction, permission);
+        // The source is the worker's delegator, another actor of the same project.
+        vouched(source, false, 'forbidden', 'Session source does not match this project');
       } else if (caller.session) {
         check(false, 'forbidden', 'Session authority cannot select another actor', 403);
       } else if (row.user_issuer && caller.key !== undefined) {
@@ -899,23 +922,9 @@ export class ProjectScope implements Scope {
     const value = await within(this.state, tx, lookup, place);
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
-    if (value.actor.sessionId) this.requireAuthorityRegistration(registration);
-    if (caller.managed)
-      check(
-        managedRegistration !== undefined &&
-          this.managedAuthorityRegistration === managedRegistration,
-        'managed_runner_unavailable',
-        'Managed runner authority changed during authorization',
-        503,
-      );
-    if (caller.conversation)
-      check(
-        conversationRegistration !== undefined &&
-          this.conversationAuthorityRegistration === conversationRegistration,
-        'conversation_unavailable',
-        'Conversation authority changed during authorization',
-        503,
-      );
+    if (value.actor.sessionId) this.sessions.fence(registration);
+    if (caller.managed) this.managed.fence(managedRegistration);
+    if (caller.conversation) this.conversations.fence(conversationRegistration);
     const allowed = permits(value.actor.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
