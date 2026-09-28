@@ -1,7 +1,7 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
 import { expiry } from './expiry.js';
-import { within } from './within.js';
+import { forRead, within } from './within.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
@@ -1068,7 +1068,7 @@ export class ProjectScope implements Scope {
   }
   async actorCredentials(caller: Caller, actorId = caller.actorId): Promise<ActorCredential[]> {
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       // A read of one's own metadata is not administration; a session or key holds none.
       if (actorId === caller.actorId) await this.require(caller, 'read', tx);
       else await this.administer(caller, tx);

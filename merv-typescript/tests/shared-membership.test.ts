@@ -93,6 +93,28 @@ test('verified identities onboard independently of projects; creation receipts r
   );
 });
 
+test('a human lists the projects they belong to in the order they joined them', async (t) => {
+  const f = await fixture();
+  t.after(async () => await f.state.close());
+  const alice = await f.login('alice'),
+    bob = await f.login('bob');
+  // Created first, joined last: the listing follows the membership, not the project.
+  const joinedLast = await f.scope.createProject(bob, { name: 'Joined last', requestId: 'z' });
+  const left = await f.scope.createProject(bob, { name: 'Left', requestId: 'left' });
+  f.advance(1_000);
+  const first = await f.scope.createProject(alice, { name: 'First', requestId: 'first' });
+  f.advance(1_000);
+  const second = await f.scope.createProject(alice, { name: 'Second', requestId: 'second' });
+  f.advance(1_000);
+  await f.scope.addMember(bob, left.id, { subject: 'alice', role: 'operator' });
+  await f.scope.removeMember(bob, left.id, 'alice');
+  await f.scope.addMember(bob, joinedLast.id, { subject: 'alice', role: 'reader' });
+  const expected = [];
+  for (const project of [first, second, joinedLast])
+    expected.push(await f.scope.project(await f.scope.caller(alice, project.id)));
+  assert.deepEqual(await f.scope.projects(alice), expected);
+});
+
 test('one human has independent project roles and attribution actors; issuer and machine boundaries remain exact', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());

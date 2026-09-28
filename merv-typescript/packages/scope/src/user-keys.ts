@@ -18,6 +18,7 @@ import {
   type UserKey,
 } from '@merv/contracts';
 import type { Ledger } from './ledger.js';
+import { forRead } from './within.js';
 import type { Memberships } from './memberships.js';
 import { projectValue, type ProjectRow } from './project-context.js';
 
@@ -149,7 +150,7 @@ export class UserKeys {
     principal: Extract<Principal, { kind: 'key' }>,
     projectId?: string,
   ): Promise<Caller> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       // Principal metadata is descriptive. Authority always comes from the current stored key.
       const key = await this.current(tx, principal.key?.id);
       const selected =
@@ -183,7 +184,7 @@ export class UserKeys {
   }
 
   async projects(principal: Extract<Principal, { kind: 'key' }>): Promise<Project[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       const key = await this.current(tx, principal.key?.id);
       return (
         await tx.all<ProjectRow>(
@@ -206,7 +207,7 @@ export class UserKeys {
       'invalid_project',
       'Project filter must be a nonempty identifier',
     );
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       const human = await this.members.human(principal, tx);
       return (
         await tx.all<KeyRow>(

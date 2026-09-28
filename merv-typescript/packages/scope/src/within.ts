@@ -27,3 +27,9 @@ export async function within<T>(
     ? await state.snapshot(() => state.transaction(fn))
     : await state.transaction(fn);
 }
+
+/** A pure read that needs a transaction: it runs wherever a read decision would run. */
+export async function forRead<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  // With a place, `within` always hands over a transaction.
+  return await within(state, undefined, (sql) => fn(sql as Transaction), 'read');
+}

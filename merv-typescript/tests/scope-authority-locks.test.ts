@@ -288,7 +288,7 @@ test('sibling read decisions share one snapshot without colliding', async (t) =>
 test('listings and caller resolution never wait for the writer lock', async (t) => {
   const f = await fixture();
   for (const [name, operation] of listings) {
-    await t.test(`${name} outside any scope`, { todo: 'step 4' }, async () => {
+    await t.test(`${name} outside any scope`, async () => {
       assert.equal(await whileWriterHeld(f, () => operation(f)), 'free');
     });
     await t.test(`${name} in a bare snapshot`, async () => {
@@ -297,21 +297,31 @@ test('listings and caller resolution never wait for the writer lock', async (t) 
         'free',
       );
     });
-    // Both fail today with nested_transaction.
-    await t.test(`${name} in an ambient transaction`, { todo: 'step 4' }, async () => {
+    await t.test(`${name} in an ambient transaction`, async () => {
       await contexts.ambient(f, () => operation(f));
     });
-    await t.test(
-      `${name} in a snapshot with an open read transaction`,
-      { todo: 'step 4' },
-      async () => {
-        assert.equal(
-          await whileWriterHeld(f, () => contexts.openRead(f, () => operation(f))),
-          'free',
-        );
-      },
-    );
+    await t.test(`${name} in a snapshot with an open read transaction`, async () => {
+      assert.equal(
+        await whileWriterHeld(f, () => contexts.openRead(f, () => operation(f))),
+        'free',
+      );
+    });
+    // A plain read scope gets a child write transaction on its own connection, as before.
+    await t.test(`${name} in a plain read`, async () => {
+      await contexts.read(f, () => operation(f));
+    });
   }
+});
+
+test('a listing in a transaction reads on that transaction', async () => {
+  const f = await fixture();
+  await f.state.transaction(async (tx) => {
+    await tx.run('UPDATE projects SET name=? WHERE id=?', 'Renamed', f.project.id);
+    assert.deepEqual(
+      (await f.scope.projects(f.alice)).map((value) => value.name),
+      ['Renamed'],
+    );
+  });
 });
 
 test('a repeat serviceActor never waits for the writer lock', { todo: 'step 9' }, async () => {

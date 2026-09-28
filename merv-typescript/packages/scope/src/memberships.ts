@@ -1,4 +1,4 @@
-import { visible, mapAsync } from '@merv/contracts';
+import { visible } from '@merv/contracts';
 import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
@@ -20,6 +20,7 @@ import {
   type VerifiedIdentity,
 } from '@merv/contracts';
 import { projectValue, type ProjectRow } from './project-context.js';
+import { forRead } from './within.js';
 
 export const membershipMigration: Migration = {
   version: 3,
@@ -217,7 +218,7 @@ export class Memberships {
   }
 
   async caller(principal: Principal, projectId?: string): Promise<Caller> {
-    return await this.state.transaction(async (tx) => await this.resolve(principal, projectId, tx));
+    return await forRead(this.state, async (tx) => await this.resolve(principal, projectId, tx));
   }
 
   private async project(tx: Sql, projectId: string): Promise<Project> {
@@ -227,22 +228,21 @@ export class Memberships {
   }
 
   async projects(principal: Principal): Promise<Project[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       if (principal?.kind === 'actor') {
         const caller = await this.resolve(principal, undefined, tx);
         return [await this.project(tx, caller.projectId)];
       }
       const human = await this.human(principal, tx);
-      return await mapAsync(
-        await tx.all<{ project_id: string }>(
-          `SELECT m.project_id FROM project_memberships m JOIN actors a ON a.id=m.actor_id
-         AND a.project_id=m.project_id AND a.role=m.role
+      return (
+        await tx.all<ProjectRow>(
+          `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
+         JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
          WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1 ORDER BY m.created_at,m.project_id`,
           human.user.issuer,
           human.user.subject,
-        ),
-        async (row) => await this.project(tx, row.project_id),
-      );
+        )
+      ).map(projectValue);
     });
   }
 
@@ -322,7 +322,7 @@ export class Memberships {
   }
 
   async memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       await this.resolve(await this.human(principal, tx), projectId, tx);
       return (
         await tx.all<MembershipRow>(
