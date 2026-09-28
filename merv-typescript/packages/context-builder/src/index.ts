@@ -102,6 +102,30 @@ const buildSchema = z
   .strict();
 const previewSchema = buildSchema.omit({ requestId: true });
 
+/** Permanent: these stored bytes will never read back. blob_not_found is not here (a restored blob or
+ *  a fixed bucket or prefix brings it back), and neither is any transient code. */
+const PERMANENT = new Set(['artifact_size', 'artifact_hash_mismatch', 'blob_corrupt']);
+/** The document's text. null when it has none (its bytes are not UTF-8), or when `lenient` and its
+ *  bytes are permanently unreadable. Everything else propagates, so a pinned prompt never records
+ *  an outage. */
+async function readText(
+  artifacts: Artifacts,
+  caller: Caller,
+  document: Artifact,
+  lenient: boolean,
+): Promise<string | null> {
+  try {
+    const read = await artifacts.read(caller, document.id);
+    return read.encoding === 'utf8' ? read.content : null;
+  } catch (error) {
+    if (lenient && error instanceof MervError && PERMANENT.has(error.code)) return null;
+    throw error;
+  }
+}
+/** A document shown by its metadata instead of its bytes. */
+const reference = (document: Artifact) =>
+  `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
+
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
   private closed = false;
@@ -360,6 +384,8 @@ export class RecipeContextBuilder implements ContextBuilder {
           async (id) => await this.artifacts.get(caller, id, tx),
         );
         const mode = value.mode ?? 'text';
+        // A required text section embeds its bytes or fails; every other unit keeps its reference.
+        const lenient = !section.required || mode !== 'text';
         const embed = (document: Artifact) =>
           mode === 'text' ||
           (mode === 'auto' &&
@@ -377,15 +403,12 @@ export class RecipeContextBuilder implements ContextBuilder {
         }
         content = (
           await mapAsync(documents, async (document) => {
-            const read = embed(document) ? await this.artifacts.read(caller, document.id) : null;
-            if (mode !== 'text' && read?.encoding !== 'utf8')
-              return `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
-            check(
-              read?.encoding === 'utf8',
-              'context_encoding',
-              'Context documents must be UTF-8 text',
-            );
-            return `Artifact ${document.id} (${document.title}; sha256 ${document.hash})\n${read.content}`;
+            const body = embed(document)
+              ? await readText(this.artifacts, caller, document, lenient)
+              : null;
+            return body === null
+              ? reference(document)
+              : `Artifact ${document.id} (${document.title}; sha256 ${document.hash})\n${body}`;
           })
         ).join('\n\n');
       } else {
@@ -519,23 +542,18 @@ export class RecipeContextBuilder implements ContextBuilder {
         )
       )
         continue;
-      let content: { encoding: 'utf8' | 'base64'; content: string };
-      try {
-        content = entry.artifact
-          ? await this.artifacts.read(caller, entry.artifact.id)
-          : { encoding: 'utf8', content: (entry.item.content as { text: string }).text };
-      } catch (error) {
-        if (error instanceof MervError && error.code === 'artifact_size') continue;
-        throw error;
-      }
-      if (content.encoding !== 'utf8') continue;
+      // Every ranked item keeps its reference, so any unit without readable text is skipped.
+      const text = entry.artifact
+        ? await readText(this.artifacts, caller, entry.artifact, true)
+        : (entry.item.content as { text: string }).text;
+      if (text === null) continue;
       const duplicate = promotedTexts.get(entry.item.hash ?? '');
-      if (content.content.length >= 128 && duplicate === content.content) continue;
-      const full = `\n### ${entry.item.id}: ${entry.item.title}\n${content.content}\n`;
+      if (text.length >= 128 && duplicate === text) continue;
+      const full = `\n### ${entry.item.id}: ${entry.item.title}\n${text}\n`;
       if (full.length > room) continue;
       entry.full = full;
       size += full.length;
-      if (entry.item.hash) promotedTexts.set(entry.item.hash, content.content);
+      if (entry.item.hash) promotedTexts.set(entry.item.hash, text);
     }
     const prompt =
       head +

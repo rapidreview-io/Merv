@@ -248,22 +248,19 @@ test('preview shares text, auto and references rendering, deduplicated manifests
     inputs: { evidence: { artifactIds: [invalidUtf8.id], mode: 'auto' } },
   });
   assert.match(fallback.prompt, /Bytes are not included/);
-  await assert.rejects(
-    async () =>
-      await registration.preview(operator, {
-        subject,
-        inputs: { evidence: { artifactIds: [invalidUtf8.id] } },
-      }),
-    { code: 'context_encoding' },
-  );
-  await assert.rejects(
-    async () =>
-      await registration.preview(operator, {
-        subject,
-        inputs: { evidence: { artifactIds: [binary.id] } },
-      }),
-    { code: 'context_encoding' },
-  );
+  // Text mode embeds every document, but one whose bytes are not UTF-8 has no text form.
+  for (const document of [invalidUtf8, binary]) {
+    const shown = await registration.preview(operator, {
+      subject,
+      inputs: { evidence: { artifactIds: [document.id] } },
+    });
+    assert.ok(
+      shown.prompt.includes(
+        `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included`,
+      ),
+    );
+    assert.deepEqual(shown.omitted, ['background', 'notes']);
+  }
   await assert.rejects(
     async () =>
       await registration.preview(operator, {

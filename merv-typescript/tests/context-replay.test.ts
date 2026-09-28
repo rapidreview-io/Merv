@@ -96,14 +96,16 @@ test('artifact context modes retain binary references without charging blob size
       content: '/w==',
       encoding: 'base64',
     });
-    await assert.rejects(
-      async () =>
-        await registration.build(caller, {
-          subject,
-          inputs: { evidence: { artifactIds: [smallBinary.id] } },
-          requestId: 'default-encoding',
-        }),
-      { code: 'context_encoding' },
+    const smallReference = await registration.build(caller, {
+      subject,
+      inputs: { evidence: { artifactIds: [smallBinary.id] } },
+      requestId: 'default-encoding',
+    });
+    assert.ok(smallReference.prompt.includes(smallBinary.hash));
+    assert.match(smallReference.prompt, /Bytes are not included/);
+    assert.deepEqual(
+      smallReference.sources.map((source) => source.id),
+      [smallBinary.id],
     );
     await assert.rejects(
       async () =>
