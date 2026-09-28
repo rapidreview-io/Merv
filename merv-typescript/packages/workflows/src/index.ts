@@ -1501,7 +1501,7 @@ export class WorkflowsService implements Workflows {
       await this.readSnapshot(tx, caller.projectId, instanceId);
       const frontier = [instanceId],
         seen = new Set<string>();
-      while (frontier.length && seen.size < closureLimit) {
+      while (frontier.length) {
         const current = frontier.pop()!;
         if (seen.has(current)) continue;
         const row = await tx.get<{ workflow: string; version: number }>(
@@ -1509,7 +1509,14 @@ export class WorkflowsService implements Workflows {
           current,
           caller.projectId,
         );
+        // A name with no instance here, gone or another project's, is no part of the closure.
         if (!row) continue;
+        check(
+          seen.size < closureLimit,
+          'closure_too_large',
+          `This dependency closure covers more than ${closureLimit} workflow instances`,
+          409,
+        );
         seen.add(current);
         frontier.push(
           ...(
@@ -1524,12 +1531,6 @@ export class WorkflowsService implements Workflows {
             ?.policy?.children?.({ caller, instanceId: current, tx })) ?? []),
         );
       }
-      check(
-        frontier.every((id) => seen.has(id)),
-        'closure_too_large',
-        `This dependency closure covers more than ${closureLimit} workflow instances`,
-        409,
-      );
       return [...seen];
     });
   }

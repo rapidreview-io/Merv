@@ -496,8 +496,9 @@ test('a closure too large to walk is refused, and its budget cannot be judged', 
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
   assert.equal((await f.sessions.projectStatus(f.owner)).queueTotal, 0);
 
-  // Exactly at the bound the walk is whole, and the budget judged on it.
-  f.fanOut.set(root.id, [live.id, ...children.slice(1)]);
+  // Exactly at the bound the walk is whole, and the budget judged on it. A name with no
+  // instance behind it, walked last, is not counted.
+  f.fanOut.set(root.id, ['gone', live.id, ...children.slice(1)]);
   assert.equal((await f.workflows.dependencyClosure(f.owner, root.id)).length, 5000);
   const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual([judged.exceeded, judged.unavailable], [[], []]);
