@@ -221,6 +221,10 @@ export abstract class StateStore implements State {
     return !!this.context.getStore()?.readOnly;
   }
 
+  get ambient(): Transaction | undefined {
+    return this.context.getStore()?.transaction;
+  }
+
   async snapshot<T>(fn: () => T | Promise<T>): Promise<T> {
     if (this.context.getStore()) return await fn();
     return this.operation(() =>

@@ -566,6 +566,12 @@ export interface State {
   /** Whether the current async context is inside such a snapshot, where nothing may write. */
   readonly readScope: boolean;
   /**
+   * The transaction this async context runs in (read-only inside a snapshot), if any: undefined
+   * at top level, in a plain read and at a snapshot's root. Never opens a connection, so a
+   * component can join the caller's transaction or open its own without holding a read.
+   */
+  readonly ambient: Transaction | undefined;
+  /**
    * Inside a snapshot, runs `fn` behind a savepoint of its own: a statement that fails there
    * costs only this call, and the snapshot reads on. Calls on one snapshot run one at a time.
    */

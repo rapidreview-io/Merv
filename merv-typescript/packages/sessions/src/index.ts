@@ -589,10 +589,10 @@ export class LeasedSessions implements Sessions {
   }
   private async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
     this.ensureOpen();
-    return await this.state.read(async (sql) => {
-      this.ensureOpen();
-      return 'transactionId' in sql ? fn(sql as Transaction) : await this.state.transaction(fn);
-    });
+    // Join the caller's transaction, or open one without first holding a read connection
+    // while this waits for the writer lock.
+    const tx = this.state.ambient;
+    return tx ? await fn(tx) : await this.state.transaction(fn);
   }
   /**
    * The same handle on a read-only snapshot: admission checks only read, and a worker
@@ -1004,7 +1004,7 @@ export class LeasedSessions implements Sessions {
     // durable consumer before trying to acquire a successor. A failed offer cannot
     // roll back retirement, and a failed cleanup cannot partially commit its effects.
     check(
-      !(await this.state.read((sql) => 'transactionId' in sql)),
+      !this.state.ambient,
       'nested_session_offer',
       'Session offers require their own control transaction',
     );

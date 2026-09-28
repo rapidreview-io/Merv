@@ -19,7 +19,13 @@ const event = {
 };
 async function fixture(
   t: TestContext,
-  config: { lockTimeoutMs?: number; maxConnections?: number; statementTimeoutMs?: number } = {},
+  config: {
+    lockTimeoutMs?: number;
+    maxConnections?: number;
+    readConnections?: number;
+    connectionTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  } = {},
 ) {
   // The class's own pool defaults, not the fixture's small test pools.
   const schema = schemaFor();
@@ -191,6 +197,77 @@ test('PostgreSQL: a failed read drains the transaction it started', async (t) =>
     released.resolve();
     await Promise.allSettled([reading, child, late]);
   }
+});
+
+test('State.ambient is the transaction this context runs in, and nothing outside one', async (t) => {
+  const { state } = await fixture(t);
+  assert.equal(state.ambient, undefined);
+  await state.read(async () => assert.equal(state.ambient, undefined));
+  await state.transaction(async (tx) => {
+    assert.equal(state.ambient, tx);
+    // A read inside a transaction reads on it; so does anything that joins it.
+    await state.read(async (sql) => assert.equal(state.ambient, sql));
+  });
+  await state.read(() => state.transaction(async (tx) => assert.equal(state.ambient, tx)));
+  await state.snapshot(async () => {
+    assert.equal(state.ambient, undefined, "A snapshot's root has no transaction of its own");
+    await state.transaction(async (tx) => {
+      assert.equal(state.ambient, tx);
+      await assert.rejects(tx.run('SELECT 1'), { code: 'read_only_scope' });
+    });
+    assert.equal(state.ambient, undefined);
+  });
+  assert.equal(state.ambient, undefined);
+});
+
+test('PostgreSQL: a write queued on the writer lock holds no reader connection', async (t) => {
+  // One reader connection, refused quickly: a read that cannot get it fails with state_busy.
+  const { state, schema } = await fixture(t, { readConnections: 1, connectionTimeoutMs: 300 });
+  const holder = new Pool({ connectionString, max: 1 });
+  const client = await holder.connect();
+  t.after(async () => {
+    await client.query('ROLLBACK').catch(() => undefined);
+    client.release();
+    await holder.end();
+  });
+  // Another instance holds this schema's writer lock.
+  await client.query('BEGIN');
+  await client.query(
+    'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
+    [`merv-state:${schema}`],
+  );
+  const pid = (await client.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid'))
+    .rows[0]!.pid;
+  const waiting = async (count: number) => {
+    for (;;) {
+      const { rows } = await client.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM pg_catalog.pg_locks WHERE NOT granted AND $1 = ANY(pg_catalog.pg_blocking_pids(pid))',
+        [pid],
+      );
+      if (rows[0]!.n >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  const plainRead = () => state.read((sql) => sql.get('SELECT 1 AS value'));
+  // A component joins its caller's transaction or opens its own, as Sessions does.
+  const write = <T>(fn: (tx: Transaction) => Promise<T>) => {
+    const tx = state.ambient;
+    return tx ? fn(tx) : state.transaction(fn);
+  };
+  const writing = write((tx) => state.appendEvent(tx, event));
+  await waiting(1);
+  assert.deepEqual(await plainRead(), { value: 1 });
+  // The form it replaces holds the only reader connection while it waits, so pages starve.
+  const held = state.read((sql) =>
+    'transactionId' in sql
+      ? state.appendEvent(sql as Transaction, event)
+      : state.transaction((tx) => state.appendEvent(tx, event)),
+  );
+  await waiting(2);
+  await assert.rejects(plainRead(), { code: 'state_busy' });
+  await client.query('ROLLBACK');
+  await Promise.all([writing, held]);
+  assert.equal(await state.eventHead(), 2);
 });
 
 test('PostgreSQL boots in a pre-created owned schema without database CREATE privilege', async (t) => {
