@@ -162,8 +162,25 @@ export class DurableEvents implements DomainEvents {
   }
 
   private async deliver(): Promise<boolean> {
+    const consumers = [...this.consumers.values()];
+    if (!consumers.length) return false;
+    // Advisory and lock-free: skip a consumer only when a snapshot taken after this pass began
+    // shows it waiting on a retry or already past every committed event. The locked
+    // transaction below still decides everything it delivers.
+    const { head, progress } = await this.state.read(async (sql) => ({
+      head: (await sql.get<{ id: number }>('SELECT COALESCE(MAX(id),0) AS id FROM events'))!.id,
+      progress: new Map(
+        (
+          await sql.all<Pick<Progress, 'id' | 'cursor' | 'retry_at'>>(
+            'SELECT id, cursor, retry_at FROM event_consumers',
+          )
+        ).map((row) => [row.id, row]),
+      ),
+    }));
     let backlog = false;
-    for (const consumer of [...this.consumers.values()]) {
+    for (const consumer of consumers) {
+      const seen = progress.get(consumer.id);
+      if (seen && (seen.retry_at > Date.now() || seen.cursor >= head)) continue;
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
         let attemptedCursor: number | undefined;

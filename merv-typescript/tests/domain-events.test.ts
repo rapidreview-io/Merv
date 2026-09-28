@@ -903,3 +903,113 @@ test('a drain() just after a pass decides it is done still delivers a commit mad
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('idle consumers and consumers in backoff take no writer transactions', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state),
+    read = state.read.bind(state);
+  let transactions = 0,
+    reads = 0;
+  let failing = false;
+  try {
+    for (let i = 0; i < 6; i++)
+      await events.subscribe({
+        id: `idle-${i}`,
+        types: ['probe.created'],
+        from: 'beginning',
+        handle() {
+          if (failing) throw new Error('handler failed');
+        },
+      });
+    await emitProbe(state);
+    await events.drain();
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    state.read = (fn) => (reads++, read(fn));
+    await sleep(1000);
+    assert.equal(transactions, 0);
+    assert.ok(reads > 0, 'the safety wakeup kept looking for work');
+    state.transaction = transaction;
+    failing = true;
+    await emitProbe(state);
+    await events.drain();
+    // Far enough out that no retry falls inside the measurement.
+    await transaction((tx) => tx.run('UPDATE event_consumers SET retry_at=?', Date.now() + 60_000));
+    assert.ok((await events.status()).every((consumer) => consumer.attempts === 1));
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await sleep(1000);
+    assert.equal(transactions, 0);
+  } finally {
+    state.transaction = transaction;
+    state.read = read;
+    await events.close();
+    await state.close();
+  }
+});
+
+test('the safety wakeup delivers a commit made through another State connection', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-other-'));
+  const state = await openState(directory);
+  const other = await openState(directory);
+  const events = await createService(new DurableEvents(state));
+  const seen: number[] = [];
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle(event) {
+        seen.push(event.id);
+      },
+    });
+    await events.drain();
+    const started = Date.now();
+    const { id } = await emitProbe(other);
+    await until(() => seen.includes(id));
+    assert.ok(Date.now() - started < 1000, `delivered after ${Date.now() - started} ms`);
+  } finally {
+    await events.close();
+    await Promise.all([state.close(), other.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('failed deliveries retry on the backoff schedule and a success resets the attempts', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const attempts: { at: number; attempts: number }[] = [];
+  try {
+    await events.subscribe({
+      id: 'flaky',
+      types: ['probe.created'],
+      from: 'beginning',
+      async handle(event, tx) {
+        const row = await tx.get<{ attempts: number }>(
+          'SELECT attempts FROM event_consumers WHERE id=?',
+          'flaky',
+        );
+        attempts.push({ at: Date.now(), attempts: row!.attempts });
+        if (attempts.length <= 3) throw new Error('handler failed');
+      },
+    });
+    const event = await emitProbe(state);
+    await events.drain();
+    await until(() => attempts.length === 4);
+    await events.drain();
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.attempts),
+      [0, 1, 2, 3],
+    );
+    // 100 ms doubling per recorded failure; each retry waits for the next safety wakeup.
+    for (const [index, delay] of [100, 200, 400].entries()) {
+      const gap = attempts[index + 1]!.at - attempts[index]!.at;
+      assert.ok(gap >= delay && gap < delay + 400, `retry ${index + 1} after ${gap} ms`);
+    }
+    assert.deepEqual(await events.status(), [
+      { id: 'flaky', cursor: event.id, active: true, attempts: 0, error: null, retryAt: 0 },
+    ]);
+  } finally {
+    await events.close();
+    await state.close();
+  }
+});
