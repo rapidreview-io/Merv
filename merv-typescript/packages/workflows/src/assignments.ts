@@ -14,7 +14,6 @@ const text = z.string().min(1);
 const identifier = z.string().regex(identifierPattern);
 const tool = z.string().regex(toolName);
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
-const size = z.number().int().nonnegative().safe();
 const reference = z.object({ kind: text, id: text, label: text }).strict();
 const preview = z
   .object({
@@ -31,25 +30,17 @@ const preview = z
       })
       .strict(),
     prompt: text,
+    // Context Builder resolved each through Artifacts for this caller, so each is the project's.
     sources: z.array(
-      z.union([
-        z.object({ id: text, title: text, mediaType: text, hash, size }).strict(),
-        // The full artifact row a package recorded before its sources were narrowed.
-        z
-          .object({
-            id: text,
-            projectId: text,
-            createdBy: text,
-            title: text,
-            mediaType: text,
-            hash,
-            size,
-            // A large artifact's bytes live in object storage; an assignment may pin it too.
-            objectId: text.optional(),
-            createdAt: text,
-          })
-          .strict(),
-      ]),
+      z
+        .object({
+          id: text,
+          title: text,
+          mediaType: text,
+          hash,
+          size: z.number().int().nonnegative().safe(),
+        })
+        .strict(),
     ),
     omitted: z.array(text),
     hash,
@@ -88,9 +79,6 @@ export async function buildAssignment(
         body.actorId === context.caller.actorId &&
         body.subject.id === context.snapshot.id &&
         body.subject.revision === context.snapshot.revision &&
-        body.sources.every(
-          (source) => !('projectId' in source) || source.projectId === context.caller.projectId,
-        ) &&
         digest(body) === packetHash,
       'invalid_workflow_policy',
       'Assignment context must match the current actor, project, revision and content hash',
