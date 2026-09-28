@@ -181,6 +181,19 @@ test('an always unit that cannot fit fails context_too_large without reading its
     ),
     { code: 'context_too_large' },
   );
+  // Each read counts before the next: once one text overflows, the next is not read.
+  const pair = memory([doc('A', 'a'.repeat(1500)), doc('B', 'b'.repeat(1500))]);
+  await assert.rejects(
+    render(
+      recipe(2000),
+      {
+        s0: [artifact('a', 'A', { embed: 'always' }), artifact('b', 'B', { embed: 'always' })],
+      },
+      pair.artifacts,
+    ),
+    { code: 'context_too_large' },
+  );
+  assert.deepEqual(pair.reads, ['A']);
 });
 
 test('lines are cut lowest rank first, keeping always units and the top of each required section', async () => {

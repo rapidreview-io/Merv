@@ -147,8 +147,8 @@ export async function renderItems(
   );
   const always = ranked.filter((u) => u.embed === 'always' && !same.has(u));
   let size = head.length + tail.length + heads.join('').length;
-  // Always units are never cut. An artifact counts its shortest block until it is read, so bytes
-  // that cannot fit are never downloaded.
+  // Always units are never cut. An artifact counts its shortest block until it is read, and the
+  // check repeats after each read, so bytes that cannot fit are never downloaded.
   for (const unit of units)
     if (unit.embed === 'always')
       size += same.has(unit)
@@ -156,7 +156,9 @@ export async function renderItems(
         : unit.artifact
           ? minChars(unit.artifact.size) + frame(unit)
           : block(unit, unit.text!).length;
-  check(size <= max, 'context_too_large', 'Always-embedded context exceeds the recipe budget');
+  const fits = () =>
+    check(size <= max, 'context_too_large', 'Always-embedded context exceeds the recipe budget');
+  fits();
   for (const unit of always) {
     if (!unit.artifact) {
       unit.body = unit.text;
@@ -166,6 +168,7 @@ export async function renderItems(
     check(text !== null, 'context_encoding', 'Always-embedded documents must be UTF-8 text');
     unit.body = text;
     size += block(unit, text).length - minChars(unit.artifact.size) - frame(unit);
+    fits();
   }
   for (const unit of units) if (unit.embed !== 'always') size += unit.line.length;
 
