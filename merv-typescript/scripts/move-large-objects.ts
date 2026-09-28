@@ -32,9 +32,16 @@ export async function probe(blobs: S3Blobs): Promise<boolean> {
     return response.headers.get('etag');
   };
   let ok = true;
-  const check = (name: string, passed: boolean) => {
-    ok &&= passed;
-    report({ probe: name, passed });
+  // A check that throws fails and the probe carries on, so every line is reported.
+  const check = async (name: string, test: () => Promise<boolean>) => {
+    try {
+      const passed = await test();
+      ok &&= passed;
+      report({ probe: name, passed });
+    } catch (error) {
+      ok = false;
+      report({ probe: name, passed: false, error: String(error) });
+    }
   };
   const status = async (
     body: Buffer,
@@ -42,27 +49,40 @@ export async function probe(blobs: S3Blobs): Promise<boolean> {
     url = signed.url,
   ) => (await put(url, body, headers)).status;
   const refused = (code: number) => code >= 400;
-  check(
+  await check(
     'P1 other bytes',
-    refused(await status(b)) && (await blobs.stored('_probe', hashA)) === null,
+    async () => refused(await status(b)) && (await blobs.stored('_probe', hashA)) === null,
   );
-  check('P2 no checksum', (await status(a, { 'if-none-match': '*' })) === 403);
-  check('P3 no if-none-match', (await status(a, { 'x-amz-checksum-sha256': checksum })) === 403);
+  await check('P2 no checksum', async () => (await status(a, { 'if-none-match': '*' })) === 403);
+  await check(
+    'P3 no if-none-match',
+    async () => (await status(a, { 'x-amz-checksum-sha256': checksum })) === 403,
+  );
   const longer = await blobs.upload('_probe', hashA, 17);
-  check('P4 other length', refused(await status(a, longer.headers, longer.url)));
-  const encoded = await status(a, { ...signed.headers, 'content-encoding': 'gzip' });
-  check('P5 unsigned encoding', encoded === 200 && (await blobs.stored('_probe', hashA)) === 16);
-  const response = await fetch((await blobs.download('_probe', hashA, 16)).url);
-  const encoding = response.headers.get('content-encoding');
-  const served = Buffer.from(await response.arrayBuffer());
-  const got = await blobs.get('_probe', hashA);
-  check('P6 identity', [null, 'identity'].includes(encoding) && served.equals(a) && got.equals(a));
-  const etag = await tag();
-  check('P7 write once', (await status(a)) === 412 && (await tag()) === etag);
-  check('P8 no overwrite', refused(await status(b)) && (await tag()) === etag);
+  await check('P4 other length', async () => refused(await status(a, longer.headers, longer.url)));
+  await check('P5 unsigned encoding', async () => {
+    const encoded = await status(a, { ...signed.headers, 'content-encoding': 'gzip' });
+    // A store that refuses the encoding still gets A, so P6-P8 check a stored object.
+    if (refused(encoded)) await status(a);
+    return encoded === 200 && (await blobs.stored('_probe', hashA)) === 16;
+  });
+  await check('P6 identity', async () => {
+    const response = await fetch((await blobs.download('_probe', hashA, 16)).url);
+    const encoding = response.headers.get('content-encoding');
+    const served = Buffer.from(await response.arrayBuffer());
+    const got = await blobs.get('_probe', hashA);
+    return [null, 'identity'].includes(encoding) && served.equals(a) && got.equals(a);
+  });
+  let etag: string | null = null;
+  await check('P7 write once', async () => {
+    etag = await tag();
+    return (await status(a)) === 412 && (await tag()) === etag;
+  });
+  await check('P8 no overwrite', async () => refused(await status(b)) && (await tag()) === etag);
   const other = await blobs.upload('_probe', hashC, 16);
   const storageClass = { ...other.headers, 'x-amz-storage-class': 'STANDARD_IA' };
-  report({ probe: 'unsigned storage class', status: await status(c, storageClass, other.url) });
+  const stored = await status(c, storageClass, other.url).catch(String);
+  report({ probe: 'unsigned storage class', status: stored });
   return ok;
 }
 

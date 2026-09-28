@@ -49,6 +49,39 @@ test('the probe passes on a store that enforces signed uploads', async (t) => {
   assert.ok([...server.objects.keys()].every((key) => key.startsWith('merv-ts/_probe/')));
 });
 
+test('a check that fails or throws is reported and the probe carries on', async (t) => {
+  const { blobs, lines } = await fixture(t);
+  // A store that refuses an unsigned Content-Encoding; one download then fails outright.
+  const real = globalThis.fetch;
+  let downloads = 0;
+  globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (init?.method === 'PUT' && headers.has('content-encoding'))
+      return new Response(null, { status: 403 });
+    if (init?.method !== 'PUT' && String(input).includes('_probe') && ++downloads === 1)
+      throw new Error('connection reset');
+    return real(input, init);
+  };
+  t.after(() => {
+    globalThis.fetch = real;
+  });
+  assert.equal(await probe(blobs), false);
+  assert.deepEqual(
+    lines.map((line) => [line.probe, line.passed ?? line.status, line.error]),
+    [
+      ['P1 other bytes', true, undefined],
+      ['P2 no checksum', true, undefined],
+      ['P3 no if-none-match', true, undefined],
+      ['P4 other length', true, undefined],
+      ['P5 unsigned encoding', false, undefined],
+      ['P6 identity', false, 'Error: connection reset'],
+      ['P7 write once', true, undefined],
+      ['P8 no overwrite', true, undefined],
+      ['unsigned storage class', 200, undefined],
+    ],
+  );
+});
+
 test('copy stores a row, skips a stored one and reports a corrupt read as a failure', async (t) => {
   const { server, blobs, lines } = await fixture(t);
   const bytes = (fill: number) => Buffer.alloc(2_000_001, fill);
