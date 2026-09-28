@@ -603,7 +603,8 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper"
+        "paper",
+        "domainEvents"
       ],
       "optional": [
         "codeResearch",
@@ -1528,7 +1529,8 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder"
+        "contextBuilder",
+        "domainEvents"
       ],
       "optional": [],
       "kind": "service",
@@ -2381,7 +2383,8 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper"
+        "paper",
+        "domainEvents"
       ],
       "optional": [
         "codeResearch"
@@ -2859,6 +2862,11 @@
     },
     {
       "from": "experiments",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "experiments",
       "to": "codeResearch",
       "optional": true
     },
@@ -3223,6 +3231,11 @@
       "optional": false
     },
     {
+      "from": "reflections",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
       "from": "research",
       "to": "state",
       "optional": false
@@ -3499,6 +3512,11 @@
     },
     {
       "from": "tasks",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "tasks",
       "to": "codeResearch",
       "optional": true
     },
@@ -3552,7 +3570,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 176
+    "dependencies": 179
   },
   "network": [
     {

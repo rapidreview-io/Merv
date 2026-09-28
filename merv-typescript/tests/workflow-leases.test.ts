@@ -335,6 +335,84 @@ test('lease generations survive provider reload but old invocations and released
   assert.notEqual(successor.session.actorId, offered.session.actorId);
 });
 
+test('a lease owner releases the lease of a session closed while its workflow was disabled', async (t) => {
+  const f = await fixture(t);
+  const { state, domainEvents } = f.app.ctx;
+  const released = async (id: string) =>
+    (await state.read(
+      async (sql) =>
+        await sql.get<{ released_at: string | null }>(
+          'SELECT released_at FROM task_leases WHERE id=?',
+          id,
+        ),
+    ))!.released_at;
+  const consumer = async (id: string) => {
+    const status = (await domainEvents.status()).find((consumer) => consumer.id === id)!;
+    return {
+      active: status.active,
+      error: status.error,
+      caughtUp: status.cursor === (await state.eventHead()),
+    };
+  };
+
+  await t.test('without the registration, closing does not stall Sessions', async () => {
+    const offered = await f.offer();
+    await f.app.setEnabled('tasks', false);
+    await f.release(offered.session);
+    assert.equal(await released(offered.session.id), null);
+    const caughtUp = { active: true, error: null, caughtUp: true };
+    assert.deepEqual(await consumer('sessions.lifecycle.v1'), caughtUp);
+    assert.equal((await consumer('tasks.lease-release.v1')).active, false);
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.ok(await released(offered.session.id));
+    assert.deepEqual(await consumer('tasks.lease-release.v1'), caughtUp);
+  });
+
+  await t.test('a close logged before the consumer existed is released', async () => {
+    const offered = await f.offer();
+    await f.app.setEnabled('tasks', false);
+    await f.release(offered.session);
+    await state.transaction(
+      async (tx) => await tx.run("DELETE FROM event_consumers WHERE id='tasks.lease-release.v1'"),
+    );
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.ok(await released(offered.session.id));
+  });
+
+  await t.test('a second release and a close without a lease row change nothing', async () => {
+    const offered = await f.offer();
+    await f.release(offered.session);
+    const first = await released(offered.session.id);
+    assert.ok(first);
+    await state.transaction(async (tx) => {
+      await state.appendEvent(tx, {
+        projectId: f.source.projectId,
+        actorId: 'system:sessions',
+        type: 'session.closed',
+        subjectId: 'no-such-lease',
+        data: { reason: 'closed' },
+      });
+    });
+    await f.app.setEnabled('tasks', false);
+    await state.transaction(
+      async (tx) =>
+        await tx.run("UPDATE event_consumers SET cursor=0 WHERE id='tasks.lease-release.v1'"),
+    );
+    const head = await state.eventHead();
+    await f.app.setEnabled('tasks', true);
+    await domainEvents.drain();
+    assert.equal(await released(offered.session.id), first);
+    assert.equal(await state.eventHead(), head);
+    assert.deepEqual(await consumer('tasks.lease-release.v1'), {
+      active: true,
+      error: null,
+      caughtUp: true,
+    });
+  });
+});
+
 test('a leased status_and_next admission stays within a statement budget', async (t) => {
   const f = await fixture(t);
   const offered = await f.offer();

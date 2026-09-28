@@ -516,23 +516,10 @@ export class LeasedSessions implements Sessions {
               'actor.key_revoked',
               'actor.key_rotated',
             ],
+            // Each lease owner releases its own rows from session.closed. The type stays
+            // subscribed only because a consumer's id fixes its types.
             handle: async (event, tx) => {
-              if (event.type === 'session.closed') {
-                // Sessions are never deleted, except those of retired workflow instances
-                // (sessions@6), whose leases went with them. A close that was logged but not
-                // yet consumed has nothing left to release, and must not stall this consumer.
-                const row = await tx.get<Row>(
-                  'SELECT * FROM worker_sessions WHERE id=?',
-                  event.subjectId,
-                );
-                if (!row) return;
-                const session = await this.decode(row, tx);
-                await this.workflows.releaseLease(
-                  session.lease,
-                  { reason: session.closeReason ?? 'closed' },
-                  tx,
-                );
-              } else await this.sweepTransaction(tx);
+              if (event.type !== 'session.closed') await this.sweepTransaction(tx);
             },
           }),
         );
@@ -984,7 +971,7 @@ export class LeasedSessions implements Sessions {
       },
     });
     // The program releases the lease now while it is loaded, so the record is free the moment
-    // the halt answers; the durable event replays the same cleanup if the provider was away.
+    // the halt answers; its own consumer of session.closed releases it if the program was away.
     try {
       await this.workflows.releaseLease(session.lease, { reason }, tx);
     } catch (error) {

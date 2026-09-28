@@ -1,5 +1,6 @@
 import {
   excludedFromReview,
+  leaseReleaseConsumer,
   releasedLease,
   visible,
   everyAsync,
@@ -1789,7 +1790,16 @@ export class ReflectionService implements Reflections {
 }
 export const reflectionsPlugin = {
   name: 'merv-reflections',
-  inject: ['state', 'scope', 'artifacts', 'paper', 'workflows', 'reviews', 'contextBuilder'],
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'paper',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'domainEvents',
+  ],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
@@ -1807,6 +1817,9 @@ export const reflectionsPlugin = {
       );
       yield () => service.close();
       yield ctx.provide('reflections', service);
+      yield await ctx.domainEvents.subscribe(
+        leaseReleaseConsumer('reflections.lease-release.v1', 'reflection_leases', ctx.reviews),
+      );
     });
   },
 };

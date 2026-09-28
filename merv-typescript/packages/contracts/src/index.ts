@@ -162,7 +162,7 @@ export type {
 import type { Data, Json } from './data.js';
 import type { Artifact } from './artifact-models.js';
 export type { Artifact } from './artifact-models.js';
-import { visible } from './text.js';
+import { clip, visible } from './text.js';
 import type {
   Role,
   WorkflowDispatchCandidate,
@@ -797,10 +797,6 @@ export const recorded = async (
     data: { ...data, ...eventSource(caller) },
   });
 /** Audit provenance only. Authority is still rechecked by Scope inside the operation. */
-/**
- * Release a domain's lease row by its exact ownership receipt: the worker's review claim goes
- * back with it, and a row already released is left alone. `where` adds the domain's columns.
- */
 /** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
 export function checkReceipt<T extends { receipt: string }>(
   lease: T | undefined,
@@ -814,6 +810,20 @@ export function checkReceipt<T extends { receipt: string }>(
     409,
   );
 }
+/** The columns every domain's lease table shares. */
+export interface LeaseRow {
+  id: string;
+  project_id: string;
+  actor_id: string;
+  receipt: string;
+  released_at: string | null;
+  review_id: string | null;
+  claim_id: string | null;
+}
+/**
+ * Release a domain's lease row by its exact ownership receipt. `where` adds the domain's
+ * columns. A missing row or another receipt is a stale lease.
+ */
 export async function releasedLease(
   tx: Transaction,
   reviews: Pick<Reviews, 'releaseClaim'>,
@@ -829,21 +839,27 @@ export async function releasedLease(
     actor_id: lease.actorId,
     ...where,
   };
-  const row = await tx.get<{
-    id: string;
-    project_id: string;
-    actor_id: string;
-    receipt: string;
-    released_at: string | null;
-    review_id: string | null;
-    claim_id: string | null;
-  }>(
+  const row = await tx.get<LeaseRow>(
     `SELECT * FROM ${table} WHERE ${Object.keys(match)
       .map((column) => `${column}=?`)
       .join(' AND ')}`,
     ...Object.values(match),
   );
   checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
+  await releaseLeaseRow(tx, reviews, table, row, reason);
+}
+/**
+ * Release a domain's lease row the caller already trusts: the worker's review claim goes back
+ * with it, and a row already released is left alone. It checks no receipt, so it never fails
+ * as stale.
+ */
+export async function releaseLeaseRow(
+  tx: Transaction,
+  reviews: Pick<Reviews, 'releaseClaim'>,
+  table: string,
+  row: LeaseRow,
+  reason: string,
+): Promise<void> {
   if (row.released_at) return;
   if (row.review_id && row.claim_id)
     await reviews.releaseClaim(
@@ -862,6 +878,35 @@ export async function releasedLease(
     row.id,
   );
 }
+/**
+ * A lease owner's durable release: when a worker session closes, release the lease row it names.
+ * A session's id is its lease's id, so the row is found without the workflow registration or a
+ * receipt. A close logged while the owner was unloaded, or before this consumer existed, is
+ * released when it next runs; a row already released, or gone with a retired instance, is left.
+ */
+export const leaseReleaseConsumer = (
+  id: string,
+  table: string,
+  reviews: Pick<Reviews, 'releaseClaim'>,
+): EventConsumer => ({
+  id,
+  types: ['session.closed'],
+  from: 'beginning',
+  handle: async (event, tx) => {
+    const row = await tx.get<LeaseRow>(
+      `SELECT * FROM ${table} WHERE id=? AND released_at IS NULL`,
+      event.subjectId,
+    );
+    if (row)
+      await releaseLeaseRow(
+        tx,
+        reviews,
+        table,
+        row,
+        clip(String(event.data.reason ?? 'closed'), 500),
+      );
+  },
+});
 /** A plugin entry's lifecycle state as the composition root reports it. */
 export type PluginRunState =
   'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';

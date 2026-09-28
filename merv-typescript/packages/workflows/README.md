@@ -233,7 +233,11 @@ A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
 the node may be leased now and which role its worker needs; it never runs once a lease
 exists. `lease.check` answers for the worker, at offer and on every admission for the
 lease's life, whether the program's reservation (its receipt) still holds. Source
-admission belongs in `role`, reservation validity in `check`.
+admission belongs in `role`, reservation validity in `check`. `lease.release` runs only
+while the program is loaded: Sessions calls `releaseLease` when it closes a session, as a
+best effort. A program that holds lease rows also releases them durably, from its own
+`session.closed` consumer (`leaseReleaseConsumer` in Contracts): a session's id is its
+lease's id, so the release needs neither the registration nor the receipt.
 
 **Dependencies.** A dependency's `failed` is a gating fact: a declared edge whose target
 ended outside its pinned success states fails its dependent. A system edge, which a
