@@ -283,6 +283,32 @@ test('a later copy of an embedded body says whose it is, and a never unit anchor
   assert.deepEqual(preview.omitted, []);
 });
 
+test('a copy never points at a unit the budget cut: the top of a required section anchors first', async () => {
+  const items = {
+    s0: [
+      text('first', 'same', { priority: 5 }),
+      ...['n1', 'n2'].map((id) => text(id, id, { embed: 'never', title: 'x'.repeat(150) })),
+    ],
+    s1: [text('kept', 'same', { priority: 1 })],
+  };
+  const preview = await render(recipe(700, [false, true]), items);
+  assert.ok(
+    preview.prompt.includes(
+      '\n- first — Title first (text, 4 characters) — same content as kept\n',
+    ),
+  );
+  assert.ok(
+    preview.prompt.includes('\n### kept — Title kept (text, 4 characters)\n~~~\nsame\n~~~\n'),
+  );
+  // At every budget, whatever is cut, each copy's anchor is listed or embedded.
+  for (let max = 350; max <= 800; max++) {
+    const rendered = await render(recipe(max, [false, true]), items).catch(() => null);
+    if (!rendered) continue;
+    for (const [, anchor] of rendered.prompt.matchAll(/ — same content as (\S+)\n/g))
+      assert.match(rendered.prompt, new RegExp(`\\n(- |### )${anchor} — `));
+  }
+});
+
 test('omitted holds only units the budget kept out', async () => {
   const png = doc('png', null, 'image/png', 50);
   const binary = doc('binary', null, 'text/plain', 50);

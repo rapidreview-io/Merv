@@ -113,13 +113,23 @@ export async function renderItems(
   );
   // Priority first, then declaration order (the sort is stable): section, then item.
   const ranked = [...units].sort((a, b) => b.priority - a.priority);
-  // Among always and fit units, always first and then by rank, a later copy of a body says whose
-  // it is instead of repeating it. Never units neither anchor nor are annotated.
+  // The budget never cuts always units or the top unit of each required section.
+  const keep = new Set([
+    ...ranked.filter((u) => u.embed === 'always'),
+    ...recipe.sections.flatMap((section, i) =>
+      section.required ? [ranked.find((u) => u.section === i)!] : [],
+    ),
+  ]);
+  // Among always and fit units a later copy of a body says whose it is instead of repeating it;
+  // never units neither anchor nor are annotated. Units the budget keeps anchor first, always
+  // before fit, then the rest by rank, so an anchor is kept or outranks every copy the budget can
+  // cut, and no line points at a unit that was cut.
   const anchors = new Map<string, string>(),
     same = new Map<Unit, string>();
   for (const unit of [
     ...ranked.filter((u) => u.embed === 'always'),
-    ...ranked.filter((u) => u.embed === 'fit'),
+    ...ranked.filter((u) => u.embed === 'fit' && keep.has(u)),
+    ...ranked.filter((u) => u.embed === 'fit' && !keep.has(u)),
   ]) {
     const anchor = anchors.get(unit.sha);
     if (anchor === undefined) anchors.set(unit.sha, unit.item.id);
@@ -169,12 +179,6 @@ export async function renderItems(
     const tools = [...cutTools[section]].sort().join(' or ');
     return `(${n} lower-priority item${n === 1 ? ' is' : 's are'} not listed for lack of room${tools ? `; retrieve ${n === 1 ? 'it' : 'them'} through ${tools}` : ''}.)\n`;
   };
-  const keep = new Set([
-    ...ranked.filter((u) => u.embed === 'always'),
-    ...recipe.sections.flatMap((section, i) =>
-      section.required ? [ranked.find((u) => u.section === i)!] : [],
-    ),
-  ]);
   for (const unit of [...ranked].reverse()) {
     if (size <= max) break;
     if (keep.has(unit)) continue;
