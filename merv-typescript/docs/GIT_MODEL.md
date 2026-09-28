@@ -340,7 +340,7 @@ Planning occurs transactionally:
 
 Quarantined records are ineligible. Unresolved healthy records remain dependencies; do not create another plan to bypass them. First committed plan wins and never changes.
 
-State already serializes writers: one PostgreSQL advisory lock per schema admits one writer at a time. Retain unique constraints as the final protection. [state/postgres.ts:229](../packages/state/src/postgres.ts:229)
+State already serializes writers: one PostgreSQL advisory lock per schema admits one writer at a time. Retain unique constraints as the final protection. [state/postgres.ts](../packages/state/src/postgres.ts)
 
 States:
 
@@ -617,7 +617,7 @@ Worker command replay remains session-scoped; base controls use Code’s operati
 
 `code_operations` follows the same fingerprint-and-replay pattern. Owner workflow commands continue using the owner’s existing mechanism; Code does not write directly into private `wf_requests`.
 
-All schemas have SQLite and PostgreSQL migrations, identical logical constraints, explicit insert columns, and immutable-field enforcement. Migrations are additive; no rewriting published migrations or workflow fingerprints. [state/base.ts:281](../packages/state/src/base.ts:281), [published-policies.test.ts:25](../tests/published-policies.test.ts:25)
+All schemas have SQLite and PostgreSQL migrations, identical logical constraints, explicit insert columns, and immutable-field enforcement. Migrations are additive; no rewriting published migrations or workflow fingerprints. [state/postgres.ts](../packages/state/src/postgres.ts), [published-policies.test.ts:25](../tests/published-policies.test.ts:25)
 
 **12. Runner split and rollout**
 
