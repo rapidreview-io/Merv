@@ -8,6 +8,7 @@ import { createService } from '@merv/contracts';
 import type {
   Caller,
   Data,
+  SessionToolPolicy,
   Task,
   TaskCheckpointInput,
   TaskContext,
@@ -346,7 +347,9 @@ test('a leased status_and_next admission stays within a statement budget', async
       });
       return fn(tx);
     })) as typeof state.transaction);
-  const invocation = await f.app.ctx.sessions.prepare(
+  // As the tool registry calls it, which marks a read tool.
+  const policy: SessionToolPolicy = f.app.ctx.sessions;
+  const invocation = await policy.prepare(
     worker,
     'workflow.status_and_next',
     { instanceId: f.task.id },
