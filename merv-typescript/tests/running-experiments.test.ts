@@ -245,7 +245,7 @@ test('an open experiment is a work card that says where it stands and what it wa
       }),
     }),
   );
-  const reads = t.mock.method(f.app.ctx.artifacts, 'read');
+  const reads = t.mock.method(f.app.ctx.artifacts, 'bytes');
   const evaluations = t.mock.method(f.app.ctx.workflows, 'evaluate');
   const graphs = t.mock.method(f.app.ctx.workflows, 'process');
   const counts = () =>
@@ -509,7 +509,8 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
   const experiment = await f.create('weight-decay');
   const feasibility = await f.attach(experiment, 'feasibility', 'feasibility.json');
   const written = await f.attach(experiment, 'plan', 'design/plan.md');
-  const reads = t.mock.method(f.app.ctx.artifacts, 'read');
+  // Every byte read, artifact.read's included, goes through bytes().
+  const reads = t.mock.method(f.app.ctx.artifacts, 'bytes');
   const graphs = t.mock.method(f.app.ctx.workflows, 'process');
   // The record page's own read runs the submission's checks, which read the plan's bytes.
   await f.app.ctx.experiments.process(f.operator, experiment.id);

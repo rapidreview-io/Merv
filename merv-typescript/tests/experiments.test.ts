@@ -676,12 +676,12 @@ test('Missing bytes and invalid scoped figure references cannot seal a review', 
   const attached = await f.attach(e, 'plan', plan),
     events = (await f.state.events(f.operator.projectId)).length;
   // Artifacts verifies its bytes (its own suite covers how); a refusal here must seal nothing.
-  const original = f.artifacts.read;
-  f.artifacts.read = async () => {
+  const original = f.artifacts.bytes;
+  f.artifacts.bytes = async () => {
     throw new MervError('blob_corrupt', 'Stored artifact bytes do not match their metadata', 500);
   };
   await assert.rejects(async () => await f.transition(e, 'submit_design'), code('blob_corrupt'));
-  f.artifacts.read = original;
+  f.artifacts.bytes = original;
   assert.equal((await f.state.events(f.operator.projectId)).length, events);
   assert.equal((await f.experiments.get(f.producer, e.id)).submissions.length, 0);
   assert.equal(

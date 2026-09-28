@@ -426,7 +426,7 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   const f = await fixture(t);
   const experiment = await f.create();
   await f.attach(experiment, 'plan', 'INCOMPLETE_DRAFT_KEEP_WORKING');
-  const reader = t.mock.method(f.artifacts, 'read', () => {
+  const reader = t.mock.method(f.artifacts, 'bytes', () => {
     assert.fail('Metadata admission must not read artifact bytes');
   });
   const evaluate = t.mock.method(f.workflows, 'evaluate', () => {
@@ -468,7 +468,7 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   const offered = await f.offer(experiment);
   assert.match(offered.session.assignment.context!.prompt, /INCOMPLETE_DRAFT_KEEP_WORKING/);
   assert.equal(offered.session.assignment.workStart, null);
-  t.mock.method(f.artifacts, 'read', () => {
+  t.mock.method(f.artifacts, 'bytes', () => {
     assert.fail('Activation must not rebuild context');
   });
   const worker = await f.sessions.authenticate(offered.secret);
@@ -619,7 +619,7 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
     ),
     'General state remains an honest metadata view',
   );
-  const noForeignReads = t.mock.method(f.artifacts, 'read');
+  const noForeignReads = t.mock.method(f.artifacts, 'bytes');
   await assert.rejects(
     async () => await f.sessions.prepare(worker, 'artifact.read', { artifactId: lateReport.id }),
     { code: 'execution_arguments_forbidden' },
@@ -1256,7 +1256,7 @@ test('Git experiments retain the central-base protocol and wait for their exact 
     (await f.workflows.execution(f.source, { instanceId: old.id, expectedRevision: 0 })).policyHash,
     oldPolicy.policyHash,
   );
-  const noBytes = t.mock.method(f.artifacts, 'read', () => {
+  const noBytes = t.mock.method(f.artifacts, 'bytes', () => {
     assert.fail('Capture/candidate metadata must not render evidence');
   });
   const beforeHead = await f.state.eventHead();

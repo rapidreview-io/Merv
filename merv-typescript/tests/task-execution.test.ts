@@ -69,7 +69,7 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
     instanceId: task.id,
     expectedRevision: 0,
   });
-  const reads = t.mock.method(app.ctx.artifacts, 'read');
+  const reads = t.mock.method(app.ctx.artifacts, 'bytes');
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {

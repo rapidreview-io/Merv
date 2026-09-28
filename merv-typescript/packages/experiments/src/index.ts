@@ -850,27 +850,8 @@ export class ExperimentService implements Experiments {
       ? (await this.artifacts.authored(caller, tx)).some((output) => output.id === artifact.id)
       : artifact.createdBy === caller.actorId;
   }
-  private async bytes(
-    caller: Caller,
-    id: string,
-    tx: Transaction,
-  ): Promise<{ artifact: Artifact; bytes: Buffer }> {
-    const artifact = await this.artifacts.get(caller, id, tx);
-    const result = await this.artifacts.read(caller, id);
-    const bytes = Buffer.from(result.content, result.encoding);
-    check(
-      result.artifact.id === artifact.id &&
-        result.artifact.hash === artifact.hash &&
-        bytes.length === artifact.size &&
-        sha256Hex(bytes) === artifact.hash,
-      'artifact_hash_mismatch',
-      'Retained artifact bytes do not match their immutable metadata',
-      409,
-    );
-    return { artifact, bytes };
-  }
   private async text(caller: Caller, id: string, tx: Transaction): Promise<string> {
-    return decodeEvidence((await this.bytes(caller, id, tx)).bytes);
+    return decodeEvidence((await this.artifacts.bytes(caller, id, tx)).bytes);
   }
   private async figures(
     caller: Caller,
@@ -889,7 +870,7 @@ export class ExperimentService implements Experiments {
         'Figure is outside this worker’s frozen inputs and authored outputs',
         403,
       );
-      const { artifact, bytes } = await this.bytes(caller, id, tx);
+      const { artifact, bytes } = await this.artifacts.bytes(caller, id, tx);
       check(
         ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(artifact.mediaType) &&
           bytes.length > 0,
@@ -1068,7 +1049,7 @@ export class ExperimentService implements Experiments {
       figureIds = [
         ...new Set([...approved.figureIds, ...(await this.figures(caller, text, experiment, tx))]),
       ];
-      for (const id of approved.figureIds) await this.bytes(caller, id, tx);
+      for (const id of approved.figureIds) await this.artifacts.bytes(caller, id, tx);
       exhibit = await this.buildExhibit(caller, experiment, tx);
       validateReport(text, {
         figures: figureIds,
@@ -1102,7 +1083,7 @@ export class ExperimentService implements Experiments {
         'Submission includes evidence outside the current worker’s authorship and frozen recovery selection',
         403,
       );
-      await this.bytes(caller, item.artifactId, tx);
+      await this.artifacts.bytes(caller, item.artifactId, tx);
     }
     return { evidence, figureIds, exhibit };
   }
