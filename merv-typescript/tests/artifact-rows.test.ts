@@ -164,15 +164,18 @@ test('a session create records its session, and metadata answers carry no bytes'
   const worker: Caller = { ...f.caller, session: { id: 'ses_worker' } };
   const artifact = await store.create(worker, { title: 'Output', content: 'worker bytes' });
   const plain = await store.create(f.caller, { title: 'Plain', content: 'plain bytes' });
+  // Both creates may share a millisecond, so the rows are compared by id, not creation order.
+  const byId = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : 1);
   const sessions = await f.state.read((sql) =>
-    sql.all<{ id: string; session_id: string | null }>(
-      'SELECT id,session_id FROM artifacts ORDER BY created_at,id',
-    ),
+    sql.all<{ id: string; session_id: string | null }>('SELECT id,session_id FROM artifacts'),
   );
-  assert.deepEqual(sessions, [
-    { id: artifact.id, session_id: 'ses_worker' },
-    { id: plain.id, session_id: null },
-  ]);
+  assert.deepEqual(
+    sessions.sort(byId),
+    [
+      { id: artifact.id, session_id: 'ses_worker' },
+      { id: plain.id, session_id: null },
+    ].sort(byId),
+  );
   const keys = Object.keys(artifact).sort();
   assert.deepEqual(keys, [
     'createdAt',
