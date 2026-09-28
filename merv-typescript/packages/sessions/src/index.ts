@@ -28,7 +28,6 @@ import {
   type Scope,
   type State,
   type Transaction,
-  type WorkflowExecution,
   type Workflows,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
@@ -694,7 +693,7 @@ export class LeasedSessions implements Sessions {
     if (session.agentId)
       await this.directory.require(await this.directory.get(session.agentId, tx), tx);
   }
-  private async valid(session: Session, tx: Transaction): Promise<WorkflowExecution> {
+  private async valid(session: Session, tx: Transaction): Promise<{ registrationId: string }> {
     this.ensureOpen();
     check(live(session), 'session_closed', 'Session is closed', 401);
     check(

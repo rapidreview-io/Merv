@@ -1458,7 +1458,12 @@ export interface Workflows {
     target: WorkflowExecutionTarget & { leaseId: string },
     tx?: Transaction,
   ): Promise<WorkflowLeaseOffer>;
-  checkLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowExecution>;
+  /** The lease still holds; its references stay those frozen at the offer. */
+  checkLease(
+    worker: Caller,
+    lease: WorkflowLease,
+    tx?: Transaction,
+  ): Promise<{ registrationId: string }>;
   authorizeLeaseDispatch(
     worker: Caller,
     lease: WorkflowLease,

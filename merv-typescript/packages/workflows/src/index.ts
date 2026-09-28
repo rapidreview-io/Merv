@@ -780,23 +780,23 @@ export class WorkflowsService implements Workflows {
     worker: Caller,
     lease: WorkflowLease,
     transaction?: Transaction,
-  ): Promise<WorkflowExecution> {
+  ): Promise<{ registrationId: string }> {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await this.read(transaction, async (tx) => {
-      const { execution, row, registration } = await this.leaseStep(worker, lease, tx);
+      const { row, registration } = await this.leaseStep(worker, lease, tx);
       await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
-      return execution;
+      return { registrationId: registration.registrationId };
     });
   }
 
-  /** The lease's current execution and its program's lease check, left for the caller's closing recheck. */
-  private async leaseStep(
-    worker: Caller,
-    lease: WorkflowLease,
-    tx: Transaction,
-  ): Promise<Loaded & { execution: WorkflowExecution }> {
+  /**
+   * The lease's admitted step and its program's lease check, left for the caller's closing
+   * recheck. References are read once, at the offer: whatever they refuse is either refused
+   * here too, by the step's check and the lease check, or fixed once the offer has passed.
+   */
+  private async leaseStep(worker: Caller, lease: WorkflowLease, tx: Transaction): Promise<Loaded> {
     check(
       worker.actorId === lease.actorId &&
         worker.projectId === lease.projectId &&
@@ -815,11 +815,11 @@ export class WorkflowsService implements Workflows {
       },
       tx,
     );
-    const { execution, rule, registration, context } = step;
+    const { snapshot, rule, registration, context } = step;
     check(
-      execution.workflow === lease.workflow &&
-        execution.version === lease.version &&
-        execution.state === lease.state,
+      snapshot.workflow === lease.workflow &&
+        snapshot.version === lease.version &&
+        snapshot.state === lease.state,
       'lease_changed',
       'Lease no longer names this workflow state',
       409,
@@ -858,13 +858,7 @@ export class WorkflowsService implements Workflows {
     frozen = workflowJson(frozen, 'invalid_execution_target', 400);
     input.input = dispatchInput(input.input);
     return await this.read(transaction, async (tx) => {
-      const {
-        execution: current,
-        rule,
-        registration,
-        row,
-        context,
-      } = await this.leaseStep(worker, lease, tx);
+      const { rule, registration, row, context } = await this.leaseStep(worker, lease, tx);
       check(
         frozen.instanceId === lease.instanceId &&
           frozen.projectId === lease.projectId &&
@@ -875,7 +869,7 @@ export class WorkflowsService implements Workflows {
           frozen.revision === lease.expectedRevision &&
           frozen.policyHash === lease.policyHash &&
           executionFingerprint(frozen.policy) === lease.policyHash &&
-          frozen.registrationId === current.registrationId,
+          frozen.registrationId === registration.registrationId,
         'execution_changed',
         'Frozen dispatch authority does not match this active lease invocation',
         409,
@@ -977,20 +971,25 @@ export class WorkflowsService implements Workflows {
     checkRevision(target.expectedRevision);
     return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const { execution, row, registration } = await this.executionStep(caller, target, tx);
-      await this.recheck(tx, [row], 'Execution callbacks must not change the workflow instance');
-      this.requireActive(registration);
+      const step = await this.executionStep(caller, target, tx);
+      const execution = await this.executionOf(step);
+      await this.recheck(
+        tx,
+        [step.row],
+        'Execution callbacks must not change the workflow instance',
+      );
+      this.requireActive(step.registration);
       return execution;
     });
   }
 
-  /** An admitted execution, left for the caller's closing recheck. */
+  /** An admitted execution step, left for the caller's closing recheck. */
   private async executionStep(
     caller: Caller,
     target: WorkflowExecutionTarget &
       Partial<Pick<WorkflowExecutionDispatch, 'registrationId' | 'policyHash'>>,
     tx: Transaction,
-  ): Promise<Loaded & { execution: WorkflowExecution }> {
+  ): Promise<Loaded> {
     const step = await this.load(caller, target, 'execution', tx);
     check(
       target.registrationId === undefined ||
@@ -1007,7 +1006,7 @@ export class WorkflowsService implements Workflows {
       409,
     );
     await checkAssignment(step.rule, step.context);
-    return { ...step, execution: await this.executionOf(step) };
+    return step;
   }
 
   /** The execution an admitted step grants: its fixed policy and the references it names now. */

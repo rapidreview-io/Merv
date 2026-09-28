@@ -332,6 +332,13 @@ test('a leased status_and_next admission stays within a statement budget', async
   const offered = await f.offer();
   const worker = await f.app.ctx.sessions.authenticate(offered.secret);
   await f.app.ctx.domainEvents.drain();
+  // Lease steps, and the execution references a step would derive: the offer froze those.
+  const engine = f.app.ctx.workflows as unknown as Record<
+    'leaseStep' | 'executionOf',
+    (...args: unknown[]) => unknown
+  >;
+  const leaseSteps = t.mock.method(engine, 'leaseStep');
+  const references = t.mock.method(engine, 'executionOf');
   // Statements issued through the state's transactions, snapshot children included.
   const state = f.app.ctx.state as PostgresState;
   let statements = 0;
@@ -358,8 +365,11 @@ test('a leased status_and_next admission stays within a statement budget', async
   assert.equal(invocation.tool, 'workflow.status_and_next');
   // The dispatch authorization runs inside the session's own frame, so every Scope check it
   // makes for the worker resolves from that frame instead of re-reading the session row
-  // (about 400 statements unframed, 127 framed).
+  // (about 400 statements unframed, 88 framed).
   assert.ok(statements <= 160, `${statements} statements for one leased read`);
+  // The session's Scope check, its validation, and the dispatch authorization.
+  assert.equal(leaseSteps.mock.callCount(), 3);
+  assert.equal(references.mock.callCount(), 0);
 });
 
 test('logical task owner can reissue worker delivery while preserving immutable review input/output provenance', async (t) => {

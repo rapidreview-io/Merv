@@ -10,6 +10,7 @@ import {
   type Caller,
   type Transaction,
   type WorkflowDefinition,
+  type WorkflowExecution,
   type WorkflowLease,
   type WorkflowPolicy,
 } from '@merv/contracts';
@@ -126,9 +127,10 @@ test('each caller method authorizes its caller once, at entry', async (t) => {
   );
   const worker = await f.worker('lease_counted');
   let lease: WorkflowLease | undefined;
+  let execution: WorkflowExecution | undefined;
   assert.deepEqual(
     await decisions(async () => {
-      ({ lease } = await f.workflows.offerLease(f.owner, worker, {
+      ({ lease, execution } = await f.workflows.offerLease(f.owner, worker, {
         instanceId: first.id,
         expectedRevision: 0,
         leaseId: 'lease_counted',
@@ -136,12 +138,11 @@ test('each caller method authorizes its caller once, at entry', async (t) => {
     }),
     { ...owner(2), [worker.actorId]: 1 },
   );
-  const execution = await f.workflows.checkLease(worker, lease!);
   const once = { [worker.actorId]: 1 };
   assert.deepEqual(await decisions(() => f.workflows.checkLease(worker, lease!)), once);
   assert.deepEqual(
     await decisions(() =>
-      f.workflows.authorizeLeaseDispatch(worker, lease!, execution, {
+      f.workflows.authorizeLeaseDispatch(worker, lease!, execution!, {
         tool: 'workflow.status_and_next',
         input: {},
         read: true,
