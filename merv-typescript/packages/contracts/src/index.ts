@@ -1215,7 +1215,11 @@ export interface WorkflowPolicy {
   limits?: WorkflowLoopLimit[];
   /** The owner may resume suspended work in the same transaction as a human's allowance. */
   limitExtended?(context: WorkflowCheckContext, status: WorkflowLimitStatus): Promise<void>;
-  /** Immutable per version; only these terminal states satisfy downstream work. */
+  /**
+   * Immutable per version, their absence included: the first registration of a version pins
+   * them, or pins that there are none. Only these terminal states satisfy downstream work, and
+   * work of a version without them cannot be depended on.
+   */
   successStates?: string[];
   /** Optional explicit recovery action suggested when a required prerequisite fails. */
   dependencyFailureAction?: string;

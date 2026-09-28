@@ -22,13 +22,13 @@ export function normalizeDependencies(value: unknown): string[] {
 export const successOf = (row: { success_json: string } | undefined): string[] | undefined =>
   row ? ((JSON.parse(row.success_json) as string[] | null) ?? undefined) : undefined;
 
+/** A version pins its success states on first registration, their absence included. */
 export async function persistSuccess(
   sql: Sql,
   definition: WorkflowDefinition,
   success?: string[],
 ): Promise<void> {
-  if (success === undefined) return;
-  const encoded = canonical([...success].sort());
+  const encoded = canonical(success === undefined ? null : [...success].sort());
   const existing = await sql.get<{ success_json: string }>(
     'SELECT success_json FROM wf_success_states WHERE workflow=? AND version=?',
     definition.name,

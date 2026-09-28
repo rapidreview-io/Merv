@@ -568,7 +568,7 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
   assert.ok(!JSON.stringify(dependencies).includes('PRIVATE TITLE'));
 });
 
-test('a pinned absence of success states reads like an undeclared one', async (t) => {
+test('success states are pinned per version, their absence included, and absence reads as undeclared', async (t) => {
   const { state, workflows, caller } = await setup();
   t.after(async () => await state.close());
   const targetProgram = await workflows.register(graph(), policy());
@@ -576,23 +576,40 @@ test('a pinned absence of success states reads like an undeclared one', async (t
     ...policy(),
     successStates: undefined,
   });
-  await state.transaction(
-    async (tx) =>
-      await tx.run(
-        'INSERT INTO wf_success_states (workflow,version,success_json) VALUES (?,?,?) ON CONFLICT DO NOTHING',
-        'absent_success',
-        1,
-        'null',
-      ),
+  assert.deepEqual(
+    await state.read(
+      async (sql) =>
+        await sql.all(
+          'SELECT success_json FROM wf_success_states WHERE workflow=?',
+          'absent_success',
+        ),
+    ),
+    [{ success_json: 'null' }],
   );
-  const absent = await start(absentProgram, caller, 'absent_success', 'absent');
+  // Absence is as pinned as any declaration: neither direction may change it in place.
+  absentProgram.dispose();
+  await assert.rejects(async () => await workflows.register(graph('absent_success'), policy()), {
+    code: 'workflow_version_conflict',
+    status: 409,
+  });
+  const reinstalled = await workflows.register(graph('absent_success'), {
+    ...policy(),
+    successStates: undefined,
+  });
+  targetProgram.dispose();
   await assert.rejects(
-    async () => await start(targetProgram, caller, 'preparation', 'waiter', [absent.id]),
+    async () => await workflows.register(graph(), { ...policy(), successStates: undefined }),
+    { code: 'workflow_version_conflict', status: 409 },
+  );
+  const reinstalledTarget = await workflows.register(graph(), policy());
+  const absent = await start(reinstalled, caller, 'absent_success', 'absent');
+  await assert.rejects(
+    async () => await start(reinstalledTarget, caller, 'preparation', 'waiter', [absent.id]),
     { code: 'dependency_unsupported', status: 409 },
   );
-  const target = await start(targetProgram, caller, 'preparation', 'target');
-  const source = await start(absentProgram, caller, 'absent_success', 'source', [target.id]);
-  await absentProgram.transition(caller, {
+  const target = await start(reinstalledTarget, caller, 'preparation', 'target');
+  const source = await start(reinstalled, caller, 'absent_success', 'source', [target.id]);
+  await reinstalled.transition(caller, {
     instanceId: source.id,
     expectedRevision: 0,
     action: 'withdraw',

@@ -106,7 +106,9 @@ Programs can coordinate domain work through one caller-owned transaction.
 ## Dependencies between work items
 
 The service also owns project-scoped dependency edges. Programs declare durable
-`successStates` in policy and can pass `dependsOn` at start. `dependencies` returns
+`successStates` in policy and can pass `dependsOn` at start. The first registration
+of a version pins its success states, or their absence; a later registration that
+adds, drops or changes them is `workflow_version_conflict`. `dependencies` returns
 live forward/reverse rows; `checkDependencies` is the shared prerequisite guard.
 Only actions with `requiresDependencies: true` enforce that guard automatically.
 Programs call it for assignment/execution gates as needed. A policy may name an

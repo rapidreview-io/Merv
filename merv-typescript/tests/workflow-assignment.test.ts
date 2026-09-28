@@ -391,16 +391,20 @@ test('start history is immutable and survives revisions, unload, termination and
 test('assignment dependencies gate entry independently of completion readiness', async (t) => {
   const f = await setup();
   t.after(async () => await f.state.close());
-  f.registration.dispose();
-  const owner = await f.workflows.register(graph, {
-    ...f.policy,
-    successStates: ['done'],
-    assignments: [{ ...f.policy.assignments![0], requiresDependencies: true }],
-  });
+  // Success states are pinned with a version, so the gated graph is a version of its own.
+  const owner = await f.workflows.register(
+    { ...graph, version: 2 },
+    {
+      ...f.policy,
+      successStates: ['done'],
+      assignments: [{ ...f.policy.assignments![0], requiresDependencies: true }],
+    },
+  );
+  const upstream = await owner.start(f.caller, { workflow: graph.name, requestId: 'upstream' });
   const downstream = await owner.start(f.caller, {
     workflow: graph.name,
     requestId: 'downstream',
-    dependsOn: [f.instance.id],
+    dependsOn: [upstream.id],
   });
   for (const action of [
     async () => await f.workflows.assignment(f.caller, downstream.id),
@@ -414,7 +418,7 @@ test('assignment dependencies gate entry independently of completion readiness',
   );
   assert.deepEqual(await f.workflows.workStarts(f.caller, downstream.id), []);
   await owner.transition(f.caller, {
-    instanceId: f.instance.id,
+    instanceId: upstream.id,
     expectedRevision: 0,
     action: 'finish',
     requestId: 'upstream-done',
