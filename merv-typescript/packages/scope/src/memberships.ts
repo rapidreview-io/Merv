@@ -1,4 +1,4 @@
-import { visible, mapAsync } from '@merv/contracts';
+import { visible } from '@merv/contracts';
 import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
@@ -20,6 +20,8 @@ import {
   type VerifiedIdentity,
 } from '@merv/contracts';
 import { projectValue, type ProjectRow } from './project-context.js';
+import { roles } from './roles.js';
+import { forRead } from './within.js';
 
 export const membershipMigration: Migration = {
   version: 3,
@@ -48,13 +50,18 @@ const membership = (row: MembershipRow): ProjectMembership => ({
   createdAt: row.created_at,
   revokedAt: row.revoked_at,
 });
-const roles: Role[] = ['operator', 'producer', 'reviewer', 'reader'];
 const identityPart = (value: unknown, limit: number): boolean =>
   typeof value === 'string' &&
   value.length > 0 &&
   value.length <= limit &&
   value.trim() === value &&
   !value.includes('\0');
+
+/** Active operator memberships whose actor agrees and whose person has signed in. */
+export const LIVE_OPERATOR = `project_memberships m
+  JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id
+  JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
+  WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`;
 
 export function identityValid(identity: VerifiedIdentity, time: string): boolean {
   return (
@@ -78,7 +85,8 @@ function checkIdentity(identity: VerifiedIdentity, time: string): void {
   );
 }
 
-/** Synchronous membership storage, owned by Scope. Identity verification stays outside this layer. */
+/** Project membership storage, owned by Scope: projects, their members and the actors members act
+ * as. Verifying an identity stays outside this layer. */
 export class Memberships {
   constructor(
     private readonly state: State,
@@ -121,7 +129,6 @@ export class Memberships {
         insertedAt,
       );
       const user = await this.user(tx, identity.issuer, identity.subject);
-      checkIdentity(identity, this.time());
       return {
         kind: 'user',
         user,
@@ -211,7 +218,7 @@ export class Memberships {
   }
 
   async caller(principal: Principal, projectId?: string): Promise<Caller> {
-    return await this.state.transaction(async (tx) => await this.resolve(principal, projectId, tx));
+    return await forRead(this.state, async (tx) => await this.resolve(principal, projectId, tx));
   }
 
   private async project(tx: Sql, projectId: string): Promise<Project> {
@@ -221,22 +228,21 @@ export class Memberships {
   }
 
   async projects(principal: Principal): Promise<Project[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       if (principal?.kind === 'actor') {
         const caller = await this.resolve(principal, undefined, tx);
         return [await this.project(tx, caller.projectId)];
       }
       const human = await this.human(principal, tx);
-      return await mapAsync(
-        await tx.all<{ project_id: string }>(
-          `SELECT m.project_id FROM project_memberships m JOIN actors a ON a.id=m.actor_id
-         AND a.project_id=m.project_id AND a.role=m.role
+      return (
+        await tx.all<ProjectRow>(
+          `SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
+         JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id AND a.role=m.role
          WHERE m.issuer=? AND m.subject=? AND m.active=1 AND a.active=1 ORDER BY m.created_at,m.project_id`,
           human.user.issuer,
           human.user.subject,
-        ),
-        async (row) => await this.project(tx, row.project_id),
-      );
+        )
+      ).map(projectValue);
     });
   }
 
@@ -316,7 +322,7 @@ export class Memberships {
   }
 
   async memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       await this.resolve(await this.human(principal, tx), projectId, tx);
       return (
         await tx.all<MembershipRow>(
@@ -457,9 +463,7 @@ export class Memberships {
   private async keepOperator(tx: Sql, previous: MembershipRow, nextRole?: Role): Promise<void> {
     if (previous.role !== 'operator' || nextRole === 'operator') return;
     const count = (await tx.get<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM project_memberships m JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id
-       JOIN shared_users u ON u.issuer=m.issuer AND u.subject=m.subject
-       WHERE m.project_id=? AND m.actor_id<>? AND m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator'`,
+      `SELECT COUNT(*) AS count FROM ${LIVE_OPERATOR} AND m.project_id=? AND m.actor_id<>?`,
       previous.project_id,
       previous.actor_id,
     ))!.count;
@@ -510,12 +514,12 @@ export class Memberships {
     await this.state.transaction(async (tx) => {
       const caller = await this.operator(principal, projectId, tx);
       const previous = await tx.get<MembershipRow>(
-        'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? ORDER BY active DESC,_merv_rowid DESC LIMIT 1',
+        'SELECT * FROM project_memberships WHERE project_id=? AND issuer=? AND subject=? AND active=1',
         projectId,
         caller.human!.issuer,
         subject,
       );
-      if (!previous?.active) return;
+      if (!previous) return;
       await this.keepOperator(tx, previous);
       await tx.run(
         'UPDATE project_memberships SET active=0,revoked_at=? WHERE id=?',

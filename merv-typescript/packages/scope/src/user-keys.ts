@@ -1,6 +1,5 @@
 import { expiry } from './expiry.js';
 import { postgresMigrations } from './user-keys.postgres.js';
-import type { CredentialStore } from '@merv/identity/credentials';
 import {
   visible,
   check,
@@ -18,6 +17,8 @@ import {
   type Transaction,
   type UserKey,
 } from '@merv/contracts';
+import type { Ledger } from './ledger.js';
+import { forRead } from './within.js';
 import type { Memberships } from './memberships.js';
 import { projectValue, type ProjectRow } from './project-context.js';
 
@@ -57,7 +58,7 @@ const validToken = (token: unknown): token is string =>
 export class UserKeys {
   constructor(
     private readonly state: State,
-    private readonly credentials: CredentialStore,
+    private readonly ledger: Ledger,
     private readonly time: () => string,
     private readonly members: Memberships,
     private readonly require: (
@@ -68,7 +69,7 @@ export class UserKeys {
   ) {}
 
   async authenticate(token: string): Promise<UserKey> {
-    const verified = await this.credentials.authenticate(token, 'user-key');
+    const verified = await this.ledger.authenticate(token, 'user-key');
     return await this.state.read(async (sql) => {
       const row = await sql.get<KeyRow>(
         'SELECT * FROM user_keys WHERE id=? AND token_hash=?',
@@ -106,11 +107,12 @@ export class UserKeys {
     );
     const row = await sql.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', id);
     this.live(row, 403);
-    await this.credentials.authenticateHash(row.token_hash, 'user-key', sql);
+    await this.ledger.live(row.token_hash, 'user-key', row.id, sql);
     return row;
   }
 
-  async authorize(caller: Caller, sql: Sql): Promise<void> {
+  /** Checks a user key caller against its stored key and membership; returns the key's deadline. */
+  async authorize(caller: Caller, sql: Sql): Promise<string | null> {
     check(
       caller.key &&
         typeof caller.key.membershipId === 'string' &&
@@ -143,13 +145,14 @@ export class UserKeys {
       'An active current membership belonging to the key owner is required',
       403,
     );
+    return key.expires_at;
   }
 
   async caller(
     principal: Extract<Principal, { kind: 'key' }>,
     projectId?: string,
   ): Promise<Caller> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       // Principal metadata is descriptive. Authority always comes from the current stored key.
       const key = await this.current(tx, principal.key?.id);
       const selected =
@@ -183,7 +186,7 @@ export class UserKeys {
   }
 
   async projects(principal: Extract<Principal, { kind: 'key' }>): Promise<Project[]> {
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       const key = await this.current(tx, principal.key?.id);
       return (
         await tx.all<ProjectRow>(
@@ -206,7 +209,7 @@ export class UserKeys {
       'invalid_project',
       'Project filter must be a nonempty identifier',
     );
-    return await this.state.transaction(async (tx) => {
+    return await forRead(this.state, async (tx) => {
       const human = await this.members.human(principal, tx);
       return (
         await tx.all<KeyRow>(
@@ -226,17 +229,7 @@ export class UserKeys {
     time: string,
   ): Promise<IssuedUserKey> {
     const key: UserKey = { ...input, id: newId('key'), createdAt: time, revokedAt: null };
-    const { token } = await this.credentials.issue(
-      {
-        owner: 'scope',
-        subject: key.id,
-        kind: 'user-key',
-        prefix: 'mk_',
-        expiresAt: key.expiresAt,
-        hardDeadline: key.expiresAt,
-      },
-      tx,
-    );
+    const { token, tokenHash } = await this.ledger.issue('user-key', key.id, key.expiresAt, tx);
     await tx.run(
       'INSERT INTO user_keys(id,issuer,subject,project_id,grant_scope,label,token_hash,created_at,expires_at,previous_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
       key.id,
@@ -245,7 +238,7 @@ export class UserKeys {
       key.projectId,
       key.grantScope,
       key.label,
-      sha256Hex(token),
+      tokenHash,
       key.createdAt,
       key.expiresAt,
       key.previousId,
@@ -367,7 +360,13 @@ export class UserKeys {
         previous.id,
       );
       check(changed.changes === 1, 'key_revoked', 'User key is already revoked or rotated', 409);
-      await this.credentials.revoke(previous.token_hash, 'scope', tx);
+      // Only a revocation counts here, never expiry: renewing an expired key is intended.
+      check(
+        (await this.ledger.retire('user-key', previous, tx)).revokedAt === null,
+        'key_revoked',
+        'User key was revoked in the credential ledger',
+        409,
+      );
       const issued = await this.issue(
         tx,
         { ...hydrate(previous), expiresAt, previousId: previous.id },
@@ -398,7 +397,7 @@ export class UserKeys {
       const ownerActorId = await this.ownerActor(tx, selected);
       const time = this.time();
       for (const key of descendants) {
-        await this.credentials.revoke(key.token_hash, 'scope', tx);
+        await this.ledger.retire('user-key', key, tx);
         await tx.run(
           'UPDATE user_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
           time,

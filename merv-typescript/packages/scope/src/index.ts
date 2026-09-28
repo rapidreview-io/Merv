@@ -1,7 +1,9 @@
 import { CredentialStore } from '@merv/identity/credentials';
-import { expiry } from './expiry.js';
+import { Ledger } from './ledger.js';
+import { within } from './within.js';
+import { ACTOR_WITH_MEMBER, needs, permits, serviceRole, workerRoles } from './roles.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
-import { postgresMigrations } from './index.postgres.js';
+import { scopeMigrations } from './migrations.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
 import type { ToolGrant, ToolPolicy } from '@merv/contracts';
@@ -34,76 +36,91 @@ import {
   type ConversationAuthority,
   type ManagedRunnerAuthority,
 } from '@merv/contracts';
-import { identityValid, Memberships, membershipMigration } from './memberships.js';
-import { UserKeys, userKeyMigration } from './user-keys.js';
+import { identityValid, LIVE_OPERATOR, Memberships } from './memberships.js';
+import { UserKeys } from './user-keys.js';
 import {
   parseProjectContextUpdate,
-  projectContextMigration,
   projectValue as project,
   type ProjectRow,
 } from './project-context.js';
+import {
+  ActorCredentials,
+  actor,
+  credential,
+  type ActorRow,
+  type CredentialRow,
+  type Decision,
+} from './actor-credentials.js';
 
-interface ActorRow {
-  id: string;
-  project_id: string;
-  name: string;
-  role: Role;
-  active: number;
-  user_issuer?: string | null;
-  user_subject?: string | null;
-  session_id?: string | null;
-  agent_id?: string | null;
-  service_owner?: string | null;
+/** The one installed provider of a kind of caller authority, and the registration it came with. */
+class AuthoritySlot<T> {
+  #value?: T;
+  #token?: symbol;
+  constructor(
+    private readonly code: { registered: string; unavailable: string },
+    private readonly text: { installed: string; unavailable: string; changed: string },
+  ) {}
+  /** Throws at once when a provider is installed; the disposer withdraws only this registration. */
+  install(value: T): () => void {
+    check(!this.#value, this.code.registered, this.text.installed, 409);
+    const token = Symbol(this.code.registered);
+    this.#value = value;
+    this.#token = token;
+    return () => {
+      if (this.#token !== token) return;
+      this.#value = this.#token = undefined;
+    };
+  }
+  /** The current registration, captured before a decision awaits anything. */
+  get token(): symbol | undefined {
+    return this.#token;
+  }
+  /** The installed provider, which a decision asks for only once it needs it. */
+  provider(): T {
+    const value = this.#value;
+    check(value, this.code.unavailable, this.text.unavailable, 503);
+    return value;
+  }
+  /** Refuses a decision whose provider was withdrawn, or installed again, while it was pending. */
+  fence(token: symbol | undefined): void {
+    check(
+      token !== undefined && this.#token === token,
+      this.code.unavailable,
+      this.text.changed,
+      503,
+    );
+  }
 }
-interface CredentialRow {
-  id: string;
-  actor_id: string;
-  project_id: string;
-  kind: 'actor';
-  token_hash: string;
-  created_at: string;
-  expires_at: string | null;
-  revoked_at: string | null;
-  previous_id: string | null;
-}
-const actor = (row: ActorRow): Actor => ({
-  id: row.id,
-  projectId: row.project_id,
-  name: row.name,
-  role: row.role,
-  active: !!row.active,
-  ...(row.user_issuer ? { user: { issuer: row.user_issuer, subject: row.user_subject! } } : {}),
-  ...(row.service_owner ? { serviceOwner: row.service_owner } : {}),
-  ...(row.agent_id ? { agentId: row.agent_id } : {}),
-  ...(row.session_id ? { sessionId: row.session_id } : {}),
-});
-const credential = (row: CredentialRow): ActorCredential => ({
-  id: row.id,
-  actorId: row.actor_id,
-  projectId: row.project_id,
-  kind: row.kind,
-  createdAt: row.created_at,
-  expiresAt: row.expires_at,
-  revokedAt: row.revoked_at,
-  previousId: row.previous_id,
-});
-const roles = ['operator', 'producer', 'reviewer', 'reader'];
-const permits = (role: Role, permission: Permission): boolean =>
-  permission === 'read' ||
-  role === 'operator' ||
-  (permission === 'write' && role === 'producer') ||
-  (permission === 'review' && role === 'reviewer');
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   private members!: Memberships;
   private userKeys!: UserKeys;
-  private credentials: CredentialStore;
-  private sessionAuthority?: SessionAuthority;
-  private sessionAuthorityRegistration?: symbol;
-  private conversationAuthority?: ConversationAuthority;
-  private conversationAuthorityRegistration?: symbol;
-  private managedAuthority?: ManagedRunnerAuthority;
-  private managedAuthorityRegistration?: symbol;
+  private ledger: Ledger;
+  private credentials: ActorCredentials;
+  private sessions = new AuthoritySlot<SessionAuthority>(
+    { registered: 'session_authority_registered', unavailable: 'session_unavailable' },
+    {
+      installed: 'Session authority is already installed',
+      unavailable: 'Session authority is unavailable',
+      changed: 'Session authority changed during authorization; retry with the current provider',
+    },
+  );
+  private conversations = new AuthoritySlot<ConversationAuthority>(
+    { registered: 'conversation_authority_registered', unavailable: 'conversation_unavailable' },
+    {
+      installed: 'Conversation authority is already installed',
+      unavailable: 'Conversation authority is unavailable',
+      changed: 'Conversation authority changed during authorization',
+    },
+  );
+  private managed = new AuthoritySlot<ManagedRunnerAuthority>(
+    { registered: 'managed_authority_registered', unavailable: 'managed_runner_unavailable' },
+    {
+      installed: 'Managed runner authority is already installed',
+      unavailable: 'Managed runner authority is unavailable',
+      changed: 'Managed runner authority changed during authorization',
+    },
+  );
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -111,63 +128,19 @@ export class ProjectScope implements Scope {
     private readonly clock: () => number = Date.now,
     grants: ToolGrant[] = [],
   ) {
-    this.credentials = new CredentialStore(state, clock);
+    this.ledger = new Ledger(new CredentialStore(state, clock));
+    this.credentials = new ActorCredentials(
+      state,
+      this.ledger,
+      () => this.time(),
+      async (caller, permission, tx) => await this.authorize(caller, permission, tx),
+      async (caller, permission, tx) => await this.require(caller, permission, tx),
+    );
     this.initialize = async () => {
-      await this.credentials.initialize();
+      await this.ledger.initialize();
       this.toolPolicy = new ExactToolPolicy(this, grants);
-      await state.migrate('scope', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        membershipMigration,
-        userKeyMigration,
-        {
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        projectContextMigration,
-        {
-          version: 7,
-          sql: postgresMigrations[7],
-        },
-        {
-          version: 8,
-          sql: postgresMigrations[8],
-        },
-        {
-          version: 9,
-          sql: postgresMigrations[9],
-        },
-      ]);
-      await state.transaction(async (tx) => {
-        const rows = await tx.all<{
-          subject: string;
-          kind: string;
-          token_hash: string;
-          expires_at: string | null;
-          revoked_at: string | null;
-        }>(
-          "SELECT id AS subject, 'actor' AS kind, token_hash, expires_at, revoked_at FROM actor_credentials UNION ALL SELECT id AS subject, 'user-key' AS kind, token_hash, expires_at, revoked_at FROM user_keys",
-        );
-        for (const row of rows)
-          await this.credentials.adopt(
-            {
-              owner: 'scope',
-              subject: row.subject,
-              kind: row.kind,
-              tokenHash: row.token_hash,
-              expiresAt: row.expires_at,
-              hardDeadline: row.expires_at,
-              revokedAt: row.revoked_at,
-            },
-            tx,
-          );
-      });
+      await state.migrate('scope', scopeMigrations);
+      await this.ledger.adoptMissing(state);
       this.members = new Memberships(
         state,
         () => this.time(),
@@ -175,7 +148,7 @@ export class ProjectScope implements Scope {
       );
       this.userKeys = new UserKeys(
         state,
-        this.credentials,
+        this.ledger,
         () => this.time(),
         this.members,
         async (caller, permission, tx) => await this.require(caller, permission, tx),
@@ -193,10 +166,10 @@ export class ProjectScope implements Scope {
         issuer: string;
         subject: string;
       }>(
-        "SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM project_memberships m JOIN actors a ON a.id=m.actor_id AND a.project_id=m.project_id WHERE m.active=1 AND m.role='operator' AND a.active=1 AND a.role='operator' ORDER BY m.created_at,m.id",
+        `SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM ${LIVE_OPERATOR} ORDER BY m.created_at,m.id`,
       );
     const owners = new Map<string, DelegationSource>();
-    for (const row of tx ? await read(tx) : await this.state.read(read))
+    for (const row of await within(this.state, tx, read))
       if (!owners.has(row.project_id))
         owners.set(row.project_id, {
           actorId: row.actor_id,
@@ -212,27 +185,42 @@ export class ProjectScope implements Scope {
     provider: string,
     projectId: string,
     tx?: Transaction,
-    role: 'producer' | 'reviewer' = 'producer',
+    role: 'producer' | 'reviewer' = serviceRole(provider),
   ): Promise<Caller> {
-    if (!tx)
-      return this.state.transaction((tx) => this.serviceActor(provider, projectId, tx, role));
-    this.state.assertTransaction(tx);
-    check(provider.trim().length > 0, 'invalid_provider', 'A service provider is required');
-    await tx.run(
-      'INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,?,1,?) ON CONFLICT DO NOTHING',
-      newId('actor'),
-      projectId,
-      `${provider} service`,
-      role,
-      provider,
+    check(
+      typeof provider === 'string' && /^[a-z][a-z0-9-]{0,62}$/.test(provider),
+      'invalid_provider',
+      'A service provider is a short lowercase slug',
     );
-    const row = await tx.get<{ id: string }>(
-      'SELECT id FROM actors WHERE project_id=? AND service_owner=?',
-      projectId,
-      provider,
-    );
-    check(row, 'service_unavailable', 'The service actor is unavailable', 503);
-    return { projectId, actorId: row.id };
+    const find = async (sql: Sql) =>
+      await sql.get<{ id: string; role: Role }>(
+        'SELECT id,role FROM actors WHERE project_id=? AND service_owner=?',
+        projectId,
+        provider,
+      );
+    // Every task, workflow and session admission asks again: once it exists, one read, no lock.
+    const found = await within(this.state, tx, find);
+    if (found?.role === role) return { projectId, actorId: found.id };
+    // A role that does not fit the provider still reaches the INSERT, whose trigger refuses it.
+    return await inTransaction(this.state, tx, async (tx) => {
+      check(
+        await tx.get('SELECT 1 FROM projects WHERE id=?', projectId),
+        'not_found',
+        'Project not found',
+        404,
+      );
+      await tx.run(
+        'INSERT INTO actors(id,project_id,name,role,active,service_owner) VALUES (?,?,?,?,1,?) ON CONFLICT DO NOTHING',
+        newId('actor'),
+        projectId,
+        `${provider} service`,
+        role,
+        provider,
+      );
+      const row = await find(tx);
+      check(row, 'service_unavailable', 'The service actor is unavailable', 503);
+      return { projectId, actorId: row.id };
+    });
   }
 
   async acceptVerifiedIdentity(identity: VerifiedIdentity) {
@@ -298,60 +286,13 @@ export class ProjectScope implements Scope {
     return await this.members.adoptProject(principal, projectId, options);
   }
   registerSessionAuthority(authority: SessionAuthority): () => void {
-    check(
-      !this.sessionAuthority,
-      'session_authority_registered',
-      'Session authority is already installed',
-      409,
-    );
-    this.sessionAuthority = authority;
-    const registration = Symbol('session-authority');
-    this.sessionAuthorityRegistration = registration;
-    return () => {
-      if (this.sessionAuthorityRegistration !== registration) return;
-      this.sessionAuthorityRegistration = undefined;
-      this.sessionAuthority = undefined;
-    };
+    return this.sessions.install(authority);
   }
   registerConversationAuthority(authority: ConversationAuthority): () => void {
-    check(
-      !this.conversationAuthority,
-      'conversation_authority_registered',
-      'Conversation authority is already installed',
-      409,
-    );
-    const registration = Symbol('conversation-authority');
-    this.conversationAuthority = authority;
-    this.conversationAuthorityRegistration = registration;
-    return () => {
-      if (this.conversationAuthorityRegistration !== registration) return;
-      this.conversationAuthority = undefined;
-      this.conversationAuthorityRegistration = undefined;
-    };
-  }
-  private requireAuthorityRegistration(registration: symbol | undefined): void {
-    check(
-      registration !== undefined && this.sessionAuthorityRegistration === registration,
-      'session_unavailable',
-      'Session authority changed during authorization; retry with the current provider',
-      503,
-    );
+    return this.conversations.install(authority);
   }
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void {
-    check(
-      !this.managedAuthority,
-      'managed_authority_registered',
-      'Managed runner authority is already installed',
-      409,
-    );
-    const registration = Symbol('managed-runner-authority');
-    this.managedAuthority = authority;
-    this.managedAuthorityRegistration = registration;
-    return () => {
-      if (this.managedAuthorityRegistration !== registration) return;
-      this.managedAuthority = undefined;
-      this.managedAuthorityRegistration = undefined;
-    };
+    return this.managed.install(authority);
   }
   async delegationSource(caller: Caller, tx?: Transaction): Promise<DelegationSource> {
     caller = structuredClone(caller);
@@ -367,39 +308,32 @@ export class ProjectScope implements Scope {
       'A worker session cannot delegate another session',
       403,
     );
+    const { source, lifetime } = await this.authorize(caller, 'read', tx);
     // A conversation acts with exactly its person's authority: the source it was given.
-    if (caller.conversation) return (await this.authorize(caller, 'read', tx)).source!;
-    await this.require(caller, 'read', tx);
+    if (caller.conversation) return source!;
     const base = { actorId: caller.actorId, projectId: caller.projectId };
     if (caller.service) return { ...base, kind: 'service', vouchedBy: caller.service.vouchedBy };
     if (caller.human) {
       const { issuer, subject, membershipId } = caller.human;
       return { ...base, kind: 'human', issuer, subject, membershipId };
     }
-    const lookup = async (sql: Sql): Promise<DelegationSource> => {
-      if (caller.key) {
-        const key = (await sql.get<{ expires_at: string | null }>(
-          'SELECT expires_at FROM user_keys WHERE id=?',
-          caller.key.id,
-        ))!;
-        return {
+    check(
+      caller.key || caller.credentialId,
+      'delegation_required',
+      'Delegation requires an authenticated source credential',
+      403,
+    );
+    // The authorization above just read the key or credential row, and with it the deadline.
+    check(lifetime !== undefined, 'scope_internal', 'Credential lifetime unavailable', 500);
+    return caller.key
+      ? {
           ...base,
           kind: 'key',
           keyId: caller.key.id,
           membershipId: caller.key.membershipId,
-          expiresAt: key.expires_at,
-        };
-      }
-      check(
-        caller.credentialId,
-        'delegation_required',
-        'Delegation requires an authenticated source credential',
-        403,
-      );
-      const row = await this.credentialRow(sql, caller.projectId, caller.credentialId);
-      return { ...base, kind: 'actor', credentialId: row.id, expiresAt: row.expires_at };
-    };
-    return tx ? await lookup(tx) : await this.state.read(lookup);
+          expiresAt: lifetime,
+        }
+      : { ...base, kind: 'actor', credentialId: caller.credentialId!, expiresAt: lifetime };
   }
   async requireDelegation(
     source: DelegationSource,
@@ -433,8 +367,7 @@ export class ProjectScope implements Scope {
         );
         return actor(row);
       };
-      if (tx) this.state.assertTransaction(tx);
-      return tx ? await lookup(tx) : await this.state.read(lookup);
+      return await within(this.state, tx, lookup);
     } else if (source.kind === 'key') {
       caller = { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
     } else if (source.kind === 'service') {
@@ -448,26 +381,16 @@ export class ProjectScope implements Scope {
       );
       caller = { ...base, credentialId: source.credentialId };
     }
-    const value = await this.require(caller, permission, tx);
+    const { actor: value, lifetime } = await this.authorize(caller, permission, tx);
     check(!value.sessionId, 'nested_session', 'A session cannot be a delegation source', 403);
-    // A service lapses with its voucher, whose lifetime its authorization already checked.
-    if (source.kind === 'service') return value;
-    {
-      const lookup = async (sql: Sql) =>
-        await sql.get<{ expires_at: string | null }>(
-          source.kind === 'key'
-            ? 'SELECT expires_at FROM user_keys WHERE id=?'
-            : 'SELECT expires_at FROM actor_credentials WHERE id=?',
-          source.kind === 'key' ? source.keyId : source.credentialId,
-        );
-      const row = tx ? await lookup(tx) : await this.state.read(lookup);
-      check(
-        row && row.expires_at === source.expiresAt,
-        'invalid_delegation',
-        'Delegation credential lifetime changed',
-        403,
-      );
-    }
+    // A key or credential source holds only while its row keeps the deadline it was given. A
+    // service lapses with its voucher, whose lifetime its authorization already checked.
+    check(
+      source.kind === 'service' || lifetime === source.expiresAt,
+      'invalid_delegation',
+      'Delegation credential lifetime changed',
+      403,
+    );
     return value;
   }
   async createSessionActor(
@@ -479,20 +402,21 @@ export class ProjectScope implements Scope {
     input = structuredClone(input);
     this.state.assertTransaction(tx);
     check(
-      ['producer', 'reviewer', 'reader'].includes(input.role) &&
+      workerRoles.includes(input.role) &&
         typeof input.sessionId === 'string' &&
         input.sessionId.length > 0 &&
+        input.sessionId.length <= 200 &&
+        (input.agentId === undefined ||
+          (typeof input.agentId === 'string' &&
+            input.agentId.length > 0 &&
+            input.agentId.length <= 200)) &&
         typeof input.name === 'string' &&
         visible(input.name) &&
         input.name.length <= 200,
       'invalid_session_actor',
       'Session actors need a name, lease and non-operator role',
     );
-    await this.requireDelegation(
-      source,
-      input.role === 'producer' ? 'write' : input.role === 'reviewer' ? 'review' : 'read',
-      tx,
-    );
+    await this.requireDelegation(source, needs(input.role), tx);
     const value: Actor = {
       id: newId('actor'),
       projectId: source.projectId,
@@ -500,7 +424,7 @@ export class ProjectScope implements Scope {
       role: input.role,
       active: true,
       sessionId: input.sessionId,
-      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
     };
     await tx.run(
       'INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id) VALUES(?,?,?,?,1,?,?)',
@@ -521,16 +445,8 @@ export class ProjectScope implements Scope {
   ): Promise<void> {
     source = structuredClone(source);
     this.state.assertTransaction(tx);
-    check(
-      ['producer', 'reviewer', 'reader'].includes(role),
-      'invalid_session_role',
-      'Agents cannot become operators',
-    );
-    await this.requireDelegation(
-      source,
-      role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read',
-      tx,
-    );
+    check(workerRoles.includes(role), 'invalid_session_role', 'Agents cannot become operators');
+    await this.requireDelegation(source, needs(role), tx);
     const result = await tx.run(
       'UPDATE actors SET role=? WHERE id=? AND project_id=? AND agent_id IS NOT NULL AND active=1',
       role,
@@ -559,128 +475,28 @@ export class ProjectScope implements Scope {
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);
     if (!caller.session) return await this.require(caller, 'read', tx);
-    const registration = this.sessionAuthorityRegistration;
-    const lookup = async (sql: Sql): Promise<Actor> => {
-      if (!('transactionId' in sql)) return await this.state.transaction(lookup);
-      // The session guard and the source it vouched for are read in one transaction.
-      const { source } = await this.authorize(caller, 'read', sql as Transaction);
-      return await this.requireDelegation(source!, 'read', sql as Transaction);
-    };
-    const result = tx ? await lookup(tx) : await this.state.read(lookup);
-    this.requireAuthorityRegistration(registration);
+    const registration = this.sessions.token;
+    const result = await within(
+      this.state,
+      tx,
+      async (sql) => {
+        // The session guard and the source it vouched for are read in one transaction.
+        const { source } = await this.authorize(caller, 'read', sql as Transaction);
+        return await this.requireDelegation(source!, 'read', sql as Transaction);
+      },
+      'read',
+    );
+    this.sessions.fence(registration);
     return result;
   }
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
-  private selfExpiry(expiresAt: string | null, limit: string | null): void {
-    check(
-      limit === null || (expiresAt !== null && expiresAt <= limit),
-      'self_expiry_extension',
-      'A self-issued credential cannot extend its existing expiry; another operator must authorize that extension',
-      403,
-    );
-  }
-  private async issue(
-    tx: Transaction,
-    projectId: string,
-    name: string,
-    role: Role,
-    expiresAt?: string | null,
-  ): Promise<IssuedActorCredential> {
-    check(
-      typeof name === 'string' && visible(name) && name.length <= 200,
-      'invalid_actor',
-      'Actor needs a nonblank name of at most 200 characters',
-    );
-    check(roles.includes(role), 'invalid_role', 'Unknown actor role');
-    const value: Actor = { id: newId('actor'), projectId, name: name.trim(), role, active: true };
-    await tx.run(
-      'INSERT INTO actors(id,project_id,name,role,active) VALUES(?,?,?,?,1)',
-      value.id,
-      projectId,
-      value.name,
-      role,
-    );
-    const time = this.time();
-    return await this.issueCredential(tx, value, expiry(expiresAt, time), null, time);
-  }
-  private async issueCredential(
-    tx: Transaction,
-    value: Actor,
-    expiresAt: string | null,
-    previousId: string | null,
-    time: string,
-  ): Promise<IssuedActorCredential> {
-    const issued: ActorCredential = {
-      id: newId('credential'),
-      actorId: value.id,
-      projectId: value.projectId,
-      kind: 'actor',
-      createdAt: time,
-      expiresAt,
-      revokedAt: null,
-      previousId,
-    };
-    const { token } = await this.credentials.issue(
-      {
-        owner: 'scope',
-        subject: issued.id,
-        kind: 'actor',
-        prefix: '',
-        expiresAt,
-        hardDeadline: expiresAt,
-      },
-      tx,
-    );
-    await tx.run(
-      'INSERT INTO actor_credentials(id,actor_id,project_id,kind,token_hash,created_at,expires_at,previous_id) VALUES(?,?,?,?,?,?,?,?)',
-      issued.id,
-      value.id,
-      value.projectId,
-      issued.kind,
-      sha256Hex(token),
-      time,
-      expiresAt,
-      previousId,
-    );
-    return { actor: value, credential: issued, token };
-  }
   async bootstrap(input: { projectName: string; actorName: string }) {
-    check(
-      typeof input.projectName === 'string' &&
-        visible(input.projectName) &&
-        input.projectName.length <= 200,
-      'invalid_project',
-      'Project needs a name of at most 200 characters',
-    );
-    return await this.state.transaction(async (tx) => {
-      const value: Project = {
-        id: newId('project'),
-        name: input.projectName.trim(),
-        createdAt: this.time(),
-        summary: '',
-        contextRevision: 0,
-      };
-      await tx.run(
-        'INSERT INTO projects(id,name,created_at) VALUES(?,?,?)',
-        value.id,
-        value.name,
-        value.createdAt,
-      );
-      const credential = await this.issue(tx, value.id, input.actorName, 'operator');
-      await this.state.appendEvent(tx, {
-        projectId: value.id,
-        actorId: credential.actor.id,
-        type: 'project.created',
-        subjectId: value.id,
-        data: { name: value.name },
-      });
-      return { project: value, ...credential };
-    });
+    return await this.credentials.bootstrap(input);
   }
   async authenticate(token: string): Promise<AuthenticatedActor> {
-    const verified = await this.credentials.authenticate(token, 'actor');
+    const verified = await this.ledger.authenticate(token, 'actor');
     const row = await this.state.read(
       async (sql) =>
         await sql.get<CredentialRow & { name: string; role: Role; active: number }>(
@@ -746,22 +562,44 @@ export class ProjectScope implements Scope {
   async require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor> {
     return (await this.authorize(caller, permission, tx)).actor;
   }
-  /** require(), also returning the delegation source that a worker's session authority vouched for. */
+  /** require(), also returning the delegation source that a worker's session authority vouched for
+   * and the deadline of the actor credential or user key the decision rested on, if any. */
   private async authorize(
     caller: Caller,
     permission: Permission,
     tx?: Transaction,
-  ): Promise<{ actor: Actor; source?: DelegationSource }> {
+  ): Promise<Decision> {
     caller = structuredClone(caller);
-    const registration = this.sessionAuthorityRegistration;
-    const managedRegistration = this.managedAuthorityRegistration;
-    const conversationRegistration = this.conversationAuthorityRegistration;
-    if (tx) this.state.assertTransaction(tx);
-    const lookup = async (sql: Sql): Promise<{ actor: Actor; source?: DelegationSource }> => {
+    const registration = this.sessions.token;
+    const managedRegistration = this.managed.token;
+    const conversationRegistration = this.conversations.token;
+    const provided = caller.session || caller.managed || caller.conversation || caller.service;
+    // A provider's own refusals come first. Then the source it vouched for must belong to this
+    // project and, unless it is a worker's delegator, be this very caller.
+    const vouched = (
+      source: DelegationSource | undefined,
+      sameActor: boolean,
+      code: string,
+      message: string,
+    ) =>
+      check(
+        !!source &&
+          source.projectId === caller.projectId &&
+          (!sameActor || source.actorId === caller.actorId),
+        code,
+        message,
+        403,
+      );
+    const lookup = async (sql: Sql): Promise<Decision> => {
+      // Unreachable: `within` hands every provider-backed decision a transaction, below.
+      check(
+        !provided || 'transactionId' in sql,
+        'scope_internal',
+        'Provider-backed authority needs a transaction',
+        500,
+      );
       const row = await sql.get<ActorRow>(
-        `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-         LEFT JOIN member_actors m ON m.actor_id=a.id
-         WHERE a.id=? AND a.project_id=?`,
+        `${ACTOR_WITH_MEMBER} WHERE a.id=? AND a.project_id=?`,
         caller.actorId,
         caller.projectId,
       );
@@ -786,6 +624,7 @@ export class ProjectScope implements Scope {
         403,
       );
       let source: DelegationSource | undefined;
+      let lifetime: string | null | undefined;
       if (caller.conversation) {
         check(
           !row.session_id,
@@ -793,18 +632,12 @@ export class ProjectScope implements Scope {
           'Conversations act only as their original source actor',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
-        const authority = this.conversationAuthority;
-        check(authority, 'conversation_unavailable', 'Conversation authority is unavailable', 503);
-        source = await authority.require(caller, sql as Transaction);
-        check(
-          source && source.actorId === caller.actorId && source.projectId === caller.projectId,
+        source = await this.conversations.provider().require(caller, sql as Transaction);
+        vouched(
+          source,
+          true,
           'conversation_forbidden',
           'Conversation source does not match this caller',
-          403,
         );
         // The person's live role, and a key's own limits, decide every permission.
         const original = await this.requireDelegation(source, permission, sql as Transaction);
@@ -822,22 +655,18 @@ export class ProjectScope implements Scope {
           'Managed runners may only use their bound execution controls',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
-        const authority = this.managedAuthority;
-        check(
-          authority,
-          'managed_runner_unavailable',
-          'Managed runner authority is unavailable',
-          503,
-        );
-        source = await authority.require(caller, sql as Transaction);
-        check(
-          source.actorId === caller.actorId && source.projectId === caller.projectId,
+        source = await this.managed.provider().require(caller, sql as Transaction);
+        vouched(
+          source,
+          true,
           'managed_runner_forbidden',
           'Managed runner source does not match this caller',
+        );
+        // Defence in depth: the real provider's requireDelegation already refuses a revoked actor.
+        check(
+          row.active,
+          'managed_runner_forbidden',
+          'Managed runner source actor is revoked',
           403,
         );
       } else if (caller.service) {
@@ -851,10 +680,6 @@ export class ProjectScope implements Scope {
           'Only a service of this project acts for one of its people',
           403,
         );
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction((inner) => this.authorize(caller, permission, inner)),
-          );
         // It acts only while the person who vouched for it may still write here.
         await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
@@ -864,21 +689,13 @@ export class ProjectScope implements Scope {
         // a permission and might usefully try something else.
         check(row.active || !own, 'session_closed', 'Session is closed', 401);
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
-        // A worker's authority is checked several times per tool call and only read, so
-        // it is read on a snapshot: outside any scope that takes no writer lock.
-        if (!('transactionId' in sql))
-          return await this.state.snapshot(() =>
-            this.state.transaction(
-              async (inner) => await this.authorize(caller, permission, inner),
-            ),
-          );
-        const authority = this.sessionAuthority;
-        check(authority, 'session_unavailable', 'Session authority is unavailable', 503);
-        source = await authority.require(caller, sql as Transaction, permission);
+        source = await this.sessions.provider().require(caller, sql as Transaction, permission);
+        // The source is the worker's delegator, another actor of the same project.
+        vouched(source, false, 'forbidden', 'Session source does not match this project');
       } else if (caller.session) {
         check(false, 'forbidden', 'Session authority cannot select another actor', 403);
       } else if (row.user_issuer && caller.key !== undefined) {
-        await this.userKeys.authorize(caller, sql);
+        lifetime = await this.userKeys.authorize(caller, sql);
       } else if (row.user_issuer) {
         check(
           caller.human !== undefined,
@@ -929,30 +746,21 @@ export class ProjectScope implements Scope {
           this.time(),
         );
         check(bound, 'forbidden', 'Credential cannot authorize this actor in this project', 403);
-        await this.credentials.authenticateHash(bound.token_hash, 'actor', sql);
+        await this.ledger.live(bound.token_hash, 'actor', bound.id, sql);
+        lifetime = bound.expires_at;
       }
-      return { actor: actor(row), source };
+      return { actor: actor(row), source, lifetime };
     };
-    const value = tx ? await lookup(tx) : await this.state.read(lookup);
+    // A provider decides in a transaction. A worker's authority is checked several times per tool
+    // call, so a read decision runs on a snapshot, which outside any scope takes no writer lock. A
+    // managed runner only ever succeeds with 'read', so its refusal never waits for the lock either.
+    const place = !provided ? undefined : caller.managed ? 'read' : permission;
+    const value = await within(this.state, tx, lookup, place);
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
-    if (value.actor.sessionId) this.requireAuthorityRegistration(registration);
-    if (caller.managed)
-      check(
-        managedRegistration !== undefined &&
-          this.managedAuthorityRegistration === managedRegistration,
-        'managed_runner_unavailable',
-        'Managed runner authority changed during authorization',
-        503,
-      );
-    if (caller.conversation)
-      check(
-        conversationRegistration !== undefined &&
-          this.conversationAuthorityRegistration === conversationRegistration,
-        'conversation_unavailable',
-        'Conversation authority changed during authorization',
-        503,
-      );
+    if (value.actor.sessionId) this.sessions.fence(registration);
+    if (caller.managed) this.managed.fence(managedRegistration);
+    if (caller.conversation) this.conversations.fence(conversationRegistration);
     const allowed = permits(value.actor.role, permission);
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
@@ -964,7 +772,6 @@ export class ProjectScope implements Scope {
     permission: Permission,
     tx?: Transaction,
   ): Promise<boolean> {
-    if (tx) this.state.assertTransaction(tx);
     const lookup = async (sql: Sql) =>
       await sql.get<{ role: Role }>(
         `SELECT a.role FROM actors a LEFT JOIN member_actors m ON m.actor_id=a.id
@@ -974,16 +781,15 @@ export class ProjectScope implements Scope {
         actorId,
         projectId,
       );
-    const row = tx ? await lookup(tx) : await this.state.read(lookup);
+    const row = await within(this.state, tx, lookup);
     return !!row && permits(row.role, permission);
   }
   async project(caller: Caller, tx?: Transaction): Promise<Project> {
     caller = structuredClone(caller);
-    if (tx) this.state.assertTransaction(tx);
     await this.require(caller, 'read', tx);
-    const read = async (sql: Sql) =>
-      project((await sql.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!);
-    return tx ? await read(tx) : await this.state.read(read);
+    return await within(this.state, tx, async (sql) =>
+      project((await sql.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!),
+    );
   }
   async updateProjectContext(
     caller: Caller,
@@ -1008,6 +814,8 @@ export class ProjectScope implements Scope {
           403,
         );
       };
+      // Decided before the receipt lookup, so a replay needs no second decision, and again after
+      // a fresh write (the receipt's `after`), on the same transaction.
       await authorize();
       return await receipted(
         tx,
@@ -1018,7 +826,6 @@ export class ProjectScope implements Scope {
           const before = project(
             (await tx.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!,
           );
-          await authorize();
           const changed =
             input.expectedContextRevision === undefined
               ? await tx.run(
@@ -1073,230 +880,30 @@ export class ProjectScope implements Scope {
           result: 'result_json',
           conflict: 'requestId already updated project context with different input',
           after: authorize,
-          replay: async (result) => {
-            await authorize();
-            return result;
-          },
         },
       );
     });
   }
   async issueActor(caller: Caller, input: { name: string; role: Role; expiresAt?: string | null }) {
-    caller = structuredClone(caller);
-    input = structuredClone(input);
-    return await this.state.transaction(async (tx) => {
-      await this.administer(caller, tx);
-      const result = await this.issue(
-        tx,
-        caller.projectId,
-        input.name,
-        input.role,
-        input.expiresAt,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'actor.created',
-        subjectId: result.actor.id,
-        data: { name: result.actor.name, role: result.actor.role, ...eventSource(caller) },
-      });
-      return result;
-    });
+    return await this.credentials.issueActor(caller, input);
   }
-  async actorCredentials(caller: Caller, actorId = caller.actorId): Promise<ActorCredential[]> {
-    caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
-      // A read of one's own metadata is not administration; a session or key holds none.
-      if (actorId === caller.actorId) await this.require(caller, 'read', tx);
-      else await this.administer(caller, tx);
-      await this.actorRow(tx, caller.projectId, actorId);
-      return (
-        await tx.all<CredentialRow>(
-          'SELECT * FROM actor_credentials WHERE project_id=? AND actor_id=? ORDER BY created_at,id',
-          caller.projectId,
-          actorId,
-        )
-      ).map(credential);
-    });
+  async actorCredentials(caller: Caller, actorId?: string): Promise<ActorCredential[]> {
+    return await this.credentials.actorCredentials(caller, actorId);
   }
   async issueActorCredential(
     caller: Caller,
     input: { actorId: string; expiresAt?: string | null },
   ): Promise<IssuedActorCredential> {
-    caller = structuredClone(caller);
-    input = structuredClone(input);
-    return await this.state.transaction(async (tx) => {
-      const { credentialId } = await this.administer(caller, tx);
-      const target = await this.actorRow(tx, caller.projectId, input.actorId);
-      this.machineActor(target);
-      check(target.active, 'actor_revoked', 'Cannot issue credentials for an inactive actor', 409);
-      const current =
-        target.id === caller.actorId && credentialId !== undefined
-          ? await this.credentialRow(tx, caller.projectId, credentialId)
-          : undefined;
-      const time = this.time();
-      const expiresAt = expiry(
-        input.expiresAt === undefined ? current?.expires_at : input.expiresAt,
-        time,
-      );
-      if (current) this.selfExpiry(expiresAt, current.expires_at);
-      const issued = await this.issueCredential(tx, actor(target), expiresAt, null, time);
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'actor.credential_issued',
-        subjectId: issued.credential.id,
-        data: { actorId: target.id, expiresAt, ...eventSource(caller) },
-      });
-      return issued;
-    });
+    return await this.credentials.issueActorCredential(caller, input);
   }
   async rotateCredential(
     caller: Caller,
     input: { credentialId: string; expiresAt?: string | null },
   ): Promise<IssuedActorCredential> {
-    caller = structuredClone(caller);
-    input = structuredClone(input);
-    return await this.state.transaction(async (tx) => {
-      const { credentialId } = await this.administer(caller, tx);
-      const previous = await this.credentialRow(tx, caller.projectId, input.credentialId);
-      check(
-        previous.id !== credentialId,
-        'self_rotation',
-        'Cannot atomically rotate the credential authenticating this call. Use actor.issue_token, verify the new token, then revoke the old credential.',
-        409,
-      );
-      const target = await this.actorRow(tx, caller.projectId, previous.actor_id);
-      this.machineActor(target);
-      check(target.active, 'actor_revoked', 'Cannot rotate credentials for an inactive actor', 409);
-      check(
-        previous.revoked_at === null,
-        'credential_revoked',
-        'Credential is already revoked',
-        409,
-      );
-      const time = this.time();
-      const expiresAt = expiry(
-        input.expiresAt === undefined ? previous.expires_at : input.expiresAt,
-        time,
-      );
-      // A self-rotation extends neither the credential it replaces nor the one making the call.
-      if (target.id === caller.actorId) {
-        this.selfExpiry(expiresAt, previous.expires_at);
-        if (credentialId !== undefined)
-          this.selfExpiry(
-            expiresAt,
-            (await this.credentialRow(tx, caller.projectId, credentialId)).expires_at,
-          );
-      }
-      const result = await tx.run(
-        'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND project_id=? AND revoked_at IS NULL',
-        time,
-        previous.id,
-        caller.projectId,
-      );
-      check(result.changes === 1, 'credential_revoked', 'Credential was already revoked', 409);
-      await this.credentials.revoke(previous.token_hash, 'scope', tx);
-      const issued = await this.issueCredential(tx, actor(target), expiresAt, previous.id, time);
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'actor.credential_rotated',
-        subjectId: issued.credential.id,
-        data: { actorId: target.id, previousId: previous.id, expiresAt, ...eventSource(caller) },
-      });
-      return issued;
-    });
+    return await this.credentials.rotateCredential(caller, input);
   }
   async revokeCredential(caller: Caller, credentialId: string): Promise<void> {
-    caller = structuredClone(caller);
-    await this.state.transaction(async (tx) => {
-      const { credentialId: own } = await this.administer(caller, tx);
-      const target = await this.credentialRow(tx, caller.projectId, credentialId);
-      this.machineActor(await this.actorRow(tx, caller.projectId, target.actor_id));
-      check(
-        target.actor_id !== caller.actorId || (own !== undefined && target.id !== own),
-        'self_revoke',
-        'Cannot revoke the credential authenticating this call; verify another credential first',
-      );
-      if (target.revoked_at !== null) return;
-      await this.credentials.revoke(target.token_hash, 'scope', tx);
-      const time = this.time();
-      await tx.run(
-        'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL',
-        time,
-        target.id,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'actor.credential_revoked',
-        subjectId: target.id,
-        data: { actorId: target.actor_id, revokedAt: time, ...eventSource(caller) },
-      });
-    });
-  }
-  private async actorRow(sql: Sql, projectId: string, actorId: string): Promise<ActorRow> {
-    check(
-      typeof actorId === 'string' && actorId.length > 0,
-      'invalid_actor',
-      'Actor id is required',
-    );
-    const row = await sql.get<ActorRow>(
-      `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-       LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.id=? AND a.project_id=?`,
-      actorId,
-      projectId,
-    );
-    check(row, 'not_found', 'Actor not found', 404);
-    return row;
-  }
-  private machineActor(row: ActorRow): void {
-    check(
-      !row.user_issuer && !row.session_id && !row.service_owner,
-      'member_actor',
-      'Member, session, and service actors carry no independent credentials',
-      403,
-    );
-  }
-  /** Admin authority over independent actors and their credentials, which a user key or a worker
-   * session never holds, nor a conversation started with a key. Returns the credential the call
-   * rests on (a conversation's source credential), which the self-revoke and self-rotate checks
-   * name. */
-  private async administer(caller: Caller, tx: Transaction): Promise<{ credentialId?: string }> {
-    const { source } = await this.authorize(caller, 'admin', tx);
-    const via = caller.conversation ? source : undefined;
-    check(
-      caller.key === undefined && caller.session === undefined && via?.kind !== 'key',
-      'forbidden',
-      'User keys and worker sessions cannot administer independent actor credentials or actors',
-      403,
-    );
-    return {
-      credentialId: via
-        ? via.kind === 'actor'
-          ? via.credentialId
-          : undefined
-        : caller.credentialId,
-    };
-  }
-  private async credentialRow(
-    sql: Sql,
-    projectId: string,
-    credentialId: string,
-  ): Promise<CredentialRow> {
-    check(
-      typeof credentialId === 'string' && credentialId.length > 0,
-      'invalid_credential',
-      'Credential id is required',
-    );
-    const row = await sql.get<CredentialRow>(
-      'SELECT * FROM actor_credentials WHERE id=? AND project_id=?',
-      credentialId,
-      projectId,
-    );
-    check(row, 'not_found', 'Actor credential not found', 404);
-    return row;
+    await this.credentials.revokeCredential(caller, credentialId);
   }
   async actors(caller: Caller) {
     caller = structuredClone(caller);
@@ -1304,38 +911,14 @@ export class ProjectScope implements Scope {
     return await this.state.read(async (sql) =>
       (
         await sql.all<ActorRow>(
-          `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-          LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.project_id=? ORDER BY a.active DESC,a.role,a.name,a.id`,
+          `${ACTOR_WITH_MEMBER} WHERE a.project_id=? ORDER BY a.active DESC,a.role,a.name,a.id`,
           caller.projectId,
         )
       ).map(actor),
     );
   }
   async revokeActor(caller: Caller, actorId: string): Promise<void> {
-    caller = structuredClone(caller);
-    await this.state.transaction(async (tx) => {
-      await this.administer(caller, tx);
-      this.machineActor(await this.actorRow(tx, caller.projectId, actorId));
-      check(
-        actorId !== caller.actorId,
-        'self_revoke',
-        'Cannot revoke your own operator credential',
-      );
-      // Revoking twice records nothing twice.
-      const r = await tx.run(
-        'UPDATE actors SET active=0 WHERE id=? AND project_id=? AND active=1',
-        actorId,
-        caller.projectId,
-      );
-      if (!r.changes) return;
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'actor.revoked',
-        subjectId: actorId,
-        data: { ...eventSource(caller) },
-      });
-    });
+    await this.credentials.revokeActor(caller, actorId);
   }
 }
 export const scopePlugin = {

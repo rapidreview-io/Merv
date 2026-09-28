@@ -247,6 +247,64 @@ test('PostgreSQL: a failed read drains the transaction it started', async (t) =>
   }
 });
 
+test("PostgreSQL: a read's sibling query waits for the transaction the read started", async (t) => {
+  const { state } = await fixture(t);
+  const code = (error: { code?: string }) => error.code;
+  // A sibling that ran on the connection would join the child, or abort it by failing.
+  for (const sibling of ['SELECT 1/0', 'SELECT 1']) {
+    const entered = deferred();
+    const outcomes = await state.read((sql) =>
+      Promise.all([
+        state
+          .transaction(async (tx) => {
+            await state.appendEvent(tx, event);
+            entered.resolve();
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            await state.appendEvent(tx, { ...event, subjectId: 'second' });
+          })
+          .then(() => 'ok', code),
+        entered.promise.then(() => sql.get(sibling)).then(() => 'ran', code),
+      ]),
+    );
+    assert.deepEqual(outcomes, ['ok', 'transaction_busy']);
+  }
+  assert.equal(await state.eventHead(), 4, "Both of each child's rows commit");
+  // Before and after its transaction, and inside a snapshot it opened, the read reads.
+  const readOnly = await state.read(async (sql) => {
+    await sql.get('SELECT 1');
+    await state.transaction(() => undefined);
+    await state.snapshot(() => state.transaction(async (tx) => await tx.get('SELECT 1')));
+    return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
+  });
+  assert.equal(readOnly, 4);
+  // The child's own callback may use the read's `sql`: it runs on the child's transaction.
+  assert.equal(
+    await state.read((sql) =>
+      state.transaction(async (tx) => {
+        await state.appendEvent(tx, event);
+        return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
+      }),
+    ),
+    5,
+  );
+  // A snapshot the read opened owns the connection the same way.
+  const opened = deferred();
+  const release = deferred();
+  const busy = await state.read((sql) =>
+    Promise.all([
+      state.snapshot(async () => {
+        opened.resolve();
+        await release.promise;
+      }),
+      opened.promise
+        .then(() => sql.get('SELECT 1'))
+        .then(() => 'ran', code)
+        .finally(() => release.resolve()),
+    ]),
+  );
+  assert.equal(busy[1], 'transaction_busy');
+});
+
 test('State.ambient is the transaction this context runs in, and nothing outside one', async (t) => {
   const { state } = await fixture(t);
   assert.equal(state.ambient, undefined);
@@ -265,7 +323,111 @@ test('State.ambient is the transaction this context runs in, and nothing outside
     });
     assert.equal(state.ambient, undefined);
   });
+  await state.read(() =>
+    state.snapshot(async () => {
+      assert.equal(state.ambient, undefined, "A snapshot's root in a read has none either");
+      await state.transaction(async (tx) => assert.equal(state.ambient, tx));
+    }),
+  );
   assert.equal(state.ambient, undefined);
+});
+
+test('PostgreSQL: a snapshot inside a plain read is a read-only transaction on its connection', async (t) => {
+  // A short lock timeout: a snapshot that took the writer lock would fail with state_timeout.
+  const { state } = await fixture(t, { lockTimeoutMs: 300 });
+  await state.transaction(async (tx) => await state.appendEvent(tx, event));
+  await state.read(async () => {
+    assert.equal(state.readScope, false);
+    await state.snapshot(async () => assert.equal(state.readScope, true));
+  });
+
+  // Another writer holds the writer lock: the snapshot's reads still answer.
+  const locked = deferred();
+  const release = deferred();
+  const writer = state.transaction(async () => {
+    locked.resolve();
+    await release.promise;
+  });
+  await locked.promise;
+  try {
+    assert.equal(
+      await state.read(() =>
+        state.snapshot(() => state.transaction(async (tx) => await state.eventHead(tx))),
+      ),
+      1,
+    );
+  } finally {
+    release.resolve();
+    await writer;
+  }
+
+  // A write there is refused and commits nothing.
+  await assert.rejects(
+    state.read(() =>
+      state.snapshot(() => state.transaction(async (tx) => await state.appendEvent(tx, event))),
+    ),
+    { code: 'read_only_scope' },
+  );
+  await assert.rejects(
+    state.read(() =>
+      state.snapshot(() =>
+        state.transaction(async (tx) => {
+          await tx.run(
+            'INSERT INTO component_migrations(component,version,hash) VALUES(?,?,?)',
+            'snapshot',
+            1,
+            'hash',
+          );
+        }),
+      ),
+    ),
+    { code: 'read_only_scope' },
+  );
+  assert.equal(await state.eventHead(), 1);
+
+  // It is the read's one transaction: a second at the same time is refused.
+  await assert.rejects(
+    state.read(() => Promise.all([state.snapshot(async () => 1), state.snapshot(async () => 2)])),
+    { code: 'nested_transaction' },
+  );
+  await assert.rejects(
+    state.read(() => Promise.all([state.snapshot(async () => 1), state.transaction(() => 2)])),
+    { code: 'nested_transaction' },
+  );
+  // One after another, each gets its own.
+  assert.deepEqual(
+    await state.read(async () => [
+      await state.snapshot(async () => await state.eventHead()),
+      await state.snapshot(async () => state.readScope),
+    ]),
+    [1, true],
+  );
+
+  // Inside it, State cannot close, and an isolated read recovers from a failing statement.
+  await state.read(() =>
+    state.snapshot(async () => {
+      await assert.rejects(state.close(), { code: 'transaction_active' });
+      await assert.rejects(
+        state.isolated(() => state.transaction(async (tx) => await tx.get('SELECT 1/0'))),
+        { code: 'state_unavailable' },
+      );
+      assert.equal(await state.isolated(async () => await state.eventHead()), 1);
+    }),
+  );
+
+  // Inside a write transaction a snapshot still reads that transaction's own rows.
+  await state.transaction(async (tx) => {
+    await state.appendEvent(tx, event);
+    assert.equal(await state.snapshot(async () => await state.eventHead()), 2);
+  });
+  // The read's connection is usable again once the snapshot ends.
+  assert.equal(
+    await state.read(async (sql) => {
+      await state.snapshot(async () => undefined);
+      return (await sql.get<{ n: number }>('SELECT count(*)::int AS n FROM events'))!.n;
+    }),
+    2,
+  );
 });
 
 test('PostgreSQL: a write queued on the writer lock holds no reader connection', async (t) => {

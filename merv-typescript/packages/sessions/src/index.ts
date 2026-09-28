@@ -1813,7 +1813,8 @@ export class LeasedSessions implements Sessions {
         eventId: event?.id ?? null,
       };
     };
-    return transaction ? await read(transaction) : await this.transaction(read);
+    // A pure read: a capture reaches it inside a plain read, which must not wait on the writer lock.
+    return transaction ? await read(transaction) : await this.reading(read);
   }
   async list(caller: Caller): Promise<Session[]> {
     this.ordinary(caller);

@@ -13,14 +13,14 @@ These run from Merv's own pages and `POST /tools`: a person's agent over MCP, li
 conversation, is not offered any of them but `actor.whoami` and `actor.list`, and cannot call
 them (`tool_forbidden`).
 
-| Tool                 | Purpose                                                                                                                    |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `actor.create`       | Create an actor and its first token. Operators may set a future `expiresAt`; null or omission leaves it unbounded.         |
-| `actor.credentials`  | Read your credential metadata, or as an operator inspect another actor in this project. No tokens or digests are returned. |
-| `actor.issue_token`  | Operator: issue an additional credential for an existing active actor. Existing tokens remain valid.                       |
-| `actor.rotate_token` | Operator: atomically revoke a credential and return a successor for the same actor/project. Supply the old credential ID.  |
-| `actor.revoke_token` | Operator: revoke one credential. A different active credential can revoke your old token.                                  |
-| `actor.revoke`       | Withdraw the actor itself. All its credentials lose access and existing actor-revocation recovery runs.                    |
+| Tool                 | Purpose                                                                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `actor.create`       | Create an actor and its first token. Operators may set a future `expiresAt`; null or omission leaves it unbounded unless the caller's own credential expires, in which case it is capped at that deadline. |
+| `actor.credentials`  | Read your credential metadata, or as an operator inspect another actor in this project. No tokens or digests are returned.                                                                                 |
+| `actor.issue_token`  | Operator: issue an additional credential for an existing active actor. Existing tokens remain valid.                                                                                                       |
+| `actor.rotate_token` | Operator: atomically revoke a credential and return a successor for the same actor/project. Supply the old credential ID.                                                                                  |
+| `actor.revoke_token` | Operator: revoke one credential. A different active credential can revoke your old token.                                                                                                                  |
+| `actor.revoke`       | Withdraw the actor itself. All its credentials lose access and existing actor-revocation recovery runs.                                                                                                    |
 
 The four credential tools use the existing Scope adapter. The later Identity
 provider brings the current network to 29 plugin entrypoints and 59 direct Cordis
@@ -45,12 +45,19 @@ If that response is lost, the operator can find the successor through
 `actor.credentials` and rotate it again. Plain revocation does not prevent an
 operator issuing a fresh credential for the same still-active actor.
 
-Omitted rotation expiry preserves the old deadline. Self-issued credentials
-cannot outlive the authenticating credential; rotating another credential of
-one’s own cannot extend its finite deadline. A different operator may explicitly
-change another actor’s expiry. These are operator-administered actor keys, not
-hard-bounded delegation leases. Shared human authorization uses project membership;
-session deadlines remain separate work.
+Nothing minted through an expiring actor credential outlives it. When the
+caller's own credential expires, directly or as the source of a conversation,
+`actor.create`, `actor.issue_token` and `actor.rotate_token` refuse a later or
+null deadline (`self_expiry_extension`), and an omitted expiry on `actor.create`
+or `actor.issue_token` inherits the caller's deadline. Omitted rotation expiry
+preserves the old deadline; rotating another credential of one’s own cannot
+extend its finite deadline. A different operator may change another actor's
+expiry, up to its own credential's deadline. People signed in through shared
+identity, and the CLI's non-expiring bootstrap credential, impose no limit: a
+login's short token lifetime is not a credential lifetime. These are
+operator-administered actor keys, not hard-bounded delegation leases. Shared
+human authorization uses project membership; session deadlines remain separate
+work.
 
 ## Request and transaction boundary
 
