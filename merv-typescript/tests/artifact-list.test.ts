@@ -7,7 +7,6 @@ import { createService, type Artifact, type Caller } from '@merv/contracts';
 import { DiskBlobs } from '@merv/blobs';
 import { ProjectScope } from '@merv/scope';
 import { ArtifactStore } from '@merv/artifacts';
-import { META } from '@merv/artifacts/content';
 import { createApp } from './fixtures/app.js';
 import { openState, stateConfig } from './fixtures/state.js';
 
@@ -136,38 +135,24 @@ test('list queries walk the project and session indexes', async (t) => {
       'artifacts_project_session',
     ],
   );
-  // The statements list runs, with and without a session and a cursor.
-  const order = 'ORDER BY created_at DESC,id DESC LIMIT ?';
-  const cursor = 'AND (created_at,id) < (?,?)';
+  // EXPLAIN the statements list itself sends, with and without a session and a cursor.
   const plans = await f.state.transaction(async (tx) => {
     await tx.run('SET LOCAL enable_seqscan = off');
-    const plan = async (sql: string, ...params: (string | number)[]) =>
-      (await tx.all<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, ...params))
+    const all = t.mock.method(tx, 'all');
+    const plan = async (query: { before?: string; session?: string }) => {
+      all.mock.resetCalls();
+      await f.artifacts.list(f.caller, query, tx);
+      assert.equal(all.mock.callCount(), 1);
+      const [sql, ...params] = all.mock.calls[0].arguments;
+      return (await tx.all<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, ...params))
         .map((row) => row['QUERY PLAN'])
         .join('\n');
-    const at = ['2026-09-01T00:00:01.000Z', id(10)];
-    const pid = f.caller.projectId;
+    };
     return {
-      project: await plan(`SELECT ${META} FROM artifacts WHERE project_id=? ${order}`, pid, 1000),
-      paged: await plan(
-        `SELECT ${META} FROM artifacts WHERE project_id=? ${cursor} ${order}`,
-        pid,
-        ...at,
-        1000,
-      ),
-      session: await plan(
-        `SELECT ${META} FROM artifacts WHERE project_id=? AND session_id=? ${order}`,
-        pid,
-        'session_a',
-        1000,
-      ),
-      sessionPaged: await plan(
-        `SELECT ${META} FROM artifacts WHERE project_id=? AND session_id=? ${cursor} ${order}`,
-        pid,
-        'session_a',
-        ...at,
-        1000,
-      ),
+      project: await plan({}),
+      paged: await plan({ before: id(10) }),
+      session: await plan({ session: 'session_a' }),
+      sessionPaged: await plan({ session: 'session_a', before: id(10) }),
     };
   });
   for (const name of ['project', 'paged'] as const)
