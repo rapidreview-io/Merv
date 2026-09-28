@@ -1871,7 +1871,7 @@ test('owner rotation keeps a continuing agent across idle and active assignments
   assert.equal((await f.sessions.agentSelf(second.token)).current, null);
 });
 
-test('restart adopts legacy session credentials once and never restores revoked authority', async (t) => {
+test('a session credential hash that is not in the ledger never authenticates, even after a restart', async (t) => {
   const f = await fixture(t);
   const agentToken = secret();
   const agent = await f.sessions.registerAgent(f.source, {
@@ -1881,7 +1881,7 @@ test('restart adopts legacy session credentials once and never restores revoked 
     secret: agentToken,
   });
   const offered = await f.offer();
-  // Simulate records written by the previous image, before the Identity table existed.
+  // Records whose hash the ledger does not hold, as an image before Identity owned it wrote them.
   await f.state.transaction(async (tx) => {
     await tx.run('ALTER TABLE identity_credentials DISABLE TRIGGER identity_credentials_no_delete');
     await tx.run(
@@ -1892,14 +1892,25 @@ test('restart adopts legacy session credentials once and never restores revoked 
     );
     await tx.run('ALTER TABLE identity_credentials ENABLE TRIGGER identity_credentials_no_delete');
   });
-  await f.restart();
-  assert.equal((await f.sessions.agentSelf(agentToken)).agent.id, agent.id);
-  assert.equal((await f.sessions.authenticate(offered.token)).session?.id, offered.session.id);
-  await f.sessions.retireAgent(f.source, agent.id);
-  await f.sessions.release(f.source, { sessionId: offered.session.id, runnerId: 'runner' });
+  await assert.rejects(f.sessions.agentSelf(agentToken), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.authenticate(offered.token), { code: 'unauthorized' });
   await f.restart();
   await assert.rejects(f.sessions.agentSelf(agentToken), { code: 'unauthorized' });
   await assert.rejects(f.sessions.authenticate(offered.token), { code: 'unauthorized' });
+  assert.equal(
+    await f.state.read((sql) =>
+      sql.get(
+        'SELECT 1 FROM identity_credentials WHERE owner=? AND subject IN (?,?)',
+        'sessions',
+        agent.id,
+        offered.session.id,
+      ),
+    ),
+    undefined,
+  );
+  // Their owners can still retire them.
+  await f.sessions.retireAgent(f.source, agent.id);
+  await f.sessions.release(f.source, { sessionId: offered.session.id, runnerId: 'runner' });
 });
 
 test('agent observations are project-scoped read-only metadata with a bounded call window and lifetime totals', async (t) => {

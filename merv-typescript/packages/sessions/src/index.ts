@@ -403,7 +403,6 @@ export class LeasedSessions implements Sessions {
       this.directory = await createService(
         new AgentDirectory(state, scope, this.clock, this.credentials),
       );
-      await this.backfillCredentials();
       this.observations = await createService(new AgentObservations(state, scope, this.clock));
       this.dispatcher = await createService(
         new SessionDispatch(
@@ -500,82 +499,6 @@ export class LeasedSessions implements Sessions {
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
   private idleCheckedAt = Number.NEGATIVE_INFINITY;
-  /** Adopt credentials created before Identity owned the ledger. Existing deadlines stay immutable. */
-  private async backfillCredentials(): Promise<void> {
-    const agentDeadline = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
-    await this.state.transaction(async (tx) => {
-      for (const row of await tx.all<{ id: string; token_hash: string; status: string }>(
-        'SELECT id,token_hash,status FROM agents WHERE token_hash IS NOT NULL',
-      )) {
-        if (row.status !== 'active') continue;
-        await this.credentials.adopt(
-          {
-            owner: 'sessions',
-            subject: row.id,
-            kind: 'session-agent',
-            tokenHash: row.token_hash,
-            expiresAt: agentDeadline,
-            hardDeadline: agentDeadline,
-          },
-          tx,
-        );
-      }
-      for (const row of await tx.all<{ id: string; token_hash: string; session_json: string }>(
-        "SELECT id,token_hash,session_json FROM worker_sessions WHERE status IN ('offered','active')",
-      )) {
-        const session = JSON.parse(row.session_json) as Session;
-        await this.credentials.adopt(
-          {
-            owner: 'sessions',
-            subject: row.id,
-            kind: 'session-execution',
-            tokenHash: row.token_hash,
-            expiresAt: session.expiresAt,
-            hardDeadline: session.hardDeadline,
-          },
-          tx,
-        );
-      }
-      const managedTable = await tx.get<{ name: string | null }>(
-        "SELECT to_regclass('session_managed_runners') AS name",
-      );
-      if (!managedTable?.name) return;
-      for (const row of await tx.all<{
-        allocation_id: string;
-        enrollment_hash: string;
-        enrollment_expires_at: string;
-        control_hash: string;
-        control_expires_at: string;
-        worker_nonce_hash: string | null;
-      }>(
-        'SELECT allocation_id,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,worker_nonce_hash FROM session_managed_runners',
-      )) {
-        await this.credentials.adopt(
-          {
-            owner: 'sessions',
-            subject: row.allocation_id,
-            kind: 'managed-enrollment',
-            tokenHash: row.enrollment_hash,
-            expiresAt: row.enrollment_expires_at,
-            hardDeadline: row.enrollment_expires_at,
-          },
-          tx,
-        );
-        if (row.worker_nonce_hash)
-          await this.credentials.adopt(
-            {
-              owner: 'sessions',
-              subject: row.allocation_id,
-              kind: 'managed-control',
-              tokenHash: row.control_hash,
-              expiresAt: row.control_expires_at,
-              hardDeadline: row.control_expires_at,
-            },
-            tx,
-          );
-      }
-    });
-  }
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
