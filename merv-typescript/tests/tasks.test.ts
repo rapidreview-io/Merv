@@ -275,6 +275,66 @@ test('a format-2 review embeds large text evidence and lists a PDF without readi
   assert.deepEqual(review.omitted, []);
 });
 
+test('a format-2 context lists a PDF context input and task background without reading it', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const pdf = await f.artifacts.create(f.producer, {
+    title: 'Signed protocol',
+    mediaType: 'application/pdf',
+    encoding: 'base64',
+    content: Buffer.from('%PDF-1.4 protocol').toString('base64'),
+  });
+  const notes = await f.artifacts.create(f.producer, {
+    title: 'Knowledge notes',
+    content: 'The adder must handle negative inputs.',
+  });
+  const task = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.', 'Handles negative inputs.'],
+    briefId: f.brief.id,
+    requestId: 'create-pdf-input',
+    type: 'project.reflection',
+    contextInputs: { experiments: [pdf.id], projectKnowledge: [notes.id] },
+  });
+  const read = f.artifacts.read.bind(f.artifacts);
+  const reads: string[] = [];
+  t.mock.method(f.artifacts, 'read', async (...args: Parameters<typeof f.artifacts.read>) => {
+    reads.push(args[1]);
+    return await read(...args);
+  });
+  const work = await f.tasks.context(f.producer, {
+    taskId: task.id,
+    purpose: 'work',
+    expectedRevision: task.workflow.revision,
+    requestId: 'work-pdf-input',
+  });
+  assert.equal(`${work.type}@${work.typeVersion}`, 'project.reflection@2');
+  assert.ok(
+    work.prompt.includes(
+      `\n- experiments:${pdf.id} — Signed protocol (artifact ${pdf.id}, application/pdf, `,
+    ),
+  );
+  assert.ok(work.prompt.includes('\nThe adder must handle negative inputs.\n'));
+  const { pending } = await round(f, task.id, 'PDF input review');
+  const claimId = (await f.reviews.get(f.reviewer, pending.reviewId!)).claimId!;
+  const review = await f.tasks.context(f.reviewer, {
+    taskId: task.id,
+    purpose: 'review',
+    claimId,
+    expectedRevision: pending.workflow.revision,
+    requestId: 'review-pdf-input',
+  });
+  assert.equal(`${review.type}@${review.typeVersion}`, 'task.review@5');
+  assert.ok(
+    review.prompt.includes(
+      `\n- taskBackground:${pdf.id} — Signed protocol (artifact ${pdf.id}, application/pdf, `,
+    ),
+  );
+  assert.ok(review.prompt.includes('\nThe adder must handle negative inputs.\n'));
+  assert.ok(reads.includes(notes.id) && !reads.includes(pdf.id));
+});
+
 test('a format-2 context names an artifact by its ID when its title shows nothing on a line', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);
