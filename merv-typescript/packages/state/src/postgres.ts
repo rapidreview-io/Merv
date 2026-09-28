@@ -211,6 +211,10 @@ DO $merv$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='events'::regclass AND tgname='events_immutable') THEN
     CREATE TRIGGER events_immutable BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION merv_events_immutable();
   END IF;
+  -- Row triggers never fire on TRUNCATE; a statement trigger refuses it too.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid='events'::regclass AND tgname='events_no_truncate') THEN
+    CREATE TRIGGER events_no_truncate BEFORE TRUNCATE ON events FOR EACH STATEMENT EXECUTE FUNCTION merv_events_immutable();
+  END IF;
 END $merv$;`);
           }),
         ),

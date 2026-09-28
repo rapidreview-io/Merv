@@ -536,13 +536,20 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
     timestamp,
   );
   await assert.rejects(captured.get('SELECT 1'), { code: 'transaction_closed' });
-  // The events trigger refuses changes; PostgreSQL errors reach callers as state_constraint.
-  for (const change of ["UPDATE events SET type='mutated'", 'DELETE FROM events'])
+  // The events triggers refuse changes; PostgreSQL errors reach callers as state_constraint.
+  const head = await state.eventHead();
+  for (const change of [
+    "UPDATE events SET type='mutated'",
+    'DELETE FROM events',
+    'TRUNCATE events',
+    'TRUNCATE events CASCADE',
+  ])
     await assert.rejects(
       state.transaction((tx) => tx.run(change)),
       { code: 'state_constraint' },
     );
   assert.equal((await state.events('project')).length, 2);
+  assert.equal(await state.eventHead(), head);
   await assert.rejects(
     state.transaction(async (tx) => {
       await state.appendEvent(tx, event);
@@ -560,6 +567,33 @@ test('PostgreSQL migrations keep records, events and checksum history atomic', a
     state.read((sql) => sql.get('SELECT 9007199254740992::bigint AS unsafe')),
     { code: 'state_integer_range' },
   );
+});
+
+test('PostgreSQL events guards install once however often the schema is opened', async (t) => {
+  const { state, schema } = await fixture(t);
+  await state.transaction((tx) => state.appendEvent(tx, event));
+  // A second instance and a concurrent pair boot the same schema under the writer lock.
+  const reopened = await Promise.all(
+    [1, 2, 3].map(() => PostgresState.open({ connectionString, schema })),
+  );
+  t.after(() => Promise.all(reopened.map((other) => other.close())));
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all<{ name: string; count: number }>(
+        `SELECT tgname AS name, count(*)::int AS count FROM pg_catalog.pg_trigger
+         WHERE tgrelid='events'::regclass AND NOT tgisinternal GROUP BY tgname ORDER BY tgname`,
+      ),
+    ),
+    [
+      { name: 'events_immutable', count: 1 },
+      { name: 'events_no_truncate', count: 1 },
+    ],
+  );
+  await assert.rejects(
+    reopened[0]!.transaction((tx) => tx.run('TRUNCATE events')),
+    { code: 'state_constraint' },
+  );
+  assert.equal(await state.eventHead(), 1);
 });
 
 test('PostgreSQL migrations apply in order in one run and refuse to insert an older one', async (t) => {
