@@ -187,3 +187,72 @@ test('a missing blob or a storage outage fails every section kind', async (t) =>
     );
   }
 });
+
+test('a required auto section that does not fit renders its references, while required text still fails', async (t) => {
+  const { artifacts, builder, operator, reads } = await setup(t);
+  const registration = await builder.register(definition);
+  const { maxChars } = definition.recipe;
+  const over = await artifacts.create(operator, {
+    title: 'Long log',
+    content: 'x'.repeat(maxChars * 3),
+  });
+  const overBytes = await artifacts.create(operator, {
+    title: 'Longer log',
+    content: 'x'.repeat(maxChars * 4 + 1),
+  });
+  const short = await artifacts.create(operator, { title: 'Short note', content: 'Short note.' });
+  for (const [document, read] of [
+    [over, true],
+    // Over the byte bound, its bytes are never read.
+    [overBytes, false],
+  ] as const) {
+    reads.length = 0;
+    const preview = await registration.preview(operator, {
+      subject,
+      inputs: { evidence: { artifactIds: [short.id, document.id], mode: 'auto' } },
+    });
+    assert.ok(preview.prompt.length <= maxChars);
+    assert.ok(preview.prompt.includes(`## Evidence\n${reference(short)}`));
+    assert.ok(preview.prompt.includes(reference(document)));
+    assert.doesNotMatch(preview.prompt, /xxx|Short note\.\n/);
+    assert.deepEqual(preview.omitted, ['background']);
+    assert.deepEqual(
+      preview.sources.map((source) => source.id),
+      [short.id, document.id],
+    );
+    assert.equal(reads.includes(document.id), read);
+    await assert.rejects(
+      registration.preview(operator, {
+        subject,
+        inputs: { evidence: { artifactIds: [document.id] } },
+      }),
+      { code: 'context_too_large' },
+    );
+  }
+  // An optional section that does not fit is still omitted, and references that do not fit still fail.
+  const optional = await registration.preview(operator, {
+    subject,
+    inputs: {
+      evidence: { text: 'Assigned.' },
+      background: { artifactIds: [over.id], mode: 'auto' },
+    },
+  });
+  assert.deepEqual(optional.omitted, ['background']);
+  const many = await Promise.all(
+    Array.from(
+      { length: 6 },
+      async (_, i) =>
+        await artifacts.create(operator, {
+          title: `${i}: ${'t'.repeat(280)}`,
+          content: 'x'.repeat(2000),
+        }),
+    ),
+  );
+  await assert.rejects(
+    registration.preview(operator, {
+      subject,
+      inputs: { evidence: { artifactIds: many.map((a) => a.id), mode: 'auto' } },
+    }),
+    { code: 'context_too_large' },
+  );
+});

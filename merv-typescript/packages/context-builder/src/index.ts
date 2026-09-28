@@ -369,7 +369,9 @@ export class RecipeContextBuilder implements ContextBuilder {
         continue;
       }
       let content: string,
-        documents: Artifact[] = [];
+        documents: Artifact[] = [],
+        // A required auto section that does not fit is shown by its references instead.
+        fallback: string | null = null;
       if ('text' in value) {
         content = value.text;
         omitted.push(...(value.omitted ?? []));
@@ -392,7 +394,7 @@ export class RecipeContextBuilder implements ContextBuilder {
             (document.mediaType.startsWith('text/') || document.mediaType === 'application/json'));
         const inlineBytes = documents.filter(embed).reduce((n, a) => n + a.size, 0);
         check(
-          !section.required || inlineBytes <= recipe.maxChars * 4,
+          !section.required || mode !== 'text' || inlineBytes <= recipe.maxChars * 4,
           'context_too_large',
           `Required context exceeds the recipe budget: ${section.key}`,
         );
@@ -401,21 +403,29 @@ export class RecipeContextBuilder implements ContextBuilder {
           omitted.push(section.key);
           continue;
         }
-        content = (
-          await mapAsync(documents, async (document) => {
-            const body = embed(document)
-              ? await readText(this.artifacts, caller, document, lenient)
-              : null;
-            return body === null
-              ? reference(document)
-              : `Artifact ${document.id} (${document.title}; sha256 ${document.hash})\n${body}`;
-          })
-        ).join('\n\n');
+        if (section.required && mode === 'auto') fallback = documents.map(reference).join('\n\n');
+        // Nor read a required auto section's bytes that cannot fit.
+        content =
+          fallback !== null && inlineBytes > recipe.maxChars * 4
+            ? fallback
+            : (
+                await mapAsync(documents, async (document) => {
+                  const body = embed(document)
+                    ? await readText(this.artifacts, caller, document, lenient)
+                    : null;
+                  return body === null
+                    ? reference(document)
+                    : `Artifact ${document.id} (${document.title}; sha256 ${document.hash})\n${body}`;
+                })
+              ).join('\n\n');
       } else {
         check(false, 'invalid_context', 'Ranked context cannot mix legacy section inputs');
         throw new Error('unreachable');
       }
-      const text = `\n## ${section.title}\n${content}\n`;
+      let text = `\n## ${section.title}\n${content}\n`;
+      // Shown by its references, a degraded section is rendered, so it is not omitted.
+      if (fallback !== null && size + text.length > recipe.maxChars)
+        text = `\n## ${section.title}\n${fallback}\n`;
       if (size + text.length > recipe.maxChars) {
         check(
           !section.required,
