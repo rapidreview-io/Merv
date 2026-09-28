@@ -236,8 +236,14 @@ test('discovery uses the real source authority and transaction; revoked or cross
   });
   const handle = await f.workflows.register(definition('caller-revoked-mid-scan'), malicious);
   await handle.start(f.source, { workflow: 'caller-revoked-mid-scan', requestId: 'mid-scan' });
+  // In the caller's transaction the revocation lands, and the closing decision refuses it.
+  await assert.rejects(
+    f.state.transaction(async (tx) => await f.workflows.dispatchCandidates(f.source, tx)),
+    { code: 'forbidden' },
+  );
+  // On its own, discovery is a read: State refuses the write itself.
   await assert.rejects(async () => await f.workflows.dispatchCandidates(f.source), {
-    code: 'forbidden',
+    code: 'invalid_workflow_policy',
   });
   await assert.doesNotReject(
     async () => await f.scope.require(f.source, 'read'),

@@ -4,11 +4,11 @@ import type { Context } from 'cordis';
 import {
   check,
   effectiveWorkspace,
-  inTransaction,
   mapAsync,
   MervError,
   newId,
   now,
+  within,
 } from '@merv/contracts';
 import type {
   Caller,
@@ -175,6 +175,21 @@ export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
   private readonly contracts = new PinnedContracts();
   private closed = false;
+  /**
+   * Where a read runs: in the `tx` given, asserted, or else the ambient transaction; outside
+   * any, in a read-only snapshot transaction of its own, which never waits for the writer lock.
+   */
+  private readonly read = async <T>(
+    tx: Transaction | undefined,
+    fn: (tx: Transaction) => Promise<T>,
+  ): Promise<T> =>
+    // With a place, `within` always hands over a transaction.
+    await within(this.state, tx, (sql) => fn(sql as Transaction), 'read');
+  /** Where a command runs: as a read does, but outside any transaction in a write one. */
+  private readonly write = async <T>(
+    tx: Transaction | undefined,
+    fn: (tx: Transaction) => Promise<T>,
+  ): Promise<T> => await within(this.state, tx, (sql) => fn(sql as Transaction), 'write');
 
   constructor(
     private readonly state: State,
@@ -329,10 +344,11 @@ export class WorkflowsService implements Workflows {
     caller: Caller,
     instanceId: string,
     { checks = true }: { checks?: boolean } = {},
+    transaction?: Transaction,
   ): Promise<ProcessGraph> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const decision = await this.decideIn(caller, instanceId, {}, tx, checks);
       const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
@@ -398,7 +414,7 @@ export class WorkflowsService implements Workflows {
         'Action is required',
       );
     const input = query.input === undefined ? undefined : this.data(query.input);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await this.decideIn(caller, instanceId, { ...query, input }, tx, true);
     });
@@ -465,7 +481,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowDispatchCandidate[]> {
     source = structuredClone(source);
     this.assertOpen();
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       check(!source.session, 'forbidden', 'A leased worker cannot schedule assignments', 403);
       // Only a state with a lease rule can be a candidate; finished work never is, and it is
@@ -566,7 +582,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
   ): Promise<Role> {
     source = structuredClone(source);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       const { role, row, registration } = await this.role(source, target, tx);
       await this.recheck(tx, row, 'Lease role callbacks must not change the workflow instance');
@@ -601,7 +617,7 @@ export class WorkflowsService implements Workflows {
     transaction?: Transaction,
   ): Promise<WorkflowLeaseOffer> {
     ({ source, worker } = structuredClone({ source, worker }));
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.write(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       const {
         role,
@@ -680,7 +696,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowExecution> {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       const { execution, row, registration } = await this.leaseStep(worker, lease, tx);
       await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
@@ -734,7 +750,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowWorkStart> {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.write(transaction, async (tx) => {
       const { row, snapshot, registration } = await this.leaseStep(worker, lease, tx);
       await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
       const started = await this.markStarted(worker, snapshot, tx);
@@ -754,7 +770,7 @@ export class WorkflowsService implements Workflows {
     lease = workflowJson(lease, 'invalid_lease', 400);
     frozen = workflowJson(frozen, 'invalid_execution_target', 400);
     input.input = dispatchInput(input.input);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       const {
         execution: current,
         rule,
@@ -810,7 +826,7 @@ export class WorkflowsService implements Workflows {
     // the release of a receipt the offer had accepted.
     lease = workflowJson(lease, 'invalid_lease', 400);
     executionMetadata(lease.receipt);
-    await inTransaction(this.state, transaction, async (tx) => {
+    await this.write(transaction, async (tx) => {
       check(
         typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 500,
         'invalid_reason',
@@ -854,7 +870,7 @@ export class WorkflowsService implements Workflows {
       'A captured policy hash, registration generation and tool are required',
     );
     dispatch.input = dispatchInput(dispatch.input);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       const execution = await this.executionInternal(caller, dispatch, tx);
       return this.admitRead(execution, dispatch.tool, dispatch.input, dispatch.read);
     });
@@ -872,7 +888,7 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     checkInstance(target.instanceId);
     checkRevision(target.expectedRevision);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const { execution, row, registration } = await this.executionStep(caller, target, tx);
       await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
@@ -1028,7 +1044,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowWorkStart[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await readWorkStarts(tx, caller.projectId, instanceId);
@@ -1086,7 +1102,9 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     caller = structuredClone(caller);
     checkInstance(instanceId);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    // Only `begin` names a revision, and it records a work start.
+    const place = expectedRevision === undefined ? this.read : this.write;
+    return await place(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const step = await this.load(caller, { instanceId, expectedRevision }, 'assignment', tx);
       await checkAssignment(step.rule, step.context);
@@ -1133,10 +1151,10 @@ export class WorkflowsService implements Workflows {
     };
   }
 
-  async overview(caller: Caller): Promise<WorkflowOverview> {
+  async overview(caller: Caller, transaction?: Transaction): Promise<WorkflowOverview> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const rows = await tx.all<{ id: string }>(
         'SELECT id FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
@@ -1228,7 +1246,7 @@ export class WorkflowsService implements Workflows {
       additional: input.additional,
       reason,
     });
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.write(transaction, async (tx) => {
       check(!caller.session, 'forbidden', 'A leased worker cannot raise its own limit', 403);
       await this.scope.require(caller, 'admin', tx);
       const snapshot = await this.readSnapshot(tx, caller.projectId, input.instanceId);
@@ -1302,15 +1320,17 @@ export class WorkflowsService implements Workflows {
     caller: Caller,
     instanceId: string,
     name: string,
-    tx: Transaction,
+    transaction?: Transaction,
   ): Promise<WorkflowLimitStatus> {
-    await this.scope.require(caller, 'read', tx);
-    const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
-    const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
-      (item) => item.name === name,
-    );
-    check(limit, 'unknown_limit', 'This workflow has no such limit', 404);
-    return await limitStatus(tx, limit, instanceId);
+    return await this.read(transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
+      const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
+        (item) => item.name === name,
+      );
+      check(limit, 'unknown_limit', 'This workflow has no such limit', 404);
+      return await limitStatus(tx, limit, instanceId);
+    });
   }
 
   async dependencies(
@@ -1320,7 +1340,7 @@ export class WorkflowsService implements Workflows {
   ): ReturnType<Workflows['dependencies']> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return await relations(tx, this.contracts, caller.projectId, instanceId);
@@ -1330,48 +1350,52 @@ export class WorkflowsService implements Workflows {
   async prerequisites(
     caller: Caller,
     instanceIds: readonly string[],
-    tx: Transaction,
+    transaction?: Transaction,
   ): Promise<Map<string, WorkflowDependency[]>> {
     this.assertOpen();
     caller = structuredClone(caller);
-    await this.scope.require(caller, 'read', tx);
-    return await prerequisites(tx, caller.projectId, [...new Set(instanceIds)]);
+    return await this.read(transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return await prerequisites(tx, caller.projectId, [...new Set(instanceIds)]);
+    });
   }
 
   async limitStatusOf(
     caller: Caller,
     instanceIds: readonly string[],
     name: string,
-    tx: Transaction,
+    transaction?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>> {
     this.assertOpen();
     caller = structuredClone(caller);
-    await this.scope.require(caller, 'read', tx);
     const ids = [...new Set(instanceIds)];
-    if (!ids.length) return new Map();
-    // One read of the instances, then two per definition among them, never two per instance.
-    const limits = new Map<string, { limit: WorkflowLoopLimit; ids: string[] }>();
-    for (const row of await tx.all<InstanceRow>(
-      `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
-      caller.projectId,
-      ...ids,
-    )) {
-      const snapshot = this.snapshot(row);
-      const at = `${snapshot.workflow}@${snapshot.version}`;
-      const known = limits.get(at);
-      if (known) {
-        known.ids.push(snapshot.id);
-        continue;
+    return await this.read(transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      if (!ids.length) return new Map();
+      // One read of the instances, then two per definition among them, never two per instance.
+      const limits = new Map<string, { limit: WorkflowLoopLimit; ids: string[] }>();
+      for (const row of await tx.all<InstanceRow>(
+        `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+        caller.projectId,
+        ...ids,
+      )) {
+        const snapshot = this.snapshot(row);
+        const at = `${snapshot.workflow}@${snapshot.version}`;
+        const known = limits.get(at);
+        if (known) {
+          known.ids.push(snapshot.id);
+          continue;
+        }
+        const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
+          (item) => item.name === name,
+        );
+        if (limit) limits.set(at, { limit, ids: [snapshot.id] });
       }
-      const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
-        (item) => item.name === name,
-      );
-      if (limit) limits.set(at, { limit, ids: [snapshot.id] });
-    }
-    const statuses = new Map<string, WorkflowLimitStatus>();
-    for (const { limit, ids: some } of limits.values())
-      for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
-    return statuses;
+      const statuses = new Map<string, WorkflowLimitStatus>();
+      for (const { limit, ids: some } of limits.values())
+        for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
+      return statuses;
+    });
   }
 
   async replaceBlockers(
@@ -1395,7 +1419,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowProvidedBlocker[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       if (instanceId !== undefined) await this.readSnapshot(tx, caller.projectId, instanceId);
       return await readBlockers(tx, caller.projectId, instanceId);
@@ -1460,7 +1484,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<void> {
     this.assertOpen();
     caller = structuredClone(caller);
-    await inTransaction(this.state, transaction, async (tx) => {
+    await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       requireDependencies(await prerequisitesOf(tx, caller.projectId, instanceId));
@@ -1522,7 +1546,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<string[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       const frontier = [instanceId],
@@ -1576,7 +1600,7 @@ export class WorkflowsService implements Workflows {
   async get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, tx, async (transaction) => {
+    return await this.read(tx, async (transaction) => {
       await this.scope.require(caller, 'read', transaction);
       return await this.readSnapshot(transaction, caller.projectId, instanceId);
     });
@@ -1585,7 +1609,7 @@ export class WorkflowsService implements Workflows {
   async list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, tx, async (tx) => {
+    return await this.read(tx, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return (
         await tx.all<InstanceRow>(
@@ -1603,7 +1627,7 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowHistoryEntry[]> {
     this.assertOpen();
     caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.read(transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.readSnapshot(tx, caller.projectId, instanceId);
       return (
@@ -1668,7 +1692,7 @@ export class WorkflowsService implements Workflows {
       data,
       ...(sorted.length ? { dependsOn: sorted } : {}),
     });
-    return await inTransaction(this.state, tx, async (transaction) => {
+    return await this.write(tx, async (transaction) => {
       // Managed programs authorize their own commands, including reviewer-triggered repair.
       await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
       const replay = await this.replay<WorkflowSnapshot>(
@@ -1760,7 +1784,7 @@ export class WorkflowsService implements Workflows {
       data,
       ...(proposed === undefined ? {} : { input: proposed }),
     });
-    return await inTransaction(this.state, tx, async (transaction) => {
+    return await this.write(tx, async (transaction) => {
       // Managed programs own action-specific write/review policies; the engine still validates tenancy.
       await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
       const row = await this.readRow(transaction, caller.projectId, input.instanceId);
@@ -1901,7 +1925,7 @@ export class WorkflowsService implements Workflows {
       dependsOn: [...dependsOn].sort(),
       ...(drop.length ? { drop: [...drop].sort() } : {}),
     });
-    return await inTransaction(this.state, transaction, async (tx) => {
+    return await this.write(transaction, async (tx) => {
       // As at start and transition: a managed program authorizes its own commands.
       await this.scope.require(caller, owner.definition.managed ? 'read' : 'write', tx);
       const before = await this.readSnapshot(tx, caller.projectId, input.instanceId);

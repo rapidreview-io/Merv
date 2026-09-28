@@ -3,6 +3,7 @@ import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
   digest,
+  forRead,
   newId,
   type Actor,
   type Caller,
@@ -21,7 +22,6 @@ import {
 } from '@merv/contracts';
 import { projectValue, type ProjectRow } from './project-context.js';
 import { roles } from './roles.js';
-import { forRead } from './within.js';
 
 export const membershipMigration: Migration = {
   version: 3,

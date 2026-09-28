@@ -12,7 +12,7 @@ Scope owns project membership, actors, actor credentials and user keys, delegati
 
 ## Where reads and decisions run
 
-`within.ts` places each one, in this order:
+`within` from `@merv/contracts` places each one, in this order:
 
 1. A `tx` the caller passes is used, once asserted.
 2. Inside a transaction, a snapshot's open read transaction included, that one is used.

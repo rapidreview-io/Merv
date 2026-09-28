@@ -1,10 +1,10 @@
 import { expiry } from './expiry.js';
 import { ACTOR_WITH_MEMBER, roles } from './roles.js';
-import { forRead } from './within.js';
 import type { Ledger } from './ledger.js';
 import {
   check,
   eventSource,
+  forRead,
   newId,
   visible,
   type Actor,

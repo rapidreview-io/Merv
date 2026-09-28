@@ -189,8 +189,14 @@ repeated after the callbacks, so a callback that revokes its own caller goes unn
 `dispatchCandidates` and `offerLease` authorize their source again once every callback has
 run, and roll back if it was revoked.
 
-**Transactions.** A method given a `tx` asserts that it belongs to State and runs in it;
-otherwise it opens its own transaction, which is read-only inside a `state.snapshot`.
+**Transactions.** Every caller method places itself by one rule, `within` from
+`@merv/contracts`. A `tx` given is asserted to belong to State and used. Without one, the
+method joins the transaction its caller is already in (`state.ambient`). Outside any, a read
+runs in a read-only snapshot transaction of its own and so never waits for the writer lock,
+and a command (a handle's, `begin`, `extendLimit` and the lease offer, activation and
+release) opens a write transaction. Inside a bare `state.snapshot` both are read-only;
+inside a plain `state.read` both run on the read's own connection. The trusted provider
+seams require the caller's `tx`.
 
 **Callbacks.** Every program callback (guards, `describe`, lease hooks, builders) is
 awaited in the engine's transaction and must not write to `wf_instances`: after each
