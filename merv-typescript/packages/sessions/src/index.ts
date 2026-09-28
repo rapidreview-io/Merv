@@ -2252,7 +2252,8 @@ export class LeasedSessions implements Sessions {
     read?: boolean,
   ) {
     const session = await this.session(caller, tx);
-    // Acknowledging a message is always admitted; it needs only a live lease.
+    // Acknowledging a message is always admitted; it needs only a live lease. The lease
+    // is checked before the input is bounded, so when both are bad the lease error wins.
     const ack = tool === 'session.message.ack';
     const current = await this.valid(session, tx, ack ? undefined : session.execution);
     if (registrationId !== undefined)
