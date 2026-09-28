@@ -1815,7 +1815,8 @@ export type ContextInput =
   | { text: string; omitted?: string[] }
   | {
       artifactIds: string[];
-      /** Text is strict UTF-8; auto retains binary references; references never embeds bytes. */
+      /** Text embeds every UTF-8 document; auto embeds textual media types; references never embeds
+       *  bytes. A document without UTF-8 text is shown by its reference. */
       mode?: 'text' | 'auto' | 'references';
     }
   | { rankedItems: RankedContextItem[] };
