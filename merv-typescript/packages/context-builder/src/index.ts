@@ -127,6 +127,11 @@ async function readText(
     throw error;
   }
 }
+/** Media types whose bytes are worth reading as text. */
+const textual = (mediaType: string) =>
+  mediaType.startsWith('text/') || mediaType === 'application/json';
+/** The fewest UTF-16 units `bytes` of UTF-8 can decode to: a unit is at most 3 bytes. */
+const minChars = (bytes: number) => Math.ceil(bytes / 3);
 /** A document shown by its metadata instead of its bytes. */
 const reference = (document: Artifact) =>
   `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included in this context. Inspect them through artifact.read with this artifactId or a capable client before judging this evidence.`;
@@ -394,9 +399,7 @@ export class RecipeContextBuilder implements ContextBuilder {
         // A required text section embeds its bytes or fails; every other unit keeps its reference.
         const lenient = !section.required || mode !== 'text';
         const embed = (document: Artifact) =>
-          mode === 'text' ||
-          (mode === 'auto' &&
-            (document.mediaType.startsWith('text/') || document.mediaType === 'application/json'));
+          mode === 'text' || (mode === 'auto' && textual(document.mediaType));
         const inlineBytes = documents.filter(embed).reduce((n, a) => n + a.size, 0);
         check(
           !section.required || mode !== 'text' || inlineBytes <= recipe.maxChars * 4,
@@ -573,14 +576,12 @@ export class RecipeContextBuilder implements ContextBuilder {
     for (const entry of ranked) {
       if (unlisted.has(entry)) continue;
       const room = definition.recipe.maxChars - size;
-      if (entry.artifact && (entry.artifact.size > 2_000_000 || entry.artifact.size > room * 4))
-        continue;
+      if (entry.artifact && !textual(entry.artifact.mediaType)) continue;
+      // Do not read bytes whose shortest text cannot fit.
       if (
         entry.artifact &&
-        !(
-          entry.artifact.mediaType.startsWith('text/') ||
-          entry.artifact.mediaType === 'application/json'
-        )
+        minChars(entry.artifact.size) + `\n### ${entry.item.id}: ${entry.item.title}\n\n`.length >
+          room
       )
         continue;
       // Every ranked item keeps its reference, so any unit without readable text is skipped.
@@ -645,9 +646,7 @@ export class RecipeContextBuilder implements ContextBuilder {
     caller = structuredClone(caller);
     ids = [...ids];
     const documents = await mapAsync(ids, async (id) => await this.artifacts.get(caller, id, tx));
-    const inline = documents
-      .filter((a) => a.mediaType.startsWith('text/') || a.mediaType === 'application/json')
-      .reduce((n, a) => n + a.size, 0);
+    const inline = documents.filter((a) => textual(a.mediaType)).reduce((n, a) => n + a.size, 0);
     return inline > room ? 'references' : 'auto';
   }
   close(): void {

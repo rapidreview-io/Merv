@@ -418,3 +418,38 @@ test('a ranked title over 300 characters renders clipped instead of failing', as
   assert.ok(preview.prompt.includes(`\n### long: ${clipped}\nShort body.\n`));
   assert.doesNotMatch(preview.prompt, /u{20}|\uD83D/);
 });
+
+test('ranked promotion reads no artifact whose shortest text cannot fit its room', async (t) => {
+  const { artifacts, builder, operator, reads } = await setup(t);
+  const registration = await builder.register({
+    ...definition,
+    name: 'test.degrade-room',
+    recipe: { ...definition.recipe, maxChars: 3000 },
+  });
+  const item = (document: Artifact): RankedContextItem => ({
+    id: 'evidence',
+    title: document.title,
+    priority: 10,
+    content: { artifactId: document.id },
+    hash: document.hash,
+    refs: [{ tool: 'artifact.read', input: { artifactId: document.id } }],
+  });
+  const preview = async (document: Artifact) =>
+    await registration.preview(operator, {
+      subject,
+      inputs: { evidence: { rankedItems: [item(document)] } },
+    });
+  const ascii = await artifacts.create(operator, { title: 'Log', content: 'x'.repeat(8000) });
+  reads.length = 0;
+  const skipped = await preview(ascii);
+  const room = 3000 - skipped.prompt.length;
+  // The old rule read anything up to four bytes per character of room.
+  assert.ok(ascii.size > room && ascii.size <= room * 4, `${room}`);
+  assert.deepEqual(reads, []);
+  assert.deepEqual(skipped.omitted, ['evidence']);
+  // Three bytes per character is the tightest a body can be, and one that fits is still read.
+  const cjk = await artifacts.create(operator, { title: 'Log', content: '文'.repeat(700) });
+  const embedded = await preview(cjk);
+  assert.deepEqual(reads, [cjk.id]);
+  assert.ok(embedded.prompt.includes(`\n### evidence: Log\n${'文'.repeat(700)}\n`));
+});
