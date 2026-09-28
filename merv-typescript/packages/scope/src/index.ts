@@ -1,5 +1,5 @@
 import { CredentialStore } from '@merv/identity/credentials';
-import { Ledger, type ScopeRow } from './ledger.js';
+import { Ledger } from './ledger.js';
 import { expiry } from './expiry.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
@@ -145,12 +145,7 @@ export class ProjectScope implements Scope {
           sql: postgresMigrations[9],
         },
       ]);
-      await state.transaction(async (tx) => {
-        const rows = await tx.all<ScopeRow>(
-          "SELECT id AS subject, 'actor' AS kind, token_hash, expires_at, revoked_at FROM actor_credentials UNION ALL SELECT id AS subject, 'user-key' AS kind, token_hash, expires_at, revoked_at FROM user_keys",
-        );
-        for (const row of rows) await this.ledger.adopt(row, tx);
-      });
+      await this.ledger.adoptMissing(state);
       this.members = new Memberships(
         state,
         () => this.time(),

@@ -324,21 +324,17 @@ test('a user key whose ledger row names another subject is refused', async () =>
   await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
 });
 
-test(
-  'a restart with nothing to adopt adopts nothing and takes no writer lock',
-  { todo: 'step 2c' },
-  async (t) => {
-    const f = await fixture();
-    const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
-    // Counts every transaction of the boot, not only the adoption pass. That is exact today because
-    // State.migrate runs its steps through the internal transact(), not transaction(); a new
-    // boot-time transaction elsewhere must be excluded here rather than tolerated.
-    const transaction = t.mock.method(f.state, 'transaction');
-    await f.boot();
-    assert.equal(adopt.mock.callCount(), 0);
-    assert.equal(transaction.mock.callCount(), 0);
-  },
-);
+test('a restart with nothing to adopt adopts nothing and takes no writer lock', async (t) => {
+  const f = await fixture();
+  const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
+  // Counts every transaction of the boot, not only the adoption pass. That is exact today because
+  // State.migrate runs its steps through the internal transact(), not transaction(); a new
+  // boot-time transaction elsewhere must be excluded here rather than tolerated.
+  const transaction = t.mock.method(f.state, 'transaction');
+  await f.boot();
+  assert.equal(adopt.mock.callCount(), 0);
+  assert.equal(transaction.mock.callCount(), 0);
+});
 
 test('a restart adopts exactly the rows written since the last boot pass', async (t) => {
   const f = await fixture();
@@ -346,36 +342,32 @@ test('a restart adopts exactly the rows written since the last boot pass', async
   const adopt = t.mock.method(CredentialStore.prototype, 'adopt');
   const scope = await f.boot();
   assert.equal((await scope.authenticate(legacy.token)).credential.id, legacy.id);
-  await t.test('and only those', { todo: 'step 2c' }, () => {
+  await t.test('and only those', () => {
     assert.equal(adopt.mock.callCount(), 1);
   });
 });
 
-test(
-  'a hash another authority owns does not stop a restart and stays refused',
-  { todo: 'step 2c' },
-  async () => {
-    const f = await fixture();
-    const id = newId('credential');
-    const { token } = await f.ledger.issue({
-      owner: 'other',
-      subject: id,
-      kind: 'actor',
-      prefix: '',
-      expiresAt: null,
-    });
-    await legacyCredential(f, { token, id });
-    const scope = await f.boot();
-    await assert.rejects(scope.authenticate(token), unauthorized);
-  },
-);
+test('a hash another authority owns does not stop a restart and stays refused', async () => {
+  const f = await fixture();
+  const id = newId('credential');
+  const { token } = await f.ledger.issue({
+    owner: 'other',
+    subject: id,
+    kind: 'actor',
+    prefix: '',
+    expiresAt: null,
+  });
+  await legacyCredential(f, { token, id });
+  const scope = await f.boot();
+  await assert.rejects(scope.authenticate(token), unauthorized);
+});
 
 test('a malformed row never adopted still stops a restart', async (t) => {
   const f = await fixture();
   // Scope writes canonical timestamps; this one lacks milliseconds.
   const legacy = await legacyCredential(f, { expiresAt: '2030-01-01T00:00:00Z' });
   await assert.rejects(f.boot(), MervError);
-  await t.test('naming the row', { todo: 'step 2c' }, async () => {
+  await t.test('naming the row', async () => {
     await assert.rejects(
       f.boot(),
       (error: { code?: string; status?: number; message?: string }) => {
