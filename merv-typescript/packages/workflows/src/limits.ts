@@ -6,7 +6,6 @@ import type {
   WorkflowLimitStatus,
   WorkflowLoopLimit,
   WorkflowPolicy,
-  WorkflowSnapshot,
 } from '@merv/contracts';
 
 /**
@@ -143,15 +142,16 @@ export async function limitStatusesOf(
 ): Promise<Map<string, WorkflowLimitStatus[]>> {
   const leaving = ({ state, policy }: (typeof instances)[number]) =>
     (policy?.limits ?? []).filter((limit) => limit.from === state);
-  const waiting = new Map<WorkflowLoopLimit, string[]>();
-  for (const instance of instances)
-    for (const limit of leaving(instance)) {
-      const ids = waiting.get(limit);
-      if (ids) ids.push(instance.id);
-      else waiting.set(limit, [instance.id]);
-    }
   const read = new Map<WorkflowLoopLimit, Map<string, WorkflowLimitStatus>>();
-  for (const [limit, ids] of waiting) read.set(limit, await limitStatusOf(sql, limit, ids));
+  for (const limit of new Set(instances.flatMap(leaving)))
+    read.set(
+      limit,
+      await limitStatusOf(
+        sql,
+        limit,
+        instances.filter((instance) => leaving(instance).includes(limit)).map(({ id }) => id),
+      ),
+    );
   return new Map(
     instances.map((instance) => [
       instance.id,
@@ -159,16 +159,6 @@ export async function limitStatusesOf(
     ]),
   );
 }
-
-/** limitStatusesOf for one instance. */
-export const limitStatuses = async (
-  sql: Sql,
-  policy: WorkflowPolicy | undefined,
-  snapshot: WorkflowSnapshot,
-) =>
-  (await limitStatusesOf(sql, [{ id: snapshot.id, state: snapshot.state, policy }])).get(
-    snapshot.id,
-  )!;
 
 export function limitMessage(status: WorkflowLimitStatus, workflow: string): string {
   return `${status.name} is exhausted on this ${workflow} (${status.used}/${status.max}). The work is not failed and waits for a human, who may take the next step by hand or end it; a project admin may allow more rounds with workflow.extend_limit.`;

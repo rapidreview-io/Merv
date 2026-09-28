@@ -13,7 +13,7 @@ import type {
 } from '@merv/contracts';
 import { clearBlockers } from './blockers.js';
 import { enforceAction, readContext } from './evaluation.js';
-import { limitFor, limitMessage, limitStatus, limitStatuses } from './limits.js';
+import { limitFor, limitMessage, limitStatus, limitStatusesOf } from './limits.js';
 import {
   attachDependencies,
   detachDependencies,
@@ -367,7 +367,9 @@ export class WorkflowCommands extends WorkflowLeases {
       // Recorded on arrival, never from a read. A step that stays in the capped state (a
       // reissued review) is not a new arrival and says nothing new.
       if (after.state !== before.state)
-        for (const arrived of await limitStatuses(transaction, owner.policy, after))
+        for (const arrived of (
+          await limitStatusesOf(transaction, [{ ...after, policy: owner.policy }])
+        ).get(after.id)!)
           if (arrived.exhausted)
             await recorded(this.state, transaction, caller, 'workflow.escalated', after.id, {
               workflow: after.workflow,
