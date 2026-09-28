@@ -13,16 +13,13 @@ import { openState } from './fixtures/state.js';
 const iso = (time: number) => new Date(time).toISOString();
 const denied = (error: unknown) => error instanceof MervError && error.status === 401;
 
-test('Identity plugin publishes credentials after State migration', async () => {
-  const state = await openState();
+test('Identity plugin loads without State and publishes no credential store', async () => {
   const ctx = new Context();
-  ctx.provide('state', state);
   const plugin = ctx.plugin(identityPlugin);
   await plugin.await();
-  assert.ok(ctx.identity.credentials);
+  assert.equal('credentials' in ctx.identity, false);
   assert.deepEqual(ctx.identity.configuration(), { enabled: false });
   await ctx.fiber.dispose();
-  await state.close();
 });
 
 test('issued secrets remain valid across restart and only their digests are stored', async (t) => {
@@ -141,5 +138,193 @@ test('owner revokes all rotations of one subject atomically', async () => {
   await assert.rejects(store.authenticate(a.token, 'session-agent'), denied);
   await assert.rejects(store.authenticate(b.token, 'session-agent'), denied);
   await store.authenticate(other.token, 'session-agent');
+  await state.close();
+});
+
+const conflict = (status: number) => (error: unknown) =>
+  error instanceof MervError && error.status === status;
+
+test('adoption carries a later revocation once and never revives or extends', async () => {
+  let now = Date.parse('2026-09-26T10:00:00.000Z');
+  const state = await openState();
+  const store = new CredentialStore(state, () => now);
+  await store.initialize();
+  const token = `ms_${randomBytes(32).toString('base64url')}`;
+  const input = {
+    owner: 'scope',
+    subject: 'credential-1',
+    kind: 'actor',
+    tokenHash: tokenDigest(token),
+    expiresAt: null,
+  };
+  const original = await store.adopt(input);
+  assert.equal((await store.authenticate(token, 'actor')).id, original.id);
+  const first = iso(now + 1_000);
+  const second = iso(now + 2_000);
+  assert.equal((await store.adopt({ ...input, revokedAt: first })).revokedAt, first);
+  await assert.rejects(store.authenticate(token, 'actor'), denied);
+  for (const later of [{ revokedAt: second }, { revokedAt: null }, {}]) {
+    const adopted = await store.adopt({ ...input, ...later });
+    assert.equal(adopted.id, original.id);
+    assert.equal(adopted.revokedAt, first);
+  }
+  await assert.rejects(store.authenticate(token, 'actor'), denied);
+  for (const mismatch of [{ owner: 'sessions' }, { subject: 'credential-2' }, { kind: 'user-key' }])
+    await assert.rejects(store.adopt({ ...input, ...mismatch }), conflict(409));
+  assert.equal((await store.revoke(input.tokenHash, 'scope'))?.revokedAt, first);
+  await state.close();
+});
+
+test('revocation is owner-checked, idempotent and a no-op for an unknown hash', async () => {
+  let now = Date.parse('2026-09-26T10:00:00.000Z');
+  const state = await openState();
+  const store = new CredentialStore(state, () => now);
+  await store.initialize();
+  const { token, credential } = await store.issue({
+    owner: 'sessions',
+    subject: 'execution-1',
+    kind: 'session-execution',
+    prefix: 'ms_',
+    expiresAt: iso(now + 60_000),
+    hardDeadline: iso(now + 120_000),
+  });
+  await assert.rejects(store.revoke(credential.tokenHash, 'pi'), conflict(403));
+  assert.equal((await store.authenticate(token, 'session-execution')).id, credential.id);
+  const unknown = tokenDigest('never-issued-or-adopted-token');
+  assert.equal(await store.revoke(unknown, 'sessions'), undefined);
+  // An owner transaction that revokes a legacy hash missing from the ledger still commits.
+  await state.transaction(async (tx) => {
+    assert.equal(await store.revoke(unknown, 'sessions', tx), undefined);
+    await tx.run(
+      'UPDATE identity_credentials SET expires_at=? WHERE token_hash=?',
+      iso(now + 90_000),
+      credential.tokenHash,
+    );
+  });
+  assert.equal((await store.authenticate(token, 'session-execution')).expiresAt, iso(now + 90_000));
+  const revoked = await store.revoke(credential.tokenHash, 'sessions');
+  assert.equal(revoked?.revokedAt, iso(now));
+  now += 5_000;
+  assert.equal((await store.revoke(credential.tokenHash, 'sessions'))?.revokedAt, iso(now - 5_000));
+  await assert.rejects(store.authenticate(token, 'session-execution'), denied);
+  // An expired row can still be revoked; the row keeps its expiry.
+  const expiring = await store.issue({
+    owner: 'pi',
+    subject: 'slot-1',
+    kind: 'pi-worker',
+    prefix: 'piw_',
+    expiresAt: iso(now + 1_000),
+    hardDeadline: iso(now + 1_000),
+  });
+  now += 2_000;
+  const late = await store.revoke(expiring.credential.tokenHash, 'pi');
+  assert.deepEqual([late?.revokedAt, late?.expiresAt], [iso(now), expiring.credential.expiresAt]);
+  await state.close();
+});
+
+test('renewal needs a hard deadline, only moves expiry forward and stops at the boundaries', async () => {
+  let now = Date.parse('2026-09-26T10:00:00.000Z');
+  const state = await openState();
+  const store = new CredentialStore(state, () => now);
+  await store.initialize();
+  const unbounded = await store.issue({
+    owner: 'sessions',
+    subject: 'agent-1',
+    kind: 'session-agent',
+    prefix: 'ms_',
+    expiresAt: iso(now + 60_000),
+  });
+  await assert.rejects(
+    store.renew(unbounded.credential.tokenHash, 'sessions', iso(now + 90_000)),
+    (error: unknown) =>
+      error instanceof MervError && error.status === 400 && error.code === 'invalid_credential',
+  );
+  const { token, credential } = await store.issue({
+    owner: 'sessions',
+    subject: 'execution-1',
+    kind: 'session-execution',
+    prefix: 'ms_',
+    expiresAt: iso(now + 60_000),
+    hardDeadline: iso(now + 120_000),
+  });
+  const earlier = await store.renew(credential.tokenHash, 'sessions', iso(now + 30_000));
+  assert.equal(earlier.expiresAt, iso(now + 60_000));
+  assert.equal(
+    (await store.renew(credential.tokenHash, 'sessions', iso(now + 60_000))).expiresAt,
+    iso(now + 60_000),
+  );
+  await assert.rejects(
+    store.renew(credential.tokenHash, 'sessions', iso(now + 120_001)),
+    conflict(400),
+  );
+  assert.equal(
+    (await store.renew(credential.tokenHash, 'sessions', iso(now + 120_000))).expiresAt,
+    iso(now + 120_000),
+  );
+  // expires_at == now and hard_deadline == now are not live.
+  now += 120_000;
+  await assert.rejects(store.authenticate(token, 'session-execution'), denied);
+  const expiry = await store.issue({
+    owner: 'scope',
+    subject: 'credential-1',
+    kind: 'actor',
+    prefix: 'ms_',
+    expiresAt: iso(now + 1_000),
+  });
+  now += 1_000;
+  await assert.rejects(store.authenticate(expiry.token, 'actor'), denied);
+  now -= 1;
+  assert.equal((await store.authenticate(expiry.token, 'actor')).id, expiry.credential.id);
+  await state.close();
+});
+
+test('the ledger trigger refuses raw un-revoke, shortened expiry, deadline changes and deletion', async () => {
+  const now = Date.parse('2026-09-26T10:00:00.000Z');
+  const state = await openState();
+  const store = new CredentialStore(state, () => now);
+  await store.initialize();
+  const input = {
+    owner: 'pi',
+    subject: 'slot-1',
+    kind: 'pi-worker',
+    prefix: 'piw_',
+    expiresAt: iso(now + 60_000),
+    hardDeadline: iso(now + 120_000),
+  };
+  const live = await store.issue(input);
+  const revoked = await store.issue({ ...input, subject: 'slot-2' });
+  await store.revoke(revoked.credential.tokenHash, 'pi');
+  // Without a hard deadline the CHECK constraint allows a NULL expiry, so only the
+  // trigger can refuse lifting it.
+  const unbounded = await store.issue({ ...input, subject: 'slot-3', hardDeadline: undefined });
+  const refusals: [string, ...string[]][] = [
+    [
+      'UPDATE identity_credentials SET revoked_at=NULL WHERE token_hash=?',
+      revoked.credential.tokenHash,
+    ],
+    [
+      'UPDATE identity_credentials SET expires_at=? WHERE token_hash=?',
+      iso(now + 30_000),
+      live.credential.tokenHash,
+    ],
+    [
+      'UPDATE identity_credentials SET expires_at=NULL WHERE token_hash=?',
+      unbounded.credential.tokenHash,
+    ],
+    [
+      'UPDATE identity_credentials SET hard_deadline=? WHERE token_hash=?',
+      iso(now + 110_000),
+      live.credential.tokenHash,
+    ],
+    ['DELETE FROM identity_credentials WHERE token_hash=?', revoked.credential.tokenHash],
+  ];
+  for (const [statement, ...values] of refusals)
+    await assert.rejects(
+      state.transaction((tx) => tx.run(statement, ...values)),
+      (error: unknown) => error instanceof MervError && error.code === 'state_constraint',
+    );
+  assert.equal((await store.authenticate(live.token, 'pi-worker')).expiresAt, input.expiresAt);
+  assert.equal((await store.authenticate(unbounded.token, 'pi-worker')).expiresAt, input.expiresAt);
+  await assert.rejects(store.authenticate(revoked.token, 'pi-worker'), denied);
   await state.close();
 });

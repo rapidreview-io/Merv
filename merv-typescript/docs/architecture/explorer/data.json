@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-27",
+  "snapshot": "2026-09-28",
   "groups": [
     {
       "id": "front",
@@ -984,9 +984,7 @@
       "provides": [
         "identity"
       ],
-      "requires": [
-        "state"
-      ],
+      "requires": [],
       "optional": [],
       "kind": "service",
       "runtime": "server",
@@ -2990,11 +2988,6 @@
       "optional": false
     },
     {
-      "from": "identity",
-      "to": "state",
-      "optional": false
-    },
-    {
       "from": "knowledge",
       "to": "state",
       "optional": false
@@ -3559,7 +3552,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 177
+    "dependencies": 176
   },
   "network": [
     {

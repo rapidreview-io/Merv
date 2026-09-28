@@ -569,20 +569,15 @@ export class PiService implements Pi, FleetOwner {
       tx,
     );
   }
-  private async revokeCredential(tx: Transaction, token: string, kind: string): Promise<void> {
-    try {
-      await this.credentials.authenticate(token, kind, tx);
-    } catch (error) {
-      if (error instanceof MervError && error.status === 401) return;
-      throw error;
-    }
+  private async revokeCredential(tx: Transaction, token: string): Promise<void> {
+    // An unknown hash is a no-op; revoking an already expired row is harmless.
     await this.credentials.revoke(tokenDigest(token), 'pi', tx);
   }
   private revokeWorkerCredential(tx: Transaction, host: PiHostRecord, slot: PiSlot) {
-    return this.revokeCredential(tx, this.workerToken(host.id, slot), 'pi-worker');
+    return this.revokeCredential(tx, this.workerToken(host.id, slot));
   }
   private revokeModelCredential(tx: Transaction, command: PiCommandRecord) {
-    return this.revokeCredential(tx, this.modelToken(command), 'pi-model');
+    return this.revokeCredential(tx, this.modelToken(command));
   }
 
   async create(caller: Caller, input: unknown): Promise<PiConversation> {

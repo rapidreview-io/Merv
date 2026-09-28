@@ -63,12 +63,17 @@ API keys and service-role JWTs are rejected by public configuration validation.
 The default empty configuration disables shared login and preserves local actor
 credentials.
 
-The default verifier uses the issuer's fixed JWKS endpoint, permitting ES256 and
-RS256 signatures. It requires exact issuer/audience, a subject, finite unexpired
-`exp` and the signed `authenticated` role, and rejects anonymous users. Clock
-skew is zero. Key URLs supplied in a JWT are ignored. JWKS responses have size,
-key-count and five-second request/body bounds; the successful cache lasts five
-minutes, with a 30-second unknown-key/failure cooldown. These choices use
+The default verifier uses the issuer's fixed JWKS endpoint, permitting ES256,
+RS256 and EdDSA (Ed25519) signatures. It requires exact issuer/audience, a subject,
+finite unexpired `exp` and the signed `authenticated` role, and rejects anonymous
+users. Clock skew is zero. Key URLs supplied in a JWT are ignored. JWKS responses
+have a 64 KiB size bound and a five-second request/body bound. Identity keeps the
+last good key set and refreshes it in the background every five minutes, so no
+request waits on a refresh while that set is usable; fetches, including those for
+an unknown key id, are retried at most every 30 seconds, and a set that could not
+be refreshed for 24 hours is no longer trusted. Keys of other types and entries
+carrying private fields are ignored, and a response with no usable key leaves the
+last good set in place. These choices use
 [Supabase's signing-key endpoint](https://supabase.com/docs/guides/auth/signing-keys)
 and [jose's verifier](https://github.com/panva/jose/blob/main/docs/jwt/verify/functions/jwtVerify.md).
 
