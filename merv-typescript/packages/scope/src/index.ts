@@ -2,6 +2,7 @@ import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
 import { expiry } from './expiry.js';
 import { forRead, within } from './within.js';
+import { ACTOR_WITH_MEMBER, needs, permits, roles, serviceRole, workerRoles } from './roles.js';
 import { visible, createService, receipted, sha256Hex } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { z } from 'zod';
@@ -95,14 +96,6 @@ const credential = (row: CredentialRow): ActorCredential => ({
   revokedAt: row.revoked_at,
   previousId: row.previous_id,
 });
-const roles = ['operator', 'producer', 'reviewer', 'reader'];
-/** A service's role follows from its provider; scope@9's trigger holds the same rule. */
-const serviceRole = (provider: string) => (provider === 'fleet-review' ? 'reviewer' : 'producer');
-const permits = (role: Role, permission: Permission): boolean =>
-  permission === 'read' ||
-  role === 'operator' ||
-  (permission === 'write' && role === 'producer') ||
-  (permission === 'review' && role === 'reviewer');
 /** The one installed provider of a kind of caller authority, and the registration it came with. */
 class AuthoritySlot<T> {
   #value?: T;
@@ -240,7 +233,7 @@ export class ProjectScope implements Scope {
         `SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM ${LIVE_OPERATOR} ORDER BY m.created_at,m.id`,
       );
     const owners = new Map<string, DelegationSource>();
-    for (const row of tx ? await read(tx) : await this.state.read(read))
+    for (const row of await within(this.state, tx, read))
       if (!owners.has(row.project_id))
         owners.set(row.project_id, {
           actorId: row.actor_id,
@@ -411,7 +404,7 @@ export class ProjectScope implements Scope {
       const row = await this.credentialRow(sql, caller.projectId, caller.credentialId);
       return { ...base, kind: 'actor', credentialId: row.id, expiresAt: row.expires_at };
     };
-    return tx ? await lookup(tx) : await this.state.read(lookup);
+    return await within(this.state, tx, lookup);
   }
   async requireDelegation(
     source: DelegationSource,
@@ -445,8 +438,7 @@ export class ProjectScope implements Scope {
         );
         return actor(row);
       };
-      if (tx) this.state.assertTransaction(tx);
-      return tx ? await lookup(tx) : await this.state.read(lookup);
+      return await within(this.state, tx, lookup);
     } else if (source.kind === 'key') {
       caller = { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
     } else if (source.kind === 'service') {
@@ -472,7 +464,7 @@ export class ProjectScope implements Scope {
             : 'SELECT expires_at FROM actor_credentials WHERE id=?',
           source.kind === 'key' ? source.keyId : source.credentialId,
         );
-      const row = tx ? await lookup(tx) : await this.state.read(lookup);
+      const row = await within(this.state, tx, lookup);
       check(
         row && row.expires_at === source.expiresAt,
         'invalid_delegation',
@@ -491,7 +483,7 @@ export class ProjectScope implements Scope {
     input = structuredClone(input);
     this.state.assertTransaction(tx);
     check(
-      ['producer', 'reviewer', 'reader'].includes(input.role) &&
+      workerRoles.includes(input.role) &&
         typeof input.sessionId === 'string' &&
         input.sessionId.length > 0 &&
         input.sessionId.length <= 200 &&
@@ -505,11 +497,7 @@ export class ProjectScope implements Scope {
       'invalid_session_actor',
       'Session actors need a name, lease and non-operator role',
     );
-    await this.requireDelegation(
-      source,
-      input.role === 'producer' ? 'write' : input.role === 'reviewer' ? 'review' : 'read',
-      tx,
-    );
+    await this.requireDelegation(source, needs(input.role), tx);
     const value: Actor = {
       id: newId('actor'),
       projectId: source.projectId,
@@ -538,16 +526,8 @@ export class ProjectScope implements Scope {
   ): Promise<void> {
     source = structuredClone(source);
     this.state.assertTransaction(tx);
-    check(
-      ['producer', 'reviewer', 'reader'].includes(role),
-      'invalid_session_role',
-      'Agents cannot become operators',
-    );
-    await this.requireDelegation(
-      source,
-      role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read',
-      tx,
-    );
+    check(workerRoles.includes(role), 'invalid_session_role', 'Agents cannot become operators');
+    await this.requireDelegation(source, needs(role), tx);
     const result = await tx.run(
       'UPDATE actors SET role=? WHERE id=? AND project_id=? AND agent_id IS NOT NULL AND active=1',
       role,
@@ -797,9 +777,7 @@ export class ProjectScope implements Scope {
         500,
       );
       const row = await sql.get<ActorRow>(
-        `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-         LEFT JOIN member_actors m ON m.actor_id=a.id
-         WHERE a.id=? AND a.project_id=?`,
+        `${ACTOR_WITH_MEMBER} WHERE a.id=? AND a.project_id=?`,
         caller.actorId,
         caller.projectId,
       );
@@ -972,7 +950,6 @@ export class ProjectScope implements Scope {
     permission: Permission,
     tx?: Transaction,
   ): Promise<boolean> {
-    if (tx) this.state.assertTransaction(tx);
     const lookup = async (sql: Sql) =>
       await sql.get<{ role: Role }>(
         `SELECT a.role FROM actors a LEFT JOIN member_actors m ON m.actor_id=a.id
@@ -982,16 +959,15 @@ export class ProjectScope implements Scope {
         actorId,
         projectId,
       );
-    const row = tx ? await lookup(tx) : await this.state.read(lookup);
+    const row = await within(this.state, tx, lookup);
     return !!row && permits(row.role, permission);
   }
   async project(caller: Caller, tx?: Transaction): Promise<Project> {
     caller = structuredClone(caller);
-    if (tx) this.state.assertTransaction(tx);
     await this.require(caller, 'read', tx);
-    const read = async (sql: Sql) =>
-      project((await sql.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!);
-    return tx ? await read(tx) : await this.state.read(read);
+    return await within(this.state, tx, async (sql) =>
+      project((await sql.get<ProjectRow>('SELECT * FROM projects WHERE id=?', caller.projectId))!),
+    );
   }
   async updateProjectContext(
     caller: Caller,
@@ -1250,8 +1226,7 @@ export class ProjectScope implements Scope {
       'Actor id is required',
     );
     const row = await sql.get<ActorRow>(
-      `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-       LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.id=? AND a.project_id=?`,
+      `${ACTOR_WITH_MEMBER} WHERE a.id=? AND a.project_id=?`,
       actorId,
       projectId,
     );
@@ -1317,8 +1292,7 @@ export class ProjectScope implements Scope {
     return await this.state.read(async (sql) =>
       (
         await sql.all<ActorRow>(
-          `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
-          LEFT JOIN member_actors m ON m.actor_id=a.id WHERE a.project_id=? ORDER BY a.active DESC,a.role,a.name,a.id`,
+          `${ACTOR_WITH_MEMBER} WHERE a.project_id=? ORDER BY a.active DESC,a.role,a.name,a.id`,
           caller.projectId,
         )
       ).map(actor),
