@@ -174,7 +174,7 @@ instance the named `worker` would be refused. It reads the instances at leasable
 their limits and their prerequisites in a fixed number of statements however many there
 are. `role`, `label` and `excludes` share one frozen context per instance, prerequisites
 included. A refusal (403, 404, 409, 503) skips the instance; one recheck after every
-instance fails the scan if any callback wrote, refused or not.
+instance fails the scan if any callback changed a candidate instance, refused or not.
 
 An assignment's fixed `execution.workspace` declaration specifies scratch,
 ephemeral or persistent checkout intent. Omission preserves old policy hashes
