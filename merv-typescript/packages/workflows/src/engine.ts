@@ -51,7 +51,11 @@ export const checkRevision = (revision: unknown) =>
     'Expected revision must be a nonnegative integer',
   );
 
-/** What the engine's parts share: the registry, where a call runs, and the instance reads. */
+/**
+ * What the engine's parts share: the registry, where a call runs, and the instance reads.
+ * Guidance, leases and commands each use only this class, never one another; their order in
+ * the chain that ends in WorkflowsService means nothing.
+ */
 export class WorkflowEngine {
   protected readonly registrations = new Map<string, Registration>();
   protected readonly contracts = new PinnedContracts();
