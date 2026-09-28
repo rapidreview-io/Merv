@@ -254,6 +254,53 @@ test('a new program registers guidance and guards without engine cases; reads, p
   }
 });
 
+test('a guard that writes under a read fails the read instead of blocking the work', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-fault-'));
+  const app = await createApp({ directory });
+  try {
+    const a = await app.ctx.scope.bootstrap({ projectName: 'Faults', actorName: 'Operator' });
+    const caller = { actorId: a.actor.id, projectId: a.project.id };
+    const graph: WorkflowDefinition = {
+      name: 'scribbling',
+      version: 1,
+      initial: 'open',
+      states: ['open', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'open', action: 'finish', to: 'done' }],
+    };
+    await app.ctx.workflows.register(graph, {
+      actions: [
+        {
+          name: 'finish',
+          states: ['open'],
+          transitions: ['finish'],
+          tool: 'scribble.finish',
+          instruction: 'Finish.',
+          check: async ({ tx, snapshot }) => {
+            await tx.run('UPDATE wf_instances SET updated_at=updated_at WHERE id=?', snapshot.id);
+          },
+        },
+      ],
+    });
+    const instance = await app.ctx.workflows.start(caller, {
+      workflow: graph.name,
+      requestId: 'start',
+    });
+    // State refuses the write with a 409, which a guard's refusal would be read as: the work
+    // would show as blocked by its own program's bug.
+    await assert.rejects(
+      async () =>
+        await app.ctx.state.snapshot(
+          async () => await app.ctx.workflows.evaluate(caller, instance.id),
+        ),
+      { code: 'invalid_workflow_policy', status: 500 },
+    );
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('task guidance follows caller, evidence, review claims, recovery, context, revision and terminal outcomes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-guidance-'));
   let app = await createApp({ directory });

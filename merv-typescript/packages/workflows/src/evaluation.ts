@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, mapAsync, MervError } from '@merv/contracts';
+import { check, mapAsync, MervError, stateFault } from '@merv/contracts';
 import type {
   WorkflowActionRule,
   WorkflowActionStatus,
@@ -241,6 +241,20 @@ export function readContext<C extends WorkflowCheckContext>(context: C): C {
   return Object.freeze({ ...freezeData(structuredClone(data)), tx }) as unknown as C;
 }
 
+/**
+ * A callback's refusal is read as a blocker; a State fault never is. A write under a read is a
+ * broken program, and a conflicting, busy or closed store says nothing about the work.
+ */
+export function throwStateFault(error: MervError): void {
+  if (error.code === 'read_only_scope')
+    throw new MervError(
+      'invalid_workflow_policy',
+      'Workflow callbacks must not write while the workflow is read',
+      500,
+    );
+  if (stateFault(error)) throw error;
+}
+
 export async function evaluateAction(
   rule: WorkflowActionRule,
   context: EngineContext,
@@ -291,6 +305,7 @@ export async function evaluateAction(
     }
   } catch (error) {
     if (!(error instanceof MervError) || error.status >= 500) throw error;
+    throwStateFault(error);
     result.status = 'blocked';
     result.blockers.push({ code: error.code, message: error.message, status: error.status });
   }
@@ -489,6 +504,7 @@ async function ownDecision(
       // Unavailable assignment resources are a blocker, not a failure to read the task.
       if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))
         throw error;
+      throwStateFault(error);
       begin.status = 'blocked';
       begin.blockers = [{ code: error.code, message: error.message, status: error.status }];
     }

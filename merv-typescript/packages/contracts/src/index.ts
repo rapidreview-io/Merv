@@ -231,6 +231,16 @@ export function check(
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
 }
+/**
+ * Whether State raised this error about its own scope, transaction or store, rather than an
+ * operation refusing its input: a write under a read, a nested or closed transaction, a
+ * conflict, timeout or outage. A caller that turns refusals into answers must not turn these.
+ */
+export const stateFault = (error: unknown): error is MervError =>
+  error instanceof MervError &&
+  (error.code === 'read_only_scope' ||
+    error.code === 'nested_transaction' ||
+    /^(transaction|state)_/.test(error.code));
 /** The name of an environment variable that holds a secret or setting a plugin config refers to. */
 export const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 /** The nonblank value of environment variable `name`; the refusal names the variable, never its value. */

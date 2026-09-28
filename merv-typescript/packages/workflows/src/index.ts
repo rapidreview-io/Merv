@@ -59,6 +59,7 @@ import {
   decision,
   enforceAction,
   readContext,
+  throwStateFault,
   type EngineContext,
   validatePolicy,
 } from './evaluation.js';
@@ -514,9 +515,11 @@ export class WorkflowsService implements Workflows {
             updatedAt: snapshot.updatedAt,
           });
         } catch (error) {
-          // Domain admission refusals make a node ineligible. Malformed programs fail visibly.
+          // Domain admission refusals make a node ineligible. Malformed programs and State
+          // faults fail visibly.
           if (!(error instanceof MervError) || ![403, 404, 409, 503].includes(error.status))
             throw error;
+          throwStateFault(error);
         }
       }
       // Every row's callbacks have run: a source they revoked is refused here, and the scan
