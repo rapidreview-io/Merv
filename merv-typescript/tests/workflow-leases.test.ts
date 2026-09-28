@@ -731,14 +731,12 @@ test('a lease check with its frozen execution grants the frozen references and d
   });
   const references = await granted();
   assert.deepEqual(references, { artifacts: ['own-artifact'] });
-  const admit = (input: Data, read?: boolean) =>
-    admitDispatch({ ...execution, references: references! }, 'artifact.read', input, read);
+  const admit = (input: Data) =>
+    admitDispatch({ ...execution, references: references! }, 'artifact.read', input);
   assert.equal(admit({ artifactId: 'own-artifact' }).input.artifactId, 'own-artifact');
   assert.throws(() => admit({ artifactId: 'live-artifact' }), {
     code: 'execution_arguments_forbidden',
   });
-  // A read the policy does not bind is bounded by the project alone.
-  assert.equal(admit({ artifactId: 'live-artifact' }, true).input.artifactId, 'live-artifact');
   // The lease's outputs extend the declared arrays, and only those.
   f.controls.outputs = () => ({ artifacts: ['authored'] });
   assert.deepEqual(await granted(), { artifacts: ['authored', 'own-artifact'] });

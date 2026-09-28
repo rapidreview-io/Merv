@@ -79,8 +79,10 @@ Cordis plugins execute in the same process; this is not a sandbox preventing a
 misbehaving plugin from accessing another service or its captured transaction.
 
 Sessions compares the generation `checkLease` returns with the invocation's, then
-applies the argument constraints with `admitDispatch` from Contracts. Its result
-is validated input for the proposed tool. It does not invoke that tool, start
+bounds the input and applies the argument constraints with `admitDispatch` from
+Contracts. A tool that only reads is left open where the policy does not bind it:
+a session reads whatever its project holds. The result is validated input for the
+proposed tool. It does not invoke that tool, start
 work, reserve ownership, or authenticate the caller.
 
 Passing the current transaction lets the session guard validate metadata

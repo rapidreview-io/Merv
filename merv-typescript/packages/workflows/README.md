@@ -190,7 +190,8 @@ returns that generation's id. Given the execution the lease was offered, it also
 that execution against the lease, its policy by content, and returns the references it
 grants now: the frozen ones, extended only in declared arrays by the lease's own
 `outputs`. Sessions fences each invocation's generation with the id and admits the tool
-call with `admitDispatch` from Contracts. A lease step runs the step's `check` and
+call: `admitDispatch` from Contracts applies the declared bindings, and Sessions leaves a
+read open where they do not bind it. A lease step runs the step's `check` and
 `lease.check`, never `references`: the offer froze those, so a refusal that must end a
 live lease belongs in one of the two checks. Sessions owns credentials,
 expiry and source authority; Workflows still has no dependency on Sessions, Tasks,

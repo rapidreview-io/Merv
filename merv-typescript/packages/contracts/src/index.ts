@@ -1423,57 +1423,10 @@ export function executionArgument(
 }
 /**
  * Admits one tool call under an execution: a declared tool, with arguments its bindings allow
- * and fill in. With `read`, the tool only reads, and a session reads whatever its project holds
- * (founder, 2026-09-17: no read constraints). The policy still fills in what it names, so a
- * read called as declared is admitted as declared; one it does not name, or names differently,
- * is admitted as given, bounded by the project alone. Every write holds as published.
+ * and fill in. The input is a detached JSON object its caller has bounded; each alternative
+ * binds its own copy.
  */
 export function admitDispatch(
-  execution: WorkflowExecution,
-  tool: string,
-  input: Data,
-  read = false,
-): WorkflowDispatchAdmission {
-  // A detached copy, bounded as the engine bounds a caller's data.
-  const encoded = canonical(
-    plain(input, 'invalid_input', {
-      depth: 32,
-      nodes: 16_000,
-      keys: 'any',
-      strings: 'json',
-      undefined: 'reject',
-      nullPrototype: false,
-    }),
-  );
-  check(encoded.length <= 4_000_000, 'invalid_input', 'Input is too large');
-  const original = JSON.parse(encoded) as Data;
-  check(
-    original && typeof original === 'object' && !Array.isArray(original),
-    'invalid_input',
-    'Tool input must be a JSON object',
-  );
-  // The project overview is asked for by leaving the instance out. A fixed binding would
-  // fill it in and answer for this worker's own record instead — a narrower question than
-  // the one asked, and the only read a session cannot otherwise express.
-  if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(original, 'instanceId'))
-    return { tool, input: original };
-  try {
-    return admitDeclared(execution, tool, original);
-  } catch (error) {
-    if (
-      read &&
-      error instanceof MervError &&
-      [
-        'execution_tool_forbidden',
-        'execution_arguments_forbidden',
-        'execution_reference_unavailable',
-      ].includes(error.code)
-    )
-      return { tool, input: original };
-    throw error;
-  }
-}
-function admitDeclared(
   execution: WorkflowExecution,
   tool: string,
   original: Data,

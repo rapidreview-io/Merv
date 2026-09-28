@@ -166,10 +166,9 @@ async function leasing(
     { lease, execution }: WorkflowLeaseOffer,
     tool: string,
     input: Data = {},
-    read?: boolean,
   ) => {
     const { references } = await workflows.checkLease(worker, lease, undefined, execution);
-    return admitDispatch({ ...execution, references: references! }, tool, input, read);
+    return admitDispatch({ ...execution, references: references! }, tool, input);
   };
   return { worker, offer, admit };
 }
@@ -235,24 +234,6 @@ test('a lease is offered fixed, detached execution metadata, and its calls are a
   });
 });
 
-test('an overview asked of the whole project is not narrowed to the session own record', async (t) => {
-  const f = await fixture();
-  t.after(f.close);
-  const offered = await f.offer(f.instance);
-  // Leaving the instance out asks what the whole project is doing. Filling it in from the
-  // binding would answer for this worker's own record — a different question.
-  assert.deepEqual((await f.admit(offered, 'workflow.status_and_next', {}, true)).input, {});
-  // Named, the instance still has to be this worker's own.
-  assert.deepEqual(
-    (await f.admit(offered, 'workflow.status_and_next', { instanceId: f.instance.id }, true)).input,
-    { instanceId: f.instance.id },
-  );
-  // Without the read mark the published binding holds, and fills what was left out.
-  assert.deepEqual((await f.admit(offered, 'workflow.status_and_next')).input, {
-    instanceId: f.instance.id,
-  });
-});
-
 test('whole-value bindings inject exact fields, preserve input, and keep OR alternatives separate', async (t) => {
   const f = await fixture();
   t.after(f.close);
@@ -282,16 +263,12 @@ test('whole-value bindings inject exact fields, preserve input, and keep OR alte
       (await f.admit(offered, 'artifact.read', { artifactId })).input.artifactId,
       artifactId,
     );
-  // A tool marked as a read is admitted as given: a session reads whatever its project
-  // holds. Without the mark, the binding holds.
-  const unknown = { artifactId: 'unknown' };
-  assert.equal(
-    (await f.admit(offered, 'artifact.read', unknown, true)).input.artifactId,
-    'unknown',
+  await assert.rejects(
+    async () => await f.admit(offered, 'artifact.read', { artifactId: 'unknown' }),
+    {
+      code: 'execution_arguments_forbidden',
+    },
   );
-  await assert.rejects(async () => await f.admit(offered, 'artifact.read', unknown), {
-    code: 'execution_arguments_forbidden',
-  });
   await assert.rejects(
     async () => await f.admit(offered, 'paired', { lane: 'task', artifactId: 'review-b' }),
     { code: 'execution_arguments_forbidden' },

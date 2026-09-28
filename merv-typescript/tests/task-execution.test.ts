@@ -158,7 +158,7 @@ test('a review session binds the claim its lease took, and a successor binds onl
   );
 });
 
-test('metadata admission avoids rendering and binds each session to its own record', async (t) => {
+test('metadata admission avoids rendering, binds each session to its own record and leaves reads open', async (t) => {
   const { app, offer, create, pending } = await fixture(t);
   const review = await pending();
   const work = await create('work-task');
@@ -176,6 +176,22 @@ test('metadata admission avoids rendering and binds each session to its own reco
   const policy: SessionToolPolicy = app.ctx.sessions;
   for (const { task, worker } of sessions) {
     assert.equal((await app.ctx.sessions.prepare(worker, 'task.get', {})).input.taskId, task.id);
+    // Leaving the instance out asks what the whole project is doing. Filling it in from the
+    // binding would answer for this worker's own record — a different question.
+    assert.deepEqual(
+      (await policy.prepare(worker, 'workflow.status_and_next', {}, true)).input,
+      {},
+    );
+    assert.deepEqual(
+      (await policy.prepare(worker, 'workflow.status_and_next', { instanceId: task.id }, true))
+        .input,
+      { instanceId: task.id },
+    );
+    // Without the read mark the published binding holds, and fills in what was left out.
+    assert.deepEqual(
+      (await app.ctx.sessions.prepare(worker, 'workflow.status_and_next', {})).input,
+      { instanceId: task.id },
+    );
     // Every session reads whatever the project holds; only a read marked as one opens.
     const outside = { artifactId: 'art_outside_the_packet' };
     assert.equal(
