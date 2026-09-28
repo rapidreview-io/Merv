@@ -1157,8 +1157,10 @@ export class ProjectScope implements Scope {
         time,
       );
       // A self-rotation never extends the credential it replaces. Nor does any rotation outlive
-      // the credential making the call, which issueCredential checks.
+      // the credential making the call: issueCredential guarantees that, and checking it here
+      // too refuses before the revocation writes.
       if (target.id === caller.actorId) this.notBeyond(expiresAt, previous.expires_at);
+      this.notBeyond(expiresAt, limit);
       const result = await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND project_id=? AND revoked_at IS NULL',
         time,

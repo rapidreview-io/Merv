@@ -233,6 +233,27 @@ test('a credential revoked only in the ledger cannot be rotated', async () => {
   assert.equal(await scopeRevokedAt(f, 'actor_credentials', f.machine.credential.id), null);
 });
 
+test('a rotation that would outlive its caller is refused before the ledger is consulted', async () => {
+  const f = await fixture();
+  const limited = await f.scope.issueActor(f.owner, {
+    name: 'Limited operator',
+    role: 'operator',
+    expiresAt: f.time(hour),
+  });
+  const caller: Caller = {
+    actorId: limited.actor.id,
+    projectId: limited.actor.projectId,
+    credentialId: limited.credential.id,
+  };
+  await f.ledger.revoke(sha256Hex(f.machine.token), 'scope');
+  // The machine credential never expires, so keeping its deadline outlives the caller's.
+  await assert.rejects(
+    f.scope.rotateCredential(caller, { credentialId: f.machine.credential.id }),
+    { code: 'self_expiry_extension', status: 403 },
+  );
+  assert.equal(await scopeRevokedAt(f, 'actor_credentials', f.machine.credential.id), null);
+});
+
 test('a key revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
   const { key, token } = await f.scope.createKey(f.alice, { projectId: f.project.id });
