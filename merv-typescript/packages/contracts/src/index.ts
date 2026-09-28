@@ -1854,6 +1854,14 @@ export interface ContextBuild {
   inputs: Record<string, ContextInput>;
   requestId: string;
 }
+/** An artifact a context draws on, as its package records it. */
+export interface ContextSource {
+  id: string;
+  title: string;
+  mediaType: string;
+  hash: string;
+  size: number;
+}
 export interface ContextPackage {
   id: string;
   projectId: string;
@@ -1863,7 +1871,9 @@ export interface ContextPackage {
   recipeHash: string;
   subject: ContextBuild['subject'];
   prompt: string;
-  sources: Artifact[];
+  /** Every artifact the build resolved, whether or not its bytes are in the prompt. A package
+   *  saved before sources were narrowed keeps the full artifact rows it recorded. */
+  sources: ContextSource[];
   omitted: string[];
   hash: string;
   createdAt: string;

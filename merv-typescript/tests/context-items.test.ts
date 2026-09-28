@@ -24,6 +24,7 @@ import type {
   ContextPreview,
   TaskTypeDefinition,
 } from '@merv/contracts';
+import { contextSource } from './fixtures/context.js';
 import { openState } from './fixtures/state.js';
 
 const caller: Caller = { actorId: 'actor_items', projectId: 'project_items' };
@@ -141,7 +142,7 @@ test('the layout lists each unit by one line or embeds it as one fenced block, i
   // A png is never read, and neither it nor a never unit is omitted: its line says what it is.
   assert.deepEqual(reads, []);
   assert.deepEqual(preview.omitted, []);
-  assert.deepEqual(preview.sources, [figure.artifact]);
+  assert.deepEqual(preview.sources, [contextSource(figure.artifact)]);
 });
 
 test('a fence is longer than any run of tildes in its body', async () => {

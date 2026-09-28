@@ -1,6 +1,6 @@
 /**
  * A package's metadata tells the truth about its prompt. `sources` lists every artifact the build
- * resolved, embedded or not, with exactly the artifact schema's fields. Only the builder computes
+ * resolved, embedded or not, by its ID, title, media type, hash and size. Only the builder computes
  * `omitted`: unique declared units in declaration order. A ranked item's printed sha256 is checked
  * against its content. Caller titles and IDs are folded onto one line, so none can start a heading.
  */
@@ -34,17 +34,6 @@ const definition: TaskTypeDefinition = {
   },
 };
 const subject = { id: 'assignment', revision: 1 };
-const schemaKeys = [
-  'createdAt',
-  'createdBy',
-  'hash',
-  'id',
-  'mediaType',
-  'projectId',
-  'size',
-  'title',
-];
-
 async function setup(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-metadata-'));
   const state = await openState(directory);
@@ -189,7 +178,7 @@ test('a ranked item hash is checked against its content before it is printed', a
   assert.doesNotMatch(plain.prompt, /sha256/);
 });
 
-test('sources carry exactly the artifact schema fields, whatever the store returns', async (t) => {
+test('sources carry exactly an artifact’s ID, title, media type, hash and size', async (t) => {
   const { artifacts, builder, operator } = await setup(t);
   const plain = await artifacts.create(operator, { title: 'Plain', content: 'Plain bytes.' });
   // Not textual, so no renderer reads the bytes the fake objectId would point at.
@@ -208,8 +197,11 @@ test('sources carry exactly the artifact schema fields, whatever the store retur
     }) as Artifact;
   const legacy = await builder.register(definition);
   const ranked = await builder.register({ ...definition, name: 'test.metadata-sources' });
-  const keys = (artifact: Artifact) => Object.keys(artifact).sort();
-  const withObject = [...schemaKeys, 'objectId'].sort();
+  const items = await builder.register({
+    ...definition,
+    name: 'test.metadata-items',
+    recipe: { ...definition.recipe, format: 2 },
+  });
   const fromLegacy = await legacy.preview(operator, {
     subject,
     inputs: { evidence: { artifactIds: [plain.id, stored.id], mode: 'auto' } },
@@ -228,10 +220,27 @@ test('sources carry exactly the artifact schema fields, whatever the store retur
       },
     },
   });
-  for (const preview of [fromLegacy, fromRanked]) {
-    assert.deepEqual(preview.sources.map(keys), [schemaKeys, withObject]);
-    assert.equal(preview.sources[1].objectId, 'object_stored');
-  }
+  const fromItems = await items.preview(operator, {
+    subject,
+    inputs: {
+      evidence: {
+        items: [plain, stored].map((artifact) => ({
+          id: artifact.id,
+          title: artifact.title,
+          body: { artifactId: artifact.id },
+        })),
+      },
+    },
+  });
+  const expected = [plain, stored].map(({ id, title, mediaType, hash, size }) => ({
+    id,
+    title,
+    mediaType,
+    hash,
+    size,
+  }));
+  for (const preview of [fromLegacy, fromRanked, fromItems])
+    assert.deepEqual(preview.sources, expected);
 });
 
 test('a title or id with line breaks cannot start a structural line in either renderer', async (t) => {

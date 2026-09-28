@@ -22,6 +22,7 @@ import {
   type ContextBuild,
   type ContextPackage,
   type ContextPreview,
+  type ContextSource,
   type Sql,
   type Transaction,
   type Artifact,
@@ -228,27 +229,13 @@ export const textual = (mediaType: string) =>
 export const minChars = (bytes: number) => Math.ceil(bytes / 3);
 /** A caller string on one line, so it can never start a structural line such as a heading. */
 export const line = (text: string) => text.replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ');
-/** A source as the package records it: exactly the artifact schema's fields, whatever `get` returned. */
-export const source = ({
+/** A source as the package records it: exactly these fields, whatever `get` returned. */
+export const source = ({ id, title, mediaType, hash, size }: Artifact): ContextSource => ({
   id,
-  projectId,
-  createdBy,
   title,
   mediaType,
   hash,
   size,
-  objectId,
-  createdAt,
-}: Artifact): Artifact => ({
-  id,
-  projectId,
-  createdBy,
-  title,
-  mediaType,
-  hash,
-  size,
-  ...(objectId === undefined ? {} : { objectId }),
-  createdAt,
 });
 
 export class RecipeContextBuilder implements ContextBuilder {

@@ -17,7 +17,7 @@ import {
   type TaskTypeDefinition,
   type Transaction,
 } from '@merv/contracts';
-import { buildContext } from './fixtures/context.js';
+import { buildContext, contextSource } from './fixtures/context.js';
 import { countWrites, openState, storedContext } from './fixtures/state.js';
 
 const definition: TaskTypeDefinition = {
@@ -86,7 +86,7 @@ test('preview renders the exact future package without creating IDs, timestamps,
   assert.ok(!Object.hasOwn(preview, 'createdAt'));
   assert.ok(!Object.hasOwn(preview, 'requestId'));
   assert.deepEqual(preview.omitted, ['background']);
-  assert.deepEqual(preview.sources, [evidence]);
+  assert.deepEqual(preview.sources, [contextSource(evidence)]);
   assert.match(preview.prompt, /The exact result is 42/);
   assert.match(preview.prompt, /Use the retained receipt/);
   assert.ok(preview.prompt.length <= definition.recipe.maxChars);

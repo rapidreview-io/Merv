@@ -15,7 +15,7 @@ import { TASK_WORKFLOW } from '@merv/tasks';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, TaskTypeDefinition } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import { buildContext } from './fixtures/context.js';
+import { buildContext, contextSource } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
 
 const recipe: TaskTypeDefinition = {
@@ -399,7 +399,7 @@ test('structured binary evidence remains reviewable and replay cannot bypass rev
     assert.match(context.prompt, /artifact\.read/);
     assert.deepEqual(
       context.sources.find((source) => source.id === binary.id),
-      binary,
+      contextSource(binary),
     );
     assert.ok(context.sources.some((source) => source.id === submitted.deliveryAssessmentId));
     await app.ctx.tasks.checkpoint(reviewer, {

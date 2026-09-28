@@ -1,8 +1,10 @@
 import type {
+  Artifact,
   Caller,
   ContextBuild,
   ContextPackage,
   ContextRegistration,
+  ContextSource,
   Transaction,
 } from '@merv/contracts';
 
@@ -16,3 +18,12 @@ export async function buildContext(
   const preview = await registration.preview(caller, input, tx);
   return await registration.build(caller, { requestId, preview }, tx);
 }
+
+/** An artifact as a context package records it among its sources. */
+export const contextSource = ({ id, title, mediaType, hash, size }: Artifact): ContextSource => ({
+  id,
+  title,
+  mediaType,
+  hash,
+  size,
+});

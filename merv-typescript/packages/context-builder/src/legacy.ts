@@ -12,6 +12,7 @@ import {
   type Caller,
   type ContextBuild,
   type ContextPreview,
+  type ContextSource,
   type RankedContextItem,
   type TaskTypeDefinition,
 } from '@merv/contracts';
@@ -55,7 +56,7 @@ export async function render(
   const tail = `\n## Expected output\n${recipe.outputInstructions}\n`;
   let size = head.length + tail.length;
   const sections = new Map<string, string>(),
-    sources: Artifact[] = [],
+    sources: ContextSource[] = [],
     omitted: string[] = [];
   // Reserve required context before considering optional background.
   for (const section of [

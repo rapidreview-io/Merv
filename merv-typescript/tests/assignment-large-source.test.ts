@@ -45,7 +45,7 @@ test('an assignment may pin a large artifact, whose bytes live in object storage
     snapshot: { id: 'wf_task', revision: 1 },
   } as unknown as WorkflowCheckContext;
   const packet = await buildAssignment(rule, context);
-  assert.equal(packet.context?.sources[0]?.objectId, 'obj_rows');
+  assert.deepEqual(packet.context?.sources, [source]);
 });
 
 test('an assignment may carry narrowed context sources, still fenced to the project', async () => {
