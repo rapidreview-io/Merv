@@ -30,7 +30,8 @@ const preview = z
       })
       .strict(),
     prompt: text,
-    // Context Builder resolved each through Artifacts for this caller, so each is the project's.
+    // Context Builder resolved each through Artifacts for this caller, so each is the project's;
+    // a source carries no projectId, and a check must not require one.
     sources: z.array(
       z
         .object({
