@@ -6,6 +6,22 @@ import { z } from 'zod';
 /** A leased worker should inspect a large file on disk or ask for a deliberate small range. */
 const workerInlineBytes = 64_000;
 const workerRangeCharacters = 8_192;
+/** Service errors name no tools; the tool adds how to go on after a refusal with this code. */
+async function hinted<T>(
+  run: () => Promise<T>,
+  code: string,
+  hint: () => Promise<string | undefined>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!(error instanceof MervError) || error.code !== code) throw error;
+    const text = await hint();
+    if (!text) throw error;
+    throw new MervError(error.code, `${error.message}; ${text}`, error.status, error.details);
+  }
+}
+const pendingHint = async () => 'retry artifact.upload_begin with the same requestId';
 export const artifactToolsPlugin = {
   name: 'merv-artifact-tools',
   inject: ['artifacts', 'tools'],
@@ -59,7 +75,12 @@ export const artifactToolsPlugin = {
           startPart: z.number().int().min(1).max(10000).optional(),
         })
         .strict(),
-      async (c, i) => await ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
+      async (c, i) =>
+        await hinted(
+          () => ctx.artifacts.uploadResume(c, i.uploadId, i.startPart),
+          'upload_pending',
+          pendingHint,
+        ),
       false,
       () => 'secret',
     );
@@ -67,7 +88,12 @@ export const artifactToolsPlugin = {
       'artifact.upload_complete',
       'Verify the uploaded bytes and retain an immutable artifact. Safe to retry with the same uploadId.',
       z.object({ uploadId: z.string().min(1) }).strict(),
-      async (c, i) => await ctx.artifacts.uploadComplete(c, i.uploadId),
+      async (c, i) =>
+        await hinted(
+          () => ctx.artifacts.uploadComplete(c, i.uploadId),
+          'upload_pending',
+          pendingHint,
+        ),
       false,
       () => 'propose',
     );
@@ -122,10 +148,15 @@ export const artifactToolsPlugin = {
             }
           }
         }
-        return await ctx.artifacts.read(c, i.artifactId, {
-          offset: i.offset,
-          length: i.length,
-        });
+        // Only on the error path: whether this artifact can be downloaded instead.
+        return await hinted(
+          () => ctx.artifacts.read(c, i.artifactId, { offset: i.offset, length: i.length }),
+          'artifact_size',
+          async () =>
+            ctx.artifacts.canDownload(await ctx.artifacts.get(c, i.artifactId))
+              ? 'use artifact.read with mode download'
+              : undefined,
+        );
       },
       true,
       // In a Pi conversation a signed URL is shown only to the person; a leased worker may

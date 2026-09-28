@@ -12,6 +12,20 @@ import {
 const MEDIA = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
+/** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
+export const META = 'id,project_id,created_by,title,media_type,hash,size,created_at,object_id';
+export const fromRow = (row: any): Artifact => ({
+  id: row.id,
+  projectId: row.project_id,
+  createdBy: row.created_by,
+  title: row.title,
+  mediaType: row.media_type,
+  hash: row.hash,
+  size: row.size,
+  createdAt: row.created_at,
+  ...(row.object_id ? { objectId: row.object_id } : {}),
+});
+
 /** Bytes read back as text. Tool input refuses NUL in text, so bytes carrying it are not text:
  * a text answer has to be one the caller could send back. */
 export const isText = (bytes: Buffer) => isUtf8(bytes) && !bytes.includes(0);

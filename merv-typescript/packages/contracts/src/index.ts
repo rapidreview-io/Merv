@@ -1093,9 +1093,11 @@ export interface ArtifactUploadStatus {
   parts: { partNumber: number; url: string; size: number; headers: Record<string, string> }[];
   completedParts: number[];
   nextPart: number | null;
+  /** Set once the upload is complete; parts is then [] and nextPart null. */
+  artifactId?: string;
 }
 /** An upload plan as large storage issues it; artifacts adds the upload ID. */
-export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId'>;
+export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId' | 'artifactId'>;
 /**
  * Object storage for artifacts above the inline limit, implemented by @merv/sandboxes. Missing
  * bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a refused origin, a
@@ -1123,11 +1125,20 @@ export interface LargeArtifactStorage {
    */
   read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
 }
+/**
+ * Every call authorises once, at its start. A revocation that lands while bytes or a download
+ * link are fetched is enforced by the ToolRegistry, which reauthorises read tools after the
+ * handler; domain callers act on bytes inside their own write transactions, which authorise
+ * again. Only a write capability is rechecked after it is issued: the signed part URLs of
+ * uploadBegin and uploadResume.
+ */
 export interface Artifacts {
   readonly downloadSupported: boolean;
   canDownload(artifact: Artifact): boolean;
   readonly largeUploadAvailable: boolean;
   bindLarge(storage: LargeArtifactStorage): () => void;
+  /** Idempotent per actor and requestId. After completion, begin and resume return the
+   * status with `artifactId` and call no storage. */
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
   uploadResume(caller: Caller, uploadId: string, startPart?: number): Promise<ArtifactUploadStatus>;
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact>;
