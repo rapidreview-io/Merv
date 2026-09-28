@@ -12,6 +12,7 @@ import type {
   TaskCheckpointInput,
   TaskContext,
   TaskDelivery,
+  Transaction,
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
@@ -20,6 +21,7 @@ import type { Session } from '@merv/sessions/types';
 import { WorkflowsService } from '@merv/workflows';
 import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
+import type { PostgresState } from '@merv/state';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext) {
@@ -322,6 +324,39 @@ test('lease generations survive provider reload but old invocations and released
   );
   const successor = await f.offer();
   assert.notEqual(successor.session.actorId, offered.session.actorId);
+});
+
+test('a leased status_and_next admission stays within a statement budget', async (t) => {
+  const f = await fixture(t);
+  const offered = await f.offer();
+  const worker = await f.app.ctx.sessions.authenticate(offered.secret);
+  await f.app.ctx.domainEvents.drain();
+  // Statements issued through the state's transactions, snapshot children included.
+  const state = f.app.ctx.state as PostgresState;
+  let statements = 0;
+  const transaction = state.transaction.bind(state);
+  t.mock.method(state, 'transaction', ((fn: (tx: Transaction) => unknown) =>
+    transaction((tx) => {
+      // Mutate in place: assertTransaction() compares the transaction object's identity.
+      const { run, get, all } = tx;
+      Object.assign(tx, {
+        run: (sql: string, ...p: never[]) => (statements++, run(sql, ...p)),
+        get: (sql: string, ...p: never[]) => (statements++, get(sql, ...p)),
+        all: (sql: string, ...p: never[]) => (statements++, all(sql, ...p)),
+      });
+      return fn(tx);
+    })) as typeof state.transaction);
+  const invocation = await f.app.ctx.sessions.prepare(
+    worker,
+    'workflow.status_and_next',
+    { instanceId: f.task.id },
+    true,
+  );
+  assert.equal(invocation.tool, 'workflow.status_and_next');
+  // The dispatch authorization runs inside the session's own frame, so every Scope check it
+  // makes for the worker resolves from that frame instead of re-reading the session row
+  // (about 400 statements unframed, 127 framed).
+  assert.ok(statements <= 160, `${statements} statements for one leased read`);
 });
 
 test('logical task owner can reissue worker delivery while preserving immutable review input/output provenance', async (t) => {

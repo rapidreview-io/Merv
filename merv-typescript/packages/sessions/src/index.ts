@@ -2257,12 +2257,22 @@ export class LeasedSessions implements Sessions {
     const admission =
       tool === 'session.message.ack'
         ? { tool, input: structuredClone(input) }
-        : await this.workflows.authorizeLeaseDispatch(
-            caller,
-            session.lease,
-            { ...session.execution, registrationId: registrationId ?? current.registrationId },
-            { tool, input, ...(read ? { read } : {}) },
-            tx,
+        : await this.framed(
+            {
+              tx,
+              actorId: session.actorId,
+              sessionId: session.id,
+              source: session.source,
+              role: session.role,
+            },
+            () =>
+              this.workflows.authorizeLeaseDispatch(
+                caller,
+                session.lease,
+                { ...session.execution, registrationId: registrationId ?? current.registrationId },
+                { tool, input, ...(read ? { read } : {}) },
+                tx,
+              ),
           );
     return { admission, registrationId: current.registrationId, session };
   }
