@@ -6,7 +6,6 @@ import {
   digest,
   MervError,
   newId,
-  sha256Hex,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -14,9 +13,9 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Agent, AgentRegistration } from './types.js';
-import type { CredentialStore } from '@merv/identity/credentials';
+import { tokenDigest, type CredentialStore } from '@merv/identity/credentials';
 
-export const tokenDigest = sha256Hex;
+export { tokenDigest };
 export { sourceCaller } from '@merv/contracts';
 interface AgentRow {
   id: string;

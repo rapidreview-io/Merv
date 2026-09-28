@@ -1,22 +1,26 @@
 import type { Context } from 'cordis';
 import {
-  createRemoteJWKSet,
-  customFetch,
+  createLocalJWKSet,
   decodeJwt,
   decodeProtectedHeader,
+  errors,
   jwtVerify,
-  type FetchImplementation,
+  type JSONWebKeySet,
   type JWTVerifyGetKey,
 } from 'jose';
 import { MervError, type VerifiedIdentity } from '@merv/contracts';
 import type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
-import { CredentialStore } from './credentials.js';
 
 export type { IdentityConfig, IdentityConfiguration, IdentityProvider } from './types.js';
 
 const MAX_JWT_BYTES = 16_384;
 const MAX_JWKS_BYTES = 65_536;
 const JWKS_TIMEOUT_MS = 5000;
+/** Refresh in the background after 5 min; retry at most every 30 s; trust the last good set for 24 h. */
+const REFRESH_MS = 5 * 60_000;
+const RETRY_MS = 30_000;
+const MAX_STALE_MS = 24 * 60 * 60_000;
+const PRIVATE_FIELDS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 const fields = new Set([
   'supabaseUrl',
   'mode',
@@ -61,20 +65,19 @@ function publicKey(reference: unknown): string {
   throw invalidConfig();
 }
 
-/** Bound the response body as well as the network request; never follow JWKS redirects. */
-async function jwksResponse(
+/** GET the key set: no redirects or cookies, at most 64 KiB, abandoned when `signal` aborts. */
+async function loadJwks(
   fetcher: typeof globalThis.fetch,
   url: string,
-  options: { headers: Headers; signal: AbortSignal },
-): Promise<Response> {
+  signal: AbortSignal,
+): Promise<unknown> {
   const response = await fetcher(url, {
     method: 'GET',
-    headers: options.headers,
-    signal: options.signal,
+    signal,
     redirect: 'error',
     credentials: 'omit',
   });
-  if (response.status !== 200 || !response.body || options.signal.aborted) {
+  if (response.status !== 200 || !response.body || signal.aborted) {
     void response.body?.cancel().catch(() => undefined);
     throw unauthorized();
   }
@@ -82,7 +85,7 @@ async function jwksResponse(
   const abort = () => {
     void reader.cancel().catch(() => undefined);
   };
-  options.signal.addEventListener('abort', abort, { once: true });
+  signal.addEventListener('abort', abort, { once: true });
   try {
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_JWKS_BYTES))
@@ -96,57 +99,87 @@ async function jwksResponse(
       if (length > MAX_JWKS_BYTES) throw unauthorized();
       chunks.push(part.value);
     }
-    const parsed: unknown = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
-    );
-    if (
-      !object(parsed) ||
-      !Array.isArray(parsed.keys) ||
-      parsed.keys.length === 0 ||
-      parsed.keys.length > 32 ||
-      parsed.keys.some(
-        (key: unknown) =>
-          !object(key) ||
-          !['EC', 'RSA'].includes(String(key.kty)) ||
-          ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'].some((field) => Object.hasOwn(key, field)),
-      )
-    )
-      throw unauthorized();
-    return new Response(JSON.stringify(parsed), { status: 200 });
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
   } finally {
-    options.signal.removeEventListener('abort', abort);
+    signal.removeEventListener('abort', abort);
     void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
 
-function boundedFetch(fetcher: typeof globalThis.fetch, clock: () => number): FetchImplementation {
-  let retryAt = 0;
-  return async (url, options) => {
-    if (clock() < retryAt) throw unauthorized();
-    if (options.signal.aborted) throw unauthorized();
-    let abort!: () => void;
-    const stopped = new Promise<never>((_resolve, reject) => {
-      abort = () => reject(unauthorized());
-      if (options.signal.aborted) abort();
-      else options.signal.addEventListener('abort', abort, { once: true });
+/** A public signing key this verifier can use; everything else in a set is ignored. */
+const usable = (key: unknown) =>
+  object(key) &&
+  !PRIVATE_FIELDS.some((field) => Object.hasOwn(key, field)) &&
+  ((key.kty === 'EC' && key.crv === 'P-256') ||
+    key.kty === 'RSA' ||
+    (key.kty === 'OKP' && key.crv === 'Ed25519'));
+
+/** The last good Supabase key set. No request waits on a refresh while the set is usable. */
+class RemoteKeys {
+  #keys?: JWTVerifyGetKey;
+  #loadedAt = -Infinity;
+  #triedAt = -Infinity;
+  #pending?: Promise<void>;
+
+  constructor(
+    private readonly load: (signal: AbortSignal) => Promise<unknown>,
+    private readonly clock: () => number,
+  ) {}
+
+  /** A clock that stepped back makes an instant due for refresh, never expired. */
+  #age(time: number): number {
+    const age = this.clock() - time;
+    return age >= 0 ? age : REFRESH_MS;
+  }
+
+  #mayFetch(): boolean {
+    return this.#pending !== undefined || this.#age(this.#triedAt) >= RETRY_MS;
+  }
+
+  #usable(): boolean {
+    return this.#keys !== undefined && this.#age(this.#loadedAt) < MAX_STALE_MS;
+  }
+
+  /** Single flight. A response with no usable key throws, so the last good set stays. */
+  #refresh(): Promise<void> {
+    this.#pending ??= (async () => {
+      this.#triedAt = this.clock();
+      const signal = AbortSignal.timeout(JWKS_TIMEOUT_MS);
+      // Settles even if a fetcher ignores its signal: one hung request cannot wedge refresh.
+      const timedOut = new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(unauthorized()), { once: true });
+      });
+      const json = await Promise.race([this.load(signal), timedOut]);
+      const keys = object(json) && Array.isArray(json.keys) ? json.keys.filter(usable) : [];
+      if (keys.length === 0) throw unauthorized();
+      this.#keys = createLocalJWKSet({ keys } as JSONWebKeySet);
+      this.#loadedAt = this.clock();
+    })().finally(() => {
+      this.#pending = undefined;
     });
+    return this.#pending;
+  }
+
+  getKey: JWTVerifyGetKey = async (header, token) => {
+    if (!this.#usable()) {
+      if (this.#mayFetch()) await this.#refresh().catch(() => undefined);
+    } else if (this.#age(this.#loadedAt) >= REFRESH_MS && this.#mayFetch())
+      void this.#refresh().catch(() => undefined);
+    if (!this.#usable()) throw unauthorized();
     try {
-      const response = await Promise.race([jwksResponse(fetcher, url, options), stopped]);
-      retryAt = 0;
-      return response;
-    } catch {
-      retryAt = clock() + 30_000;
-      throw unauthorized();
-    } finally {
-      options.signal.removeEventListener('abort', abort);
+      return await this.#keys!(header, token);
+    } catch (error) {
+      // A new kid joins or starts one refresh; unknown-kid spam fetches at most every 30 s.
+      if (!(error instanceof errors.JWKSNoMatchingKey) || !this.#mayFetch()) throw error;
+      await this.#refresh();
+      return await this.#keys!(header, token);
     }
   };
 }
 
 /** Verifies external user identities; it owns no project, actor or membership state. */
 export class SupabaseIdentity implements IdentityProvider {
-  credentials?: CredentialStore;
   #public: IdentityConfiguration = { enabled: false };
   #key?: Uint8Array | JWTVerifyGetKey;
   #issuer = '';
@@ -200,13 +233,10 @@ export class SupabaseIdentity implements IdentityProvider {
         this.#key = new TextEncoder().encode(secret);
         this.#algorithms = ['HS256'];
       } else if (mode === 'jwks' && config.secretEnv === undefined) {
-        this.#key = createRemoteJWKSet(new URL(`${this.#issuer}/.well-known/jwks.json`), {
-          timeoutDuration: JWKS_TIMEOUT_MS,
-          cacheMaxAge: 300_000,
-          cooldownDuration: 30_000,
-          [customFetch]: boundedFetch(options.fetch ?? globalThis.fetch, this.#clock),
-        });
-        this.#algorithms = ['ES256', 'RS256'];
+        const fetcher = options.fetch ?? globalThis.fetch;
+        const jwks = `${this.#issuer}/.well-known/jwks.json`;
+        this.#key = new RemoteKeys((signal) => loadJwks(fetcher, jwks, signal), this.#clock).getKey;
+        this.#algorithms = ['ES256', 'RS256', 'EdDSA', 'Ed25519'];
       } else throw invalidConfig();
       this.#public = {
         enabled: true,
@@ -267,13 +297,9 @@ export class SupabaseIdentity implements IdentityProvider {
 
 export const identityPlugin = {
   name: 'merv-identity',
-  inject: ['state'],
-  async apply(ctx: Context, config: IdentityConfig = {}) {
-    const identity = new SupabaseIdentity(config);
-    const credentials = new CredentialStore(ctx.state);
-    await credentials.initialize();
-    identity.credentials = credentials;
-    ctx.provide('identity', identity);
+  inject: [],
+  apply(ctx: Context, config: IdentityConfig = {}) {
+    ctx.provide('identity', new SupabaseIdentity(config));
   },
 };
 export default identityPlugin;
