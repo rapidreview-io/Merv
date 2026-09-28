@@ -321,30 +321,19 @@ export class CodeProposalService implements CodeProposals {
     await this.scope.require(caller, 'read', tx);
     return tx ? read(tx) : await this.state.read(read);
   }
+  /**
+   * Sealed evidence keeps its bytes within the inline limit: artifacts.bytes refuses a larger
+   * artifact (artifact_size) or one whose bytes are gone (artifact_bytes_missing), and verifies
+   * the rest, so the bytes themselves are not needed here.
+   */
   private async pinArtifact(caller: Caller, id: string, tx: Transaction): Promise<Artifact> {
-    const artifact = parseCodeInput(artifactSchema, await this.artifacts.get(caller, id, tx));
+    const { artifact: stored } = await this.artifacts.bytes(caller, id, tx);
+    const artifact = parseCodeInput(artifactSchema, stored);
     check(
       artifact.projectId === caller.projectId && artifact.id === id,
       'code_proposal_artifact',
       'Evidence must belong to this project',
       403,
-    );
-    const read = await this.artifacts.read(caller, id);
-    check(
-      canonical(parseCodeInput(artifactSchema, read.artifact)) === canonical(artifact) &&
-        typeof read.content === 'string' &&
-        (read.encoding === 'utf8' || read.encoding === 'base64'),
-      'code_proposal_artifact',
-      'Evidence metadata changed while sealing',
-      409,
-    );
-    const bytes = Buffer.from(read.content, read.encoding);
-    check(
-      bytes.length === artifact.size &&
-        createHash('sha256').update(bytes).digest('hex') === artifact.hash,
-      'code_proposal_artifact',
-      'Evidence bytes do not match their immutable metadata',
-      409,
     );
     return artifact;
   }
