@@ -204,27 +204,26 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     return await this.reading(caller, tx, async (tx, caller) => {
       if (!ids.length) return new Map();
       // One read of the instances, then two per definition among them, never two per instance.
-      const limits = new Map<string, { limit: WorkflowLoopLimit; ids: string[] }>();
-      for (const row of await tx.all<InstanceRow>(
-        `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+      const limits = new Map<string, { limit?: WorkflowLoopLimit; ids: string[] }>();
+      for (const row of await tx.all<Pick<InstanceRow, 'id' | 'workflow' | 'version'>>(
+        `SELECT id,workflow,version FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
         caller.projectId,
         ...ids,
       )) {
-        const snapshot = this.snapshot(row);
-        const at = `${snapshot.workflow}@${snapshot.version}`;
-        const known = limits.get(at);
-        if (known) {
-          known.ids.push(snapshot.id);
-          continue;
-        }
-        const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
-          (item) => item.name === name,
-        );
-        if (limit) limits.set(at, { limit, ids: [snapshot.id] });
+        const at = `${row.workflow}@${row.version}`;
+        if (!limits.has(at))
+          limits.set(at, {
+            limit: this.definition(row.workflow, row.version).policy?.limits?.find(
+              (item) => item.name === name,
+            ),
+            ids: [],
+          });
+        limits.get(at)!.ids.push(row.id);
       }
       const statuses = new Map<string, WorkflowLimitStatus>();
       for (const { limit, ids: some } of limits.values())
-        for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
+        if (limit)
+          for (const [id, status] of await limitStatusOf(tx, limit, some)) statuses.set(id, status);
       return statuses;
     });
   }
