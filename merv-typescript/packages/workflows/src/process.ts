@@ -19,7 +19,7 @@ import type {
 export function processGraph(source: {
   definition: WorkflowDefinition;
   rules: WorkflowActionRule[];
-  history: WorkflowHistoryEntry[];
+  history: Omit<WorkflowHistoryEntry, 'instanceId' | 'data'>[];
   decision: WorkflowDecision;
   dependencies: WorkflowDependency[];
   dependents: WorkflowDependency[];

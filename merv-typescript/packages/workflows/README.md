@@ -179,21 +179,26 @@ Reviews or artifact storage. See [the integrated contract](../../docs/SESSION_LE
 
 ## Conventions
 
-**Authority.** A caller method authorizes its caller through Scope: reads need `read`;
-a handle's commands need `read` on a managed graph, where the program authorizes the
-action itself, and `write` otherwise; `extendLimit` needs `admin`. The trusted provider
+**Authority.** A caller method authorizes its caller through Scope once, at entry: reads
+need `read`; a handle's commands need `read` on a managed graph, where the program authorizes
+the action itself, and `write` otherwise; `extendLimit` needs `admin`. The trusted provider
 seams (`replaceBlockers`, `systemPrerequisites(provider).replace`, `dependencyRelations`,
 `sponsoringRoots`) take a `projectId` and the caller's `tx` and authorize no caller: only
-in-process code reaches them. A lease step authorizes its worker at entry.
+in-process code reaches them. A lease step authorizes its worker at entry. No decision is
+repeated after the callbacks, so a callback that revokes its own caller goes unnoticed; only
+`dispatchCandidates` and `offerLease` authorize their source again once every callback has
+run, and roll back if it was revoked.
 
 **Transactions.** A method given a `tx` asserts that it belongs to State and runs in it;
 otherwise it opens its own transaction, which is read-only inside a `state.snapshot`.
 
 **Callbacks.** Every program callback (guards, `describe`, lease hooks, builders) is
 awaited in the engine's transaction and must not write to `wf_instances`: after each
-group of callbacks the engine rereads the instance, refuses it as
-`invalid_workflow_policy` 500 if it reads differently (a rewrite to equal values is not
-seen), and rechecks the caller's authority and the registration.
+group of callbacks the engine rereads the instance's stored `revision`, `state`,
+`data_json` and `updated_at` and refuses the call as `invalid_workflow_policy` 500 if any
+differs from what it read before them, even equal data in other bytes (a rewrite of the
+same bytes is not seen). It then checks that the registration is still installed. Under a
+snapshot it skips the reread, because State refuses every write there.
 A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
 `nested_transaction`, `transaction_*`, `state_*`) never is, and a write under a read is
 `invalid_workflow_policy` 500.

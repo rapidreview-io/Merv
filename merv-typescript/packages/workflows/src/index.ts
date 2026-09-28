@@ -38,7 +38,6 @@ import type {
   WorkflowDispatchCandidate,
   WorkflowLease,
   WorkflowLeaseOffer,
-  WorkflowCheckContext,
   WorkflowAssignmentRule,
   WorkflowHistoryEntry,
   WorkflowExtendLimit,
@@ -113,6 +112,8 @@ interface Registration {
 }
 /** One step as load() read it: the frozen context every callback of the call is given. */
 interface Loaded {
+  /** The instance as stored, which the closing recheck compares against. */
+  row: InstanceRow;
   snapshot: WorkflowSnapshot;
   registration: Registration;
   rule: WorkflowAssignmentRule;
@@ -186,14 +187,13 @@ export class WorkflowsService implements Workflows {
     await this.state.read(async (sql) => await this.contracts.preload(sql));
   }
 
-  private async admitRead(
-    caller: Caller,
+  /** Its caller was authorized for `read` at the method's entry, in the same transaction. */
+  private admitRead(
     execution: WorkflowExecution,
     tool: string,
     input: Data,
-    tx: Transaction,
     read?: boolean,
-  ): Promise<WorkflowDispatchAdmission> {
+  ): WorkflowDispatchAdmission {
     const registration = this.definition(execution.workflow, execution.version);
     check(
       registration.registrationId === execution.registrationId,
@@ -204,10 +204,8 @@ export class WorkflowsService implements Workflows {
     // The project overview is asked for by leaving the instance out. A fixed binding would
     // fill it in and answer for this worker's own record instead — a narrower question than
     // the one asked, and the only read a session cannot otherwise express.
-    if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(input, 'instanceId')) {
-      await this.scope.require(caller, 'read', tx);
+    if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(input, 'instanceId'))
       return { tool, input: structuredClone(input) };
-    }
     try {
       return admitDispatch(execution, tool, input);
     } catch (error) {
@@ -223,10 +221,8 @@ export class WorkflowsService implements Workflows {
           'execution_arguments_forbidden',
           'execution_reference_unavailable',
         ].includes(error.code)
-      ) {
-        await this.scope.require(caller, 'read', tx);
+      )
         return { tool, input: structuredClone(input) };
-      }
       throw error;
     }
   }
@@ -337,14 +333,44 @@ export class WorkflowsService implements Workflows {
     this.assertOpen();
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
-      const decision = await this.decide(caller, instanceId, {}, tx, checks);
+      await this.scope.require(caller, 'read', tx);
+      const decision = await this.decideIn(caller, instanceId, {}, tx, checks);
       const registration = this.registrations.get(`${decision.workflow}@${decision.version}`);
       check(registration, 'workflow_unavailable', 'The pinned definition is unavailable', 503);
-      const { dependencies, dependents } = await this.dependencies(caller, instanceId, tx);
+      const { dependencies, dependents } = await relations(
+        tx,
+        this.contracts,
+        caller.projectId,
+        instanceId,
+      );
+      // Only what a traversal shows: a history row's data can be as large as the data it merged.
+      const history = (
+        await tx.all<{
+          revision: number;
+          action: string;
+          actor_id: string;
+          request_id: string;
+          from_state: string | null;
+          to_state: string;
+          created_at: string;
+        }>(
+          'SELECT revision,action,actor_id,request_id,from_state,to_state,created_at FROM wf_history WHERE project_id = ? AND instance_id = ? ORDER BY revision',
+          caller.projectId,
+          instanceId,
+        )
+      ).map((row) => ({
+        revision: row.revision,
+        action: row.action,
+        actorId: row.actor_id,
+        requestId: row.request_id,
+        fromState: row.from_state,
+        toState: row.to_state,
+        createdAt: row.created_at,
+      }));
       return processGraph({
         definition: registration.definition,
         rules: registration.policy?.actions ?? [],
-        history: await this.history(caller, instanceId, tx),
+        history,
         decision,
         dependencies,
         dependents,
@@ -372,14 +398,14 @@ export class WorkflowsService implements Workflows {
         'Action is required',
       );
     const input = query.input === undefined ? undefined : this.data(query.input);
-    return await inTransaction(
-      this.state,
-      transaction,
-      async (tx) => await this.decide(caller, instanceId, { ...query, input }, tx, true),
-    );
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return await this.decideIn(caller, instanceId, { ...query, input }, tx, true);
+    });
   }
 
-  private async decide(
+  /** The decision for an authorized caller, rechecked after its callbacks. */
+  private async decideIn(
     caller: Caller,
     instanceId: string,
     query: WorkflowEvaluationInput,
@@ -387,8 +413,8 @@ export class WorkflowsService implements Workflows {
     checks: boolean,
   ): Promise<WorkflowDecision> {
     const { input } = query;
-    await this.scope.require(caller, 'read', tx);
-    const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
+    const row = await this.readRow(tx, caller.projectId, instanceId);
+    const snapshot = this.snapshot(row);
     if (input && Object.hasOwn(input, 'expectedRevision'))
       check(
         input.expectedRevision === snapshot.revision,
@@ -416,16 +442,11 @@ export class WorkflowsService implements Workflows {
       await readBlockers(tx, caller.projectId, snapshot.id),
       checks,
     );
+    // Without a registration no program callback ran.
     if (installed) {
-      await this.checkContext(
-        { caller, snapshot, tx },
-        'Guidance callbacks must not change the workflow instance',
-      );
+      await this.recheck(tx, row, 'Guidance callbacks must not change the workflow instance');
       this.requireActive(installed);
-    } else {
-      await this.scope.require(caller, 'read', tx);
-      this.assertOpen();
-    }
+    } else this.assertOpen();
     return result;
   }
 
@@ -493,10 +514,7 @@ export class WorkflowsService implements Workflows {
             'Dispatch labels must be nonempty',
             500,
           );
-          await this.checkContext(
-            { caller: source, snapshot, tx },
-            'Dispatch callbacks must not change the workflow instance',
-          );
+          await this.recheck(tx, row, 'Dispatch callbacks must not change the workflow instance');
           this.requireActive(registration);
           if (
             worker &&
@@ -549,11 +567,9 @@ export class WorkflowsService implements Workflows {
   ): Promise<Role> {
     source = structuredClone(source);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const { role, context, registration } = await this.role(source, target, tx);
-      await this.checkContext(
-        context,
-        'Lease role callbacks must not change the workflow instance',
-      );
+      await this.scope.require(source, 'read', tx);
+      const { role, row, registration } = await this.role(source, target, tx);
+      await this.recheck(tx, row, 'Lease role callbacks must not change the workflow instance');
       this.requireActive(registration);
       return role;
     });
@@ -586,8 +602,10 @@ export class WorkflowsService implements Workflows {
   ): Promise<WorkflowLeaseOffer> {
     ({ source, worker } = structuredClone({ source, worker }));
     return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(source, 'read', tx);
       const {
         role,
+        row,
         snapshot,
         registration,
         rule,
@@ -613,7 +631,7 @@ export class WorkflowsService implements Workflows {
         tx,
         dependencies: sourced.dependencies,
       });
-      const step: Loaded = { snapshot, registration, rule, context };
+      const step: Loaded = { row, snapshot, registration, rule, context };
       const receipt = executionMetadata(
         await rule.lease!.acquire(
           Object.freeze({ ...context, source: structuredClone(source), leaseId: target.leaseId }),
@@ -646,9 +664,10 @@ export class WorkflowsService implements Workflows {
       await rule.lease!.check(context, structuredClone(receipt));
       this.requireActive(registration);
       const assignment = await this.assignmentOf(worker, step, false, tx, execution);
-      // Both callers are rechecked once, after every callback.
+      // The source is authorized again once every callback has run: one that revoked it is
+      // refused here, and the offer rolls back.
       await this.scope.require(source, 'read', tx);
-      await this.checkContext(context, 'Lease acquisition must not transition the workflow');
+      await this.recheck(tx, row, 'Lease acquisition must not transition the workflow');
       this.requireActive(registration);
       return { lease, assignment, execution };
     });
@@ -662,8 +681,8 @@ export class WorkflowsService implements Workflows {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const { execution, context, registration } = await this.leaseStep(worker, lease, tx);
-      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      const { execution, row, registration } = await this.leaseStep(worker, lease, tx);
+      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
       return execution;
     });
@@ -683,6 +702,7 @@ export class WorkflowsService implements Workflows {
       'Lease belongs to a different worker',
       403,
     );
+    await this.scope.require(worker, 'read', tx);
     const step = await this.executionStep(
       worker,
       {
@@ -715,8 +735,8 @@ export class WorkflowsService implements Workflows {
     worker = structuredClone(worker);
     lease = workflowJson(lease, 'invalid_lease', 400);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const { snapshot, context, registration } = await this.leaseStep(worker, lease, tx);
-      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      const { row, snapshot, registration } = await this.leaseStep(worker, lease, tx);
+      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
       const started = await this.markStarted(worker, snapshot, tx);
       this.requireActive(registration);
       return started;
@@ -739,6 +759,7 @@ export class WorkflowsService implements Workflows {
         execution: current,
         rule,
         registration,
+        row,
         context,
       } = await this.leaseStep(worker, lease, tx);
       check(
@@ -774,16 +795,9 @@ export class WorkflowsService implements Workflows {
           references[key] = [...new Set([...(references[key] as string[]), ...ids])].sort();
         }
       }
-      await this.checkContext(context, 'Lease callbacks must not change the workflow instance');
+      await this.recheck(tx, row, 'Lease callbacks must not change the workflow instance');
       this.requireActive(registration);
-      return await this.admitRead(
-        worker,
-        { ...frozen, references },
-        input.tool,
-        input.input,
-        tx,
-        input.read,
-      );
+      return this.admitRead({ ...frozen, references }, input.tool, input.input, input.read);
     });
   }
 
@@ -842,14 +856,7 @@ export class WorkflowsService implements Workflows {
     dispatch.input = dispatchInput(dispatch.input);
     return await inTransaction(this.state, transaction, async (tx) => {
       const execution = await this.executionInternal(caller, dispatch, tx);
-      return await this.admitRead(
-        caller,
-        execution,
-        dispatch.tool,
-        dispatch.input,
-        tx,
-        dispatch.read,
-      );
+      return this.admitRead(execution, dispatch.tool, dispatch.input, dispatch.read);
     });
   }
 
@@ -866,8 +873,9 @@ export class WorkflowsService implements Workflows {
     checkInstance(target.instanceId);
     checkRevision(target.expectedRevision);
     return await inTransaction(this.state, transaction, async (tx) => {
-      const { execution, context, registration } = await this.executionStep(caller, target, tx);
-      await this.checkContext(context, 'Execution callbacks must not change the workflow instance');
+      await this.scope.require(caller, 'read', tx);
+      const { execution, row, registration } = await this.executionStep(caller, target, tx);
+      await this.recheck(tx, row, 'Execution callbacks must not change the workflow instance');
       this.requireActive(registration);
       return execution;
     });
@@ -935,9 +943,8 @@ export class WorkflowsService implements Workflows {
     tx: Transaction,
   ): Promise<Loaded> {
     this.assertOpen();
-    // Domain policy owns write/review admission; the engine always fences tenancy.
-    await this.scope.require(caller, 'read', tx);
-    const snapshot = await this.readSnapshot(tx, caller.projectId, target.instanceId);
+    const row = await this.readRow(tx, caller.projectId, target.instanceId);
+    const snapshot = this.snapshot(row);
     const expected = target.expectedRevision;
     if (expected !== undefined && snapshot.revision !== expected) {
       if (purpose === 'execution') {
@@ -1006,7 +1013,7 @@ export class WorkflowsService implements Workflows {
       tx,
       dependencies: await prerequisitesOf(tx, caller.projectId, snapshot.id),
     });
-    return { snapshot, registration, rule, context };
+    return { row, snapshot, registration, rule, context };
   }
 
   async begin(caller: Caller, input: WorkflowBegin, tx?: Transaction): Promise<WorkflowAssignment> {
@@ -1080,11 +1087,13 @@ export class WorkflowsService implements Workflows {
     caller = structuredClone(caller);
     checkInstance(instanceId);
     return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
       const step = await this.load(caller, { instanceId, expectedRevision }, 'assignment', tx);
       await checkAssignment(step.rule, step.context);
       const assignment = await this.assignmentOf(caller, step, expectedRevision !== undefined, tx);
-      await this.checkContext(
-        step.context,
+      await this.recheck(
+        tx,
+        step.row,
         'Assignment callbacks must not change the workflow instance',
       );
       this.requireActive(step.registration);
@@ -1135,7 +1144,7 @@ export class WorkflowsService implements Workflows {
       );
       const workflows = await mapAsync(
         rows,
-        async (row) => await this.evaluate(caller, row.id, {}, tx),
+        async (row) => await this.decideIn(caller, row.id, {}, tx, true),
       );
       // Work whose prerequisite ended without succeeding: the engine resolves that gate
       // itself, to the ending action its program declares. Such a record is not ready for
@@ -1754,7 +1763,8 @@ export class WorkflowsService implements Workflows {
     return await inTransaction(this.state, tx, async (transaction) => {
       // Managed programs own action-specific write/review policies; the engine still validates tenancy.
       await this.scope.require(caller, owner?.definition.managed ? 'read' : 'write', transaction);
-      const before = await this.readSnapshot(transaction, caller.projectId, input.instanceId);
+      const row = await this.readRow(transaction, caller.projectId, input.instanceId);
+      const before = this.snapshot(row);
       await this.checkOwnerForSnapshot(before, owner, transaction);
       const replay = await this.replay<WorkflowSnapshot>(
         transaction,
@@ -1808,8 +1818,9 @@ export class WorkflowsService implements Workflows {
           }),
         );
       }
-      await this.checkContext(
-        { caller, snapshot: before, tx: transaction },
+      await this.recheck(
+        transaction,
+        row,
         'Transition checks must not change the workflow instance',
       );
       this.requireActive(registered);
@@ -2018,16 +2029,24 @@ export class WorkflowsService implements Workflows {
     );
   }
 
-  /** Recheck authority and registration after an awaited callback, before returning its result. */
-  private async checkContext(context: WorkflowCheckContext, message: string): Promise<void> {
-    await this.scope.require(context.caller, 'read', context.tx);
-    const after = await this.readSnapshot(
-      context.tx,
-      context.caller.projectId,
-      context.snapshot.id,
+  /**
+   * After a group of callbacks: none of them wrote to the instance. Its stored columns are
+   * compared as read, so a rewrite to equal data in other bytes is refused too. Every
+   * transaction under a snapshot root is read-only, so there nothing can have written.
+   */
+  private async recheck(tx: Transaction, row: InstanceRow, message: string): Promise<void> {
+    if (this.state.readScope) return;
+    const now = await tx.get<Pick<InstanceRow, 'revision' | 'state' | 'data_json' | 'updated_at'>>(
+      'SELECT revision,state,data_json,updated_at FROM wf_instances WHERE id=? AND project_id=?',
+      row.id,
+      row.project_id,
     );
     check(
-      canonical(after) === canonical(context.snapshot),
+      !!now &&
+        now.revision === row.revision &&
+        now.state === row.state &&
+        now.data_json === row.data_json &&
+        now.updated_at === row.updated_at,
       'invalid_workflow_policy',
       message,
       500,
@@ -2109,18 +2128,22 @@ export class WorkflowsService implements Workflows {
     });
   }
 
-  private async readSnapshot(
-    sql: Sql,
-    projectId: string,
-    instanceId: string,
-  ): Promise<WorkflowSnapshot> {
+  private async readRow(sql: Sql, projectId: string, instanceId: string): Promise<InstanceRow> {
     const row = await sql.get<InstanceRow>(
       'SELECT * FROM wf_instances WHERE id = ? AND project_id = ?',
       instanceId,
       projectId,
     );
     check(row, 'not_found', 'Workflow instance not found', 404);
-    return this.snapshot(row);
+    return row;
+  }
+
+  private async readSnapshot(
+    sql: Sql,
+    projectId: string,
+    instanceId: string,
+  ): Promise<WorkflowSnapshot> {
+    return this.snapshot(await this.readRow(sql, projectId, instanceId));
   }
 
   private snapshot(row: InstanceRow): WorkflowSnapshot {
