@@ -1,4 +1,4 @@
-import { boundedPaperContext, createService } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -193,32 +193,6 @@ test('task work and review contexts carry the project paper with its revision', 
   assert.match(review.prompt, /intermediate step/);
 });
 
-test('a task keeps the review recipe of its work recipe’s format', async (t) => {
-  const f = await fixture();
-  t.after(f.cleanup);
-  const task = await f.tasks.create(f.producer, {
-    title: 'Adder',
-    goal: 'Build an adder.',
-    checks: ['Adds two numbers.', 'Handles negative inputs.'],
-    briefId: f.brief.id,
-    requestId: 'create-frozen',
-    type: 'task.work',
-    typeVersion: 3,
-  });
-  const { pending } = await round(f, task.id, 'Frozen review');
-  const claimId = (await f.reviews.get(f.reviewer, pending.reviewId!)).claimId!;
-  const review = await f.tasks.context(f.reviewer, {
-    taskId: task.id,
-    purpose: 'review',
-    claimId,
-    expectedRevision: pending.workflow.revision,
-    requestId: 'review-frozen',
-  });
-  // A task.work@3 task is reviewed as before: task.review@4 and its frozen renderer.
-  assert.equal(`${review.type}@${review.typeVersion}`, 'task.review@4');
-  assert.match(review.prompt, /\n## Pinned evidence\nArtifact /);
-});
-
 test('a format-2 review embeds large text evidence and lists a PDF without reading it', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);
@@ -397,51 +371,6 @@ test('a format-2 context freezes no more of a mature paper than its budget can e
       work.prompt,
     )!;
   assert.ok(Number(count) > 0 && Number(count) < 80);
-});
-
-test('a task.work@2 context carries a mature paper capped to a third of its budget', async (t) => {
-  const f = await fixture();
-  t.after(f.cleanup);
-  // Many sections with long titles: their JSON outgrows the recipe though every body is short.
-  for (const kind of ['literature', 'methods'] as const)
-    await f.paper.patch(f.producer, {
-      kind,
-      expectedRevision: 0,
-      requestId: `paper-${kind}`,
-      changes: Array.from({ length: 100 }, (_, index) => ({
-        id: `${kind}-${index}`,
-        title: `${kind} section ${index} `.padEnd(300, 't'),
-        content: `Finding ${index}.`,
-      })),
-    });
-  await f.paper.patch(f.producer, {
-    kind: 'problem',
-    expectedRevision: 0,
-    requestId: 'paper-goal',
-    changes: [{ id: 'goals', content: 'Build a reliable arithmetic library.' }],
-  });
-  const documents = (await f.paper.read(f.producer)).documents;
-  assert.ok(JSON.stringify(boundedPaperContext(documents, 16_000)).length > 60_000);
-  const task = await f.tasks.create(f.producer, {
-    title: 'Adder',
-    goal: 'Build an adder.',
-    checks: ['Adds two numbers.'],
-    briefId: f.brief.id,
-    requestId: 'create-mature-paper',
-    type: 'task.work',
-    typeVersion: 2,
-  });
-  const work = await f.tasks.context(f.producer, {
-    taskId: task.id,
-    purpose: 'work',
-    expectedRevision: task.workflow.revision,
-    requestId: 'work-mature-paper',
-  });
-  assert.equal(`${work.type}@${work.typeVersion}`, 'task.work@2');
-  assert.ok(work.prompt.length <= 48_000);
-  assert.match(work.prompt, /Build a reliable arithmetic library/);
-  assert.match(work.prompt, /"omittedSections":100/);
-  assert.doesNotMatch(work.prompt, /literature section 1 /);
 });
 
 test('task reads, context and failure keep their original caller and inputs', async (t) => {
@@ -822,79 +751,6 @@ test('a task rejected more than once carries every earlier round into the next w
     });
     assert.deepEqual(done.workflow.data.rejectedReviewIds, [first.review.id, second.review.id]);
   } finally {
-    await f.cleanup();
-  }
-});
-
-test('feedback that no longer fits a nearly full recipe is reported omitted, never cut', async () => {
-  const f = await fixture();
-  const disposers: (() => void)[] = [];
-  try {
-    const work = async (taskId: string, expectedRevision: number) =>
-      await f.tasks.context(f.producer, {
-        taskId,
-        purpose: 'work',
-        expectedRevision,
-        requestId: `context-${taskId}-${expectedRevision}`,
-      });
-    const typed = async (name: string, maxChars: number) => {
-      const definition = structuredClone(TASK_TYPES[0]);
-      disposers.push(
-        await f.tasks.registerType({
-          ...definition,
-          name,
-          recipe: { ...definition.recipe, maxChars },
-        }),
-      );
-      let task = await f.tasks.create(f.producer, {
-        title: 'Adder',
-        goal: 'Build an adder.',
-        checks: ['Adds two numbers.', 'Handles negative inputs.'],
-        briefId: f.brief.id,
-        requestId: `create-${name}`,
-        type: name,
-        typeVersion: definition.version,
-      });
-      for (const round of [1, 2]) {
-        const pending = await f.tasks.submitDelivery(
-          f.producer,
-          confirmedDelivery(
-            {
-              taskId: task.id,
-              artifactIds: [(await f.delivery(`Delivery ${round}`)).id],
-              expectedRevision: task.workflow.revision,
-              requestId: `deliver-${name}-${round}`,
-            },
-            2,
-          ),
-        );
-        const review = await f.reviews.start(f.reviewer, pending.reviewId!);
-        task = await f.tasks.submitReview(f.reviewer, {
-          ...reviewedFindings(review),
-          reviewId: review.id,
-          claimId: review.claimId!,
-          verdict: 'needs_changes',
-          notes: `Round ${round} was not reproducible.`,
-          expectedRevision: pending.workflow.revision,
-          requestId: `reject-${name}-${round}`,
-        });
-      }
-      return await work(task.id, task.workflow.revision);
-    };
-    // Twice rejected under a roomy copy of the default recipe, everything fits.
-    const roomy = await typed('task.roomy', 48_000);
-    assert.ok(!roomy.omitted.includes('feedback'));
-    assert.match(roomy.prompt, /Pinned review assessment[^]*Earlier review rounds/);
-    // The same task under a budget 200 characters short of that: Context Builder drops an optional
-    // section whole. The worker is told feedback is missing and can still read every round with
-    // review.get; a half-cut assessment would mislead instead.
-    const budget = roomy.prompt.length - 200;
-    const tight = await typed('task.tight', budget);
-    assert.ok(tight.omitted.includes('feedback'));
-    assert.doesNotMatch(tight.prompt, /Pinned review assessment|Earlier review rounds/);
-    assert.ok(tight.prompt.length <= budget);
-  } finally {
-    for (const dispose of disposers) dispose();
     await f.cleanup();
   }
 });

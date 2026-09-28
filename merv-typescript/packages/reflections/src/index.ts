@@ -34,7 +34,6 @@ import {
   type RunningPanelPart,
   type Scope,
   type State,
-  type TaskTypeDefinition,
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowExecutionPolicy,
@@ -147,53 +146,6 @@ const embedded = (sections: Record<string, ContextItem[]>): Record<string, Conte
       },
     ]),
   );
-/**
- * A lease's frozen inputs as format-2 items. A lease of the ranked recipes (lens 10, synthesis and
- * review 11) froze ranked items: each keeps its ID, title, priority, body and refs, with its
- * association as its note; its text hash and revision are dropped, since the builder hashes the
- * body itself. An earlier lease froze whole sections: a text becomes one item and each artifact
- * one item, titled by their section and ranked in section order, and an artifact the section named
- * by reference only is listed, never embedded.
- */
-const toItems = (
-  inputs: Record<string, ContextInput>,
-  sections: TaskTypeDefinition['recipe']['sections'],
-): Record<string, ContextInput> =>
-  embedded(
-    Object.fromEntries(
-      Object.entries(inputs).map(([key, input]): [string, ContextItem[]] => {
-        const title = sections.find((section) => section.key === key)?.title ?? key;
-        if ('items' in input) return [key, input.items];
-        if ('rankedItems' in input)
-          return [
-            key,
-            input.rankedItems.map(({ id, title, priority, content, association, refs }) => ({
-              id,
-              title,
-              priority,
-              body: content,
-              ...(association === undefined ? {} : { note: association }),
-              refs,
-            })),
-          ];
-        if ('text' in input)
-          return [key, [{ id: `${key}:frozen`, title, body: { text: input.text } }]];
-        if ('artifactIds' in input)
-          return [
-            key,
-            input.artifactIds.map((artifactId) => ({
-              id: `${key}:${artifactId}`,
-              title,
-              body: { artifactId },
-              ...(input.mode === 'references' ? { embed: 'never' as const } : {}),
-              refs: [{ tool: 'artifact.read', input: { artifactId } }],
-            })),
-          ];
-        throw new MervError('invalid_context', `The lease froze ${key} in a shape no recipe reads`);
-      }),
-    ),
-  );
-
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
@@ -795,23 +747,13 @@ export class ReflectionService implements Reflections {
         : [],
     });
   }
-  /** Every artifact the inputs name, whichever shape a lease froze them in: they are the
-   *  worker's artifact grants and the ones its source approved at acquisition. */
+  /** Every artifact the inputs name: the worker's artifact grants and the ones its source
+   *  approved at acquisition. */
   private inputIds(inputs: Record<string, ContextInput>): string[] {
     return [
       ...new Set(
         Object.values(inputs).flatMap((input) =>
-          'artifactIds' in input
-            ? input.artifactIds
-            : 'rankedItems' in input
-              ? input.rankedItems.flatMap((item) =>
-                  'artifactId' in item.content ? [item.content.artifactId] : [],
-                )
-              : 'items' in input
-                ? input.items.flatMap((item) =>
-                    'artifactId' in item.body ? [item.body.artifactId] : [],
-                  )
-                : [],
+          input.items.flatMap((item) => ('artifactId' in item.body ? [item.body.artifactId] : [])),
         ),
       ),
     ];
@@ -847,10 +789,7 @@ export class ReflectionService implements Reflections {
     const stage = lens ? 'lens' : context.snapshot.state === 'in_review' ? 'review' : 'synthesis';
     const recipe = ITEM_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
     const inputs = context.caller.session
-      ? toItems(
-          JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>,
-          recipe.recipe.sections,
-        )
+      ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
       : await this.inputs(context);
     const preview = await this.contexts
       .get(recipe.name)!

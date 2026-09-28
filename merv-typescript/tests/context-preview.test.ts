@@ -13,6 +13,7 @@ import {
   digest,
   type Caller,
   type ContextBuild,
+  type ContextItem,
   type ContextPreview,
   type TaskTypeDefinition,
   type Transaction,
@@ -33,8 +34,21 @@ const definition: TaskTypeDefinition = {
     ],
     outputInstructions: 'Report the result with evidence.',
     maxChars: 1600,
+    format: 2,
   },
 };
+const text = (id: string, body: string, rest: Partial<ContextItem> = {}) => ({
+  items: [{ id, title: id, body: { text: body }, ...rest }],
+});
+/** Artifacts as items, embedded as `embed` says. */
+const docs = (ids: string[], embed?: ContextItem['embed']) => ({
+  items: ids.map((id) => ({
+    id,
+    title: id,
+    body: { artifactId: id },
+    ...(embed ? { embed } : {}),
+  })),
+});
 
 async function setup(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-preview-'));
@@ -71,9 +85,9 @@ test('preview renders the exact future package without creating IDs, timestamps,
   const input: Omit<ContextBuild, 'requestId'> = {
     subject: { id: 'assignment', revision: 3, claimId: 'claim-current' },
     inputs: {
-      background: { text: 'x'.repeat(1500) },
-      evidence: { artifactIds: [evidence.id] },
-      notes: { text: 'Use the retained receipt.' },
+      background: text('background', 'x'.repeat(1500)),
+      evidence: docs([evidence.id]),
+      notes: text('notes', 'Use the retained receipt.'),
     },
   };
   const before = await changes();
@@ -133,7 +147,7 @@ test('build saves only an unchanged preview this registration rendered for its c
   };
   const input = {
     subject: { id: 'assignment', revision: 0 },
-    inputs: { evidence: { text: 'Verified.' } },
+    inputs: { evidence: text('evidence', 'Verified.') },
   };
   const preview = await registration.preview(operator, input);
   const { hash, ...body } = preview;
@@ -203,13 +217,13 @@ test('build saves only an unchanged preview this registration rendered for its c
 });
 
 test('context requests retain their caller and assignment across authorization', async (t) => {
-  const { state, scope, artifacts, builder, operator } = await setup(t);
+  const { scope, builder, operator } = await setup(t);
   const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const other = { actorId: identity.actor.id, projectId: identity.project.id };
   const registration = await builder.register(definition);
   const original = {
     subject: { id: 'assignment', revision: 3 },
-    inputs: { evidence: { text: 'Original evidence' } },
+    inputs: { evidence: text('evidence', 'Original evidence') },
     requestId: 'original',
   };
   const built = await buildContext(registration, operator, original);
@@ -226,7 +240,7 @@ test('context requests retain their caller and assignment across authorization',
         const actor = await authorize(...args);
         Object.assign(caller, other);
         input.subject.revision = 99;
-        input.inputs.evidence.text = 'Changed evidence';
+        input.inputs.evidence.items[0].body = { text: 'Changed evidence' };
         input.requestId = 'changed';
         save.requestId = 'changed';
         save.preview.subject.revision = 99;
@@ -254,116 +268,6 @@ test('context requests retain their caller and assignment across authorization',
       }
     });
   }
-  const small = await artifacts.create(operator, { title: 'Small', content: 'x' });
-  const large = await artifacts.create(operator, { title: 'Large', content: 'x'.repeat(100) });
-  const ids = [small.id, large.id];
-  const modeCaller = { ...operator };
-  const lookup = artifacts.get.bind(artifacts);
-  artifacts.get = async (...args) => {
-    const artifact = await lookup(...args);
-    ids.pop();
-    Object.assign(modeCaller, other);
-    return artifact;
-  };
-  await state.transaction(async (tx) => {
-    assert.equal(await builder.mode(modeCaller, ids, 50, tx), 'references');
-  });
-});
-
-test('preview shares text, auto and references rendering, deduplicated manifests and required/optional budgets', async (t) => {
-  const { artifacts, builder, operator, changes } = await setup(t);
-  const text = await artifacts.create(operator, { title: 'Text', content: 'A text result.' });
-  const json = await artifacts.create(operator, {
-    title: 'JSON',
-    mediaType: 'application/json',
-    content: '{"answer":42}',
-  });
-  const binary = await artifacts.create(operator, {
-    title: 'Binary',
-    mediaType: 'application/octet-stream',
-    content: '/w==',
-    encoding: 'base64',
-  });
-  const invalidUtf8 = await artifacts.create(operator, {
-    title: 'Invalid UTF-8',
-    mediaType: 'text/plain',
-    content: '/w==',
-    encoding: 'base64',
-  });
-  const large = await artifacts.create(operator, { title: 'Long log', content: 'x'.repeat(10000) });
-  const registration = await builder.register(definition);
-  const subject = { id: 'assignment', revision: 0 };
-  const read = artifacts.read.bind(artifacts);
-  const reads: string[] = [];
-  artifacts.read = async (caller, id) => {
-    reads.push(id);
-    return await read(caller, id);
-  };
-  const before = await changes();
-  const autoInput: Omit<ContextBuild, 'requestId'> = {
-    subject,
-    inputs: {
-      background: { artifactIds: [large.id] },
-      evidence: { artifactIds: [text.id, json.id, binary.id], mode: 'auto' },
-      notes: { artifactIds: [text.id] },
-    },
-  };
-  const auto = await registration.preview(operator, autoInput);
-  assert.match(auto.prompt, /A text result/);
-  assert.match(auto.prompt, /"answer":42/);
-  assert.ok(auto.prompt.includes(binary.hash));
-  assert.match(auto.prompt, /Bytes are not included/);
-  // The omitted background's artifact is still a source: the build resolved it.
-  assert.deepEqual(
-    auto.sources.map((item) => item.id),
-    [text.id, json.id, binary.id, large.id],
-  );
-  assert.deepEqual(auto.omitted, ['background']);
-  assert.deepEqual(reads, [text.id, json.id, text.id]);
-  assert.equal(await changes(), before);
-  const built = await buildContext(registration, operator, { ...autoInput, requestId: 'auto' });
-  assert.equal(auto.hash, built.hash);
-  reads.length = 0;
-  const referencesInput: Omit<ContextBuild, 'requestId'> = {
-    subject,
-    inputs: { evidence: { artifactIds: [large.id, binary.id], mode: 'references' } },
-  };
-  const references = await registration.preview(operator, referencesInput);
-  assert.deepEqual(reads, []);
-  assert.ok(references.prompt.includes(large.hash));
-  assert.ok(references.prompt.includes(binary.hash));
-  assert.equal(
-    references.hash,
-    (await buildContext(registration, operator, { ...referencesInput, requestId: 'references' }))
-      .hash,
-  );
-  assert.deepEqual(reads, []);
-  const fallback = await registration.preview(operator, {
-    subject,
-    inputs: { evidence: { artifactIds: [invalidUtf8.id], mode: 'auto' } },
-  });
-  assert.match(fallback.prompt, /Bytes are not included/);
-  // Text mode embeds every document, but one whose bytes are not UTF-8 has no text form.
-  for (const document of [invalidUtf8, binary]) {
-    const shown = await registration.preview(operator, {
-      subject,
-      inputs: { evidence: { artifactIds: [document.id] } },
-    });
-    assert.ok(
-      shown.prompt.includes(
-        `Artifact ${document.id} (${document.title}; sha256 ${document.hash}; ${document.mediaType}; ${document.size} bytes)\nBytes are not included`,
-      ),
-    );
-    assert.deepEqual(shown.omitted, ['background', 'notes']);
-  }
-  await assert.rejects(
-    async () =>
-      await registration.preview(operator, {
-        subject,
-        inputs: { evidence: { artifactIds: [large.id] } },
-      }),
-    { code: 'context_too_large' },
-  );
 });
 
 test('invalid, missing, oversized and corrupt preview inputs perform no SQL writes, including rolled-back writes', async (t) => {
@@ -383,27 +287,35 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
     [{ subject: { ...subject, extra: true }, inputs: {} }, 'invalid_context'],
     [{ subject: { ...subject, revision: -1 }, inputs: {} }, 'invalid_context'],
     [
-      { subject, inputs: { evidence: { artifactIds: [evidence.id], mode: 'unknown' } } },
+      { subject, inputs: { evidence: text('a', 'Valid', { extra: true } as object) } },
       'invalid_context',
     ],
-    [{ subject, inputs: { evidence: { text: 'Valid', extra: true } } }, 'invalid_context'],
+    [{ subject, inputs: { evidence: { ...text('a', 'Valid'), extra: true } } }, 'invalid_context'],
     [
-      { subject, inputs: { evidence: { text: 'Valid' }, unknown: { text: 'Invalid' } } },
+      { subject, inputs: { evidence: text('a', 'Valid'), unknown: text('b', 'Invalid') } },
       'invalid_context',
     ],
-    [
-      { subject, inputs: { evidence: { artifactIds: [evidence.id, evidence.id] } } },
-      'invalid_context',
-    ],
+    [{ subject, inputs: { evidence: docs([evidence.id, evidence.id]) } }, 'invalid_context'],
     [{ subject, inputs: {} }, 'context_missing'],
-    [{ subject, inputs: { evidence: { text: '   ' } } }, 'context_missing'],
-    [{ subject, inputs: { evidence: { artifactIds: [] } } }, 'context_missing'],
-    [{ subject, inputs: { evidence: { artifactIds: ['not-an-artifact'] } } }, 'not_found'],
-    [{ subject, inputs: { evidence: { text: 'x'.repeat(2000) } } }, 'context_too_large'],
+    [{ subject, inputs: { evidence: docs([]) } }, 'context_missing'],
+    [{ subject, inputs: { evidence: docs(['not-an-artifact']) } }, 'not_found'],
+    [
+      { subject, inputs: { evidence: text('a', 'x'.repeat(2000), { embed: 'always' }) } },
+      'context_too_large',
+    ],
     [
       {
         subject,
-        inputs: { evidence: { artifactIds: many.map((item) => item.id), mode: 'references' } },
+        inputs: {
+          evidence: {
+            items: many.map(({ id, title }) => ({
+              id,
+              title,
+              body: { artifactId: id },
+              embed: 'always' as const,
+            })),
+          },
+        },
       },
       'context_too_large',
     ],
@@ -427,7 +339,7 @@ test('invalid, missing, oversized and corrupt preview inputs perform no SQL writ
     async () =>
       await registration.preview(operator, {
         subject,
-        inputs: { evidence: { artifactIds: [evidence.id] } },
+        inputs: { evidence: docs([evidence.id], 'always') },
       }),
     { code: 'blob_corrupt' },
   );
@@ -459,7 +371,7 @@ test('preview checks project membership and revocation, not the work role; handl
   const other = { actorId: otherIdentity.actor.id, projectId: otherIdentity.project.id };
   const input = {
     subject: { id: 'assignment', revision: 0 },
-    inputs: { evidence: { artifactIds: [evidence.id] } },
+    inputs: { evidence: docs([evidence.id]) },
   };
   const before = await changes();
   // Whether an actor may do this work or review is its consumer's assignment check; the builder
@@ -514,7 +426,7 @@ test('a saved request ID replays without rendering and returns its package to a 
   const registration = await builder.register(definition);
   const input = {
     subject: { id: 'assignment', revision: 0 },
-    inputs: { evidence: { artifactIds: [evidence.id] } },
+    inputs: { evidence: docs([evidence.id], 'always') },
     requestId: 'saved',
   };
   const saved = await buildContext(registration, operator, input);
@@ -534,7 +446,7 @@ test('a saved request ID replays without rendering and returns its package to a 
   // The request ID names the saved package: a preview of other inputs for the same subject gets it.
   const other = await registration.preview(operator, {
     ...previewInput,
-    inputs: { evidence: { text: 'Other evidence.' } },
+    inputs: { evidence: text('evidence', 'Other evidence.') },
   });
   assert.deepEqual(await registration.build(operator, { requestId, preview: other }), saved);
   await assert.rejects(

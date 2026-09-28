@@ -1,7 +1,5 @@
 import {
   check,
-  boundedPaperContext,
-  paperJsonCap,
   checkReceipt,
   childRequest,
   clip,
@@ -76,7 +74,7 @@ import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
 import type { Paper, PaperContextSection } from '@merv/paper/types';
-import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
+import { RESERVED_CONTEXT_INPUTS, SUCCESSORS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
   renderAssessment,
@@ -303,6 +301,8 @@ const PAPER_RECEIPT_BYTES = 384 * 1024;
  * the review criteria are always embedded; the rest fit while they can, highest priority first.
  * A custom input section is fit at 500, like the task background.
  */
+/** A context input before it becomes items: one text, or artifacts listed by ID. */
+type Source = { text: string } | { artifactIds: string[] };
 const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
   task: { embed: 'always' },
   brief: { embed: 'always' },
@@ -600,7 +600,7 @@ export class TaskService implements Tasks {
       reviewId: review?.id ?? null,
       claimId: review?.claimId ?? null,
       project: await this.projectContext(source, tx),
-      ...(this.paper ? { paper: await this.paperContext(source, type, tx) } : {}),
+      ...(this.paper ? { paper: await this.paperSections(source, type, tx) } : {}),
     };
     await tx.run(
       'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1527,19 +1527,12 @@ export class TaskService implements Tasks {
   }
 
   /**
-   * A task's work recipe is the version it was created with. Its review recipe follows that
-   * version's format: a format-2 work recipe is reviewed with task.review@5, any other with
-   * task.review@4, so a task already in review keeps the recipe its saved contexts were built with.
+   * A task's work recipe is the version it was created with, or the successor of a retired one;
+   * every task is reviewed with task.review@5.
    */
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
     const work = `${task.type}@${task.typeVersion}`;
-    const key =
-      purpose === 'work'
-        ? work
-        : this.types.get(work)?.definition.recipe.format === 2
-          ? 'task.review@5'
-          : 'task.review@4';
-    const type = this.types.get(key);
+    const type = this.types.get(purpose === 'work' ? (SUCCESSORS[work] ?? work) : 'task.review@5');
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
   }
@@ -1552,33 +1545,6 @@ export class TaskService implements Tasks {
       summary: project.summary ?? '',
       contextRevision: project.contextRevision ?? 0,
     };
-  }
-
-  /** The paper as `type`'s recipe takes it: sections for format 2, else capped JSON. */
-  private async paperContext(
-    caller: Caller,
-    type: { definition: TaskTypeDefinition },
-    tx: Transaction,
-  ): Promise<Data> {
-    return type.definition.recipe.format === 2
-      ? await this.paperSections(caller, type, tx)
-      : await this.projectPaperContext(caller, type, tx);
-  }
-
-  /** The paper lands in a required section of `type`'s recipe, so its JSON is capped by that recipe. */
-  private async projectPaperContext(
-    caller: Caller,
-    type: { definition: TaskTypeDefinition },
-    tx: Transaction,
-  ): Promise<Data> {
-    check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
-    const workspace = await this.paper.read(caller, tx);
-    const documents = boundedPaperContext(
-      workspace.documents,
-      16_000,
-      paperJsonCap(type.definition.recipe.maxChars),
-    );
-    return JSON.parse(JSON.stringify({ documents })) as Data;
   }
 
   /**
@@ -1644,8 +1610,8 @@ export class TaskService implements Tasks {
         ) as Data)
       : null;
     const project = receipt?.project ?? (await this.projectContext(caller, tx));
-    const paper = receipt?.paper ?? (this.paper ? await this.paperContext(caller, type, tx) : null);
-    const items = type.definition.recipe.format === 2;
+    const paper =
+      receipt?.paper ?? (this.paper ? await this.paperSections(caller, type, tx) : null);
     const hasProjectPaper = type.definition.recipe.sections.some(
       (section) => section.key === 'projectPaper',
     );
@@ -1657,19 +1623,13 @@ export class TaskService implements Tasks {
       (!hasProjectPaper && paper
         ? `\n\nProject paper (captured document revisions; read paper.read for abbreviated sections):\n${JSON.stringify(paper)}`
         : '');
-    let inputs: Record<string, ContextInput>;
+    let inputs: Record<string, Source>;
     if (purpose === 'review') {
       check(review, 'invalid_context', 'Missing review assignment');
       inputs = {
         task: { text: taskMetadata },
         assessment: { text: JSON.stringify(review) },
-        // Format 2 decides per item what fits; the frozen review recipe decides per section.
-        evidence: items
-          ? { artifactIds: review.artifactIds }
-          : {
-              artifactIds: review.artifactIds,
-              mode: await this.contextBuilder.mode(caller, review.artifactIds, 48_000, tx),
-            },
+        evidence: { artifactIds: review.artifactIds },
         taskBackground: Object.values(task.contextInputs).flat().length
           ? { artifactIds: [...new Set(Object.values(task.contextInputs).flat())] }
           : { text: 'No additional task background was specified.' },
@@ -1752,20 +1712,14 @@ export class TaskService implements Tasks {
     if (checkpoints.length) {
       inputs.checkpoints = { text: JSON.stringify(checkpoints) };
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
-      if (artifactIds.length) inputs.checkpointEvidence = { artifactIds, mode: 'auto' };
+      if (artifactIds.length) inputs.checkpointEvidence = { artifactIds };
     }
-    if (hasProjectPaper && !items)
-      inputs.projectPaper = {
-        text: paper
-          ? JSON.stringify(paper)
-          : 'Project paper unavailable in this assignment; read paper.read before work.',
-      };
     inputs = Object.fromEntries(
       Object.entries(inputs).filter(([key]) =>
         type.definition.recipe.sections.some((section) => section.key === key),
       ),
     );
-    return items ? await this.contextItems(caller, task, inputs, paper, type, tx) : inputs;
+    return await this.contextItems(caller, task, inputs, paper, type, tx);
   }
 
   /**
@@ -1775,7 +1729,7 @@ export class TaskService implements Tasks {
   private async contextItems(
     caller: Caller,
     task: Task,
-    inputs: Record<string, ContextInput>,
+    inputs: Record<string, Source>,
     /** What paperSections gave, frozen in a lease's receipt or read now; null without Paper. */
     paper: unknown,
     type: { definition: TaskTypeDefinition },
@@ -1801,15 +1755,13 @@ export class TaskService implements Tasks {
                   ],
                 },
               ]
-            : 'artifactIds' in input
-              ? await mapAsync(input.artifactIds, async (id): Promise<ContextItem> => ({
-                  id: `${key}:${id}`,
-                  title: itemTitle(await this.artifacts.get(caller, id, tx)),
-                  body: { artifactId: id },
-                  ...rule,
-                  refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
-                }))
-              : [],
+            : await mapAsync(input.artifactIds, async (id): Promise<ContextItem> => ({
+                id: `${key}:${id}`,
+                title: itemTitle(await this.artifacts.get(caller, id, tx)),
+                body: { artifactId: id },
+                ...rule,
+                refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
+              })),
       };
     }
     if (type.definition.recipe.sections.some((section) => section.key === 'projectPaper')) {
@@ -1817,7 +1769,9 @@ export class TaskService implements Tasks {
         sections = [],
         left = [],
         more = 0,
+        documents,
       } = (paper ?? {}) as {
+        documents?: unknown;
         sections?: PaperContextSection[];
         left?: { id: string; title: string }[];
         more?: number;
@@ -1852,9 +1806,12 @@ export class TaskService implements Tasks {
                   id: 'paper:none',
                   title: 'Project paper',
                   body: {
-                    text: paper
-                      ? 'The project paper has no written sections yet.'
-                      : 'Project paper unavailable in this assignment; read paper.read before work.',
+                    // A lease taken under a retired recipe froze the paper as capped documents.
+                    text: !paper
+                      ? 'Project paper unavailable in this assignment; read paper.read before work.'
+                      : documents
+                        ? JSON.stringify(paper)
+                        : 'The project paper has no written sections yet.',
                   },
                   refs: [read],
                 },

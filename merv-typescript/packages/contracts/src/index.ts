@@ -1796,11 +1796,8 @@ export interface ContextRecipe {
   outputInstructions: string;
   /** The only budget, in UTF-16 code units (JavaScript string length). */
   maxChars: number;
-  /**
-   * Absent: the frozen renderers, picked by the shape of the inputs, byte for byte. 2: the item
-   * renderer, which accepts only `{ items }` inputs. Optional, so every existing recipe hash is
-   * unchanged.
-   */
+  /** 2: the item renderer. Absent in retired versions, which register refuses; optional so their
+   *  definitions keep their hashes. */
   format?: 2;
 }
 export interface TaskTypeDefinition {
@@ -1808,17 +1805,6 @@ export interface TaskTypeDefinition {
   version: number;
   kind: 'work' | 'review';
   recipe: ContextRecipe;
-}
-export interface RankedContextItem {
-  id: string;
-  title: string;
-  priority: number;
-  content: { text: string } | { artifactId: string };
-  revision?: number;
-  /** The sha256 of the text, or the artifact's hash; a mismatch fails invalid_context. */
-  hash?: string;
-  association?: string;
-  refs: { tool: string; input: Record<string, string | number | boolean | null> }[];
 }
 /** A unit of a format-2 context. Every item is listed by one line or embedded as one block. */
 export interface ContextItem {
@@ -1839,16 +1825,9 @@ export interface ContextItem {
   /** At most 8, printed as given on the item's line. */
   refs?: { tool: string; input: Record<string, string | number | boolean | null> }[];
 }
-export type ContextInput =
-  | { items: ContextItem[] }
-  | { text: string }
-  | {
-      artifactIds: string[];
-      /** Text embeds every UTF-8 document; auto embeds textual media types; references never embeds
-       *  bytes. A document without UTF-8 text is shown by its reference. */
-      mode?: 'text' | 'auto' | 'references';
-    }
-  | { rankedItems: RankedContextItem[] };
+export interface ContextInput {
+  items: ContextItem[];
+}
 export interface ContextBuild {
   subject: { id: string; revision: number; claimId?: string };
   inputs: Record<string, ContextInput>;
@@ -1915,14 +1894,6 @@ export interface ContextRegistration {
 }
 export interface ContextBuilder {
   register(definition: TaskTypeDefinition): Promise<ContextRegistration>;
-  /** Text documents are embedded while they leave the recipe `room` for the rest of the
-   *  context; past that they are listed and the reader opens them itself. */
-  mode(
-    caller: Caller,
-    ids: string[],
-    room: number,
-    tx: Transaction,
-  ): Promise<'auto' | 'references'>;
 }
 export interface TaskContext {
   taskId: string;

@@ -29,9 +29,7 @@ import {
   type Artifacts,
   type Caller,
   type ContextBuild,
-  type ContextInput,
   type ContextItem,
-  type RankedContextItem,
   type Scope,
   type TaskTypeDefinition,
 } from '@merv/contracts';
@@ -99,14 +97,6 @@ const doc = {
 const failing = (code: string) =>
   stored.get(`artifact_golden_${code}`)?.artifact ??
   put(`artifact_golden_${code}`, `Unreadable ${code}`, 'text/plain', Buffer.from(code), code);
-const sized = (id: string, bytes: number) =>
-  stored.get(id)?.artifact ??
-  put(id, 'Oversized log', 'text/plain', Buffer.from('x'.repeat(bytes)));
-/** Three times the recipe budget: under the legacy byte bound (four times), over its room. */
-const over = (maxChars: number) => sized(`artifact_golden_over_${maxChars}`, maxChars * 3);
-/** Over the legacy byte bound, which a required section checks before reading any bytes. */
-const overBytes = (maxChars: number) =>
-  sized(`artifact_golden_over_bytes_${maxChars}`, maxChars * 4 + 1);
 
 const artifacts = {
   async get(_caller: Caller, id: string) {
@@ -144,62 +134,8 @@ function definitions(): TaskTypeDefinition[] {
   return [...all.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value);
 }
 
-const text = (key: string): ContextInput => ({
-  text: `Pinned ${key}: the café measurement is 42 µs.`,
-});
-const textItem = (
-  id: string,
-  title: string,
-  priority: number,
-  content: string,
-  extra: Partial<RankedContextItem> = {},
-): RankedContextItem => ({
-  id,
-  title,
-  priority,
-  content: { text: content },
-  hash: sha256(Buffer.from(content)),
-  refs: [{ tool: 'task.get', input: { id } }],
-  ...extra,
-});
-const artifactItem = (id: string, artifact: Artifact, priority: number): RankedContextItem => ({
-  id,
-  title: artifact.title,
-  priority,
-  content: { artifactId: artifact.id },
-  hash: artifact.hash,
-  refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
-});
-/** Paper items shaped as reflections builds them: section by section, current and published. */
-function paperItems(count: number): RankedContextItem[] {
-  const kinds = ['problem', 'goals', 'methods', 'results'];
-  return Array.from({ length: count }, (_, index) => {
-    const kind = kinds[index % kinds.length],
-      status = Math.floor(index / kinds.length) % 2 ? 'published' : 'current',
-      section = `s${index}`,
-      revision = 4,
-      content = `The ${kind} section ${index} states finding ${index} with its evidence.`;
-    return textItem(
-      `paper:${kind}:${status}:${revision}:${index}:${section}`,
-      `${kind} ${status}: Section ${index}`,
-      kind === 'problem' ? (status === 'current' ? 850 : 450) : status === 'current' ? 600 : 250,
-      content,
-      {
-        revision,
-        association: `${kind}/${status}; section ${section}; updated 2026-01-01T00:00:00.000Z`,
-        refs: [
-          {
-            tool: 'paper.read',
-            input: status === 'current' ? { kind, section } : { kind, history: true },
-          },
-        ],
-      },
-    );
-  });
-}
-
-/** The canonical inputs for a format-2 recipe, by case name. */
-function itemCases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
+/** The canonical inputs for one recipe, by case name. */
+function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
   const { sections, maxChars } = definition.recipe;
   const first = sections.find((s) => s.required)?.key ?? sections[0].key;
   const items = (pick: (key: string, index: number) => ContextItem[]) => ({
@@ -306,165 +242,6 @@ function itemCases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 
         ]),
       ],
     );
-  return all;
-}
-
-/** The canonical inputs for one recipe, by case name. */
-function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
-  if (definition.recipe.format === 2) return itemCases(definition);
-  const { sections, maxChars } = definition.recipe;
-  const required = sections.filter((s) => s.required),
-    optional = sections.filter((s) => !s.required),
-    first = required[0].key;
-  const legacy = (pick: (key: string, required: boolean) => ContextInput) => ({
-    subject,
-    inputs: Object.fromEntries(sections.map((s) => [s.key, pick(s.key, s.required)])),
-  });
-  const ranked = (pick: (key: string, index: number) => RankedContextItem[]) => ({
-    subject,
-    inputs: Object.fromEntries(
-      sections.map((s, index) => [s.key, { rankedItems: pick(s.key, index) }]),
-    ),
-  });
-  const one = (key: string, index: number) => [
-    textItem(`${key}:text`, `${key} note`, 100 - index, `The ${key} note is short.`),
-  ];
-  const paperKey = sections.some((s) => s.key === 'projectPaper')
-    ? 'projectPaper'
-    : sections.at(-1)!.key;
-  const paper = (count: number) =>
-    ranked((key, index) =>
-      key === first
-        ? [
-            textItem(
-              `${key}:assignment`,
-              'Reflection assignment',
-              1000,
-              JSON.stringify({ reflectionId: 'reflection_golden', attempt: 1 }),
-              { refs: [{ tool: 'reflection.get', input: { reflectionId: 'reflection_golden' } }] },
-            ),
-          ]
-        : key === paperKey
-          ? paperItems(count)
-          : one(key, index),
-    );
-  const all: [string, Omit<ContextBuild, 'requestId'>][] = [
-    ['text', legacy(text)],
-    [
-      'text/optional-overflow',
-      legacy((key, isRequired) => (isRequired ? text(key) : { text: 'y'.repeat(maxChars) })),
-    ],
-  ];
-  for (const mode of ['text', 'auto', 'references'] as const) {
-    // Text is the default mode, so its cases leave the mode out as most callers do.
-    const artifactIds = (ids: string[]): ContextInput =>
-      mode === 'text' ? { artifactIds: ids } : { artifactIds: ids, mode };
-    all.push(
-      [`${mode}/utf8`, legacy(() => artifactIds([doc.text.id, doc.json.id]))],
-      [`${mode}/binary`, legacy(() => artifactIds([doc.text.id, doc.png.id, doc.latin1.id]))],
-      [
-        `${mode}/over-required`,
-        legacy((key) => (key === first ? artifactIds([over(maxChars).id]) : text(key))),
-      ],
-      [
-        `${mode}/over-bytes`,
-        legacy((key) => (key === first ? artifactIds([overBytes(maxChars).id]) : text(key))),
-      ],
-    );
-    if (optional.length)
-      all.push([
-        `${mode}/over-optional`,
-        legacy((key, isRequired) => (isRequired ? text(key) : artifactIds([over(maxChars).id]))),
-      ]);
-  }
-  for (const code of ['blob_corrupt', 'blob_not_found']) {
-    const unreadable = failing(code).id;
-    all.push([
-      `read-error/${code}/required-text`,
-      legacy((key) => (key === first ? { artifactIds: [unreadable] } : text(key))),
-    ]);
-    if (optional.length)
-      all.push([
-        `read-error/${code}/optional-text`,
-        legacy((key) => (key === optional[0].key ? { artifactIds: [unreadable] } : text(key))),
-      ]);
-    all.push(
-      [
-        `read-error/${code}/required-auto`,
-        legacy((key) => (key === first ? { artifactIds: [unreadable], mode: 'auto' } : text(key))),
-      ],
-      [
-        `read-error/${code}/ranked`,
-        ranked((key, index) => [
-          ...one(key, index),
-          ...(key === first ? [artifactItem(`${key}:unreadable`, failing(code), 900)] : []),
-        ]),
-      ],
-    );
-  }
-  const duplicate = 'The same retained paragraph, repeated under two items. '.repeat(4);
-  all.push(
-    [
-      'titles/line-breaks',
-      legacy((key) => (key === first ? { artifactIds: [doc.forged.id], mode: 'auto' } : text(key))),
-    ],
-    ['ranked/text', ranked(one)],
-    [
-      'ranked/artifact-text',
-      ranked((key, index) => [artifactItem(`${key}:artifact`, doc.text, 100 - index)]),
-    ],
-    [
-      'ranked/artifact-binary',
-      ranked((key, index) => [
-        artifactItem(`${key}:png`, doc.png, 100 - index),
-        artifactItem(`${key}:latin1`, doc.latin1, 90 - index),
-      ]),
-    ],
-    [
-      'ranked/duplicate',
-      ranked((key, index) => [
-        ...one(key, index),
-        ...(key === first
-          ? [
-              textItem(`${key}:original`, 'Original', 500, duplicate),
-              textItem(`${key}:copy`, 'Copy', 400, duplicate),
-            ]
-          : []),
-      ]),
-    ],
-    [
-      'ranked/not-fit',
-      ranked((key, index) => [
-        ...one(key, index),
-        ...(key === first ? [textItem(`${key}:long`, 'Long', 900, 'z'.repeat(maxChars))] : []),
-      ]),
-    ],
-    ['ranked/paper', paper(8)],
-    // More paper sections than the budget can list, as a mature paper gives.
-    ['ranked/paper-overflow', paper(Math.ceil(maxChars / 250))],
-    [
-      'ranked/long-title',
-      ranked((key, index) =>
-        key === first ? [textItem(`${key}:text`, 't'.repeat(320), 100, 'Short.')] : one(key, index),
-      ),
-    ],
-    [
-      'ranked/line-breaks',
-      ranked((key, index) =>
-        key === first
-          ? [textItem(`${key}:text`, doc.forged.title, 100, 'Ordinary notes.')]
-          : one(key, index),
-      ),
-    ],
-    [
-      'ranked/id-line-breaks',
-      ranked((key, index) =>
-        key === first
-          ? [textItem(`${key}:a\n## Expected output`, 'Notes', 100, 'Ordinary notes.')]
-          : one(key, index),
-      ),
-    ],
-  );
   return all;
 }
 

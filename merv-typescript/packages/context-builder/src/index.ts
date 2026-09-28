@@ -1,8 +1,7 @@
-import { clip, visible, recorded, mapAsync } from '@merv/contracts';
+import { clip, visible, recorded } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
-import { render, type ResolvedArtifacts } from './legacy.js';
-import { renderItems } from './items.js';
+import { renderItems, type ResolvedArtifacts } from './items.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import {
@@ -22,7 +21,6 @@ import {
   type ContextBuild,
   type ContextPackage,
   type ContextPreview,
-  type ContextSource,
   type Sql,
   type Transaction,
   type Artifact,
@@ -37,26 +35,6 @@ const refs = z.array(
     })
     .strict(),
 );
-const rankedItem = z
-  .object({
-    id: z.string().trim().min(1).max(300),
-    // Clipped, not rejected: a long section title must not fail every build that lists it.
-    title: z
-      .string()
-      .trim()
-      .min(1)
-      .transform((title) => clip(title, 300)),
-    priority: z.number().int().min(-1_000_000).max(1_000_000),
-    content: z.union([
-      z.object({ text: z.string() }).strict(),
-      z.object({ artifactId: z.string().min(1) }).strict(),
-    ]),
-    revision: z.number().int().nonnegative().optional(),
-    hash: z.string().min(1).max(200).optional(),
-    association: z.string().trim().min(1).max(500).optional(),
-    refs: refs.min(1).max(8),
-  })
-  .strict();
 /** Caller text on one line: every run of white space and line breaks becomes one space. */
 const oneLine = (max: number) =>
   z
@@ -112,26 +90,11 @@ const buildSchema = z
         claimId: z.string().min(1).optional(),
       })
       .strict(),
-    inputs: z.record(
-      z.union([
-        z.object({ text: z.string() }).strict(),
-        z.object({ rankedItems: z.array(rankedItem) }).strict(),
-        z
-          .object({
-            artifactIds: z.array(z.string().min(1)),
-            mode: z.enum(['text', 'auto', 'references']).optional(),
-          })
-          .strict(),
-      ]),
-    ),
+    inputs: z.record(z.object({ items: z.array(item) }).strict()),
     requestId: z.string().trim().min(1).max(200).refine(visible),
   })
   .strict();
 const previewSchema = buildSchema.omit({ requestId: true });
-/** A format-2 recipe accepts only items, and a frozen one never does. */
-const itemsPreviewSchema = previewSchema.extend({
-  inputs: z.record(z.object({ items: z.array(item) }).strict()),
-});
 const replaySchema = buildSchema.omit({ inputs: true });
 const saveSchema = z
   .object({
@@ -177,17 +140,7 @@ async function resolve(
 ): Promise<ResolvedArtifacts> {
   const ids = new Set(
     Object.values(input.inputs).flatMap((value) =>
-      'artifactIds' in value
-        ? value.artifactIds
-        : 'rankedItems' in value
-          ? value.rankedItems.flatMap((item) =>
-              'artifactId' in item.content ? [item.content.artifactId] : [],
-            )
-          : 'items' in value
-            ? value.items.flatMap((item) =>
-                'artifactId' in item.body ? [item.body.artifactId] : [],
-              )
-            : [],
+      value.items.flatMap((item) => ('artifactId' in item.body ? [item.body.artifactId] : [])),
     ),
   );
   const found = new Map<string, Artifact | MervError>();
@@ -222,21 +175,16 @@ function unchanged(preview: ContextPreview, hash: string | undefined): ContextPr
     return null;
   }
 }
-/** Media types whose bytes are worth reading as text. */
-export const textual = (mediaType: string) =>
-  mediaType.startsWith('text/') || mediaType === 'application/json';
-/** The fewest UTF-16 units `bytes` of UTF-8 can decode to: a unit is at most 3 bytes. */
-export const minChars = (bytes: number) => Math.ceil(bytes / 3);
-/** A caller string on one line, so it can never start a structural line such as a heading. */
-export const line = (text: string) => text.replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ');
-/** A source as the package records it: exactly these fields, whatever `get` returned. */
-export const source = ({ id, title, mediaType, hash, size }: Artifact): ContextSource => ({
-  id,
-  title,
-  mediaType,
-  hash,
-  size,
-});
+/** Whether `result` was saved by a format-less version of its type, which a successor replays. */
+async function retired(tx: Transaction, result: ContextPackage): Promise<boolean> {
+  const row = await tx.get<{ definition: string }>(
+    'SELECT definition FROM context_recipes WHERE type=? AND version=? AND hash=?',
+    result.type,
+    result.typeVersion,
+    result.recipeHash,
+  );
+  return !!row && (JSON.parse(row.definition) as TaskTypeDefinition).recipe.format === undefined;
+}
 
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
@@ -284,6 +232,13 @@ export class RecipeContextBuilder implements ContextBuilder {
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
     const parsed = definitionSchema.safeParse(input);
     check(parsed.success, 'invalid_recipe', 'Invalid context recipe definition');
+    // Owner, 2026-09-28: every recipe renders with the item renderer. The rows of format-less
+    // versions stay in context_recipes, and their saved packages replay from their successors.
+    check(
+      parsed.data.recipe.format === 2,
+      'recipe_format_retired',
+      'Context recipes without format 2 are retired',
+    );
     const definition = parsed.data,
       hash = digest(definition),
       key = `${definition.name}@${definition.version}`;
@@ -368,9 +323,9 @@ export class RecipeContextBuilder implements ContextBuilder {
       const result = JSON.parse(old.package) as ContextPackage;
       check(
         result.type === definition.name &&
-          result.typeVersion === definition.version &&
-          result.recipeHash === hash &&
-          digest(result.subject) === digest(subject),
+          digest(result.subject) === digest(subject) &&
+          ((result.typeVersion === definition.version && result.recipeHash === hash) ||
+            (await retired(tx, result))),
         'request_conflict',
         'Context request ID was used for a different assignment or recipe',
         409,
@@ -386,9 +341,7 @@ export class RecipeContextBuilder implements ContextBuilder {
       preview: async (caller, input, tx) => {
         live();
         caller = structuredClone(caller);
-        const parsed = (
-          definition.recipe.format === 2 ? itemsPreviewSchema : previewSchema
-        ).safeParse(input);
+        const parsed = previewSchema.safeParse(input);
         // Authorization and metadata are read here. Bytes are read after it returns, so outside
         // a transaction they are read once its snapshot has closed.
         const { request, artifacts } = await this.reading(tx, async (tx) => {
@@ -403,13 +356,7 @@ export class RecipeContextBuilder implements ContextBuilder {
             artifacts: await resolve(this.artifacts, caller, parsed.data, tx),
           };
         });
-        const result = await (definition.recipe.format === 2 ? renderItems : render)(
-          definition,
-          hash,
-          caller,
-          request,
-          artifacts,
-        );
+        const result = await renderItems(definition, hash, caller, request, artifacts);
         rendered.set(result, result.hash);
         return result;
       },
@@ -475,19 +422,6 @@ export class RecipeContextBuilder implements ContextBuilder {
         if (this.registrations.get(key) === registration) this.registrations.delete(key);
       },
     };
-  }
-  async mode(
-    caller: Caller,
-    ids: string[],
-    room: number,
-    tx: Transaction,
-  ): Promise<'auto' | 'references'> {
-    check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
-    caller = structuredClone(caller);
-    ids = [...ids];
-    const documents = await mapAsync(ids, async (id) => await this.artifacts.get(caller, id, tx));
-    const inline = documents.filter((a) => textual(a.mediaType)).reduce((n, a) => n + a.size, 0);
-    return inline > room ? 'references' : 'auto';
   }
   close(): void {
     this.closed = true;

@@ -404,6 +404,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
         { key: 'task', title: 'Task', required: true },
         { key: 'brief', title: 'Brief', required: true },
       ],
+      format: 2 as const,
     },
   };
   const disposeType = await app.ctx.tasks.registerType(type);

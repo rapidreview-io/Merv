@@ -14,8 +14,7 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { renderItems } from '@merv/context-builder/items';
-import type { ResolvedArtifacts } from '@merv/context-builder/legacy';
+import { renderItems, type ResolvedArtifacts } from '@merv/context-builder/items';
 import type {
   Artifact,
   Caller,
@@ -586,7 +585,7 @@ test('item strings print on one line, and IDs equal after that are rejected', as
   assert.ok(clipped.prompt.includes(`\n### ${'i'.repeat(300)} — ${'t'.repeat(200)} (`));
 });
 
-test('a format-2 recipe takes only items and a frozen recipe never does', async (t) => {
+test('a recipe takes only items, and a format-less recipe no longer registers', async (t) => {
   const { builder, registration, operator, preview } = await setup(t);
   for (const inputs of [
     { s0: { text: 'Assigned.' } },
@@ -594,14 +593,18 @@ test('a format-2 recipe takes only items and a frozen recipe never does', async 
     { s0: { rankedItems: [] } },
   ])
     await assert.rejects(
-      registration.preview(operator, { subject, inputs } as Omit<ContextBuild, 'requestId'>),
+      registration.preview(operator, { subject, inputs } as unknown as Omit<
+        ContextBuild,
+        'requestId'
+      >),
       { code: 'invalid_context' },
     );
-  const { format: _, ...frozen } = recipe(2000).recipe;
-  const legacy = await builder.register({ ...recipe(2000), name: 'test.frozen', recipe: frozen });
+  const { format: _, ...retired } = recipe(2000).recipe;
   await assert.rejects(
-    legacy.preview(operator, { subject, inputs: { s0: { items: [text('a', 'x')] } } }),
-    { code: 'invalid_context' },
+    builder.register({ ...recipe(2000), name: 'test.retired', recipe: retired }),
+    {
+      code: 'recipe_format_retired',
+    },
   );
   await assert.rejects(preview({}), { code: 'context_missing' });
   await assert.rejects(preview({ s0: [text('a', 'x')], other: [] }), { code: 'invalid_context' });

@@ -363,6 +363,7 @@ test('unavailable task recipes block begin while task reads and explicit closure
           { key: 'brief', title: 'Brief', required: true },
         ],
         outputInstructions: 'Submit retained evidence.',
+        format: 2 as const,
       },
     };
     const dispose = await f.app.ctx.tasks.registerType(type);

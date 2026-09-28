@@ -15,8 +15,20 @@ import {
   type ContextPreview,
   type TaskTypeDefinition,
 } from '@merv/contracts';
-import { minChars, source, textual } from './index.js';
-import type { ResolvedArtifacts } from './legacy.js';
+
+/** The artifacts a render may use: those its input names, resolved before rendering. */
+export interface ResolvedArtifacts {
+  /** An artifact the input names; throws what fetching it threw. */
+  get(id: string): Artifact;
+  /** The document's text, or null when it has none (see readText). */
+  read(document: Artifact, lenient: boolean): Promise<string | null>;
+}
+
+/** Media types whose bytes are worth reading as text. */
+const textual = (mediaType: string) =>
+  mediaType.startsWith('text/') || mediaType === 'application/json';
+/** The fewest UTF-16 units `bytes` of UTF-8 can decode to: a unit is at most 3 bytes. */
+const minChars = (bytes: number) => Math.ceil(bytes / 3);
 
 interface Unit {
   item: ContextItem;
@@ -71,9 +83,7 @@ export async function renderItems(
     'Unknown context input',
   );
   const items = recipe.sections.map((section) => {
-    const value = Object.hasOwn(input.inputs, section.key) ? input.inputs[section.key] : undefined;
-    check(!value || 'items' in value, 'invalid_context', 'A format-2 recipe takes only items');
-    return value ? value.items : [];
+    return Object.hasOwn(input.inputs, section.key) ? input.inputs[section.key].items : [];
   });
   recipe.sections.forEach((section, i) =>
     check(
@@ -252,7 +262,16 @@ export async function renderItems(
     prompt,
     sources: [
       ...new Map(
-        units.flatMap((u) => (u.artifact ? [[u.artifact.id, source(u.artifact)] as const] : [])),
+        units.flatMap(({ artifact: a }) =>
+          a
+            ? [
+                [
+                  a.id,
+                  { id: a.id, title: a.title, mediaType: a.mediaType, hash: a.hash, size: a.size },
+                ] as const,
+              ]
+            : [],
+        ),
       ).values(),
     ],
     // Units the budget kept out, in declaration order; only the builder decides what was omitted.

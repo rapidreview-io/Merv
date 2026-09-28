@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors.",
   "definitions": [
     {
       "name": "consolidation",
@@ -1310,73 +1310,85 @@
       "type": "experiment.attempt_review",
       "version": 2,
       "hash": "6b0094ab96ad6712758beb94975a62fdcdf53ea8878f53aff5d173c16f0d417c",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 3,
       "hash": "9e42bcbd9076ebf797adadd92f5c9a8ab36ce5b17c8e5dfa9a315868e1140162",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 4,
       "hash": "8ab5d0cc017ef3a771e9593398e2e830147e4df7f2708d6431b80dfc5a4da661",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 2,
       "hash": "708064d54cf52c3939c3b94669d809b16413965bb506cbfc1b17ddffea5f279b",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 3,
       "hash": "6d1a3c12517c5f7c6d65cf9c15e7f6748c2b684e3e5c6b63298ae4e25736f9d1",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 4,
       "hash": "592d9c9501dbe7b4a6dc2ce628e1176f1aebfdd198cbf54750076b1e56d6a1df",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 2,
       "hash": "dc3b2a00449468a977dcf5150256376468ac963d67311c15abffcfe02f3cd048",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 3,
       "hash": "9e7b20c7d6e7646b88b582c3577323ae4910507852e97f10d2f93a63117682e0",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 4,
       "hash": "1857be949cd9f03ea0eb0416cab7808001a02f4baff68f4a45435c9a89c4e04b",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 2,
       "hash": "88bec8a35b078941cee0af9fbfd017b75eed514d172e6cbb2125c4d296f8a7a2",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 3,
       "hash": "c08f8f093f2971997a9e8908a0851f8b3b82be5e79af32996808514a54ab77de",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 4,
       "hash": "db4e009a30b7a731b571bcc3e82ed5ffc83625e3ab83e415e3338276ae25af95",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.plan",
@@ -1389,157 +1401,183 @@
       "type": "project.reflection",
       "version": 1,
       "hash": "c9263585eeb1989d16cf93695d75a0f3a29704c93863a6b84bb1bc672b530ce2",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 2,
       "hash": "5c6f8f8de77f37468d9c2358579c797545ea5c7a27f670c0e287a8f89c5c4f38",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 3,
       "hash": "2d33110e9b3f60e3f95d83b3ea135a093ff68245ede7615cac591ba746b531a5",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 4,
       "hash": "8b45ab6ea54bbec21c2879200f7396a692e538d282d9cb702ca25a90bba2d333",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 5,
       "hash": "ba4bc788123c8445a02b162c408579605033138dceeca9eb87747796ea0e00b3",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 2,
       "hash": "a0709564f899c8cad3a3cd1fda98fafa7a8926428f0947ca0a8cbc8e9130d43c",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 3,
       "hash": "7f82bcfe04968bb04e5f93502b370362e177069838f2efdd0d0082b9ce46ace7",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 4,
       "hash": "cbae81e4c8f04facd44688cd388d547f981eb7c35875ec91904049148913044c",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 5,
       "hash": "49d5ca223242cebc7164808246540b9d832d38b735915fb8f6a25f8e5b84b740",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 2,
       "hash": "fe8e01cc77e0f62b6042b278d59a853d3f8e354c8a22588dcdae6e9e911b99bf",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 3,
       "hash": "30d054026deb4155d728ad947790fd193b6d6fcc849488af77e5c640792763cf",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 4,
       "hash": "825b45c54946953a09ee95410e6e8aa6cee1b08c982cbddf1fb63f2a9140dacf",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 5,
       "hash": "62a8990e1ae41d6c2474d7236cca5f8c2364663fe9f684cdcfd6a4ba6d60ddd5",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.review",
       "version": 1,
       "hash": "700a9c7a5281ab218ee5c3674fcdedb97b006154e289015ae3201e8c1cf8d824",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.review",
       "version": 2,
       "hash": "9e741983c2423d52a0f3bb19f1d7e834f7ee1628c6419aaa0ced28bafba4c4e8",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.work",
       "version": 1,
       "hash": "9e0a7ea7d61cf27290c4dd9ecc5b0396a94055e35758b6272056b7f929fecac9",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 5,
       "hash": "e8704ebfcc3aa27b9a02305bce49f915cfd2d918d7f21ec4d06e0e5f34cb72d7",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 5,
       "hash": "310068031ba37032535ed186f01775b1ac28d7a71e42cb470a5b77797495f8b9",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 5,
       "hash": "58c56c4e9091c298a4455c191c3d9664f54fe55d6dd225032032920cb73c4742",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 5,
       "hash": "b3f5f38b860c8c41129b38b57c01a99c6149b3a3aff520e74398ce00fd3f860d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.work",
       "version": 2,
       "hash": "0fd47227bf4b0ddc8772561a851a571ddf9dc6b622814d6587f0de6a036983cd",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.review",
       "version": 3,
       "hash": "a89bf1e02add9da2bd58b0b7c3d36753cfb4b62cf093a623dc29c07148da7901",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 6,
       "hash": "935cf8f8b4042e1bd58b462b87acedbb60e1eecceb95800c506d0eb2c963b496",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 6,
       "hash": "c9bb7712119e8758f17adab5e3552aeada13b6c38465b6091e8ed140074fd6f3",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 6,
       "hash": "8749a0d11dfcace597b3149419cd8ff506aa50c6ca89da4b22395428c7af6511",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 6,
       "hash": "03a9a43b4149586b22acee5a35f7f32c444a8425da87ee37b0ef89bc88d4ba6c",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.plan",
@@ -1552,67 +1590,78 @@
       "type": "experiment.design",
       "version": 7,
       "hash": "7a7cfe5900f07891fc0ad5a83b0681477513aff4775276c31945eb921f7182f5",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 7,
       "hash": "3d34bb921943768e3e358ee6c6a61fed68a34fdad8c8f7fd46bec94117448fb7",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 7,
       "hash": "c104305a5659bedca31b0ef56878a85356c17161859112fc637c9a62fe37d5dd",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 7,
       "hash": "f590faa313aabcaa4048e284d063d86674d58b8de9d22f78016040d42d3955d4",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 6,
       "hash": "013fafe7039ceb6934ce446f7a6d656b9eae32de1efcc667dfa72acd29ca49a9",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 8,
       "hash": "8926c20adddf3979c03e10f9200667fd3927eef8b6ef743bddb8ca81e353d5d1",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 6,
       "hash": "1651728e9dceb754abb2d1a9d9d1f864e7b8e630da1008c4baee7c85d0c7f555",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 8,
       "hash": "cb86353369875aa0beb1d67b2cfab5583e212c99196ce9a453ba3b87d2153e1d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 8,
       "hash": "c6e886dfca74d9956a6797bd96818cc45c08121f51b411babddd9e2c6c65991e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 7,
       "hash": "0ab78b0005a6c87175adbe0c60e90af19de2e45f68b6a68e94420c286e9875d6",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design",
       "version": 9,
       "hash": "bf9935f993024344db2a477e007ba510d50732d29831208105546a604bfd34ec",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
@@ -1625,7 +1674,8 @@
       "type": "experiment.design_review",
       "version": 9,
       "hash": "bc4210b554ee79768a292e1d2f493983c7f7455ff18901cba239924b1074645e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
@@ -1638,25 +1688,29 @@
       "type": "experiment.execute",
       "version": 9,
       "hash": "ddab60214e6b92b8313e272d3634afc6fa530424a992f2e88626a155d3df4ffb",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 9,
       "hash": "c03ab038efed6ec5e2254d7c8be446f79ffb34fc95e8868d2f08415212e3c97f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 8,
       "hash": "2e8e834ffabe7329510ee54737f1aefb6c503566d6345fdcf68e6d4839382160",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 8,
       "hash": "d8c490d4eff3b9cb20d2ff85dee6df1ff1268bd7a8e0acc22603bb67a5e07b80",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "consolidation.consolidating",
@@ -1683,91 +1737,106 @@
       "type": "experiment.design",
       "version": 10,
       "hash": "533e169ac26fe9d1c65fe0c7a0710be30106fb48d79457eae46a652a96a0c023",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.design_review",
       "version": 10,
       "hash": "56e05e472a1d46049cc04ce47bba2eafb7285d7e16cc462bd58d3321d99e71cd",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.execute",
       "version": 10,
       "hash": "2eba1bee71a06ff94abeeee319d4ce24b6bbb9a4a4bc1026f8b117db2aad0e02",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 10,
       "hash": "088b8ad6265ecb2dadff4dbffb2508fd5cd08311fe0b6ff393230a34d33d079f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.work",
       "version": 3,
       "hash": "a3c17552937eab768151f6fdfaa43f9771bdd18d18aed14d3d1c4faced825622",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "task.review",
       "version": 4,
       "hash": "21bcacc932c96575c8770e2173367e9466e8aa6cc6b6504b12927db0cecb4a33",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 9,
       "hash": "1b5b65248ddb28415adcef36d8700347666b1d19c421fe2b987ba525bf3247d9",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 9,
       "hash": "1df11b562cf08c00f3fc16e0a1b370e01e7ded31d2ee3c1f4402d40f211222dc",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 9,
       "hash": "ce269d116693b68e4a34d1419a871de8015fbfd46ef8c792f8924439be13cbb0",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "experiment.attempt_review",
       "version": 11,
       "hash": "f8e6520cf66b5420a2b0cba26431939908c227f4adb8bf3089b5b9f5db7fceab",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",
       "version": 10,
       "hash": "b8d69750091cdf6c500aac7f23aff5c2e2c203954cb86087e3a7495d20fbef14",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 11,
       "hash": "987492f74bbcce798f5eaf73ce0d2bd48db53639860d513595c3b2f96ec17937",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 11,
       "hash": "5ee3296faec103e045dc37ecd186a3ac73fddbfdde38092f1f48930c29da6fd0",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.synthesis",
       "version": 10,
       "hash": "802917236c78ae9dd03355ef4efb0a6b2144517712c3143f03b95894017c7ec7",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.review",
       "version": 10,
       "hash": "a95491c391ca0dd9bb44d034ba229918886d0786f3126831911946832003f609",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "type": "reflection.lens",

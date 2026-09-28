@@ -274,6 +274,7 @@ test('concurrent registrations of one recipe must have exactly one owner', async
       outputInstructions: 'Return the result.',
       sections: [{ key: 'task', title: 'Task', required: true }],
       maxChars: 1200,
+      format: 2 as const,
     },
   };
   const results = await Promise.allSettled([
@@ -285,7 +286,10 @@ test('concurrent registrations of one recipe must have exactly one owner', async
   assert.equal(successful.length, 1);
   assert.equal(refused.length, 1);
   assert.equal(refused[0].reason.code, 'recipe_registered');
-  const input = { subject: { id: 'task_test', revision: 0 }, inputs: { task: { text: 'Work' } } };
+  const input = {
+    subject: { id: 'task_test', revision: 0 },
+    inputs: { task: { items: [{ id: 'task', title: 'Task', body: { text: 'Work' } }] } },
+  };
   assert.match((await successful[0].value.preview(caller, input)).prompt, /Work/);
   successful[0].value.dispose();
   const replacement = await builder.register(definition);
@@ -319,6 +323,7 @@ test('closing Context Builder during registration cannot publish a live handle',
       outputInstructions: 'Report',
       sections: [{ key: 'task', title: 'Task', required: true }],
       maxChars: 1200,
+      format: 2,
     },
   });
   const rejected = assert.rejects(pending, { code: 'context_builder_closed' });

@@ -351,10 +351,9 @@ export interface ExperimentProgramHost {
 }
 
 interface FrozenInputs {
-  /** A lease acquired before the format-2 recipes holds its bounded paper here instead. */
   experiment: Data;
-  /** The paper, section by section. Absent from a lease acquired before the format-2 recipes. */
-  paper?: PaperContextSection[];
+  /** The paper, section by section. */
+  paper: PaperContextSection[];
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
@@ -1018,8 +1017,7 @@ export class ExperimentProgram {
           },
         ],
       },
-      // A lease acquired before these recipes has its paper inside the experiment record.
-      ...(inputs.paper?.length
+      ...(inputs.paper.length
         ? {
             projectPaper: {
               items: inputs.paper.map(({ id, title, text, priority, note, refs }): ContextItem => ({

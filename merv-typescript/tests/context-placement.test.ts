@@ -17,11 +17,10 @@ import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import {
   createService,
-  sha256Hex,
   type Artifacts,
   type Caller,
   type ContextBuild,
-  type RankedContextItem,
+  type ContextItem,
   type Scope,
   type TaskTypeDefinition,
   type Transaction,
@@ -42,9 +41,15 @@ const definition: TaskTypeDefinition = {
     ],
     outputInstructions: 'Report the result with evidence.',
     maxChars: 4000,
+    format: 2,
   },
 };
 const subject = { id: 'assignment', revision: 1 };
+const item = (id: string, artifactId: string): ContextItem => ({
+  id,
+  title: id,
+  body: { artifactId },
+});
 
 async function setup(t: TestContext, options: { lockTimeoutMs?: number } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-context-placement-'));
@@ -68,7 +73,7 @@ test('preview and replay outside a transaction never wait for the writer lock', 
   const { schema, artifacts, builder, operator } = await setup(t, { lockTimeoutMs: 300 });
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });
   const registration = await builder.register(definition);
-  const input = { subject, inputs: { evidence: { artifactIds: [evidence.id] } } };
+  const input = { subject, inputs: { evidence: { items: [item('proof', evidence.id)] } } };
   const saved = await buildContext(registration, operator, { ...input, requestId: 'saved' });
   // Another instance holds this schema's writer lock.
   const holder = new pg.Client({ connectionString: postgresUrl });
@@ -101,13 +106,8 @@ test('a restart registers its stored recipe versions without a write transaction
     { ...definition, name: 'test.placement-review', kind: 'review' },
   ];
   for (const recipe of definitions as TaskTypeDefinition[]) await first.register(recipe);
-  // Before closing, mode() answers; after, it is refused like every other call.
-  assert.equal(await state.transaction((tx) => first.mode({} as Caller, [], 1, tx)), 'auto');
   first.close();
-  await assert.rejects(
-    state.transaction((tx) => first.mode({} as Caller, [], 1, tx)),
-    { code: 'context_builder_closed' },
-  );
+  await assert.rejects(first.register(definition), { code: 'context_builder_closed' });
 
   const restarted = await createService(new RecipeContextBuilder(state, stub, stub));
   const concurrent = await createService(new RecipeContextBuilder(state, stub, stub));
@@ -194,119 +194,67 @@ test('a render looks up each named artifact once and fails in the same order as 
     }
   };
   const registration = await builder.register(definition);
-  const ranked = await builder.register({ ...definition, name: 'test.placement-ranked' });
 
-  const legacy = await registration.preview(operator, {
+  const preview = await registration.preview(operator, {
     subject,
     inputs: {
-      evidence: { artifactIds: [a.id, b.id] },
-      background: { artifactIds: [a.id], mode: 'references' },
-      notes: { artifactIds: [b.id, c.id], mode: 'auto' },
+      evidence: { items: [item('ea', a.id), item('eb', b.id)] },
+      background: { items: [item('ba', a.id)] },
+      notes: { items: [item('nb', b.id), item('nc', c.id)] },
     },
   });
   assert.deepEqual(lookups, [a.id, b.id, c.id]);
   assert.deepEqual(
-    legacy.sources.map((source) => source.id),
+    preview.sources.map((source) => source.id),
     [a.id, b.id, c.id],
   );
-  const item = (id: string, artifactId: string, priority = 10): RankedContextItem => ({
-    id,
-    title: id,
-    priority,
-    content: { artifactId },
-    refs: [{ tool: 'artifact.read', input: { artifactId } }],
-  });
-  lookups.length = 0;
-  const twice = await ranked.preview(operator, {
-    subject,
-    inputs: {
-      evidence: { rankedItems: [item('first', a.id), item('again', a.id), item('b', b.id)] },
-    },
-  });
-  assert.deepEqual(lookups, [a.id, b.id]);
-  assert.match(twice.prompt, /Document A\./);
+  assert.match(preview.prompt, /Document A\./);
 
   // The error a build fails with does not depend on which artifacts were looked up first.
   const missing = 'artifact_missing';
-  const wrongHash: RankedContextItem = {
-    id: 'text',
-    title: 'Text',
-    priority: 1,
-    content: { text: 'Assigned.' },
-    hash: sha256Hex('Something else.'),
-    refs: [{ tool: 'task.get', input: { id: 'text' } }],
-  };
-  const cases: [string, Omit<ContextBuild, 'requestId'>, string][] = [
+  const text = (id: string, body: string): ContextItem => ({
+    id,
+    title: id,
+    body: { text: body },
+    embed: 'always',
+  });
+  const cases: [string, Record<string, ContextItem[]>, string][] = [
     [
       'a required section missing before a missing artifact in an optional one',
-      { subject, inputs: { background: { artifactIds: [missing] } } },
+      { background: [item('gone', missing)] },
       'context_missing',
     ],
     [
-      'required text too large before a missing artifact in an optional section',
-      {
-        subject,
-        inputs: {
-          evidence: { text: 'x'.repeat(definition.recipe.maxChars) },
-          background: { artifactIds: [missing] },
-        },
-      },
-      'context_too_large',
-    ],
-    [
-      'a missing artifact in a required section before duplicates in an optional one',
-      {
-        subject,
-        inputs: {
-          evidence: { artifactIds: [missing] },
-          background: { artifactIds: [a.id, a.id] },
-        },
-      },
-      'not_found',
-    ],
-    [
-      'duplicates in a required section before a missing artifact in an optional one',
-      {
-        subject,
-        inputs: {
-          evidence: { artifactIds: [a.id, a.id] },
-          background: { artifactIds: [missing] },
-        },
-      },
+      'duplicate item IDs before a missing artifact',
+      { evidence: [item('gone', missing)], background: [item('x', a.id), item('x', b.id)] },
       'invalid_context',
     ],
     [
       'an unknown input before a missing artifact',
-      { subject, inputs: { evidence: { artifactIds: [missing] }, unknown: { text: 'x' } } },
+      { evidence: [item('gone', missing)], unknown: [text('x', 'x')] },
       'invalid_context',
+    ],
+    [
+      'a missing artifact before an always body too large',
+      {
+        evidence: [text('large', 'x'.repeat(definition.recipe.maxChars))],
+        background: [item('gone', missing)],
+      },
+      'not_found',
     ],
     [
       'a foreign artifact',
-      { subject, inputs: { evidence: { artifactIds: [a.id, foreign.id] } } },
+      { evidence: [item('a', a.id), item('foreign', foreign.id)] },
       'not_found',
     ],
   ];
-  for (const [name, input, code] of cases)
+  for (const [name, sections, code] of cases) {
+    const input: Omit<ContextBuild, 'requestId'> = {
+      subject,
+      inputs: Object.fromEntries(Object.entries(sections).map(([key, items]) => [key, { items }])),
+    };
     await assert.rejects(registration.preview(operator, input), { code }, name);
-  const rankedCases: [string, RankedContextItem[], string][] = [
-    [
-      'a missing artifact before a later wrong hash',
-      [item('gone', missing), wrongHash],
-      'not_found',
-    ],
-    [
-      'a wrong hash before a later missing artifact',
-      [wrongHash, item('gone', missing)],
-      'invalid_context',
-    ],
-    ['a foreign artifact', [item('foreign', foreign.id)], 'not_found'],
-  ];
-  for (const [name, items, code] of rankedCases)
-    await assert.rejects(
-      ranked.preview(operator, { subject, inputs: { evidence: { rankedItems: items } } }),
-      { code },
-      name,
-    );
+  }
   // A refused caller is refused before its input is judged, in preview, build and replay.
   const outsider = { actorId: operator.actorId, projectId: other.project.id };
   const invalid = { subject, inputs: { evidence: { bogus: true } } } as never;
@@ -342,7 +290,7 @@ test('a session worker previews inside a snapshot, where nothing may write', asy
   });
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });
   const registration = await builder.register(definition);
-  const input = { subject, inputs: { evidence: { artifactIds: [evidence.id] } } };
+  const input = { subject, inputs: { evidence: { items: [item('proof', evidence.id)] } } };
   const preview = await state.snapshot(() => registration.preview(session, input));
   assert.equal(preview.actorId, worker.id);
   assert.match(preview.prompt, /Result: 42\./);
