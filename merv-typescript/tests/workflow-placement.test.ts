@@ -64,6 +64,7 @@ async function fixture(t: TestContext) {
   const fault: { write?: (tx: Transaction, id: string) => Promise<unknown> } = {};
   const policy: WorkflowPolicy = {
     successStates: ['done'],
+    limits: [{ name: 'finishes', from: 'open', actions: ['finish'], max: 1 }],
     actions: [
       {
         name: 'finish',
@@ -182,9 +183,24 @@ const reads: [string, (f: Fixture) => Promise<unknown>][] = [
       ),
   ],
   [
+    'limitStatus',
+    async (f) =>
+      assert.equal(
+        (await f.workflows.limitStatus(f.owner, f.instance.id, 'finishes')).remaining,
+        1,
+      ),
+  ],
+  [
     'limitStatusOf',
     async (f) =>
       assert.equal((await f.workflows.limitStatusOf(f.owner, [f.instance.id], 'none')).size, 0),
+  ],
+  [
+    'checkDependencies',
+    async (f) =>
+      await assert.rejects(f.workflows.checkDependencies(f.owner, f.instance.id), {
+        code: 'dependencies_pending',
+      }),
   ],
   [
     'dependencyClosure',
