@@ -6,7 +6,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
-import { check, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
+import {
+  check,
+  type Caller,
+  type Transaction,
+  type WorkflowDefinition,
+  type WorkflowPolicy,
+} from '@merv/contracts';
 
 test('a new program registers guidance and guards without engine cases; reads, preflight, disposal and revision fences agree', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-program-'));
@@ -254,7 +260,7 @@ test('a new program registers guidance and guards without engine cases; reads, p
   }
 });
 
-test('a guard that writes under a read fails the read instead of blocking the work', async () => {
+test('a guard, begin check or lease role that writes under a read fails the read instead of blocking the work', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-fault-'));
   const app = await createApp({ directory });
   try {
@@ -268,6 +274,12 @@ test('a guard that writes under a read fails the read instead of blocking the wo
       terminal: ['done'],
       edges: [{ from: 'open', action: 'finish', to: 'done' }],
     };
+    /** Which callback writes. */
+    let writer: 'guard' | 'begin' | 'role' | null = null;
+    const scribble = async (by: typeof writer, tx: Transaction, id: string) => {
+      if (writer === by)
+        await tx.run('UPDATE wf_instances SET updated_at=updated_at WHERE id=?', id);
+    };
     await app.ctx.workflows.register(graph, {
       actions: [
         {
@@ -276,8 +288,31 @@ test('a guard that writes under a read fails the read instead of blocking the wo
           transitions: ['finish'],
           tool: 'scribble.finish',
           instruction: 'Finish.',
-          check: async ({ tx, snapshot }) => {
-            await tx.run('UPDATE wf_instances SET updated_at=updated_at WHERE id=?', snapshot.id);
+          check: async ({ tx, snapshot }) => await scribble('guard', tx, snapshot.id),
+        },
+      ],
+      assignments: [
+        {
+          state: 'open',
+          check: async ({ tx, snapshot }) => await scribble('begin', tx, snapshot.id),
+          build: () => ({
+            role: 'producer',
+            label: 'Scribble',
+            brief: 'Scribble',
+            references: [],
+            handoff: { instruction: 'Finish', tools: ['scribble.finish'] },
+            execution: { readOnly: true, tools: [] },
+            context: null,
+          }),
+          execution: { readOnly: true, tools: [] },
+          lease: {
+            role: async ({ tx, snapshot }) => {
+              await scribble('role', tx, snapshot.id);
+              return 'producer' as const;
+            },
+            acquire: ({ leaseId }) => ({ leaseId }),
+            check: () => {},
+            release: () => {},
           },
         },
       ],
@@ -286,13 +321,26 @@ test('a guard that writes under a read fails the read instead of blocking the wo
       workflow: graph.name,
       requestId: 'start',
     });
-    // State refuses the write with a 409, which a guard's refusal would be read as: the work
-    // would show as blocked by its own program's bug.
+    const read = async <T>(fn: () => Promise<T>) => await app.ctx.state.snapshot(fn);
+    // Unfaulted, the work is offered and dispatchable.
+    assert.equal(
+      (await read(() => app.ctx.workflows.evaluate(caller, instance.id))).nextAction?.action,
+      'begin',
+    );
+    assert.equal((await read(() => app.ctx.workflows.dispatchCandidates(caller))).length, 1);
+    // State refuses each write with a 409, which a callback's refusal would be read as: the
+    // work would show as blocked, or be skipped, because of its own program's bug.
+    for (const by of ['guard', 'begin'] as const) {
+      writer = by;
+      await assert.rejects(
+        async () => await read(() => app.ctx.workflows.evaluate(caller, instance.id)),
+        { code: 'invalid_workflow_policy', status: 500 },
+        by,
+      );
+    }
+    writer = 'role';
     await assert.rejects(
-      async () =>
-        await app.ctx.state.snapshot(
-          async () => await app.ctx.workflows.evaluate(caller, instance.id),
-        ),
+      async () => await read(() => app.ctx.workflows.dispatchCandidates(caller)),
       { code: 'invalid_workflow_policy', status: 500 },
     );
   } finally {
