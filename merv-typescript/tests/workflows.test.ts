@@ -464,6 +464,34 @@ test('one data cap bounds start data, transition data and input, and preflight i
   assert.deepEqual(revised.data, { first: half, second: half, note: 'small' });
 });
 
+test('a version pauses starts while an instance is in one of its nonterminal states', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const pausing = (name: string, states: string[], terminal: string[]): WorkflowDefinition => ({
+    name,
+    version: 1,
+    initial: states[0],
+    states,
+    terminal,
+    edges: [],
+    blocksStarts: ['approval'],
+  });
+  // With no nonterminal state an instance is over as it starts, so it pauses nothing.
+  await workflows.register(pausing('instant', ['over'], ['over']));
+  await workflows.start(caller, { workflow: 'instant', requestId: 'instant' });
+  await workflows.start(caller, { workflow: 'approval', requestId: 'after-instant' });
+  // With no terminal state every instance stays open, so one pauses starts for good.
+  await workflows.register(pausing('standing', ['on'], []));
+  await workflows.start(caller, { workflow: 'standing', requestId: 'standing' });
+  await assert.rejects(
+    async () => await workflows.start(caller, { workflow: 'approval', requestId: 'paused' }),
+    code('workflow_creation_paused'),
+  );
+  // Only the workflows it names are paused, and a retry of a committed start still replays.
+  await workflows.start(caller, { workflow: 'instant', requestId: 'unnamed' });
+  await workflows.start(caller, { workflow: 'approval', requestId: 'after-instant' });
+});
+
 test('pinned contracts are kept in memory, immutable in storage, and found when another service adds one', async (t) => {
   const folder = mkdtempSync(join(tmpdir(), 'merv-workflow-pinned-'));
   t.after(() => rmSync(folder, { recursive: true, force: true }));

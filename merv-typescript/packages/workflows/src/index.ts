@@ -134,6 +134,41 @@ const checkRevision = (revision: unknown) =>
     'Expected revision must be a nonnegative integer',
   );
 
+/**
+ * An open instance of any stored version whose definition pauses starts of `workflow`. Only
+ * that version's nonterminal states are looked for, on the (project, workflow, version, state)
+ * index, so the ended instances that make up most of a project are never read; a version with
+ * no nonterminal state never pauses anything.
+ */
+async function openBlocker(
+  tx: Transaction,
+  projectId: string,
+  workflow: string,
+): Promise<{ id: string; workflow: string } | undefined> {
+  const blocking = (
+    await tx.all<{ definition_json: string }>(
+      `SELECT definition_json FROM wf_definitions WHERE (definition_json::jsonb -> 'blocksStarts') @> jsonb_build_array(?::text)`,
+      workflow,
+    )
+  )
+    .map((row) => JSON.parse(row.definition_json) as WorkflowDefinition)
+    .map((definition) => ({
+      definition,
+      open: definition.states.filter((state) => !definition.terminal.includes(state)),
+    }))
+    .filter(({ open }) => open.length);
+  if (!blocking.length) return undefined;
+  return await tx.get<{ id: string; workflow: string }>(
+    `SELECT id,workflow FROM wf_instances WHERE project_id=? AND (${blocking
+      .map(
+        ({ open }) => `(workflow=? AND version=? AND state IN (${open.map(() => '?').join(',')}))`,
+      )
+      .join(' OR ')}) LIMIT 1`,
+    projectId,
+    ...blocking.flatMap(({ definition, open }) => [definition.name, definition.version, ...open]),
+  );
+}
+
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
@@ -1640,16 +1675,7 @@ export class WorkflowsService implements Workflows {
       }
       const registered = this.definition(input.workflow, input.version);
       this.checkOwner(registered, owner);
-      const blocker = await transaction.get<{ id: string; workflow: string }>(
-        `SELECT w.id,w.workflow FROM wf_instances w
-         JOIN wf_definitions d ON d.name=w.workflow AND d.version=w.version
-         WHERE w.project_id=?
-           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(d.definition_json::jsonb #> '{blocksStarts}') AS selected(value) WHERE value=?)
-           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(d.definition_json::jsonb #> '{terminal}') AS selected(value) WHERE value=w.state)
-         LIMIT 1`,
-        caller.projectId,
-        registered.definition.name,
-      );
+      const blocker = await openBlocker(transaction, caller.projectId, registered.definition.name);
       check(
         !blocker,
         'workflow_creation_paused',

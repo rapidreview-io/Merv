@@ -71,6 +71,10 @@ Unmanaged graph mutations require `write` permission directly. A registration ha
   at startup and keeps them. It reads a version it does not hold, such as one another service
   registered later, only once, unless that version still lacks its success row or an
   execution row for a nonterminal state, which a later registration would add.
+- A definition's `blocksStarts` names workflows that may not start while any instance of that
+  version, loaded or not, is in one of its nonterminal states (`workflow_creation_paused`). The
+  check reads only instances in those states, through an index, so ended ones cost nothing, and
+  a version with no nonterminal state pauses nothing.
 - Starting without a version chooses the latest installed version. Retrying that
   request returns the original response even if a newer version was installed.
 - Start data, transition data and input, and preflight input are each a JSON object of
