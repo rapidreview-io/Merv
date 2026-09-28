@@ -463,6 +463,44 @@ test('an instance budget withholds only the work inside its closure', async (t) 
   );
 });
 
+test('a closure too large to walk is refused, and its budget cannot be judged', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const root = await f.instance();
+  // 5,000 more instances the root names as children: one past the walk's bound. They are
+  // finished, so the root is the only work dispatch could offer.
+  const children = await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO wf_instances (id, project_id, workflow, version, state, revision, data_json, created_at, updated_at)
+       SELECT 'bulk-' || n, ?, 'usage-fixture', 1, 'done', 0, '{}', ?, ? FROM generate_series(1, 5000) AS n`,
+      f.owner.projectId,
+      root.createdAt,
+      root.createdAt,
+    );
+    return Array.from({ length: 5000 }, (_, index) => `bulk-${index + 1}`);
+  });
+  f.fanOut.set(root.id, children);
+  await assert.rejects(async () => await f.workflows.dependencyClosure(f.owner, root.id), {
+    code: 'closure_too_large',
+    status: 409,
+  });
+  // A usage read of the closure would under-count it, so it is refused too.
+  await assert.rejects(async () => await f.sessions.usage(f.owner, { instanceId: root.id }), {
+    code: 'closure_too_large',
+  });
+  const set = await f.sessions.setBudget(f.owner, { instanceId: root.id, maxWallMinutes: 60 });
+  assert.deepEqual([set.exceeded, set.unavailable], [[], ['wall']]);
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
+
+  // Exactly at the bound the walk is whole.
+  f.fanOut.set(root.id, children.slice(1));
+  assert.equal((await f.workflows.dependencyClosure(f.owner, root.id)).length, 5000);
+  const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  assert.deepEqual([judged.exceeded, judged.unavailable], [[], []]);
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+});
+
 test('launches that keep failing on one revision stop being offered until dispatch is switched off and on', async (t) => {
   const f = await fixture(t, 2);
   await f.sessions.heartbeatRunner(f.source, presence);

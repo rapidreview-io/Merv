@@ -1474,7 +1474,8 @@ export class WorkflowsService implements Workflows {
   /**
    * A walk rather than a recursive query, like the cycle check beside the dependency insert:
    * it can ask each loaded policy for the children that no dependency edge names. The bound keeps a pathological graph from holding a
-   * read open; the caller reports how many instances it was given.
+   * read open. A closure past it is refused rather than cut short: every caller would act on the
+   * part it was given as if it were the whole.
    */
   async dependencyClosure(
     caller: Caller,
@@ -1511,6 +1512,12 @@ export class WorkflowsService implements Workflows {
             ?.policy?.children?.({ caller, instanceId: current, tx })) ?? []),
         );
       }
+      check(
+        frontier.every((id) => seen.has(id)),
+        'closure_too_large',
+        `This dependency closure covers more than ${closureLimit} workflow instances`,
+        409,
+      );
       return [...seen];
     });
   }

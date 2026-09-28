@@ -316,9 +316,10 @@ export interface BudgetStatus {
   /**
    * Bounds that cannot be judged because of them: a cost or token bound is enforced only
    * on complete accounting, so it withholds new automatic offers until the usage arrives
-   * or the bound is cleared, rather than letting unreported spending pass as none.
+   * or the bound is cleared, rather than letting unreported spending pass as none. An
+   * instance whose dependency closure is too large to walk leaves every bound unjudged.
    */
-  unavailable: ('cost' | 'tokens')[];
+  unavailable: ('wall' | 'cost' | 'tokens')[];
   updatedAt: string;
   updatedBy: string;
 }
