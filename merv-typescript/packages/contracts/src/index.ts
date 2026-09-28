@@ -1842,13 +1842,20 @@ export interface ContextPackage {
 }
 export type ContextPreview = Omit<ContextPackage, 'id' | 'createdAt'>;
 export interface ContextRegistration {
+  /**
+   * With `tx`, or without it inside a transaction, runs there: the caller chose the placement,
+   * and a writer transaction holds the writer lock while bytes are read. Outside any
+   * transaction, authorization and artifact metadata are read in a read-only snapshot and the
+   * bytes after it closes, so the builder never takes the writer lock.
+   */
   preview(
     caller: Caller,
     input: Omit<ContextBuild, 'requestId'>,
     tx?: Transaction,
   ): Promise<ContextPreview>;
   build(caller: Caller, input: ContextBuild, tx?: Transaction): Promise<ContextPackage>;
-  /** Replay an existing assignment request before rebuilding its live inputs. */
+  /** Replay an existing assignment request before rebuilding its live inputs. Placed as
+   *  `preview` is: outside any transaction it reads in a read-only snapshot. */
   replay(
     caller: Caller,
     input: Pick<ContextBuild, 'subject' | 'requestId'>,
