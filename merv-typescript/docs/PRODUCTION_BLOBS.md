@@ -1,6 +1,6 @@
 # Artifact bytes on S3 or R2
 
-The existing Blobs plugin supports asynchronous disk and S3-compatible storage. It still has no State dependency. Artifacts owns metadata and permissions; Blobs stores immutable bytes under a project namespace and SHA-256 content hash. Ordinary uploads and inline reads remain limited to 2,000,000 bytes. Artifacts imported from the legacy system up to 512 MiB are downloaded directly; heavy sandbox outputs remain in the external storage system.
+The existing Blobs plugin supports asynchronous disk and S3-compatible storage. It still has no State dependency. Artifacts owns metadata and permissions; Blobs stores immutable bytes under a project namespace and SHA-256 content hash. `put`, `get` and inline reads remain limited to 2,000,000 bytes. Larger artifacts, up to 512 MiB (`MAX_OBJECT_BYTES`), are blobs too: on S3 they are uploaded and downloaded directly through signed URLs (see [Large files](PRODUCTION_STORAGE.md#large-files)).
 
 Existing local configuration is unchanged:
 
@@ -33,7 +33,7 @@ Uploads use a signed conditional write (`If-None-Match: *`) and Content-MD5 for 
 
 `timeoutMs` bounds each complete remote operation, including response-body consumption and request retries (default 30,000; maximum 120,000). `maxAttempts` defaults to 3 and is limited to 1–5. Retry backoff observes the same deadline. During unload, the provider stops accepting calls, drains admitted operations and then destroys the SDK client. Production endpoints require HTTPS. The direct provider constructor has an explicit HTTP-loopback allowance only for protocol tests; plugin configuration cannot enable it.
 
-Both providers expose Promise-returning `put` and `get`. Disk retains atomic create-without-replacement, flushed file writes and integrity verification. Callers must await durable storage before publishing successful artifact metadata. Blobs does not make database and object storage one atomic transaction; database failures after a successful upload may leave unreferenced content, and callers must not delete a shared hash on rollback.
+Both providers expose Promise-returning `put` and `get`; only S3 adds `upload`, `stored` and `download`, so on disk artifacts refuses uploads (`storage_unavailable`) and downloads. Disk retains atomic create-without-replacement, flushed file writes and integrity verification. Callers must await durable storage before publishing successful artifact metadata. Blobs does not make database and object storage one atomic transaction; database failures after a successful upload may leave unreferenced content, and callers must not delete a shared hash on rollback.
 
 `tests/blobs-s3.test.ts` exercises the real AWS SDK against a local HTTP fixture: SigV4 headers, conditional writes, verified duplicate content, corruption, bounded reads, sanitized failures, retry limits, deadlines and drain behavior. It also checks asynchronous disk immutability and cleanup. These tests use fake credentials and do not prove access to a real deployment bucket.
 
@@ -43,7 +43,7 @@ Both providers expose Promise-returning `put` and `get`. Disk retains atomic cre
 
 The URL grants GET access to one exact object for 60 seconds. Its signed response overrides force `attachment`, `application/octet-stream`, `private, no-store` and the `identity` content encoding, whatever metadata the object was uploaded with. The UI prepares it only when clicked, removes expired links and offers refresh. The browser downloads directly from storage, so large bytes never enter the API JSON response or agent context. **A URL already issued remains usable for up to 60 seconds after access is revoked.** Revocation blocks fresh URLs and a request whose storage preparation is still pending. Do not log or persist these bearer URLs. The immutable SHA-256 remains in artifact metadata; the direct download does not rehash hundreds of megabytes before every URL is issued.
 
-Artifacts over the inline limit exist only because the one-time [legacy import](LEGACY_IMPORT.md) copied them; that importer and its verified server-side copy were removed on 2026-09-23. A download checks the exact HEAD length against the retained size (at most 512 MiB) before signing, within the ordinary operation deadline.
+A download checks the exact HEAD length against the retained size (at most 512 MiB) before signing, within the ordinary operation deadline.
 
 The local protocol tests verify presigned query signatures, downloaded attachment/cache headers, project-path tampering, size mismatches and authorization during revocation, seeding large objects directly into the S3 fixture.
 
