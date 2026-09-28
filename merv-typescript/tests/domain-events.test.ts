@@ -851,3 +851,55 @@ test('a removed progress row neither rejects drain nor strands later consumers',
     await state.close();
   }
 });
+
+test('a drain() just after a pass decides it is done still delivers a commit made before it', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-events-window-'));
+  const state = await openState(directory);
+  const other = await openState(directory);
+  const dispatcher = new DurableEvents(state);
+  const events = await createService(dispatcher);
+  // The pass's final check follows its last deliver() by a few microtasks; sweep across it.
+  const internals = dispatcher as unknown as {
+    deliver(): Promise<boolean>;
+    wakeRequested: boolean;
+  };
+  const deliver = internals.deliver.bind(dispatcher);
+  const seen: number[] = [];
+  const missed: number[] = [];
+  try {
+    await events.subscribe({
+      id: 'worker',
+      types: ['probe.created'],
+      from: 'beginning',
+      handle(event) {
+        seen.push(event.id);
+      },
+    });
+    for (let hops = 0; hops <= 8; hops++) {
+      let armed = true;
+      let late: Promise<void> | undefined;
+      internals.deliver = async () => {
+        const backlog = await deliver();
+        if (armed && !backlog && !internals.wakeRequested) {
+          armed = false;
+          // Through another State: this dispatcher gets no post-commit wakeup for it.
+          const { id } = await emitProbe(other);
+          late = (async () => {
+            for (let hop = 0; hop < hops; hop++) await Promise.resolve();
+            await events.drain();
+            if (!seen.includes(id)) missed.push(hops);
+          })();
+        }
+        return backlog;
+      };
+      await events.drain();
+      await late;
+    }
+    assert.deepEqual(missed, []);
+    assert.equal(seen.length, 9);
+  } finally {
+    await events.close();
+    await Promise.all([state.close(), other.close()]);
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

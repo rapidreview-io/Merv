@@ -143,19 +143,21 @@ export class DurableEvents implements DomainEvents {
     if (this.closed) return Promise.resolve();
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    this.running = Promise.resolve()
-      .then(async () => {
+    this.running = Promise.resolve().then(async () => {
+      try {
         let backlog: boolean;
         do {
           this.wakeRequested = false;
           backlog = await this.deliver();
         } while (!this.closed && (backlog || this.wakeRequested));
-      })
-      .finally(() => {
+      } finally {
+        // Cleared in the same step as the last check above: a drain() from here on starts a
+        // new pass instead of joining one that will not look for its commit.
         this.running = undefined;
         // Also discovers commits made through another State connection.
         this.wake(100);
-      });
+      }
+    });
     return this.running;
   }
 
