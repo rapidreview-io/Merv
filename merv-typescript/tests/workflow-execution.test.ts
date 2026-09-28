@@ -332,6 +332,28 @@ test('a lease check fences its worker, revision, policy and active registration,
       }),
     /Rollback/,
   );
+  // A record moved by the worker's own hand is the same conflict: what it means is Sessions'.
+  await assert.rejects(
+    async () =>
+      await f.state.transaction(async (tx) => {
+        await f.handle.transition(
+          f.worker,
+          {
+            instanceId: f.instance.id,
+            expectedRevision: 0,
+            action: 'finish',
+            input: { evidence: 'yes' },
+            requestId: 'handoff',
+          },
+          tx,
+        );
+        await assert.rejects(async () => await f.workflows.checkLease(f.worker, lease, tx), {
+          code: 'revision_conflict',
+        });
+        throw new Error('Rollback');
+      }),
+    /Rollback/,
+  );
   assert.equal((await f.admit(offered, 'claim')).input.claimId, 'claim-1');
   f.handle.dispose();
   await assert.rejects(async () => await f.workflows.checkLease(f.worker, lease), {

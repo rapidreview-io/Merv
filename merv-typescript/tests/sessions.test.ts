@@ -616,8 +616,14 @@ test('one invocation may finish its own handoff transaction, while later calls a
   await assert.rejects(async () => await f.scope.require(prepared.caller, 'read'), {
     code: 'session_invocation',
   });
-  // The record moved by the worker's own hand: the session ends as a completed handoff,
-  // whichever path meets it first; a halt that finds it so halts nothing.
+  // The record moved by the worker's own hand. Workflows sees only a stale revision; Sessions
+  // tells the worker its handoff landed.
+  await assert.rejects(async () => await f.scope.require(worker, 'read'), {
+    code: 'session_completed',
+    status: 409,
+  });
+  // The session ends as a completed handoff, whichever path meets it first; a halt that finds
+  // it so halts nothing.
   assert.equal((await f.sessions.halt(f.owner, { sessionId: session.id })).halted, 0);
   // And it keeps saying so. A worker retrying a handoff whose response was lost has only
   // this refusal to tell it the work committed.

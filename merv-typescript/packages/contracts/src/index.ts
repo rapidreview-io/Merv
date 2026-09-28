@@ -171,6 +171,7 @@ import type {
   WorkflowSnapshot,
   WorkflowWorkspacePolicy,
 } from './workflow-models.js';
+export { ROLES } from './workflow-models.js';
 export type {
   Role,
   WorkflowDispatchCandidate,

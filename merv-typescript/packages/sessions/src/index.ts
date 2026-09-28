@@ -747,7 +747,11 @@ export class LeasedSessions implements Sessions {
     if (session.agentId)
       await this.directory.require(await this.directory.get(session.agentId, tx), tx);
   }
-  /** The session's lease still holds; with `frozen`, also the references its execution grants now. */
+  /**
+   * The session's lease still holds; with `frozen`, also the references its execution grants now.
+   * A record moved by this worker's own hand is its handoff landing, not a conflict: a second
+   * copy of the same call has nothing left to do.
+   */
   private async valid(
     session: Session,
     tx: Transaction,
@@ -762,16 +766,31 @@ export class LeasedSessions implements Sessions {
       401,
     );
     await this.source(session, tx);
-    const execution = await this.framed(
-      {
-        tx,
-        actorId: session.actorId,
-        sessionId: session.id,
-        source: session.source,
-        role: session.role,
-      },
-      () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
-    );
+    let execution: { registrationId: string; references?: WorkflowExecutionReferences };
+    try {
+      execution = await this.framed(
+        {
+          tx,
+          actorId: session.actorId,
+          sessionId: session.id,
+          source: session.source,
+          role: session.role,
+        },
+        () => this.workflows.checkLease(this.worker(session), session.lease, tx, frozen),
+      );
+    } catch (error) {
+      if (
+        error instanceof MervError &&
+        error.code === 'revision_conflict' &&
+        (await this.handedOff(session, tx))
+      )
+        throw new MervError(
+          'session_completed',
+          'Your handoff already moved this record; this session has ended',
+          409,
+        );
+      throw error;
+    }
     this.ensureOpen();
     check(
       session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
@@ -995,9 +1014,7 @@ export class LeasedSessions implements Sessions {
       const failure = safeError(error);
       if (failure.status >= 500) return failure;
       // The record moved by this worker's own hand: that is its handoff, not a conflict.
-      const handoff =
-        failure.code === 'session_completed' ||
-        (failure.code === 'revision_conflict' && (await this.handedOff(session, tx)));
+      const handoff = failure.code === 'session_completed';
       // A poll on a read snapshot reports the closure it found; the sweep records it.
       const close = async (
         ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never

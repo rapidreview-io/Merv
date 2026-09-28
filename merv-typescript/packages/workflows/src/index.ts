@@ -8,6 +8,7 @@ import {
   MervError,
   newId,
   now,
+  ROLES,
   within,
 } from '@merv/contracts';
 import type {
@@ -194,12 +195,7 @@ async function openBlocker(
 async function leaseRoleOf(rule: WorkflowAssignmentRule, context: EngineContext): Promise<Role> {
   if (rule.requiresDependencies) requireDependencies(context.dependencies);
   const role = await rule.lease!.role(context);
-  check(
-    ['reader', 'producer', 'reviewer', 'operator'].includes(role),
-    'invalid_workflow_policy',
-    'Lease role must be declared',
-    500,
-  );
+  check(ROLES.includes(role), 'invalid_workflow_policy', 'Lease role must be declared', 500);
   return role;
 }
 
@@ -895,35 +891,18 @@ export class WorkflowsService implements Workflows {
     const row = await this.readRow(tx, caller.projectId, target.instanceId);
     const snapshot = this.snapshot(row);
     const expected = target.expectedRevision;
-    if (expected !== undefined && snapshot.revision !== expected) {
-      if (purpose === 'execution') {
-        // The record moved by this caller's own hand: its handoff landed, and a second copy
-        // of the same call has nothing left to do.
-        const moved = caller.session
-          ? await tx.get<{ actor_id: string }>(
-              'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
-              target.instanceId,
-              expected + 1,
-            )
-          : undefined;
-        check(
-          moved?.actor_id !== caller.actorId,
-          'session_completed',
-          'Your handoff already moved this record; this session has ended',
-          409,
-        );
-      }
-      check(
-        false,
-        'revision_conflict',
-        {
-          lease: 'Workflow changed before lease admission',
-          execution: 'Workflow changed; refresh execution metadata before dispatch',
-          assignment: `Expected revision ${expected}, found ${snapshot.revision}`,
-        }[purpose],
-        409,
-      );
-    }
+    // Whose hand moved the record is not the engine's question: Sessions reads a worker's own
+    // handoff out of this conflict.
+    check(
+      expected === undefined || snapshot.revision === expected,
+      'revision_conflict',
+      {
+        lease: 'Workflow changed before lease admission',
+        execution: 'Workflow changed; refresh execution metadata before dispatch',
+        assignment: `Expected revision ${expected}, found ${snapshot.revision}`,
+      }[purpose],
+      409,
+    );
     const registration = this.definition(snapshot.workflow, snapshot.version);
     check(
       !registration.definition.terminal.includes(snapshot.state),

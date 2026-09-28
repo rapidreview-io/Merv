@@ -26,7 +26,8 @@ export interface WorkflowHistoryEntry {
   createdAt: string;
 }
 
-export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
+export const ROLES = ['operator', 'producer', 'reviewer', 'reader'] as const;
+export type Role = (typeof ROLES)[number];
 export type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
 /** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */
 export type WorkflowWorkspacePolicy =
