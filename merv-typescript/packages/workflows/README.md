@@ -164,12 +164,17 @@ ordinary keys. See [the contract and next integration boundary](../../docs/WORKF
 
 ## Leased execution
 
-`dispatchCandidates(source, tx?)` discovers eligible leased assignments using
+`dispatchCandidates(source, tx?, worker?)` discovers eligible leased assignments using
 source/domain admission and metadata only. It checks prerequisite and recipe
 availability without rendering prompts, resolving reference values or recording
 work starting. Sessions still rechecks the selected revision before reservation.
 Read-only work sorts first. An optional `lease.label` callback supplies a small
-queue label without calling the assignment builder.
+queue label without calling the assignment builder, and `lease.excludes` drops an
+instance the named `worker` would be refused. It reads the instances at leasable steps,
+their limits and their prerequisites in a fixed number of statements however many there
+are. `role`, `label` and `excludes` share one frozen context per instance, prerequisites
+included. A refusal (403, 404, 409, 503) skips the instance; one recheck after every
+instance fails the scan if any callback wrote, refused or not.
 
 An assignment's fixed `execution.workspace` declaration specifies scratch,
 ephemeral or persistent checkout intent. Omission preserves old policy hashes

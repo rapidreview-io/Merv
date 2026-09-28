@@ -194,6 +194,19 @@ async function openBlocker(
   );
 }
 
+/** The role a step's lease rule gives its source, once the step's prerequisites are met. */
+async function leaseRoleOf(rule: WorkflowAssignmentRule, context: EngineContext): Promise<Role> {
+  if (rule.requiresDependencies) requireDependencies(context.dependencies);
+  const role = await rule.lease!.role(context);
+  check(
+    ['reader', 'producer', 'reviewer', 'operator'].includes(role),
+    'invalid_workflow_policy',
+    'Lease role must be declared',
+    500,
+  );
+  return role;
+}
+
 /** Durable graph engine. Domain programs enforce their own guards through managed handles. */
 export class WorkflowsService implements Workflows {
   private readonly registrations = new Map<string, Registration>();
@@ -544,83 +557,104 @@ export class WorkflowsService implements Workflows {
     return await this.read(transaction, async (tx) => {
       await this.scope.require(source, 'read', tx);
       check(!source.session, 'forbidden', 'A leased worker cannot schedule assignments', 403);
-      // Only a state with a lease rule can be a candidate; finished work never is, and it is
+      // Only a step with a lease rule can be a candidate; finished work never is, and it is
       // most of a project's history.
-      const leasable = [
-        ...new Set(
-          [...this.registrations.values()].flatMap((registration) =>
-            (registration.policy?.assignments ?? [])
-              .filter((rule) => rule.lease && rule.execution)
-              .map((rule) => rule.state),
-          ),
-        ),
-      ];
-      if (!leasable.length) return [];
+      const leasable = (registration: Registration) =>
+        (registration.policy?.assignments ?? []).filter((rule) => rule.lease && rule.execution);
+      const registered = new Map(
+        [...this.registrations].filter(([, registration]) => leasable(registration).length),
+      );
+      const steps = [...registered.values()].flatMap((registration) =>
+        leasable(registration).map((rule) => [
+          registration.definition.name,
+          registration.definition.version,
+          rule.state,
+        ]),
+      );
+      if (!steps.length) return [];
       const rows = await tx.all<InstanceRow>(
-        `SELECT * FROM wf_instances WHERE project_id=? AND state IN (${leasable.map(() => '?').join(',')}) ORDER BY created_at,id`,
+        `SELECT * FROM wf_instances WHERE project_id=? AND (workflow,version,state) IN (${steps
+          .map(() => '(?,?,?)')
+          .join(',')}) ORDER BY created_at,id`,
         source.projectId,
-        ...leasable,
+        ...steps.flat(),
       );
       const candidates: WorkflowDispatchCandidate[] = [];
-      for (const row of rows) {
-        const snapshot = this.snapshot(row);
-        const registration = this.registrations.get(`${snapshot.workflow}@${snapshot.version}`);
-        const rule = registration?.policy?.assignments?.find(
-          (rule) => rule.state === snapshot.state,
+      for (const part of batches(rows)) {
+        const found = part.map((row) => {
+          const registration = registered.get(`${row.workflow}@${row.version}`)!;
+          const rule = leasable(registration).find((rule) => rule.state === row.state)!;
+          return { row, registration, rule };
+        });
+        const limits = await limitStatusesOf(
+          tx,
+          found.map(({ row, registration }) => ({
+            id: row.id,
+            state: row.state,
+            policy: registration.policy,
+          })),
         );
-        if (!registration || !rule?.lease || !rule.execution) continue;
         // A reviewer leased at an exhausted limit could only have a needs_changes verdict
         // refused and rolled back, and the next poll would lease another. The work waits for
         // a human instead, who may still begin it by hand.
-        if ((await limitStatuses(tx, registration.policy, snapshot)).some((item) => item.exhausted))
-          continue;
-        try {
-          // The role and label callbacks share one read; the recheck below closes both.
-          const { role, context } = await this.role(
-            source,
-            { instanceId: snapshot.id, expectedRevision: snapshot.revision },
+        const open = found.filter(({ row }) => !limits.get(row.id)!.some((item) => item.exhausted));
+        const dependencies = await prerequisites(
+          tx,
+          source.projectId,
+          open.map(({ row }) => row.id),
+        );
+        for (const { row, registration, rule } of open) {
+          const snapshot = this.snapshot(row);
+          // One frozen read serves every callback of the row; the recheck below closes them all.
+          const context = readContext({
+            caller: source,
+            snapshot,
             tx,
-          );
-          const label = rule.lease.label
-            ? await rule.lease.label(context)
-            : `${snapshot.workflow}: ${snapshot.state}`;
-          check(
-            typeof label === 'string' && visible(label),
-            'invalid_workflow_policy',
-            'Dispatch labels must be nonempty',
-            500,
-          );
-          await this.recheck(tx, [row], 'Dispatch callbacks must not change the workflow instance');
-          this.requireActive(registration);
-          if (
-            worker &&
-            rule.lease.excludes &&
-            (await rule.lease.excludes(readContext({ caller: source, snapshot, tx }), worker))
-          )
-            continue;
-          candidates.push({
-            instanceId: snapshot.id,
-            projectId: source.projectId,
-            expectedRevision: snapshot.revision,
-            workflow: snapshot.workflow,
-            version: snapshot.version,
-            state: snapshot.state,
-            role,
-            readOnly: rule.execution.readOnly,
-            label,
-            policyHash: executionFingerprint(rule.execution),
-            registrationId: registration.registrationId,
-            workspace: effectiveWorkspace(rule.execution),
-            updatedAt: snapshot.updatedAt,
+            dependencies: dependencies.get(row.id)!,
           });
-        } catch (error) {
-          // Domain admission refusals make a node ineligible. Malformed programs and State
-          // faults fail visibly.
-          if (!(error instanceof MervError) || ![403, 404, 409, 503].includes(error.status))
-            throw error;
-          throwStateFault(error);
+          try {
+            const role = await leaseRoleOf(rule, context);
+            const label = rule.lease!.label
+              ? await rule.lease!.label(context)
+              : `${snapshot.workflow}: ${snapshot.state}`;
+            check(
+              typeof label === 'string' && visible(label),
+              'invalid_workflow_policy',
+              'Dispatch labels must be nonempty',
+              500,
+            );
+            const excluded =
+              worker !== undefined &&
+              !!rule.lease!.excludes &&
+              (await rule.lease!.excludes(context, worker));
+            this.requireActive(registration);
+            if (excluded) continue;
+            candidates.push({
+              instanceId: snapshot.id,
+              projectId: source.projectId,
+              expectedRevision: snapshot.revision,
+              workflow: snapshot.workflow,
+              version: snapshot.version,
+              state: snapshot.state,
+              role,
+              readOnly: rule.execution!.readOnly,
+              label,
+              policyHash: executionFingerprint(rule.execution!),
+              registrationId: registration.registrationId,
+              workspace: effectiveWorkspace(rule.execution!),
+              updatedAt: snapshot.updatedAt,
+            });
+          } catch (error) {
+            // Domain admission refusals make a node ineligible. Malformed programs and State
+            // faults fail visibly.
+            if (!(error instanceof MervError) || ![403, 404, 409, 503].includes(error.status))
+              throw error;
+            throwStateFault(error);
+          }
         }
       }
+      // Refused rows too: a callback may write and then refuse.
+      await this.recheck(tx, rows, 'Dispatch callbacks must not change the workflow instance');
       // Every row's callbacks have run: a source they revoked is refused here, and the scan
       // rolls back.
       await this.scope.require(source, 'read', tx);
@@ -658,14 +692,7 @@ export class WorkflowsService implements Workflows {
     tx: Transaction,
   ): Promise<Loaded & { role: Role }> {
     const loaded = await this.load(source, target, 'lease', tx);
-    if (loaded.rule.requiresDependencies) requireDependencies(loaded.context.dependencies);
-    const role = await loaded.rule.lease!.role(loaded.context);
-    check(
-      ['reader', 'producer', 'reviewer', 'operator'].includes(role),
-      'invalid_workflow_policy',
-      'Lease role must be declared',
-      500,
-    );
+    const role = await leaseRoleOf(loaded.rule, loaded.context);
     this.requireActive(loaded.registration);
     return { ...loaded, role };
   }
