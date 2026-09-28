@@ -13,9 +13,11 @@ import {
   BlobOperations,
   copyBytes,
   hashBytes,
-  MAX_BLOB_BYTES,
+  storageError,
+  storedSize,
   validateKey,
   validateNamespace,
+  verifyBytes,
 } from './common.js';
 
 export interface S3BlobOptions {
@@ -36,6 +38,15 @@ export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
 
 /** Presigned downloads only; ordinary get/put remain limited to 2 MB. */
 const MAX_TRANSFER_BYTES = 512 * 1024 * 1024;
+/** The HTTP status of an S3 SDK failure, when the service answered. */
+const statusOf = (error: unknown) =>
+  (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+
+/** GET names a missing key; a missing bucket or prefix is misconfiguration, not a missing blob. */
+const missingKey = (error: unknown) => (error as { name?: string }).name === 'NoSuchKey';
+/** HEAD has no error body, so a missing key and a missing bucket are both a bare 404. */
+const missingHead = (error: unknown) => statusOf(error) === 404;
+
 const transferSize = (size: number) =>
   check(
     Number.isSafeInteger(size) && size >= 0 && size <= MAX_TRANSFER_BYTES,
@@ -119,14 +130,15 @@ export class S3Blobs implements Blobs {
       try {
         return await send();
       } catch (error) {
-        const failure = error as { $metadata?: { httpStatusCode?: number }; code?: string };
-        const status = failure.$metadata?.httpStatusCode;
+        const status = statusOf(error);
+        // 409: a conditional write raced another operation on the same key.
         const retryable =
           status === 408 ||
+          status === 409 ||
           status === 429 ||
           (status !== undefined && status >= 500) ||
           ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE'].includes(
-            failure.code ?? '',
+            (error as { code?: string }).code ?? '',
           );
         if (signal.aborted || attempt >= this.maxAttempts || !retryable) throw error;
         await delay(Math.min(100 * 2 ** (attempt - 1), 1000), undefined, { signal });
@@ -156,11 +168,13 @@ export class S3Blobs implements Blobs {
           ),
         );
       } catch (error) {
-        if (
-          (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 412
-        )
-          await this.read(namespace, hash, signal);
-        else throw new MervError('blob_unavailable', 'Blob upload failed', 503);
+        if (statusOf(error) !== 412) throw storageError(error, 'Blob upload failed');
+        // The object exists: it must read back intact. Vanishing now is an outage, not a miss.
+        await this.read(namespace, hash, signal).catch((failure: unknown) => {
+          throw failure instanceof MervError && failure.code === 'blob_not_found'
+            ? new MervError('blob_unavailable', 'Blob upload failed', 503)
+            : failure;
+        });
       }
       return { hash, size: content.byteLength };
     });
@@ -185,20 +199,13 @@ export class S3Blobs implements Blobs {
       );
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) abort();
-      check(
-        response.ContentLength === undefined || response.ContentLength <= MAX_BLOB_BYTES,
-        'blob_size',
-        'Blob exceeds the maximum size',
-      );
-      const chunks: Buffer[] = [];
-      const digest = createHash('sha256');
+      if (response.ContentLength !== undefined) storedSize(response.ContentLength);
+      const chunks: Uint8Array[] = [];
       let length = 0;
       for await (const chunk of body!) {
-        const bytes = Buffer.from(chunk);
-        length += bytes.byteLength;
-        check(length <= MAX_BLOB_BYTES, 'blob_size', 'Blob exceeds the maximum size');
-        digest.update(bytes);
-        chunks.push(bytes);
+        length += (chunk as Uint8Array).byteLength;
+        storedSize(length);
+        chunks.push(chunk as Uint8Array);
       }
       check(
         response.ContentLength === undefined || response.ContentLength === length,
@@ -206,25 +213,16 @@ export class S3Blobs implements Blobs {
         'Stored blob size does not match its metadata',
         500,
       );
-      check(
-        digest.digest('hex') === hash,
-        'blob_corrupt',
-        'Stored blob failed its integrity check',
-        500,
-      );
-      return Buffer.concat(chunks, length);
+      return verifyBytes(Buffer.concat(chunks, length), hash);
     } catch (error) {
-      if (error instanceof MervError) throw error;
-      if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404)
-        throw new MervError('blob_not_found', 'Blob not found', 404);
-      throw new MervError('blob_unavailable', 'Blob download failed', 503);
+      throw storageError(error, 'Blob download failed', missingKey);
     } finally {
       signal.removeEventListener('abort', abort);
       body?.destroy();
     }
   }
 
-  download(namespace: string, hash: string, expectedSize: number) {
+  async download(namespace: string, hash: string, expectedSize: number) {
     const key = this.key(namespace, hash);
     transferSize(expectedSize);
     return this.operations.run(async () => {
@@ -255,8 +253,7 @@ export class S3Blobs implements Blobs {
         );
         return { url, expiresAt: new Date(signingDate.getTime() + 60_000).toISOString() };
       } catch (error) {
-        if (error instanceof MervError) throw error;
-        throw new MervError('blob_unavailable', 'Blob download could not be prepared', 503);
+        throw storageError(error, 'Blob download could not be prepared', missingHead);
       }
     });
   }

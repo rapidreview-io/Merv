@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, link, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { check, MervError, type Blobs } from '@merv/contracts';
+import type { Blobs } from '@merv/contracts';
 import {
   BlobOperations,
   copyBytes,
   hashBytes,
-  MAX_BLOB_BYTES,
+  storageError,
+  storedSize,
   validateKey,
   validateNamespace,
   verifyBytes,
 } from './common.js';
+
+const missingFile = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
 
 export class DiskBlobs implements Blobs {
   private root: string;
@@ -20,9 +23,8 @@ export class DiskBlobs implements Blobs {
     this.root = resolve(root);
   }
 
-  private path(namespace: string, hash: string): string {
-    validateKey(namespace, hash);
-    return join(this.root, namespace, hash.slice(0, 2), hash);
+  private directory(namespace: string, hash: string): string {
+    return join(this.root, namespace, hash.slice(0, 2));
   }
 
   async put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }> {
@@ -30,61 +32,54 @@ export class DiskBlobs implements Blobs {
     const content = copyBytes(bytes);
     return this.operations.run(async () => {
       const hash = hashBytes(content);
-      const destination = this.path(namespace, hash);
-      const directory = join(this.root, namespace, hash.slice(0, 2));
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      const temporary = join(directory, `.${randomUUID()}`);
-      const handle = await open(temporary, 'wx', 0o600);
+      const directory = this.directory(namespace, hash);
+      const destination = join(directory, hash);
       try {
+        await mkdir(directory, { recursive: true, mode: 0o700 });
+        const temporary = join(directory, `.${randomUUID()}`);
+        const handle = await open(temporary, 'wx', 0o600);
         try {
-          await handle.writeFile(content);
-          await handle.sync();
+          try {
+            await handle.writeFile(content);
+            await handle.sync();
+          } finally {
+            await handle.close();
+          }
+          try {
+            await link(temporary, destination);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            await this.read(namespace, hash);
+          }
+          const parent = await open(directory, 'r');
+          try {
+            await parent.sync();
+          } finally {
+            await parent.close();
+          }
         } finally {
-          await handle.close();
+          // Never let cleanup replace the error that got us here.
+          await unlink(temporary).catch(() => {});
         }
-        try {
-          await link(temporary, destination);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-          await this.read(namespace, hash);
-        }
-        const parent = await open(directory, 'r');
-        try {
-          await parent.sync();
-        } finally {
-          await parent.close();
-        }
-      } finally {
-        await unlink(temporary);
+      } catch (error) {
+        throw storageError(error, 'Blob upload failed');
       }
       return { hash, size: content.byteLength };
     });
   }
 
   private async read(namespace: string, hash: string): Promise<Buffer> {
+    validateKey(namespace, hash);
     try {
-      const handle = await open(this.path(namespace, hash), 'r');
+      const handle = await open(join(this.directory(namespace, hash), hash), 'r');
       try {
-        check(
-          (await handle.stat()).size <= MAX_BLOB_BYTES,
-          'blob_size',
-          'Blob exceeds the maximum size',
-        );
-        const buffer = Buffer.alloc(MAX_BLOB_BYTES + 1);
-        let length = 0;
-        while (length < buffer.length) {
-          const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
-          if (!bytesRead) break;
-          length += bytesRead;
-        }
-        return verifyBytes(Buffer.from(buffer.subarray(0, length)), hash);
+        storedSize((await handle.stat()).size);
+        return verifyBytes(await handle.readFile(), hash);
       } finally {
         await handle.close();
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-        throw new MervError('blob_not_found', 'Blob not found', 404);
-      throw error;
+      throw storageError(error, 'Blob read failed', missingFile);
     }
   }
 

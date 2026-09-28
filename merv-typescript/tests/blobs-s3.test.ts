@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiskBlobs, S3Blobs, blobsPlugin } from '@merv/blobs';
@@ -73,7 +73,8 @@ test('S3 bounds declared and streamed reads and validates keys before networking
   const { blobs, server } = await fixture(t);
   for (const chunked of [false, true]) {
     server.overrideRead({ body: Buffer.alloc(2_000_001), chunked });
-    await assert.rejects(blobs.get('project_1', hash), code('blob_size'));
+    // Callers only read hashes they stored: an oversized stored object is corruption.
+    await assert.rejects(blobs.get('project_1', hash), code('blob_corrupt'));
   }
   const count = server.requests.length;
   await assert.rejects(blobs.get('../other', hash), code('invalid_namespace'));
@@ -99,6 +100,24 @@ test('S3 reports sanitized errors, missing objects and bounded retries', async (
   assert.equal(server.requests.length - start, 2);
   server.fail(403);
   await assert.rejects(blobs.get('project_1', hash), code('blob_unavailable'));
+  server.fail(undefined);
+  const misconfigured = new S3Blobs({
+    bucket: 'missing-bucket',
+    endpoint: server.endpoint,
+    ...credentials,
+    allowHttpLoopbackForTests: true,
+    maxAttempts: 1,
+  });
+  t.after(() => misconfigured.close());
+  await assert.rejects(
+    misconfigured.get('project_1', hash),
+    code('blob_unavailable'),
+    'A missing bucket is misconfiguration, not a missing blob',
+  );
+  server.fail(409);
+  const conflict = server.requests.length;
+  await assert.rejects(blobs.put('project_1', content), code('blob_unavailable'));
+  assert.equal(server.requests.length - conflict, 2, 'A conditional-write conflict is retried');
 });
 
 test('S3 teardown rejects new operations and drains an admitted write', async (t) => {
@@ -207,12 +226,39 @@ test('async Disk preserves atomic immutable writes, integrity and clean temporar
   await assert.rejects(blobs.get('project_1', hash), code('blobs_closed'));
 });
 
+test('Disk reports I/O failures as unavailable storage without leaking paths', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'merv-disk-failures-'));
+  const blobs = new DiskBlobs(root);
+  t.after(async () => {
+    await blobs.close();
+    await chmod(join(root, 'project_1'), 0o700).catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  });
+  await assert.rejects(blobs.get('project_1', hash), code('blob_not_found'));
+  await blobs.put('project_1', content);
+  // A blob path that is a directory fails to read with EISDIR, not ENOENT.
+  const other = createHash('sha256').update('other').digest('hex');
+  await mkdir(join(root, 'project_1', other.slice(0, 2), other), { recursive: true });
+  const unavailable = (error: unknown) => {
+    assert.ok(error instanceof MervError);
+    assert.equal(error.code, 'blob_unavailable');
+    assert.equal(error.status, 503);
+    assert.doesNotMatch(String(error), new RegExp(root));
+    return true;
+  };
+  await assert.rejects(blobs.get('project_1', other), unavailable);
+  if (process.getuid?.() !== 0) {
+    await chmod(join(root, 'project_1'), 0o500);
+    await assert.rejects(blobs.put('project_1', Buffer.from('new bytes')), unavailable);
+  }
+});
+
 test('S3 large downloads sign one immutable key for sixty seconds with attachment and no-store', async (t) => {
   const { blobs, server } = await fixture(t);
   const bytes = Buffer.alloc(2_000_001, 97);
   const keyHash = createHash('sha256').update(bytes).digest('hex');
   server.objects.set(`evidence/v1/project_1/${keyHash}`, bytes);
-  await assert.rejects(blobs.get('project_1', keyHash), code('blob_size'));
+  await assert.rejects(blobs.get('project_1', keyHash), code('blob_corrupt'));
   const before = Date.now();
   const link = await blobs.download('project_1', keyHash, bytes.length);
   const url = new URL(link.url);
@@ -239,7 +285,15 @@ test('S3 large downloads sign one immutable key for sixty seconds with attachmen
     blobs.download('project_1', keyHash, bytes.length - 1),
     code('blob_corrupt'),
   );
-  assert.throws(() => blobs.download('../other', keyHash, bytes.length), code('invalid_namespace'));
+  await assert.rejects(
+    blobs.download('../other', keyHash, bytes.length),
+    code('invalid_namespace'),
+  );
+  await assert.rejects(
+    blobs.download('project_1', 'f'.repeat(64), bytes.length),
+    code('blob_not_found'),
+    'A missing object is not a storage outage',
+  );
 });
 
 test('S3 downloads a retained zero-byte object after checking its exact HEAD length', async (t) => {

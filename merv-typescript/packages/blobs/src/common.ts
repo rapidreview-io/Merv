@@ -1,4 +1,4 @@
-import { check, sha256Hex } from '@merv/contracts';
+import { check, MervError, sha256Hex } from '@merv/contracts';
 
 export const MAX_BLOB_BYTES = 2_000_000;
 export const hashBytes = (bytes: Uint8Array) => sha256Hex(bytes);
@@ -26,10 +26,26 @@ export function copyBytes(bytes: Uint8Array): Buffer {
   return Buffer.from(bytes);
 }
 
+/** Callers only read hashes they stored, so an oversized stored blob is corruption, not bad input. */
+export function storedSize(size: number): void {
+  check(size <= MAX_BLOB_BYTES, 'blob_corrupt', 'Stored blob exceeds the maximum size', 500);
+}
+
 export function verifyBytes(bytes: Buffer, hash: string): Buffer {
-  check(bytes.byteLength <= MAX_BLOB_BYTES, 'blob_size', 'Blob exceeds the maximum size');
+  storedSize(bytes.byteLength);
   check(hashBytes(bytes) === hash, 'blob_corrupt', 'Stored blob failed its integrity check', 500);
   return bytes;
+}
+
+/** Our own errors pass through; a `missing` failure is 404; anything else is a storage outage. */
+export function storageError(
+  error: unknown,
+  message: string,
+  missing: (error: unknown) => boolean = () => false,
+): MervError {
+  if (error instanceof MervError) return error;
+  if (missing(error)) return new MervError('blob_not_found', 'Blob not found', 404);
+  return new MervError('blob_unavailable', message, 503);
 }
 
 /** Withdraw admission before draining operations, then release provider resources. */
