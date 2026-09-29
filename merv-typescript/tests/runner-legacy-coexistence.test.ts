@@ -181,7 +181,7 @@ test(
     const alsoLegacy = await create('legacy-two');
     assert.deepEqual(
       [legacyWork.workflow.version, alsoLegacy.workflow.version],
-      [3, 3],
+      [13, 13],
       'before the import, new Git work is the version a legacy machine knows',
     );
 
@@ -223,7 +223,7 @@ test(
     // The project is imported, and new Git work is the version that lives in Code.
     await importBundle(code, owner, operator.bundle(main));
     const hosted = await create('hosted');
-    assert.equal(hosted.workflow.version, 5);
+    assert.equal(hosted.workflow.version, 15);
 
     // With room to spare and nothing but the hosted work left, it is never offered it.
     await legacy.accepting(true, 2);

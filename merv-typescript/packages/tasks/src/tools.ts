@@ -18,6 +18,63 @@ export const taskToolsPlugin = {
   name: 'merv-task-tools',
   inject: ['tools', 'tasks'],
   apply(ctx: Context) {
+    const computeRun = z
+      .object({
+        taskId: id,
+        expectedRevision: z.number().int().nonnegative(),
+        key: z.string().min(1).max(128),
+        provider: z.string().min(1).max(64),
+        offerId: z.string().min(1).max(256),
+        command: z.string().min(1).max(65536),
+        minutes: z.number().int().min(5).max(1380),
+        maxUsd: z.number().finite().nonnegative(),
+        commandId: id.optional(),
+      })
+      .strict();
+    for (const definition of [
+      {
+        name: 'task.compute_offers',
+        description: 'Read this project’s ML allowance and GPU offers for a task.',
+        inputSchema: z.object({}).strict(),
+        readOnly: true,
+        handler: async (caller: Caller) => await ctx.tasks.computeOffers(caller),
+      },
+      {
+        name: 'task.compute_status',
+        description:
+          'List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.',
+        inputSchema: z
+          .object({
+            taskId: id,
+            runId: id.optional(),
+            generation: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+        readOnly: true,
+        handler: async (
+          caller: Caller,
+          input: { taskId: string; runId?: string; generation?: number },
+        ) => await ctx.tasks.computeStatus(caller, input.taskId, input.runId, input.generation),
+      },
+      {
+        name: 'task.compute_run',
+        description:
+          'Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.',
+        inputSchema: computeRun,
+        conversation: 'propose' as const,
+        handler: async (caller: Caller, input: z.infer<typeof computeRun>) =>
+          await ctx.tasks.computeRun(caller, input),
+      },
+      {
+        name: 'task.compute_cancel',
+        description: 'Cancel one GPU run owned by the current leased task work revision.',
+        inputSchema: z.object({ taskId: id, runId: id }).strict(),
+        conversation: 'propose' as const,
+        handler: async (caller: Caller, input: { taskId: string; runId: string }) =>
+          await ctx.tasks.computeCancel(caller, input.taskId, input.runId),
+      },
+    ])
+      ctx.effect(() => ctx.tools.register(definition));
     const definitions = [
       {
         name: 'task.checkpoint',

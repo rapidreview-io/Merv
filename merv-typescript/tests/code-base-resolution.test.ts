@@ -698,7 +698,7 @@ test('Code unload preserves an existing system prerequisite and blocker while wo
     checks: ['The note exists.'],
     requestId: 'unloaded-note',
   });
-  assert.equal(note.workflow.version, 2);
+  assert.equal(note.workflow.version, 12);
   assert.equal(
     await f.workflows.leaseRole(f.admin, { instanceId: note.id, expectedRevision: 0 }),
     'producer',

@@ -157,7 +157,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   sessions: ['tools'],
-  tasks: ['codeResearch'],
+  tasks: ['codeResearch', 'sandboxes'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -438,7 +438,10 @@ function assertComponentReferences(
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
-      if (!utility && !credentials) {
+      // Sandboxes publishes the shared managed GPU ledger; owner policy stays in Tasks/Experiments.
+      const managedCompute =
+        ['tasks', 'experiments'].includes(owner) && specifier === '@merv/sandboxes/managed-compute';
+      if (!utility && !credentials && !managedCompute) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,
