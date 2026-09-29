@@ -81,13 +81,13 @@ async function fixture(t: TestContext) {
 
 test('the second workspace protocol is forwarded unread, under the bounds of its own routes', async (t) => {
   const f = await fixture(t);
-  // Without Code there is nothing to forward to.
+  // Before Code mounts, a runner's credential waits on 503 rather than a final 404.
   assert.deepEqual(
     [
       (await f.send('/code/v2/workspace')).status,
       (await f.send('/code/v2/workspace')).body.error.code,
     ],
-    [404, 'not_found'],
+    [503, 'unavailable'],
   );
   // Code that keeps no repositories offers the rest of its controls and not this protocol.
   const withdraw = f.register({ ...f.provider, v2: undefined });
