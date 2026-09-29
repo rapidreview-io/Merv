@@ -787,7 +787,7 @@ test('a slow authority read never holds a frame, and only one is in flight', asy
   const f = await fixture({
     authority: {
       authorize: async () => grant(),
-      // Admission reads three times at once; every later read takes 1.1 s.
+      // The three admission reads answer at once; every later read takes 1.1 s.
       validate: async () => {
         most = Math.max(most, ++inFlight);
         if (++validations > 3) await new Promise((resolve) => setTimeout(resolve, 1_100));
@@ -804,6 +804,28 @@ test('a slow authority read never holds a frame, and only one is in flight', asy
   assert.equal(text.match(/"type":"delta"/g)?.length, 11);
   assert.match(text, /response\.completed/);
   assert.equal(most, 1);
+});
+
+test('an authority slower than 2 s but under 4 s never ends a long stream', async (t) => {
+  let validations = 0;
+  const failures: PiRelayFailureRecord[] = [];
+  const f = await fixture({
+    authority: {
+      authorize: async () => grant(),
+      // The three admission reads answer at once; every later read takes 3 s.
+      validate: async () => {
+        if (++validations > 3) await new Promise((resolve) => setTimeout(resolve, 3_000));
+      },
+    },
+    onFailure: (record) => void failures.push(record),
+    fetchImpl: ticking(200, 35),
+  });
+  t.after(() => f.close());
+  const text = await (await send(f)).text();
+  assert.equal(text.match(/"type":"delta"/g)?.length, 35);
+  assert.match(text, /response\.completed/);
+  assert.deepEqual(failures, []);
+  assert.ok(validations > 4, `${validations} reads`);
 });
 
 test('an authority that stops answering ends the stream within its staleness bound', async (t) => {

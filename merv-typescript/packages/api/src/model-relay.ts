@@ -222,7 +222,6 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R 
       const validate = async () => {
         if (signal.aborted) throw signal.reason;
         if (expired(grant)) reject(403, 'grant_forbidden');
-        const started = Date.now();
         try {
           await interruptible(authority.validate(grant), signal);
         } catch (error) {
@@ -230,7 +229,8 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R 
           return reject(403, 'grant_forbidden');
         }
         if (expired(grant)) reject(403, 'grant_forbidden');
-        validatedAt = started;
+        // Stamped when the read returns, so a read of d seconds leaves frames an age of 1 + d.
+        validatedAt = Date.now();
       };
       await validate();
       if (this.lanes.has(this.config.lane(grant))) reject(429, 'relay_busy');
@@ -254,6 +254,8 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R 
       const previous = this.grants.get(grant.id);
       const binding = JSON.stringify(grant);
       if (previous && previous.binding !== binding) reject(403, 'grant_forbidden');
+      // Calls in flight may each add a new grant across reserve, so the entry cap is soft by up to
+      // maxConcurrent; one lane per grant keeps each grant's count exact.
       if (
         (previous?.count ?? 0) >= this.options.maxRequestsPerGrant ||
         (!previous && this.grants.size >= this.options.maxGrantEntries)
@@ -444,6 +446,8 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R 
       }
     } finally {
       done = true;
+      // Releases a fence read still pending when a frame ended the call.
+      if (!signal.aborted) controller.abort();
       if (reader) void reader.cancel().catch(() => {});
       clearTimeout(total);
       if (idle) clearTimeout(idle);
