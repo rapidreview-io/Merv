@@ -99,7 +99,7 @@ function renderer(t) {
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins: 'state scope blobs identity api ui code code-research sessions'
+      plugins: 'state scope blobs identity api ui code code-research code-research-api sessions'
         .split(' ')
         .map((id) => ({ id, name: id })),
     }),
@@ -118,11 +118,12 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 9);
+  assert.equal(config.plugins.length, 10);
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
   assert.equal(config.plugins.find((p) => p.id === 'code-research').required, true);
+  assert.equal(config.plugins.find((p) => p.id === 'code-research-api').required, true);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts');
   assert.equal(statSync(output).mode & 0o077, 0);
   assert.equal(
@@ -130,7 +131,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 10);
+  assert.equal(config.plugins.length, 11);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -140,7 +141,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
 
   assert.equal(run(connected).status, 0);
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 12);
+  assert.equal(config.plugins.length, 13);
   assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtimes, undefined);
   assert.equal(
     config.plugins.find((p) => p.id === 'fleet'),

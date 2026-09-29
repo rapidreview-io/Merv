@@ -115,6 +115,8 @@ set('ui', {});
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
 set('code-research', {});
+// Code's HTTP routes: without them a deployment that runs Code serves no /code at all.
+set('code-research-api', {});
 // Temporary: the server moves the bytes of artifacts written before bytes were kept in their rows
 // into the rows. Off until the operator turns it on for a release that carries the fill.
 if (optIn('MERV_ARTIFACTS_BACKFILL')) set('artifacts', { backfill: true });
