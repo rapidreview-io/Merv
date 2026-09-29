@@ -271,7 +271,9 @@ test('a call that waited in binding selection is rechecked although its lane war
 test('the registry re-authorizes a warm call at dispatch, which the pool relies on', async (t) => {
   const { pool, upstream, a, access, scope } = await fixture(t);
   // Admission's require passes, and the grant is withdrawn before dispatch. If api ever drops its
-  // dispatch access.require, this fails, and the pool's warm path must add one.
+  // dispatch access.require, this fails, and the pool's warm path must add one. The policy revokes
+  // after the first require of a call, so dropping only the admission require (before parsing)
+  // fails this too; the pool needs no change then, because the dispatch require still guards it.
   let revoke = false;
   const policy: ToolPolicy = {
     allows: access.allows.bind(access),
