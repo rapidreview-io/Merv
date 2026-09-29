@@ -2,10 +2,7 @@ import { createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { META, decode, fromRow, insert, isText, meta, span, view } from './content.js';
 import { Uploads } from './uploads.js';
-import { Backfill } from './backfill.js';
-import { fileURLToPath } from 'node:url';
 import type { Context } from 'cordis';
-import { z } from 'zod';
 import {
   check,
   MervError,
@@ -36,8 +33,6 @@ async function missing<T>(fn: () => Promise<T>): Promise<T> {
 }
 /** An id argument: a nonempty string. */
 const named = (id: unknown): id is string => typeof id === 'string' && id.length > 0;
-/** This package's own source, whose stack frames are never the call site that is reported. */
-const OWN = [new URL('.', import.meta.url).href, fileURLToPath(new URL('.', import.meta.url))];
 export class ArtifactStore implements Artifacts {
   get largeUploadAvailable(): boolean {
     return typeof this.blobs.upload === 'function';
@@ -116,45 +111,8 @@ export class ArtifactStore implements Artifacts {
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
-  /** The bytes behind a row created before they were kept in it, verified by blobs.get. */
-  private async fetch({ projectId, hash }: Artifact, tx?: Transaction) {
-    this.offLock(tx);
-    return await missing(() => this.blobs.get(projectId, hash));
-  }
-  /**
-   * Starts filling the rows written before bytes were kept in the row (temporary; the server
-   * turns it on in its config). Returns its stop, which waits for the row in hand.
-   */
-  backfill(): () => Promise<void> {
-    const fill = new Backfill(this.state, (artifact) => this.fetch(artifact));
-    fill.start();
-    return () => fill.stop();
-  }
-  private sites = new Set<string>();
-  /**
-   * Phase A: each call site that does storage I/O inside a write transaction is logged once. The
-   * site is the first frame outside this package; the whole stack goes with it as evidence.
-   */
-  private offLock(tx?: Transaction) {
-    if (!(tx ?? this.state.ambient) || this.state.readScope) return;
-    const frames = (new Error().stack?.split('\n').slice(2) ?? []).map((frame) => frame.trim());
-    const stack = frames.join('\n');
-    const site =
-      frames.find(
-        (frame) =>
-          /:\d+:\d+\)?$/.test(frame) &&
-          !frame.includes('(node:') &&
-          !OWN.some((own) => frame.includes(own)),
-      ) ?? stack;
-    if (this.sites.has(site)) return;
-    this.sites.add(site);
-    process.stderr.write(
-      `${JSON.stringify({ event: 'artifacts.io_in_transaction', site, stack })}\n`,
-    );
-  }
   async download(caller: Caller, artifactId: string) {
     caller = structuredClone(caller);
-    this.offLock();
     const artifact = await this.get(caller, artifactId);
     check(
       this.blobs.download,
@@ -204,7 +162,8 @@ export class ArtifactStore implements Artifacts {
         400,
         { artifactId: artifact.id, size: artifact.size },
       );
-    return { artifact, bytes: row.content ?? (await this.fetch(artifact, tx)) };
+    check(row.content, 'artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
+    return { artifact, bytes: row.content };
   }
   async read(
     caller: Caller,
@@ -279,21 +238,14 @@ export class ArtifactStore implements Artifacts {
     });
   }
 }
-const configuration = z
-  .object({
-    /** Temporary: fill legacy rows' bytes into the row. Only the server's config turns it on. */
-    backfill: z.boolean().default(false),
-  })
-  .strict()
-  .default({});
 export const artifactsPlugin = {
   name: 'merv-artifacts',
   inject: ['state', 'scope', 'blobs'],
-  Config: configuration,
-  async apply(ctx: Context, config: z.infer<typeof configuration> = { backfill: false }) {
-    const artifacts = await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs));
-    ctx.provide('artifacts', artifacts);
-    if (config.backfill) ctx.effect(() => artifacts.backfill());
+  async apply(ctx: Context) {
+    ctx.provide(
+      'artifacts',
+      await createService(new ArtifactStore(ctx.state, ctx.scope, ctx.blobs)),
+    );
   },
 };
 export default artifactsPlugin;

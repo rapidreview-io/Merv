@@ -185,9 +185,9 @@ async function seedRun(
   await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.run(
-        `INSERT INTO experiment_compute_runs
-        (project_id,experiment_id,attempt_index,key,input_hash,input_json,run_id,state,cost,result,created_by,created_at,updated_at)
-        VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO managed_compute_runs
+        (project_id,owner_kind,owner_id,generation,key,input_hash,input_json,run_id,state,cost,result,created_by,created_at,updated_at)
+        VALUES(?,'experiment',?,1,?,?,?,?,?,?,?,?,?,?)`,
         f.operator.projectId,
         experimentId,
         key,
@@ -970,8 +970,9 @@ test('a live run’s sidebar is found among the runs in flight, and a finished o
   compute.close();
   const row = (key: string, state: string) => ({
     project_id: 'project',
-    experiment_id: 'experiment',
-    attempt_index: 1,
+    owner_kind: 'experiment',
+    owner_id: 'experiment',
+    generation: 1,
     key,
     input_hash: `hash-${key}`,
     input_json: JSON.stringify({ minutes: 60, maxUsd: 2, command: 'secret' }),
@@ -1002,7 +1003,7 @@ test('a live run’s sidebar is found among the runs in flight, and a finished o
   assert.equal((await compute.find('project', named('done'), tx))?.key, 'done');
   assert.equal(statements.length, 2, 'then one read of the finished runs written last');
   assert.match(statements[1]!.sql, /ORDER BY updated_at DESC,key LIMIT \?$/);
-  assert.deepEqual(statements[1]!.params, ['project', 100]);
+  assert.deepEqual(statements[1]!.params, ['project', 'experiment', 100]);
   statements.length = 0;
   // A key nobody was given costs the same two bounded reads, and finds nothing.
   assert.equal(await compute.find('project', named('missing'), tx), null);

@@ -217,7 +217,7 @@ test('workspace-free tasks work with Code absent and task manifests retain their
     checks: ['The note exists.'],
     requestId: 'note',
   });
-  assert.equal(task.workflow.version, 2);
+  assert.equal(task.workflow.version, 12);
   assert.equal(
     await f.workflows.leaseRole(f.admin, { instanceId: task.id, expectedRevision: 0 }),
     'producer',

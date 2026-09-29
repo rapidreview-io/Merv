@@ -10,7 +10,6 @@ import { ToolRegistry } from '../packages/api/src/registry.js';
 import { createService } from '../packages/contracts/src/index.js';
 import { openState } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -182,80 +181,69 @@ test('sandbox extension refuses missing revisions and never falls back on an old
   assert.equal(writes, 1);
 });
 
-for (const mode of ['inline', 'download'] as const)
-  test(`PostgreSQL ${mode} read must reject a caller revoked during storage access`, async (t) => {
-    const state = await openState(undefined, { readConnections: 1 });
-    t.after(async () => {
-      await state.close();
-    });
-    const scope = await createService(new ProjectScope(state));
-    const entered = deferred();
-    const release = deferred();
-    const artifacts = await createService(
-      new ArtifactStore(state, scope, {
-        put: async (_namespace, bytes) => ({
-          hash: createHash('sha256').update(bytes).digest('hex'),
-          size: bytes.length,
-        }),
-        get: async () => {
-          entered.resolve();
-          await release.promise;
-          return Buffer.from('private evidence');
-        },
-        download: async () => {
-          entered.resolve();
-          await release.promise;
-          return {
-            url: 'https://storage.test/private-signed-url',
-            expiresAt: new Date(Date.now() + 60_000).toISOString(),
-          };
-        },
-      }),
-    );
-    const boot = await scope.bootstrap({ projectName: 'Adversarial test', actorName: 'Owner' });
-    const operator = {
-      projectId: boot.project.id,
-      actorId: boot.actor.id,
-      credentialId: boot.credential.id,
-    };
-    const issued = await scope.issueActor(operator, { name: 'Reader', role: 'reader' });
-    const reader = {
-      projectId: boot.project.id,
-      actorId: issued.actor.id,
-      credentialId: issued.credential.id,
-    };
-    // Only a row from before bytes were kept in it still fetches them from storage.
-    const artifact = await legacyArtifact(
-      state,
-      operator,
-      Buffer.from('private evidence'),
-      () => undefined,
-    );
-    // This is the exact snapshot wrapper used by the shipped toolsPlugin.
-    const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
-    t.after(() => tools.close());
-    const { z } = await import('zod');
-    tools.register({
-      name: 'artifact.read',
-      description: 'Download',
-      readOnly: true,
-      inputSchema: z.object({ artifactId: z.string() }),
-      handler: (caller, input) =>
-        mode === 'download'
-          ? artifacts.download(caller, input.artifactId)
-          : artifacts.read(caller, input.artifactId),
-    });
-    const pending = tools.call('artifact.read', reader, { artifactId: artifact.id });
-    const rejected = assert.rejects(pending, { code: 'forbidden' });
-    await entered.promise;
-    try {
-      await scope.revokeActor(operator, reader.actorId);
-    } finally {
-      release.resolve();
-    }
-    await rejected;
-    await assert.rejects(scope.require(reader, 'read'), { code: 'forbidden' });
+test('a PostgreSQL download must reject a caller revoked while its link is signed', async (t) => {
+  const state = await openState(undefined, { readConnections: 1 });
+  t.after(async () => {
+    await state.close();
   });
+  const scope = await createService(new ProjectScope(state));
+  const entered = deferred();
+  const release = deferred();
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, {
+      put: async (_namespace, bytes) => ({
+        hash: createHash('sha256').update(bytes).digest('hex'),
+        size: bytes.length,
+      }),
+      get: async () => Buffer.from('private evidence'),
+      download: async () => {
+        entered.resolve();
+        await release.promise;
+        return {
+          url: 'https://storage.test/private-signed-url',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+    }),
+  );
+  const boot = await scope.bootstrap({ projectName: 'Adversarial test', actorName: 'Owner' });
+  const operator = {
+    projectId: boot.project.id,
+    actorId: boot.actor.id,
+    credentialId: boot.credential.id,
+  };
+  const issued = await scope.issueActor(operator, { name: 'Reader', role: 'reader' });
+  const reader = {
+    projectId: boot.project.id,
+    actorId: issued.actor.id,
+    credentialId: issued.credential.id,
+  };
+  const artifact = await artifacts.create(operator, {
+    title: 'Private',
+    content: 'private evidence',
+  });
+  // This is the exact snapshot wrapper used by the shipped toolsPlugin.
+  const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
+  t.after(() => tools.close());
+  const { z } = await import('zod');
+  tools.register({
+    name: 'artifact.read',
+    description: 'Download',
+    readOnly: true,
+    inputSchema: z.object({ artifactId: z.string() }),
+    handler: (caller, input) => artifacts.download(caller, input.artifactId),
+  });
+  const pending = tools.call('artifact.read', reader, { artifactId: artifact.id });
+  const rejected = assert.rejects(pending, { code: 'forbidden' });
+  await entered.promise;
+  try {
+    await scope.revokeActor(operator, reader.actorId);
+  } finally {
+    release.resolve();
+  }
+  await rejected;
+  await assert.rejects(scope.require(reader, 'read'), { code: 'forbidden' });
+});
 
 test('concurrent registrations of one recipe must have exactly one owner', async (t) => {
   const state = await openState(':memory:');

@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-28",
+  "snapshot": "2026-09-29",
   "groups": [
     {
       "id": "front",
@@ -2313,6 +2313,26 @@
           "readOnly": false
         },
         {
+          "name": "task.compute_cancel",
+          "description": "Cancel one GPU run owned by the current leased task work revision.",
+          "readOnly": false
+        },
+        {
+          "name": "task.compute_offers",
+          "description": "Read this project’s ML allowance and GPU offers for a task.",
+          "readOnly": true
+        },
+        {
+          "name": "task.compute_run",
+          "description": "Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.",
+          "readOnly": false
+        },
+        {
+          "name": "task.compute_status",
+          "description": "List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.",
+          "readOnly": true
+        },
+        {
           "name": "task.context",
           "description": "Build and persist the starting context from this task type’s versioned recipe. Work context requires the producer/operator. Review context requires a current independent claimId from review.start. Returns the complete context package with source hashes.",
           "readOnly": false
@@ -2385,7 +2405,8 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch"
+        "codeResearch",
+        "sandboxes"
       ],
       "kind": "service",
       "runtime": "server",
@@ -2400,6 +2421,26 @@
           "name": "task.checkpoint",
           "description": "Save attributed progress for this task assignment. Checkpoints are unverified notes for continuity, not a delivery or verdict. Review checkpoints require the current claimId.",
           "readOnly": false
+        },
+        {
+          "name": "task.compute_cancel",
+          "description": "Cancel one GPU run owned by the current leased task work revision.",
+          "readOnly": false
+        },
+        {
+          "name": "task.compute_offers",
+          "description": "Read this project’s ML allowance and GPU offers for a task.",
+          "readOnly": true
+        },
+        {
+          "name": "task.compute_run",
+          "description": "Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.",
+          "readOnly": false
+        },
+        {
+          "name": "task.compute_status",
+          "description": "List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.",
+          "readOnly": true
         },
         {
           "name": "task.context",
@@ -3514,6 +3555,11 @@
       "optional": true
     },
     {
+      "from": "tasks",
+      "to": "sandboxes",
+      "optional": true
+    },
+    {
       "from": "tools",
       "to": "scope",
       "optional": false
@@ -3563,7 +3609,7 @@
     "plugins": 65,
     "providers": 30,
     "adapters": 35,
-    "dependencies": 178
+    "dependencies": 179
   },
   "network": [
     {

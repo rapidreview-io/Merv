@@ -64,7 +64,7 @@ test('without signed uploads, new tasks keep the version that grants none', asyn
     checks: ['Result retained'],
     requestId: 'original',
   });
-  assert.equal(ordinary.workflow.version, 2);
+  assert.equal(ordinary.workflow.version, 12);
 });
 
 test('S3 blobs give new producers upload grants while reviewers stay read-only', async (t) => {
@@ -75,7 +75,7 @@ test('S3 blobs give new producers upload grants while reviewers stay read-only',
     checks: ['Rows retained'],
     requestId: 'large',
   });
-  assert.equal(task.workflow.version, 7);
+  assert.equal(task.workflow.version, 16);
   const experiment = await s3.ctx.experiments.create(owner, {
     name: 'large_experiment',
     intent: 'Analyze retained rows',

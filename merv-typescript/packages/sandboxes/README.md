@@ -145,3 +145,18 @@ refusal, an idempotent release — the deployment entries
 appearing only when the service is named, and the shipped fake control plane
 (`npm run fake:sandboxes`, port 3210) answering a manifest, six sandboxes and both lifecycle
 routes this build accepts.
+
+## Managed GPU runs
+
+The optional ML adapter remains the transport to merv-sandboxes. The shared
+`managed_compute_runs` ledger in this package gives Tasks and Experiments one
+project allowance check, one two-job admission limit, and one idempotent
+submit/poll/cancel loop. Each owner checks its own active workflow and worker
+lease before admitting a run. Jobs already admitted remain live through worker
+replacement; leaving the work state cancels them. Task reads show compact job
+summaries, while `task.compute_status` with a run ID returns its bounded output.
+
+Startup imports legacy experiment jobs and preserves their run IDs
+and provider idempotency keys. During rollout, avoid reverting to an older server
+image while managed jobs are active: the older image reads the legacy experiment
+ledger, which no longer receives updates after import.

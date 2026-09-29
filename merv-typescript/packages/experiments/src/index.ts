@@ -34,6 +34,7 @@ import type { Paper } from '@merv/paper/types';
 import type { Code, CodeCaptureRef } from '@merv/code-research/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
 import { ExperimentCompute, type ComputeRunning } from './compute.js';
+import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import {
   computeNode,
   computePanel,
@@ -213,6 +214,7 @@ export class ExperimentService implements Experiments {
   ) {
     this.initialize = async () => {
       await migrateExperiments(state);
+      await initializeManagedCompute(state, true);
       const service = this;
       this.program = await createService(
         new ExperimentProgram({
