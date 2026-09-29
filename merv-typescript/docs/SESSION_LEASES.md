@@ -68,7 +68,9 @@ do not rebuild prompts or fetch artifact bytes while admitting a request.
 
 The default offer lifetime is five minutes, the active sliding lifetime
 four hours, and the hard deadline twenty-four hours, capped at seven days.
-Heartbeat renews an active, unexpired lease only. Release, expiry and lost source
+Heartbeat renews an active, unexpired lease only, and records a renewal only when it moves
+`expiresAt` by 15 minutes or more, or up to the hard deadline; a heartbeat in between answers
+the stored window, which is then still over 3 h 45 min ahead. Release, expiry and lost source
 authority close the execution permanently. Continuing agents remain registered unless their source authority is lost or they are explicitly retired.
 
 A machine reports how its launch ended: `launch_failed`, `workspace_failed`, `host_failed` or
@@ -245,7 +247,8 @@ passed or whose workflow record moved, as every offer does first. Every 30 secon
 pass re-checks every live session (a revoked or demoted source, a retired agent, a lease
 its domain refused, a machine Fleet no longer runs), every active agent and service-work
 reservations. A session's own next authentication, attach, heartbeat or release records
-such a closure sooner, and every worker call is refused at once. Each subject is decided
+such a closure sooner, and every worker call is refused at once. `GET /sessions/:id` reports
+a closure it finds without recording it. Each subject is decided
 on a read snapshot and recorded in a transaction of its own, so a healthy pass takes no
 writer lock. One that fails holds back no other: it is logged once as
 `sessions.sweep_failed` with its code and retried by the next full pass.

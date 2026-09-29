@@ -407,6 +407,11 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     1,
   );
   f.advance(60_000);
+  const quiet = { sessionId: session.id, runnerId: 'runner' };
+  const unmoved = (await f.sessions.get(f.source, session.id)).expiresAt;
+  // A slide under 15 minutes rewrites nothing, and the answer keeps the stored window.
+  assert.equal((await f.sessions.heartbeat(f.source, quiet)).expiresAt, unmoved);
+  f.advance(900_000);
   const heartbeat = { sessionId: session.id, runnerId: 'runner' };
   const pendingHeartbeat = f.sessions.heartbeat(f.source, heartbeat);
   Object.assign(heartbeat, { sessionId: 'missing', runnerId: 'other' });
@@ -418,6 +423,7 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     code: 'unauthorized',
   });
   assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
+  await f.sessions.sweep();
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
   assert.equal(
     (await f.state.read(
@@ -434,6 +440,30 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     ))!.live,
     0,
   );
+});
+
+test('a heartbeat within 15 minutes of the hard deadline still renews to it', async (t) => {
+  const f = await fixture(t),
+    target = await f.instance(),
+    token = secret();
+  const session = await f.sessions.offer(f.source, {
+    instanceId: target.id,
+    expectedRevision: 0,
+    runnerId: 'runner',
+    requestId: randomBytes(10).toString('hex'),
+    secret: token,
+    hardDeadlineSeconds: 5 * 3600,
+  });
+  await f.sessions.authenticate(token);
+  const control = { sessionId: session.id, runnerId: 'runner' };
+  f.advance(50 * 60_000);
+  const slid = await f.sessions.heartbeat(f.source, control);
+  assert.equal(Date.parse(slid.expiresAt), f.time() + 14_400_000);
+  // Ten minutes on, the window can move only ten minutes: it still reaches the hard deadline.
+  f.advance(10 * 60_000);
+  const last = await f.sessions.heartbeat(f.source, control);
+  assert.equal(last.expiresAt, last.hardDeadline);
+  assert.equal((await f.sessions.get(f.source, session.id)).expiresAt, last.hardDeadline);
 });
 
 test('controller polls fence changed workflow revisions and expired offers without activating or rendering', async (t) => {
@@ -466,6 +496,8 @@ test('controller polls fence changed workflow revisions and expired offers witho
   assert.equal(closed.closeReason, 'revision_conflict');
   assert.equal(f.builds, builds);
   assert.deepEqual(await f.sessions.get(f.source, session.id), closed);
+  // A poll only reports; the sweep's next pass records the moved record.
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.events(session.projectId)).filter((event) => event.type === 'session.closed')
       .length,
@@ -2140,7 +2172,8 @@ for (const boundary of ['offer expiry', 'hard deadline'] as const) {
             f.time(),
         );
     });
-    await assert.rejects(f.sessions.authenticate(token), { code: 'session_expired', status: 401 });
+    // Expired between the snapshot and the writer that would activate it: its credential with it.
+    await assert.rejects(f.sessions.authenticate(token), { status: 401 });
     assert.equal(checks, 2);
     assert.deepEqual(await f.workflows.workStarts(f.source, session.instanceId), []);
     assert.equal(
@@ -2152,6 +2185,7 @@ for (const boundary of ['offer expiry', 'hard deadline'] as const) {
     const closed = await f.sessions.get(f.source, session.id);
     assert.equal(closed.status, 'expired');
     assert.equal(closed.closeReason, 'session_expired');
+    await f.sessions.sweep();
     assert.equal(
       await f.state.read(
         async (sql) =>

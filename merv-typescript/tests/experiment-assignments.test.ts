@@ -1118,8 +1118,7 @@ test('declared producer terminal actions and owner cancellation close active wor
     'failed',
     'The owner can end work without first releasing its worker',
   );
-  await f.sessions.get(f.source, offered.session.id);
-  await f.sessions.get(f.source, active.session.id);
+  await f.sessions.sweep();
   await f.events.drain();
   assert.equal(
     await f.state.read(

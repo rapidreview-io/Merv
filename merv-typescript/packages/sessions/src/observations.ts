@@ -90,7 +90,8 @@ export class AgentObservations {
 
   async finish(id: string, status: 'succeeded' | 'failed', result?: unknown): Promise<void> {
     if (this.state.readScope) return;
-    const now = this.clock();
+    const now = this.clock(),
+      tokens = result === undefined ? null : estimate(result);
     await this.state.transaction(async (tx) => {
       const row = await tx.get<{ started_at: string }>(
         "SELECT started_at FROM session_tool_calls WHERE id=? AND status='running'",
@@ -102,7 +103,7 @@ export class AgentObservations {
         status,
         new Date(now).toISOString(),
         Math.max(0, now - Date.parse(row.started_at)),
-        result === undefined ? null : estimate(result),
+        tokens,
         id,
       );
     });

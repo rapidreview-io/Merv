@@ -525,6 +525,7 @@ test('HTTP transports strict workspace metadata and permits post-transition capt
   await f.finish();
   const closed = await f.app.ctx.sessions.get(f.source, f.session.id);
   assert.equal(closed.status, 'expired');
+  await f.app.ctx.sessions.sweep();
   f.poison();
   const result = workspace({ headOid: oid('b') });
   const body = { runnerId: 'runner', hostRef: f.control.hostRef, workspace: result };

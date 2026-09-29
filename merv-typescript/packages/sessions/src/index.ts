@@ -1786,14 +1786,11 @@ export class LeasedSessions implements Sessions {
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
     caller = structuredClone(caller);
-    if (caller.managed)
-      return await this.reading(
-        async (tx) => await this.controlled(caller, sessionId, undefined, tx),
-      );
-    const result = await this.transaction(async (tx) => {
+    const result = await this.reading(async (tx) => {
       const session = await this.controlled(caller, sessionId, undefined, tx);
-      // A poll reports a closure, which a GET's snapshot leaves to the sweep; outages retry.
-      const error = await this.reconcile(session, tx, true);
+      // A poll reports a closure to its controller, recorded only in a caller's writer, else by
+      // the sweep; provider outages are retryable. A managed poll only reads.
+      const error = caller.managed ? undefined : await this.reconcile(session, tx, true);
       return error && error.status >= 500 ? { error } : { session };
     });
     if (result.error) throw result.error;
@@ -1965,19 +1962,27 @@ export class LeasedSessions implements Sessions {
         'Only an activated session may heartbeat',
         409,
       );
-      session.expiresAt = new Date(
-        Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
-      ).toISOString();
+      // Each renewal rewrites the frozen packet, so one that slides the window by less than 15
+      // minutes is skipped; the window stays over 3h45m ahead, or reaches the hard deadline.
+      const expiresAt = this.slide(session);
+      const step = Date.parse(expiresAt) - Date.parse(session.expiresAt);
+      if (step < (expiresAt === session.hardDeadline ? 1 : 900_000)) return;
+      session.expiresAt = expiresAt;
       await this.save(tx, session);
       await this.renewSessionCredential(session, tx);
     });
+  }
+  private slide(session: Session): string {
+    return new Date(
+      Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
+    ).toISOString();
   }
   private async controlMutation(
     caller: Caller,
     input: SessionControl,
     mutate: (session: Session, tx: Transaction) => void | Promise<void>,
   ): Promise<Session> {
-    const result = await this.transaction(async (tx) => {
+    const result = await this.readFirst(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx),
         error = await this.reconcile(session, tx);
       if (error) return { error };
@@ -2062,7 +2067,7 @@ export class LeasedSessions implements Sessions {
     });
   }
   async authenticate(token: string): Promise<Caller> {
-    const result = await this.transaction(async (tx) => {
+    const result = await this.readFirst(async (tx) => {
       const credential = await this.credentials.authenticate(
         token,
         ['session-agent', 'session-execution'],
@@ -2102,9 +2107,7 @@ export class LeasedSessions implements Sessions {
         );
         session.status = 'active';
         session.activatedAt = isoNow(this.clock);
-        session.expiresAt = new Date(
-          Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
-        ).toISOString();
+        session.expiresAt = this.slide(session);
         await this.save(tx, session);
         await this.renewSessionCredential(session, tx);
         await this.state.appendEvent(tx, {
@@ -2318,17 +2321,14 @@ export class LeasedSessions implements Sessions {
     // Claim once before yielding so concurrent callers cannot execute one preparation twice.
     state.running = true;
     try {
-      // Authorize before recording an observation, so an unauthorized call records none. A
-      // caller that just validated (the tool registry does, right before run) is not admitted
-      // twice; the check after observation storage still runs.
-      if (!state.validated) await this.validate(invocation.caller, invocation.tool, state.input);
+      // The registry authorized this call right before run; storing the observation yields,
+      // so it is authorized again below before the tool runs.
       await this.observations.start(
         invocation.caller.session!.invocationId!,
         state.sessionId,
         invocation.tool,
         state.input,
       );
-      // Observation storage yields too; recheck authorization before invoking the tool.
       await this.validate(invocation.caller, invocation.tool, state.input);
       if (invocation.tool !== 'session.messages' && invocation.tool !== 'session.message.ack')
         await this.reading(
@@ -2338,7 +2338,7 @@ export class LeasedSessions implements Sessions {
       // assignment is an admission of somebody else, so the question is refused by name.
       const own =
         invocation.tool === 'workflow.assignment'
-          ? await this.transaction(async (tx) => await this.session(invocation.caller, tx))
+          ? await this.reading(async (tx) => await this.session(invocation.caller, tx))
           : undefined;
       const asked = (state.input as { instanceId?: string }).instanceId;
       check(
@@ -2366,6 +2366,7 @@ export class LeasedSessions implements Sessions {
           failed ? 'failed' : 'succeeded',
           result,
         );
+      state.running = false;
       return result;
     } finally {
       await this.cancel(invocation);

@@ -235,26 +235,33 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
   const token = await f.leased();
   const session = (await f.sessions.list(f.source))[0]!;
   let worker!: Caller;
+  // An activation is decided on a snapshot and again in the writer that records it.
   await f.atMost(
-    { writers: 1, checks: 1 },
+    { writers: 1, checks: 2 },
     async () => (worker = await f.sessions.authenticate(token)),
     'activation',
   );
   await f.atMost(
-    { writers: 1, checks: 1 },
+    { writers: 0, checks: 1 },
     () => f.sessions.authenticate(token),
     'an active session',
   );
   f.advance(60_000);
   const control = { sessionId: session.id, runnerId: 'machine' };
   await f.atMost(
-    { writers: 1, checks: 1 },
+    { writers: 0, checks: 1 },
     () => f.sessions.heartbeat(f.source, control),
     'a heartbeat a minute later',
   );
+  f.advance(900_000);
+  await f.atMost(
+    { writers: 1, checks: 2 },
+    () => f.sessions.heartbeat(f.source, control),
+    'a heartbeat that slides the window 15 minutes',
+  );
   const input = { instanceId: session.instanceId, expectedRevision: 0 };
   await f.atMost(
-    { writers: 3, checks: 6 },
+    { writers: 2, checks: 6 },
     async () => {
       const invocation = await f.sessions.prepare(worker, 'finish', input);
       await f.sessions.validate(invocation.caller, 'finish', input);
@@ -264,7 +271,7 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
   );
   await f.sessions.release(f.source, control);
   await f.atMost(
-    { writers: 1, checks: 0 },
+    { writers: 0, checks: 0 },
     () => assert.rejects(f.sessions.authenticate(token), { status: 401 }),
     'a closed session',
   );
