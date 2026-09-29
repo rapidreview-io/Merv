@@ -190,9 +190,9 @@ export class MountRuntime {
       this.timeoutMs,
       {
         signal,
-        notifications: (client) =>
-          client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-            if (!this.stopping && this.client === client)
+        notifications: (discovery) =>
+          discovery.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+            if (!this.stopping && this.client === discovery)
               void this.refresh().catch(() => undefined);
           }),
       },
