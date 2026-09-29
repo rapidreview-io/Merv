@@ -1308,6 +1308,13 @@ test('a mount withdrawn while its body is read answers 503 and its handler never
 
 test('a namespace owner authenticates its bearers on the routes it allows, and nothing else does', async (t) => {
   const { scope, tools } = fixture();
+  const keys: string[] = [];
+  Object.assign(scope, {
+    authenticateKey: async (token: string) => {
+      keys.push(token);
+      throw new MervError('unauthorized', 'Invalid key', 401);
+    },
+  });
   let verified = 0;
   const api = new ApiServer(scope, tools, {}, {
     verify: async () => {
@@ -1367,6 +1374,8 @@ test('a namespace owner authenticates its bearers on the routes it allows, and n
   assert.deepEqual(await get('/tools', 'zz_bad.jwt.token'), [503, 'credential_unavailable']);
   assert.equal(verified, 0);
   // User keys and 43-character legacy actor tokens stay Scope's.
+  assert.deepEqual(await get('/tools', `mk_${'a'.repeat(43)}`), [401, 'unauthorized']);
+  assert.deepEqual(keys, [`mk_${'a'.repeat(43)}`]);
   assert.equal((await get('/tools', `pb_${'a'.repeat(40)}`))[0], 401);
   assert.equal(verified, 0);
 });

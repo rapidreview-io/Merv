@@ -2119,6 +2119,71 @@ test(
   },
 );
 
+test('Pi’s model relay charges a worker’s call before it runs and settles it to what it used', async (t) => {
+  // The relay checks a grant's expiry against the real clock.
+  const f = await fixture(t, { startTime: Date.now() });
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.pi.begin(bound.token, bound.input);
+  const grant = await f.pi.authorizeModel(bound.work.modelToken);
+  const { fetch: send } = globalThis;
+  const asked = provider(t, async () => {
+    const completed = {
+      type: 'response.completed',
+      response: {
+        id: 'resp_1',
+        status: 'completed',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    };
+    return new Response(`data: ${JSON.stringify(completed)}\n\n`, {
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  });
+  // The relay Pi's API adapter mounts at /pi-model.
+  const relay = f.pi.modelRelay();
+  const server = createServer((req, res) => void relay.handle(req, res, undefined as never));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => {
+    relay.close();
+    server.closeAllConnections();
+    server.close();
+  });
+  const { port } = server.address() as { port: number };
+  const body = {
+    model: grant.model,
+    store: false,
+    stream: true,
+    input: [{ role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+  };
+  const response = await send(`http://127.0.0.1:${port}/pi-model/responses`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${bound.work.modelToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 200, await response.text());
+  assert.equal(asked.length, 1);
+  const spent = () =>
+    f.state.read((sql) =>
+      sql.all<{ tokens: number | string }>(
+        'SELECT tokens FROM pi_model_usage WHERE person=?',
+        grant.userId,
+      ),
+    );
+  // The charge made the day's row and the settlement brought it to what the call used; usage
+  // settles as its frame passes, beside the response.
+  for (let tries = 0; tries < 50 && Number((await spent())[0]?.tokens) !== 15; tries++)
+    await pause(10);
+  assert.deepEqual(
+    (await spent()).map(({ tokens }) => Number(tokens)),
+    [15],
+  );
+});
+
 test('a person’s Agent tokens are charged before each call and settled after, and refused at the day’s ceiling', async (t) => {
   const f = await fixture(t, { pi: { dailyTokensPerPerson: 1_000 } as PiConfig });
   const conversation = await f.create();
