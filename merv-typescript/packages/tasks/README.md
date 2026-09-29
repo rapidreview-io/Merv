@@ -32,6 +32,18 @@ Creation and type registration copy their inputs before asynchronous work. A typ
 
 ## Work prerequisites
 
+New task workflow versions 12–19 give a leased producer optional GPU access through
+`task.compute_offers`, `task.compute_run`, `task.compute_status`, and
+`task.compute_cancel`. A run names the task's current work revision, a stable key,
+provider offer, bounded command, minutes and whole-workflow `maxUsd`; repeat the
+same key and input to recover an uncertain submission. `task.get` and
+`task.compute_status` retain results from earlier revisions for review. The
+Sandboxes integration enforces the project's allowance and a shared limit of two
+live GPU jobs across Tasks and Experiments. The remote scratch directory is
+temporary and the result captures bounded output; retain evidence through the
+existing artifact workflow. Published older task execution policies remain pinned
+and do not gain GPU grants retroactively.
+
 `task.create.dependsOn` accepts existing same-project work IDs (array, one ID, null
 or omitted). Workflows owns the durable DAG and its completion checks. Tasks
 declares `done` as success and gates producer context/checkpoints and delivery.

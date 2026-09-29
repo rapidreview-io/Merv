@@ -564,7 +564,7 @@ async function live(outputDirectory: string) {
     while (!ready() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
     requireCondition(ready(), 'mount_not_ready');
     requireCondition(
-      (await app.ctx.tools.list(caller))
+      (await app.ctx.tools.describe(caller))
         .filter((entry) => entry.name.startsWith('_'))
         .map((entry) => entry.name)
         .join() === tool,

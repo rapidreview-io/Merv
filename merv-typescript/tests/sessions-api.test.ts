@@ -622,6 +622,8 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   );
   // An admission is the lease check that carries the frozen execution.
   const admissions = () => leaseChecks.mock.calls.filter((call) => call.arguments[3]).length;
+  // The session's liveness is its read decision; the transport does not also describe it.
+  const described = t.mock.method(f.app.ctx.sessions, 'describe');
   // Preparation, the check after parsing, and the check after the observation is stored;
   // a read is admitted once more after its handler releases the read snapshot. Each extra
   // layer that re-admits would show here.
@@ -634,6 +636,8 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
     assert.equal(result.isError, undefined, JSON.stringify(result));
     assert.equal(admissions(), expected, name);
   }
+  await client.listTools();
+  assert.equal(described.mock.callCount(), 0);
 });
 
 test('session route and credential namespaces stay reserved when the Sessions provider is unloaded', async (t) => {
@@ -951,6 +955,8 @@ test('an external agent explicitly changes assignments over HTTP and keeps its M
     200,
   );
   assert.equal((await f.http('/sessions/self', token)).status, 401);
+  assert.equal((await f.http('/sessions/self/release', token, { executionId: 'x' })).status, 401);
+  assert.equal((await f.http('/sessions/self/nope', token, {})).status, 404);
   assert.ok(!JSON.stringify([registered, assigned, again]).includes(token));
 });
 

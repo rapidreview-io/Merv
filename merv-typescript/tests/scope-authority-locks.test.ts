@@ -5,8 +5,12 @@
  * today are marked with the plan step that turns them on.
  */
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { after, test } from 'node:test';
 import pg from 'pg';
+import { z } from 'zod';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   createService,
   type Caller,
@@ -16,6 +20,8 @@ import {
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { ExactToolPolicy } from '@merv/scope/tool-policy';
+import { ApiServer } from '../packages/api/src/http.js';
+import { ToolRegistry } from '../packages/api/src/registry.js';
 import { deferred } from './fixtures/deferred.js';
 import { openState, postgresUrl, schemaFor, testLimits } from './fixtures/state.js';
 
@@ -175,8 +181,9 @@ const decisions: [string, Operation][] = [
     async (f) => assert.equal((await f.scope.authorityActor(f.session)).id, f.owner.actorId),
   ],
   [
-    'toolPolicy.allows(session)',
-    async (f) => assert.equal(await f.scope.toolPolicy.allows(f.session, 'fixture', 'look'), true),
+    'toolPolicy.granted(session)',
+    async (f) =>
+      assert.equal((await f.scope.toolPolicy.granted(f.session))('fixture', 'look'), true),
   ],
   [
     "require(conversation, 'read')",
@@ -480,7 +487,10 @@ test('the tool policy authorizes a session once, without the writer lock', async
     ],
   );
   const checks: [string, () => Promise<unknown>][] = [
-    ['allows', async () => assert.equal(await policy.allows(f.session, 'fixture', 'look'), true)],
+    [
+      'granted',
+      async () => assert.equal((await policy.granted(f.session))('fixture', 'look'), true),
+    ],
     ['require', async () => await policy.require(f.session, 'fixture', 'look')],
   ];
   for (const [name, check] of checks)
@@ -521,4 +531,102 @@ test('a provider cannot write on a read decision', async (t) => {
   await t.test('in a plain read', async () => {
     await contexts.read(f, refused);
   });
+});
+
+/**
+ * Read decisions per request, counted where Scope makes them: resolving the caller, a read
+ * requirement, and the tool policy's grant check, which decides through Scope once. A native
+ * read is decided again after its snapshot is released, before its result leaves.
+ */
+test('a tool request makes one read decision per decision point', async (t) => {
+  const state = await openState(':memory:');
+  const scope = await createService(new ProjectScope(state));
+  const boot = await scope.bootstrap({ projectName: 'Decisions', actorName: 'Owner' });
+  // Twenty granted mounted tools, so a listing shows what its grant check costs.
+  const mounted = Array.from({ length: 20 }, (_, n) => (n ? `look${n}` : 'look'));
+  (scope.toolPolicy as ExactToolPolicy).replace([
+    { projectId: boot.project.id, actorId: boot.actor.id, mountId: 'fixture', tools: mounted },
+  ]);
+  const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
+  const api = new ApiServer(scope, tools, { port: 0 });
+  const url = await api.start();
+  const client = new Client({ name: 'decisions', version: '1' });
+  t.after(async () => {
+    await client.close();
+    await api.stop();
+    await tools.close();
+    await state.close();
+  });
+  const empty = z.object({}).strict();
+  tools.register({
+    name: 'fixture.read',
+    description: 'Reads.',
+    readOnly: true,
+    inputSchema: empty,
+    handler: () => ({}),
+  });
+  tools.register({
+    name: 'fixture.write',
+    description: 'Writes.',
+    inputSchema: empty,
+    handler: () => ({}),
+  });
+  await tools.createCatalog('fixture').replace(
+    mounted.map((name) => ({
+      kind: 'mcp' as const,
+      name,
+      inputSchema: { type: 'object' as const },
+      handler: async () => ({ content: [] }),
+    })),
+  );
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${boot.token}` } },
+    }),
+  );
+  // A decision that asks Scope again inside itself (caller resolution requires read) is one.
+  const deciding = new AsyncLocalStorage<true>();
+  let decisions = 0;
+  for (const method of ['caller', 'require', 'authorityActor'] as const) {
+    const decide = scope[method].bind(scope) as (...args: unknown[]) => Promise<unknown>;
+    t.mock.method(scope, method, async (...args: unknown[]) => {
+      if (!deciding.getStore()) decisions++;
+      return await deciding.run(true, () => decide(...args));
+    });
+  }
+  const counted = async (request: () => Promise<unknown>) => {
+    decisions = 0;
+    await request();
+    return decisions;
+  };
+  const post = (name: string) => async () => {
+    const response = await fetch(`${url}/tools/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${boot.token}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+  };
+  const call = (name: string) => async () =>
+    assert.equal((await client.callTool({ name, arguments: {} })).isError, undefined);
+  assert.deepEqual(
+    {
+      'native read': await counted(post('fixture.read')),
+      'native write': await counted(post('fixture.write')),
+      'MCP tools/list': await counted(async () =>
+        assert.equal((await client.listTools()).tools.length, 22),
+      ),
+      'MCP native read': await counted(call('fixture.read')),
+      // Mounts' own connection pool adds its two when the tool is a real mount.
+      'MCP remote call': await counted(call('_fixture.look')),
+    },
+    {
+      'native read': 3,
+      'native write': 2,
+      // One grant check for all twenty mounted tools is the third.
+      'MCP tools/list': 3,
+      'MCP native read': 3,
+      'MCP remote call': 3,
+    },
+  );
 });

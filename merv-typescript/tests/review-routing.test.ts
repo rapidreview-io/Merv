@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Caller, ReviewApplication, ReviewSubmitOwner, Transaction } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { assessment } from './fixtures/review-verdict.js';
 
@@ -415,7 +416,9 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const tool = (await f.app.ctx.tools.list()).find((tool) => tool.name === 'task.get')!;
+  const tool = (await f.app.ctx.tools.list()).find(
+    (tool) => tool.name === 'task.get',
+  ) as ToolDefinition;
   const original = tool.handler;
   tool.handler = async (caller, input) => {
     const result = await original(caller, input);

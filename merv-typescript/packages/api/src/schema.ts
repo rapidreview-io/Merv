@@ -11,49 +11,9 @@ import { MervError, plain } from '@merv/contracts';
 export const cloneJson = <T>(value: T): T =>
   plain<T>(value, 'invalid_json', { keys: 'any', strings: 'json', depth: Infinity });
 
-function rejectReferences(schema: unknown): void {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return;
-  const node = schema as Record<string, unknown>;
-  if ('$async' in node) throw new Error('Async schemas are unsupported');
-  for (const keyword of ['$ref', '$dynamicRef', '$recursiveRef']) {
-    if (keyword in node && (typeof node[keyword] !== 'string' || !node[keyword].startsWith('#')))
-      throw new Error('Only local schema references are supported');
-  }
-  for (const keyword of [
-    'properties',
-    'patternProperties',
-    '$defs',
-    'definitions',
-    'dependentSchemas',
-    'dependencies',
-  ]) {
-    const children = node[keyword];
-    if (children && typeof children === 'object' && !Array.isArray(children))
-      Object.values(children).forEach(rejectReferences);
-  }
-  for (const keyword of ['allOf', 'anyOf', 'oneOf', 'prefixItems'])
-    if (Array.isArray(node[keyword])) node[keyword].forEach(rejectReferences);
-  for (const keyword of [
-    'items',
-    'additionalItems',
-    'additionalProperties',
-    'unevaluatedProperties',
-    'unevaluatedItems',
-    'contains',
-    'not',
-    'if',
-    'then',
-    'else',
-    'propertyNames',
-    'contentSchema',
-  ]) {
-    const child = node[keyword];
-    if (Array.isArray(child)) child.forEach(rejectReferences);
-    else rejectReferences(child);
-  }
-}
-
-/** Compilation is synchronous, strict, and never fetches remote references. */
+/** Compilation is synchronous and never fetches a reference: a remote `$ref` fails to resolve.
+ *  Keywords and formats the validator does not know are annotations, as JSON Schema defines
+ *  them, so an upstream's extensions (`x-*`, `discriminator`) do not refuse its catalog. */
 export function compileSchema(schema: unknown): ValidateFunction {
   try {
     const snapshot = cloneJson(schema);
@@ -65,16 +25,14 @@ export function compileSchema(schema: unknown): ValidateFunction {
       snapshot.type !== 'object'
     )
       throw new Error('Tool schema must declare object input');
-    rejectReferences(snapshot);
     const dialect = '$schema' in snapshot ? snapshot.$schema : undefined;
+    // Ajv's defaults already neither coerce, insert defaults nor remove fields.
     const options = {
-      strict: true,
+      strict: false,
+      logger: false as const,
       allErrors: true,
       ownProperties: true,
       addUsedSchema: false,
-      coerceTypes: false as const,
-      useDefaults: false as const,
-      removeAdditional: false as const,
     };
     let validator: Ajv | Ajv2020;
     if (
@@ -90,7 +48,10 @@ export function compileSchema(schema: unknown): ValidateFunction {
       validator = new Ajv(options);
     else throw new Error('Only JSON Schema draft 2020-12 and draft-07 are supported');
     addFormats(validator);
-    return validator.compile(snapshot);
+    const validate = validator.compile(snapshot);
+    // A root $async compiles an asynchronous validator; Ajv refuses a nested one itself.
+    if ((validate as { $async?: unknown }).$async) throw new Error('Async schemas are unsupported');
+    return validate;
   } catch (error) {
     throw new MervError(
       'invalid_schema',

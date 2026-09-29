@@ -212,6 +212,27 @@ test('only the administrator who began an import continues it, and a worker neve
   assert.equal(existsSync(join(swept.paths.quarantine, stale.id)), false);
 });
 
+test('a part authorizes its sender itself: one whose credential was revoked is refused', async (t) => {
+  const source = gitSource(t);
+  const bundle = source.bundle(source.commit({ 'a.txt': 'a\n' }));
+  const f = await codeStoreFixture(t);
+  const begun = await f.code.importRepository(f.admin, {
+    source: 'bundle',
+    tip: bundle.tip,
+    bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
+    requestId: 'revoked',
+  });
+  const other = await f.scope.issueActor(f.admin, { name: 'Operator', role: 'operator' });
+  await f.scope.revokeCredential(
+    { projectId: f.admin.projectId, actorId: other.actor.id, credentialId: other.credential.id },
+    f.admin.credentialId!,
+  );
+  // The API decides once, before a part's bytes arrive; the part decides again as it is stored.
+  await assert.rejects(f.code.v2!.putPart(f.admin, begun.id, 0, bundle.content), {
+    code: 'forbidden',
+  });
+});
+
 test('ending the process at every boundary leaves one receipt, one completed row and no quarantine', async (t) => {
   const source = gitSource(t);
   const tip = source.commit({ 'a.txt': 'a\n', 'dir/b.txt': 'b\n' });

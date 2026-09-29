@@ -29,7 +29,7 @@ import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fi
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
-test('Pi offers and runs system.status under the real conversation policy', async (t) => {
+test('Pi offers and runs system.status in a conversation', async (t) => {
   const f = await fixture(t);
   const sessions = {
     projectStatus: async (caller: Caller) => {
@@ -64,6 +64,20 @@ test('Pi offers and runs system.status under the real conversation policy', asyn
     ).dispatch,
     { enabled: false, state: 'paused', ownMachines: true, fleet: false },
   );
+});
+
+test("a turn is offered every native tool the person may use but Pi's own", async (t) => {
+  const f = await fixture(t);
+  f.tools.register({
+    name: 'pi.send',
+    description: 'Send a message',
+    inputSchema: z.object({}).strict(),
+    handler: () => null,
+  });
+  const offered = (await f.begun(f.operator)).work.tools.map(({ name }) => name);
+  assert.ok(offered.includes('project.get'));
+  assert.ok(!offered.includes('pi.send'));
+  assert.ok(!offered.some((name) => name.startsWith('_')), 'a mounted tool is never offered');
 });
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {
@@ -2113,10 +2127,37 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
   const body = { model: grant.model, input: [], max_output_tokens: 600 };
   const charged = await f.pi.reserveModel(grant, body);
-  assert.equal(charged, Math.ceil(JSON.stringify(body).length / 4) + 600);
+  assert.equal(charged.tokens, Math.ceil(JSON.stringify(body).length / 4) + 600);
+  assert.match(charged.day, /^\d{4}-\d{2}-\d{2}$/);
   // A second call at its most would pass the ceiling while the first is still out.
   await assert.rejects(f.pi.reserveModel(grant, body), code('pi_model_ceiling'));
   // Settled to what it used, the day has room again.
   await f.pi.settleModel({ inputTokens: 40, outputTokens: 10 }, grant, charged);
-  assert.equal(await f.pi.reserveModel(grant, body), charged);
+  assert.deepEqual(await f.pi.reserveModel(grant, body), charged);
+  // A call settles to the day it was charged to, whatever the day is when it finishes.
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?)',
+      grant.userId,
+      '2000-01-01',
+      10,
+    ),
+  );
+  await f.pi.settleModel({ inputTokens: 1, outputTokens: 2 }, grant, {
+    day: '2000-01-01',
+    tokens: 10,
+  });
+  const days = await f.state.read((sql) =>
+    sql.all<{ day: string; tokens: number | string }>(
+      'SELECT day, tokens FROM pi_model_usage WHERE person=? ORDER BY day',
+      grant.userId,
+    ),
+  );
+  assert.deepEqual(
+    days.map(({ day, tokens }) => ({ day, tokens: Number(tokens) })),
+    [
+      { day: '2000-01-01', tokens: 3 },
+      { day: charged.day, tokens: 50 + charged.tokens },
+    ],
+  );
 });

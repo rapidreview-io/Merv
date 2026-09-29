@@ -10,7 +10,6 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { s3Server } from './fixtures/s3-server.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { postgresUrl, schemaFor } from './fixtures/state.js';
 
 const production = async (): Promise<ApplicationConfig> =>
@@ -284,15 +283,9 @@ test(
         (request) => request.method === 'PUT' && request.headers['if-none-match'] === '*',
       ),
     );
-    // Only a row from before bytes were kept in it still reads through S3.
-    const legacy = await legacyArtifact(
-      app.ctx.state,
-      operator,
-      Buffer.from('The verified sum is 20.'),
-      (bytes) => app.ctx.blobs.put(operator.projectId, bytes),
-    );
-    const held = f.server.holdNext('GET');
-    const reading = app.ctx.artifacts.read(operator, legacy.id);
+    // Unloading blobs waits for a download in hand.
+    const held = f.server.holdNext('HEAD');
+    const signing = app.ctx.artifacts.download(operator, artifact.id);
     await held.started;
     let unloaded = false;
     const unloading = app.setEnabled('blobs', false).then(() => {
@@ -304,12 +297,12 @@ test(
     } finally {
       held.release();
     }
-    assert.equal((await reading).content, 'The verified sum is 20.');
+    assert.equal((await signing).artifact.id, artifact.id);
     await unloading;
     assert.equal(app.ctx.get('artifacts'), undefined);
     await app.setEnabled('blobs', true);
     assert.equal(
-      (await app.ctx.artifacts.read(operator, legacy.id)).content,
+      (await app.ctx.artifacts.read(operator, artifact.id)).content,
       'The verified sum is 20.',
     );
   },

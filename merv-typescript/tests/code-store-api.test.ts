@@ -202,11 +202,22 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
 });
 
 test(
-  'a part is forwarded only while the credential that sent it still holds, however long its bytes took',
+  'the API decides once before a part and leaves a credential revoked while its bytes arrived to Code',
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    f.api.registerCode(f.provider);
+    // The API decides once, before the bytes. The stubbed putPart stands in for Code's, which
+    // authorizes in its own transaction; code-operations.test.ts proves the real putPart refuses.
+    f.api.registerCode({
+      ...f.provider,
+      v2: {
+        ...f.v2,
+        putPart: async (caller, operationId, offset, bytes) => {
+          await f.scope.require(caller, 'read');
+          return await f.v2.putPart(caller, operationId, offset, bytes);
+        },
+      },
+    });
     const admin = await f.scope.issueActor(f.caller, { name: 'Second operator', role: 'operator' });
     const adminCaller = await f.scope.caller({
       kind: 'actor',

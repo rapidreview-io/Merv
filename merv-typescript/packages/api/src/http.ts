@@ -53,6 +53,9 @@ export interface HttpOptions {
   allowedOrigins?: string[];
   /** Runs a read-only GET route in a snapshot scope: no writer lock, writes refused. */
   snapshot?: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** How long stop() lets in-flight responses finish before it cuts their sockets (default 45 s,
+   *  below the deployment's 60 s stop grace period). */
+  drainMs?: number;
 }
 
 function errorBody(error: unknown): {
@@ -65,20 +68,73 @@ function errorBody(error: unknown): {
       error: {
         code: error.code,
         message: error.message,
-        ...(error.details ? { details: error.details } : {}),
+        ...(error.details && serializable(error.details) ? { details: error.details } : {}),
       },
     };
   return { status: 500, error: { code: 'internal_error', message: 'Internal server error' } };
 }
 
+/** Details that JSON cannot carry (a BigInt, a cycle) are dropped, so the refusal still reaches
+ *  its caller instead of failing while it is written. */
+function serializable(details: unknown): boolean {
+  try {
+    JSON.stringify(details);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function json(res: ServerResponse, status: number, value: unknown): void {
   if (res.headersSent || res.destroyed) return;
+  // Serialize first: a value that cannot be written fails while a 500 can still be sent.
+  const body = JSON.stringify(value);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+    ...(status === 401 && { 'www-authenticate': 'Bearer' }),
   });
-  res.end(JSON.stringify(value));
+  res.end(body);
+}
+
+/** The one log point for server failures: primitive fields only, never the error's message,
+ *  which may carry request values or connection details. */
+function logFailure(error: unknown, status: number, code: string, where: string): void {
+  if (status < 500) return;
+  const failure = (error ?? {}) as {
+    name?: unknown;
+    stack?: unknown;
+    cause?: Record<string, unknown>;
+  };
+  const cause = failure.cause ?? {};
+  process.stderr.write(
+    `${JSON.stringify({
+      event: 'api_error',
+      where,
+      status,
+      code,
+      name: String(failure.name),
+      at: String(failure.stack)
+        .split('\n')
+        .filter((line) => /^\s+at /.test(line))
+        .slice(0, 3)
+        .map((line) => line.trim()),
+      sqlstate: String(cause.sqlstate ?? ''),
+      table: String(cause.table ?? ''),
+      constraint: String(cause.constraint ?? ''),
+    })}\n`,
+  );
+}
+
+/** A JSON-RPC error that carries a MervError's code and status, and nothing internal. */
+function rpcError(error: unknown): Error {
+  const { status, error: body } = errorBody(error);
+  logFailure(error, status, body.code, 'mcp');
+  return Object.assign(new Error(body.message), {
+    code: status >= 500 ? -32603 : -32600,
+    data: body,
+  });
 }
 
 function octets(res: ServerResponse, value: Buffer): void {
@@ -92,12 +148,15 @@ function octets(res: ServerResponse, value: Buffer): void {
   res.end(value);
 }
 
+/** The request's path without its query, which a log must never carry. */
+const pathOf = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').pathname;
+
 /** One bounded body of `mediaType`: 415 for any other type, 413 past `maxBytes`. */
 function readBody(req: IncomingMessage, maxBytes: number, mediaType: string): Promise<Buffer> {
   // Authentication may have yielded while the client disconnected. Its abort/end
   // events will not fire again for listeners attached after the stream was destroyed.
   if (req.destroyed) throw new MervError('request_aborted', 'Request was aborted');
-  if (req.headers['content-type']?.split(';')[0]?.trim() !== mediaType) {
+  if (req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() !== mediaType) {
     req.resume();
     throw new MervError('unsupported_media_type', `Content-Type must be ${mediaType}`, 415);
   }
@@ -193,6 +252,9 @@ const managedRoute = (method: string | undefined, path: string): boolean =>
 // A legacy random actor token is exactly 43 characters even if it starts with ms_.
 const sessionNamespace = (token: string) =>
   token.startsWith('ms_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
+/** An agent's own routes, which authenticate its key themselves. */
+const agentSelfPath = (path: string) =>
+  path === '/sessions/self' || path.startsWith('/sessions/self/');
 
 function bearer(req: IncomingMessage): string {
   const authorization = req.headers.authorization;
@@ -290,11 +352,11 @@ export class ApiServer {
   private stopping = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
-  private readonly requests = new Set<Promise<void>>();
+  private readonly requests = new Set<Promise<unknown>>();
   private readonly calls = new Set<Promise<unknown>>();
-  private readonly mcpServers = new Set<McpServer>();
   private readonly mounts = new Map<string, MountHandler>();
   private readonly maxBodyBytes: number;
+  private readonly drainMs: number;
   url?: string;
 
   constructor(
@@ -307,6 +369,7 @@ export class ApiServer {
     this.maxBodyBytes = options.maxBodyBytes ?? 3 * 1024 * 1024;
     if (!Number.isSafeInteger(this.maxBodyBytes) || this.maxBodyBytes < 1)
       throw new MervError('invalid_config', 'maxBodyBytes must be a positive integer');
+    this.drainMs = options.drainMs ?? 45_000;
   }
 
   start(): Promise<string> {
@@ -324,10 +387,18 @@ export class ApiServer {
 
   private async listen(): Promise<string> {
     const server = createServer((req, res) => {
-      const request = this.handle(req, res).catch((error: unknown) => {
-        const body = errorBody(error);
-        json(res, body.status, { error: body.error });
-      });
+      // A request is done when its response is flushed or its connection is gone: a handler
+      // settles at res.end(), before the bytes leave, and shutdown must not cut them off.
+      const request = Promise.all([
+        this.handle(req, res).catch((error: unknown) => {
+          const { status, error: body } = errorBody(error);
+          if (!res.headersSent) json(res, status, { error: body });
+          // A response that failed part-way cannot be completed; end it rather than hang.
+          else if (!res.writableEnded) res.destroy();
+          logFailure(error, status, body.code, `${req.method} ${pathOf(req)}`);
+        }),
+        new Promise((closed) => res.once('close', closed)),
+      ]);
       this.requests.add(request);
       void request.then(
         () => this.requests.delete(request),
@@ -336,7 +407,9 @@ export class ApiServer {
     });
     server.requestTimeout = 30_000;
     server.headersTimeout = 15_000;
-    server.keepAliveTimeout = 5_000;
+    // Above the reverse proxy's two-minute idle timeout, so the proxy closes idle connections
+    // first and never reuses one this server is closing.
+    server.keepAliveTimeout = 125_000;
     const host = this.options.host ?? '127.0.0.1';
     this.server = server;
     try {
@@ -382,16 +455,21 @@ export class ApiServer {
     if (starting) await starting.catch(() => undefined);
     if (!this.server) return;
     const server = this.server;
-    // Stop admission before waiting. Existing responses and handlers retain their providers.
+    // Admission is already withdrawn: every new request is answered 503. Responses get drainMs
+    // to finish; cutting their sockets then ends every stream still open, since each one ends
+    // when its response closes. Existing responses and handlers retain their providers.
+    const cut = setTimeout(() => server.closeAllConnections(), this.drainMs);
+    await Promise.allSettled([...this.requests]);
+    clearTimeout(cut);
+    // Only now: close() also ends every connection whose response has ended, even while its
+    // bytes are still reaching a slow reader.
     const closed = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
-    server.closeIdleConnections();
-    await Promise.allSettled([...this.requests]);
     await Promise.allSettled([...this.calls]);
+    // Only idle keep-alive connections remain.
+    server.closeAllConnections();
     await closed;
-    await Promise.allSettled([...this.mcpServers].map((instance) => instance.close()));
-    this.mcpServers.clear();
     this.server = undefined;
   }
 
@@ -424,9 +502,9 @@ export class ApiServer {
       if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
     };
   }
-  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,
-    config: ModelRelayConfig<G, N>,
+    config: ModelRelayConfig<G, N, R>,
   ): () => void {
     const relay = new ModelRelay(config);
     const unmount = this.mount(prefix, relay.handle);
@@ -447,11 +525,13 @@ export class ApiServer {
     return this.code.register(provider);
   }
 
+  /** A request's one read decision, made before any body is read. Every effect then authorizes
+   *  itself in its own transaction, so nothing here re-checks after the body. */
   private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
     if (principal.kind !== 'session' && principal.kind !== 'managed')
       return await this.scope.caller(principal, projectId);
     projectSelection(principal.caller.projectId, projectId);
-    if (principal.kind === 'session') await this.sessions.get().describe(principal.caller);
+    // A session's liveness is Sessions' guard, which this read decision consults.
     await this.scope.require(principal.caller, 'read');
     return principal.caller;
   }
@@ -533,7 +613,6 @@ export class ApiServer {
     const projectId = projectSelection(selectedProject, remote ? undefined : argumentProject);
     // actorId and other caller-shaped fields are ordinary arguments: strict feature schemas reject them.
     const caller = await this.selectedCaller(principal, projectId);
-    await this.scope.require(caller, 'read');
     return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
@@ -567,20 +646,21 @@ export class ApiServer {
       json(res, 200, this.identity?.configuration() ?? { enabled: false });
       return;
     }
-    // Every other GET is a read, so it runs in a snapshot scope. Two families are not:
-    // an agent's own routes may activate its lease, and Code's GitHub routes sweep expired
-    // OAuth flows, claim token refreshes and complete the callback.
+    // Every other GET is a read, so it runs in a snapshot scope. Three kinds are not: an
+    // agent's own routes may activate its lease, Code's GitHub routes sweep expired OAuth
+    // flows, claim token refreshes and complete the callback, and mounted handlers
+    // authenticate themselves and open any snapshot they need.
     if (
       req.method === 'GET' &&
       this.options.snapshot &&
-      !path.startsWith('/sessions/self') &&
+      !agentSelfPath(path) &&
       !path.startsWith('/pi/') &&
-      !path.startsWith('/code/')
+      !path.startsWith('/code/') &&
+      !this.mounted(path)
     ) {
       // A verified user's first request records that user, which is a write, so the caller
-      // is authenticated before the read-only scope opens. Mounted handlers authenticate
-      // themselves.
-      const principal = this.mounted(path) ? undefined : await this.authenticate(req);
+      // is authenticated before the read-only scope opens.
+      const principal = await this.authenticate(req);
       return await this.options.snapshot(() => this.route(req, res, url, path, principal));
     }
     return await this.route(req, res, url, path);
@@ -624,7 +704,7 @@ export class ApiServer {
         );
       const enrolled = await provider.enrollManaged(presented, await readJson(req, 4096));
       projectSelection(enrolled.caller.projectId, req.headers['x-merv-project-id']);
-      json(res, 200, enrolled);
+      json(res, 200, { controlToken: enrolled.controlToken });
       return;
     }
     const mounted = this.mounted(path);
@@ -633,42 +713,40 @@ export class ApiServer {
       return;
     }
     // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
-    if (path === '/sessions/self' || path.startsWith('/sessions/self/')) {
+    if (agentSelfPath(path)) {
       if ([...url.searchParams].length)
         throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
+      // The route is matched first: an unknown one costs no authentication.
+      const action = path.slice('/sessions/self'.length);
+      if (
+        req.method === 'GET'
+          ? action !== ''
+          : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
+      )
+        throw new MervError('not_found', 'Unknown agent control route', 404);
       const token = bearer(req),
         provider = this.sessions.get();
+      // The key is checked before any body is read, so a bad one never buffers a body.
       const self = await provider.agentSelf(token);
-      if (path === '/sessions/self' && req.method === 'GET') {
+      if (req.method === 'GET') {
         json(res, 200, self);
         return;
       }
-      if (req.method === 'POST') {
-        const body = await readJson(req, this.maxBodyBytes);
-        if (path === '/sessions/self/assignment') {
-          json(res, 200, { execution: await provider.assignAgent(token, body) });
-          return;
-        }
-        if (path === '/sessions/self/release') {
-          json(res, 200, {
-            execution: await provider.releaseAgentAssignment(
-              token,
-              parseInput(agentReleaseInput, body).executionId,
-            ),
-          });
-          return;
-        }
-        if (path === '/sessions/self/context-reset') {
-          json(res, 200, {
-            agent: await provider.resetAgentContext(
-              token,
-              parseInput(agentResetInput, body).reason,
-            ),
-          });
-          return;
-        }
-      }
-      throw new MervError('not_found', 'Unknown agent control route', 404);
+      const body = await readJson(req, this.maxBodyBytes);
+      if (action === '/assignment')
+        json(res, 200, { execution: await provider.assignAgent(token, body) });
+      else if (action === '/release')
+        json(res, 200, {
+          execution: await provider.releaseAgentAssignment(
+            token,
+            parseInput(agentReleaseInput, body).executionId,
+          ),
+        });
+      else
+        json(res, 200, {
+          agent: await provider.resetAgentContext(token, parseInput(agentResetInput, body).reason),
+        });
+      return;
     }
     const principal = authenticated ?? (await this.authenticate(req));
     if (path.startsWith('/pi/')) {
@@ -679,7 +757,6 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       await this.pi.get().stream(caller, match[1], req, res);
       return;
     }
@@ -688,9 +765,7 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
-      await this.scope.require(caller, 'read');
       json(
         res,
         200,
@@ -703,9 +778,7 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
-      await this.scope.require(caller, 'read');
       const github = this.code.get().github;
       if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
       json(res, 200, await githubRequest(req, res, caller, github, () => Promise.resolve(body)));
@@ -719,9 +792,7 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(caller, 'read');
         const input = parseInput(codeTransportInputSchema, await readJson(req, 8192));
-        await this.scope.require(caller, 'read');
         const provider = this.code.get();
         if (!provider.transportGrant || !provider.verifyTransport)
           throw new MervError('github_unavailable', 'Git transport is unavailable', 503);
@@ -741,7 +812,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(caller, 'read');
         const route = path.slice('/code/v2/'.length);
         const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
         const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
@@ -755,8 +825,6 @@ export class ApiServer {
         const body = part
           ? await readBody(req, CODE_PART_MAX_BYTES, 'application/octet-stream')
           : await readJson(req, 65536);
-        // Body streaming may outlive credential authority or the optional adapter.
-        await this.scope.require(caller, 'read');
         const v2 = this.code.get().v2;
         if (!v2)
           throw new MervError(
@@ -777,7 +845,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(sourceCaller, 'read');
         if (req.method !== 'POST') {
           res.setHeader('allow', 'POST');
           json(res, 405, {
@@ -789,9 +856,7 @@ export class ApiServer {
         const input = path.endsWith('/next')
           ? parseInput(codeCommandControlSchema, body)
           : parseInput(codeCommandCompletionSchema, body);
-        // Body streaming may outlive credential authority or the optional adapter.
         // Lookup the current provider only after parsing; its methods are synchronous.
-        await this.scope.require(sourceCaller, 'read');
         const provider = this.code.get();
         if (path.endsWith('/next'))
           json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
@@ -890,7 +955,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(sourceCaller, 'read');
         if (path === '/sessions/agents') {
           if (req.method === 'GET') {
             json(res, 200, { agents: await this.sessions.get().agents(sourceCaller) });
@@ -1026,7 +1090,6 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       json(res, 200, {
         tools: await this.tools.describe(caller),
       });
@@ -1076,16 +1139,19 @@ export class ApiServer {
         },
       );
       instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
-        const caller = await this.selectedCaller(
-          principal,
-          projectSelection(
-            req.headers['x-merv-project-id'],
-            request.params?._meta?.['merv/projectId'],
-          ),
-        );
-        await this.scope.require(caller, 'read');
-        // An agent over MCP is offered what a Pi conversation is; Merv's pages call /tools.
-        return { tools: await this.tools.describe(caller, true) };
+        try {
+          const caller = await this.selectedCaller(
+            principal,
+            projectSelection(
+              req.headers['x-merv-project-id'],
+              request.params?._meta?.['merv/projectId'],
+            ),
+          );
+          // MCP curates what a person's agent is offered; Merv's pages call /tools.
+          return { tools: await this.tools.describe(caller, true) };
+        } catch (error) {
+          throw rpcError(error);
+        }
       });
       instance.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
@@ -1103,10 +1169,11 @@ export class ApiServer {
             ? (result.value as CallToolResult)
             : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
         } catch (error) {
-          const body = errorBody(error);
+          const { status, error: body } = errorBody(error);
+          logFailure(error, status, body.code, 'mcp');
           return {
             isError: true,
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: body.error }) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: body }) }],
           };
         }
       });
@@ -1114,12 +1181,10 @@ export class ApiServer {
         sessionIdGenerator: undefined,
         enableJsonResponse: true,
       });
-      this.mcpServers.add(instance);
       let closing = false;
       const close = () => {
         if (closing) return;
         closing = true;
-        this.mcpServers.delete(instance);
         void instance.close().catch(() => {});
       };
       // In JSON-response mode the SDK transport's close() discards a reply that is still

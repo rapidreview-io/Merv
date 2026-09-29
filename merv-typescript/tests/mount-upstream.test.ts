@@ -276,7 +276,7 @@ test('the registry re-authorizes a warm call at dispatch, which the pool relies 
   // fails this too; the pool needs no change then, because the dispatch require still guards it.
   let revoke = false;
   const policy: ToolPolicy = {
-    allows: access.allows.bind(access),
+    granted: access.granted.bind(access),
     replace: access.replace.bind(access),
     async require(...args) {
       await access.require(...args);

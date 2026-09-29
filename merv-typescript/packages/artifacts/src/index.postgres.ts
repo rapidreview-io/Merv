@@ -52,8 +52,7 @@ DROP INDEX artifacts_project;
 CREATE INDEX artifacts_project_session ON artifacts(project_id, session_id, created_at, id) WHERE session_id IS NOT NULL;
 `,
   // Temporary: the one change the update guard permits is filling a row's missing content, which
-  // the CHECK then verifies; the legacy backfill makes it. A later version restores the body of
-  // version 1 once prod has no row left to fill. Rollback is forward only, as for version 3.
+  // the CHECK then verifies; the legacy backfill made it. Version 6 restores the body of version 1.
   5: `
 CREATE OR REPLACE FUNCTION artifacts_immutable_update_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
 BEGIN
@@ -62,6 +61,16 @@ BEGIN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION USING MESSAGE = 'Artifacts are immutable', ERRCODE = '23514';
+END;
+$merv$;
+`,
+  // Prod has no row left to fill, so the guard refuses every UPDATE again, with the body of
+  // version 1. Rollback is forward only, as for version 3.
+  6: `
+CREATE OR REPLACE FUNCTION artifacts_immutable_update_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  RAISE EXCEPTION USING MESSAGE = 'Artifacts are immutable', ERRCODE = '23514';
+  RETURN NEW;
 END;
 $merv$;
 `,

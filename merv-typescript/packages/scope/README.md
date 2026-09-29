@@ -44,7 +44,7 @@ Configure grants on the existing Scope entry:
 
 Grants default to an empty list. Each exact project/actor/mount/tool combination must be granted, including for operators. Tool names are the raw upstream names, before the mounted prefix is applied; wildcards and role-derived grants are not supported. Grants neither create credentials nor change local project permissions.
 
-`scope.toolPolicy.require()` checks current Scope authority and the grant; `allows()` returns false for ordinary authentication or permission failures and propagates infrastructure errors. Session callers resolve through their current delegation owner. Revocation and membership changes are checked again on later calls.
+`scope.toolPolicy.require()` checks current Scope authority and the grant; `granted()` decides once for a whole listing and answers per mount and tool; an ordinary authentication or permission failure grants nothing, and infrastructure errors propagate. Session callers resolve through their current delegation owner. Revocation and membership changes are checked again on later calls.
 
 Trusted application code can call `scope.toolPolicy.replace(grants)`. Replacement validates and copies the full input before publishing it, so malformed or subsequently mutated inputs cannot change the active grants. Grants remain configuration-backed in memory; reinstalling Scope restores its configured grants rather than runtime replacements.
 

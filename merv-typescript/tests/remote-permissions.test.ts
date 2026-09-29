@@ -78,19 +78,19 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   };
   const readerMcp = await connect(reader.token),
     otherMcp = await connect(b.token);
-  assert.equal((await httpList(reader.token)).body.tools.length, 100);
+  assert.equal((await httpList(reader.token)).body.tools.length, 104);
   // Over MCP a reader's agent is offered its reads alone, as a reader's Pi conversation is.
-  assert.equal((await readerMcp.listTools()).tools.length, 37);
+  assert.equal((await readerMcp.listTools()).tools.length, 39);
   assert.equal(
     (await httpList(producer.token)).body.tools.filter((tool: { name: string }) =>
       tool.name.startsWith('_'),
     )[0].name,
     '_bridge.write',
   );
-  assert.equal((await otherMcp.listTools()).tools.length, 89);
+  assert.equal((await otherMcp.listTools()).tools.length, 93);
   assert.equal(
     (await httpList(a.token)).body.tools.length,
-    99,
+    103,
     'Operator role is not a remote grant',
   );
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 200);
@@ -125,8 +125,8 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     403,
   );
   app.ctx.scope.toolPolicy.replace([]);
-  assert.equal((await readerMcp.listTools()).tools.length, 36);
-  assert.equal((await httpList(reader.token)).body.tools.length, 99);
+  assert.equal((await readerMcp.listTools()).tools.length, 38);
+  assert.equal((await httpList(reader.token)).body.tools.length, 103);
   assert.equal((await httpCall(reader.token, '_bridge.inspect')).status, 403);
   assert.equal(
     (await readerMcp.callTool({ name: '_bridge.inspect', arguments: {} })).isError,
@@ -134,7 +134,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   );
   assert.equal(admitted.length, count);
   app.ctx.scope.toolPolicy.replace([grant]);
-  assert.equal((await readerMcp.listTools()).tools.length, 37);
+  assert.equal((await readerMcp.listTools()).tools.length, 39);
   await app.ctx.scope.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());
@@ -166,7 +166,10 @@ test('a registry without an access provider defaults to denying remote calls and
       1,
       'Embedded administration can inspect the installed catalog',
     );
-    assert.deepEqual(await registry.list(caller), []);
+    assert.deepEqual(
+      (await registry.describe(caller)).map((tool) => tool.name),
+      [],
+    );
     await assert.rejects(registry.call('_ungranted.inspect', caller, {}), {
       code: 'tool_forbidden',
       status: 403,

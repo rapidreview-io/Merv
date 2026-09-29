@@ -160,10 +160,6 @@ test('system.status is a read-only conversation tool and project access is check
       return { role: 'operator' } as never;
     },
   });
-  const dispose = tools.registerConversationPolicy({
-    allowsTool: async (_candidate, name) => !name.startsWith('pi.'),
-    validate: async () => {},
-  });
   const sessions = {
     projectStatus: async () => ({
       observedAt: 'now',
@@ -190,13 +186,8 @@ test('system.status is a read-only conversation tool and project access is check
     listed.find((tool) => tool.name === 'system.status')?.annotations?.readOnlyHint,
     true,
   );
-  assert.equal(
-    listed.some((tool) => tool.name === 'pi.send'),
-    false,
-  );
   const value = await tools.call('system.status', caller, {});
   assert.equal((value as { dispatch: { state: string } }).dispatch.state, 'paused');
   allowed = false;
   await assert.rejects(tools.call('system.status', caller, {}), { code: 'forbidden' });
-  dispose();
 });

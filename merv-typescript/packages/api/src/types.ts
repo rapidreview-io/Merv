@@ -3,7 +3,6 @@ import type {
   Caller,
   Data,
   SessionToolPolicy,
-  ConversationToolPolicy,
   CodeCommandCompletion,
   CodeCommandControl,
   CodeCommandRecord,
@@ -43,6 +42,9 @@ export interface RemoteToolDefinition extends ToolDescription {
   handler(caller: Caller, input: any): CallToolResult | Promise<CallToolResult>;
 }
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
+/** A registered tool as Tools.list() shows it: a native definition, or a remote tool's
+ *  description without its handler, which only the registry's admission may call. */
+export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
@@ -71,7 +73,6 @@ export interface SessionApiProvider {
   releaseAgentAssignment(token: string, executionId: string): Promise<unknown>;
   resetAgentContext(token: string, reason: string): Promise<unknown>;
   authenticate(token: string): Promise<Caller>;
-  describe(caller: Caller): Promise<unknown>;
   projectStatus(caller: Caller): Promise<unknown>;
   setDispatch(caller: Caller, input: unknown): Promise<unknown>;
   halt(caller: Caller, input: { sessionId?: string; reason?: string }): Promise<unknown>;
@@ -154,7 +155,11 @@ export interface ModelRelayTerminal<E extends string = string> {
  * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
  * what the relay sets in them, and the lane that allows one call in flight.
  */
-export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = string> {
+export interface ModelRelayConfig<
+  G extends ModelRelayGrant,
+  N extends string = string,
+  R = unknown,
+> {
   /** Names the records, `${name}_relay_usage`, `${name}_relay_failure` and `${name}_relay_terminal`. */
   name: N;
   route: string;
@@ -182,14 +187,15 @@ export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = 
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
-  /** Charges a call before it goes upstream and returns what it charged; throwing refuses it,
-   *  with the error's `code` when it has one. The charge stands for a call that never finishes. */
-  reserve?: (grant: G, body: Record<string, unknown>) => Promise<number>;
-  /** A finished call's usage, with what `reserve` charged for it. */
+  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
+   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
+   *  one. The charge stands for a call that never finishes. */
+  reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
+  /** A finished call's usage, with what `reserve` returned for it. */
   onUsage?: (
     record: ModelRelayUsage<`${N}_relay_usage`>,
     grant: G,
-    reserved: number,
+    reserved: R,
   ) => void | Promise<void>;
 }
 export interface Api {
@@ -198,9 +204,9 @@ export interface Api {
   stop(): Promise<void>;
   mount(prefix: string, handler: MountHandler): () => void;
   /** Mounts a model relay; the disposer withdraws it and ends the calls it is streaming. */
-  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,
-    config: ModelRelayConfig<G, N>,
+    config: ModelRelayConfig<G, N, R>,
   ): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;
@@ -209,16 +215,18 @@ export interface Api {
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Detached public descriptions. Transports must supply the authenticated caller. agent: the
-   *  caller is a person's own agent over MCP, offered only what a Pi conversation is. */
+   *  caller is a person's own agent over MCP. MCP offers it every native tool not marked `never`
+   *  (a reader: its reads alone) plus the mounted tools its Access grants. This curates what an
+   *  agent is offered; it is not an authority boundary: the same credential may call any tool it
+   *  is permitted over POST /tools. */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
-  /** Omitting caller is trusted in-process inspection; transports must always supply it. */
-  list(caller?: Caller): Promise<AnyToolDefinition[]>;
+  /** Every registered tool, for trusted in-process code only: it takes no caller. */
+  list(): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(name: string, caller: Caller, input: unknown, agent?: boolean): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
-  registerConversationPolicy(provider: ConversationToolPolicy): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
 }

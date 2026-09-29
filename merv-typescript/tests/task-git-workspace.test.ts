@@ -237,7 +237,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     requestId: f.request(),
   };
   const scratch = await f.tasks.create(f.source, scratchInput);
-  assert.equal(scratch.workflow.version, 2);
+  assert.equal(scratch.workflow.version, 12);
   assert.equal(Object.hasOwn(scratch, 'workspace'), false);
   assert.equal(Object.hasOwn(scratch.workflow.data, 'workspace'), false);
   assert.equal((await policy(scratch)).workspace, undefined);
@@ -260,7 +260,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     requestId: f.request(),
   };
   const git = await f.tasks.create(f.source, gitInput);
-  assert.equal(git.workflow.version, 3);
+  assert.equal(git.workflow.version, 13);
   assert.equal(git.workspace, 'git');
   assert.deepEqual(await f.tasks.create(f.source, gitInput), git);
   await assert.rejects(
@@ -306,7 +306,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     { code: 'invalid_workspace_base' },
   );
   const based = await f.create({ workspace: 'git', baseTaskId: git.id, dependsOn: [git.id] });
-  assert.equal(based.workflow.version, 4);
+  assert.equal(based.workflow.version, 14);
   assert.equal(based.baseTaskId, git.id);
   assert.equal(based.workflow.version, (await f.tasks.get(f.source, based.id)).workflow.version);
   const stored = await f.workflows.get(f.source, based.id);
@@ -443,7 +443,7 @@ test('A Git task delivers only its own worker’s receipted commit, and a scratc
     code: 'code_unavailable',
   });
   assert.equal((await f.tasks.get(f.source, task.id)).workspace, 'git');
-  assert.equal((await f.create()).workflow.version, 2);
+  assert.equal((await f.create()).workflow.version, 12);
 });
 
 test('A delivered commit is pinned for review as a rendered record, alone or beside files', async (t) => {
@@ -821,7 +821,7 @@ test('A Git task review past its review_rounds limit, which no runner is offered
 test('An unhosted Git task runs on the central-base version and records its legacy acceptance', async (t) => {
   const f = await fixture(t);
   const task = await f.create({ workspace: 'git' });
-  assert.equal(task.workflow.version, 3);
+  assert.equal(task.workflow.version, 13);
   assert.equal(task.workspace, 'git');
   assert.equal(
     await f.tasks.codeUnit(f.source, task.id),
@@ -845,7 +845,7 @@ test('An unhosted Git task runs on the central-base version and records its lega
 
   // The pass is recorded like any other, and no base was ever pinned for the old version.
   const unit = await f.code.unit(f.source, task.id);
-  assert.equal(unit.version, 3);
+  assert.equal(unit.version, 13);
   assert.equal(unit.base, null);
   assert.deepEqual(
     [
@@ -857,14 +857,14 @@ test('An unhosted Git task runs on the central-base version and records its lega
     [oid('b'), true, 'legacy-local', done.workflow.revision],
   );
   const next = await f.create({ workspace: 'git', dependsOn: [task.id] });
-  assert.equal(next.workflow.version, 3);
+  assert.equal(next.workflow.version, 13);
   assert.equal((await f.lease(next)).session.execution.references.base, undefined);
 });
 
 test('A project imported into Code while a Git task is under way lets that task finish as it began, and only new work names Code’s driver', async (t) => {
   const f = await fixture(t);
   const task = await f.create({ workspace: 'git' });
-  assert.equal(task.workflow.version, 3);
+  assert.equal(task.workflow.version, 13);
   const held = await f.lease(task);
   // The import: a fact of the database alone, which never turns false again.
   await f.state.transaction(async (tx) => {
@@ -891,12 +891,12 @@ test('A project imported into Code while a Git task is under way lets that task 
 
   // Reject the legacy form before it can silently select a Fleet-incompatible checkout.
   const hosted = await f.create({ workspace: 'git' });
-  assert.equal(hosted.workflow.version, 5);
+  assert.equal(hosted.workflow.version, 15);
   await assert.rejects(
     async () => await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] }),
     { code: 'incompatible_workspace' },
   );
-  assert.equal((await f.create()).workflow.version, 2);
+  assert.equal((await f.create()).workflow.version, 12);
   // Main is named but Code does not hold it, so the hosted task is blocked, never launched.
   await assert.rejects(async () => await f.lease(hosted), { code: 'code_base_pending' });
   await f.state.transaction(async (tx) => {

@@ -6,7 +6,6 @@ import test from 'node:test';
 import { MervError, type Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { deferred } from './fixtures/deferred.js';
-import { legacyArtifact } from './fixtures/legacy-artifact.js';
 import { stateConfig } from './fixtures/state.js';
 
 test('artifact.read waits on storage holding no reader connection, and a revocation still refuses it', async (t) => {
@@ -41,21 +40,13 @@ test('artifact.read waits on storage holding no reader connection, and a revocat
   const issued = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
   const reader: Caller = { actorId: issued.actor.id, projectId: owner.projectId };
 
-  // Rows from before bytes were kept in them, whose bytes are in blobs that hold every read.
+  // Downloads whose links storage holds.
   let waiting = 0;
   const all = deferred();
-  const held = async () => {
+  const blobs = app.ctx.blobs;
+  blobs.download = async (namespace, hash) => {
     if (++waiting === 3) all.resolve();
     await gate.promise;
-  };
-  const blobs = app.ctx.blobs;
-  const get = blobs.get.bind(blobs);
-  t.mock.method(blobs, 'get', async (namespace: string, hash: string) => {
-    await held();
-    return await get(namespace, hash);
-  });
-  blobs.download = async (namespace, hash) => {
-    await held();
     return {
       url: `https://bucket.example/${namespace}/${hash}`,
       expiresAt: new Date().toISOString(),
@@ -64,24 +55,18 @@ test('artifact.read waits on storage holding no reader connection, and a revocat
   t.after(() => delete blobs.download);
   const rows = [];
   for (const n of [1, 2, 3])
-    rows.push(
-      await legacyArtifact(app.ctx.state, owner, Buffer.from(`object ${n}`), (bytes) =>
-        blobs.put(owner.projectId, bytes),
-      ),
-    );
+    rows.push(await app.ctx.artifacts.create(owner, { title: 'Object', content: `object ${n}` }));
 
-  const reads = [
-    app.ctx.tools.call('artifact.read', reader, { artifactId: rows[0].id }),
-    app.ctx.tools.call('artifact.read', reader, { artifactId: rows[1].id }),
-    app.ctx.tools.call('artifact.read', reader, { artifactId: rows[2].id, mode: 'download' }),
-  ];
+  const reads = rows.map((row) =>
+    app.ctx.tools.call('artifact.read', reader, { artifactId: row.id, mode: 'download' }),
+  );
   const outcomes = Promise.allSettled(reads);
   // A read that could not get a reader connection fails here instead of waiting forever.
   await Promise.race([all.promise, Promise.all(reads)]);
   // Three reads wait on storage, and the two reader connections still answer.
   const listed = (await app.ctx.tools.call('artifact.list', owner, {})) as { id: string }[];
   assert.deepEqual(listed.map((artifact) => artifact.id).sort(), rows.map((row) => row.id).sort());
-  // The reader is revoked while its reads wait: none of their bytes or URLs reach it.
+  // The reader is revoked while its reads wait: none of their URLs reach it.
   await app.ctx.scope.revokeActor(owner, reader.actorId);
   gate.resolve();
   for (const outcome of await outcomes) {

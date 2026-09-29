@@ -454,6 +454,30 @@ test('project readers can inspect while worker reads and runner control preserve
   assert.equal((await f.code.operation(f.source, queued.command.id)).status, 'queued');
 });
 
+test('runner controls authorize their caller themselves: a revoked source credential is refused', async (t) => {
+  const f = await fixture(t),
+    worker = await f.ready();
+  const queued = await f.code.commit(worker.caller, input());
+  const other = await f.scope.issueActor(f.source, { name: 'Operator', role: 'operator' });
+  await f.scope.revokeCredential(
+    { actorId: other.actor.id, projectId: f.source.projectId, credentialId: other.credential.id },
+    f.source.credentialId!,
+  );
+  // The API decides once, before a request's body; the control decides again as it acts.
+  await assert.rejects(async () => await f.code.nextCommand(f.source, worker.control), {
+    code: 'forbidden',
+  });
+  await assert.rejects(
+    async () =>
+      await f.code.completeCommand(f.source, {
+        ...worker.control,
+        commandId: queued.command.id,
+        error: 'git_failed',
+      }),
+    { code: 'forbidden' },
+  );
+});
+
 test('receipts bind all command identity, require a claim, and are immutable at service and database boundaries', async (t) => {
   const f = await fixture(t),
     worker = await f.ready();

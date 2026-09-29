@@ -77,6 +77,8 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code, CodeCapture } from '@merv/code-research/types';
+import type { SandboxCompute } from '@merv/sandboxes/types';
+import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import type { Paper, PaperContextSection } from '@merv/paper/types';
 import { RESERVED_CONTEXT_INPUTS, SUCCESSORS, TASK_TYPES } from './definitions.js';
 import {
@@ -164,6 +166,14 @@ const workspaces: Record<number, TaskWorkspace> = {
   9: 'reference',
   10: 'code',
   11: 'resolution',
+  12: 'none',
+  13: 'central',
+  14: 'reference',
+  15: 'code',
+  16: 'none',
+  17: 'central',
+  18: 'reference',
+  19: 'code',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
@@ -172,10 +182,11 @@ const taskVersion = (
   hosted: boolean,
   largeUploads = false,
 ): number =>
-  (workspace !== 'git' ? 2 : baseTaskId !== undefined ? 4 : hosted ? 5 : 3) +
-  (largeUploads ? 5 : 0);
+  (workspace !== 'git' ? 12 : baseTaskId !== undefined ? 14 : hosted ? 15 : 13) +
+  (largeUploads ? 4 : 0);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
-const derivedBase = (version: number) => version === 5 || version === 10 || serviceOwned(version);
+const derivedBase = (version: number) =>
+  version === 5 || version === 10 || version === 15 || version === 19 || serviceOwned(version);
 /** Only the internal service binding may create these tasks; their producer has no credential. */
 const serviceOwned = (version: number) =>
   version === TASK_WORKFLOW_SERVICE.version || version === 11;
@@ -210,9 +221,21 @@ export const TASK_WORKFLOW_LARGE = [
   { ...TASK_WORKFLOW_GIT_HOSTED, version: 10 },
   { ...TASK_WORKFLOW_SERVICE, version: 11 },
 ];
+/** The same graph, with GPU access declared for new producer assignments. */
+export const TASK_WORKFLOW_COMPUTE = [
+  { ...TASK_WORKFLOW, version: 12 },
+  { ...TASK_WORKFLOW_GIT, version: 13 },
+  { ...TASK_WORKFLOW_GIT_BASED, version: 14 },
+  { ...TASK_WORKFLOW_GIT_HOSTED, version: 15 },
+  { ...TASK_WORKFLOW, version: 16 },
+  { ...TASK_WORKFLOW_GIT, version: 17 },
+  { ...TASK_WORKFLOW_GIT_BASED, version: 18 },
+  { ...TASK_WORKFLOW_GIT_HOSTED, version: 19 },
+];
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
+  | 'source'
   | 'capture'
   | 'acceptUnit'
   | 'declareUnit'
@@ -276,6 +299,8 @@ const GIT_REVIEW =
  */
 const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
+const GPU_WORK =
+  'If this task needs a GPU, read task.compute_offers, then call task.compute_run with this taskId and expectedRevision, a stable key, a bounded command, minutes, and maxUsd. Read task.compute_status to recover a submitted job and its result; task.get also retains earlier revisions. Use task.compute_cancel when work should stop. The remote scratch directory is temporary and the result retains only bounded output, so print compact evidence or retain it through the existing artifact path. GPU work counts against the project allowance and its two concurrent jobs.';
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
@@ -321,6 +346,7 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
 export class TaskService implements Tasks {
   private closed = false;
   private code?: TaskCode;
+  private compute?: ManagedCompute;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -345,6 +371,7 @@ export class TaskService implements Tasks {
         'tasks',
         Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
       );
+      await initializeManagedCompute(state);
       try {
         for (const definition of [
           TASK_WORKFLOW,
@@ -353,6 +380,7 @@ export class TaskService implements Tasks {
           TASK_WORKFLOW_GIT_HOSTED,
           TASK_WORKFLOW_SERVICE,
           ...TASK_WORKFLOW_LARGE,
+          ...TASK_WORKFLOW_COMPUTE,
         ]) {
           this.registrations.set(
             definition.version,
@@ -412,6 +440,8 @@ export class TaskService implements Tasks {
 
   dispose(): void {
     this.closed = true;
+    this.compute?.close();
+    this.compute = undefined;
     this.withdrawReviewOwner();
     for (const registration of this.registrations.values()) registration.dispose();
     this.registrations.clear();
@@ -732,7 +762,12 @@ export class TaskService implements Tasks {
             await this.unleased(caller, snapshot.id, snapshot.revision, tx);
           },
           build: async (context) => await this.workflowAssignment(context),
-          execution: taskExecutionPolicy('work', taskWorkspace(version), version >= 7),
+          execution: taskExecutionPolicy(
+            'work',
+            taskWorkspace(version),
+            (version >= 7 && version <= 11) || version >= 16,
+            version >= 12,
+          ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
         },
@@ -742,7 +777,12 @@ export class TaskService implements Tasks {
             await this.workflowAssignmentFacts(context);
           },
           build: async (context) => await this.workflowAssignment(context),
-          execution: taskExecutionPolicy('review', taskWorkspace(version), version >= 7),
+          execution: taskExecutionPolicy(
+            'review',
+            taskWorkspace(version),
+            (version >= 7 && version <= 11) || version >= 16,
+            version >= 12,
+          ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
         },
@@ -1177,7 +1217,118 @@ export class TaskService implements Tasks {
     return {
       ...(await this.projectRecord(caller, row, tx)),
       guidance: await this.workflows.evaluate(caller, row.id, {}, tx),
+      ...(this.compute && tx
+        ? { compute: await this.compute.historySummary(caller.projectId, row.id, tx) }
+        : {}),
     };
+  }
+
+  bindCompute(adapter: SandboxCompute): () => void {
+    this.compute?.close();
+    const service = new ManagedCompute(this.state, this.scope, adapter, 'task', {
+      authorize: async (caller, taskId, revision, tx, commandId) => {
+        const task = await tx.get<{ state: string; revision: number; version: number }>(
+          `SELECT w.state,w.revision,w.version FROM tasks t JOIN wf_instances w ON w.id=t.id
+           WHERE t.id=? AND t.project_id=?`,
+          taskId,
+          caller.projectId,
+        );
+        check(
+          task &&
+            task.version >= 12 &&
+            task.version <= 19 &&
+            task.state === 'in_progress' &&
+            task.revision === revision,
+          'compute_not_running',
+          'Compute requires the current task work revision',
+          409,
+        );
+        if (commandId)
+          check(
+            taskWorkspace(task.version) !== 'none' && this.code,
+            'code_source_unavailable',
+            'This task cannot ship code to compute',
+            409,
+          );
+        check(caller.session, 'stale_lease', 'Compute requires the task work lease', 403);
+        const lease = await tx.get(
+          `SELECT id FROM task_leases WHERE id=? AND project_id=? AND task_id=? AND revision=?
+           AND actor_id=? AND purpose='work' AND released_at IS NULL`,
+          caller.session.id,
+          caller.projectId,
+          taskId,
+          revision,
+          caller.actorId,
+        );
+        check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
+      },
+      active: async (row, tx) => {
+        const task = await tx.get<{ state: string; revision: number }>(
+          `SELECT w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id
+           WHERE t.id=? AND t.project_id=?`,
+          row.owner_id,
+          row.project_id,
+        );
+        return task?.state === 'in_progress' && task.revision === row.generation;
+      },
+      source: async (row, commandId) => this.code?.source(row.project_id, row.owner_id, commandId),
+    });
+    this.compute = service;
+    return () => {
+      if (this.compute === service) {
+        service.close();
+        this.compute = undefined;
+      }
+    };
+  }
+  async computeOffers(caller: Caller) {
+    return this.compute
+      ? this.compute.offers(caller)
+      : { entitled: false, available: false, allowance: null, offers: [] };
+  }
+  async computeStatus(caller: Caller, taskId: string, runId?: string, generation?: number) {
+    return this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      await this.row(tx, caller, taskId);
+      if (!this.compute) return runId ? null : [];
+      return runId
+        ? this.compute.status(caller.projectId, taskId, runId, tx, generation)
+        : this.compute.historySummary(caller.projectId, taskId, tx);
+    });
+  }
+  async computeRun(
+    caller: Caller,
+    input: {
+      taskId: string;
+      expectedRevision: number;
+      key: string;
+      provider: string;
+      offerId: string;
+      command: string;
+      minutes: number;
+      maxUsd: number;
+      commandId?: string;
+    },
+  ) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return this.compute.run(caller, {
+      ownerId: input.taskId,
+      generation: input.expectedRevision,
+      key: input.key,
+      provider: input.provider,
+      offerId: input.offerId,
+      command: input.command,
+      minutes: input.minutes,
+      maxUsd: input.maxUsd,
+      ...(input.commandId ? { commandId: input.commandId } : {}),
+    });
+  }
+  async computeCancel(caller: Caller, taskId: string, runId: string) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return this.compute.cancel(caller, taskId, runId);
+  }
+  async computeTick() {
+    await this.compute?.tick();
   }
   private async command<T>(
     tx: Transaction,
@@ -1888,7 +2039,8 @@ export class TaskService implements Tasks {
           (git ? ` ${GIT_CLAIM}` : '')
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
-          (git ? ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` : '');
+          (git ? ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` : '') +
+          (purpose === 'work' && task.workflow.version >= 12 ? ` ${GPU_WORK}` : '');
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
@@ -1914,7 +2066,17 @@ export class TaskService implements Tasks {
               : ['review.submit']
             : assisting
               ? []
-              : ['task.submit_delivery'],
+              : [
+                  'task.submit_delivery',
+                  ...(task.workflow.version >= 12
+                    ? [
+                        'task.compute_offers',
+                        'task.compute_run',
+                        'task.compute_status',
+                        'task.compute_cancel',
+                      ]
+                    : []),
+                ],
       },
       execution: {
         readOnly: purpose === 'review',
@@ -2975,6 +3137,9 @@ export const tasksPlugin = {
     );
     ctx.inject(['codeResearch'], (ctx) => {
       ctx.effect(() => tasks.bindCode(ctx.codeResearch));
+    });
+    ctx.inject(['sandboxes'], (ctx) => {
+      if (ctx.sandboxes.compute) ctx.effect(() => tasks.bindCompute(ctx.sandboxes.compute!));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.
     ctx.effect(function* () {

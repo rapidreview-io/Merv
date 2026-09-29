@@ -8,6 +8,7 @@ import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from './fixtures/app.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
 
 function latch() {
   let resolve!: () => void;
@@ -120,11 +121,13 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
     const taskNames = toolsBefore.filter(
       (name) => name.startsWith('task.') || name.startsWith('workflow.'),
     );
-    assert.equal(taskNames.length, 14);
+    assert.equal(taskNames.length, 18);
     assert.ok(taskNames.includes('task.mark_failed'));
 
     // Hold an admitted task response while Cordis suspends the engine's consumers.
-    const taskGet = (await app.ctx.tools.list()).find((tool) => tool.name === 'task.get')!;
+    const taskGet = (await app.ctx.tools.list()).find(
+      (tool) => tool.name === 'task.get',
+    ) as ToolDefinition;
     const originalHandler = taskGet.handler;
     taskGet.handler = async (actor, input) => {
       const result = await originalHandler(actor, input);

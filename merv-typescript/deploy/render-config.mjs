@@ -115,9 +115,6 @@ set('ui', {});
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
 set('code-research', {});
-// Temporary: the server moves the bytes of artifacts written before bytes were kept in their rows
-// into the rows. Off until the operator turns it on for a release that carries the fill.
-if (optIn('MERV_ARTIFACTS_BACKFILL')) set('artifacts', { backfill: true });
 // Rows and acts published by merv-sandboxes. Absent until the operator names the service, so
 // a deployment that has not connected one composes exactly the plugins it composed before.
 let connections = [];

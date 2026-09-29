@@ -3,8 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { MervError, type Caller } from '@merv/contracts';
-import type { RemoteToolDefinition } from '@merv/api/types';
+import Ajv2020 from 'ajv/dist/2020.js';
+import type { RemoteToolDefinition, ToolDefinition } from '@merv/api/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { ExactToolPolicy } from '@merv/scope/tool-policy';
 
 const caller = { actorId: 'alice', projectId: 'local-project' };
 const scope = {
@@ -178,7 +180,11 @@ test('native invocation remains JSON even when its value resembles MCP, while re
 });
 
 test('remote JSON Schema validates without coercion, defaults, argument stripping, or consuming remote projectId', async () => {
-  const registry = new ToolRegistry(scope, fixtureAccess);
+  // A remote call's read decision is its grant check, so this policy authorizes through Scope.
+  const access = new ExactToolPolicy(scope, [
+    { ...caller, mountId: 'schema', tools: ['validate', 'tuple'] },
+  ]);
+  const registry = new ToolRegistry(scope, access);
   let seen: unknown;
   const catalog = registry.createCatalog('schema');
   await catalog.replace([
@@ -251,12 +257,17 @@ test('catalog compilation is atomic and unsupported schemas or execution modes n
     catalog = registry.createCatalog('atomic');
   await catalog.replace([remote('original')]);
   const unsupported = [
-    { type: 'object', unknownKeyword: true },
-    { type: 'object', properties: { x: { type: 'string', format: 'unknown-format' } } },
     { type: 'object', $schema: 'https://json-schema.org/draft/2019-09/schema' },
     { type: 'object', properties: { x: { $ref: 'https://example.com/schema.json' } } },
+    {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: { x: { $ref: 'http://example.com/schema.json' } },
+    },
     { type: 'object', properties: { x: { $ref: '#/$defs/missing' } } },
     { type: 'object', $async: true },
+    { type: 'object', properties: { x: { $async: true, type: 'string' } } },
+    { type: 'object', properties: { x: { type: 'nonsense' } } },
   ];
   for (const inputSchema of unsupported) {
     await assert.rejects(
@@ -325,15 +336,122 @@ test('mounted namespaces are unique and reserved, and catalog descriptions are d
   await assert.rejects(registry.call('_one.same', caller, { text: 'x' }), {
     code: 'invalid_input',
   });
-  await assert.rejects(one.replace([remote('x'.repeat(128))]), { code: 'invalid_tool' });
+  await assert.rejects(one.replace([remote('x'.repeat(128))]), {
+    code: 'invalid_tool',
+    message: `Invalid tool name: _one.${'x'.repeat(128)}`,
+  });
   assert.equal((await registry.list()).length, 2);
+  // Only the registry's admission calls a remote handler.
+  assert.ok((await registry.list()).every((tool) => !('handler' in tool)));
+});
+
+test('upstream schema extensions publish, validate what they declare, and fetch nothing', async () => {
+  const registry = new ToolRegistry(scope, fixtureAccess),
+    catalog = registry.createCatalog('extended');
+  const published = {
+    extensions: {
+      type: 'object',
+      'x-upstream': { internal: true },
+      discriminator: { propertyName: 'kind' },
+      properties: {
+        kind: { type: 'string', format: 'upstream-format' },
+        nested: { properties: { count: { type: 'integer' } } },
+      },
+    },
+    embedded: {
+      $id: 'https://example.com/tool',
+      type: 'object',
+      $defs: { name: { $id: 'name', type: 'string', minLength: 2 } },
+      properties: { name: { $ref: 'name' } },
+    },
+  };
+  await catalog.replace(
+    Object.entries(published).map(([name, inputSchema]) =>
+      remote(name, { inputSchema: inputSchema as RemoteToolDefinition['inputSchema'] }),
+    ),
+  );
+  assert.ok(
+    await registry.call('_extended.extensions', caller, { kind: 'any', nested: { count: 2 } }),
+  );
+  await assert.rejects(
+    registry.call('_extended.extensions', caller, { nested: { count: 'two' } }),
+    { code: 'invalid_input' },
+  );
+  assert.ok(await registry.call('_extended.embedded', caller, { name: 'ok' }));
+  await assert.rejects(registry.call('_extended.embedded', caller, { name: 'x' }), {
+    code: 'invalid_input',
+  });
+});
+
+test('an unchanged catalog refresh compiles nothing, and a changed schema compiles once', async (t) => {
+  const registry = new ToolRegistry(scope, fixtureAccess),
+    catalog = registry.createCatalog('refresh');
+  const compile = t.mock.method(Ajv2020.prototype, 'compile');
+  const tools = () => [
+    remote('one'),
+    remote('two'),
+    remote('three', {
+      inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+      outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+    }),
+  ];
+  await catalog.replace(tools());
+  // one and two share a schema.
+  assert.equal(compile.mock.callCount(), 3);
+  await catalog.replace(tools());
+  assert.equal(compile.mock.callCount(), 3);
+  await catalog.replace([
+    ...tools(),
+    remote('four', { inputSchema: { type: 'object', required: ['x'] } }),
+  ]);
+  assert.equal(compile.mock.callCount(), 4);
+  // A refused refresh keeps the published generation's validators.
+  await assert.rejects(
+    catalog.replace([remote('bad', { inputSchema: { type: 'object', $async: true } })]),
+    { code: 'invalid_schema' },
+  );
+  await catalog.replace(tools());
+  assert.equal(compile.mock.callCount(), 5);
+  // Another catalog compiles its own.
+  await registry.createCatalog('other').replace([remote('one')]);
+  assert.equal(compile.mock.callCount(), 6);
+});
+
+test('a native tool cannot declare projectId, which selects the project', () => {
+  const registry = new ToolRegistry(scope, fixtureAccess);
+  assert.throws(
+    () =>
+      registry.register({
+        name: 'project.shadow',
+        description: 'Declares the reserved selection field',
+        inputSchema: z.object({ projectId: z.string() }).strict(),
+        handler: () => null,
+      }),
+    { code: 'invalid_tool', message: 'projectId is reserved for project selection' },
+  );
+});
+
+test('conversation policy is the registration’s: mutating the definition changes nothing', async () => {
+  const registry = new ToolRegistry(scope, fixtureAccess);
+  const definition: ToolDefinition = {
+    name: 'pages.only',
+    description: 'Only Merv’s own pages run this',
+    inputSchema: z.object({}).strict(),
+    readOnly: true,
+    conversation: 'never',
+    handler: () => null,
+  };
+  registry.register(definition);
+  definition.conversation = undefined;
+  assert.deepEqual(await registry.describe(caller, true), []);
+  await assert.rejects(registry.invoke('pages.only', caller, {}, true), { code: 'tool_forbidden' });
 });
 
 test('compact mounted names preserve raw tool identities for grants and do not retain old aliases', async () => {
   const rawName = 'qa.ask_more__detail';
   const checks: [string, string][] = [];
   const registry = new ToolRegistry(scope, {
-    allows: async (_caller, mountId, toolName) => mountId === 'nisa' && toolName === rawName,
+    granted: async () => (mountId, toolName) => mountId === 'nisa' && toolName === rawName,
     require: async (_caller, mountId, toolName) => {
       checks.push([mountId, toolName]);
       if (mountId !== 'nisa' || toolName !== rawName)
@@ -363,6 +481,33 @@ test('compact mounted names preserve raw tool identities for grants and do not r
       code: 'unknown_tool',
     });
     await assert.rejects(registry.call(rawName, caller, {}), { code: 'unknown_tool' });
+  } finally {
+    await registry.close();
+  }
+});
+
+test('a conversation listing offers no mounted tool and asks no grant decision', async () => {
+  let decisions = 0;
+  const registry = new ToolRegistry(scope, {
+    granted: async () => {
+      decisions++;
+      return () => true;
+    },
+    require: async () => undefined,
+  });
+  const conversation = {
+    ...caller,
+    conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
+  };
+  try {
+    await registry.createCatalog('research').replace([remote('search')]);
+    assert.deepEqual(await registry.describe(conversation), []);
+    assert.equal(decisions, 0);
+    assert.deepEqual(
+      (await registry.describe(caller)).map((tool) => tool.name),
+      ['_research.search'],
+    );
+    assert.equal(decisions, 1);
   } finally {
     await registry.close();
   }

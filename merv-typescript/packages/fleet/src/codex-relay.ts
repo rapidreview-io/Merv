@@ -230,10 +230,8 @@ export async function codexModelRelay(
   sessions: Sessions,
   state: State,
   options: { providerKey: () => string; dailyTokensPerPerson: number },
-): Promise<ModelRelayConfig<ManagedModelGrant, 'codex'>> {
+): Promise<ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }>> {
   await state.migrate('fleet_workflow', modelMigrations);
-  // The day each session's one call in flight was charged to.
-  const days = new Map<string, string>();
   return {
     name: 'codex',
     route: '/codex-model/responses',
@@ -279,8 +277,7 @@ export async function codexModelRelay(
       });
       if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
       check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);
-      days.set(grant.id, today);
-      return most;
+      return { day: today, tokens: most };
     },
     grant: (raw) => raw as ManagedModelGrant,
     payload: codexPayload,
@@ -297,9 +294,9 @@ export async function codexModelRelay(
       await state.transaction((tx) =>
         tx.run(
           'UPDATE fleet_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-          record.inputTokens + record.outputTokens - reserved,
+          record.inputTokens + record.outputTokens - reserved.tokens,
           grant.person,
-          days.get(grant.id) ?? day(),
+          reserved.day,
         ),
       );
     },

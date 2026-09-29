@@ -22,7 +22,7 @@ const key = (caller: Caller, mountId: string, toolName: string) =>
 
 /** In-memory exact grants; Scope remains authoritative for the actor's current project access. */
 export class ExactToolPolicy implements ToolPolicy {
-  private granted = new Set<string>();
+  private grants = new Set<string>();
 
   constructor(
     private readonly scope: Pick<Scope, 'require'> & Partial<Pick<Scope, 'authorityActor'>>,
@@ -31,21 +31,24 @@ export class ExactToolPolicy implements ToolPolicy {
     this.replace(grants);
   }
 
-  async allows(caller: Caller, mountId: string, toolName: string): Promise<boolean> {
+  async granted(caller: Caller): Promise<(mountId: string, toolName: string) => boolean> {
+    let holder: Caller;
     try {
-      caller = await this.effective(caller);
+      holder = await this.effective(caller);
     } catch (error) {
       if (error instanceof MervError && (error.status === 401 || error.status === 403))
-        return false;
+        return () => false;
       throw error;
     }
-    return this.granted.has(key(caller, mountId, toolName));
+    // The grants of this decision: a later replace() does not change an answer already given.
+    const grants = this.grants;
+    return (mountId, toolName) => grants.has(key(holder, mountId, toolName));
   }
 
   async require(caller: Caller, mountId: string, toolName: string): Promise<void> {
     caller = await this.effective(caller);
     check(
-      this.granted.has(key(caller, mountId, toolName)),
+      this.grants.has(key(caller, mountId, toolName)),
       'tool_forbidden',
       'Actor is not granted access to this remote tool',
       403,
@@ -76,6 +79,6 @@ export class ExactToolPolicy implements ToolPolicy {
     const next = new Set<string>();
     for (const grant of parsed.data)
       for (const toolName of grant.tools) next.add(key(grant, grant.mountId, toolName));
-    this.granted = next;
+    this.grants = next;
   }
 }

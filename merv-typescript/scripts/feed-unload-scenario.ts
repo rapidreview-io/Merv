@@ -4,6 +4,7 @@ import { FiberState } from 'cordis';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../src/app.js';
+import type { ToolDefinition } from '@merv/api/types';
 
 async function until(check: () => boolean | Promise<boolean>, message: string) {
   const deadline = Date.now() + 5000;
@@ -75,7 +76,7 @@ export async function runFeedUnloadScenario(
     const r = await connect(url, reviewer.token);
     clients.push(r);
     const beforeTools = (await p.listTools()).tools.map((tool) => tool.name);
-    assert.equal(beforeTools.length, 93);
+    assert.equal(beforeTools.length, 97);
     assert.ok(beforeTools.includes('system.status'));
     const post = await call(p, 'feed.post', {
       body: 'Starting a task before feed removal.',
@@ -111,7 +112,9 @@ export async function runFeedUnloadScenario(
 
     // Pause one actual feed.post after admission but before its real handler.
     // This makes the otherwise synchronous operation overlap disposal reliably.
-    const definition = (await app.ctx.tools.list()).find((tool) => tool.name === 'feed.post')!;
+    const definition = (await app.ctx.tools.list()).find(
+      (tool) => tool.name === 'feed.post',
+    ) as ToolDefinition;
     const originalHandler = definition.handler;
     definition.handler = async (caller, input) => {
       entered.resolve();

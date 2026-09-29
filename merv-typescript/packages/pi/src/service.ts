@@ -65,6 +65,7 @@ import type {
   PiMachineChoice,
   PiMachineOption,
   PiMessage,
+  PiModelCharge,
   PiMove,
   PiMoveBy,
   PiMoveFailure,
@@ -266,14 +267,6 @@ export class PiService implements Pi, FleetOwner {
     this.disposers.push(
       this.scope.registerConversationAuthority({
         require: (caller, tx) => this.requireConversation(caller, tx),
-      }),
-    );
-    this.disposers.push(
-      // Every native tool but Pi's own, run as the person: Scope applies their live role, and each
-      // tool's own registration says what only the person may run (ToolDefinition.conversation).
-      this.tools.registerConversationPolicy({
-        allowsTool: async (_caller, name) => !name.startsWith('pi.'),
-        validate: async () => {},
       }),
     );
     await this.tick();
@@ -1328,10 +1321,14 @@ export class PiService implements Pi, FleetOwner {
           'kind' in tool ? undefined : tool.conversation,
         ]),
       );
-      const described = (await this.tools.describe(caller)).flatMap((description) => {
-        const tool = piTool(description, uses.get(description.name));
-        return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
-      });
+      // Every native tool but Pi's own, run as the person: Scope applies their live role, and
+      // each tool's own registration says what only the person may run.
+      const described = (await this.tools.describe(caller))
+        .filter(({ name }) => !name.startsWith('pi.'))
+        .flatMap((description) => {
+          const tool = piTool(description, uses.get(description.name));
+          return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
+        });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
       const paper = await this.tools.call('paper.read', caller, {}).catch(() => undefined);
       const told = [...(await this.told(conversation, command, actor!.role, paper)), ...notes];
@@ -2319,8 +2316,6 @@ export class PiService implements Pi, FleetOwner {
     });
   }
 
-  /** The day each conversation's one call in flight was charged to. */
-  private charged = new Map<string, string>();
   /**
    * A person's Agent tokens today: a call is charged at its most (its request and its output)
    * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
@@ -2329,7 +2324,7 @@ export class PiService implements Pi, FleetOwner {
   async reserveModel(
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
     body: Record<string, unknown>,
-  ): Promise<number> {
+  ): Promise<PiModelCharge> {
     const most =
       Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
     const day = this.time().slice(0, 10);
@@ -2346,20 +2341,20 @@ export class PiService implements Pi, FleetOwner {
         ),
       ));
     check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
-    this.charged.set(grant.conversationId, day);
-    return most;
+    return { day, tokens: most };
   }
   async settleModel(
     usage: { inputTokens: number; outputTokens: number },
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
-    reserved: number,
+    reserved: PiModelCharge,
   ): Promise<void> {
+    // Settles the day the call was charged to, even past midnight.
     await this.state.transaction((tx) =>
       tx.run(
         'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-        usage.inputTokens + usage.outputTokens - reserved,
+        usage.inputTokens + usage.outputTokens - reserved.tokens,
         grant.userId,
-        this.charged.get(grant.conversationId) ?? this.time().slice(0, 10),
+        reserved.day,
       ),
     );
   }
