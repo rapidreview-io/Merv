@@ -194,7 +194,7 @@
       "component": "context_builder",
       "version": 3,
       "hash": "df5d4b843fa8a153f5b4dcfdf0a3d5c45e784bdfa1c8018492093b677a035370",
-      "published": false
+      "published": true
     },
     {
       "component": "domain_events",
@@ -404,13 +404,13 @@
       "component": "reviews",
       "version": 11,
       "hash": "150cc60f6af1c6431b84099ac1b70e5da0d46590277a137e9bd08c92d30ff3a5",
-      "published": false
+      "published": true
     },
     {
       "component": "reviews",
       "version": 12,
       "hash": "531997c6b0092a64419bf55c7b6fdea0c58c0a01ed679265ffca4f905fab7d15",
-      "published": false
+      "published": true
     },
     {
       "component": "scope",
@@ -464,7 +464,7 @@
       "component": "scope",
       "version": 9,
       "hash": "2eafad8c61701dc96178a14a89ef573425104522f2fc584722b12bb59b7c17f6",
-      "published": false
+      "published": true
     },
     {
       "component": "session_dispatch",
@@ -494,19 +494,19 @@
       "component": "session_dispatch",
       "version": 5,
       "hash": "51a40e9fe356a75d298a5df382f045b20e2b7b6359fed50aa07f7c0905cc0be4",
-      "published": false
+      "published": true
     },
     {
       "component": "session_dispatch",
       "version": 6,
       "hash": "9304ab85f8eee3752b13e9c1575b840045d82b79ed12272d0b6183dca11d9696",
-      "published": false
+      "published": true
     },
     {
       "component": "pi",
       "version": 3,
       "hash": "1ffe96b02c976255aa5b8ee577f887ccc164bff430f2069198bb86198ed6e9f5",
-      "published": false
+      "published": true
     },
     {
       "component": "fleet_workflow",
@@ -590,7 +590,7 @@
       "component": "sessions",
       "version": 9,
       "hash": "22a9d2206d7bc39a9ee78fae968ae1e003ea4d30621061dd42e8b2f407b25d77",
-      "published": false
+      "published": true
     },
     {
       "component": "sessions",
@@ -650,7 +650,7 @@
       "component": "tasks",
       "version": 9,
       "hash": "80c74ad88c823ae8e15302ae3f39123d04444be66a9f694055be5b40521ac6e0",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
@@ -698,13 +698,13 @@
       "component": "workflows",
       "version": 8,
       "hash": "f2376b94a2878d7a83d0598f1eccc8ea0371025ac20eb8d7cc162ec3d6c21d14",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
       "version": 9,
       "hash": "1ec9a3af66ecbf4324b60f4f7bf32c64785f9b80b90349797fabae4b3d09c57c",
-      "published": false
+      "published": true
     },
     {
       "component": "reflections",
@@ -716,7 +716,7 @@
       "component": "experiments",
       "version": 5,
       "hash": "8df80b32f36d600a661aedf909bcfecd94e53668e9a2272f8bcc00db7b50d506",
-      "published": false
+      "published": true
     }
   ]
 }
