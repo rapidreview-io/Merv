@@ -1425,8 +1425,8 @@ test('historical observations stay project-scoped and pure after source revocati
   assert.equal(getters, 0);
   const operator = await f.issue('operator');
   const before = await f.code.capture(f.reviewer, ref);
-  // Stop durable delivery before the revocation: the sessions lifecycle consumer would otherwise
-  // close this session in reaction to it, concurrently with the reads measured below.
+  // Stop durable delivery before the revocation, so no consumer reacts to it concurrently with
+  // the reads measured below.
   await f.events.close();
   await f.scope.revokeCredential(operator, f.source.credentialId!);
   await assert.rejects(async () => await f.code.capture(f.source, ref), { code: 'forbidden' });
