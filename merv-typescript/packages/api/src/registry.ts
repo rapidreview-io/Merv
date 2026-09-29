@@ -4,6 +4,7 @@ import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/type
 import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
+  ListedTool,
   RemoteToolDefinition,
   ConversationUse,
   ToolDefinition,
@@ -12,21 +13,23 @@ import type {
   ToolInvocation,
   Tools,
 } from './types.js';
+import type { ValidateFunction } from 'ajv';
 import { cloneJson, compileSchema } from './schema.js';
 import type { ConversationToolPolicy, SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 
 export type { ToolDescription } from './types.js';
-export function isRemoteTool(tool: AnyToolDefinition): tool is RemoteToolDefinition {
+export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
+  tool: T,
+): tool is Extract<T, { kind: 'mcp' }> {
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
 }
 
 /** How a conversation may use a tool with this parsed input (ToolDefinition.conversation);
  * undefined runs it as the person. A remote tool is never offered to a conversation at all. */
 export function conversationUse(
-  tool: AnyToolDefinition,
+  tool: Pick<ToolDefinition, 'conversation'>,
   input: unknown,
 ): ConversationUse | undefined {
-  if (isRemoteTool(tool)) return undefined;
   const use = tool.conversation;
   return typeof use === 'function' ? use(input) : use;
 }
@@ -49,6 +52,9 @@ export function describeTool(tool: AnyToolDefinition): ToolDescription {
   const schema = zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
   if (!('type' in schema) || schema.type !== 'object')
     throw new MervError('invalid_tool', 'Tool input must be an object');
+  // Transports take projectId out of a native tool's arguments to select the project.
+  if ('properties' in schema && Object.hasOwn(schema.properties, 'projectId'))
+    throw new MervError('invalid_tool', 'projectId is reserved for project selection');
   return {
     name: tool.name,
     description: tool.description,
@@ -77,7 +83,11 @@ interface Entry {
   complete(value: unknown): ToolInvocation;
   running: Set<Promise<ToolInvocation>>;
   remote?: { mountId: string; toolName: string };
+  /** A native tool's ToolDefinition.conversation, as it was registered. */
+  conversation?: ToolDefinition['conversation'];
 }
+/** A remote tool's catalog identity, and how its catalog compiles a schema. */
+type Remote = NonNullable<Entry['remote']> & { compile(schema: unknown): ValidateFunction };
 interface CatalogState {
   active: boolean;
   current: Set<Entry>;
@@ -114,9 +124,9 @@ export class ToolRegistry implements Tools {
     if (this.stopping) throw new MervError('unavailable', 'Tool registry is stopping', 503);
   }
 
-  private prepare(definition: AnyToolDefinition, remote?: Entry['remote']): Entry {
+  private prepare(definition: AnyToolDefinition, remote?: Remote): Entry {
     if (!publishedNamePattern.test(definition.name))
-      throw new MervError('invalid_tool', 'Invalid tool name');
+      throw new MervError('invalid_tool', `Invalid tool name: ${definition.name}`);
     if (typeof definition.handler !== 'function')
       throw new MervError('invalid_tool', 'Tool handler is required');
     if (isRemoteTool(definition)) {
@@ -125,11 +135,13 @@ export class ToolRegistry implements Tools {
       return this.prepareRemote(definition, remote);
     }
     // Schema changes require a new registration, keeping validation paired with its catalog.
-    const inputSchema = definition.inputSchema;
+    // Conversation policy is likewise the registration's: mutating the definition changes neither.
+    const { inputSchema, conversation } = definition;
     return {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema }),
+      conversation,
       async parse(input) {
         const parsed = await inputSchema.safeParseAsync(input);
         if (!parsed.success)
@@ -146,7 +158,7 @@ export class ToolRegistry implements Tools {
     };
   }
 
-  private prepareRemote(input: RemoteToolDefinition, remote: NonNullable<Entry['remote']>): Entry {
+  private prepareRemote(input: RemoteToolDefinition, { compile, ...remote }: Remote): Entry {
     const { kind: _kind, handler, ...metadata } = input;
     let description: ToolDescription;
     try {
@@ -162,9 +174,9 @@ export class ToolRegistry implements Tools {
         'Remote MCP tasks are not supported; taskSupport must be absent or forbidden',
       );
     }
-    const validate = compileSchema(description.inputSchema);
+    const validate = compile(description.inputSchema);
     const validateOutput =
-      description.outputSchema === undefined ? undefined : compileSchema(description.outputSchema);
+      description.outputSchema === undefined ? undefined : compile(description.outputSchema);
     const definition: RemoteToolDefinition = { ...description, kind: 'mcp', handler };
     return {
       name: definition.name,
@@ -256,6 +268,9 @@ export class ToolRegistry implements Tools {
     const catalog: CatalogState = { active: true, current: new Set(), owned: new Set() };
     this.catalogs.set(mountId, catalog);
     let disposing: Promise<void> | undefined;
+    // The published generation's validators by schema, so an unchanged refresh compiles
+    // nothing. Each catalog keeps its own; one validator never serves another catalog.
+    let validators = new Map<string, ValidateFunction>();
     return {
       replace: async (definitions) => {
         this.open();
@@ -264,6 +279,13 @@ export class ToolRegistry implements Tools {
         if (!Array.isArray(definitions))
           throw new MervError('invalid_tool', 'Catalog definitions must be an array');
         const candidate = new Map<string, Entry>();
+        const compiled = new Map<string, ValidateFunction>();
+        const compile = (schema: unknown) => {
+          const key = JSON.stringify(schema);
+          const validate = validators.get(key) ?? compiled.get(key) ?? compileSchema(schema);
+          compiled.set(key, validate);
+          return validate;
+        };
         for (const definition of definitions) {
           if (
             !definition ||
@@ -275,17 +297,11 @@ export class ToolRegistry implements Tools {
           const name = `${namespace}${mountId}.${definition.name}`;
           if (candidate.has(name))
             throw new MervError('duplicate_tool', `Duplicate remote tool: ${definition.name}`, 409);
-          const current = this.entries.get(name);
-          if (current && !catalog.current.has(current))
-            throw new MervError('duplicate_tool', `Tool already registered: ${name}`, 409);
           candidate.set(
             name,
-            this.prepare({ ...definition, name }, { mountId, toolName: definition.name }),
+            this.prepare({ ...definition, name }, { mountId, toolName: definition.name, compile }),
           );
         }
-        this.open();
-        if (!catalog.active)
-          throw new MervError('catalog_closed', 'Remote catalog is disposed', 409);
         const previous = [...catalog.current];
         // No awaits between withdrawing the old generation and publishing the complete new one.
         for (const entry of previous)
@@ -295,6 +311,7 @@ export class ToolRegistry implements Tools {
           this.entries.set(entry.name, entry);
           catalog.owned.add(entry);
         }
+        validators = compiled;
         await this.drain(previous);
         for (const entry of previous) catalog.owned.delete(entry);
       },
@@ -381,7 +398,7 @@ export class ToolRegistry implements Tools {
     this.fenceConversation(registration);
     if (
       !this.conversable(entry) ||
-      conversationUse(entry.definition, input) !== undefined ||
+      conversationUse(entry, input) !== undefined ||
       !(await this.conversationDecision(
         registration,
         registration.provider.allowsTool(caller, entry.name),
@@ -434,7 +451,7 @@ export class ToolRegistry implements Tools {
   }
   /** A native tool an agent conversation is offered: any but those only a leased worker runs. */
   private conversable(entry: Entry): boolean {
-    return !entry.remote && (entry.definition as ToolDefinition).conversation !== 'never';
+    return !entry.remote && entry.conversation !== 'never';
   }
   /** What a person's own agent over MCP is offered, as a Pi conversation is: any native tool but
    *  those only a leased worker or Merv's own pages run, and a reader's reads alone. A mounted
@@ -489,13 +506,13 @@ export class ToolRegistry implements Tools {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async list(caller?: Caller): Promise<AnyToolDefinition[]> {
+  async list(caller?: Caller): Promise<ListedTool[]> {
     if (caller?.managed)
       throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     return (await this.visible(caller))
       .map(({ definition, description }) =>
         isRemoteTool(definition)
-          ? { ...structuredClone(description), kind: 'mcp' as const, handler: definition.handler }
+          ? { ...structuredClone(description), kind: 'mcp' as const }
           : definition,
       )
       .sort((a, b) => a.name.localeCompare(b.name));

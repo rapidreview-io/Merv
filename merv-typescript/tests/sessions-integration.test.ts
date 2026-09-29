@@ -19,6 +19,7 @@ import type {
 import type { Session } from '@merv/sessions/types';
 import type {} from '@merv/reflections/types';
 import { createApp } from './fixtures/app.js';
+import type { ToolDefinition } from '../packages/api/src/types.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
@@ -443,7 +444,7 @@ test('source revocation after transport admission still refuses the native write
   const worker = await f.connect(work.secret);
   const definition = (await f.app.ctx.tools.list()).find(
     (tool) => tool.name === 'task.checkpoint',
-  )!;
+  ) as ToolDefinition;
   const original = definition.handler;
   let entered!: () => void;
   let resume!: () => void;

@@ -43,6 +43,9 @@ export interface RemoteToolDefinition extends ToolDescription {
   handler(caller: Caller, input: any): CallToolResult | Promise<CallToolResult>;
 }
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
+/** A registered tool as Tools.list() shows it: a native definition, or a remote tool's
+ *  description without its handler, which only the registry's admission may call. */
+export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
@@ -212,7 +215,7 @@ export interface Tools {
    *  caller is a person's own agent over MCP, offered only what a Pi conversation is. */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
   /** Omitting caller is trusted in-process inspection; transports must always supply it. */
-  list(caller?: Caller): Promise<AnyToolDefinition[]>;
+  list(caller?: Caller): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(name: string, caller: Caller, input: unknown, agent?: boolean): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;

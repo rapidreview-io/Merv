@@ -92,7 +92,10 @@ function fixture() {
 
 test('registry enforces unique registration, input validation, scope and awaited disposal', async () => {
   const { tools } = fixture();
-  await assert.rejects(async () => tools.register((await tools.list())[0]!), /already registered/);
+  await assert.rejects(
+    async () => tools.register((await tools.list())[0] as ToolDefinition),
+    /already registered/,
+  );
   await assert.rejects(
     tools.call('echo', caller, { message: 7 }),
     (error: unknown) => error instanceof MervError && error.code === 'invalid_input',
@@ -383,7 +386,7 @@ test('official MCP client initializes, lists tools and calls with isolated authe
 test('HTTP and MCP consume the registry public description projection without rebuilding definitions', async (t) => {
   const { scope, tools: native } = fixture();
   const tools = new ToolRegistry(scope, fixtureAccess);
-  tools.register((await native.list())[0]!);
+  tools.register((await native.list())[0] as ToolDefinition);
   await native.close();
   tools.register({
     name: 'unlisted',
