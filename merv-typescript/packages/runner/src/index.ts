@@ -709,10 +709,13 @@ export class MachineRunner implements Runner {
       return false;
     }
     if (session.status === 'active') {
-      // Each only when it moves something by over a minute, read afresh from this tick's GET: a
-      // heartbeat slides the session to min(now + 4 h, hardDeadline); the guardian follows it.
-      const slid = Math.min(this.clock() + 4 * 3_600_000, Date.parse(session.hardDeadline));
-      if (slid - Date.parse(session.expiresAt) > 60_000) {
+      // Read afresh from this tick's GET: a heartbeat slides the session to min(now + 4 h,
+      // hardDeadline), and the server keeps only a slide of 15 minutes or one to hardDeadline, so
+      // only such a slide is asked for. The guardian follows when its deadline moves over a minute.
+      const hard = Date.parse(session.hardDeadline),
+        expires = Date.parse(session.expiresAt);
+      const slid = Math.min(this.clock() + 4 * 3_600_000, hard);
+      if (slid - expires >= (slid === hard ? 1 : 900_000)) {
         session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
         record = this.save(record.id, { session: view(session) });
       }

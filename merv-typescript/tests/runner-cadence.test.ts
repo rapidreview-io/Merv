@@ -110,9 +110,47 @@ test('a launch that activates late still gets the deadline its session slid to',
   await delay(Math.max(0, Date.parse(work.expiresAt) + 1_500 - Date.now()));
   await runner.tick();
   assert.equal(runner.snapshot().launches[0].status, 'running');
-  // A heartbeat is sent only once it would move the expiry by more than a minute.
+  // A heartbeat is sent only for a slide the server would keep: none moves this expiry forward.
   assert.equal(
     fake.calls.filter((call) => call.path === `/sessions/${work.id}/heartbeat`).length,
     0,
   );
+});
+
+test('a session heartbeat is sent only when the server would keep its slide', async (t) => {
+  let now = Date.now();
+  const work = offer('renewed');
+  let offered = false;
+  const fake = server(
+    () => (offered ? null : ((offered = true), work)),
+    undefined,
+    undefined,
+    () => now,
+  );
+  const f = machine(t, [node('a', 'setInterval(()=>{},1000)')], fake.fetch, { clock: () => now });
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => runner.snapshot().launches[0]?.status === 'running', 'running');
+  // Activated with a day to its hard deadline: the window starts four hours ahead.
+  const session = fake.sessions.get(work.id)!;
+  session.status = 'active';
+  session.expiresAt = new Date(now + 4 * 3_600_000).toISOString();
+  session.hardDeadline = new Date(now + 24 * 3_600_000).toISOString();
+  const heartbeats = () =>
+    fake.calls.filter((call) => call.path === `/sessions/${work.id}/heartbeat`).length;
+  // Forty minutes a tick a minute: one that slid by over a minute would send from minute two.
+  for (let minute = 1; minute <= 40; minute++) {
+    now += 60_000;
+    await runner.tick();
+  }
+  assert.equal(heartbeats(), 2, 'one at each 15-minute slide the server keeps');
+  assert.equal(runner.snapshot().launches[0].status, 'running');
+  // Near its hard deadline, one heartbeat takes the window to it and none follows.
+  session.hardDeadline = new Date(now + 4 * 3_600_000 - 5 * 60_000).toISOString();
+  for (let minute = 1; minute <= 3; minute++) {
+    now += 60_000;
+    await runner.tick();
+  }
+  assert.equal(heartbeats(), 3);
+  assert.equal(session.expiresAt, session.hardDeadline);
 });
