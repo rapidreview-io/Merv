@@ -203,9 +203,15 @@ type Transcript =
   | { state: 'none' | 'uploaded' }
   | { state: 'refused'; code: string }
   | ({ state: 'owed'; tries?: number } & TranscriptFacts);
-/** Ten deliveries at most, a minute apart after a failure; one PUT at a time, off the tick. */
+/**
+ * Ten PUTs at most, a minute apart after a failure; one at a time, off the tick. The delivery
+ * after the tenth only confirms it.
+ */
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
+/** A declaration's facts: what the transcript route is sent. */
+const factsOf = ({ state: _state, tries: _tries, ...facts }: Transcript & { state: 'owed' }) =>
+  facts;
 /** What a put-off preparation recorded, in words the release route accepts, else a default. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
   if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
@@ -842,13 +848,11 @@ export class MachineRunner implements Runner {
         t = file ? { state: 'owed', ...file.facts } : { state: 'none' };
         record = this.save(record.id, { transcript: t });
       }
-      if (t.state === 'owed') {
-        const { state: _state, tries: _tries, ...facts } = t;
+      if (t.state === 'owed')
         await this.client.transcript(record.sessionId, this.ledger.runnerId, {
           hostRef: record.id,
-          ...facts,
+          ...factsOf(t),
         });
-      }
     } catch (error) {
       if (error instanceof RunnerControlError && !error.final) this.lastError = error.code;
       else
@@ -875,17 +879,18 @@ export class MachineRunner implements Runner {
       (this.transcriptRetry.get(record.id) ?? 0) > this.clock()
     )
       return false;
-    const tries = (t.tries ?? 0) + 1;
-    if (tries > transcriptTries) return this.delivered(record.id, 'transcript_abandoned');
+    // Past the tenth PUT a delivery only confirms: stored, or abandoned.
+    const tries = (t.tries ?? 0) + 1,
+      spent = tries > transcriptTries;
     this.save(record.id, { transcript: { ...t, tries } });
-    const { state: _state, tries: _tries, ...facts } = t;
     try {
       const reply = await this.client.transcript(record.sessionId, this.ledger.runnerId, {
         hostRef: record.id,
-        ...facts,
+        ...factsOf(t),
         deliver: true,
       });
       if (reply.uploadedAt) return this.delivered(record.id);
+      if (spent) return this.delivered(record.id, 'transcript_abandoned');
       // The declaration is write-once: a log changed or removed since cannot be delivered.
       const file = readTranscript(record.runDirectory, [this.sourceBearer]);
       if (file?.facts.sha256 !== t.sha256) return this.delivered(record.id, 'transcript_changed');
@@ -911,6 +916,7 @@ export class MachineRunner implements Runner {
     } catch (error) {
       if (error instanceof RunnerControlError && error.final)
         return this.delivered(record.id, error.code);
+      if (spent) return this.delivered(record.id, 'transcript_abandoned');
       this.lastError = diagnostic(error);
       this.transcriptRetry.set(record.id, this.clock() + transcriptRetryMs);
     }

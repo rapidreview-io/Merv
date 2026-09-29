@@ -163,7 +163,11 @@ function transcripts(
   const objects = new Map<string, Buffer>();
   const puts: { headers: Headers; body: Buffer }[] = [];
   const bodies: Body[] = [];
-  const state = { store: 200 as StoreAnswer, refuse: undefined as Refusal | undefined };
+  const state = {
+    store: 200 as StoreAnswer,
+    refuse: undefined as Refusal | undefined,
+    aborted: 0,
+  };
   const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
     if (url.origin === store) {
@@ -174,7 +178,10 @@ function transcripts(
       });
       if (state.store === 'never')
         return await new Promise((_, reject) =>
-          init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason)),
+          init!.signal!.addEventListener('abort', () => {
+            state.aborted++;
+            reject(init!.signal!.reason);
+          }),
         );
       // 412: the same bytes were stored by another session first.
       if (state.store !== 503) objects.set(url.pathname.slice(1), puts.at(-1)!.body);
@@ -450,7 +457,7 @@ test('a PUT to anything but https or loopback is never sent and counts as a try'
   assert.equal(transcript(f, id).tries, 2);
 });
 
-test('a failing store is tried ten times, a minute apart, across a restart', async (t) => {
+test('a failing store is sent ten PUTs, a minute apart, across a restart', async (t) => {
   let now = Date.now();
   const fake = server(() => null);
   const sessions = transcripts(fake);
@@ -487,11 +494,33 @@ test('a failing store is tried ten times, a minute apart, across a restart', asy
   assert.equal(runner.snapshot().launches[0]?.transcriptPending, true);
   now += 60_001;
   await runner.tick();
-  assert.equal(sessions.of('deliver'), 10);
+  assert.equal(sessions.of('deliver'), 11, 'the last delivery only confirms');
   assert.equal(sessions.of('PUT'), 10);
   assert.deepEqual(transcript(f, id), { state: 'refused', code: 'transcript_abandoned' });
   assert.equal(runner.snapshot().launches[0]?.transcriptPending, false);
   assert.deepEqual(open(f), []);
+});
+
+test('the tenth PUT, stored, is confirmed by one more delivery', async (t) => {
+  let now = Date.now();
+  const fake = server(() => null);
+  const sessions = transcripts(fake);
+  sessions.state.store = 503;
+  const f = machine(t, [node('a')], sessions.fetch, { clock: () => now });
+  const { id } = seed(f, fake, 'late', 'printed\n');
+  const runner = f.make();
+  await runner.start();
+  for (let i = 2; i <= 10; i++) {
+    await delay(20);
+    if (i === 10) sessions.state.store = 200;
+    now += 60_001;
+    await runner.tick();
+  }
+  assert.equal(sessions.of('PUT'), 10);
+  await delay(20);
+  await runner.tick();
+  assert.equal(sessions.of('deliver'), 11);
+  assert.deepEqual(transcript(f, id), { state: 'uploaded' });
 });
 
 test('a PUT that never answers holds no tick, one PUT runs at a time, and stop aborts it', async (t) => {
@@ -519,6 +548,7 @@ test('a PUT that never answers holds no tick, one PUT runs at a time, and stop a
     [true, true],
   );
   await runner.stop();
+  assert.equal(sessions.state.aborted, 1, 'the stop aborts the PUT in flight');
   await delay(10);
   assert.equal(sessions.of('PUT'), 1, 'a stop starts no PUT');
   assert.deepEqual(open(f).sort(), [first.id, second.id].sort());
