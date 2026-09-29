@@ -107,7 +107,7 @@ What a runner advertises:
 
 - each driver it composed, by name (`code.v2`);
 - `git.local` exactly when it has a repository of its own (`workspace` in its configuration) for policies that name no driver. Sessions still offers such work to any non-managed runner, and one without a repository fails it counted (`workspace_repository_required`); filtering on `git.local`, with an uncounted `repository_absent` deferral on the runner, comes later, server first;
-- `runner.N`, what its protocol tolerates: `runner.1` ignores fields a server adds to lease, settings and session replies; `runner.2` also advertises `git.local` as above. Sessions reads it from the stored presence before relying on either.
+- `runner.N`, what its protocol tolerates: `runner.1` ignores fields a server adds to lease, settings and session replies; `runner.2` also advertises `git.local` as above. Sessions must read it from the stored presence before relying on either; it does not yet.
 
 A managed (hosted) runner advertises only its drivers, because its capabilities must equal its enrolment; its image release is the proof of what it tolerates.
 
