@@ -11,7 +11,7 @@ import type {
   CodeCommitCommand,
 } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { z, ZodTypeAny } from 'zod';
+import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
 import type {} from 'cordis';
 
 export type ConversationUse = 'never' | 'propose' | 'secret';
@@ -47,15 +47,9 @@ export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 /** A registered tool as Tools.list() shows it: a native definition, or a remote tool's
  *  description without its handler, which only the registry's admission may call. */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
-/** A registered tool as caller rules see it: as it was registered, whatever its definition
- *  reads now. */
-export interface RegisteredTool {
-  name: string;
-  /** A mounted tool, published by a remote catalog. */
-  remote: boolean;
-  /** A native tool's ToolDefinition.conversation. */
-  conversation?: ToolDefinition['conversation'];
-}
+/** A tool as caller rules see it: as it was registered, whatever its definition reads now.
+ *  `remote` marks a mounted tool, which has no `conversation`. */
+export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation'> & { remote: boolean };
 /** The callers one plugin issues, by the Caller field it sets: Pi's conversations and Sessions'
  *  managed runners. */
 export type CallerKind = 'conversation' | 'managed';
@@ -158,8 +152,7 @@ export interface ApiRequest {
   caller(projectId?: string): Promise<Caller>;
   /** The JSON body: 415, 413 past `maxBytes` (default the server's limit), 400 `invalid_json`,
    *  or 400 `invalid_input` with the schema's issues. */
-  json(schema?: undefined, maxBytes?: number): Promise<unknown>;
-  json<S extends ZodTypeAny>(schema: S, maxBytes?: number): Promise<z.output<S>>;
+  json<T = unknown>(schema?: ZodType<T, ZodTypeDef, unknown>, maxBytes?: number): Promise<T>;
   /** The body's bytes: 415 for any other media type, 413 past `maxBytes`. */
   bytes(maxBytes: number, mediaType: string): Promise<Buffer>;
   // json and bytes answer 503 `unavailable` when the mount was withdrawn while the body was read.

@@ -558,14 +558,10 @@ export class ApiServer {
   mount(prefix: string, handler: MountHandler, options: MountOptions = {}): () => void {
     if (!/^\/[a-z][a-z0-9-]*$/.test(prefix))
       throw new MervError('invalid_mount', 'Mount prefix must be one lowercase segment');
-    if (typeof handler !== 'function')
-      throw new MervError('invalid_mount', 'Mount handler is required');
     const paths = options.public;
-    const within = (path: unknown) =>
-      typeof path === 'string' &&
-      /^(\/[^/?#]+)+$/.test(path) &&
-      `${path}/`.startsWith(`${prefix}/`);
-    if (paths !== undefined && paths !== true && !(Array.isArray(paths) && paths.every(within)))
+    const within = (path: string) =>
+      /^(\/[^/?#]+)+$/.test(path) && `${path}/`.startsWith(`${prefix}/`);
+    if (Array.isArray(paths) && !paths.every(within))
       throw new MervError('invalid_mount', 'Public paths must lie within their mount');
     if (this.mounts.get(prefix))
       throw new MervError('mount_conflict', `Path prefix is already mounted: ${prefix}`, 409);
@@ -581,15 +577,9 @@ export class ApiServer {
     if (
       !/^[a-z]+_$/.test(namespace) ||
       namespace === 'mk_' ||
-      typeof credential?.kind !== 'string' ||
-      ['user', 'key', 'actor'].includes(credential.kind) ||
-      typeof credential.routes !== 'function' ||
-      !(credential.forbidden instanceof MervError)
+      ['user', 'key', 'actor'].includes(credential.kind)
     )
-      throw new MervError(
-        'invalid_credential',
-        'A credential namespace is lowercase letters then _, never mk_, of a kind that is not user, key or actor, with its routes and refusal',
-      );
+      throw new MervError('invalid_credential', 'Credential namespace or kind is reserved');
     if (this.credentials.has(namespace))
       throw new MervError(
         'credential_conflict',
@@ -752,9 +742,9 @@ export class ApiServer {
           projectSelection(req.headers['x-merv-project-id'], projectId),
         );
       },
-      json: async (schema?: z.ZodTypeAny, maxBytes = this.maxBodyBytes) => {
+      json: async (schema, maxBytes = this.maxBodyBytes) => {
         const body = current(await readJson(req, maxBytes));
-        return schema ? parseInput(schema, body) : body;
+        return schema ? parseInput(schema, body) : (body as never);
       },
       bytes: async (maxBytes, mediaType) => current(await readBody(req, maxBytes, mediaType)),
     };
