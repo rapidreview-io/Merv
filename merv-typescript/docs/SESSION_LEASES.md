@@ -164,7 +164,7 @@ cost and model. Every close writes a `session_usage` row with the lease wall-clo
 first report for a session is stored beside it and later ones are dropped without an
 error, including for a session its own handoff already closed. Three more lease decisions
 exist: `budget_exceeded`, when a project or instance budget is reached;
-`usage_unavailable`, when a cost or token bound cannot be judged because a session that ran
+`usage_unavailable`, when a cost or token bound cannot be judged because an activated session
 in its scope reported no usage; and `retries_exhausted`, when the only queued work left has
 failed to launch `maxLaunchFailures` times on its current revision. All three only pause
 automatic offers.

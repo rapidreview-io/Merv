@@ -262,7 +262,7 @@ export async function budgetStatuses(
       totals.inputTokens + totals.outputTokens >= Number(row.max_tokens)
     )
       exceeded.push('tokens');
-    // A bound on reported figures holds only while every closed session reported. One that
+    // A bound on reported figures holds only while every activated session reported. One that
     // did not leaves the sum a floor, so the bound withholds rather than pass as unreached.
     const unavailable: BudgetStatus['unavailable'] = [];
     if (unwalked) {

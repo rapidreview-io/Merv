@@ -152,8 +152,8 @@ when the bound was crossed.
 
 **A cost or token bound is enforced only on complete accounting.** Those figures exist
 only where a runner reported them, so a bound on them is judged while every closed session
-in its scope that was activated has reported; an offer that never ran has nothing to report
-and is not counted. One that closed without a report leaves the sum a floor, not a
+in its scope that was activated has reported; a session never activated is not counted,
+even if its runner spent tokens before its first call to Merv. One that closed without a report leaves the sum a floor, not a
 total: the bound then withholds new automatic offers with `usage_unavailable` instead of
 `budget_exceeded`, and the budget's status names it under `unavailable` with
 `unreportedSessions`. It lifts when the report arrives (a release may carry it after the
