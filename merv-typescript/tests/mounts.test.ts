@@ -225,7 +225,7 @@ test(
 );
 
 test(
-  'a stalled discovery refresh times out, withdraws its catalog, and a later round restores it',
+  'a stalled discovery list times out and keeps the published tools',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
@@ -241,14 +241,18 @@ test(
         () => mounts.status()[0].errorCode === 'remote_timeout',
         'The stalled list did not time out',
       );
-      assert.equal(mounts.status()[0].toolCount, 0);
-      assert.deepEqual(await names(services.registry), ['native']);
-      assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
+      assert.equal(mounts.status()[0].state, 'disconnected');
+      assert.equal(mounts.status()[0].toolCount, 1);
+      assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+      assert.deepEqual(
+        await services.registry.call('_fixture.media', services.caller, {}),
+        representativeResult,
+      );
     } finally {
       held.release();
     }
-    await until(() => mounts.status()[0].state === 'ready', 'A later round did not restore');
-    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+    await until(() => mounts.status()[0].state === 'ready', 'A later round did not recover');
+    assert.equal(mounts.status()[0].errorCode, undefined);
   },
 );
 
@@ -302,7 +306,7 @@ test(
 );
 
 test(
-  'upstream connection loss is detected by bounded polling and withdraws mounted names',
+  'upstream connection loss is detected by polling; stale tools fail per call',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
@@ -313,12 +317,16 @@ test(
     assert.equal(mounts.status()[0].state, 'ready');
     await upstream.close();
     await until(
-      () => mounts.status()[0].toolCount === 0,
-      'Lost upstream connection remained discoverable',
+      () => mounts.status()[0].state === 'disconnected',
+      'Lost upstream connection was not detected',
     );
-    assert.deepEqual(await names(services.registry), ['native']);
-    assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
     assert.ok(mounts.status()[0].errorCode);
+    assert.equal(mounts.status()[0].toolCount, 1);
+    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+    await assert.rejects(services.registry.call('_fixture.media', services.caller, {}), {
+      code: 'remote_unavailable',
+    });
+    assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
   },
 );
 
@@ -525,7 +533,13 @@ test('removing the discovery actor fails the next round and ends its session', a
   );
   await until(() => upstream.deletes === 1, 'The discovery session was not ended');
   assert.equal(upstream.sessionCount, 0);
-  assert.deepEqual(await names(services.registry), ['native']);
+  // The last catalog stays published, and callers are unaffected.
+  assert.equal(mounts.status()[0].state, 'disconnected');
+  assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+  assert.deepEqual(
+    await services.registry.call('_fixture.media', services.caller, {}),
+    representativeResult,
+  );
 });
 
 test('a warm discovery poll checks the actor once and resolves no credential or grant', async (t) => {
@@ -651,22 +665,23 @@ test(
 );
 
 test(
-  'an unchanged catalog is published again after a failed round',
+  'an unchanged successful round after a failure replaces nothing',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
+    const counts = replacements(t, services.registry);
     const upstream = await remote(t);
     const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 50 },
     ]);
     upstream.holdNextList();
-    await until(() => mounts.status()[0].toolCount === 0, 'A stalled list did not fail the round');
-    assert.deepEqual(await names(services.registry), ['native']);
     await until(
-      async () => (await names(services.registry)).includes('_fixture.media'),
-      'The unchanged catalog was not republished after the failure',
+      () => mounts.status()[0].state === 'disconnected',
+      'A stalled list did not fail the round',
     );
-    assert.equal(mounts.status()[0].state, 'ready');
+    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+    await until(() => mounts.status()[0].state === 'ready', 'The next round did not succeed');
+    assert.equal(counts.all, 1, 'Neither the failure nor the recovery replaces the catalog');
   },
 );
 
@@ -681,6 +696,7 @@ test(
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
     ]);
     assert.equal(mounts.status()[0].errorCode, 'invalid_schema');
+    assert.equal(mounts.status()[0].state, 'failed', 'Nothing was ever published');
     await until(() => mounts.status()[0].state === 'ready', 'The rejected catalog was not retried');
     assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
     assert.equal(counts.nonempty, 2);
@@ -982,4 +998,31 @@ test('a mount whose selected tools are all missing is ready with none published'
     },
   ]);
   assert.deepEqual(await names(services.registry), ['native']);
+});
+
+test('a round answered with 404 keeps the published tools', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const actualFetch = globalThis.fetch;
+  let lost = false;
+  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
+    if (lost && typeof init?.body === 'string' && init.body.includes('"tools/list"')) {
+      lost = false;
+      return new Response(null, { status: 404 });
+    }
+    return actualFetch(address, init);
+  });
+  const { mounts } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  lost = true;
+  await upstream.notifyToolsChanged();
+  await until(() => mounts.status()[0].state === 'disconnected', 'The 404 did not fail the round');
+  assert.equal(mounts.status()[0].errorCode, 'remote_unavailable');
+  assert.equal(mounts.status()[0].toolCount, 1);
+  assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
+  assert.deepEqual(
+    await services.registry.call('_fixture.media', services.caller, {}),
+    representativeResult,
+  );
 });

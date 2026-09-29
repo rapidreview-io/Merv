@@ -25,7 +25,7 @@ export class MountRuntime {
   #again = false;
   #stopped = false;
   #timer?: NodeJS.Timeout;
-  /** Every withdrawal and discovery DELETE a failed round started; stop() awaits it. */
+  /** Every discovery DELETE a failed round started; stop() awaits it. */
   #ending: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -117,16 +117,15 @@ export class MountRuntime {
     });
   }
 
+  /** Published tools stay; each call reports its own failure. */
   private failed(error: unknown): void {
     if (this.#stopped) return;
-    this.#published = undefined; // the replace([]) below withdraws it
-    this.#set(this.#status.state === 'ready' ? 'disconnected' : 'failed', 0, fault(error).code);
-    // Withdrawal starts now. A held call must not delay status updates or reconnect scheduling.
-    const withdrawn = this.#catalog.replace([]).catch(() => undefined);
+    const state = this.#published === undefined ? 'failed' : 'disconnected';
+    this.#set(state, this.#status.toolCount, fault(error).code);
     const client = this.#client;
     this.#client = undefined;
     const ended = client && endUpstream(client);
-    this.#ending = this.#ending.then(() => Promise.all([withdrawn, ended]));
+    this.#ending = this.#ending.then(() => ended);
   }
 
   /** Never rejects. */
