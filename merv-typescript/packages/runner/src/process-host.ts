@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +29,22 @@ export const usageFileVariable = 'MERV_USAGE_FILE';
 export const usageFile = (record: LaunchRecord) => join(record.runDirectory, 'usage.json');
 const pause = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+/** This boot of the machine; unreadable means no launch is ever proven dead by a reboot. */
+const bootId = (): string | undefined => {
+  try {
+    const id =
+      process.platform === 'linux'
+        ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8')
+        : execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], { timeout: 2000 });
+    return String(id).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /** Controls only authenticated supervisors. A saved PID is never evidence or a kill target. */
 export class ProcessHost {
+  readonly boot = bootId();
   constructor(private readonly ledger: LocalLedger) {}
 
   async launch(input: ProcessLaunch): Promise<LaunchRecord> {
@@ -59,6 +72,9 @@ export class ProcessHost {
     if (record.status === 'reserved') {
       // Only what this launch writes may be reported as its usage.
       rmSync(usageFile(record), { force: true });
+      // The boot a guardian may claim this launch in, so a later boot proves it gone.
+      if (this.boot && record.metadata.boot !== this.boot)
+        this.ledger.updateMetadata(record.id, { boot: this.boot });
       // Multiple controllers/retries may reach spawn, but only one guardian can claim the SQL row.
       const guardian = spawn(
         process.execPath,
@@ -90,7 +106,12 @@ export class ProcessHost {
         const now = this.required(input.launchId);
         if (terminalLaunch(now)) return now;
         if (!this.unreachable(error) || Date.now() >= until) {
-          if (this.unreachable(error)) this.ledger.markUncertain(input.launchId);
+          // A reservation no guardian claimed is cancelled; a claimed one is not known.
+          if (
+            this.unreachable(error) &&
+            !this.ledger.end(now.id, 'cancelled_before_spawn', 'reserved')
+          )
+            this.ledger.markUncertain(now.id);
           throw error;
         }
         await pause(25);
@@ -105,7 +126,7 @@ export class ProcessHost {
       await this.request(id, { action: 'inspect' });
     } catch (error) {
       if (!this.unreachable(error)) throw error;
-      this.ledger.markUncertain(id);
+      this.lost(this.required(id));
     }
     return this.required(id);
   }
@@ -118,15 +139,13 @@ export class ProcessHost {
   async stop(id: string): Promise<LaunchRecord> {
     let record = this.required(id);
     if (terminalLaunch(record)) return record;
-    if (record.status === 'reserved') {
-      // The same SQL predicate arbitrates cancellation versus the guardian's irreversible claim.
-      if (this.ledger.cancelReservation(id)) return this.required(id);
-    }
+    // The same SQL predicate arbitrates cancellation versus the guardian's irreversible claim.
+    if (this.ledger.end(id, 'cancelled_before_spawn', 'reserved')) return this.required(id);
     try {
       await this.request(id, { action: 'stop' });
     } catch (error) {
       if (!this.unreachable(error)) throw error;
-      this.ledger.markUncertain(id);
+      this.lost(this.required(id));
       return this.required(id);
     }
     const until = Date.now() + 5000;
@@ -138,9 +157,26 @@ export class ProcessHost {
     return this.required(id);
   }
   async reconcile(): Promise<void> {
-    for (const record of this.ledger.list()) await this.inspect(record.id);
+    for (const record of this.ledger.open()) await this.inspect(record.id);
   }
 
+  /**
+   * An unreachable guardian. A launch claimed in an earlier boot is gone. One with no pinned
+   * command ends a minute after `lostAt` (not `updated_at`, which every save rewrites): the
+   * guardian pins it before spawning and cannot on an ended row, and one without an owner
+   * ends the launch itself within 30 s. Anything else may still run, so stays uncertain.
+   */
+  private lost(record: LaunchRecord): void {
+    const { boot, lostAt } = record.metadata;
+    if (typeof boot === 'string' && this.boot && boot !== this.boot)
+      this.ledger.end(record.id, 'host_rebooted', 'open');
+    else if (record.commandHash === null && ['starting', 'uncertain'].includes(record.status)) {
+      if (typeof lostAt !== 'number') this.ledger.updateMetadata(record.id, { lostAt: Date.now() });
+      else if (lostAt < Date.now() - 60_000)
+        this.ledger.end(record.id, 'guardian_lost_before_launch', 'unlaunched');
+    }
+    this.ledger.markUncertain(record.id); // A no-op on a launch ended above.
+  }
   private required(id: string): LaunchRecord {
     const record = this.ledger.get(id);
     if (!record) throw new Error('Launch intent must be reserved before using its process host');

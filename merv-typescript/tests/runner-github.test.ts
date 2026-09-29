@@ -141,7 +141,7 @@ test('separate runners exchange exact objects, recover a lost push reply, and ne
   } as unknown as Session;
   const checkout = await producer.manager.prepare(launch, session);
   writeFileSync(join(checkout.path, 'result.txt'), 'review this exact result\n');
-  producer.ledger.cancelReservation(launch.id);
+  producer.ledger.end(launch.id, 'cancelled_before_spawn', 'reserved');
   const captured = (await producer.manager.capture(launch))!;
   const push = {
     ...grant,

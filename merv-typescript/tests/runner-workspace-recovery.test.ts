@@ -404,8 +404,8 @@ test(
     assert.equal(lostRelease, true);
     assert.equal(
       runner.snapshot().launches[0].workspace?.status,
-      'captured',
-      'Unknown attach/close acknowledgment must retain the immutable local capture',
+      'ready',
+      'An unknown release acknowledgment keeps the checkout until the launch is settled',
     );
     assert.equal((await app.ctx.sessions.get(source, offered.id)).status, 'released');
     runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });

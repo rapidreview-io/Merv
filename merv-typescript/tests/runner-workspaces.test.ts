@@ -118,7 +118,7 @@ function setup(
         references: options.references ?? {},
       },
     }) as unknown as Session;
-  const stop = (id: string) => ledger.cancelReservation(id);
+  const stop = (id: string) => ledger.end(id, 'cancelled_before_spawn', 'reserved');
   const reopen = () => {
     manager.dispose();
     manager = new GitWorkspaceManager(ledger, config, assignmentWorkspaceDirectory);

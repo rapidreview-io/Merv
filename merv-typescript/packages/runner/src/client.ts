@@ -35,32 +35,37 @@ export class RunnerControlError extends Error {
   get unavailable() {
     return this.status === 0 || this.status >= 500 || this.status === 429;
   }
+  // Recorded once, never replayed. A 404 is final because a server answers 503, never 404,
+  // while a route's owning plugin is unmounted; a 401 loops only while presence authenticates.
+  get final() {
+    const retried = [401, 408, 429].includes(this.status) || retriedCodes.includes(this.code);
+    return this.status >= 400 && this.status < 500 && !retried;
+  }
 }
+/** Retried whatever their status; `github_push_required` only until GitHub mode is retired. */
+const retriedCodes = ['transaction_conflict', 'invalid_control_response', 'github_push_required'];
 
 const label = z
   .string()
   .min(1)
   .max(200)
   .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/);
-const settingsSchema = z
-  .object({
-    platforms: z
-      .array(
-        z
-          .object({
-            name,
-            enabled: z.boolean(),
-            model: label.optional(),
-            effort: label.optional(),
-            parallelism: z.number().int().min(1).max(32),
-          })
-          .strict(),
-      )
-      .max(32)
-      .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
-  })
-  .strict();
+// Replies ignore fields a server adds (`runner.1`). Tuned values are validated again as a
+// profile before use; only the list's own bounds are checked here.
+const settingsSchema = z.object({
+  platforms: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
+        enabled: z.boolean(),
+        model: z.string().optional(),
+        effort: z.string().optional(),
+        parallelism: z.number().int().min(1).max(32),
+      }),
+    )
+    .max(32)
+    .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
+});
 const presenceSchema = z
   .object({
     runnerId: label,
@@ -89,13 +94,10 @@ const sessionSchema = z
       .passthrough(),
     workspace: z
       .object({ attachment: workspaceSchema, result: workspaceSchema.nullable() })
-      .strict()
       .optional(),
   })
   .passthrough();
-const leaseSchema = z
-  .object({ session: z.union([z.null(), sessionSchema]), reason: label })
-  .strict();
+const leaseSchema = z.object({ session: z.union([z.null(), sessionSchema]), reason: label });
 
 export class RunnerClient {
   readonly baseUrl: string;
@@ -343,7 +345,13 @@ export class RunnerClient {
       { id, runnerId, statuses: ['active'] },
     );
   }
-  async nextCodeCommand(session: Session, hostRef: string): Promise<CodeCommitCommand | null> {
+  async nextCodeCommand(
+    session: Pick<
+      Session,
+      'id' | 'runnerId' | 'actorId' | 'instanceId' | 'expectedRevision' | 'workspace'
+    >,
+    hostRef: string,
+  ): Promise<CodeCommitCommand | null> {
     session = structuredClone(session);
     const value = await this.request('/code/commands/next', {
       sessionId: session.id,
@@ -393,37 +401,24 @@ export class RunnerClient {
       throw new RunnerControlError('invalid_control_response', 0);
     return parsed.data;
   }
+  /**
+   * Close the session, or, once it is closed, report what it used. With no `outcome` a live
+   * session closes as `released`, which counts against nothing. `deferral` goes only with a
+   * deferred preparation: why the checkout was put off.
+   */
   async release(
     id: string,
     runnerId: string,
-    outcome: SessionReleaseOutcome,
-    reason: string,
-    usage?: SessionUsageReport,
-    /** Named with a deferred preparation, and only then: why the checkout was put off. */
-    deferral?: SessionDeferral,
+    input: {
+      outcome?: SessionReleaseOutcome;
+      reason?: string;
+      usage?: SessionUsageReport;
+      deferral?: SessionDeferral;
+    },
   ): Promise<Session> {
+    const body = { runnerId, ...input }; // JSON leaves out what is undefined
     return this.session(
-      (
-        await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
-          runnerId,
-          outcome,
-          reason,
-          ...(deferral ? { deferral } : {}),
-          ...(usage ? { usage } : {}),
-        })
-      )?.session,
-      { id, runnerId, statuses: ['released', 'expired'] },
-    );
-  }
-  /** The release route also acknowledges that a managed runner stopped locally. */
-  async reportUsage(id: string, runnerId: string, usage?: SessionUsageReport): Promise<Session> {
-    return this.session(
-      (
-        await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
-          runnerId,
-          ...(usage ? { usage } : {}),
-        })
-      )?.session,
+      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, body))?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }

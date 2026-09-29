@@ -240,7 +240,7 @@ try {
   );
   assert.equal(legacyHandoff.status, 0, legacyHandoff.stderr);
   writeAsAssignment(legacy.path, 'legacy.txt', 'Git assignment edit\n');
-  ledger.cancelReservation(legacyLaunch.id);
+  ledger.end(legacyLaunch.id, 'cancelled_before_spawn', 'reserved');
   const legacyResult = await manager.capture(legacyLaunch);
   assert.ok(legacyResult && legacyResult.headOid !== head);
   assert.equal(
