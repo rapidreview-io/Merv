@@ -532,6 +532,10 @@ the only global slot held.
 - Find it with the query below. Use `->>`, because `->` never matches a JSON
   `null`.
 - A `provisioning` row may still have its create in flight; it is not a wedge.
+- Closing Fleet leaves a row with no runtime as it is. The next Fleet's first
+  pass recovers any machine by the same create key, then stops it, or launches
+  it when a workflow step still wants it. Such a row is a wedge only if it
+  outlives that pass.
 - Unless the failure provably happened before any network call, first confirm
   that Sandboxes holds no sandbox for the allocation, with the second query in
   the Sandboxes database.
