@@ -919,6 +919,70 @@ test('a capped request waits for its offer’s price, then is refused ten minute
   await successor.close();
 });
 
+test('a request priced after it waited, then refused before any machine, costs nothing', async (t) => {
+  const f = await capped(t, { globalLimit: 1 });
+  f.price(3);
+  const occupant = await f.ask('c_1');
+  await f.fleet.tick();
+  const waited = await f.ask('a_1');
+  f.advance(50 * 60_000);
+  await f.fleet.cancel(f.caller, occupant.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const refused = await f.get(waited.id);
+  assert.deepEqual(
+    [refused.phase, refused.error, refused.runtime, refused.usdPerHour],
+    ['released', 'runtime_refused', null, 3],
+  );
+  // Fifty minutes from its request at $3 an hour would be over the cap, had it had a machine.
+  assert.equal((await f.ask('a_2')).person, 'person_a');
+});
+
+test('an unpriced request waits without taking the writer lock, and is refused on time while the queue is full', async (t) => {
+  const f = await capped(t, { globalLimit: 1 });
+  f.price(null);
+  const waiting = await f.ask('a_1');
+  const transactions = t.mock.method(f.state, 'transaction');
+  await f.fleet.tick();
+  assert.equal(transactions.mock.callCount(), 0, 'nothing to admit, nothing to write');
+  transactions.mock.restore();
+  // Every slot taken, the unpriced request is still refused ten minutes on.
+  const occupant = await f.ask('c_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(occupant.id)).phase, 'provisioning');
+  f.advance(600_000);
+  await f.fleet.tick();
+  const refused = await f.get(waiting.id);
+  assert.deepEqual([refused.phase, refused.error], ['released', 'runtime_refused']);
+});
+
+test('a capped request whose place loses its connection is refused at once, not after the unpriced wait', async (t) => {
+  const f = await capped(t);
+  const lines: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  f.price(1);
+  const stranded = await f.ask('a_1');
+  f.runtimes.disconnected.add(f.caller.projectId);
+  await f.fleet.tick();
+  const current = await f.get(stranded.id);
+  assert.deepEqual(
+    [current.phase, current.error, current.createAttempted, current.usdPerHour],
+    ['released', 'runtime_refused', false, undefined],
+  );
+  assert.deepEqual(f.runtimes.createKeys, []);
+  assert.deepEqual(
+    lines.filter((line) => line.includes('fleet.unpriced')),
+    [],
+    'a lost connection is not a missing price',
+  );
+});
+
 test('prices are read once per place and profile each pass, outside any transaction, and never by a request', async (t) => {
   const f = await capped(t);
   f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 600 };

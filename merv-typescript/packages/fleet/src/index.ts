@@ -522,20 +522,26 @@ export class FleetService implements Fleet {
     // the writer lock: Sandboxes answers from its cache, or within its client's timeout.
     const cap = this.config.dailyUsdPerPerson;
     const capped = (a: FleetAllocation) => !!a.person && cap !== undefined;
+    const place = (a: FleetAllocation) => a.rentedIn ?? a.projectId;
     const offer = (a: FleetAllocation) =>
-      `${a.rentedIn ?? a.projectId} ${this.runtimes!.profiles.find((p) => p.id === a.profileId)?.key}`;
+      `${place(a)} ${this.runtimes!.profiles.find((p) => p.id === a.profileId)?.key}`;
     const prices = new Map<string, number>();
     await Promise.all(
       [...new Set(queued.filter(capped).map(offer))].map(async (key) => {
-        const [place, profile] = key.split(' ');
-        const usd = (await this.describe(place!, profile!).catch(() => null))?.maxHourlyUsd;
+        const [where, profile] = key.split(' ');
+        const usd = (await this.describe(where!, profile!).catch(() => null))?.maxHourlyUsd;
         if (usd !== undefined) prices.set(key, usd);
       }),
     );
     const priced = (a: FleetAllocation) => !capped(a) || prices.has(offer(a));
-    /** An offer that lists no price is withdrawn, or no options read has succeeded since boot. */
+    /**
+     * An offer that lists no price is withdrawn, or no options read has succeeded since boot.
+     * A place without a connection has nothing to wait for: its capped request is refused at once.
+     */
     const unpriced = (a: FleetAllocation) =>
-      !priced(a) && this.clock() - Math.max(Date.parse(a.createdAt), this.startedAt) >= unpricedMs;
+      !priced(a) &&
+      (!this.connected(place(a)) ||
+        this.clock() - Math.max(Date.parse(a.createdAt), this.startedAt) >= unpricedMs);
     const active = waiting.filter(occupied);
     const projectCount = new Map<string, number>();
     for (const a of active) projectCount.set(a.projectId, (projectCount.get(a.projectId) ?? 0) + 1);
@@ -546,7 +552,9 @@ export class FleetService implements Fleet {
       !this.owners.has(a.owner.kind);
     const hasRoom =
       active.length < this.config.globalLimit &&
-      queued.some((a) => (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId));
+      queued.some(
+        (a) => priced(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId),
+      );
     if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
@@ -559,7 +567,8 @@ export class FleetService implements Fleet {
         if (dropped(a) || unpriced(a)) {
           if (!dropped(a)) {
             a.error = 'runtime_refused';
-            report('fleet.unpriced', a, new MervError('fleet_unpriced', 'No price is listed'));
+            if (this.connected(place(a)))
+              report('fleet.unpriced', a, new MervError('fleet_unpriced', 'No price is listed'));
           }
           a.intent = 'stop';
           a.phase = 'released';
