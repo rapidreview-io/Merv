@@ -1236,7 +1236,8 @@ export class LeasedSessions implements Sessions {
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
       const current = await this.currentAgentExecution(agent, tx);
-      if (current) await this.closeSession(current, 'agent_retired', tx, 'released', 'halted');
+      if (current)
+        await this.closeReleased(current, { reason: 'agent_retired', outcome: 'halted' }, tx);
       return await this.directory.retire(agent, 'agent_retired', tx);
     });
   }
@@ -1311,7 +1312,7 @@ export class LeasedSessions implements Sessions {
         'Assignment belongs to another agent',
         403,
       );
-      return await this.closeSession(session, 'released', tx, 'released');
+      return await this.closeReleased(session, {}, tx);
     });
   }
   async resetAgentContext(token: string, reason: string): Promise<Agent> {
@@ -2033,6 +2034,7 @@ export class LeasedSessions implements Sessions {
       'invalid_outcome',
       'A completed outcome is recorded by the worker’s own handoff, not by a release',
     );
+    if (!live(session)) return session;
     if (input.deferral) session.deferral = structuredClone(input.deferral);
     return await this.closeSession(
       session,

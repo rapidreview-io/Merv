@@ -206,3 +206,100 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   assert.equal(paper.sections.length + paper.left.length + paper.more, 300);
   assert.ok(context.prompt.includes('\n### paper:literature:current:1:0:literature-0-'));
 });
+
+test('an agent route closes a session as what happened to it, and a closed session only once', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-agent-close-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const boot = await app.ctx.scope.bootstrap({ projectName: 'Agent close', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  const createTask = async (requestId: string) =>
+    await app.ctx.tasks.create(owner, {
+      title: requestId,
+      goal: 'Verify addition.',
+      checks: ['Two plus three equals five.'],
+      requestId,
+    });
+  const stored = async (id: string) => {
+    const { status, closeReason, outcome, deferral } = await app.ctx.sessions.get(owner, id);
+    return { status, closeReason, outcome, deferral };
+  };
+
+  // The implicit agent of a hand offer is retired once, with its live offer.
+  const offered = await app.ctx.sessions.offer(owner, {
+    instanceId: (await createTask('offered')).id,
+    expectedRevision: 0,
+    runnerId: 'hand',
+    requestId: 'hand-offer',
+    secret: secret(),
+  });
+  assert.equal((await app.ctx.sessions.retireAgent(owner, offered.agentId!)).status, 'retired');
+  assert.deepEqual(await stored(offered.id), {
+    status: 'released',
+    closeReason: 'agent_retired',
+    outcome: 'halted',
+    deferral: undefined,
+  });
+
+  // A delivered handoff is recorded as that, whichever route closes the session.
+  const token = secret();
+  await app.ctx.sessions.registerAgent(owner, {
+    name: 'Continuing agent',
+    runnerId: 'external',
+    requestId: 'register',
+    secret: token,
+  });
+  const task = await createTask('delivered');
+  const execution = await app.ctx.sessions.assignAgent(token, {
+    instanceId: task.id,
+    expectedRevision: task.workflow.revision,
+    requestId: 'work',
+  });
+  const worker = await app.ctx.sessions.authenticate(token);
+  const proof = (await app.ctx.tools.call('artifact.create', worker, {
+    title: 'Proof',
+    content: 'Observed 2 + 3 = 5.',
+  })) as Artifact;
+  await app.ctx.tools.call(
+    'task.submit_delivery',
+    worker,
+    confirmedDelivery({
+      taskId: task.id,
+      expectedRevision: 0,
+      artifactIds: [proof.id],
+      requestId: 'deliver',
+    }),
+  );
+  const closed = await app.ctx.sessions.releaseAgentAssignment(token, execution.id);
+  assert.deepEqual(
+    [closed.status, closed.closeReason, closed.outcome],
+    ['released', 'handoff', 'completed'],
+  );
+
+  // A closed session's release records nothing and echoes no deferral it did not record.
+  const control = { sessionId: execution.id, runnerId: 'external' };
+  const again = await app.ctx.sessions.release(owner, {
+    ...control,
+    outcome: 'preparation_deferred',
+    deferral: { cause: 'store_busy', code: 'code_store_full' },
+  });
+  assert.equal(again.deferral, undefined);
+  assert.deepEqual(await stored(execution.id), {
+    status: 'released',
+    closeReason: 'handoff',
+    outcome: 'completed',
+    deferral: undefined,
+  });
+  // A completed outcome is still never a release's to claim.
+  await assert.rejects(app.ctx.sessions.release(owner, { ...control, outcome: 'completed' }), {
+    code: 'invalid_outcome',
+    status: 400,
+  });
+});
