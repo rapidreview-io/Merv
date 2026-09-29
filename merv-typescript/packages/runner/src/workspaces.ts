@@ -1,21 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import {
-  constants,
   closeSync,
   copyFileSync,
   existsSync,
   fsyncSync,
-  fstatSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readFileSync,
-  readSync,
   realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -23,6 +20,7 @@ import { promisify } from 'node:util';
 import {
   codeCommitCommandSchema,
   effectiveWorkspace,
+  WorkspaceDeferred,
   type CodeCommitCommand,
   type CodeCommitReceipt,
   type WorkflowWorkspacePolicy,
@@ -36,7 +34,9 @@ import {
   privateDirectory,
   syncPath,
   terminalLaunch,
+  type LaunchMetadata,
   type LaunchRecord,
+  type LocalJson,
 } from './ledger.js';
 
 export type GitWorkspaceConfig = { repository: string; baseRef: string } | { github: true };
@@ -95,12 +95,17 @@ const statIfPresent = (path: string) => {
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 /** Changed files above this size are refused at capture and commit. */
 const MAX_FILE = 50 * 1024 * 1024;
+// What a merge, rebase, cherry-pick, revert or bisect left half-done in a checkout's admin that
+// `reset` does not clear (it clears an unmerged index and MERGE_HEAD, and keeps the worktree).
+const HALF_DONE = ['rebase-merge', 'rebase-apply', 'sequencer', 'BISECT_LOG', 'BISECT_START'];
 const repositoryIdentity = (row: RepositoryRow) => ({
   repositoryId: row.repository_id,
   sourcePath: row.source_path,
   baseRef: row.base_ref,
   initialOid: row.initial_oid,
 });
+/** A checkout's own ref: its lineage branch, else a detached HEAD. */
+const onRef = (row: WorkspaceRow) => (row.branch ? ['-B', row.branch] : ['--detach']);
 const oid = (value: string): string => {
   const result = value.trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
@@ -136,39 +141,6 @@ const marker = (path: string, value: unknown) => {
     closeSync(fd);
   }
   syncPath(dirname(path));
-};
-/** Pin one assignment-produced bundle as a private regular file before root Git parses it. */
-const stageAssignmentBundle = (source: string, target: string): void => {
-  const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const info = fstatSync(input);
-    if (
-      !info.isFile() ||
-      info.nlink !== 1 ||
-      ![process.getuid?.(), 12001].includes(info.uid) ||
-      info.size > 8 * 1024 * 1024 * 1024
-    )
-      throw new WorkspaceError('workspace_foreign_path');
-    const output = openSync(target, 'wx', 0o600);
-    try {
-      const buffer = Buffer.allocUnsafe(256 * 1024);
-      let copied = 0;
-      for (;;) {
-        const count = readSync(input, buffer, 0, buffer.length, null);
-        if (!count) break;
-        copied += count;
-        if (copied > info.size) throw new WorkspaceError('workspace_foreign_path');
-        let offset = 0;
-        while (offset < count) offset += writeSync(output, buffer, offset, count - offset);
-      }
-      if (copied !== info.size) throw new WorkspaceError('workspace_foreign_path');
-      fsyncSync(output);
-    } finally {
-      closeSync(output);
-    }
-  } finally {
-    closeSync(input);
-  }
 };
 
 /** Local checkout ownership and immutable per-launch captures, independent of server persistence. */
@@ -305,7 +277,7 @@ export class GitWorkspaceManager {
           : join(realpathSync(record.runDirectory), 'workspace');
         slotId = `scratch:${record.id}`;
       } else {
-        repository = await this.repository();
+        repository = await this.repository(true);
         const namespace = segment(policy.namespace),
           project = segment(session.projectId),
           instance = segment(session.instanceId);
@@ -328,9 +300,7 @@ export class GitWorkspaceManager {
               ? 'persistent/per-base'
               : 'persistent/shared';
         slotId = `${policy.mode}:${repository.repository_id}:${lineage}${suffix}`;
-        path = this.assignmentWorkspaceDirectory
-          ? join(this.assignmentWorkspaceDirectory, hash(record.id))
-          : join(this.root, 'checkouts', layout, lineage + suffix);
+        path = join(this.root, 'checkouts', layout, lineage + suffix);
         branch =
           policy.mode === 'persistent'
             ? `codex/merv/${policy.perBase ? 'per-base' : 'shared'}/${[namespace, project, instance].map(refSegment).join('/')}${suffix}`
@@ -349,7 +319,12 @@ export class GitWorkspaceManager {
         const slot = this.db
           .prepare('SELECT * FROM runner_checkout_slots WHERE slot_id=?')
           .get(slotId);
-        if (slot?.owner_launch_id) throw new WorkspaceError('workspace_owned_by_another_launch');
+        // An owner that is running or settling frees the slot by itself, within the capture
+        // bound; one whose process is uncertain needs an operator, so that refusal counts.
+        if (slot?.owner_launch_id)
+          throw this.ledger.get(String(slot.owner_launch_id))?.status === 'uncertain'
+            ? new WorkspaceError('workspace_owned_by_another_launch')
+            : new WorkspaceDeferred('checkout_busy', 'workspace_owned_by_another_launch');
         if (!slot && statIfPresent(path)) throw new WorkspaceError('workspace_foreign_checkout');
         const epoch = Number(slot?.epoch ?? 0) + 1;
         this.db
@@ -479,10 +454,8 @@ export class GitWorkspaceManager {
     if (!journal.tree_oid) {
       // Each pre-freeze retry owns a fresh index. A crashed Git child can never mutate
       // the checkout index, a successor's index, or another attempt's frozen tree.
-      const directory = this.assignmentWorkspaceDirectory
-        ? join(row.path, '.git')
-        : join(this.root, 'operations', hash(record.id), hash(command.id));
-      if (!this.assignmentWorkspaceDirectory) this.safeDirectory(directory);
+      const directory = join(this.root, 'operations', hash(record.id), hash(command.id));
+      this.safeDirectory(directory);
       const index = join(directory, `index-${randomUUID()}`);
       const env = { GIT_INDEX_FILE: index };
       await this.checkoutGit(row, ['read-tree', command.expectedHead], env);
@@ -531,34 +504,6 @@ export class GitWorkspaceManager {
     }
     this.requireCommitLaunch(row);
     if (this.fence(row)?.status !== 'armed') throw new WorkspaceError('workspace_commit_fenced');
-    if (this.assignmentWorkspaceDirectory) {
-      await this.importAssignmentCommit(row, journal.target_oid!);
-      const privateBranch = row.branch ? `refs/heads/${row.branch}` : null;
-      const previous = privateBranch
-        ? await this.optionalRef(repository.bare_path, privateBranch)
-        : undefined;
-      await this.git(
-        ['--git-dir', repository.bare_path, 'update-ref', '--stdin'],
-        60000,
-        false,
-        undefined,
-        [
-          'start',
-          `verify ${this.ownerRef(row)} ${fence.owner_oid}`,
-          ...(privateBranch
-            ? [
-                `update ${privateBranch} ${journal.target_oid} ${previous ?? '0'.repeat(journal.target_oid!.length)}`,
-              ]
-            : []),
-          `create ${receiptRef} ${journal.target_oid}`,
-          'prepare',
-          'commit',
-          '',
-        ].join('\n'),
-      );
-      await this.syncCommitIndex(row, journal);
-      return this.finishCommitReceipt(row, command, journal);
-    }
     // HEAD and the receipt marker commit atomically; the ownership verify also fences
     // an orphan process whose controller died before the Git transaction completed.
     await this.checkoutGit(
@@ -610,42 +555,73 @@ export class GitWorkspaceManager {
       this.db
         .prepare("UPDATE runner_workspaces SET status='capturing' WHERE launch_id=?")
         .run(record.id);
-      await this.validateCheckout(row);
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
+      // A scratch directory is the launch's own: nothing in it is captured or checked.
       if (policy.mode === 'none') {
         this.db
           .prepare("UPDATE runner_workspaces SET status='captured' WHERE launch_id=?")
           .run(record.id);
         return undefined;
       }
-      // A delayed orphan update-ref must fail before final capture or successor reuse.
-      await this.revokeFence(row);
-      const attached = JSON.parse(row.attachment_json!) as SessionWorkspace;
-      const before = await this.checkoutGit(row, ['rev-parse', '--verify', 'HEAD^{commit}']);
-      if (row.read_only && oid(before) !== attached.headOid)
-        throw new WorkspaceError('workspace_readonly_head_changed');
-      const status = await this.checkoutGit(row, [
-        'status',
-        '--porcelain',
-        '--untracked-files=all',
-      ]);
-      // A reviewer may compute in a checkout that is about to be removed: its untracked
-      // scratch goes with it, and nothing later reuses the path. What a read-only lease may
-      // never do is change the thing it is judging, which the HEAD check and the tracked-file
-      // lines below still refuse. A retained checkout keeps the strict rule, because the next
-      // launch inherits whatever is left behind.
-      if (row.read_only) {
-        const dirty = policy.retain
-          ? status.trim()
-          : status
-              .split('\n')
-              .filter((line) => line.trim() && !line.startsWith('??'))
-              .join('\n');
-        if (dirty) throw new WorkspaceError('workspace_readonly_dirty');
-      }
-      if (!row.read_only) {
-        if (status.trim()) {
-          await this.checkChangedFiles(row);
+      return this.bounded(row, async () => {
+        // A delayed orphan update-ref must fail before final capture or successor reuse.
+        await this.revokeFence(row);
+        const attached = JSON.parse(row.attachment_json!) as SessionWorkspace;
+        // Nothing the agent left half-done reaches the capture or the next session (HALF_DONE).
+        const repository = await this.repository();
+        const admin = await this.adminDirectory(row, repository);
+        // A writer's lineage continues from wherever it left HEAD. What that leaves behind, newest
+        // first: an unfinished rebase's or sequence's original commits, the lineage's tip, the
+        // session's receipted checkpoints and where it started, stays reachable from a rescue ref.
+        if (!row.read_only) {
+          const earlier = ['rebase-merge/orig-head', 'rebase-apply/orig-head']
+            .concat(existsSync(join(admin, 'sequencer')) ? ['ORIG_HEAD'] : [])
+            .map((name) => join(admin, name))
+            .map((path) =>
+              statIfPresent(path)?.isFile() ? readFileSync(path, 'utf8').trim() : '',
+            );
+          if (row.branch)
+            earlier.push(
+              (await this.optionalRef(repository.bare_path, `refs/heads/${row.branch}`)) ?? '',
+            );
+          const checkpoints = this.db
+            .prepare(
+              'SELECT target_oid FROM runner_code_commits WHERE launch_id=? AND receipt_json IS NOT NULL ORDER BY rowid DESC',
+            )
+            .all(row.launch_id) as { target_oid: string }[];
+          earlier.push(...checkpoints.map((commit) => commit.target_oid), attached.headOid);
+          await this.rescue(row, earlier);
+        }
+        for (const state of HALF_DONE) rmSync(join(admin, state), { recursive: true, force: true });
+        // A reviewer is reported as attached, and its checkout put back on it. A writer's lineage
+        // keeps its commits and uncommitted work.
+        if (row.read_only) await this.restore(row, attached.headOid);
+        else {
+          await this.checkoutGit(row, ['reset', '--quiet']);
+          await this.checkoutGit(row, ['checkout', '--quiet', ...onRef(row)]);
+        }
+        await this.validateCheckout(row);
+        if (!row.read_only) {
+          // What no capture may carry is moved aside, never deleted: the rest is captured.
+          const refused = new Set<string>();
+          await this.checkChangedFiles(row, undefined, refused);
+          if (refused.size) {
+            const aside = `${row.path}.refused-${row.launch_id}`;
+            for (const name of refused) {
+              this.within(this.root, join(aside, name));
+              mkdirSync(dirname(join(aside, name)), { recursive: true, mode: 0o700 });
+              renameSync(join(row.path, name), join(aside, name));
+            }
+            // A refused path HEAD tracks stays as HEAD has it in the capture.
+            const paths = [...refused];
+            const literal = ['--literal-pathspecs', 'ls-tree', '-r', '-z', '--name-only', 'HEAD'];
+            const tracked = (await this.checkoutGit(row, [...literal, '--', ...paths]))
+              .split('\0')
+              .filter(Boolean);
+            if (tracked.length)
+              await this.checkoutGit(row, ['--literal-pathspecs', 'restore', '--', ...tracked]);
+            this.note(row, 'workspace_capture_refused_file', { aside, paths: paths.slice(0, 100) });
+          }
           await this.checkoutGit(row, ['add', '-A', '--', '.']);
           const staged = await this.checkoutGit(row, [
             'diff',
@@ -666,30 +642,12 @@ export class GitWorkspaceManager {
               `merv: capture ${record.sessionId}`,
             ]);
         }
-      }
-      if (this.assignmentWorkspaceDirectory) {
-        const head = oid(await this.checkoutGit(row, ['rev-parse', '--verify', 'HEAD^{commit}']));
-        await this.importAssignmentCommit(row, head);
-        if (row.branch) {
-          const repository = await this.repository();
-          const ref = `refs/heads/${row.branch}`;
-          const current = await this.optionalRef(repository.bare_path, ref);
-          if (current !== head)
-            await this.git([
-              '--git-dir',
-              repository.bare_path,
-              'update-ref',
-              ref,
-              head,
-              current ?? '0'.repeat(head.length),
-            ]);
-        }
-      }
-      const snapshot = (await this.snapshot(row))!;
-      this.db
-        .prepare("UPDATE runner_workspaces SET status='captured',result_json=? WHERE launch_id=?")
-        .run(JSON.stringify(snapshot), record.id);
-      return snapshot;
+        const snapshot = (await this.snapshot(row))!;
+        this.db
+          .prepare("UPDATE runner_workspaces SET status='captured',result_json=? WHERE launch_id=?")
+          .run(JSON.stringify(snapshot), record.id);
+        return snapshot;
+      });
     });
   }
   close(record: LaunchRecord): Promise<void> {
@@ -706,24 +664,12 @@ export class GitWorkspaceManager {
         .prepare("UPDATE runner_workspaces SET status='closing' WHERE launch_id=?")
         .run(record.id);
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
-      if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path)) {
-        await this.validateCheckout(row);
-        if (this.assignmentWorkspaceDirectory) {
-          this.assignmentPath(row);
-          rmSync(row.path, { recursive: true, force: true });
-        } else {
-          const repository = await this.repository();
-          await this.git([
-            '--git-dir',
-            repository.bare_path,
-            'worktree',
-            'remove',
-            '--force',
-            '--',
-            row.path,
-          ]);
-        }
-      }
+      if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path))
+        await this.bounded(row, async () => {
+          await this.validateCheckout(row);
+          const bare = (await this.repository()).bare_path;
+          await this.git(['--git-dir', bare, 'worktree', 'remove', '--force', '--', row.path]);
+        });
       this.db.exec('BEGIN IMMEDIATE');
       try {
         this.requireOwnership(row);
@@ -741,6 +687,81 @@ export class GitWorkspaceManager {
         throw error;
       }
     });
+  }
+  /** Each tip neither HEAD nor an earlier rescue contains is kept under `refs/merv/rescued/<launch>[-n]`. */
+  private async rescue(row: WorkspaceRow, tips: string[]): Promise<void> {
+    const name = /^[A-Za-z0-9_-]{1,180}$/.test(row.launch_id) ? row.launch_id : hash(row.launch_id);
+    const bare = (await this.repository()).bare_path;
+    // An earlier attempt's rescues stay: they count as kept, and new ones are numbered after them.
+    const earlier = (
+      await this.git([
+        '--git-dir',
+        bare,
+        'for-each-ref',
+        '--format=%(refname) %(objectname)',
+        'refs/merv/rescued/',
+      ])
+    )
+      .split('\n')
+      .map((line) => line.split(' '))
+      .filter(([ref]) => new RegExp(`^refs/merv/rescued/${name}(?:-\\d+)?$`).test(ref ?? ''));
+    const refs = earlier.map(([ref]) => ref!);
+    const kept = ['HEAD', ...earlier.map(([, tip]) => tip!)];
+    for (const tip of new Set(tips.filter((tip) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tip)))) {
+      const args = ['rev-list', '-n1', '--ignore-missing', tip, '--not', ...kept];
+      if (!(await this.checkoutGit(row, args)).trim()) continue;
+      const ref = `refs/merv/rescued/${name}${refs.length ? `-${refs.length}` : ''}`;
+      // Create-only: a rescue is never moved once written.
+      await this.git(['--git-dir', bare, 'update-ref', ref, tip, '']);
+      kept.push(tip);
+      refs.push(ref);
+    }
+    if (refs.length) this.note(row, 'workspace_commits_rescued', { refs });
+  }
+  /** A launch's workspace diagnostic: in its ledger metadata, on stderr, and as lastError. */
+  private note(row: WorkspaceRow, code: string, detail: Record<string, LocalJson>): void {
+    const notes = this.ledger.get(row.launch_id)?.metadata.workspaceNotes as LaunchMetadata;
+    this.ledger.updateMetadata(row.launch_id, { workspaceNotes: { ...notes, [code]: detail } });
+    process.stderr.write(
+      `merv-runner: launch ${row.launch_id} ${code} ${JSON.stringify(detail)}\n`,
+    );
+  }
+  /** Put a checkout exactly on `target`, on its own ref; ignored files (dependencies, caches) stay. */
+  private async restore(row: WorkspaceRow, target: string): Promise<void> {
+    await this.checkoutGit(row, ['checkout', '--quiet', '--force', ...onRef(row), target]);
+    await this.checkoutGit(row, ['clean', '-fdq']);
+  }
+  /**
+   * Git capture or close work that still fails after 10 minutes and three attempts is abandoned,
+   * never retried forever: the checkout is moved aside, never deleted or read again, and its row
+   * canceled, which frees the slot. The lineage restarts from its branch at the next prepare.
+   */
+  private readonly failing = new Map<string, [since: number, attempts: number]>();
+  private async bounded<T>(row: WorkspaceRow, action: () => Promise<T>): Promise<T> {
+    try {
+      const value = await action();
+      this.failing.delete(row.launch_id);
+      return value;
+    } catch (error) {
+      const [since, attempts] = this.failing.get(row.launch_id) ?? [Date.now(), 0];
+      this.failing.set(row.launch_id, [since, attempts + 1]);
+      if (attempts < 2 || Date.now() - since < 600_000) throw error;
+      this.failing.delete(row.launch_id);
+      const aside = `${row.path}.abandoned-${row.launch_id}`;
+      // Its `.git` goes: the lineage's next checkout at this path reuses the admin directory it
+      // names. A checkout that cannot be moved is left where it is, abandoned all the same.
+      try {
+        this.within(this.root, row.path);
+        renameSync(row.path, aside);
+        rmSync(join(aside, '.git'));
+      } catch {}
+      this.db
+        .prepare(
+          "UPDATE runner_workspaces SET canceled=1,status=CASE status WHEN 'capturing' THEN 'captured' ELSE status END WHERE launch_id=?",
+        )
+        .run(row.launch_id);
+      throw new WorkspaceError('workspace_abandoned');
+    }
   }
   dispose(): void {
     this.disposed = true;
@@ -922,7 +943,12 @@ export class GitWorkspaceManager {
     const line = refs.split('\n').find((entry) => entry.startsWith(`${ref} `));
     return line ? oid(line.slice(ref.length + 1)) : undefined;
   }
-  private async checkChangedFiles(row: WorkspaceRow, env?: Record<string, string>): Promise<void> {
+  /** With `refused`, collects what may not be captured (the path to move aside) instead of throwing. */
+  private async checkChangedFiles(
+    row: WorkspaceRow,
+    env?: Record<string, string>,
+    refused?: Set<string>,
+  ): Promise<void> {
     const changed = await this.checkoutGit(
       row,
       ['ls-files', '--modified', '--others', '--exclude-standard', '-z'],
@@ -936,34 +962,40 @@ export class GitWorkspaceManager {
     for (const name of new Set((changed + staged).split('\0').filter(Boolean))) {
       const file = resolve(row.path, name);
       // A tracked final-component symlink is Git data. Never traverse a symlink parent.
-      this.within(row.path, dirname(file));
+      try {
+        this.within(row.path, dirname(file));
+      } catch (error) {
+        const parts = name.split('/');
+        const link = parts.findIndex(
+          (_, i) =>
+            i > 0 && !!statIfPresent(join(row.path, ...parts.slice(0, i)))?.isSymbolicLink(),
+        );
+        if (!refused || link < 0) throw error;
+        refused.add(parts.slice(0, link).join('/'));
+        continue;
+      }
       const stat = statIfPresent(file);
       if (stat?.isFile() && stat.size > MAX_FILE)
-        throw new WorkspaceError('workspace_file_too_large');
+        if (refused) refused.add(name);
+        else throw new WorkspaceError('workspace_file_too_large');
     }
   }
+  /** Only the blobs a commit adds or changes are measured; a gitlink names another repository. */
   private async checkTreeFiles(row: WorkspaceRow, parent: string, tree: string): Promise<void> {
-    const changed = new Set(
-      (
-        await this.checkoutGit(row, [
-          'diff-tree',
-          '--no-commit-id',
-          '--name-only',
-          '-r',
-          '-z',
-          parent,
-          tree,
-        ])
-      ).split('\0'),
-    );
-    const entries = await this.checkoutGit(row, ['ls-tree', '-r', '-l', '-z', tree]);
-    for (const entry of entries.split('\0').filter(Boolean)) {
-      const tab = entry.indexOf('\t');
-      if (!changed.has(entry.slice(tab + 1))) continue;
-      const size = entry.slice(0, tab).trim().split(/\s+/)[3];
-      if (size !== '-' && Number(size) > MAX_FILE)
-        throw new WorkspaceError('workspace_file_too_large');
+    const fields = (
+      await this.checkoutGit(row, ['diff-tree', '-r', '-z', '--no-renames', parent, tree])
+    ).split('\0');
+    const blobs: string[] = [];
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const [, mode, , blob] = fields[i].split(' ');
+      if (!['000000', '160000'].includes(mode)) blobs.push(blob);
     }
+    if (!blobs.length) return;
+    const batch = ['cat-file', '--batch-check=%(objectsize)'];
+    const sizes = await this.checkoutGit(row, batch, undefined, `${blobs.join('\n')}\n`);
+    // A line that is not a number ("<oid> missing") is not a size.
+    if (sizes.split('\n').some((size) => /^\d+$/.test(size) && Number(size) > MAX_FILE))
+      throw new WorkspaceError('workspace_file_too_large');
   }
   private async syncCommitIndex(row: WorkspaceRow, journal: CommitRow): Promise<void> {
     if (
@@ -971,13 +1003,6 @@ export class GitWorkspaceManager {
       this.row(row.launch_id)?.status !== 'ready'
     )
       return;
-    if (this.assignmentWorkspaceDirectory) {
-      const head = oid(await this.checkoutGit(row, ['rev-parse', 'HEAD']));
-      if (head !== journal.target_oid)
-        await this.checkoutGit(row, ['update-ref', 'HEAD', journal.target_oid!, head]);
-      await this.checkoutGit(row, ['read-tree', journal.target_oid!]);
-      return;
-    }
     const repository = await this.repository();
     const admin = await this.adminDirectory(row, repository);
     if (oid(await this.checkoutGit(row, ['rev-parse', 'HEAD'])) !== journal.target_oid) return;
@@ -1030,7 +1055,7 @@ export class GitWorkspaceManager {
     this.within(this.root, path);
     privateDirectory(path);
   }
-  private async repository(): Promise<RepositoryRow> {
+  private async repository(fresh = false): Promise<RepositoryRow> {
     if (!this.config) throw new WorkspaceError('workspace_repository_required');
     if ('github' in this.config) {
       const row = this.repositoryRow();
@@ -1041,32 +1066,38 @@ export class GitWorkspaceManager {
       await this.validateRepository(row.bare_path);
       return row;
     }
-    if (
-      !isAbsolute(this.config.repository) ||
-      !this.config.baseRef ||
-      /[\0\r\n]/.test(this.config.baseRef)
-    )
-      throw new WorkspaceError('workspace_invalid_repository_config');
-    if (!existsSync(this.config.repository) || lstatSync(this.config.repository).isSymbolicLink())
-      throw new WorkspaceError('workspace_repository_missing');
-    const source = realpathSync(this.config.repository);
     let row = this.repositoryRow();
-    if (row && (row.source_path !== source || row.base_ref !== this.config.baseRef))
-      throw new WorkspaceError('workspace_repository_changed');
-    if (!row) {
-      const initial = oid(
-        await this.git([
-          '-C',
-          source,
-          'rev-parse',
-          '--verify',
-          '--end-of-options',
-          `${this.config.baseRef}^{commit}`,
-        ]),
+    // The configured source is read only to bootstrap or to add a checkout (`fresh`): running
+    // launches finish on the repository they started with, whatever the configuration says now.
+    if (fresh || row?.status !== 'ready') {
+      if (
+        !isAbsolute(this.config.repository) ||
+        !this.config.baseRef ||
+        /[\0\r\n]/.test(this.config.baseRef)
+      )
+        throw new WorkspaceError('workspace_invalid_repository_config');
+      if (!existsSync(this.config.repository) || lstatSync(this.config.repository).isSymbolicLink())
+        throw new WorkspaceError('workspace_repository_missing');
+      const source = realpathSync(this.config.repository);
+      if (row && (row.source_path !== source || row.base_ref !== this.config.baseRef))
+        throw new WorkspaceError('workspace_repository_changed');
+      row ??= this.insertRepositoryRow(
+        `repo_${randomUUID()}`,
+        source,
+        this.config.baseRef,
+        oid(
+          await this.git([
+            '-C',
+            source,
+            'rev-parse',
+            '--verify',
+            '--end-of-options',
+            `${this.config.baseRef}^{commit}`,
+          ]),
+        ),
       );
-      row = this.insertRepositoryRow(`repo_${randomUUID()}`, source, this.config.baseRef, initial);
     }
-    const central = row.initial_oid;
+    const { source_path: source, initial_oid: central } = row;
     await this.materializeBare(row, `bootstrap-${row.repository_id}`, async (temporary) => {
       await this.git(
         [
@@ -1277,15 +1308,19 @@ export class GitWorkspaceManager {
       '--null',
       '--list',
     ]);
-    for (const entry of config.split('\0').filter(Boolean)) {
-      const key = entry.split('\n', 1)[0];
+    // An agent's `git config` or `git remote add` in a linked checkout writes this shared file.
+    // What it added is removed before the runner's next Git work: every key but the runner's own.
+    // Only this file's keys are listed (--no-includes); an include.* key is removed like any
+    // other, and what it included goes with it.
+    const keys = new Set(config.split('\0').map((entry) => entry.split('\n', 1)[0]));
+    for (const key of keys)
       if (
+        key &&
         !/^(?:core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|extensions\.objectformat|user\.(?:name|email))$/.test(
           key,
         )
       )
-        throw new WorkspaceError('workspace_unsafe_git_config');
-    }
+        await this.git(['--git-dir', bare, 'config', '--local', '--unset-all', key]);
     if (
       (await this.git(['--git-dir', bare, 'rev-parse', '--is-bare-repository'])).trim() !== 'true'
     )
@@ -1300,23 +1335,8 @@ export class GitWorkspaceManager {
         realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
       this.within(parent, row.path);
       privateDirectory(row.path);
-      marker(join(row.path, '.merv-workspace-owner.json'), {
-        launchId: row.launch_id,
-        slotId: row.slot_id,
-      });
     } else {
       const repository = await this.repository();
-      if (this.assignmentWorkspaceDirectory) {
-        await this.prepareAssignmentCheckout(row, repository);
-        const snapshot = await this.snapshot(row);
-        await this.armFence(row);
-        this.db
-          .prepare(
-            "UPDATE runner_workspaces SET status='ready',attachment_json=? WHERE launch_id=?",
-          )
-          .run(snapshot ? JSON.stringify(snapshot) : null, row.launch_id);
-        return;
-      }
       this.within(this.root, row.path);
       // A persistent branch's lineage records its base once; a changed record is refused
       // before any checkout is added, including the recovery of an existing path.
@@ -1326,6 +1346,8 @@ export class GitWorkspaceManager {
         throw new WorkspaceError('workspace_recorded_base_changed');
       if (!existsSync(row.path)) {
         this.safeDirectory(dirname(row.path));
+        // A checkout deleted or moved aside still holds its branch until pruned.
+        await this.git(['--git-dir', repository.bare_path, 'worktree', 'prune']);
         const heads = (
           await this.git([
             '--git-dir',
@@ -1383,105 +1405,17 @@ export class GitWorkspaceManager {
       .run(snapshot ? JSON.stringify(snapshot) : null, row.launch_id);
   }
 
-  private assignmentPath(row: WorkspaceRow): void {
-    if (
-      !this.assignmentWorkspaceDirectory ||
-      row.path !== join(this.assignmentWorkspaceDirectory, hash(row.launch_id))
-    )
-      throw new WorkspaceError('workspace_foreign_checkout');
-    this.within(this.assignmentWorkspaceDirectory, row.path);
-  }
-
-  private async prepareAssignmentCheckout(
-    row: WorkspaceRow,
-    repository: RepositoryRow,
-  ): Promise<void> {
-    this.assignmentPath(row);
-    const dot = join(row.path, '.git');
-    const baseRef = `refs/merv/bases/${hash(row.slot_id)}`;
-    const recorded = row.branch ? await this.optionalRef(repository.bare_path, baseRef) : undefined;
-    if (recorded && recorded !== row.base_oid)
-      throw new WorkspaceError('workspace_recorded_base_changed');
-    const head = row.branch
-      ? ((await this.optionalRef(repository.bare_path, `refs/heads/${row.branch}`)) ?? row.base_oid)
-      : row.base_oid;
-    if (!existsSync(dot)) {
-      if (existsSync(row.path)) throw new WorkspaceError('workspace_foreign_checkout');
-      privateDirectory(row.path);
-      const ref = `refs/merv/hosted/${hash(row.launch_id)}`;
-      const bundle = join(this.root, `checkout-${hash(row.launch_id)}.bundle`);
-      try {
-        await this.git(['--git-dir', repository.bare_path, 'update-ref', ref, head]);
-        await this.git(['--git-dir', repository.bare_path, 'bundle', 'create', bundle, ref]);
-        await this.git(['init', '--quiet', `--template=${this.emptyTemplate}`, row.path]);
-        await this.checkoutGit(row, ['bundle', 'unbundle', bundle]);
-      } finally {
-        rmSync(bundle, { force: true });
-        await this.git(['--git-dir', repository.bare_path, 'update-ref', '-d', ref]);
-      }
-      await this.checkoutGit(
-        row,
-        row.branch
-          ? ['checkout', '--quiet', '-B', row.branch, head]
-          : ['checkout', '--quiet', '--detach', head],
-      );
-    }
-    await this.validateCheckout(row);
-    if (row.branch && !recorded)
-      await this.git(['--git-dir', repository.bare_path, 'update-ref', baseRef, row.base_oid]);
-  }
-
-  private async importAssignmentCommit(row: WorkspaceRow, target: string): Promise<void> {
-    if (!this.assignmentWorkspaceDirectory) return;
-    this.assignmentPath(row);
-    const repository = await this.repository();
-    const ref = `refs/merv/export/${hash(`${row.launch_id}:${target}`)}`;
-    const bundle = join(row.path, '.git', `merv-export-${randomUUID()}.bundle`);
-    const staged = join(this.root, `import-${randomUUID()}.bundle`);
-    try {
-      await this.checkoutGit(row, ['update-ref', ref, target]);
-      await this.checkoutGit(row, ['bundle', 'create', bundle, ref]);
-      stageAssignmentBundle(bundle, staged);
-      await this.git(['--git-dir', repository.bare_path, 'bundle', 'unbundle', staged]);
-      await this.rev(repository.bare_path, target);
-    } finally {
-      rmSync(bundle, { force: true });
-      rmSync(staged, { force: true });
-    }
-  }
   private async validateCheckout(row: WorkspaceRow): Promise<void> {
     const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
-    if (policy.mode === 'none') {
-      this.within(
+    if (policy.mode === 'none')
+      return this.within(
         this.assignmentWorkspaceDirectory ??
           realpathSync(this.ledger.get(row.launch_id)!.runDirectory),
         row.path,
       );
-      const file = join(row.path, '.merv-workspace-owner.json');
-      if (
-        !existsSync(file) ||
-        lstatSync(file).isSymbolicLink() ||
-        readFileSync(file, 'utf8') !==
-          JSON.stringify({ launchId: row.launch_id, slotId: row.slot_id })
-      )
-        throw new WorkspaceError('workspace_foreign_checkout');
-      return;
-    }
     const repository = await this.repository();
     if (repository.repository_id !== row.repository_id)
       throw new WorkspaceError('workspace_repository_changed');
-    if (this.assignmentWorkspaceDirectory) {
-      this.assignmentPath(row);
-      const dot = join(row.path, '.git');
-      if (!lstatSync(dot).isDirectory() || existsSync(join(dot, 'objects/info/alternates')))
-        throw new WorkspaceError('workspace_foreign_checkout');
-      const branch = (
-        await this.git(['-C', row.path, 'symbolic-ref', '-q', 'HEAD'], 60000, true)
-      ).trim();
-      if ((row.branch ? `refs/heads/${row.branch}` : '') !== branch)
-        throw new WorkspaceError('workspace_branch_changed');
-      return;
-    }
     this.within(this.root, row.path);
     const admin = await this.adminDirectory(row, repository);
     const branch = (
@@ -1520,10 +1454,6 @@ export class GitWorkspaceManager {
     env?: Record<string, string>,
     input?: string,
   ): Promise<string> {
-    if (this.assignmentWorkspaceDirectory) {
-      this.assignmentPath(row);
-      return this.git(['-C', row.path, ...args], 60000, false, env, input);
-    }
     const repository = await this.repository();
     const admin = await this.adminDirectory(row, repository);
     return this.git(
@@ -1595,16 +1525,6 @@ export class GitWorkspaceManager {
     env?: Record<string, string>,
     input?: string,
   ): Promise<string> {
-    const assignment =
-      args[0] === '-C' &&
-      this.assignmentWorkspaceDirectory &&
-      dirname(args[1]) === this.assignmentWorkspaceDirectory &&
-      /^[0-9a-f]{64}$/.test(args[1].slice(this.assignmentWorkspaceDirectory.length + 1));
-    const leaf = assignment ? statIfPresent(args[1]) : undefined;
-    const dot = assignment ? statIfPresent(join(args[1], '.git')) : undefined;
-    const assignmentOwned = leaf && process.getuid?.() === 0 && leaf.uid === 12001;
-    if (assignmentOwned && (leaf.gid !== 12001 || dot?.uid !== 12001 || dot.gid !== 12001))
-      throw new WorkspaceError('workspace_foreign_checkout');
     const options = [
       '-c',
       'core.hooksPath=/dev/null',
@@ -1624,32 +1544,29 @@ export class GitWorkspaceManager {
       'commit.gpgsign=false',
       '-c',
       'tag.gpgsign=false',
+      '-c',
+      'gc.auto=0',
     ];
     try {
-      const operation = execute(
-        assignmentOwned ? '/opt/merv/python/merv_sandboxes/runtimes/assignment.py' : 'git',
-        [...(assignmentOwned ? ['--git'] : []), ...options, ...args],
-        {
-          ...(assignmentOwned ? { cwd: args[1] } : {}),
-          timeout,
-          maxBuffer: 32 * 1024 * 1024,
-          encoding: 'utf8',
-          env: {
-            PATH: '/usr/bin:/bin',
-            HOME: this.emptyTemplate,
-            GIT_CONFIG_NOSYSTEM: '1',
-            GIT_CONFIG_SYSTEM: '/dev/null',
-            GIT_CONFIG_GLOBAL: '/dev/null',
-            GIT_ATTR_NOSYSTEM: '1',
-            GIT_TERMINAL_PROMPT: '0',
-            GIT_ASKPASS: '/usr/bin/false',
-            GIT_SSH_COMMAND: '/usr/bin/false',
-            LC_ALL: 'C',
-            LANG: 'C',
-            ...env,
-          },
+      const operation = execute('git', [...options, ...args], {
+        timeout,
+        maxBuffer: 32 * 1024 * 1024,
+        encoding: 'utf8',
+        env: {
+          PATH: '/usr/bin:/bin',
+          HOME: this.emptyTemplate,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_SYSTEM: '/dev/null',
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_ATTR_NOSYSTEM: '1',
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_ASKPASS: '/usr/bin/false',
+          GIT_SSH_COMMAND: '/usr/bin/false',
+          LC_ALL: 'C',
+          LANG: 'C',
+          ...env,
         },
-      );
+      });
       operation.child.stdin?.end(input);
       const result = await operation;
       return result.stdout;

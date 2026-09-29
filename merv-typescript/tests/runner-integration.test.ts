@@ -745,7 +745,9 @@ test(
       workerNonce: randomBytes(32).toString('hex'),
     });
     process.env[f.credentialEnv] = control.controlToken;
-    const runner = f.make();
+    // Presence is sent again once 15 s have passed; each tick below comes that much later.
+    let skew = 0;
+    const runner = f.make(undefined, () => Date.now() + skew);
     await runner.start();
     const online = runner.snapshot().state;
     assert.notEqual(online, 'offline');
@@ -753,11 +755,13 @@ test(
     // Sessions under it, withdraws them, and the runner's heartbeat gets 503.
     for (const id of ['sessions-api', 'sessions']) {
       await f.app.setEnabled(id, false);
+      skew += 15_000;
       await runner.tick();
       assert.equal(runner.snapshot().state, 'offline', id);
       await f.app.setEnabled(id, true);
       // A restarted Sessions has lost Fleet's stand-in validator.
       if (id === 'sessions') unregister = f.app.ctx.sessions.registerManagedValidator(validator);
+      skew += 15_000;
       await runner.tick();
       assert.equal(runner.snapshot().state, online, id);
     }
@@ -874,13 +878,17 @@ test(
     const f = await fixture(t, ['--hold']);
     f.config.capacity = 2;
     f.config.profiles[0].parallelism = 2;
-    let refuseLease = false;
-    const runner = f.make(async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : String(input));
-      if (refuseLease && url.pathname === '/sessions/lease')
-        return new Response('Source revoked', { status: 403 });
-      return fetch(input, init);
-    });
+    let refuseLease = false,
+      skew = 0;
+    const runner = f.make(
+      async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (refuseLease && url.pathname === '/sessions/lease')
+          return new Response('Source revoked', { status: 403 });
+        return fetch(input, init);
+      },
+      () => Date.now() + skew,
+    );
     await runner.start();
     await f.enabled(true);
     await until(
@@ -889,6 +897,7 @@ test(
       'live worker before source refusal',
     );
     refuseLease = true;
+    skew += 5_000; // past the back-off after the second slot's decline
     await runner.tick();
     assert.equal(runner.snapshot().state, 'unauthorized');
     assert.ok(runner.snapshot().launches.every((launch) => terminal(launch.status)));
@@ -1082,35 +1091,39 @@ test(
     let haltedSessionId: string | undefined;
     let attachRefusal: { status: number; code: string } | undefined;
     const fetchedSessions = new Set<string>();
-    const runner = f.make(async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : String(input));
-      const match = url.pathname.match(/^\/sessions\/([^/]+)(\/attach)?$/);
-      if (match && !match[2] && init?.method === 'GET') fetchedSessions.add(match[1]);
-      if (match?.[2] && !haltedSessionId && secondTaskId) {
-        const pending = (await f.sessions()).find((session) => session.id === match[1]);
-        if (pending?.instanceId === secondTaskId) {
-          assert(fetchedSessions.has(pending.id), 'The offer was read before this attachment');
-          assert.equal(pending.status, 'offered');
-          haltedSessionId = pending.id;
-          const halt = await fetch(`${f.app.ctx.api.url}/sessions/${pending.id}/halt`, {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${f.token}`,
-              'x-merv-project-id': f.source.projectId,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({ reason: 'Cancel only the second worker before attachment.' }),
-          });
-          assert.equal(halt.status, 200);
-          assert.deepEqual(await halt.json(), { halted: 1 });
-          const response = await fetch(input, init);
-          const body = (await response.clone().json()) as { error: { code: string } };
-          attachRefusal = { status: response.status, code: body.error.code };
-          return response;
+    let skew = 0;
+    const runner = f.make(
+      async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const match = url.pathname.match(/^\/sessions\/([^/]+)(\/attach)?$/);
+        if (match && !match[2] && init?.method === 'GET') fetchedSessions.add(match[1]);
+        if (match?.[2] && !haltedSessionId && secondTaskId) {
+          const pending = (await f.sessions()).find((session) => session.id === match[1]);
+          if (pending?.instanceId === secondTaskId) {
+            assert(fetchedSessions.has(pending.id), 'The offer was read before this attachment');
+            assert.equal(pending.status, 'offered');
+            haltedSessionId = pending.id;
+            const halt = await fetch(`${f.app.ctx.api.url}/sessions/${pending.id}/halt`, {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${f.token}`,
+                'x-merv-project-id': f.source.projectId,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({ reason: 'Cancel only the second worker before attachment.' }),
+            });
+            assert.equal(halt.status, 200);
+            assert.deepEqual(await halt.json(), { halted: 1 });
+            const response = await fetch(input, init);
+            const body = (await response.clone().json()) as { error: { code: string } };
+            attachRefusal = { status: response.status, code: body.error.code };
+            return response;
+          }
         }
-      }
-      return fetch(input, init);
-    });
+        return fetch(input, init);
+      },
+      () => Date.now() + skew,
+    );
     await runner.start();
     await f.enabled(true);
     await until(() => childResults(f.runnerDirectory).length === 1, runner, 'first holding worker');
@@ -1127,6 +1140,7 @@ test(
       requestId: 'second-task-race',
     });
     secondTaskId = second.id;
+    skew += 5_000; // past the back-off after the second slot's earlier decline
     await runner.tick();
     assert.deepEqual(attachRefusal, { status: 401, code: 'session_closed' });
     assert(haltedSessionId);

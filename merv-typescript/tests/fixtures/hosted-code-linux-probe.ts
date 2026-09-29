@@ -15,8 +15,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceSession } from '@merv/contracts';
 import { CodeWorkspaceDriver } from '../../packages/code/src/driver/index.js';
-import { LocalLedger } from '../../packages/runner/src/ledger.js';
-import { GitWorkspaceManager } from '../../packages/runner/src/workspaces.js';
 
 const root = mkdtempSync(join(tmpdir(), 'merv-code-linux-probe-'));
 const assignmentRoot = '/workspace/assignments';
@@ -32,8 +30,6 @@ const git = (cwd: string, ...args: string[]) =>
     },
   }).trim();
 let driver: CodeWorkspaceDriver | undefined;
-let manager: GitWorkspaceManager | undefined;
-let ledger: LocalLedger | undefined;
 try {
   assert.equal(process.getuid?.(), 0);
   const source = join(root, 'source');
@@ -187,75 +183,8 @@ try {
   const final = await driver.capture(launch);
   assert.ok(final && final.headOid !== receipt.headOid);
   await driver.close(launch);
-  ledger = new LocalLedger({
-    directory: join(root, 'git-ledger'),
-    binding: {
-      baseUrl: 'http://127.0.0.1:7000',
-      projectId: 'project-linux-probe',
-      sourceId: 'fixture',
-    },
-  });
-  manager = new GitWorkspaceManager(
-    ledger,
-    { repository: source, baseRef: 'refs/heads/main' },
-    assignmentRoot,
-  );
-  const legacyLaunch = ledger.reserve({
-    id: 'launch-git-linux-probe',
-    sessionId: 'session-git-linux-probe',
-    deadline: Date.now() + 60000,
-  });
-  const legacy = await manager.prepare(legacyLaunch, {
-    id: legacyLaunch.sessionId,
-    projectId: 'project-linux-probe',
-    instanceId: 'instance-linux-probe',
-    execution: {
-      policy: {
-        readOnly: false,
-        tools: [],
-        workspace: {
-          mode: 'persistent',
-          namespace: 'probe',
-          base: 'central',
-          retain: true,
-          perBase: false,
-          advancesCentral: false,
-        },
-      },
-      references: {},
-    },
-  } as never);
-  assert.ok(statSync(join(legacy.path, '.git')).isDirectory());
-  const legacyHandoff = spawnSync(
-    '/usr/bin/python3',
-    [
-      '-c',
-      'import sys; sys.path.insert(0, "/opt/merv/python"); from pathlib import Path; from merv_sandboxes.runtimes.assignment import _workspace; _workspace(Path.cwd())',
-    ],
-    {
-      cwd: legacy.path,
-      encoding: 'utf8',
-      env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' },
-    },
-  );
-  assert.equal(legacyHandoff.status, 0, legacyHandoff.stderr);
-  writeAsAssignment(legacy.path, 'legacy.txt', 'Git assignment edit\n');
-  ledger.end(legacyLaunch.id, 'cancelled_before_spawn', 'reserved');
-  const legacyResult = await manager.capture(legacyLaunch);
-  assert.ok(legacyResult && legacyResult.headOid !== head);
-  assert.equal(
-    git(
-      join(ledger.directory, 'workspaces/repository.git'),
-      'show',
-      `${legacyResult.headOid}:legacy.txt`,
-    ),
-    'Git assignment edit',
-  );
-  await manager.close(legacyLaunch);
-  process.stdout.write('PASS: Linux UID 12001 Code checkpoint/final capture and Git capture\n');
+  process.stdout.write('PASS: Linux UID 12001 Code checkpoint and final capture\n');
 } finally {
-  manager?.dispose();
-  ledger?.close();
   driver?.dispose();
   rmSync(root, { recursive: true, force: true });
 }

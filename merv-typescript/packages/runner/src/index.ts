@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import { lstatSync, readFileSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -11,10 +11,8 @@ import {
   sessionUsageReportSchema,
   WorkspaceDeferred,
   type CodeCommitCommand,
-  type CodeCommitReceipt,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
-  type WorkspaceLaunch,
 } from '@merv/contracts';
 import type {
   RunnerPlatform,
@@ -43,19 +41,6 @@ import {
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
 export type * from './types.js';
-
-/** Optional Git command capability; ordinary workspace drivers only own their lifecycle. */
-interface CommitDriver extends WorkspaceDriver {
-  checkpointCommit(launch: WorkspaceLaunch, command: CodeCommitCommand): Promise<CodeCommitReceipt>;
-  pendingCommits(launchId: string): CodeCommitCommand[];
-  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
-  acknowledgeCommit(commandId: string): void;
-}
-function commits(driver: WorkspaceDriver): driver is CommitDriver {
-  return ['checkpointCommit', 'pendingCommits', 'commitOutcome', 'acknowledgeCommit'].every(
-    (method) => typeof (driver as unknown as Record<string, unknown>)[method] === 'function',
-  );
-}
 
 /** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 const configSchema = z
@@ -144,6 +129,13 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
       'invalid_runner_config',
       'One assignment requires one isolated Codex profile and capacity one',
     );
+  // An isolated machine's Git checkouts are its workspace driver's; the runner's own
+  // repository gives it only scratch directories.
+  check(
+    !parsed.data.assignmentWorkspaceDirectory || !parsed.data.workspace,
+    'invalid_runner_config',
+    'An assignment workspace directory cannot be combined with a runner repository',
+  );
   return { ...parsed.data, profiles };
 }
 const liveSession = (session: Session) =>
@@ -174,6 +166,7 @@ function terminalReason(record: LaunchRecord): string {
   if (reason === 'cancelled_before_spawn') return 'local_process_not_started';
   if (reason === 'host_rebooted') return 'local_process_host_rebooted';
   if (reason === 'guardian_lost_before_launch') return 'local_process_guardian_lost_before_launch';
+  if (reason === 'socket_failed') return 'local_process_socket_failed';
   if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
@@ -229,6 +222,9 @@ export class MachineRunner implements Runner {
    */
   private readonly drivers = new Map<string, WorkspaceDriver>();
   private lastDeclined?: string;
+  /** The last presence the server accepted, and when; a declined profile's last decline. */
+  private presented?: [body: string, at: number];
+  private readonly declinedAt = new Map<string, number>();
   private profiles: RunnerProfile[];
   private appliedVersion = 0;
   private readonly clock: () => number;
@@ -293,7 +289,7 @@ export class MachineRunner implements Runner {
         sourceId: createHash('sha256').update(source).digest('hex'),
       },
     });
-    this.host = new ProcessHost(this.ledger);
+    this.host = new ProcessHost(this.ledger, source);
     try {
       this.workspaces = new GitWorkspaceManager(
         this.ledger,
@@ -389,21 +385,31 @@ export class MachineRunner implements Runner {
     return this.ledger.updateMetadata(id, patch as LaunchMetadata);
   }
   private async advertise(): Promise<void> {
-    // `runner.1`: this runner ignores fields a server adds to its replies. A managed runner's
-    // capabilities must equal its enrolment, so it names only its drivers.
-    const marker = this.config.oneAssignment ? [] : ['runner.1'];
+    // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`) and names
+    // `git.local` exactly when it has a repository of its own for work that names no driver.
+    // A managed runner's capabilities must equal its enrolment, so it names only its drivers.
+    const marker = this.config.oneAssignment
+      ? []
+      : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
-    const heartbeat = () =>
-      this.client.presence({
+    // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
+    const heartbeat = async () => {
+      const body = {
         runnerId: this.ledger.runnerId,
         machine: { hostname: hostname(), system: process.platform, architecture: process.arch },
         platforms: this.profiles.map(platformOf),
         capacity: this.assigned() ? 0 : this.capacity(),
         appliedVersion: this.appliedVersion,
         ...(capabilities.length ? { capabilities } : {}),
-      });
+      };
+      const key = JSON.stringify(body);
+      if (this.presented?.[0] === key && this.clock() - this.presented[1] < 15_000) return;
+      const reply = await this.client.presence(body);
+      this.presented = [key, this.clock()];
+      return reply;
+    };
     const presence = await heartbeat();
-    if (presence.desiredVersion !== this.appliedVersion) {
+    if (presence && presence.desiredVersion !== this.appliedVersion) {
       this.profiles = this.config.profiles.map((profile) => {
         const desired = presence.desiredSettings.platforms.find(
           (item) => item.name === profile.name,
@@ -432,6 +438,7 @@ export class MachineRunner implements Runner {
       await this.advertise();
     } catch (error) {
       this.lastError = diagnostic(error);
+      this.presented = undefined; // the next cycle asks again at once
       if (error instanceof RunnerControlError && [401, 403].includes(error.status)) {
         this.state = 'unauthorized';
         return this.stopOwned();
@@ -471,6 +478,8 @@ export class MachineRunner implements Runner {
         live.length >= this.capacity() ||
         live.filter((record) => record.metadata.platform === profile.name).length >=
           profile.parallelism ||
+        // A decline is answered for this profile for 5 s; kept requests above are always replayed.
+        this.clock() - (this.declinedAt.get(profile.name) ?? -Infinity) < 5_000 ||
         this.ledger.pendingRequests().some((p) => p.platform.name === profile.name)
       )
         continue;
@@ -518,6 +527,9 @@ export class MachineRunner implements Runner {
       const session = result.session;
       if (session === null) {
         this.lastDeclined = result.reason;
+        this.declinedAt.set(pending.platform.name, this.clock());
+        // The server waits for presence to report its settings: the next cycle sends it at once.
+        if (result.reason === 'settings_pending') this.presented = undefined;
         this.ledger.completeRequest(pending.platform.name, pending.requestId);
         return;
       }
@@ -671,16 +683,6 @@ export class MachineRunner implements Runner {
             ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
             : {}),
         });
-        check(
-          !JSON.stringify({ args: command.args, stdin: command.stdin }).includes(this.sourceBearer),
-          'unsafe_runner_launch',
-          'Source credential cannot enter the agent launch',
-        );
-        check(
-          !Object.values(command.env).some((value) => value?.includes(this.sourceBearer)),
-          'unsafe_runner_launch',
-          'Source credential cannot enter the agent environment',
-        );
         await this.host.launch({
           launchId: record.id,
           command,
@@ -707,24 +709,27 @@ export class MachineRunner implements Runner {
       return false;
     }
     if (session.status === 'active') {
-      session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
-      await this.host.extendDeadline(record.id, this.deadline(session));
-      const stored = view(session);
-      await this.reconcileCodeCommands(this.save(record.id, { session: stored }), stored);
+      // Read afresh from this tick's GET: a heartbeat slides the session to min(now + 4 h,
+      // hardDeadline), and the server keeps only a slide of 15 minutes or one to hardDeadline, so
+      // only such a slide is asked for. The guardian follows when its deadline moves over a minute.
+      const hard = Date.parse(session.hardDeadline),
+        expires = Date.parse(session.expiresAt);
+      const slid = Math.min(this.clock() + 4 * 3_600_000, hard);
+      if (slid - expires >= (slid === hard ? 1 : 900_000)) {
+        session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
+        record = this.save(record.id, { session: view(session) });
+      }
+      if (this.deadline(session) > record.deadline + 60_000)
+        await this.host.extendDeadline(record.id, this.deadline(session));
+      await this.reconcileCodeCommands(record, view(session));
     }
     return false;
   }
   private async reconcileCodeCommands(record: LaunchRecord, session?: SessionView): Promise<void> {
-    const workspaces = this.driverOf(record);
-    check(workspaces, 'workspace_driver_missing', 'This runner does not carry that driver');
-    if (!commits(workspaces)) {
-      check(
-        !session?.execution.policy.tools.some((tool) => tool.name === 'code.commit'),
-        'workspace_commit_unsupported',
-        'This workspace driver does not support Code commands',
-      );
-      return;
-    }
+    const driver = this.driverOf(record);
+    check(driver, 'workspace_driver_missing', 'This runner does not carry that driver');
+    if (!driver.pendingCommits) return; // A lifecycle-only driver runs no Code commands.
+    const workspaces = driver as Required<WorkspaceDriver>; // The contract: all four or none.
     const local = this.local(record);
     const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.
@@ -782,6 +787,9 @@ export class MachineRunner implements Runner {
     const workspace = driver.get(record.id);
     if (!workspace || workspace.status === 'closed') return true;
     const result = await driver.capture(record);
+    // Work the capture moved aside or rescued is reported, never passed over in silence.
+    const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
+    if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
     await this.reconcileCodeCommands(
       record,
       record.metadata.session as unknown as SessionView | undefined,
@@ -851,13 +859,22 @@ export class MachineRunner implements Runner {
   /**
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
    * anything here, so a link, a device or a malformed report is simply not sent. Without one,
-   * what the profile's harness printed of its spending in the launch's redacted log, if any.
+   * what the profile's harness printed of its spending at the end of the launch's redacted log:
+   * its last 1 MiB, from the first whole line, however long the log grew.
    */
   private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
-    const read = (path: string, limit: number) => {
+    const read = (path: string, limit: number, tail = false) => {
       const stat = lstatSync(path);
-      if (!stat.isFile() || stat.size > limit) throw new Error('Not a readable report');
-      return readFileSync(path, 'utf8');
+      if (!stat.isFile() || (!tail && stat.size > limit)) throw new Error('Not a readable report');
+      const bytes = Buffer.alloc(Math.min(stat.size, limit)),
+        fd = openSync(path, 'r');
+      try {
+        readSync(fd, bytes, 0, bytes.length, stat.size - bytes.length);
+      } finally {
+        closeSync(fd);
+      }
+      const text = bytes.toString('utf8');
+      return bytes.length < stat.size ? text.slice(text.indexOf('\n') + 1) : text;
     };
     try {
       return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));
@@ -865,7 +882,7 @@ export class MachineRunner implements Runner {
       // No report of its own; the harness may have printed one.
     }
     try {
-      const log = read(join(record.runDirectory, 'stdout.log'), 64 << 20);
+      const log = read(join(record.runDirectory, 'stdout.log'), 1 << 20, true);
       return sessionUsageReportSchema.parse(
         harnessUsage(record.metadata.profile as RunnerProfile, log),
       );

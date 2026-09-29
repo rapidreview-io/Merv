@@ -2,15 +2,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  truncateSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -21,10 +13,8 @@ import { LocalLedger, type LaunchRecord } from '../packages/runner/src/ledger.js
 import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture(t: TestContext, hosted = false) {
+function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-commit-'));
-  const assignmentRoot = hosted ? join(realpathSync(directory), 'assignments') : undefined;
-  if (assignmentRoot) mkdirSync(assignmentRoot, { mode: 0o700 });
   const repository = join(directory, 'source');
   mkdirSync(repository);
   const git = (cwd: string, ...args: string[]) =>
@@ -59,7 +49,7 @@ function fixture(t: TestContext, hosted = false) {
   };
   const ledger = new LocalLedger({ directory: join(directory, 'machine'), binding });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(ledger, config, assignmentRoot);
+  let manager = new GitWorkspaceManager(ledger, config);
   const db = new DatabaseSync(ledger.path);
   const bare = join(ledger.directory, 'workspaces/repository.git');
   const prepare = async (
@@ -119,7 +109,7 @@ function fixture(t: TestContext, hosted = false) {
     db.prepare("UPDATE launches SET status='stopped' WHERE id=?").run(record.id);
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(ledger, config, assignmentRoot);
+    manager = new GitWorkspaceManager(ledger, config);
     return manager;
   };
   t.after(() => {
@@ -140,7 +130,6 @@ function fixture(t: TestContext, hosted = false) {
     ledger,
     db,
     bare,
-    assignmentRoot,
     git,
     prepare,
     stop,
@@ -192,25 +181,6 @@ test('code commit changes only the owned checkout, persists a replayable receipt
   assert.equal((await f.manager.capture(first.record))!.headOid, receipt.headOid);
   await f.manager.close(first.record);
   assert.deepEqual(await f.manager.checkpointCommit(first.record, command), receipt);
-});
-
-test('hosted Git checkout checkpoints and replays a receipt without linked private metadata', async (t) => {
-  const f = fixture(t, true);
-  const first = await f.prepare();
-  assert.equal(first.handle.path, join(f.assignmentRoot!, hash(first.record.id)));
-  assert.equal(f.git(first.handle.path, 'rev-parse', '--git-common-dir'), '.git');
-  writeFileSync(join(first.handle.path, 'seed.txt'), 'hosted checkpoint\n');
-  const request = first.command();
-  const receipt = await f.manager.checkpointCommit(first.record, request);
-  assert.equal(f.git(first.handle.path, 'rev-parse', 'HEAD'), receipt.headOid);
-  assert.equal(
-    f.git(f.bare, 'rev-parse', `refs/merv/commands/${hash(request.id)}`),
-    receipt.headOid,
-  );
-  assert.deepEqual(await f.reopen().checkpointCommit(first.record, request), receipt);
-  f.stop(first.record);
-  assert.equal((await f.manager.capture(first.record))?.headOid, receipt.headOid);
-  await f.manager.close(first.record);
 });
 
 test('read-only, stopped, uncertain, expired, wrong-host and conflicting-head requests cannot mutate Git', async (t) => {
@@ -332,7 +302,7 @@ test('a delayed old Git transaction is fenced after capture and successor owners
   );
 });
 
-test('changed files over 50 MiB and unsafe Git configuration are rejected before committing', async (t) => {
+test('changed files over 50 MiB are rejected before committing, and a gitlink is not measured', async (t) => {
   const f = fixture(t),
     first = await f.prepare();
   writeFileSync(join(first.handle.path, 'large.bin'), '');
@@ -343,12 +313,46 @@ test('changed files over 50 MiB and unsafe Git configuration are rejected before
   );
   assert.equal(f.git(first.handle.path, 'rev-parse', 'HEAD'), first.handle.snapshot!.headOid);
   assert.equal(f.git(first.handle.path, 'diff', '--cached', '--name-only'), '');
-  f.git(f.bare, 'config', 'filter.hostile.clean', 'touch /never-run');
-  await assert.rejects(
-    f.manager.checkpointCommit(first.record, first.command('unsafe-config')),
-    /workspace_unsafe_git_config/,
+  rmSync(join(first.handle.path, 'large.bin'));
+  // An embedded repository is committed as a gitlink, which names a commit this repository lacks.
+  const nested = join(first.handle.path, 'nested');
+  mkdirSync(nested);
+  f.git(nested, 'init', '-q');
+  writeFileSync(join(nested, 'inner.txt'), 'inner\n');
+  f.git(nested, 'add', '.');
+  f.git(
+    nested,
+    '-c',
+    'user.name=Agent',
+    '-c',
+    'user.email=agent@example.invalid',
+    'commit',
+    '-qm',
+    'inner',
   );
-  f.git(f.bare, 'config', '--unset', 'filter.hostile.clean');
+  const receipt = await f.manager.checkpointCommit(first.record, first.command('gitlink'));
+  assert.match(f.git(first.handle.path, 'ls-tree', receipt.headOid, 'nested'), /^160000 commit /);
+});
+
+test("an agent's configuration of the private repository is removed, never obeyed or fatal", async (t) => {
+  const f = fixture(t),
+    first = await f.prepare();
+  // Run inside the linked checkout, these write the private repository's shared config.
+  f.git(first.handle.path, 'remote', 'add', 'upstream', 'https://example.invalid/upstream.git');
+  f.git(first.handle.path, 'config', 'pull.rebase', 'false');
+  f.git(first.handle.path, 'config', 'filter.x.clean', 'cat');
+  writeFileSync(join(first.handle.path, 'seed.txt'), 'checkpointed\n');
+  const receipt = await f.manager.checkpointCommit(first.record, first.command());
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /upstream|rebase|filter/);
+  f.git(first.handle.path, 'config', 'filter.x.clean', 'cat');
+  writeFileSync(join(first.handle.path, 'seed.txt'), 'captured\n');
+  f.stop(first.record);
+  const result = await f.manager.capture(first.record);
+  assert.notEqual(result!.headOid, receipt.headOid);
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /filter/);
+  await f.manager.close(first.record);
+  const next = await f.prepare('next');
+  assert.equal(next.handle.snapshot!.headOid, result!.headOid);
 });
 
 test('a killed controller resumes the frozen tree and deterministic commit object without including later edits', async (t) => {

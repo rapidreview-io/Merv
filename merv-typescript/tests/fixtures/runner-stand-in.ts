@@ -73,9 +73,10 @@ export function offer(
  * `refuse` answers any call with a refusal first, as a failing or unloaded route would.
  */
 export function server(
-  lease: (body: Body) => Body | null | Refusal,
+  lease: (body: Body) => Body | null | string | Refusal,
   settings: { version: number; platforms: unknown[] } = { version: 0, platforms: [] },
   refuse: (path: string, body: Body | undefined) => Refusal | undefined = () => undefined,
+  clock: () => number = Date.now,
 ) {
   const calls: Call[] = [];
   const sessions = new Map<string, Body>();
@@ -100,7 +101,9 @@ export function server(
     if (path === '/sessions/lease') {
       const answer = lease(body!);
       if (answer instanceof Refusal) return refusal(answer);
-      if (answer === null) return reply({ session: null, reason: 'no_candidates' });
+      // A string is a decline's reason; null declines with no candidates.
+      if (answer === null || typeof answer === 'string')
+        return reply({ session: null, reason: answer ?? 'no_candidates' });
       const session = sessions.get(answer.id) ?? { ...answer, runnerId: body!.runnerId };
       sessions.set(session.id, session);
       return reply({ session, reason: 'leased' });
@@ -116,6 +119,13 @@ export function server(
       session.closeReason = body!.reason ?? 'released';
       session.outcome = body!.outcome ?? 'released';
     } else if (action === 'workspace-result') session.workspace.result = body!.workspace;
+    else if (action === 'heartbeat' && session.status === 'active') {
+      // As Sessions renews: a slide of at least 15 minutes, or any slide to the hard deadline.
+      const hard = Date.parse(session.hardDeadline);
+      const slid = Math.min(clock() + 4 * 3_600_000, hard);
+      if (slid - Date.parse(session.expiresAt) >= (slid === hard ? 1 : 900_000))
+        session.expiresAt = new Date(slid).toISOString();
+    }
     return reply({ session });
   };
   const leases = (platform: string) =>

@@ -1,3 +1,4 @@
+import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
 import type { WorkflowExecution } from './index.js';
 
@@ -33,6 +34,14 @@ export interface WorkspaceDriver {
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined>;
   close(launch: WorkspaceLaunch): Promise<void>;
   dispose(): void;
+  /** Code commands, journalled until acknowledged: a driver that runs them has all four. */
+  checkpointCommit?(
+    launch: WorkspaceLaunch,
+    command: CodeCommitCommand,
+  ): Promise<CodeCommitReceipt>;
+  pendingCommits?(launchId: string): CodeCommitCommand[];
+  commitOutcome?(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
+  acknowledgeCommit?(commandId: string): void;
 }
 /** What a runner lends a driver: its ledger's place on disk and what it knows of a launch. */
 export interface WorkspaceDriverHost {

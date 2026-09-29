@@ -4,6 +4,8 @@ import {
   canonical,
   check,
   digest,
+  hostedCodexCapabilities,
+  hostedCodexPlatform,
   MervError,
   recorded,
   sourceCaller,
@@ -89,15 +91,6 @@ const retryNext = {
   active: 'An active machine already covers this target.',
   ready: 'Fleet may allocate when capacity, wallet and model budgets allow.',
 };
-/** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
-export const hostedCodexPlatform = Object.freeze({
-  name: 'hosted-codex',
-  harness: 'codex' as const,
-  model: 'gpt-6-luna',
-  enabled: true,
-  parallelism: 1,
-});
-export const hostedCodexCapabilities = Object.freeze(['code.v2']);
 const raiseLimit = 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.';
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;

@@ -90,7 +90,9 @@ PID read from disk. Confirmed shutdown permits local capture. A Git launch keeps
 its slot until result acknowledgment and checkout cleanup complete. If the
 guardian is unreachable or cannot confirm termination, the launch remains
 `uncertain`, consumes capacity and is not respawned—even if the server lease
-has closed. Historical launch and redacted log records remain inspectable.
+has closed—until it is proven gone: claimed in an earlier boot, or with no
+command pinned a minute after it was first found unreachable. Historical launch
+and redacted log records remain inspectable.
 
 A zero process exit code is not a completed workflow gate. If the agent exits
 before its handoff, the runner releases unfinished work with a canonical failure
@@ -107,6 +109,23 @@ counted outcome. A refusal that asking again cannot change (any 4xx except 401,
 their status) is that call's answer: it is recorded once and never replayed, so a
 session the server no longer knows is stopped once and settled.
 
+An idle runner costs the server little. Presence is sent when it changes, 15 s
+after the last accepted one (the server holds it fresh for 45 s) and at once
+after a failure or a `settings_pending` decline, so remote settings apply within
+15 s. A profile whose lease was declined is not asked for again for 5 s; a
+request whose answer was lost is always replayed. Each live session is read every
+tick, but heartbeated only when that would slide its expiry by more than a
+minute, as judged by the runner's clock against the server's `expiresAt`: the
+machine's clock is assumed to be within a minute or so of the server's, as the
+local deadline check already assumes. A clock hours behind heartbeats only when
+the session is that close to expiry, and one four hours behind never does. A
+guardian's deadline is pushed only when its session's has moved on by more than a
+minute, so a launch that activates late is extended on the first tick that sees
+it active. A managed
+runner's read does not reconcile its session on the server, so it learns of a
+close that reconciling decides (an expiry, or a workflow moving on after a
+handoff) up to about a minute later than a heartbeat every tick would.
+
 The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
 that launch's private run directory, cleared before the process starts. A profile's
 wrapper, or the process itself, may write one JSON object there:
@@ -114,14 +133,19 @@ wrapper, or the process itself, may write one JSON object there:
 else allowed but a legacy `costUsd`, which is accepted and dropped. Without that file the runner asks the launch's profile what its harness printed: the Codex
 profile reads the `turn.completed` usage of its own `codex exec --json` stream from the
 redacted `stdout.log` (input tokens, cached ones included, output tokens and the profile's
-model). Codex prints it only after the closing message it writes once the
+model, never a cost); the Claude profile reads the final `result` event of its
+`stream-json` output (input tokens plus the cache it wrote and read, output tokens and the
+profile's model; any cost it reports is dropped). Only the log's last 1 MiB is read, from its first
+whole line. Codex prints it only after the closing message it writes once the
 handoff tool returns, so a Codex launch whose own handoff closed its session gets a grace of
 a minute, within its deadline, to exit by itself; any other close, and any other profile, is
 stopped at once. The grace holds the launch's capacity slot but changes no capture: the
 worker's tools are already closed, the final capture is still taken once the process has
 ended, as a Git result submission already expects, and a sealed lease's Codex sandbox is
-read-only. A Codex launch stopped before its turn completed still reports nothing, as does
-any other profile that writes nothing. When the launch is over the runner sends a regular
+read-only. A Codex launch stopped before its turn completed still reports nothing, and so
+does a Claude launch stopped before its `result` event (which, with no grace, includes one
+stopped at once when its own handoff closed its session), as does any other profile that
+writes nothing. When the launch is over the runner sends a regular
 file of at most 4 KB in that shape, or what the profile read: with its release when the
 process ended first, and on its own when the server had already closed the session, which is
 how a landed handoff ends. The ledger remembers that the report was answered, so it is
@@ -153,7 +177,8 @@ their sandbox. If their fixed policy grants `code.commit`, they can request a
 named commit and wait for its immutable receipt through `code.operation` before
 handoff. Runner performs the fixed commit against that worker's owned checkout;
 the request cannot supply Git arguments or paths. After confirmed termination, Runner captures writable
-changes as a bounded WIP commit. Read-only changes are refused and preserved.
+changes as a bounded WIP commit. A read-only session is reported as attached and
+its checkout put back on that commit.
 
 Code owns the durable server queue; Runner owns the durable local operation
 journal. A command freezes its parent/tree/message/timestamp before an atomic

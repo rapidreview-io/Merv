@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -21,6 +23,7 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { LocalLedger } from '../packages/runner/src/ledger.js';
 import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
+import { validateRunnerConfig } from '../packages/runner/src/index.js';
 
 function setup(
   t: TestContext,
@@ -181,43 +184,34 @@ test('isolated scratch cwd is outside the private ledger while Git storage stays
   assert.equal(readFileSync(join(handle.path, 'result.txt'), 'utf8'), 'assignment output\n');
 });
 
-test('hosted Git checkout keeps complete metadata in the assignment leaf and captures edits privately', async (t) => {
-  const f = setup(t, { assignmentScratch: true });
-  const first = f.reserve('hosted-git');
-  const handle = await f.manager.prepare(first, f.session(first.id));
+test("an isolated machine takes no runner repository: its Git checkouts are its driver's", () => {
+  const isolated = {
+    directory: '/tmp/merv-runner',
+    baseUrl: 'http://127.0.0.1:7000',
+    projectId: 'project',
+    credentialEnv: 'MERV_SOURCE',
+    capacity: 1,
+    oneAssignment: true,
+    assignmentWorkspaceDirectory: '/workspace/assignments',
+    profiles: [
+      {
+        name: 'hosted-codex',
+        harness: 'codex',
+        executable: process.execPath,
+        isolatedLauncher: process.execPath,
+        enabled: true,
+        parallelism: 1,
+      },
+    ],
+  };
   assert.equal(
-    handle.path,
-    join(f.assignmentWorkspaceDirectory!, createHash('sha256').update(first.id).digest('hex')),
+    validateRunnerConfig(isolated).assignmentWorkspaceDirectory,
+    isolated.assignmentWorkspaceDirectory,
   );
-  assert.ok(statSync(join(handle.path, '.git')).isDirectory());
-  assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
-  assert.equal(f.git(handle.path, 'rev-parse', '--git-common-dir'), '.git');
-  assert.equal(f.git(handle.path, 'remote'), '');
-  assert.equal(handle.snapshot?.headOid, f.second);
-  writeFileSync(join(handle.path, 'hosted.txt'), 'assignment edit\n');
-  f.stop(first.id);
-  const result = await f.manager.capture(first);
-  assert.notEqual(result?.headOid, f.second);
-  assert.equal(f.git(f.bare, 'show', `${result!.headOid}:hosted.txt`), 'assignment edit');
-  await f.manager.close(first);
-  const second = f.reserve('hosted-resume');
-  const resumed = await f.manager.prepare(second, f.session(second.id));
-  assert.equal(resumed.snapshot?.headOid, result?.headOid);
-  assert.equal(readFileSync(join(resumed.path, 'hosted.txt'), 'utf8'), 'assignment edit\n');
-  const review = f.reserve('hosted-review');
-  const readOnly = await f.manager.prepare(
-    review,
-    f.session(
-      review.id,
-      { mode: 'ephemeral', namespace: 'tests', base: 'central', retain: false },
-      { readOnly: true },
-    ),
+  assert.throws(
+    () => validateRunnerConfig({ ...isolated, workspace: { repository: '/src', baseRef: 'main' } }),
+    { code: 'invalid_runner_config' },
   );
-  assert.equal(f.git(readOnly.path, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
-  f.stop(review.id);
-  assert.equal((await f.manager.capture(review))?.headOid, f.second);
-  await f.manager.close(review);
-  assert.equal(existsSync(readOnly.path), false);
 });
 
 test('private clone, idempotent prepare, bounded WIP capture and persistent resume preserve per-launch history', async (t) => {
@@ -254,10 +248,12 @@ test('private clone, idempotent prepare, bounded WIP capture and persistent resu
   );
   assert.deepEqual(await f.manager.capture(first), result);
   const second = f.reserve('second');
-  await assert.rejects(
-    f.manager.prepare(second, f.session('second')),
-    /workspace_owned_by_another_launch/,
-  );
+  // The owner has ended and will free the slot: the successor is put off, not failed.
+  await assert.rejects(f.manager.prepare(second, f.session('second')), {
+    name: 'WorkspaceDeferred',
+    cause: 'checkout_busy',
+    code: 'workspace_owned_by_another_launch',
+  });
   const closingRecord = structuredClone(first);
   const closing = f.manager.close(closingRecord);
   closingRecord.id = 'changed';
@@ -356,26 +352,35 @@ test('reference bases never fall back and non-per-base persistent branches refus
   );
 });
 
-test('read-only work refuses dirty files, staged changes and unexpected HEAD without auto-committing', async (t) => {
+test('a retained reviewer that changed what it judged is reported as attached and put back on it', async (t) => {
   const f = setup(t),
     record = f.reserve('review');
   const handle = await f.manager.prepare(
     record,
     f.session(record.id, f.policy(), { readOnly: true }),
   );
-  f.stop(record.id);
-  writeFileSync(join(handle.path, 'new.txt'), 'unexpected\n');
-  await assert.rejects(f.manager.capture(record), /workspace_readonly_dirty/);
-  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), handle.snapshot!.headOid);
+  // Ignored files (dependencies, caches) are the checkout's own and survive the restore.
+  mkdirSync(join(f.bare, 'info'), { recursive: true });
+  writeFileSync(join(f.bare, 'info/exclude'), 'cache/\n');
+  mkdirSync(join(handle.path, 'cache'));
+  writeFileSync(join(handle.path, 'cache/kept'), 'ignored\n');
+  writeFileSync(join(handle.path, 'staged.txt'), 'staged\n');
   f.git(handle.path, 'add', '.');
-  await assert.rejects(f.manager.capture(record), /workspace_readonly_dirty/);
   f.commit(handle.path, 'unexpected commit');
-  await assert.rejects(f.manager.capture(record), /workspace_readonly_head_changed/);
-  assert.equal(f.manager.get(record.id)?.status, 'capturing');
-  assert.equal(readFileSync(join(handle.path, 'new.txt'), 'utf8'), 'unexpected\n');
+  writeFileSync(join(handle.path, 'seed.txt'), 'tracked edit\n');
+  writeFileSync(join(handle.path, 'new.txt'), 'untracked\n');
+  f.stop(record.id);
+  const captured = await f.manager.capture(record);
+  assert.deepEqual(captured, handle.snapshot);
+  assert.equal(f.git(handle.path, 'symbolic-ref', '--short', 'HEAD'), handle.snapshot!.branch);
+  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), handle.snapshot!.headOid);
+  assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
+  assert.equal(readFileSync(join(handle.path, 'cache/kept'), 'utf8'), 'ignored\n');
+  await f.manager.close(record);
+  assert.equal(f.manager.get(record.id)?.status, 'closed');
 });
 
-test('a reviewer computes in a checkout it is about to lose, and still cannot change what it reviews', async (t) => {
+test('a reviewer computes in a checkout it is about to lose, and is reported as attached', async (t) => {
   const f = setup(t),
     record = f.reserve('review');
   // Not retained: the worktree is removed at release, so untracked scratch goes with it.
@@ -401,7 +406,10 @@ test('a reviewer computes in a checkout it is about to lose, and still cannot ch
   );
   f.stop(second.id);
   writeFileSync(join(changed.path, 'seed.txt'), 'edited by the reviewer\n');
-  await assert.rejects(f.manager.capture(second), /workspace_readonly_dirty/);
+  f.git(changed.path, 'switch', '--detach');
+  assert.deepEqual(await f.manager.capture(second), changed.snapshot);
+  await f.manager.close(second);
+  assert.equal(existsSync(changed.path), false);
 });
 
 test('uncertain ownership never releases a persistent checkout and branch/commondir tampering is refused', async (t) => {
@@ -430,18 +438,87 @@ test('uncertain ownership never releases a persistent checkout and branch/common
   );
 });
 
-test('oversized changed files are preserved and rejected before WIP commit', async (t) => {
+/** The launch's workspace diagnostics, as the runner reports them. */
+const notes = (f: ReturnType<typeof setup>, id: string) =>
+  f.ledger.get(id)!.metadata.workspaceNotes as Record<string, Record<string, unknown>> | undefined;
+
+for (const retain of [true, false])
+  test(`a ${retain ? 'retained' : 'non-retained'} writer's oversized file is moved aside, visibly, and the rest captured`, async (t) => {
+    const f = setup(t),
+      record = f.reserve('large');
+    const policy = retain
+      ? f.policy()
+      : ({ mode: 'ephemeral', namespace: 'tests', base: 'central', retain: false } as const);
+    const handle = await f.manager.prepare(record, f.session(record.id, policy));
+    writeFileSync(join(handle.path, 'seed.txt'), 'kept beside the refused file\n');
+    writeFileSync(join(handle.path, 'large.bin'), '');
+    truncateSync(join(handle.path, 'large.bin'), 51 * 1024 * 1024);
+    f.stop(record.id);
+    const result = (await f.manager.capture(record))!;
+    assert.equal(
+      f.git(handle.path, 'show', `${result.headOid}:seed.txt`),
+      'kept beside the refused file',
+    );
+    assert.equal(f.git(handle.path, 'ls-tree', '--name-only', result.headOid, 'large.bin'), '');
+    assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
+    assert.equal(
+      f.git(f.bare, 'cat-file', '--batch-all-objects', '--batch-check').includes(' 53477376'),
+      false,
+    );
+    const aside = `${handle.path}.refused-${record.id}`;
+    assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file, {
+      aside,
+      paths: ['large.bin'],
+    });
+    await f.manager.close(record);
+    assert.equal(statSync(join(aside, 'large.bin')).size, 51 * 1024 * 1024);
+    const next = f.reserve('after-large');
+    const resumed = await f.manager.prepare(next, f.session(next.id, policy));
+    assert.equal(resumed.snapshot!.headOid, retain ? result.headOid : handle.snapshot!.headOid);
+  });
+
+test('a tracked directory a writer replaced with a symlink is moved aside and restored from HEAD', async (t) => {
   const f = setup(t),
-    record = f.reserve('large');
+    record = f.reserve('linked');
   const handle = await f.manager.prepare(record, f.session(record.id));
-  const file = join(handle.path, 'large.bin');
-  writeFileSync(file, '');
-  truncateSync(file, 50 * 1024 * 1024 + 1);
+  mkdirSync(join(handle.path, 'lib'));
+  writeFileSync(join(handle.path, 'lib/a.txt'), 'tracked\n');
+  agent(f, handle.path, 'add', 'lib');
+  agent(f, handle.path, 'commit', '-m', 'lib');
+  rmSync(join(handle.path, 'lib'), { recursive: true });
+  symlinkSync(f.directory, join(handle.path, 'lib'));
+  writeFileSync(join(handle.path, 'work.txt'), 'captured\n');
   f.stop(record.id);
-  await assert.rejects(f.manager.capture(record), /workspace_file_too_large/);
-  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), handle.snapshot!.headOid);
-  assert.equal(f.git(handle.path, 'diff', '--cached', '--name-only'), '');
-  assert.equal(existsSync(file), true);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:lib/a.txt`), 'tracked');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:work.txt`), 'captured');
+  assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(realpathSync(join(aside, 'lib')), realpathSync(f.directory));
+  assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file?.paths, ['lib']);
+});
+
+test("a writer's hours of work beside one oversized dataset survive on disk, and the drop is reported", async (t) => {
+  // Also what an upgraded runner does with a capture an older one left wedged on such a file.
+  const f = setup(t),
+    record = f.reserve('large-work');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'analysis.py'), 'UNIQUE-WRITER-WORK-1f3a\n');
+  writeFileSync(join(handle.path, 'seed.txt'), 'UNIQUE-WRITER-EDIT-9c2e\n');
+  writeFileSync(join(handle.path, 'dataset.csv'), '');
+  truncateSync(join(handle.path, 'dataset.csv'), 51 * 1024 * 1024);
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.notEqual(result.headOid, handle.snapshot!.headOid);
+  assert.equal(
+    f.git(handle.path, 'show', `${result.headOid}:analysis.py`),
+    'UNIQUE-WRITER-WORK-1f3a',
+  );
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'UNIQUE-WRITER-EDIT-9c2e');
+  assert.equal(readFileSync(join(handle.path, 'analysis.py'), 'utf8'), 'UNIQUE-WRITER-WORK-1f3a\n');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(statSync(join(aside, 'dataset.csv')).size, 51 * 1024 * 1024);
+  assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file?.paths, ['dataset.csv']);
 });
 
 test('an unchanged historical large file does not block small WIP capture', async (t) => {
@@ -502,7 +579,7 @@ test('a failed validation after a new branch is added still records the lineage 
   assert.equal(existsSync(resumed.path), true);
 });
 
-test('unsafe private Git filters refuse checkout creation without executing smudge commands', async (t) => {
+test('unsafe private Git configuration is removed before any checkout runs its filters', async (t) => {
   const f = setup(t),
     first = f.reserve('first');
   await f.manager.prepare(first, f.session(first.id));
@@ -512,12 +589,33 @@ test('unsafe private Git filters refuse checkout creation without executing smud
   mkdirSync(join(f.bare, 'info'), { recursive: true });
   writeFileSync(join(f.bare, 'info/attributes'), '* filter=hostile\n');
   const next = f.reserve('other');
-  await assert.rejects(
-    f.manager.prepare(next, f.session(next.id, f.policy(), { instanceId: 'other' })),
-    /workspace_unsafe_git_config/,
-  );
+  await f.manager.prepare(next, f.session(next.id, f.policy(), { instanceId: 'other' }));
   assert.equal(existsSync(canary), false);
-  assert.equal(f.manager.get(next.id), undefined);
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /hostile/);
+});
+
+test('configuration an agent includes from another file is removed with its include', async (t) => {
+  // Only the file's own keys are listed: removing a key that lives in the included file alone
+  // would exit 5 and fail every runner Git call.
+  const f = setup(t),
+    record = f.reserve('include');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  const canary = join(f.directory, 'executed');
+  const included = join(f.directory, 'included.config');
+  writeFileSync(
+    included,
+    `[filter "x"]\n\tclean = touch '${canary}'; cat\n[core]\n\tpager = cat\n`,
+  );
+  mkdirSync(join(f.bare, 'info'), { recursive: true });
+  writeFileSync(join(f.bare, 'info/attributes'), '* filter=x\n');
+  agent(f, handle.path, 'config', 'include.path', included);
+  agent(f, handle.path, 'config', `includeIf.gitdir:${f.directory}/.path`, included);
+  writeFileSync(join(handle.path, 'seed.txt'), 'captured\n');
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'captured');
+  assert.equal(existsSync(canary), false);
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /include/i);
 });
 
 test('foreign paths are not adopted and failed unstarted preparation can close while preserving files', async (t) => {
@@ -562,6 +660,8 @@ test('scratch needs no repository and same-namespace Git modes never nest their 
   const s = await f.manager.prepare(scratch, f.session(scratch.id, { mode: 'none' }));
   assert.equal(existsSync(f.bare), false);
   writeFileSync(join(s.path, 'output.txt'), 'scratch data\n');
+  // The directory is the launch's own: nothing in it marks ownership, or could be deleted.
+  assert.deepEqual(readdirSync(s.path), ['output.txt']);
   f.stop(scratch.id);
   assert.equal(await f.manager.capture(scratch), undefined);
   await f.manager.close(scratch);
@@ -620,4 +720,375 @@ test('valid declaration namespaces have collision-free Git-safe branch component
     f.git(f.bare, 'check-ref-format', `refs/heads/${branch}`);
     branches.add(branch);
   }
+});
+
+/** An agent's Git command in its checkout; a merge, rebase or cherry-pick that stops exits non-zero. */
+const agent = (f: ReturnType<typeof setup>, cwd: string, ...args: string[]) => {
+  try {
+    f.git(cwd, '-c', 'user.name=Agent', '-c', 'user.email=agent@example.test', ...args);
+  } catch {
+    // Left half-done, as an agent may leave it.
+  }
+};
+const adminOf = (path: string) => readFileSync(join(path, '.git'), 'utf8').trim().slice(8);
+/** A second line of work from the lineage's base, changing what the lineage changes. */
+const conflicting = (f: ReturnType<typeof setup>, path: string, branch: string) => {
+  agent(f, path, 'switch', '-c', 'upstream');
+  writeFileSync(join(path, 'seed.txt'), 'upstream\n');
+  agent(f, path, 'commit', '-am', 'upstream');
+  agent(f, path, 'switch', branch);
+  writeFileSync(join(path, 'seed.txt'), 'lineage\n');
+  agent(f, path, 'commit', '-am', 'lineage');
+};
+
+test('a writer that leaves a conflicted merge is captured as one commit with its markers', async (t) => {
+  const f = setup(t),
+    record = f.reserve('merge');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  const before = f.git(handle.path, 'rev-parse', 'HEAD');
+  agent(f, handle.path, 'merge', 'upstream');
+  assert.ok(existsSync(join(adminOf(handle.path), 'MERGE_HEAD')));
+  f.stop(record.id);
+  const result = await f.manager.capture(record);
+  assert.equal(
+    f.git(handle.path, 'rev-list', '--parents', '-n1', handle.snapshot!.branch!),
+    `${result!.headOid} ${before}`,
+  );
+  assert.match(f.git(handle.path, 'show', 'HEAD:seed.txt'), /^<<<<<<< /m);
+  assert.equal(existsSync(join(adminOf(handle.path), 'MERGE_HEAD')), false);
+  await f.manager.close(record);
+  const next = f.reserve('after-merge');
+  const resumed = await f.manager.prepare(next, f.session(next.id));
+  assert.equal(resumed.snapshot!.headOid, result!.headOid);
+  assert.equal(f.git(resumed.path, 'status', '--porcelain'), '');
+});
+
+for (const operation of ['rebase', 'cherry-pick'] as const)
+  test(`a writer stopped mid-${operation} continues its lineage from HEAD, and the next session sees no ${operation}`, async (t) => {
+    const f = setup(t),
+      record = f.reserve(operation);
+    const handle = await f.manager.prepare(record, f.session(record.id));
+    const branch = handle.snapshot!.branch!;
+    conflicting(f, handle.path, branch);
+    const state = join(adminOf(handle.path), operation === 'rebase' ? 'rebase-merge' : 'sequencer');
+    if (operation === 'rebase') agent(f, handle.path, 'rebase', 'upstream');
+    else {
+      writeFileSync(join(handle.path, 'second.txt'), 'upstream again\n');
+      agent(f, handle.path, 'switch', 'upstream');
+      writeFileSync(join(handle.path, 'second.txt'), 'upstream again\n');
+      agent(f, handle.path, 'commit', '-am', 'upstream again');
+      agent(f, handle.path, 'switch', branch);
+      agent(f, handle.path, 'cherry-pick', 'upstream~1', 'upstream');
+    }
+    assert.ok(existsSync(state));
+    const stopped = f.git(handle.path, 'rev-parse', 'HEAD');
+    f.stop(record.id);
+    const result = await f.manager.capture(record);
+    assert.equal(f.git(f.bare, 'rev-parse', `refs/heads/${branch}`), result!.headOid);
+    assert.equal(
+      f.git(f.bare, 'rev-list', '--parents', '-n1', result!.headOid),
+      `${result!.headOid} ${stopped}`,
+    );
+    assert.equal(existsSync(state), false);
+    await f.manager.close(record);
+    const next = f.reserve(`after-${operation}`);
+    const resumed = await f.manager.prepare(next, f.session(next.id));
+    assert.equal(resumed.snapshot!.headOid, result!.headOid);
+    assert.doesNotMatch(f.git(resumed.path, 'status'), /rebas|cherry|bisect/i);
+  });
+
+test('a writer stopped mid-rebase keeps its unreplayed commits reachable from a rescue ref', async (t) => {
+  const f = setup(t),
+    record = f.reserve('rebase-work');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  writeFileSync(join(handle.path, 'later.txt'), 'committed later\n');
+  agent(f, handle.path, 'add', 'later.txt');
+  agent(f, handle.path, 'commit', '-m', 'later, committed work');
+  const committed = f.git(handle.path, 'rev-parse', 'HEAD');
+  agent(f, handle.path, 'rebase', 'upstream'); // stops on the first commit's conflict
+  f.stop(record.id);
+  await f.manager.capture(record);
+  assert.equal(f.git(f.bare, 'rev-parse', 'refs/merv/rescued/rebase-work'), committed);
+  assert.deepEqual(notes(f, record.id)?.workspace_commits_rescued, {
+    refs: ['refs/merv/rescued/rebase-work'],
+  });
+});
+
+test("a writer that rewinds its lineage keeps the old tip under a rescue ref; one that doesn't, none", async (t) => {
+  const f = setup(t),
+    record = f.reserve('rewind');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'kept.txt'), 'acknowledged\n');
+  f.stop(record.id);
+  const first = (await f.manager.capture(record))!;
+  await f.manager.close(record);
+  assert.equal(notes(f, record.id), undefined);
+  const next = f.reserve('rewinder');
+  const resumed = await f.manager.prepare(next, f.session(next.id));
+  agent(f, resumed.path, 'reset', '--hard', handle.snapshot!.headOid);
+  f.stop(next.id);
+  const second = (await f.manager.capture(next))!;
+  assert.equal(second.headOid, handle.snapshot!.headOid);
+  assert.equal(f.git(f.bare, 'rev-parse', 'refs/merv/rescued/rewinder'), first.headOid);
+  assert.deepEqual(notes(f, next.id)?.workspace_commits_rescued, {
+    refs: ['refs/merv/rescued/rewinder'],
+  });
+});
+
+test('a retained reviewer stopped mid-rebase is put back on what it judged', async (t) => {
+  const f = setup(t),
+    record = f.reserve('review');
+  const handle = await f.manager.prepare(
+    record,
+    f.session(record.id, f.policy(), { readOnly: true }),
+  );
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  agent(f, handle.path, 'rebase', 'upstream');
+  assert.ok(existsSync(join(adminOf(handle.path), 'rebase-merge')));
+  f.stop(record.id);
+  assert.deepEqual(await f.manager.capture(record), handle.snapshot);
+  assert.equal(existsSync(join(adminOf(handle.path), 'rebase-merge')), false);
+  assert.equal(f.git(handle.path, 'symbolic-ref', '--short', 'HEAD'), handle.snapshot!.branch);
+  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), handle.snapshot!.headOid);
+  assert.equal(f.git(handle.path, 'status', '--porcelain'), '');
+});
+
+test('work a writer did on a side branch becomes its lineage, even with the lineage branch deleted', async (t) => {
+  const f = setup(t),
+    record = f.reserve('side');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  const branch = handle.snapshot!.branch!;
+  agent(f, handle.path, 'switch', '-c', 'feature');
+  writeFileSync(join(handle.path, 'feature.txt'), 'committed\n');
+  agent(f, handle.path, 'add', '.');
+  agent(f, handle.path, 'commit', '-m', 'feature');
+  agent(f, handle.path, 'branch', '-D', branch);
+  writeFileSync(join(handle.path, 'seed.txt'), 'dirty\n');
+  f.stop(record.id);
+  const result = await f.manager.capture(record);
+  assert.equal(f.git(handle.path, 'symbolic-ref', '--short', 'HEAD'), branch);
+  assert.equal(f.git(handle.path, 'rev-parse', 'HEAD'), result!.headOid);
+  assert.equal(f.git(handle.path, 'show', `${branch}:feature.txt`), 'committed');
+  assert.equal(f.git(handle.path, 'show', `${branch}:seed.txt`), 'dirty');
+  await f.manager.close(record);
+});
+
+test('a retained checkout deleted between sessions rejoins its lineage', async (t) => {
+  const f = setup(t),
+    record = f.reserve('deleted');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'kept.txt'), 'captured\n');
+  f.stop(record.id);
+  const result = await f.manager.capture(record);
+  await f.manager.close(record);
+  rmSync(handle.path, { recursive: true, force: true });
+  const next = f.reserve('after-delete');
+  const resumed = await f.manager.prepare(next, f.session(next.id));
+  assert.equal(resumed.path, handle.path);
+  assert.equal(resumed.snapshot!.headOid, result!.headOid);
+});
+
+const unreadable = { skip: process.getuid?.() === 0 && 'root reads every file' };
+for (const [name, readOnly, jam] of [
+  [
+    "a writer's unreadable file",
+    false,
+    (path: string) => {
+      writeFileSync(join(path, 'locked.txt'), 'x\n');
+      chmodSync(join(path, 'locked.txt'), 0);
+    },
+  ],
+  [
+    "a reviewer's unreadable directory",
+    true,
+    (path: string) => {
+      mkdirSync(join(path, 'locked'));
+      writeFileSync(join(path, 'locked/file'), 'x\n');
+      chmodSync(join(path, 'locked'), 0);
+    },
+  ],
+  [
+    'a stale index.lock',
+    false,
+    (path: string) => writeFileSync(join(adminOf(path), 'index.lock'), ''),
+  ],
+] as const)
+  test(
+    `a capture that fails the same way for 10 minutes is abandoned, not retried forever: ${name}`,
+    unreadable,
+    async (t) => {
+      t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      let aside = '';
+      // Registered before the fixture's cleanup, which must be able to read what it removes.
+      t.after(() => {
+        if (existsSync(join(aside, 'locked'))) chmodSync(join(aside, 'locked'), 0o700);
+      });
+      const f = setup(t),
+        record = f.reserve('stuck');
+      const handle = await f.manager.prepare(
+        record,
+        f.session(record.id, f.policy(), { readOnly }),
+      );
+      aside = `${handle.path}.abandoned-${record.id}`;
+      writeFileSync(join(handle.path, 'work.txt'), "the session's work\n");
+      jam(handle.path);
+      f.stop(record.id);
+      await assert.rejects(f.manager.capture(record), /workspace_git_failed/);
+      t.mock.timers.tick(600_000);
+      await assert.rejects(f.manager.capture(record), /workspace_git_failed/);
+      await assert.rejects(f.manager.capture(record), /workspace_abandoned/);
+      assert.equal(await f.manager.capture(record), undefined);
+      await f.manager.close(record);
+      assert.equal(f.manager.get(record.id)?.status, 'closed');
+      // Moved aside for the user, never deleted, and pointing at no checkout of this repository.
+      // (A reviewer's own files were already cleaned away by the restore that failed.)
+      assert.ok(existsSync(aside));
+      if (!readOnly)
+        assert.equal(readFileSync(join(aside, 'work.txt'), 'utf8'), "the session's work\n");
+      assert.equal(existsSync(join(aside, '.git')), false);
+      const next = f.reserve('after');
+      const resumed = await f.manager.prepare(next, f.session(next.id));
+      assert.equal(resumed.path, handle.path);
+      assert.equal(resumed.snapshot!.headOid, handle.snapshot!.headOid);
+      assert.equal(f.git(resumed.path, 'status', '--porcelain'), '');
+    },
+  );
+
+test('an index.lock gone by the next attempt is captured normally', async (t) => {
+  const f = setup(t),
+    record = f.reserve('transient');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'work.txt'), 'captured\n');
+  writeFileSync(join(adminOf(handle.path), 'index.lock'), '');
+  f.stop(record.id);
+  await assert.rejects(f.manager.capture(record), /workspace_git_failed/);
+  rmSync(join(adminOf(handle.path), 'index.lock'));
+  const result = await f.manager.capture(record);
+  assert.equal(f.git(handle.path, 'show', `${result!.headOid}:work.txt`), 'captured');
+});
+
+test(
+  'a close whose checkout cannot be removed is abandoned and still frees its slot',
+  unreadable,
+  async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    let aside = '';
+    t.after(() => chmodSync(join(aside, 'locked'), 0o700));
+    const f = setup(t),
+      record = f.reserve('unremovable');
+    const handle = await f.manager.prepare(
+      record,
+      f.session(record.id, f.policy({ retain: false })),
+    );
+    f.stop(record.id);
+    await f.manager.capture(record);
+    // Something left in the checkout that its removal cannot read.
+    mkdirSync(join(handle.path, 'locked'));
+    writeFileSync(join(handle.path, 'locked/file'), 'x\n');
+    chmodSync(join(handle.path, 'locked'), 0);
+    aside = `${handle.path}.abandoned-${record.id}`;
+    await assert.rejects(f.manager.close(record));
+    t.mock.timers.tick(600_000);
+    await assert.rejects(f.manager.close(record));
+    await assert.rejects(f.manager.close(record), /workspace_abandoned/);
+    await f.manager.close(record);
+    assert.equal(f.manager.get(record.id)?.status, 'closed');
+    assert.ok(existsSync(join(aside, 'locked')));
+    const next = f.reserve('after');
+    await f.manager.prepare(next, f.session(next.id, f.policy({ retain: false })));
+  },
+);
+
+test('a commit size check reads only what changed, however large the tree', async (t) => {
+  const f = setup(t),
+    record = f.reserve('wide');
+  await f.manager.prepare(record, f.session(record.id));
+  const index = join(f.directory, 'wide-index');
+  const plumb = (args: string[], input?: string) =>
+    execFileSync('git', ['--git-dir', f.bare, ...args], {
+      input,
+      encoding: 'utf8',
+      maxBuffer: 1 << 30,
+      env: { PATH: '/usr/bin:/bin', GIT_INDEX_FILE: index },
+    }).trim();
+  const blob = plumb(['hash-object', '-w', '--stdin'], 'x\n');
+  // 500,000 paths: listing the whole tree would exceed Git's 32 MiB output bound.
+  plumb(
+    ['update-index', '--index-info'],
+    Array.from({ length: 500_000 }, (_, i) => `100644 ${blob}\td${i % 1000}/f${i}\n`).join(''),
+  );
+  const parent = plumb(['write-tree']);
+  plumb([
+    'update-index',
+    '--add',
+    '--cacheinfo',
+    `100644,${plumb(['hash-object', '-w', '--stdin'], 'y\n')},changed`,
+  ]);
+  const tree = plumb(['write-tree']);
+  const manager = f.manager as unknown as {
+    row(id: string): unknown;
+    checkTreeFiles(row: unknown, parent: string, tree: string): Promise<void>;
+  };
+  await manager.checkTreeFiles(manager.row(record.id), parent, tree);
+});
+
+test('a retried capture never overwrites a rescue ref an earlier attempt wrote', async (t) => {
+  const f = setup(t),
+    record = f.reserve('retry-rescue');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  // Unique work made on a detached HEAD: only the rebase's orig-head names it.
+  agent(f, handle.path, 'checkout', '--detach');
+  writeFileSync(join(handle.path, 'detached.txt'), 'only here\n');
+  agent(f, handle.path, 'add', 'detached.txt');
+  agent(f, handle.path, 'commit', '-m', 'detached work');
+  const unique = f.git(handle.path, 'rev-parse', 'HEAD');
+  agent(f, handle.path, 'rebase', 'upstream'); // stops on the conflict
+  assert.ok(existsSync(join(adminOf(handle.path), 'rebase-merge')));
+  // A git child killed with the agent left its index lock: the first attempt fails after rescue.
+  writeFileSync(join(adminOf(handle.path), 'index.lock'), '');
+  f.stop(record.id);
+  await assert.rejects(f.manager.capture(record), /workspace_git_failed/);
+  const firstRefs = f.git(
+    f.bare,
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    'refs/merv/rescued/',
+  );
+  console.log('after attempt 1:', firstRefs);
+  rmSync(join(adminOf(handle.path), 'index.lock'));
+  await f.manager.capture(record);
+  const refs = f.git(
+    f.bare,
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    'refs/merv/rescued/',
+  );
+  console.log('after attempt 2:', refs);
+  const reachable = f.git(f.bare, 'for-each-ref', '--contains', unique, '--format=%(refname)');
+  assert.notEqual(reachable, '', `detached work ${unique} must stay reachable from some ref`);
+});
+
+test('a tracked file grown past the bound is moved aside and kept as HEAD has it; a nested untracked big file too', async (t) => {
+  const f = setup(t),
+    record = f.reserve('tracked-large');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'seed.txt'), '');
+  truncateSync(join(handle.path, 'seed.txt'), 51 * 1024 * 1024);
+  mkdirSync(join(handle.path, 'data/deep'), { recursive: true });
+  writeFileSync(join(handle.path, 'data/deep/big.csv'), '');
+  truncateSync(join(handle.path, 'data/deep/big.csv'), 51 * 1024 * 1024);
+  writeFileSync(join(handle.path, 'data/small.txt'), 'small\n');
+  writeFileSync(join(handle.path, '-dash :(glob)*.txt'), 'odd\n');
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'initial');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:data/small.txt`), 'small');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:-dash :(glob)*.txt`), 'odd');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(statSync(join(aside, 'seed.txt')).size, 51 * 1024 * 1024);
+  assert.equal(statSync(join(aside, 'data/deep/big.csv')).size, 51 * 1024 * 1024);
+  assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
 });

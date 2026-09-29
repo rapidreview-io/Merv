@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { hostedCodexPlatform } from '@merv/contracts';
 import { MachineRunner } from '@merv/runner';
 import { codeWorkspaceDriver } from '@merv/code/driver/index';
 
@@ -77,16 +78,7 @@ async function main() {
       assignmentWorkspaceDirectory: assignmentRoot,
       workspaceDrivers: ['code'],
       profiles: [
-        {
-          name: 'hosted-codex',
-          harness: 'codex',
-          executable: codex,
-          isolatedLauncher: launcher,
-          hosted: true,
-          model: 'gpt-6-luna',
-          enabled: true,
-          parallelism: 1,
-        },
+        { ...hostedCodexPlatform, executable: codex, isolatedLauncher: launcher, hosted: true },
       ],
     },
     { autoPoll: false, drivers: [codeWorkspaceDriver] },

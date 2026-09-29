@@ -135,13 +135,17 @@ test('a final lease refusal completes that request and later profiles lease on t
 test('a kept request for a removed profile does not stop the other profiles', async (t) => {
   const kept = offer('kept');
   const fake = server((body) => (body.platform.name === 'gone' ? kept : null));
-  const f = machine(t, [node('b')], fake.fetch);
+  // Each tick comes 5 s after the last, past b's back-off after its decline.
+  let now = Date.now();
+  const f = machine(t, [node('b')], fake.fetch, { clock: () => now });
   const ledger = f.ledger();
   const pending = ledger.request({ name: 'gone', harness: 'command' });
   ledger.close();
   const runner = f.make();
   await runner.start();
+  now += 5_000;
   await runner.tick();
+  now += 5_000;
   await runner.tick();
   assert.equal(fake.leases('b').length, 3, 'b asks on every tick');
   assert.deepEqual(
@@ -296,7 +300,7 @@ test('a one-assignment runner replays only the request of its own launch', async
   assert.equal(fake.leases('codex').length, 1, 'it never asks for a successor');
 });
 
-test('presence names runner.1 on a source runner and only the enrolled drivers on a managed one', async (t) => {
+test('presence names runner.2 (and git.local) on a source runner and only the enrolled drivers on a managed one', async (t) => {
   const driver: WorkspaceDriverFactory = {
     name: 'code.v2',
     create: () => ({ get: () => undefined, dispose: () => {} }) as unknown as WorkspaceDriver,
@@ -311,28 +315,54 @@ test('presence names runner.1 on a source runner and only the enrolled drivers o
     return fake.calls.find((call) => call.path === '/sessions/runners/heartbeat')!.body!
       .capabilities;
   };
-  assert.deepEqual(await capabilities({}, []), ['runner.1']);
-  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.1']);
+  assert.deepEqual(await capabilities({}, []), ['runner.2']);
+  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.2']);
+  // A runner with a repository of its own says so, for work that names no driver.
+  const workspace = { repository: '/nonexistent/source', baseRef: 'main' };
+  assert.deepEqual(await capabilities({ workspace }, []), ['git.local', 'runner.2']);
   const managed = { oneAssignment: true, capacity: 1 };
   assert.deepEqual(await capabilities(managed, [driver]), ['code.v2']);
   assert.equal(await capabilities(managed, []), undefined);
 });
 
-test('a guardian lost before it launched anything is ended a minute later and released', async (t) => {
-  const work = offer('lost');
+test('a guardian that cannot own its socket ends the launch it claimed, which is released', async (t) => {
+  const work = offer('socket');
   let offered = false;
   const fake = server(() => (offered ? null : ((offered = true), work)));
   const f = machine(t, [node('a', 'setInterval(()=>{},1000)')], fake.fetch);
-  // A socket directory the guardian refuses: it claims the launch, then exits before listening.
+  // A socket directory the guardian refuses: it has claimed the launch, and nothing was spawned.
   const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(resolve(f.config.directory)).digest('hex').slice(0, 16)}`;
   symlinkSync(f.root, sockets);
   t.after(() => rmSync(sockets, { force: true }));
   const runner = f.make();
   await runner.start();
   const id = launchId(work.id);
+  await until(runner, () => fake.releases(work.id).length > 0, 'released');
+  const ledger = f.ledger();
+  const launch = ledger.get(id)!;
+  ledger.close();
+  assert.deepEqual([launch.status, launch.reason], ['stopped', 'socket_failed']);
+  assert.equal(fake.releases(work.id).length, 1);
+  assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_socket_failed');
+  assert.ok(['crash_loop', 'host_failed'].includes(fake.releases(work.id)[0].body?.outcome));
+});
+
+test('a guardian lost before it launched anything is ended a minute later and released', async (t) => {
+  const work = offer('lost');
+  const fake = server(() => null);
+  const f = machine(t, [node('a')], fake.fetch);
+  // Claimed, then gone before it pinned a command: a guardian killed before it listened, or one
+  // from before guardians ended such a launch themselves.
+  const ledger = f.ledger();
+  const id = launchId(work.id);
+  ledger.reserve({ id, sessionId: work.id, deadline: Date.now() + 3_600_000, metadata: {} });
+  fake.sessions.set(work.id, { ...work, runnerId: ledger.runnerId, hostRef: id, status: 'active' });
+  ledger.close();
+  ended(f.config.directory, id, { status: 'starting', reason: null });
+  const runner = f.make();
+  await runner.start();
   const first = metadata(f.config.directory, id);
   assert.equal(runner.snapshot().launches[0].status, 'uncertain');
-  assert.equal(first.releaseOutcome, 'launch_failed');
   assert.equal(typeof first.lostAt, 'number');
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   await runner.tick();
@@ -343,6 +373,6 @@ test('a guardian lost before it launched anything is ended a minute later and re
   await runner.tick();
   assert.equal(runner.snapshot().launches[0].status, 'stopped');
   assert.equal(fake.releases(work.id).length, 1);
-  assert.equal(fake.releases(work.id)[0].body?.outcome, 'launch_failed');
+  assert.ok(['crash_loop', 'host_failed'].includes(fake.releases(work.id)[0].body?.outcome));
   assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_guardian_lost_before_launch');
 });

@@ -108,7 +108,13 @@ export {
 } from './running.js';
 export type { CodeBlocker, PersonMove, NameLookup } from './code-blockers.js';
 export { personMove, publicationBlocker, firstPersonMove } from './code-blockers.js';
-export { codexHandoffGraceMs, RUNNER_HARNESSES, sessionSecretPattern } from './session-inputs.js';
+export {
+  codexHandoffGraceMs,
+  hostedCodexCapabilities,
+  hostedCodexPlatform,
+  RUNNER_HARNESSES,
+  sessionSecretPattern,
+} from './session-inputs.js';
 export { WorkspaceDeferred } from './workspace-driver.js';
 export type {
   WorkspaceDriver,

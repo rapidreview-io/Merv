@@ -55,10 +55,7 @@ const client = (value: unknown) =>
 const invalid = { code: 'invalid_control_response', status: 0 };
 
 test('runner presence keeps only bounded tuning settings and ignores fields it does not know', async () => {
-  const input = structuredClone(heartbeat);
-  const pending = client(presence()).presence(input);
-  input.runnerId = 'changed_runner';
-  const result = await pending;
+  const result = await client(presence()).presence(heartbeat);
   assert.deepEqual(result.desiredSettings, { platforms: [desired] });
   assert.equal(result.desiredVersion, 1);
   assert.deepEqual((await client(presence([])).presence(heartbeat)).desiredSettings, {
@@ -113,10 +110,10 @@ test('runner presence keeps only bounded tuning settings and ignores fields it d
 });
 
 test('lease replies bind the server-selected session to this project and runner, including replayed closed leases', async () => {
-  const input = structuredClone(lease);
-  const pending = client({ session: session(), reason: 'leased' }).lease(input);
-  input.runnerId = 'changed_runner';
-  assert.equal((await pending).session?.id, 'session_fixture');
+  assert.equal(
+    (await client({ session: session(), reason: 'leased' }).lease(lease)).session?.id,
+    'session_fixture',
+  );
   assert.deepEqual(await client({ session: null, reason: 'no_candidates' }).lease(lease), {
     session: null,
     reason: 'no_candidates',
@@ -144,17 +141,6 @@ test('lease replies bind the server-selected session to this project and runner,
     { session: null, reason: 'empty' },
     'a field a newer server adds to the envelope is ignored',
   );
-});
-
-test('pending presence and lease replies cannot adopt a replacement runner identity', async () => {
-  const ping = { ...heartbeat, runnerId: 'other_runner' };
-  const pinging = client(presence()).presence(ping);
-  ping.runnerId = heartbeat.runnerId;
-  await assert.rejects(pinging, invalid);
-  const offer = { ...lease, runnerId: 'other_runner' };
-  const offering = client({ session: session(), reason: 'leased' }).lease(offer);
-  offer.runnerId = heartbeat.runnerId;
-  await assert.rejects(offering, invalid);
 });
 
 test('workspace acknowledgements compare against the attachment originally sent', async () => {

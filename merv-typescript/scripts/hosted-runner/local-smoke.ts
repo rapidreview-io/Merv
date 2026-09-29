@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
 import { createApp } from '../../src/app.js';
 import { loadConfiguration } from '../../src/config.js';
 import { useRunSchema } from '../database.js';
@@ -80,13 +81,6 @@ try {
   sourceToken = boot.token;
   const source = await app.ctx.scope.delegationSource(caller);
   const allocationId = `local_${run}`;
-  const profile = {
-    name: 'hosted-codex',
-    harness: 'codex' as const,
-    model: 'gpt-6-luna',
-    enabled: true,
-    parallelism: 1,
-  };
   app.ctx.sessions.registerManagedValidator({
     current: async (binding) =>
       binding.allocationId === allocationId &&
@@ -101,8 +95,8 @@ try {
     epoch: 1,
     source,
     runtimeProfileId: 'local-codex-acceptance',
-    platform: profile,
-    capabilities: ['code.v2'],
+    platform: hostedCodexPlatform,
+    capabilities: [...hostedCodexCapabilities],
     expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
   });
   if (!modelApiKey) {

@@ -19,11 +19,8 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { FleetService } from '@merv/fleet';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
-import {
-  FleetWorkflowAdapter,
-  hostedCodexCapabilities,
-  hostedCodexPlatform,
-} from '../packages/fleet/src/workflow.js';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
+import { FleetWorkflowAdapter } from '../packages/fleet/src/workflow.js';
 import { openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;

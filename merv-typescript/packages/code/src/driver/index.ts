@@ -470,26 +470,11 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       this.db
         .prepare("UPDATE code_v2_workspaces SET status='capturing' WHERE launch_id=?")
         .run(launch.id);
-      const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
-      const attached = JSON.parse(row.attachment_json!) as SessionWorkspace;
-      let head: string;
-      if (row.read_only) {
-        head = oid(
-          await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
-        );
-        if (head !== attached.headOid) throw new WorkspaceError('workspace_readonly_head_changed');
-        const status = await this.git.ok(['status', '--porcelain', '--untracked-files=all'], {
-          cwd: row.path,
-        });
-        const dirty =
-          policy.mode !== 'none' && policy.retain
-            ? status.trim()
-            : status
-                .split('\n')
-                .filter((line) => line.trim() && !line.startsWith('??'))
-                .join('\n');
-        if (dirty) throw new WorkspaceError('workspace_readonly_dirty');
-      } else head = await this.finalize(row);
+      // A reviewer's session is reported as it was attached, whatever it left in the checkout:
+      // what was judged is what is inherited, and the next prepare restores the checkout.
+      const head = row.read_only
+        ? (JSON.parse(row.attachment_json!) as SessionWorkspace).headOid
+        : await this.finalize(row);
       row = this.row(launch.id)!;
       const snapshot = await this.snapshot(row, head);
       this.db

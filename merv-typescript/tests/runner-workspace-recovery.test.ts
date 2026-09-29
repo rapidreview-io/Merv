@@ -391,8 +391,9 @@ test(
       else process.env[credentialEnv] = previous;
       rmSync(directory, { recursive: true, force: true });
     });
-    await runner.start();
+    // Dispatch first: the runner's first lease finds the work, rather than a decline it backs off.
     await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await runner.start();
     await runner.tick();
     assert.equal(lostAttach, true);
     const offered = (await app.ctx.sessions.list(source))[0];

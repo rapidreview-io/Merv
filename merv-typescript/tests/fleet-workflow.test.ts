@@ -36,13 +36,12 @@ import type {
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   fleetWorkflowPlugin,
   FleetWorkflowAdapter,
   type FleetWorkflowConfig,
-  hostedCodexCapabilities,
-  hostedCodexPlatform,
 } from '../packages/fleet/src/workflow.js';
 import {
   codexModelRelay,

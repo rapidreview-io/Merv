@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import {
   WorkspaceDeferred,
+  type CodeCommitCommand,
   type WorkspaceDriverFactory,
   type WorkspaceHandle,
 } from '@merv/contracts';
@@ -231,14 +232,16 @@ test('presence and lease 401 halts stay counted', async (t) => {
           ? new Refusal(401, 'unauthorized')
           : undefined,
     );
+    let skew = 60_000;
     const f = machine(t, [node('a', live), node('b')], fake.fetch, {
       config: { capacity: 2 },
-      clock: () => Date.now() + 60_000,
+      clock: () => Date.now() + skew,
     });
     const runner = f.make();
     await runner.start();
     await running(runner);
     revoked = true;
+    skew += 15_000; // presence is due again, and b's decline is backed off no longer
     await runner.tick();
     assert.equal(runner.snapshot().state, 'unauthorized', route);
     assert.equal(runner.snapshot().launches[0].status, 'stopped', route);
@@ -384,7 +387,7 @@ test('a Code receipt refused until GitHub is pushed is kept and replayed on the 
         : undefined,
   );
   const acknowledged: string[] = [];
-  let command: Body | undefined;
+  let command: CodeCommitCommand | undefined;
   // The stand-in knows no Code route; once pushed, it answers the completion as Code would.
   const fetcher: typeof fetch = async (input, init) => {
     const reply = await fake.fetch(input as string, init);
@@ -419,7 +422,7 @@ test('a Code receipt refused until GitHub is pushed is kept and replayed on the 
     create: (host, transport) => ({
       ...stub.factory.create(host, transport),
       checkpointCommit: async () => assert.fail('its outcome is already proven'),
-      pendingCommits: () => (acknowledged.length ? [] : [command]),
+      pendingCommits: () => (acknowledged.length ? [] : [command!]),
       commitOutcome: () => ({ error: 'workspace_stopped' }),
       acknowledgeCommit: (commandId: string) => acknowledged.push(commandId),
     }),
@@ -449,12 +452,14 @@ test('a final presence refusal keeps supervising launches and stops leasing', as
       ? new Refusal(409, 'runner_limit')
       : undefined,
   );
-  const f = machine(t, [node('a', live, 2)], fake.fetch);
+  let skew = 0;
+  const f = machine(t, [node('a', live, 2)], fake.fetch, { clock: () => Date.now() + skew });
   const runner = f.make();
   await runner.start();
   limited = true;
   const before = fake.calls.length;
   fake.sessions.get(work.id)!.status = 'released';
+  skew += 15_000; // presence is due again
   await runner.tick();
   const paths = fake.calls.slice(before).map((call) => call.path);
   assert.ok(paths.includes(`/sessions/${work.id}`), 'the launch is reconciled');
