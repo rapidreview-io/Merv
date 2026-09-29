@@ -15,6 +15,8 @@ import type { CredentialBinding } from '@merv/mounts/types';
 import type { MountConfig, Mounts } from '@merv/mounts/types';
 import { mountsPlugin } from '../packages/mounts/src/index.js';
 import { MountRuntime } from '../packages/mounts/src/runtime.js';
+import { mountsUiPlugin } from '../packages/mounts/src/ui.js';
+import { UiRegistry } from '@merv/ui';
 import {
   RemoteFixture,
   representativeTools,
@@ -191,7 +193,7 @@ test(
 );
 
 test(
-  'catalog loss withdraws tools and bounded automatic reconnect restores a complete selected catalog',
+  'a missing selected tool is withdrawn and polling restores it when it returns',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
@@ -205,13 +207,15 @@ test(
       () => mounts.status()[0].toolCount === 0,
       'Missing selected tool did not withdraw the catalog',
     );
+    assert.equal(mounts.status()[0].state, 'ready');
     assert.equal(mounts.status()[0].errorCode, 'mount_missing_tool');
     assert.deepEqual(await names(services.registry), ['native']);
     upstream.setTools(representativeTools);
     await until(
-      () => mounts.status()[0].state === 'ready',
-      'Automatic reconnect did not restore selected tools',
+      () => mounts.status()[0].toolCount === 1,
+      'Polling did not restore the selected tool',
     );
+    assert.equal(mounts.status()[0].errorCode, undefined);
     assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
     assert.deepEqual(
       await services.registry.call('_fixture.media', services.caller, {}),
@@ -687,14 +691,15 @@ test('a failed round and stop each end the discovery session with a DELETE', asy
   const services = await local(t);
   const upstream = await remote(t);
   const { mounts, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 100 },
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 100 },
   ]);
   assert.equal(upstream.sessionCount, 1);
-  upstream.setTools([]);
+  const held = upstream.holdNextList();
   await upstream.notifyToolsChanged();
   await until(() => upstream.deletes === 1, 'A failed round did not DELETE its session');
+  assert.equal(mounts.status()[0].errorCode, 'remote_timeout');
   assert.equal(upstream.sessionCount, 0);
-  upstream.setTools(representativeTools);
+  held.release();
   await until(() => mounts.status()[0].state === 'ready', 'The next round did not reconnect');
   assert.equal(upstream.sessionCount, 1);
   await fiber.dispose();
@@ -864,18 +869,15 @@ test("a failed round's DELETE completes before stop resolves", async (t) => {
   const upstream = await remote(t);
   const actualFetch = globalThis.fetch;
   t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
-    if (init?.method === 'DELETE') await sleep(300);
+    if (init?.method === 'DELETE') await sleep(300); // within the DELETE deadline
     return actualFetch(address, init);
   });
   const { mounts, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 500, reconnectMs: 60000 },
   ]);
-  upstream.setTools([]);
+  upstream.holdNextList();
   await upstream.notifyToolsChanged();
-  await until(
-    () => mounts.status()[0].errorCode === 'mount_missing_tool',
-    'The round did not fail',
-  );
+  await until(() => mounts.status()[0].errorCode === 'remote_timeout', 'The round did not fail');
   assert.equal(upstream.deletes, 0);
   await fiber.dispose();
   assert.equal(upstream.deletes, 1);
@@ -916,8 +918,11 @@ test('a round that finishes after stop leaves the mount stopped', async (t) => {
 
 test('twelve failed rounds and stop send no notifications/cancelled', async (t) => {
   const services = await local(t);
-  const upstream = await remote(t);
-  upstream.setTools([]);
+  const upstream = await remote(t, {
+    page: () => {
+      throw new Error('Synthetic catalog failure');
+    },
+  });
   const runtime = new MountRuntime(
     services.registry,
     new Bindings(services.scope, services.bindings),
@@ -929,7 +934,7 @@ test('twelve failed rounds and stop send no notifications/cancelled', async (t) 
     runtime.refresh();
     await until(() => upstream.deletes === round, 'A failed round did not end its session');
   }
-  assert.equal(runtime.status().errorCode, 'mount_missing_tool');
+  assert.equal(runtime.status().errorCode, 'remote_error');
   assert.equal(upstream.opened, 12);
   await runtime.stop();
   await sleep(100);
@@ -938,4 +943,43 @@ test('twelve failed rounds and stop send no notifications/cancelled', async (t) 
     upstream.notifications.filter((method) => method === 'notifications/cancelled'),
     [],
   );
+});
+
+test('a missing selected tool is withdrawn alone and degrades the Connections row', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { mounts } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media', 'inspect'], reconnectMs: 60000 },
+  ]);
+  const ui = new UiRegistry();
+  mountsUiPlugin.apply({ mounts, ui, effect: (fn: () => unknown) => fn() } as never);
+  assert.deepEqual((await ui.describe(services.caller))[0].status, { state: 'ready' });
+  upstream.setTools(representativeTools.filter((tool) => tool.name !== 'media'));
+  await upstream.notifyToolsChanged();
+  await until(() => mounts.status()[0].toolCount === 1, 'The missing tool was not withdrawn');
+  assert.equal(mounts.status()[0].state, 'ready');
+  assert.equal(mounts.status()[0].errorCode, 'mount_missing_tool');
+  assert.deepEqual(await names(services.registry), ['_fixture.inspect', 'native']);
+  assert.deepEqual((await ui.describe(services.caller))[0].status, {
+    state: 'degraded',
+    detail: '1 of 1 not ready',
+  });
+});
+
+test('a mount whose selected tools are all missing is ready with none published', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t, { tools: [] });
+  const { mounts } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], reconnectMs: 60000 },
+  ]);
+  assert.deepEqual(mounts.status(), [
+    {
+      id: 'fixture',
+      origin: new URL(upstream.url).origin,
+      state: 'ready',
+      toolCount: 0,
+      errorCode: 'mount_missing_tool',
+    },
+  ]);
+  assert.deepEqual(await names(services.registry), ['native']);
 });

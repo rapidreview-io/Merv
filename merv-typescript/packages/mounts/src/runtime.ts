@@ -1,6 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { check, type Scope } from '@merv/contracts';
+import type { Scope } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
 import type { Bindings } from './credentials.js';
 import type { MountConfig, MountStatus } from './types.js';
@@ -85,10 +85,10 @@ export class MountRuntime {
       signal,
       timeout: this.#timeoutMs,
     });
-    const selected: RemoteToolDefinition[] = this.config.tools.map((name) => {
+    // The selected tools the upstream offers now; a missing one is withdrawn alone.
+    const selected: RemoteToolDefinition[] = this.config.tools.flatMap((name) => {
       const definition = found.get(name);
-      check(definition, 'mount_missing_tool', 'A selected remote tool is missing', 502);
-      return { ...definition, kind: 'mcp', handler: this.#pool.handler(name) };
+      return definition ? [{ ...definition, kind: 'mcp', handler: this.#pool.handler(name) }] : [];
     });
     // Registry compilation only sees the selected subset and swaps the entire generation atomically.
     // An unchanged catalog is not replaced: no schema compile, and no drain of admitted calls.
@@ -98,7 +98,8 @@ export class MountRuntime {
       this.#published = next;
     }
     if (this.#stopped) return; // a round finishing after stop() never overwrites 'stopped'
-    this.#set('ready', selected.length);
+    const missing = selected.length < this.config.tools.length;
+    this.#set('ready', selected.length, missing ? 'mount_missing_tool' : undefined);
   }
 
   /** Discovery lists metadata only; its binding never carries a call (handlers use the pool). */

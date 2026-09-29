@@ -33,6 +33,7 @@ export interface MountStatus {
   id: string;
   /** Public endpoint origin only; never credentials, paths, query strings, or headers. */
   origin: string;
+  /** ready: the last round succeeded (errorCode mount_missing_tool when some selected tools are absent). */
   state: 'connecting' | 'ready' | 'disconnected' | 'failed' | 'stopped';
   toolCount: number;
   errorCode?: string;
