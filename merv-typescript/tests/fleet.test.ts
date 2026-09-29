@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import { createService, MervError, type Caller } from '@merv/contracts';
+import { createService, MervError, type Caller, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type {
   SandboxRuntimeHandle,
@@ -821,6 +821,60 @@ test('a person’s machines stop renting once today’s compute is spent; anothe
   assert.equal((await ask('b_1')).person, 'person_b');
   // An owner that names nobody is not counted, nor held back.
   assert.equal((await ask('c_1')).person, undefined);
+});
+
+test('the reads every pass makes walk their indexes, not the whole history', async (t) => {
+  const f = await fixture(t);
+  const template = await f.fleet.request(f.caller, input('template'));
+  const plans = await f.state.transaction(async (tx) => {
+    await tx.run('SET LOCAL enable_seqscan = off');
+    // 5,000 rows of history, one in a hundred still open, over fifty people and about 100 days.
+    await tx.run(
+      `INSERT INTO fleet_allocations(id,project_id,source_hash,request_id,input_hash,phase,created_at,data_json)
+       SELECT 'flt_seed_' || n, project_id, source_hash, 'seed_' || n, input_hash, row.phase, row.created_at,
+         (data_json::jsonb || jsonb_build_object('id', 'flt_seed_' || n, 'phase', row.phase,
+           'createdAt', row.created_at, 'person', 'person_' || n % 50,
+           'owner', jsonb_build_object('kind', 'workflow', 'id', 'work_' || n)))::text
+       FROM fleet_allocations, generate_series(1, 5000) AS n,
+         LATERAL (SELECT CASE WHEN n % 100 = 0 THEN 'queued' ELSE 'released' END AS phase,
+           to_char(timestamp '2026-06-01' + n * interval '30 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+             AS created_at) AS row
+       WHERE id=?`,
+      template.id,
+    );
+    const count = await tx.get<{ n: number }>('SELECT count(*)::int AS n FROM fleet_allocations');
+    assert.equal(count?.n, 5001);
+    const all = t.mock.method(tx, 'all');
+    const explain = async (sql: string, ...params: SqlValue[]) =>
+      (await tx.all<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, ...params))
+        .map((row) => row['QUERY PLAN'])
+        .join('\n');
+    /** EXPLAIN the one statement `read` sends, exactly as Fleet sends it. */
+    const plan = async (read: () => Promise<unknown>) => {
+      all.mock.resetCalls();
+      await read();
+      assert.equal(all.mock.callCount(), 1);
+      const [sql, ...params] = all.mock.calls[0]!.arguments;
+      return explain(sql, ...params);
+    };
+    return {
+      open: await plan(() => f.fleet.free(f.caller.projectId, tx)),
+      owned: await plan(() => f.fleet.listOwned(f.owner, ['work_7', 'work_4200'])),
+      // The read the spend cap is to make of one person's recent rentals.
+      person: await explain(
+        "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
+        'person_7',
+        '2026-09-01T00:00:00.000Z',
+      ),
+    };
+  });
+  // Which scan the planner picks depends on its estimates; that it can use the index at all
+  // depends only on the query text matching the index, which is what this guards.
+  assert.match(plans.open, /fleet_allocations_open\b/, plans.open);
+  assert.match(plans.owned, /fleet_allocations_open\b/, plans.owned);
+  assert.match(plans.owned, /fleet_allocations_owner\b/, plans.owned);
+  assert.match(plans.person, /Index Cond: .*'person'.*created_at >=/, plans.person);
+  assert.match(plans.person, /fleet_allocations_person\b/, plans.person);
 });
 
 test('missing owner releases an untouched allocation without renting a machine', async (t) => {

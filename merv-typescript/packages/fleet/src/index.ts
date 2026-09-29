@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
-import { migration } from './schema.js';
+import { migration, migrationV2 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
@@ -122,7 +122,7 @@ export class FleetService implements Fleet {
     );
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration]);
+    await this.state.migrate('fleet', [migration, migrationV2]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);

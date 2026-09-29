@@ -26,3 +26,15 @@ export const migration = {
   CREATE TRIGGER fleet_allocation_identity BEFORE UPDATE ON fleet_allocations
   FOR EACH ROW EXECUTE FUNCTION fleet_allocation_identity_guard();`,
 };
+
+/**
+ * Rows are never deleted, so each read that runs every pass needs an index on what it filters:
+ * the open rows (all()), an owner's targets (listOwned()) and one person's rentals by day (the
+ * spend cap). The expressions must match the queries' text, or the planner cannot use them.
+ */
+export const migrationV2 = {
+  version: 2,
+  sql: `CREATE INDEX fleet_allocations_open ON fleet_allocations(created_at, id) WHERE phase <> 'released';
+  CREATE INDEX fleet_allocations_owner ON fleet_allocations((data_json::jsonb #>> '{owner,id}'));
+  CREATE INDEX fleet_allocations_person ON fleet_allocations((data_json::jsonb ->> 'person'), created_at);`,
+};
