@@ -27,6 +27,8 @@ export interface ManagedModelGrant {
   /** The session. */
   id: string;
   projectId: string;
+  /** The Fleet allocation whose machine runs it. */
+  allocationId: string;
   /** Whose spend it is: the directing member, keyed as Pi keys a person, or else its actor. */
   person: string;
   model: string;

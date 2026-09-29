@@ -20,6 +20,7 @@ const bearer = `ms_${'b'.repeat(43)}`;
 const grant: ManagedModelGrant = {
   id: 'session_hosted',
   projectId: 'project_hosted',
+  allocationId: 'flt_hosted',
   person: 'person_hosted',
   model: 'gpt-6-luna',
   effort: 'medium',

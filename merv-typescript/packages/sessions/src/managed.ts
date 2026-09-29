@@ -395,6 +395,7 @@ export class ManagedRunnerBindings {
         return {
           id: session.id,
           projectId: row.project_id,
+          allocationId: row.allocation_id,
           person: digest(
             user ? { issuer: user.issuer, subject: user.subject } : { projectId, actorId: id },
           ),

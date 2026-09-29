@@ -44,7 +44,11 @@ import {
   hostedCodexCapabilities,
   hostedCodexPlatform,
 } from '../packages/fleet/src/workflow.js';
-import { modelBudgetStatus, setDailyTokens } from '../packages/fleet/src/codex-relay.js';
+import {
+  codexModelRelay,
+  modelBudgetStatus,
+  setDailyTokens,
+} from '../packages/fleet/src/codex-relay.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
@@ -288,6 +292,46 @@ test('a refused model reservation stops new Fleet rents until its payer has enou
   await f.adapter.reconcile();
   assert.deepEqual(f.requests, [f.caller.projectId]);
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
+});
+
+test('a step’s payer is its person, read without a lookup; a voucher that cannot be read refuses', async (t) => {
+  const f = await fixture(t);
+  let lookups = 0;
+  const requireDelegation = f.scope.requireDelegation.bind(f.scope);
+  f.scope.requireDelegation = async (...args) => (lookups++, await requireDelegation(...args));
+  const payer = (source: DelegationSource) =>
+    f.state.transaction((tx) => f.adapter.payer(source, 'task:0', tx));
+  const founder = digest({ issuer, subject: 'founder' });
+  assert.equal(await payer(f.source), founder);
+  assert.equal(
+    await payer({
+      kind: 'service',
+      projectId: f.source.projectId,
+      actorId: 'r',
+      vouchedBy: f.source,
+    }),
+    founder,
+  );
+  assert.equal(lookups, 0);
+  // A review director vouched for by an issued actor counts toward that actor, while it lasts.
+  const issued = await f.scope.issueActor(f.caller, { name: 'Voucher', role: 'operator' });
+  const voucher = await f.scope.delegationSource({
+    actorId: issued.actor.id,
+    projectId: f.source.projectId,
+    credentialId: issued.credential.id,
+  });
+  const reviewer: DelegationSource = {
+    kind: 'service',
+    projectId: f.source.projectId,
+    actorId: 'reviewer',
+    vouchedBy: voucher,
+  };
+  assert.equal(
+    await payer(reviewer),
+    digest({ projectId: f.source.projectId, actorId: issued.actor.id }),
+  );
+  await f.scope.revokeActor(f.caller, issued.actor.id);
+  await assert.rejects(payer(reviewer), MervError);
 });
 
 test('workflow adapter covers demand with one pending slot and retries a claimed generation', async (t) => {
@@ -777,6 +821,51 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
   assert.deepEqual(await response.json(), { error: 'relay_unavailable' });
   await unloading;
   assert.deepEqual(order, ['unmount', 'relay', 'validator', 'owner']);
+});
+
+test('the mounted relay reads a grant through the adapter, charged to the allocation’s person', async (t) => {
+  const state = await openState();
+  const modelEnv = `MERV_WORKFLOW_MODEL_${randomUUID().replaceAll('-', '')}`;
+  process.env[modelEnv] = `sk-test-${randomBytes(32).toString('hex')}`;
+  let relay: ModelRelayConfig<ManagedModelGrant, string, unknown> | undefined;
+  const ctx = new Context();
+  ctx.provide('state', state);
+  ctx.provide('scope', await createService(new ProjectScope(state)));
+  ctx.provide('tools', { register: () => () => undefined });
+  ctx.provide('api', { mount: () => () => undefined });
+  const kinds = new Map<string, FleetOwner>();
+  ctx.provide('fleet', {
+    registerOwner: (kind: string, owner: FleetOwner) => (kinds.set(kind, owner), () => undefined),
+    listOwned: async () => [],
+    inspectOwned: async (owner: FleetOwner, id: string) => {
+      assert.equal(owner, kinds.get('workflow'));
+      return { id, person: 'voucher' };
+    },
+    modelRelay: (config: typeof relay) => ((relay = config), new ModelRelay(config!)),
+  });
+  const grant = { id: 'session', projectId: 'p', allocationId: 'flt_1', person: 'actor' };
+  ctx.provide('sessions', {
+    registerManagedValidator: () => () => undefined,
+    servedSources: async () => [],
+    managedModelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
+  });
+  const fiber = ctx.plugin(fleetWorkflowPlugin, {
+    enabled: true,
+    people: ['*'],
+    modelApiKeyEnv: modelEnv,
+    baseUrl: 'https://merv.example.test',
+    pollIntervalMs: 60_000,
+  });
+  await fiber;
+  t.after(async () => {
+    await fiber.dispose();
+    await state.close();
+    delete process.env[modelEnv];
+  });
+  assert.equal(
+    ((await relay!.authority!.authorize(`ms_${'b'.repeat(43)}`)) as ManagedModelGrant).person,
+    'voucher',
+  );
 });
 
 test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
@@ -1714,4 +1803,35 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   await assert.rejects(h.sessions.authenticate(machine.secret), { code: 'unauthorized' });
   await h.fleet.tick();
   assert.equal(h.stopped.size, 1);
+});
+
+test('a review step’s model calls count toward the admin who vouched for its director', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Charged');
+  await h.sessions.setDispatch(caller, { enabled: true });
+  await delivered(h, caller, 'charged');
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  assert.equal(allocation?.source.kind, 'service');
+  const voucher = digest({ issuer, subject: 'founder' });
+  assert.equal(allocation.person, voucher);
+  await h.fleet.tick(); // Reserve and provision.
+  await h.fleet.tick(); // Launch.
+  const machine = await boot(h, allocation);
+  // Sessions names the review director itself; Fleet rented its machine for the voucher.
+  assert.notEqual((await h.sessions.managedModelGrant(machine.secret)).person, voucher);
+  const relay = codexModelRelay(h.sessions, h.state, {
+    providerKey: () => 'test-model-key',
+    dailyTokensPerPerson: 20_000_000,
+    authorize: (token) => h.adapter.modelGrant(token),
+  });
+  const grant = (await relay.authority!.authorize(machine.secret)) as ManagedModelGrant;
+  assert.deepEqual([grant.allocationId, grant.person], [allocation.id, voucher]);
+  const charge = await relay.reserve!(grant, { model: grant.model, input: [] });
+  assert.equal((await modelBudgetStatus(h.state, voucher, 20_000_000)).usedToday, charge.tokens);
+  // The worker's own budget is the voucher's too.
+  const worker = await h.sessions.authenticate(machine.secret);
+  assert.equal((await h.adapter.modelBudget(worker))?.blocked, false);
+  await setDailyTokens(h.state, voucher, charge.tokens + 1_000);
+  assert.equal((await h.adapter.modelBudget(worker))?.blocked, true);
 });

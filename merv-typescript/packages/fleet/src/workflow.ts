@@ -13,7 +13,11 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { Sessions, ManagedRunnerBindingIdentity } from '@merv/sessions/types';
+import type {
+  ManagedModelGrant,
+  ManagedRunnerBindingIdentity,
+  Sessions,
+} from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
 import {
   codexModelRelay,
@@ -99,6 +103,17 @@ const skipped = (projectId: string, error: unknown) => {
   const code = error instanceof MervError ? error.code : 'unexpected';
   process.stderr.write(`${JSON.stringify({ event: 'fleet.workflow_skipped', projectId, code })}\n`);
 };
+/** Whose day a director's spend counts toward: their sign-in identity, keyed as Pi keys a person
+ * so one day counts both, else the actor itself. */
+const personOf = (
+  user: { issuer: string; subject: string } | undefined,
+  who: { projectId: string; actorId: string },
+) =>
+  digest(
+    user
+      ? { issuer: user.issuer, subject: user.subject }
+      : { projectId: who.projectId, actorId: who.actorId },
+  );
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
@@ -183,16 +198,19 @@ export class FleetWorkflowAdapter implements FleetOwner {
     );
   }
   /** A step's machine is for the person who directs it; a review director's, for its voucher.
-   * Keyed as Pi keys a person, so one day's compute counts both. */
-  async payer(source: DelegationSource, _ownerId: string, tx: Transaction): Promise<string | null> {
+   * A lookup that fails refuses the request. */
+  async payer(source: DelegationSource, _ownerId: string, tx: Transaction): Promise<string> {
     const who = source.kind === 'service' ? source.vouchedBy : source;
-    if (who.kind === 'human') return digest({ issuer: who.issuer, subject: who.subject });
-    const actor = await this.scope.requireDelegation(who, 'read', tx).catch(() => null);
-    return digest(
-      actor?.user
-        ? { issuer: actor.user.issuer, subject: actor.user.subject }
-        : { projectId: who.projectId, actorId: who.actorId },
+    return personOf(
+      who.kind === 'human' ? who : (await this.scope.requireDelegation(who, 'read', tx)).user,
+      who,
     );
+  }
+  /** A hosted session's model grant, charged to the person its machine was rented for. */
+  async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
+    const grant = await this.sessions.managedModelGrant(tokenOrSessionId);
+    const { person } = await this.fleet.inspectOwned(this, grant.allocationId);
+    return { ...grant, person: person ?? grant.person };
   }
   /** The managed worker's or project's current Fleet director's budget, without private counts. */
   async modelBudget(caller: Caller) {
@@ -201,7 +219,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     let person: string;
     if (caller.session) {
       try {
-        person = (await this.sessions.managedModelGrant(caller.session.id)).person;
+        person = (await this.modelGrant(caller.session.id)).person;
       } catch (error) {
         if (error instanceof MervError && [401, 403, 404].includes(error.status)) return null;
         throw error;
@@ -215,11 +233,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         selected.source.kind === 'service' ? selected.source.vouchedBy : selected.source;
       const actor = await this.director(source);
       if (!actor) return null;
-      person = digest(
-        actor.user
-          ? { issuer: actor.user.issuer, subject: actor.user.subject }
-          : { projectId: source.projectId, actorId: source.actorId },
-      );
+      person = personOf(actor.user, source);
     }
     const { blocked, blockReason, resetsAt } = await modelBudgetStatus(
       this.state,
@@ -622,11 +636,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return {
         actor,
         who: actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : source.actorId,
-        key: digest(
-          actor?.user
-            ? { issuer: actor.user.issuer, subject: actor.user.subject }
-            : { projectId: source.projectId, actorId: source.actorId },
-        ),
+        key: personOf(actor?.user, source),
       };
     };
     const everyone = this.config.people.includes('*');
@@ -783,6 +793,7 @@ export const fleetWorkflowPlugin = {
       const relay = codexModelRelay(ctx.sessions, ctx.state, {
         providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
         dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
+        authorize: (token) => adapter.modelGrant(token),
       });
       ctx.effect(() => {
         const model = ctx.fleet.modelRelay(relay);

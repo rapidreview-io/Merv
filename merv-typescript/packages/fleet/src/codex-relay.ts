@@ -231,7 +231,12 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
 export function codexModelRelay(
   sessions: Sessions,
   state: State,
-  options: { providerKey: () => string; dailyTokensPerPerson: number },
+  options: {
+    providerKey: () => string;
+    dailyTokensPerPerson: number;
+    /** Reads a bearer's grant; Sessions' by default, the workflow adapter's in Main. */
+    authorize?: (token: string) => Promise<ManagedModelGrant>;
+  },
 ): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
   return {
     name: 'codex',
@@ -240,7 +245,7 @@ export function codexModelRelay(
     enabled: true,
     providerKey: options.providerKey,
     authority: {
-      authorize: (token) => sessions.managedModelGrant(token),
+      authorize: options.authorize ?? ((token) => sessions.managedModelGrant(token)),
       validate: async (grant) => void (await sessions.managedModelGrant(grant.id)),
     },
     reserve: async (grant, body) => {
