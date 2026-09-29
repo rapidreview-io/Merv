@@ -263,15 +263,15 @@ function App() {
               improves <span>itself.</span>
             </h1>
             <p>
-              Your models can get better. So can the way you build them.
-              <br className="desktop" /> Merv turns ideas into experiments,
-              evidence into improvements,
-              <br className="desktop" /> and every result into a smarter next
-              move.
+              More promising ideas than time to test them?
+              <br className="desktop" /> Merv helps AI teams turn research into
+              reviewed experiments,
+              <br className="desktop" /> better model decisions, and learning that
+              compounds.
             </p>
             <div className="hero-actions">
               <a className="button primary" href={CONTACT}>
-                Run Merv with your team <ArrowUpRight size={17} />
+                Discuss a research pilot <ArrowUpRight size={17} />
               </a>
               <a className="text-link" href="#how-it-works">
                 <Play size={13} fill="currentColor" /> See the research loop
@@ -286,7 +286,7 @@ function App() {
               <span>
                 <span className="status-dot" /> MERV / RESEARCH ENGINE
               </span>
-              <span className="example">ILLUSTRATIVE WORKSPACE</span>
+              <span className="example">THE RESEARCH LOOP / ILLUSTRATED</span>
               <button
                 className="icon-button"
                 onClick={() => setPaused(!paused)}
@@ -751,26 +751,29 @@ function App() {
           <div className="control-grid">
             <article>
               <span className="feature-symbol">↳</span>
-              <h3>Your direction.</h3>
+              <h3>Move ideas off the backlog.</h3>
               <p>
-                Set the objective and constraints. Keep the research pointed at
-                the problems that matter to your company.
+                A small team can only investigate so much. Give promising
+                directions a path from research question to reviewed experiment,
+                guided by your objectives and compute budget.
               </p>
             </article>
             <article>
               <span className="feature-symbol">⌘</span>
-              <h3>Your stack.</h3>
+              <h3>Make evidence-led decisions.</h3>
               <p>
-                Work through your existing coding agent. Run locally or connect
-                cloud sandboxes for heavier experiments.
+                Find out which techniques deserve your engineering time. Test
+                against your own models, data, and evaluations, with independent
+                review of the plan and the result.
               </p>
             </article>
             <article>
               <span className="feature-symbol">↺</span>
-              <h3>Compounding knowledge.</h3>
+              <h3>Stop losing what you learn.</h3>
               <p>
-                Plans, reviews, artifacts, and findings stay connected. The next
-                run starts with the context of the last.
+                Failed experiments are useful context. Keep plans, reviews,
+                artifacts, and findings connected so the next research cycle
+                builds on the last.
               </p>
             </article>
           </div>
@@ -779,9 +782,9 @@ function App() {
           <div>
             <span className="eyebrow">A FEW GOOD QUESTIONS</span>
             <h2>
-              Before you
+              A clearer path
               <br />
-              <span>press run.</span>
+              <span>from idea to evidence.</span>
             </h2>
           </div>
           <div className="faqs">
@@ -824,7 +827,7 @@ function App() {
           </h2>
           <p>Bring the ambition. Let's build the loop.</p>
           <a className="button primary" href={CONTACT}>
-            Run Merv with your team <ArrowUpRight size={17} />
+            Discuss a research pilot <ArrowUpRight size={17} />
           </a>
           <Dialog.Root>
             <Dialog.Trigger className="install-trigger">
