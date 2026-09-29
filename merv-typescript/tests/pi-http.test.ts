@@ -138,7 +138,7 @@ function fixture(t: TestContext, rotateMs?: number) {
   const http = new PiHttp(pi, rotateMs);
   const api = new ApiServer(scope, {} as Tools);
   const unmountWorker = api.mount('/pi-worker', http.worker, { public: true });
-  const unregister = api.registerPi(http);
+  const unregister = api.mount('/pi', http.events);
   t.after(async () => {
     for (const dispose of cleanup) dispose();
     http.close();
@@ -220,8 +220,8 @@ test('optional Pi routes require a provider and human source authentication', as
   const missing = await fetch(events, { headers });
   assert.equal(missing.status, 503);
   assert.deepEqual((await json(missing)).error, {
-    code: 'pi_unavailable',
-    message: 'Agent conversations are unavailable',
+    code: 'unavailable',
+    message: 'This route is unavailable',
   });
 });
 

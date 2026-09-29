@@ -2,7 +2,7 @@ import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
-import type { PiApiProvider } from '@merv/api/pi';
+import type { MountHandler } from '@merv/api/types';
 import type { PiRuntime } from './types.js';
 
 function json(res: ServerResponse, status: number, value: unknown): void {
@@ -55,7 +55,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-export class PiHttp implements PiApiProvider {
+export class PiHttp {
   private readonly responses = new Set<ServerResponse>();
   private closed = false;
 
@@ -104,6 +104,18 @@ export class PiHttp implements PiApiProvider {
             : { code: 'pi_unavailable', message: 'Agent operation failed' },
       });
     }
+  };
+
+  /** `GET /pi/<id>/events`: a page's live view of one conversation, as its authenticated person. */
+  readonly events: MountHandler = async (req, res, r) => {
+    const match = /^\/pi\/([A-Za-z0-9_-]{1,200})\/events$/.exec(r.url.pathname);
+    check(
+      req.method === 'GET' && match && !r.url.search,
+      'not_found',
+      'Unknown conversation route',
+      404,
+    );
+    await this.stream(await r.caller(), match[1]!, req, res);
   };
 
   async stream(
@@ -228,7 +240,7 @@ export const piApiPlugin = {
   apply(ctx: Context) {
     const http = new PiHttp(ctx.pi);
     ctx.effect(() => () => http.close());
-    ctx.effect(() => ctx.api.registerPi(http));
+    ctx.effect(() => ctx.api.mount('/pi', http.events));
     ctx.effect(() => ctx.api.mount('/pi-worker', http.worker, { public: true }));
     ctx.effect(() => {
       const relay = ctx.pi.modelRelay();

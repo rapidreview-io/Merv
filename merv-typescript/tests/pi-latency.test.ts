@@ -184,7 +184,7 @@ test(
       (req, res) => operations.run({ kind: 'progress' }, () => piHttp.worker(req, res)),
       { public: true },
     );
-    const unregister = app.ctx.api.registerPi(piHttp);
+    const unregister = app.ctx.api.mount('/pi', piHttp.events);
     let stream: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let streamDone: Promise<void> | undefined;
     t.after(async () => {

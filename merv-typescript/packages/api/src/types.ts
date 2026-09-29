@@ -192,7 +192,6 @@ export interface Api {
   credential(namespace: `${string}_`, credential: ApiCredential): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;
-  registerPi(provider: import('./pi.js').PiApiProvider): () => void;
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;

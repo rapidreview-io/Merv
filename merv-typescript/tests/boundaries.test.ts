@@ -305,8 +305,7 @@ function moduleReferences(source: ts.SourceFile): ModuleReference[] {
 }
 
 function publicTypesTarget(specifier: string, base: string): string {
-  const match =
-    /^@merv\/([^/]+)\/(types|models)$/.exec(specifier) ?? /^@merv\/(api)\/(pi)$/.exec(specifier);
+  const match = /^@merv\/([^/]+)\/(types|models)$/.exec(specifier);
   assert.ok(
     match,
     `${specifier}: cross-component imports must use a public /types or /models contract`,
@@ -910,7 +909,7 @@ test('workspace exports and imported export subpaths resolve to real implementat
       const manifest = manifests.get(name);
       assert.ok(manifest, `${relative(root, path)} references absent package ${name}`);
       const subpath = segments.length ? `./${segments.join('/')}` : '.';
-      if (subpath === './types' || specifier === '@merv/api/pi') {
+      if (subpath === './types') {
         assert.ok(
           reference.typeOnly,
           `${path}: a public type contract cannot be imported as a runtime value`,

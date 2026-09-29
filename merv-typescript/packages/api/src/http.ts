@@ -42,7 +42,6 @@ import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { githubCallback, githubRequest } from './code-github.js';
 import { publicationRequest } from './code-publications.js';
-import type { PiApiProvider } from './pi.js';
 
 export { describeTool } from './registry.js';
 
@@ -348,7 +347,7 @@ function slot<T>(code: string, label: string, unavailableMessage: string) {
 
 /**
  * One listener. Each request's first path segment names its mount: the built-ins, the owners'
- * mounts and, until their owners register them, the Sessions, Code, Scope and Pi routes. A
+ * mounts and, until their owners register them, the Sessions, Code and Scope routes. A
  * public route authenticates itself; every other one is authenticated here first. One stateless
  * MCP transport serves each MCP request.
  */
@@ -360,7 +359,6 @@ export class ApiServer {
     'Sessions are unavailable',
   );
   private readonly code = slot<CodeApiProvider>('code', 'Code', 'Code controls are unavailable');
-  private readonly pi = slot<PiApiProvider>('pi', 'Pi', 'Agent conversations are unavailable');
   private stopping = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
@@ -403,7 +401,7 @@ export class ApiServer {
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
     // Until their owners register them, the routes and credentials the API serves for Sessions,
-    // Code, Scope and Pi.
+    // Code and Scope.
     this.mount('/sessions', (req, res, r) => this.sessionsRoute(req, res, r), {
       public: ['/sessions/self', '/sessions/runners/enroll'],
     });
@@ -412,7 +410,6 @@ export class ApiServer {
     });
     this.mount('/account', (req, res, r) => this.scopeRoute(req, res, r));
     this.mount('/projects', (req, res, r) => this.scopeRoute(req, res, r));
-    this.mount('/pi', (req, res, r) => this.piRoute(req, res, r));
     this.credential('ms_', {
       kind: 'session',
       forbidden: new MervError(
@@ -596,10 +593,6 @@ export class ApiServer {
   registerSessions(provider: SessionApiProvider): () => void {
     return this.sessions.register(provider);
   }
-  registerPi(provider: PiApiProvider): () => void {
-    return this.pi.register(provider);
-  }
-
   registerCode(provider: CodeApiProvider): () => void {
     return this.code.register(provider);
   }
@@ -771,14 +764,6 @@ export class ApiServer {
     );
     const result = await this.call(name, request.caller, request.input);
     return { result: result.value ?? null };
-  }
-
-  private async piRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
-    const match = /^\/pi\/([A-Za-z0-9_-]{1,200})\/events$/.exec(r.url.pathname);
-    if (req.method !== 'GET' || !match || r.url.search)
-      throw new MervError('not_found', 'Unknown conversation route', 404);
-    const caller = await r.caller();
-    await this.pi.get().stream(caller, match[1]!, req, res);
   }
 
   private async codeRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
