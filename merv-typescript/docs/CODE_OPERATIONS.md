@@ -22,13 +22,13 @@ Code. Its adapters are optional for startup and remain pending until Code return
 No workflow is silently converted from Git to non-Git, and no agent is restarted
 merely because this optional service changes.
 
-| Plugin     | Direct Cordis dependencies        | Responsibility                                                                                 |
-| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Code       | State, Scope, Sessions, Artifacts | Durable command identity, worker admission, source ownership, immutable receipts and proposals |
-| code-tools | Code, Tools                       | `code.commit` and `code.operation`                                                             |
-| code-api   | Code, API                         | Source-authenticated command retrieval and completion over `/code`                             |
-| code-ui    | Code, UI                          | Recent operations and sealed proposals in the Code page                                        |
-| Runner     | None; separate machine context    | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts     |
+| Plugin            | Direct Cordis dependencies        | Responsibility                                                                                 |
+| ----------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Code              | State, Scope, Sessions, Artifacts | Durable command identity, worker admission, source ownership, immutable receipts and proposals |
+| code-tools        | Code, Tools                       | `code.commit` and `code.operation`                                                             |
+| code-research-api | Code, API                         | Source-authenticated command retrieval and completion over `/code`                             |
+| code-ui           | Code, UI                          | Recent operations and sealed proposals in the Code page                                        |
+| Runner            | None; separate machine context    | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts     |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
 
@@ -266,8 +266,9 @@ Machines reach all of this under `/code/v2/`, which Code's API adapter
 confined to `POST /mcp` and can never reach it. The adapter forwards opaque JSON bodies (at most
 64 KiB) and the bytes of one part (`application/octet-stream`, at most 4 MiB) and reads neither;
 only Code interprets them. `workspace` gives a machine the manifest of what to prepare,
-`uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>` carry it, `uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a
-bundle back. The legacy `/code/transport/*` grant routes are untouched and still serve
+`uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>` carry it,
+`uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a bundle
+back. The legacy `/code/transport/*` grant routes are untouched and still serve
 GitHub-mode machines on the legacy workflow versions.
 
 ## Trust boundary
