@@ -39,7 +39,7 @@ Discovery, invocation, and notification requests refuse HTTP redirects. Configur
 
 The following helper modules now belong to this package:
 
-- `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection is bounded by page, tool, and time limits and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
+- `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection keeps only the selected names, stops once it has found them all, bounds each page by the request timeout and a whole collection by 20 pages, and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
 - `@merv/mounts/upstream` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, replaces a lane's connection when its credential identity changes, ends a connection after five idle minutes, and drains admitted calls during shutdown. Ending a connection sends the MCP DELETE, capped at one second, before closing it.
 
 These helpers contain upstream SDK transport ownership, while the public types module remains free of runtime code.

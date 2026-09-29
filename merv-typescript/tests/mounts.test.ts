@@ -368,6 +368,7 @@ test(
     await held.entered;
     try {
       await rejected;
+      assert.equal(manager.status()[0].errorCode, 'remote_timeout');
       assert.equal(manager.status()[0].toolCount, 0);
       assert.deepEqual(await names(services.registry), ['native']);
       assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
@@ -803,4 +804,32 @@ test('a stalled discovery connect reports a timeout', async (t) => {
   assert.ok(performance.now() - started < 1000, 'The SDK timeout bounds initialize');
   assert.equal(manager.status()[0].state, 'failed');
   assert.equal(manager.status()[0].errorCode, 'remote_timeout');
+});
+
+test('an upstream with more than 1,000 tools mounts its selected tool', async (t) => {
+  const services = await local(t);
+  const tools = Array.from({ length: 1001 }, (_, index) => ({
+    name: `tool-${index}`,
+    inputSchema: { type: 'object' as const, additionalProperties: false },
+  }));
+  const upstream = await remote(t, { tools, pageSize: 1000 });
+  const { manager } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['tool-1000'], reconnectMs: 60000 },
+  ]);
+  assert.equal(manager.status()[0].state, 'ready');
+  assert.deepEqual(await names(services.registry), ['_fixture.tool-1000', 'native']);
+});
+
+test('a successful round leaves no notifications/cancelled behind', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { manager } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 60000 },
+  ]);
+  assert.equal(manager.status()[0].state, 'ready');
+  await sleep(500);
+  assert.deepEqual(
+    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
+    [],
+  );
 });

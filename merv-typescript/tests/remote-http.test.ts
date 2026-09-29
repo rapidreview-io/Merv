@@ -33,7 +33,12 @@ async function fixture(t: test.TestContext) {
     rmSync(directory, { recursive: true, force: true });
   });
   await remote.connect(new StreamableHTTPClientTransport(new URL(upstream.url)));
-  await catalog.replace(callable(remote, await collectRemoteCatalog(remote)));
+  const found = await collectRemoteCatalog(
+    remote,
+    new Set(representativeTools.map((tool) => tool.name)),
+    { timeout: 5000 },
+  );
+  await catalog.replace(callable(remote, [...found.values()]));
   const identity = await app.ctx.scope.bootstrap({
     projectName: 'Transport test',
     actorName: 'Operator',

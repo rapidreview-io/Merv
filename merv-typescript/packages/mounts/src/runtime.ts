@@ -14,6 +14,7 @@ export class MountRuntime {
   private readonly pool: ScopedRemoteClients;
   private readonly timeoutMs: number;
   private readonly reconnectMs: number;
+  private readonly wanted: ReadonlySet<string>;
   private snapshot: MountStatus;
   /** JSON of the descriptions now in the registry; a key-order change only republishes. */
   private published?: string;
@@ -38,6 +39,7 @@ export class MountRuntime {
   ) {
     this.timeoutMs = config.timeoutMs ?? 5000;
     this.reconnectMs = config.reconnectMs ?? 1000;
+    this.wanted = new Set(config.tools);
     this.snapshot = {
       id: config.id,
       origin: new URL(config.url).origin,
@@ -109,7 +111,10 @@ export class MountRuntime {
       await this.resetDiscovery();
     if (!this.client) await this.connect(credential, signal);
     const client = this.client!;
-    const definitions = await collectRemoteCatalog(client, { timeoutMs: this.timeoutMs, signal });
+    const found = await collectRemoteCatalog(client, this.wanted, {
+      signal,
+      timeout: this.timeoutMs,
+    });
     check(
       !this.stopping && this.client === client,
       'mount_disconnected',
@@ -129,9 +134,8 @@ export class MountRuntime {
       'Discovery connection changed',
       503,
     );
-    const available = new Map(definitions.map((definition) => [definition.name, definition]));
     const selected: RemoteToolDefinition[] = this.config.tools.map((name) => {
-      const definition = available.get(name);
+      const definition = found.get(name);
       check(definition, 'mount_missing_tool', 'A selected remote tool is missing', 502);
       return {
         ...definition,
