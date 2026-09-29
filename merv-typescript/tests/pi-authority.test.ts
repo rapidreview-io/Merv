@@ -9,6 +9,8 @@ import {
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { conversationRules } from '../packages/pi/src/conversation-rules.js';
+import { managedRunnerRules } from '../packages/sessions/src/managed.js';
 
 const conversation = {
   id: 'conversation_1',
@@ -52,6 +54,7 @@ function registry(readScope?: <T>(fn: () => Promise<T>) => Promise<T>) {
     },
   };
   const tools = new ToolRegistry(scope, undefined, readScope);
+  tools.registerCallerRules('conversation', conversationRules);
   tools.register({
     name: 'read',
     description: 'Read',
@@ -252,6 +255,7 @@ test(
       conversation,
     };
     const tools = new ToolRegistry(scope);
+    tools.registerCallerRules('conversation', conversationRules);
     t.after(() => tools.close());
     let ran = 0;
     tools.register({
@@ -408,3 +412,34 @@ test(
     });
   },
 );
+
+test('conversation and managed callers are refused until the plugin that issues them registers its rules', async () => {
+  const tools = new ToolRegistry({ require: async () => ({ role: 'owner' }) as never });
+  tools.register({
+    name: 'read',
+    description: 'Read',
+    readOnly: true,
+    inputSchema: z.object({}).strict(),
+    handler: () => 'result',
+  });
+  const managed: Caller = {
+    actorId: 'runner',
+    projectId: 'project_1',
+    managed: { allocationId: 'allocation', epoch: 1, credentialHash: 'hash' },
+  };
+  for (const candidate of [caller, managed]) {
+    await assert.rejects(tools.describe(candidate), { code: 'unavailable', status: 503 });
+    await assert.rejects(tools.call('read', candidate, {}), { code: 'unavailable', status: 503 });
+  }
+  const withdraw = tools.registerCallerRules('conversation', conversationRules);
+  assert.throws(() => tools.registerCallerRules('conversation', conversationRules), {
+    code: 'caller_rules_conflict',
+  });
+  assert.equal(await tools.call('read', caller, {}), 'result');
+  withdraw();
+  await assert.rejects(tools.call('read', caller, {}), { code: 'unavailable' });
+  // Rules that offer nothing refuse the caller outright, listing included.
+  tools.registerCallerRules('managed', managedRunnerRules);
+  for (const refused of [tools.describe(managed), tools.call('read', managed, {})])
+    await assert.rejects(refused, { code: 'managed_runner_forbidden', status: 403 });
+});

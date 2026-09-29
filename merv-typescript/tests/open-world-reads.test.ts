@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { MervError, createService, type Actor, type Caller, type Data } from '@merv/contracts';
 import { ProjectScope } from '../packages/scope/src/index.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { openState } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
@@ -121,6 +122,7 @@ test('an open-world read is listed, admitted and checked again exactly as a read
     snapshots++;
     return run();
   });
+  tools.registerCallerRules('conversation', conversationRules);
   t.after(() => tools.close());
   const ran: string[] = [];
   const definition = (name: string, fields: Partial<ToolDefinition>): ToolDefinition => ({

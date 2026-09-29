@@ -4,6 +4,7 @@ import {
   canonical,
   check,
   digest,
+  MervError,
   effectiveWorkspace,
   RUNNER_HARNESSES,
   codexHandoffGraceMs,
@@ -18,6 +19,7 @@ import {
 import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
+import type { CallerRules } from '@merv/api/types';
 import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
@@ -58,6 +60,11 @@ const enrollment = z
     expiresAt: z.string().datetime({ offset: true }),
   })
   .strict();
+
+/** A managed runner supervises its bound execution through its own routes: it uses no tool. */
+export const managedRunnerRules: CallerRules = {
+  forbidden: new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403),
+};
 
 export class ManagedRunnerBindings {
   private validator?: ManagedRunnerValidator;

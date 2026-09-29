@@ -44,6 +44,7 @@ import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
 import { piModelRelay, piTitle } from './relay.js';
+import { conversationRules, conversationUse } from './conversation-rules.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
 import { piInstructions, turnNotes } from './prompt.js';
@@ -264,10 +265,13 @@ export class PiService implements Pi, FleetOwner {
       }
     });
     this.disposers.push(this.fleet.registerOwner('pi-host', this));
+    // Pi issues conversation callers: Scope asks it whether one is current, and the tool registry
+    // refuses every one until its rules are registered.
     this.disposers.push(
       this.scope.registerConversationAuthority({
         require: (caller, tx) => this.requireConversation(caller, tx),
       }),
+      this.tools.registerCallerRules('conversation', conversationRules),
     );
     await this.tick();
     this.timer = setInterval(() => {
@@ -1748,10 +1752,7 @@ export class PiService implements Pi, FleetOwner {
             details: parsed.error.issues.map(({ path, message }) => ({ path, message })),
           },
         };
-      const found =
-        typeof definition.conversation === 'function'
-          ? definition.conversation(parsed.data)
-          : definition.conversation;
+      const found = conversationUse(definition, parsed.data);
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
     this.progressAt.set(key, this.clock());

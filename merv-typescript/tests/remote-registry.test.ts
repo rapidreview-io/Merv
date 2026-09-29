@@ -6,6 +6,7 @@ import { MervError, type Caller } from '@merv/contracts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import type { RemoteToolDefinition, ToolDefinition } from '@merv/api/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { ExactToolPolicy } from '@merv/scope/tool-policy';
 
 const caller = { actorId: 'alice', projectId: 'local-project' };
@@ -495,6 +496,7 @@ test('a conversation listing offers no mounted tool and asks no grant decision',
     },
     require: async () => undefined,
   });
+  registry.registerCallerRules('conversation', conversationRules);
   const conversation = {
     ...caller,
     conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },

@@ -40,7 +40,7 @@ import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations, lastActivity } from './observations.js';
 import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
-import { ManagedRunnerBindings } from './managed.js';
+import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
 import type {
   ManagedEnrollmentInput,
   ManagedModelGrant,
@@ -2542,9 +2542,10 @@ export const sessionsPlugin = {
         new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),
       );
       yield async () => await sessions.close();
-      // Without this registration the tool registry refuses every session call.
+      // Without these registrations the tool registry refuses every session and managed caller.
       ctx.inject(['tools'], (ctx) => {
         ctx.effect(() => ctx.tools.registerSessionPolicy(sessions));
+        ctx.effect(() => ctx.tools.registerCallerRules('managed', managedRunnerRules));
       });
       yield ctx.provide('sessions', sessions);
     });

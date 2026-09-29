@@ -5,6 +5,7 @@ import type { Caller } from '@merv/contracts';
 import type { Fleet } from '@merv/fleet/types';
 import type { Sessions } from '@merv/sessions/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { conversationRules } from '../packages/pi/src/conversation-rules.js';
 import { systemStatus } from '../packages/sessions/src/system-status.js';
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 
@@ -160,6 +161,7 @@ test('system.status is a read-only conversation tool and project access is check
       return { role: 'operator' } as never;
     },
   });
+  tools.registerCallerRules('conversation', conversationRules);
   const sessions = {
     projectStatus: async () => ({
       observedAt: 'now',

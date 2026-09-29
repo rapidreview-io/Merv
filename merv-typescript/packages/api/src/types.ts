@@ -47,6 +47,32 @@ export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
 /** A registered tool as Tools.list() shows it: a native definition, or a remote tool's
  *  description without its handler, which only the registry's admission may call. */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
+/** A registered tool as caller rules see it: as it was registered, whatever its definition
+ *  reads now. */
+export interface RegisteredTool {
+  name: string;
+  /** A mounted tool, published by a remote catalog. */
+  remote: boolean;
+  /** A native tool's ToolDefinition.conversation. */
+  conversation?: ToolDefinition['conversation'];
+}
+/** The callers one plugin issues, by the Caller field it sets: Pi's conversations and Sessions'
+ *  managed runners. */
+export type CallerKind = 'conversation' | 'managed';
+/**
+ * How the plugin that issues one kind of caller limits that caller's tools (registered with
+ * Tools.registerCallerRules). While none is registered, such a caller is refused 503.
+ */
+export interface CallerRules {
+  /** Whether such a caller is offered the tool: describe lists it, and invoke refuses any other
+   *  with `forbidden`. Absent: such a caller may use no tool, and describe refuses it too. */
+  offers?(tool: RegisteredTool): boolean;
+  forbidden: MervError;
+  /** Throws to refuse one call with its parsed input, before its handler runs. */
+  admits?(tool: RegisteredTool, input: unknown): void;
+  /** Throws to withhold a handler's result from the caller. */
+  returns?(result: unknown): void;
+}
 export interface ToolInvocation {
   format: 'json' | 'mcp';
   value: unknown;
@@ -190,6 +216,8 @@ export interface Tools {
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
+  /** The rules for one kind of caller, from the plugin that issues it (409 when registered). */
+  registerCallerRules(kind: CallerKind, rules: CallerRules): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
 }

@@ -4,9 +4,11 @@ import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/type
 import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
+  CallerKind,
+  CallerRules,
   ListedTool,
+  RegisteredTool,
   RemoteToolDefinition,
-  ConversationUse,
   ToolDefinition,
   ToolCatalog,
   ToolDescription,
@@ -23,25 +25,6 @@ export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
 ): tool is Extract<T, { kind: 'mcp' }> {
   return !!tool && typeof tool === 'object' && 'kind' in tool && tool.kind === 'mcp';
 }
-
-/** How a conversation may use a tool with this parsed input (ToolDefinition.conversation);
- * undefined runs it as the person. A remote tool is never offered to a conversation at all. */
-export function conversationUse(
-  tool: Pick<ToolDefinition, 'conversation'>,
-  input: unknown,
-): ConversationUse | undefined {
-  const use = tool.conversation;
-  return typeof use === 'function' ? use(input) : use;
-}
-/** A result holding a bearer credential: a string `token` at any depth (deeper than 24 counts). */
-const holdsToken = (value: unknown, depth = 0): boolean =>
-  value !== null &&
-  typeof value === 'object' &&
-  (depth > 24 ||
-    Object.entries(value).some(
-      ([key, entry]) =>
-        (key === 'token' && typeof entry === 'string') || holdsToken(entry, depth + 1),
-    ));
 
 /** Canonical public metadata; project selection is a transport envelope, not handler input. */
 export function describeTool(tool: AnyToolDefinition): ToolDescription {
@@ -83,8 +66,8 @@ interface Entry {
   complete(value: unknown): ToolInvocation;
   running: Set<Promise<ToolInvocation>>;
   remote?: { mountId: string; toolName: string };
-  /** A native tool's ToolDefinition.conversation, as it was registered. */
-  conversation?: ToolDefinition['conversation'];
+  /** What caller rules see, fixed at registration. */
+  tool: RegisteredTool;
 }
 /** A remote tool's catalog identity, and how its catalog compiles a schema. */
 type Remote = NonNullable<Entry['remote']> & { compile(schema: unknown): ValidateFunction };
@@ -109,6 +92,7 @@ export class ToolRegistry implements Tools {
   private readonly running = new Set<Promise<ToolInvocation>>();
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
+  private readonly callerRules = new Map<CallerKind, CallerRules>();
   private stopping = false;
 
   constructor(
@@ -139,7 +123,7 @@ export class ToolRegistry implements Tools {
       name: definition.name,
       definition,
       description: describeTool({ ...definition, inputSchema }),
-      conversation,
+      tool: { name: definition.name, remote: false, conversation },
       async parse(input) {
         const parsed = await inputSchema.safeParseAsync(input);
         if (!parsed.success)
@@ -181,6 +165,7 @@ export class ToolRegistry implements Tools {
       definition,
       description,
       remote,
+      tool: { name: definition.name, remote: true },
       running: new Set(),
       parse(input) {
         let data: unknown;
@@ -337,6 +322,25 @@ export class ToolRegistry implements Tools {
     };
   }
 
+  registerCallerRules(kind: CallerKind, rules: CallerRules): () => void {
+    if (this.callerRules.has(kind))
+      throw new MervError('caller_rules_conflict', `Rules for ${kind} callers are registered`, 409);
+    this.callerRules.set(kind, rules);
+    return () => {
+      if (this.callerRules.get(kind) === rules) this.callerRules.delete(kind);
+    };
+  }
+
+  /** The rules of the plugin that issued this caller, if any; fails closed without them. */
+  private rulesFor(caller?: Caller): CallerRules | undefined {
+    const kind = caller?.conversation ? 'conversation' : caller?.managed ? 'managed' : undefined;
+    if (!kind) return undefined;
+    const rules = this.callerRules.get(kind);
+    if (!rules) throw new MervError('unavailable', `Tools are unavailable to ${kind} callers`, 503);
+    if (!rules.offers) throw rules.forbidden;
+    return rules;
+  }
+
   private sessionPolicy(): SessionRegistration {
     if (!this.sessions)
       throw new MervError('session_unavailable', 'Session policy is unavailable', 503);
@@ -375,36 +379,33 @@ export class ToolRegistry implements Tools {
   private snapshotted(entry: Entry): boolean {
     return this.reads(entry) && entry.description.annotations?.openWorldHint !== true;
   }
-  /** A native tool an agent conversation is offered: any but those only a leased worker runs. */
-  private conversable(entry: Entry): boolean {
-    return !entry.remote && entry.conversation !== 'never';
-  }
   /** MCP offers a person's agent every native tool not marked `never` (a reader: its reads alone)
    *  plus the mounted tools its Access grants. This curates what an agent is offered; it is not an
    *  authority boundary: the same credential may call any tool it is permitted over POST /tools. */
   private offered(entry: Entry, reader: boolean): boolean {
-    return !!entry.remote || (this.conversable(entry) && (!reader || this.reads(entry)));
+    return (
+      !!entry.remote || (entry.tool.conversation !== 'never' && (!reader || this.reads(entry)))
+    );
   }
 
   private async visible(caller?: Caller, agent = false): Promise<Entry[]> {
     if (caller) caller = structuredClone(caller);
+    const rules = this.rulesFor(caller);
     // Scope refuses a conversation that also carries another authority.
     const actor = caller ? await this.scope.require(caller, 'read') : undefined;
     const reader = actor?.role === 'reader';
     const session = caller?.session ? this.sessionPolicy() : undefined;
-    // One grant decision covers every mounted tool in the listing; a conversation is offered none.
+    const offered = [...this.entries.values()].filter(
+      (entry) => (!agent || this.offered(entry, reader)) && (!rules || rules.offers!(entry.tool)),
+    );
+    // One grant decision covers every mounted tool still in the listing.
     const grant =
-      caller &&
-      !caller.conversation &&
-      this.access &&
-      [...this.entries.values()].some((entry) => entry.remote)
+      caller && this.access && offered.some((entry) => entry.remote)
         ? await this.access.granted(caller)
         : undefined;
     const visible = await filterAsync(
-      [...this.entries.values()],
+      offered,
       async (entry) =>
-        (!agent || this.offered(entry, reader)) &&
-        (!caller?.conversation || this.conversable(entry)) &&
         (!caller ||
           !session ||
           (await this.fenced(
@@ -418,8 +419,6 @@ export class ToolRegistry implements Tools {
 
   /** agent: the caller is a person's own agent over MCP (never a leased worker); see offered(). */
   async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
-    if (caller?.managed)
-      throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     return (await this.visible(caller, agent && !caller?.session))
       .map((entry) => structuredClone(entry.description))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -445,14 +444,11 @@ export class ToolRegistry implements Tools {
   ): Promise<ToolInvocation> {
     this.open();
     caller = structuredClone(caller);
-    if (caller.managed)
-      throw new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403);
     // Scope refuses a conversation that also carries another authority, at its read decision.
-    const conversation = !!caller.conversation;
+    const rules = this.rulesFor(caller);
     const entry = this.entries.get(name);
     if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
-    if (conversation && !this.conversable(entry))
-      throw new MervError('tool_forbidden', 'This tool is not offered to conversations', 403);
+    if (rules && !rules.offers!(entry.tool)) throw rules.forbidden;
     // A reader's writes are refused by their own permission check, as over /tools.
     if (agent && !caller.session && !this.offered(entry, false))
       throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
@@ -483,10 +479,7 @@ export class ToolRegistry implements Tools {
         if (session) this.fence(session);
         const dispatchCaller = prepared?.caller ?? caller;
         const parsed = await entry.parse(prepared ? prepared.input : input);
-        // What only the person may run with this input (ToolDefinition.conversation) Pi proposes
-        // to them instead of calling it.
-        if (conversation && conversationUse(entry, parsed) !== undefined)
-          throw new MervError('tool_forbidden', 'Conversation tool is not admitted', 403);
+        rules?.admits?.(entry.tool, parsed);
         const validate = async (caller: Caller) => {
           if (session)
             await this.fenced(session, session.provider.validate(caller, name, parsed as Data));
@@ -506,12 +499,7 @@ export class ToolRegistry implements Tools {
           };
           const result =
             this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();
-          if (conversation && holdsToken(result))
-            throw new MervError(
-              'tool_result_secret',
-              'This result carries a credential and is never returned to a conversation',
-              403,
-            );
+          rules?.returns?.(result);
           // Read handlers can wait for external storage while their PostgreSQL snapshot
           // retains old permissions, and permissions can change while an open-world read
           // waits on another service. Reauthorize after releasing that snapshot, before
