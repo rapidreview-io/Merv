@@ -186,6 +186,25 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(m.Failure):
             self.r.restore(first, db, destination)
 
+    def test_missing_terminal_capture_is_history_but_live_writers_block(self):
+        self.write("""ALTER TABLE audit.worker_sessions ADD COLUMN id text, ADD COLUMN session_json text;
+        INSERT INTO audit.worker_sessions VALUES ('expired','old','{"execution":{"policy":{"readOnly":false,"workspace":{"mode":"persistent","retain":true}}}}');
+        CREATE TABLE audit.session_workspaces(session_id text, result_json text);
+        INSERT INTO audit.session_workspaces VALUES ('old',NULL);
+        ALTER TABLE audit.code_units ADD COLUMN writer_state text DEFAULT 'available';""")
+        # The obsolete entry in an older host config must not make historical debt live.
+        self.r.c['idle_tables'] = ['worker_sessions', 'session_workspaces', 'code_units']
+        first = self.r.create()['snapshot']
+        self.assertEqual(self.r.verify(first)['state'], 'verified')
+        self.write("UPDATE audit.code_units SET writer_state='closing';")
+        with self.assertRaisesRegex(m.Failure, 'active work'):
+            self.r.create()
+        self.write("UPDATE audit.code_units SET writer_state='available'; UPDATE audit.worker_sessions SET status='active';")
+        with self.assertRaisesRegex(m.Failure, 'active work'):
+            self.r.create()
+        self.assertEqual([p.parent.name for p in self.r.bucket.glob('*/COMPLETE.json')], [first])
+        self.assertTrue(self.r.control['State']['Running'])
+
     def test_incomplete_upload_does_not_publish_or_prune(self):
         first = self.r.create()['snapshot']
         self.r.fail_upload = True

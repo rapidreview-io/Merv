@@ -127,7 +127,6 @@ class Recovery:
         schema = self.c['schema']
         for table, condition in (
             ('worker_sessions', "status IN ('offered','active')"),
-            ('session_workspaces', f"result_json IS NULL AND EXISTS (SELECT 1 FROM \"{schema}\".worker_sessions s WHERE s.id=session_workspaces.session_id AND NOT (COALESCE(s.session_json::jsonb #>> '{{execution,policy,readOnly}}','false')='true' AND COALESCE(s.session_json::jsonb #>> '{{execution,policy,workspace,mode}}','none')='ephemeral' AND COALESCE(s.session_json::jsonb #>> '{{execution,policy,workspace,retain}}','false')='false'))"),
             ('fleet_allocations', "phase <> 'released'"),
             ('code_bases', "state='running' OR check_state IN ('queued','running') OR check_job_json IS NOT NULL"),
             ('code_units', "writer_state IN ('reserved','active','closing')"),
@@ -135,7 +134,7 @@ class Recovery:
             ('managed_compute_runs', "state NOT IN ('completed','failed','cancelled')"),
             ('code_publications', 'lock_id IS NOT NULL'),
         ):
-            if table in self.c.get('idle_tables', ['worker_sessions', 'session_workspaces', 'fleet_allocations', 'code_bases', 'code_units', 'pi_commands', 'managed_compute_runs', 'code_publications']):
+            if table in self.c.get('idle_tables', ['worker_sessions', 'fleet_allocations', 'code_bases', 'code_units', 'pi_commands', 'managed_compute_runs', 'code_publications']):
                 require(self.exists(table), 'configured idle census table missing')
                 require(self.sql(f'SELECT count(*) FROM "{schema}"."{table}" WHERE {condition};') == '0',
                         'active work: snapshot skipped; previous recovery points unchanged')
@@ -461,7 +460,9 @@ class Recovery:
                 deadline = time.monotonic() + 90
                 while True:
                     try:
-                        self.run(['docker', 'exec', container, 'pg_isready', '-U', 'postgres'])
+                        # The image's temporary init server accepts Unix sockets before
+                        # shutdown. TCP becomes ready only when the final server starts.
+                        self.run(['docker', 'exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'])
                         break
                     except Failure:
                         require(time.monotonic() < deadline, 'isolated verification database did not start')

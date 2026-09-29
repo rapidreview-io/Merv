@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { canonical, digest, MervError, newId, now } from '@merv/contracts';
 import type { CodeMirrorStatus, CodeStoreWarning, Transaction } from '@merv/contracts';
 import type { GitResult, ServerGit } from '@merv/code/git';
-import type { CodeRepositories } from '@merv/code/store/repository';
+import { CodeRepositories } from '@merv/code/store/repository';
 import {
+  CodeMirrorService,
   enqueueMirror,
   GitMirrorTransport,
   type MirrorOutcome,
@@ -510,4 +511,51 @@ test('the credential of a push exists only in the environment of that one Git ch
     '--porcelain',
     `--force-with-lease=refs/heads/merv/work/unit:${'a'.repeat(40)}`,
   ]);
+});
+
+test('disconnected projects cannot hide connected mirrors beyond the first batch', async (t) => {
+  const f = await mirrored(t);
+  const other = await f.scope.bootstrap({ projectName: 'disconnected', actorName: 'owner' });
+  await f.state.transaction(async (tx) => {
+    for (let i = 0; i < 105; i++)
+      await enqueueMirror(tx, other.project.id, 'mirror-work', `waiting-${i}`, f.root);
+    await tx.run(
+      "UPDATE code_operations SET next_at=CASE WHEN CAST(SUBSTRING(unit_id FROM 9) AS INTEGER)<55 THEN NULL ELSE '2020-01-01T00:00:00.000Z' END WHERE project_id=?",
+      other.project.id,
+    );
+  });
+  const snapshot = () =>
+    f.state.read((sql) =>
+      sql.all('SELECT * FROM code_operations WHERE project_id=? ORDER BY id', other.project.id),
+    );
+  const before = await snapshot();
+  await f.lease('session-1');
+  const tip = f.source.commit({ 'connected.txt': 'publish despite the disconnected backlog' });
+  await f.upload('checkpoint', 'session-1', 1, f.root, f.source.bundle(tip, [f.root]));
+  const targetReads: string[] = [];
+  const transport = f.remote.transport(f.paths.repository);
+  const mirror = new CodeMirrorService(
+    f.state,
+    f.scope,
+    new CodeRepositories({ root: join(f.directory, 'code'), quotaBytes: 0, reservedFreeBytes: 0 }),
+    {
+      ...transport,
+      target: async (projectId) => {
+        targetReads.push(projectId);
+        return projectId === other.project.id
+          ? { blocked: 'github_repository_required' }
+          : transport.target(projectId);
+      },
+    },
+    { mirrorSeconds: 0 },
+  );
+  t.after(() => mirror.close());
+  await mirror.run();
+  assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${tip}`]);
+  assert.equal(targetReads.filter((id) => id === other.project.id).length, 1);
+  assert.deepEqual(
+    await snapshot(),
+    before,
+    'unlinked work stays untouched and available after linking',
+  );
 });

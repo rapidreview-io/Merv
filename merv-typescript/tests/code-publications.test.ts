@@ -398,3 +398,32 @@ test('repository relinking fences publications, and verdict rollback leaves the 
   assert.equal((await f.sync()).lastError, 'github_conflict');
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
 });
+
+test('an exact completed merge retry returns its saved receipt without GitHub access', async (t) => {
+  const f = await setup(t);
+  await f.review();
+  await f.sync();
+  const input = {
+    proposalId: f.proposal.id,
+    expectedHead: headOid,
+    expectedBase: baseOid,
+    requestId: 'completed-retry',
+  };
+  const first = await f.publications.mergePublication(f.caller, input);
+  assert.equal(first.pull?.merged, true);
+  const calls = f.calls.length;
+  await f.github.disconnect(f.caller, { expectedRevision: 3 });
+  assert.deepEqual(await f.publications.mergePublication(f.caller, input), first);
+  assert.equal(f.calls.length, calls, 'reading the saved receipt needs no remote credential');
+  await assert.rejects(
+    f.publications.mergePublication(f.caller, { ...input, expectedBase: headOid }),
+    { code: 'publication_conflict' },
+  );
+  await assert.rejects(
+    f.publications.mergePublication(f.caller, { ...input, requestId: 'different-request' }),
+    { code: 'publication_conflict' },
+  );
+  await assert.rejects(f.publications.mergePublication(f.reviewer, input), {
+    code: 'publication_conflict',
+  });
+});

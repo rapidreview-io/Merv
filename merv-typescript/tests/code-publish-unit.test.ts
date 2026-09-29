@@ -628,6 +628,21 @@ test('an accepted publishing unit waits on one pull request and then carries mai
     requestId: 'publish',
   });
   assert.equal(merged.verified, true);
+  const remoteCalls = f.remote!.calls.length;
+  assert.deepEqual(
+    await f.code.mergePublication(f.admin, {
+      proposalId: opened.proposalId,
+      expectedHead: f.feature,
+      expectedBase: f.root0,
+      requestId: 'publish',
+    }),
+    merged,
+  );
+  assert.equal(
+    f.remote!.calls.length,
+    remoteCalls,
+    'verified replay does not merge or verify remotely again',
+  );
   const published = await f.code.unit(f.admin, work.id);
   assert.equal(published.publication?.state, 'published');
   assert.equal(published.publication?.mergeCommit, merge);
