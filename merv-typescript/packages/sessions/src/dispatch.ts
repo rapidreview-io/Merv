@@ -361,8 +361,9 @@ class PoisonedOffer extends Error {
   constructor(
     readonly candidate: Target,
     readonly cause: unknown,
-    /** A server fault: skipped for this lease only, never held against the work. */
-    readonly transient = false,
+    readonly owner: string,
+    /** A server fault or a refusal of who asked: logged and passed over, never held. */
+    readonly silent: boolean,
   ) {
     super('Offer could not be built');
   }
@@ -370,6 +371,15 @@ class PoisonedOffer extends Error {
 export class SessionDispatch {
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
+  /** `${ownerHash} ${targetKey}` of a silent offer failure, until when that owner passes it over. */
+  private readonly passed = new Map<string, number>();
+  private passing(ownerHash: string): Set<string> {
+    const keys = new Set<string>();
+    for (const [key, until] of this.passed)
+      if (until <= this.clock()) this.passed.delete(key);
+      else if (key.startsWith(`${ownerHash} `)) keys.add(key.slice(ownerHash.length + 1));
+    return keys;
+  }
   constructor(
     private state: State,
     private scope: Scope,
@@ -737,12 +747,11 @@ export class SessionDispatch {
    * trying again. A failure to record must not stop the queue, so a refusal is swallowed.
    */
   private async poisoned(caller: Caller, target: Target, cause: unknown): Promise<void> {
-    const status = (cause as { status?: number })?.status;
     const failure =
       cause instanceof MervError
         ? { code: cause.code, message: cause.message }
         : { code: 'offer_failed', message: cause instanceof Error ? cause.message : String(cause) };
-    if (status === 401 || status === 403 || uncountedOfferCodes.has(failure.code)) return;
+    if (uncountedOfferCodes.has(failure.code)) return;
     try {
       await this.state.transaction(async (tx) => {
         const owner = await ownerOf(this.scope, caller, tx);
@@ -1012,7 +1021,7 @@ export class SessionDispatch {
         candidates: [],
         reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
       };
-    const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+    const open = admissible.queue;
     // A checkout with no driver is cloned from the runner's own repository, which a machine
     // Fleet rents does not have.
     const compatible = open.filter(
@@ -1025,6 +1034,7 @@ export class SessionDispatch {
     const candidates = compatible.filter(
       (item) =>
         !admissible.backoff.has(targetKey(item)) &&
+        !skipped.has(targetKey(item)) &&
         !failures.some(
           (session) =>
             session.instanceId === item.instanceId &&
@@ -1092,16 +1102,13 @@ export class SessionDispatch {
         // Only Fleet asks: a project on its own machines has no work for a machine it rents.
         if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
           return { candidates: [] };
+        const owner = (await ownerOf(this.scope, caller, tx)).hash;
         const selected = await this.eligibleCandidates(
           caller,
           tx,
           new Set(input.capabilities ?? []),
-          await this.recentFailures(
-            tx,
-            (await ownerOf(this.scope, caller, tx)).hash,
-            input.platform.name,
-          ),
-          new Set(),
+          await this.recentFailures(tx, owner, input.platform.name),
+          this.passing(owner),
           false,
         );
         return {
@@ -1760,21 +1767,18 @@ export class SessionDispatch {
       : caller;
     await this.hooks.prepare(preparedCaller);
     // A candidate whose offer cannot be built (a context past its recipe's budget) must
-    // not stop the queue behind it: its failure rolls the attempt back, the next
-    // candidate is tried, and the failure is what the runner sees only when nothing
-    // else is leasable.
+    // not stop the queue behind it: its failure rolls the attempt back and the next
+    // candidate is tried. The runner is answered with the decision, never one target's error.
     const skipped = new Set<string>();
-    let poison: unknown;
     for (;;) {
       try {
-        const result = await this.leaseOnce(caller, input, skipped);
-        if (!result.session && poison !== undefined) throw poison;
-        return result;
+        return await this.leaseOnce(caller, input, skipped);
       } catch (error) {
         if (!(error instanceof PoisonedOffer)) throw error;
-        skipped.add(targetKey(error.candidate));
-        poison = error.cause;
-        if (!error.transient) await this.poisoned(preparedCaller, error.candidate, error.cause);
+        const key = targetKey(error.candidate);
+        skipped.add(key);
+        if (error.silent) this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
+        else await this.poisoned(preparedCaller, error.candidate, error.cause);
       }
     }
   }
@@ -1872,7 +1876,7 @@ export class SessionDispatch {
         tx,
         capabilities,
         failures,
-        skipped,
+        new Set([...skipped, ...this.passing(owner.hash)]),
         !managed,
       );
       const candidate = selected.candidates[0];
@@ -1912,8 +1916,10 @@ export class SessionDispatch {
         )
         .catch((error: unknown) => {
           const status = (error as { status?: number })?.status ?? 500;
-          if (status >= 500) {
-            // The whole lease rolls back, leaving no decision, hold or event: only this says why.
+          // No hold counts a server fault or a refusal of who asked, and the whole lease rolls
+          // back, leaving no decision or event: only this says why the work is passed over.
+          const silent = status >= 500 || status === 401 || status === 403;
+          if (silent)
             process.stderr.write(
               `${JSON.stringify({
                 event: 'dispatch.offer_failed',
@@ -1923,16 +1929,11 @@ export class SessionDispatch {
                 message: String((error as Error)?.message ?? error).slice(0, 300),
               })}\n`,
             );
-            // One target's server fault must not keep every machine from the work behind it.
-            throw new PoisonedOffer(
-              { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
-              error,
-              true,
-            );
-          }
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
             error,
+            owner.hash,
+            silent,
           );
         });
       check(

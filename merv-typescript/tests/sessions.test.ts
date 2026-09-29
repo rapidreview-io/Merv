@@ -1055,13 +1055,14 @@ test('automatic dispatch moves past a candidate whose offer cannot be built', as
     ).map((row) => [row.attempts, row.last_code, row.last_session_id]),
     [[1, 'context_too_large', null]],
   );
-  // With nothing else leasable, the runner sees why the remaining candidate cannot be offered.
+  // With nothing else leasable, the runner is answered with the decision, never the error.
   await f.sessions.release(f.source, { sessionId: leased.session!.id, runnerId: 'machine' });
   f.onBuild(() => {
     throw new MervError('context_too_large', 'Context exceeds the budget', 400);
   });
-  await assert.rejects(async () => await f.sessions.lease(f.source, autoInput()), {
-    code: 'context_too_large',
+  assert.deepEqual(await f.sessions.lease(f.source, autoInput()), {
+    session: null,
+    reason: 'retry_backoff',
   });
 });
 
