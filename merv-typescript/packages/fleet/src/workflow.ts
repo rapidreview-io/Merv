@@ -632,6 +632,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const everyone = this.config.people.includes('*');
     // Each target a project wants, with the director whose machine takes it.
     const served = new Map<string, Map<string, DelegationSource>>();
+    const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
         const { actor, who, key } = await person(source);
@@ -652,9 +653,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
         served.set(projectId, wanted);
       } catch (error) {
         skipped(projectId, error);
+        failed.add(projectId);
       }
     }
-    this.served = new Set(served.keys());
+    // A project that could not be read this pass keeps its standing and its machines.
+    this.served = new Set([...served.keys(), ...[...this.served].filter((p) => failed.has(p))]);
     const allocations = await this.fleet.listOwned(
       this,
       [...served.values()].flatMap((wanted) => [...wanted.keys()]),
@@ -672,7 +675,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const walletPaused = newestWallet > newestAdmitted;
     const active = allocations.filter(occupied);
     for (const a of active)
-      if (a.intent === 'run' && !launched(a) && !served.get(a.projectId)?.has(a.owner.id))
+      if (
+        a.intent === 'run' &&
+        !launched(a) &&
+        !failed.has(a.projectId) &&
+        !served.get(a.projectId)?.has(a.owner.id)
+      )
         await this.fleet.cancelOwned(this, a.id);
     if (walletPaused && this.clock() - newestWallet < walletRetryCooldownMs) return;
     const covered = new Set<string>();

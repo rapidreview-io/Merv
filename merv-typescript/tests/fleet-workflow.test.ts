@@ -989,6 +989,26 @@ test('a director who can no longer write directs nothing, and a failing project 
   assert.equal(f.serves(f.caller.projectId), false);
 });
 
+test('a project whose demand cannot be read keeps its machines and its standing for the pass', async (t) => {
+  const f = await fixture(t);
+  f.demand(targets('kept', 1));
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), [[f.caller.projectId, 'kept_0:0']]);
+  f.allocations[0]!.phase = 'provisioning';
+  f.demand(new MervError('state_unavailable', 'Lock timeout', 503));
+  await f.adapter.reconcile();
+  assert.deepEqual(
+    f.open(),
+    [[f.caller.projectId, 'kept_0:0']],
+    'a transient error cancels nothing',
+  );
+  assert.equal(f.allocations[0]!.intent, 'run');
+  assert.equal(f.serves(f.caller.projectId), true);
+  f.demand([]);
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), [], 'work read as gone is still cancelled');
+});
+
 test('the review director takes only what the admin’s own hand may not, within Fleet’s machines', async (t) => {
   const f = await fixture(t, { maxAgents: 2 });
   f.demand(targets('shared', 1));
