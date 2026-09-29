@@ -691,13 +691,28 @@ export class GitWorkspaceManager {
   /** Each tip neither HEAD nor an earlier rescue contains is kept under `refs/merv/rescued/<launch>[-n]`. */
   private async rescue(row: WorkspaceRow, tips: string[]): Promise<void> {
     const name = /^[A-Za-z0-9_-]{1,180}$/.test(row.launch_id) ? row.launch_id : hash(row.launch_id);
-    const refs: string[] = [];
-    const kept = ['HEAD'];
+    const bare = (await this.repository()).bare_path;
+    // An earlier attempt's rescues stay: they count as kept, and new ones are numbered after them.
+    const earlier = (
+      await this.git([
+        '--git-dir',
+        bare,
+        'for-each-ref',
+        '--format=%(refname) %(objectname)',
+        'refs/merv/rescued/',
+      ])
+    )
+      .split('\n')
+      .map((line) => line.split(' '))
+      .filter(([ref]) => new RegExp(`^refs/merv/rescued/${name}(?:-\\d+)?$`).test(ref ?? ''));
+    const refs = earlier.map(([ref]) => ref!);
+    const kept = ['HEAD', ...earlier.map(([, tip]) => tip!)];
     for (const tip of new Set(tips.filter((tip) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tip)))) {
       const args = ['rev-list', '-n1', '--ignore-missing', tip, '--not', ...kept];
       if (!(await this.checkoutGit(row, args)).trim()) continue;
       const ref = `refs/merv/rescued/${name}${refs.length ? `-${refs.length}` : ''}`;
-      await this.git(['--git-dir', (await this.repository()).bare_path, 'update-ref', ref, tip]);
+      // Create-only: a rescue is never moved once written.
+      await this.git(['--git-dir', bare, 'update-ref', ref, tip, '']);
       kept.push(tip);
       refs.push(ref);
     }
