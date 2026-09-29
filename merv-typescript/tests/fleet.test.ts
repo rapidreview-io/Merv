@@ -673,6 +673,7 @@ test('source revocation and missing owner stop a live allocation', async (t) => 
   const missing = await f.fleet.request(f.caller, input('missing-owner'));
   await f.fleet.tick();
   f.unregister();
+  f.advance(300_000);
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, missing.id)).intent, 'stop');
   assert.ok(f.runtimes.stopped.includes('sbx_2'));
@@ -1085,6 +1086,10 @@ test('missing owner releases an untouched allocation without renting a machine',
   const allocation = await f.fleet.request(f.caller, input('unowned'));
   assert.equal(allocation.createAttempted, false);
   f.unregister();
+  // After a restart, owners have five minutes to register before anything of theirs is judged.
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'queued');
+  f.advance(300_000);
   await f.fleet.tick();
   const current = await f.fleet.inspect(f.caller, allocation.id);
   assert.equal(current.phase, 'released');
@@ -1128,17 +1133,110 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   await f.fleet.close();
   assert.deepEqual(f.runtimes.stopped, [chat1], 'only the chat machine ends with the process');
   assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
-  const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
-    ),
-  );
+  const restart = async () =>
+    await createService(
+      new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+        Date.parse('2026-09-22T00:00:00Z'),
+      ),
+    );
+  // A Fleet that closes before the owner registers again never fences what it did not own.
+  await (await restart()).close();
+  const successor = await restart();
+  // Before its owner registers again the kept machine is watched, never stopped.
+  await successor.tick();
+  assert.equal((await successor.inspect(f.caller, work.id)).intent, 'run');
+  assert.ok(!f.runtimes.stopped.includes(kept1));
   successor.registerOwner('workflow', kept);
   f.runtimes.leaseSoon(kept1);
   await successor.tick();
   assert.ok(f.runtimes.renewed.includes(kept1), 'the restarted Fleet renews the kept machine');
   assert.equal((await successor.inspect(f.caller, work.id)).intent, 'run');
   await successor.close();
+});
+
+test('closing leaves a kept owner’s queued and booting work to the successor, which waits for the owner', async (t) => {
+  const f = await fixture(t, { globalLimit: 3, projectLimit: 3 });
+  f.unregister();
+  const kept: FleetOwner = { ...f.owner, keepsRunning: true };
+  f.fleet.registerOwner('workflow', kept);
+  f.runtimes.failCreateOnce = true;
+  const lost = await f.fleet.request(f.caller, input('lost'));
+  await f.fleet.tick();
+  const booting = await f.fleet.request(f.caller, input('booting'));
+  await f.fleet.tick();
+  const queued = await f.fleet.request(f.caller, input('queued'));
+  await f.fleet.close();
+  const phases = async () =>
+    await Promise.all(
+      [lost.id, booting.id, queued.id].map(async (id) => {
+        const { phase, intent } = await f.fleet.inspect(f.caller, id);
+        return `${phase} ${intent}`;
+      }),
+    );
+  const closed = ['uncertain run', 'provisioning run', 'queued run'];
+  assert.deepEqual(await phases(), closed, 'closing admits, creates and stops nothing kept');
+  assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
+  const successor = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+      Date.parse('2026-09-22T00:00:10Z'),
+    ),
+  );
+  await successor.tick();
+  assert.deepEqual(await phases(), closed, 'nothing moves before the owner registers again');
+  assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
+  successor.registerOwner('workflow', kept);
+  await successor.tick();
+  assert.deepEqual(await phases(), ['provisioning run', 'starting run', 'provisioning run']);
+  assert.deepEqual(f.runtimes.launchKeys, [`${booting.id}:launch`]);
+  assert.equal(f.runtimes.createKeys.filter((key) => key === `${lost.id}:create`).length, 2);
+  await successor.close();
+});
+
+test('a create whose reply was lost before closing is recovered by the successor, not while closing', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.failCreateOnce = true;
+  const { id } = await f.fleet.request(f.caller, input('lost'));
+  await f.fleet.tick();
+  await f.fleet.close();
+  const closed = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(
+    [closed.intent, closed.runtime, closed.releaseBy, f.runtimes.createKeys],
+    ['stop', null, undefined, [`${id}:create`]],
+  );
+  const successor = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
+    ),
+  );
+  await successor.tick();
+  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create`]);
+  await successor.tick();
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  await successor.close();
+});
+
+test('a machine without a registered owner is watched, not stopped, until the owner grace ends', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const gone = await f.fleet.request(f.caller, input('gone'));
+  const idle = await f.fleet.request(f.caller, {
+    requestId: 'idle',
+    owner: { kind: 'workflow', id: 'work_2' },
+  });
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [deleted, live] = [await machine(gone.id), await machine(idle.id)];
+  f.unregister();
+  f.runtimes.confirmStopped(deleted);
+  f.runtimes.leaseSoon(live);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, gone.id)).phase, 'released');
+  const waiting = await f.fleet.inspect(f.caller, idle.id);
+  assert.deepEqual([waiting.phase, waiting.intent], ['running', 'run']);
+  assert.deepEqual([f.runtimes.stopped, f.runtimes.renewed], [[], []]);
+  f.advance(300_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, idle.id)).intent, 'stop');
+  assert.deepEqual(f.runtimes.stopped, [live]);
 });
 
 test('drain waits for owner completion and close leaves pending delete for a successor', async (t) => {

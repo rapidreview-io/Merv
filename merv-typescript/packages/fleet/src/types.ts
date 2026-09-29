@@ -88,8 +88,9 @@ export interface FleetOwner {
   /** Rent through the host project, so work in a project without its own connection can rent.
    * connected(), free() and describe() still answer for the project's own connection. */
   rentsInHost?: true;
-  /** Its launched machines outlive a Main restart: closing leaves them running, and the owner
-   * registering again after the restart takes them back. Pi's end with the process. */
+  /** Its machines outlive a Main restart, launched or not: closing leaves its running work in
+   * every phase, and the owner registering again after the restart takes it back. Pi's end with
+   * the process. */
   keepsRunning?: true;
   /** Who a machine for this source and owner id is for, keyed as Pi keys a person (a digest of
    * their sign-in); null when nobody's daily compute should count it. */

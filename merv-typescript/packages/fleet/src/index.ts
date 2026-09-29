@@ -89,6 +89,8 @@ const report = (event: string, a: FleetAllocation, error: unknown) => {
 };
 /** How long a capped request waits for its offer to list a price, as after a restart. */
 const unpricedMs = 600_000;
+/** How long after a restart owners have to register before their kinds' machines are judged. */
+const ownerGraceMs = 300_000;
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
@@ -100,8 +102,8 @@ export class FleetService implements Fleet {
   private fullAt = 0;
   private watching = false;
   private awake = false;
-  /** Owner kinds whose launched machines outlive a Main restart. */
-  private readonly kept = new Set<string>();
+  /** Owner kinds registered in this process, with whether their machines outlive it. */
+  private readonly kinds = new Map<string, boolean>();
   private unlisten?: () => void;
   /** Timers never inherit a caller's database scope: kicks come from inside transactions. */
   private readonly detached = AsyncResource.bind((fn: () => void) => fn());
@@ -189,6 +191,10 @@ export class FleetService implements Fleet {
   private stale(a: FleetAllocation): boolean {
     return !this.runtimes?.profiles.some((profile) => profile.id === a.profileId);
   }
+  /** Judged only once owners have had time to register after a restart. */
+  private orphan(a: FleetAllocation): boolean {
+    return !this.owners.has(a.owner.kind) && this.clock() - this.startedAt >= ownerGraceMs;
+  }
   /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {
     // Owners register after Fleet starts and a pass stops what has none: wait for the first.
@@ -221,7 +227,7 @@ export class FleetService implements Fleet {
     );
     this.owners.set(kind, owner);
     // Kept even after the owner leaves: closing reads it after the owners have gone.
-    if (owner.keepsRunning) this.kept.add(kind);
+    this.kinds.set(kind, !!owner.keepsRunning);
     return () => {
       if (this.owners.get(kind) === owner) this.owners.delete(kind);
     };
@@ -514,7 +520,7 @@ export class FleetService implements Fleet {
     }));
   }
   private async reserve(): Promise<void> {
-    if (!this.config.enabled || !this.runtimes) return;
+    if (!this.config.enabled || !this.runtimes || this.closed) return;
     const waiting = await this.state.read((sql) => this.all(sql));
     const queued = waiting.filter((a) => a.phase === 'queued');
     if (!queued.length) return;
@@ -546,14 +552,13 @@ export class FleetService implements Fleet {
     const projectCount = new Map<string, number>();
     for (const a of active) projectCount.set(a.projectId, (projectCount.get(a.projectId) ?? 0) + 1);
     const dropped = (a: FleetAllocation) =>
-      a.intent !== 'run' ||
-      a.deadlineAt <= this.time() ||
-      this.stale(a) ||
-      !this.owners.has(a.owner.kind);
+      a.intent !== 'run' || a.deadlineAt <= this.time() || this.stale(a) || this.orphan(a);
+    // A request whose owner has not registered yet waits, neither admitted nor dropped.
+    const admissible = (a: FleetAllocation) => this.owners.has(a.owner.kind) && priced(a);
     const hasRoom =
       active.length < this.config.globalLimit &&
       queued.some(
-        (a) => priced(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId),
+        (a) => admissible(a) && (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId),
       );
     if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
@@ -573,7 +578,7 @@ export class FleetService implements Fleet {
           a.intent = 'stop';
           a.phase = 'released';
         } else if (
-          priced(a) &&
+          admissible(a) &&
           count < this.config.globalLimit &&
           (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
         ) {
@@ -743,14 +748,15 @@ export class FleetService implements Fleet {
     return allocations.some((a) => !steady(a));
   }
   private async advance(a: FleetAllocation): Promise<void> {
-    // Closing stops only what close() fenced; a kept machine is left as it is.
-    if (this.closed && a.intent !== 'stop') return;
+    // Closing stops only machines Fleet has seen: a kept one is left as it is, and a create
+    // whose reply was lost is left to the successor, which recovers it by its key.
+    if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
     const owner = this.owners.get(a.owner.kind);
     if (
       a.intent !== 'stop' &&
-      (a.deadlineAt <= this.time() || this.stale(a) || !this.config.enabled || !owner)
+      (a.deadlineAt <= this.time() || this.stale(a) || !this.config.enabled || this.orphan(a))
     )
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
@@ -764,6 +770,8 @@ export class FleetService implements Fleet {
           current.intent = 'stop';
         });
     }
+    // Nothing is created before its owner registers; a machine it has is still watched.
+    if (!a.runtime && a.intent === 'run' && !owner) return;
     if (!a.runtime) {
       // A false marker proves no create could have happened; older records count as attempted.
       let first = false;
@@ -877,7 +885,9 @@ export class FleetService implements Fleet {
         : 'releasing';
   }
   /** Disposal fences admission durably, then makes one bounded provider cleanup pass.
-   * Pending deletes remain counted and are reconciled when the plugin is re-enabled.
+   * Pending deletes remain counted and are reconciled when the plugin is re-enabled. A kind
+   * never registered in this process is left alone, and a kept kind's running work in every
+   * phase: the successor takes both back.
    */
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -888,12 +898,8 @@ export class FleetService implements Fleet {
       await this.pending?.catch(() => undefined);
       await this.state.transaction(async (tx) => {
         for (const a of await this.all(tx)) {
-          if (
-            this.kept.has(a.owner.kind) &&
-            a.intent === 'run' &&
-            a.runtime?.launch?.deliveryState === 'launched'
-          )
-            continue;
+          const keeps = this.kinds.get(a.owner.kind);
+          if (keeps === undefined || (keeps && a.intent === 'run')) continue;
           const before = structuredClone(a);
           a.intent = 'stop';
           if (a.phase === 'queued') a.phase = 'released';
