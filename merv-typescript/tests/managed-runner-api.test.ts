@@ -610,13 +610,14 @@ async function checkRows(
       assert.ok(result.reached.includes(row.reaches), `${label}: ${JSON.stringify(result)}`);
     } else {
       assert.deepEqual([result.status, result.code], row.refused, label);
-      // A 403 comes before authentication; an absent owner is never asked.
-      assert.ok(
-        result.reached.every(
-          (owner) => row.refused![0] !== 403 && owner === 'sessions.authenticateManaged',
-        ),
-        `${label} reached ${result.reached}`,
-      );
+      // A 403 comes before authentication, so it reaches nothing.
+      if (row.refused![0] === 403) assert.deepEqual(result.reached, [], label);
+      // An absent owner is never asked; authentication may have run first.
+      else
+        assert.ok(
+          result.reached.every((owner) => owner === 'sessions.authenticateManaged'),
+          `${label} reached ${result.reached}`,
+        );
     }
   }
 }
