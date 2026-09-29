@@ -10,24 +10,74 @@ import type { Tools } from '@merv/api/types';
 import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
 
+const END_MS = 1000; // cleanup is best effort: a DELETE never holds a retire, stop or unload longer
+const isSignal = (signal: AbortSignal | null | undefined): signal is AbortSignal => !!signal;
+
+/**
+ * Bounds: the SDK request `timeout` (cleared on response) plus a fetch deadline on every non-GET.
+ * Never a timer or long-lived signal on an SDK request: its abort listener outlives the request
+ * and sends a stray notifications/cancelled.
+ */
+export async function connectUpstream(
+  url: string,
+  headers: Record<string, string> | undefined,
+  timeoutMs: number,
+  options: { signal?: AbortSignal; notifications?: (client: Client) => void } = {},
+): Promise<Client> {
+  const client = new Client({ name: 'merv-mount', version: '1' });
+  options.notifications?.(client);
+  const transport = new StreamableHTTPClientTransport(new URL(url), {
+    ...(headers && { requestInit: { headers } }),
+    fetch: (address, init) => {
+      const stream = init?.method === 'GET';
+      // Invocation takes no server notifications. Decline only the standalone stream; resumptions
+      // carry last-event-id.
+      if (stream && !options.notifications && !new Headers(init?.headers).has('last-event-id'))
+        return Promise.resolve(new Response(null, { status: 405 }));
+      const deadline = init?.method === 'DELETE' ? Math.min(timeoutMs, END_MS) : timeoutMs;
+      const signals = [init?.signal, stream ? undefined : AbortSignal.timeout(deadline)];
+      // A binding authorizes this endpoint, never a redirect target. Even when fetch strips
+      // Authorization, it forwards tool bodies and MCP headers.
+      return fetch(address, {
+        ...init,
+        redirect: 'error',
+        signal: AbortSignal.any(signals.filter(isSignal)),
+      });
+    },
+  });
+  // The signal is discovery's per-round stop; the SDK closes the client when initialize fails.
+  await client.connect(transport, { timeout: timeoutMs, signal: options.signal });
+  return client;
+}
+
+/** The MCP DELETE first (close() aborts the signal it uses), then the local close. Never rejects. */
+export async function endUpstream(client: Client): Promise<void> {
+  await (client.transport as StreamableHTTPClientTransport | undefined)
+    ?.terminateSession()
+    .catch(() => undefined);
+  await client.close().catch(() => undefined);
+}
+
 /** One pool serves one mount endpoint. */
 export interface ScopedRemoteClientOptions {
   mountId: string;
   url: string;
-  /** Applies separately to connection, invocation, and connection cleanup. */
+  /** Bounds each upstream request; a DELETE gets at most one second. */
   timeoutMs?: number;
-  /** Test seam; the helper always attaches its own authenticated SDK HTTP transport. */
-  clientFactory?: () => Client;
+  /** A connection without calls for this long ends (default five minutes). */
+  idleMs?: number;
+  /** Test seam in place of connectUpstream. */
+  connect?: typeof connectUpstream;
 }
 
 interface Connection {
   key: string;
   lane: string;
   identityKey: string;
-  client: Client;
-  ready: Promise<void>;
+  ready: Promise<Client>;
   users: number;
   retired: boolean;
+  idle?: NodeJS.Timeout;
   closing?: Promise<void>;
 }
 
@@ -95,7 +145,6 @@ export class ScopedRemoteClients {
   private readonly running = new Set<Promise<CallToolResult>>();
   private readonly timeoutMs: number;
   private readonly url: string;
-  private cleanupFailed = false;
   private stopping = false;
   private closing?: Promise<void>;
 
@@ -190,46 +239,20 @@ export class ScopedRemoteClients {
     url: string,
     credential: ResolvedCredential,
   ): Connection {
-    const client =
-      this.options.clientFactory?.() ?? new Client({ name: 'merv-scoped-client', version: '1' });
+    const connect = this.options.connect ?? connectUpstream;
     const connection: Connection = {
       key,
       lane,
       identityKey: credential.identityKey,
-      client,
-      ready: Promise.resolve(),
+      ready: connect(url, { ...credential.headers() }, this.timeoutMs),
       users: 0,
       retired: false,
     };
     this.connections.set(key, connection);
     this.current.set(lane, connection);
     this.all.add(connection);
-    connection.ready = (async () => {
-      try {
-        const transport = new StreamableHTTPClientTransport(new URL(url), {
-          requestInit: { headers: { ...credential.headers() } },
-          fetch: (address, init) =>
-            fetch(address, {
-              ...init,
-              // The binding authorizes this endpoint, not a redirect destination. Even
-              // when fetch strips Authorization, it forwards tool bodies and MCP headers.
-              redirect: 'error',
-              signal: AbortSignal.any([
-                ...(init?.signal ? [init.signal] : []),
-                AbortSignal.timeout(this.timeoutMs),
-              ]),
-            }),
-        });
-        await withDeadline(
-          client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
-          this.timeoutMs,
-          'remote_timeout',
-        );
-      } catch (error) {
-        this.retire(connection);
-        throw fault(error);
-      }
-    })();
+    // A failed connect is never reused.
+    connection.ready.catch(() => this.retire(connection));
     return connection;
   }
 
@@ -241,8 +264,9 @@ export class ScopedRemoteClients {
     args: Record<string, unknown>,
   ): Promise<CallToolResult> {
     connection.users++;
+    clearTimeout(connection.idle);
     try {
-      await connection.ready;
+      const client = await connection.ready;
       // Connection setup and credential resolution can yield. Rotation or revocation
       // during either wait must be observed before an operation crosses the upstream boundary.
       const currentCredential = await this.credentials.resolve(caller, mountId);
@@ -255,11 +279,10 @@ export class ScopedRemoteClients {
       await this.admit(caller, mountId, name, args);
       // Cast on purpose: the registry's complete() is the one result validator.
       return (await withDeadline(
-        connection.client.request(
-          { method: 'tools/call', params: { name, arguments: args } },
-          z.unknown(),
-          { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs },
-        ),
+        client.request({ method: 'tools/call', params: { name, arguments: args } }, z.unknown(), {
+          timeout: this.timeoutMs,
+          maxTotalTimeout: this.timeoutMs,
+        }),
         this.timeoutMs,
         'remote_timeout',
       )) as CallToolResult;
@@ -268,10 +291,15 @@ export class ScopedRemoteClients {
       if (!(error instanceof MervError) && !answered(error)) this.retire(connection);
       throw fault(error);
     } finally {
-      connection.users--;
-      // A failed shared connection is withdrawn immediately; other admitted calls retain it.
-      if (connection.retired && connection.users === 0)
-        await this.dispose(connection).catch(() => undefined);
+      // A retired connection ends after its last admitted call; an unused one ends when idle.
+      if (--connection.users === 0) {
+        if (connection.retired) void this.dispose(connection);
+        else
+          (connection.idle = setTimeout(
+            () => this.retire(connection),
+            this.options.idleMs ?? 300_000,
+          )).unref();
+      }
     }
   }
 
@@ -280,21 +308,14 @@ export class ScopedRemoteClients {
     if (this.connections.get(connection.key) === connection)
       this.connections.delete(connection.key);
     if (this.current.get(connection.lane) === connection) this.current.delete(connection.lane);
-    if (connection.users === 0) void this.dispose(connection).catch(() => undefined);
+    if (connection.users === 0) void this.dispose(connection);
   }
 
+  /** Ends a connection once; never rejects. */
   private dispose(connection: Connection): Promise<void> {
-    return (connection.closing ??= withDeadline(
-      connection.client.close(),
-      this.timeoutMs,
-      'remote_timeout',
-    )
-      .catch((error: unknown) => {
-        // Retirements can finish before shutdown snapshots the live clients.
-        // Retain their cleanup outcome after removing the connection itself.
-        this.cleanupFailed = true;
-        throw fault(error);
-      })
+    clearTimeout(connection.idle);
+    return (connection.closing ??= connection.ready
+      .then(endUpstream, () => undefined)
       .finally(() => this.all.delete(connection)));
   }
 
@@ -303,13 +324,9 @@ export class ScopedRemoteClients {
     this.stopping = true;
     this.closing = (async () => {
       await Promise.allSettled([...this.running]);
-      const results = await Promise.allSettled(
-        [...this.all].map(async (connection) => this.dispose(connection)),
-      );
+      await Promise.all([...this.all].map(async (connection) => this.dispose(connection)));
       this.connections.clear();
       this.current.clear();
-      if (this.cleanupFailed || results.some((result) => result.status === 'rejected'))
-        throw new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
     })();
     return this.closing;
   }

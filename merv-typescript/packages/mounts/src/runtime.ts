@@ -1,5 +1,4 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { check, MervError } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
@@ -7,7 +6,7 @@ import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
-import { ScopedRemoteClients, withDeadline } from './credential-client.js';
+import { connectUpstream, endUpstream, ScopedRemoteClients } from './upstream.js';
 
 const safeCodes = new Set([
   'forbidden',
@@ -41,12 +40,12 @@ export class MountRuntime {
   private published?: string;
   private client?: Client;
   private discoveryIdentity?: string;
+  /** The running refresh's stop signal: only stop() aborts it, and only while that refresh runs. */
   private discoveryAbort?: AbortController;
   private current?: Promise<void>;
   private forceNext = false;
   private refreshAgain = false;
   private failures = 0;
-  private cleanupFailed = false;
   private timer?: Awaited<ReturnType<typeof setTimeout>>;
   private readonly drains = new Set<Promise<void>>();
   private stopping = false;
@@ -88,6 +87,8 @@ export class MountRuntime {
     if (force) this.forceNext = true;
     else this.refreshAgain = true;
     if (this.current) return this.current;
+    const round = new AbortController();
+    this.discoveryAbort = round;
     const operation = Promise.resolve()
       .then(async () => {
         let rounds = 0;
@@ -97,7 +98,7 @@ export class MountRuntime {
           this.forceNext = false;
           this.refreshAgain = false;
           if (reconnect) await this.resetDiscovery();
-          await this.refreshOnce();
+          await this.refreshOnce(round.signal);
           // Continuous notifications cannot keep optional startup or one explicit refresh open forever.
         } while (!this.stopping && rounds < 2 && (this.forceNext || this.refreshAgain));
       })
@@ -107,6 +108,7 @@ export class MountRuntime {
       })
       .finally(() => {
         this.current = undefined;
+        this.discoveryAbort = undefined;
         this.schedule();
       });
     this.current = operation;
@@ -121,17 +123,14 @@ export class MountRuntime {
     return await this.credentials.resolve(this.config.discovery, this.config.id);
   }
 
-  private async refreshOnce(): Promise<void> {
+  private async refreshOnce(signal: AbortSignal): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
     const credential = await this.credential();
     if (this.client && this.discoveryIdentity !== credential?.identityKey)
       await this.resetDiscovery();
-    if (!this.client) await this.connect(credential);
+    if (!this.client) await this.connect(credential, signal);
     const client = this.client!;
-    const definitions = await collectRemoteCatalog(client, {
-      timeoutMs: this.timeoutMs,
-      signal: this.discoveryAbort!.signal,
-    });
+    const definitions = await collectRemoteCatalog(client, { timeoutMs: this.timeoutMs, signal });
     check(
       !this.stopping && this.client === client,
       'mount_disconnected',
@@ -179,61 +178,31 @@ export class MountRuntime {
     this.failures = 0;
   }
 
-  private async connect(credential: ResolvedCredential | undefined): Promise<void> {
+  private async connect(
+    credential: ResolvedCredential | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
     this.snapshot = { ...this.snapshot, state: 'connecting' };
-    const client = new Client({ name: 'merv-mount-discovery', version: '1' });
-    const controller = new AbortController();
-    this.client = client;
-    this.discoveryAbort = controller;
-    this.discoveryIdentity = credential?.identityKey;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-      if (!this.stopping && this.client === client) void this.refresh().catch(() => undefined);
-    });
-    const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
-      ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
-      fetch: async (address, init) => {
-        const lifetime = [controller.signal, ...(init?.signal ? [init.signal] : [])];
-        if (init?.method?.toUpperCase() !== 'GET')
-          return fetch(address, {
-            ...init,
-            redirect: 'error',
-            signal: AbortSignal.any([...lifetime, AbortSignal.timeout(this.timeoutMs)]),
-          });
-        // Bound opening the notification stream, not its lifetime. Timing out an
-        // established SSE body creates gaps that can permanently lose notifications.
-        const opening = new AbortController();
-        const timer = setTimeout(() => opening.abort(), this.timeoutMs);
-        try {
-          return await fetch(address, {
-            ...init,
-            // Notification session headers must stay on the configured endpoint too.
-            redirect: 'error',
-            signal: AbortSignal.any([...lifetime, opening.signal]),
-          });
-        } finally {
-          clearTimeout(timer);
-        }
+    const client = await connectUpstream(
+      this.config.url,
+      credential && { ...credential.headers() },
+      this.timeoutMs,
+      {
+        signal,
+        notifications: (client) =>
+          client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+            if (!this.stopping && this.client === client)
+              void this.refresh().catch(() => undefined);
+          }),
       },
-    });
-    try {
-      await withDeadline(
-        client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
-        this.timeoutMs,
-        'mount_timeout',
-      );
-      check(
-        !this.stopping && this.client === client,
-        'mount_disconnected',
-        'Discovery connection changed',
-        503,
-      );
-    } catch (error) {
-      if (this.client === client) this.client = undefined;
-      controller.abort();
-      await this.closeClient(client).catch(() => undefined);
-      throw error;
+    );
+    if (this.stopping) {
+      await endUpstream(client); // a connect that finished during stop still gets its DELETE
+      throw new MervError('mounts_stopped', 'Mounts are stopped', 503);
     }
+    this.client = client;
+    this.discoveryIdentity = credential?.identityKey;
   }
 
   private failed(error: unknown): void {
@@ -260,17 +229,8 @@ export class MountRuntime {
     const client = this.client;
     this.client = undefined;
     this.discoveryIdentity = undefined;
-    this.discoveryAbort?.abort();
-    this.discoveryAbort = undefined;
-    if (client) await this.closeClient(client);
-  }
-  private async closeClient(client: Client): Promise<void> {
-    try {
-      await withDeadline(client.close(), this.timeoutMs, 'mount_timeout');
-    } catch {
-      this.cleanupFailed = true;
-      throw new MervError('mount_cleanup_failed', 'Discovery resource cleanup failed', 503);
-    }
+    // Ending the client rejects its in-flight requests; the refresh signal is stop()'s alone.
+    if (client) await endUpstream(client);
   }
   private clearTimer(): void {
     if (this.timer) clearTimeout(this.timer);
@@ -304,11 +264,7 @@ export class MountRuntime {
         ...(this.current ? [this.current] : []),
         ...this.drains,
       ]);
-      const results = await Promise.allSettled([this.pool.close(), this.resetDiscovery()]);
-      if (this.cleanupFailed || results.some((result) => result.status === 'rejected')) {
-        this.snapshot = { ...this.snapshot, state: 'failed', errorCode: 'mount_cleanup_failed' };
-        throw new MervError('mount_cleanup_failed', 'Mount resource cleanup failed', 503);
-      }
+      await Promise.all([this.pool.close(), this.resetDiscovery()]);
     })();
     return this.closing;
   }

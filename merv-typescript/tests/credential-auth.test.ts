@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { ApiServer } from '../packages/api/src/http.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
 import { createApp } from './fixtures/app.js';
 import type { Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
@@ -318,15 +318,16 @@ test('mount connection setup retains the original credential fence before upstre
     {
       mountId: 'bridge',
       url: 'http://127.0.0.1:1/mcp',
-      clientFactory: () =>
-        ({
-          connect: () => ready,
-          callTool: async () => {
+      connect: async () => {
+        await ready;
+        return {
+          request: async () => {
             calls++;
             return { content: [] };
           },
           close: async () => {},
-        }) as unknown as Client,
+        } as unknown as Client;
+      },
     },
   );
   t.after(async () => {

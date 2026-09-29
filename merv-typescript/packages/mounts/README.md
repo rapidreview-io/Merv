@@ -40,7 +40,7 @@ Discovery, invocation, and notification requests refuse HTTP redirects. Configur
 The following helper modules now belong to this package:
 
 - `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection is bounded by page, tool, and time limits and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
-- `@merv/mounts/credential-client` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, retires changed identities, and drains admitted calls during shutdown.
+- `@merv/mounts/upstream` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, retires changed identities, and drains admitted calls during shutdown.
 
 These helpers were relocated from API without changing their tool transport behavior. Pool shutdown also retains earlier retirement cleanup failures so a later close cannot incorrectly report success. They contain upstream SDK transport ownership, while the public types module remains free of runtime code.
 

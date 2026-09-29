@@ -6,7 +6,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import { ProjectScope } from '@merv/scope';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
 import { openState } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
 
@@ -66,18 +66,15 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
         mountId: 'bridge',
         url: 'https://unused-mount.example/mcp',
         timeoutMs: 1500,
-        clientFactory: () => {
+        connect: async () => {
           const connection = { closes: 0 };
           connections.push(connection);
-          const held = connections.length === 1;
           // Only the SDK I/O is substituted. All caller, grant, and credential checks are real.
+          if (connections.length === 1) {
+            entered.resolve();
+            await release.promise;
+          }
           return {
-            connect: async () => {
-              if (held) {
-                entered.resolve();
-                await release.promise;
-              }
-            },
             request: async (request: unknown) => {
               dispatched.push(request);
               return { content: [], structuredContent: { dispatched: true } };

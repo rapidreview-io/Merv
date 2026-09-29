@@ -13,7 +13,7 @@ import { MervError } from '@merv/contracts';
 import { ToolRegistry } from '@merv/api';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { createApp } from './fixtures/app.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 import { RemoteFixture, representativeResult } from './fixtures/remote-server.js';
 
@@ -26,8 +26,38 @@ function data(result: CallToolResult) {
   };
 }
 
-async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure = false) {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-credential-client-'));
+async function until(predicate: () => boolean, message: string, milliseconds = 4000) {
+  const end = Date.now() + milliseconds;
+  while (!predicate()) {
+    if (Date.now() >= end) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/** Records every SDK client the pool creates, in order, with its local close() count. */
+function recordClients(t: TestContext) {
+  const clients: { client: Client; closeCalls: number }[] = [];
+  const connect = Client.prototype.connect;
+  const close = Client.prototype.close;
+  t.mock.method(
+    Client.prototype,
+    'connect',
+    function (this: Client, ...args: Parameters<Client['connect']>) {
+      clients.push({ client: this, closeCalls: 0 });
+      return connect.apply(this, args);
+    },
+  );
+  t.mock.method(Client.prototype, 'close', async function (this: Client) {
+    const record = clients.find((record) => record.client === this);
+    if (record) record.closeCalls++;
+    await close.call(this);
+  });
+  return clients;
+}
+
+async function fixture(t: TestContext, timeoutMs = 1500) {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-mount-upstream-'));
   const app = await createApp({ directory, components: ['state', 'scope'] });
   const first = await app.ctx.scope.bootstrap({ projectName: 'Project A', actorName: 'Actor A' });
   const second = await app.ctx.scope.bootstrap({ projectName: 'Project B', actorName: 'Actor B' });
@@ -69,29 +99,16 @@ async function fixture(t: TestContext, timeoutMs = 1500, expectedCleanupFailure 
   const credentials = new EnvironmentCredentials(app.ctx.scope, bindings);
   const access = app.ctx.scope.toolPolicy;
   access.replace(grants);
-  const clients: { client: Client; closeCalls: number }[] = [];
+  const clients = recordClients(t);
   const pool = new ScopedRemoteClients(credentials, access, {
     mountId: 'sandbox',
     url: upstream.url,
     timeoutMs,
-    clientFactory: () => {
-      const client = new Client({ name: 'scoped-client-test', version: '1' });
-      const original = client.close.bind(client);
-      const record = { client, closeCalls: 0 };
-      client.close = async () => {
-        record.closeCalls++;
-        await original();
-      };
-      clients.push(record);
-      return client;
-    },
   });
   t.after(async () => {
     await upstream.close();
     try {
-      if (expectedCleanupFailure)
-        await assert.rejects(pool.close(), { code: 'remote_unavailable' });
-      else await pool.close();
+      await pool.close();
     } finally {
       await app.stop();
       delete process.env[envA];
@@ -189,41 +206,8 @@ test('credential rotation withdraws the old client but lets an admitted old-iden
   assert.equal(clients[0].closeCalls, 0);
   held.release();
   assert.equal(data(await admitted).connectionId, data(initial).connectionId);
-  assert.equal(clients[0].closeCalls, 1);
+  await until(() => clients[0].closeCalls >= 1, 'The retired client was not closed');
   assert.equal(clients[1].closeCalls, 0);
-});
-
-test('a failed retired-client cleanup remains visible during later shutdown', async (t) => {
-  const { pool, a, envA, tokens, clients } = await fixture(t, 1500, true);
-  const first = await pool.call(a, 'sandbox', 'inspect', {});
-  const originalClose = clients[0].client.close.bind(clients[0].client);
-  let finishRetirement!: () => void;
-  const retirementFinished = new Promise<void>((resolve) => {
-    finishRetirement = resolve;
-  });
-  t.mock.method(clients[0].client, 'close', async () => {
-    await originalClose();
-    finishRetirement();
-    throw new Error(`Retired cleanup contains ${tokens.a}`);
-  });
-  process.env[envA] = tokens.rotated;
-  const replacement = await pool.call(a, 'sandbox', 'inspect', {});
-  assert.notEqual(data(first).connectionId, data(replacement).connectionId);
-  await retirementFinished;
-  // Let the completed retirement leave the live-connection set before shutdown begins.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(clients[0].closeCalls, 1);
-  await assert.rejects(pool.close(), (error: unknown) => {
-    assert.equal((error as { code?: string }).code, 'remote_unavailable');
-    assert.ok(!String(error).includes(tokens.a));
-    assert.ok(!JSON.stringify(error).includes(tokens.a));
-    return true;
-  });
-  assert.equal(
-    clients[1].closeCalls,
-    1,
-    'Shutdown must also attempt the current connection cleanup',
-  );
 });
 
 for (const change of ['grant', 'credential'] as const) {
@@ -245,7 +229,7 @@ for (const change of ['grant', 'credential'] as const) {
     if (change === 'credential') {
       await pool.call(a, 'sandbox', 'inspect', {});
       assert.equal(upstream.initializeAttempts, 2);
-      assert.equal(clients[0].closeCalls, 1);
+      await until(() => clients[0].closeCalls === 1, 'The superseded client was not closed');
     }
   });
 }
@@ -385,7 +369,7 @@ test('one failed call evicts a shared client without closing another admitted ca
   assert.equal(clients[0].closeCalls, 0);
   held.release();
   assert.equal(data(await admitted).connectionId, data(first).connectionId);
-  assert.equal(clients[0].closeCalls, 1);
+  await until(() => clients[0].closeCalls >= 1, 'The failed shared client was not closed');
   const replacement = await pool.call(a, 'sandbox', 'inspect', {});
   assert.notEqual(data(replacement).connectionId, data(first).connectionId);
 });
@@ -399,18 +383,23 @@ for (const phase of ['connect', 'call'] as const) {
     void operation.catch(() => undefined);
     await held.entered;
     await assert.rejects(operation, { code: 'remote_timeout' });
-    assert.ok(clients[0].closeCalls >= 1);
+    await until(() => clients[0].closeCalls >= 1, 'The stalled client was not closed');
     held.release();
   });
 }
 
-async function remotePool(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
+async function remotePool(
+  t: TestContext,
+  f: Awaited<ReturnType<typeof fixture>>,
+  options: { timeoutMs?: number; idleMs?: number } = {},
+) {
   const remote = new RemoteFixture();
   await remote.start();
   const pool = new ScopedRemoteClients(f.credentials, f.access, {
     mountId: 'sandbox',
     url: remote.url,
     timeoutMs: 1500,
+    ...options,
   });
   t.after(async () => {
     await pool.close();
@@ -525,4 +514,35 @@ test('the registry refuses an invalid MCP result and the connection stays', asyn
       code: 'invalid_remote_result',
     });
   assert.equal(initializes, 1);
+});
+
+test('an idle invocation connection opens no notification stream', async (t) => {
+  const f = await fixture(t);
+  const { remote, pool } = await remotePool(t, f, { timeoutMs: 300 });
+  await pool.call(f.a, 'sandbox', 'inspect', {});
+  await sleep(1500);
+  assert.equal(remote.gets, 0);
+  assert.equal(remote.sessionCount, 1);
+});
+
+test('an idle connection ends with an MCP DELETE', async (t) => {
+  const f = await fixture(t);
+  const { remote, pool } = await remotePool(t, f, { idleMs: 200 });
+  await pool.call(f.a, 'sandbox', 'inspect', {});
+  assert.equal(remote.sessionCount, 1);
+  await until(() => remote.sessionCount === 0, 'The idle connection stayed open', 400);
+  assert.equal(remote.deletes, 1);
+  await pool.call(f.a, 'sandbox', 'inspect', {});
+  assert.equal(remote.opened, 2);
+});
+
+test('closing the pool ends every connection with an MCP DELETE', async (t) => {
+  const f = await fixture(t);
+  const { remote, pool } = await remotePool(t, f);
+  for (const caller of [f.a, f.a2, f.b]) await pool.call(caller, 'sandbox', 'inspect', {});
+  assert.equal(remote.sessionCount, 3);
+  await pool.close();
+  assert.equal(remote.sessionCount, 0);
+  assert.equal(remote.deletes, remote.opened);
+  assert.equal(remote.opened, 3);
 });

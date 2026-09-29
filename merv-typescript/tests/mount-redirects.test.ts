@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { MountManager } from '../packages/mounts/src/index.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
 import { fixtureAccess } from './fixtures/access.js';
 import type { CredentialProvider } from '../packages/mounts/src/types.js';
 
@@ -93,6 +93,7 @@ for (const mode of ['invocation', 'discovery']) {
   test(`${mode} notification GET refuses cross-origin redirects`, { timeout: 5000 }, async (t) => {
     const { url, received } = await fixture(t, 'GET');
     const nativeFetch = globalThis.fetch;
+    let gets = 0;
     let settled!: () => void;
     const notification = new Promise<void>((resolve) => {
       settled = resolve;
@@ -101,6 +102,7 @@ for (const mode of ['invocation', 'discovery']) {
       globalThis,
       'fetch',
       async (address: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (init?.method === 'GET') gets++;
         try {
           return await nativeFetch(address, init);
         } finally {
@@ -138,9 +140,13 @@ for (const mode of ['invocation', 'discovery']) {
       timeoutMs: 1000,
     });
     try {
-      if (mode === 'invocation') await pool.call(caller, 'fixture', 'inspect', {});
-      else await manager.start();
-      await notification;
+      if (mode === 'invocation') {
+        await pool.call(caller, 'fixture', 'inspect', {});
+        assert.equal(gets, 0, 'invocation connections never open a notification stream');
+      } else {
+        await manager.start();
+        await notification;
+      }
       assert.deepEqual(received, [], 'notification headers must not reach a redirect destination');
     } finally {
       await pool.close();

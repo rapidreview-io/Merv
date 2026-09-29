@@ -519,38 +519,6 @@ test(
 );
 
 test(
-  'shutdown attempts every client cleanup and reports failures without credential details',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const upstream = await remote(t);
-    const manager = new MountManager(services.registry, services.credentials, services.access, {
-      mounts: [
-        { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 500, reconnectMs: 60000 },
-      ],
-    });
-    t.after(() => manager.close().catch(() => undefined));
-    await manager.start();
-    await services.registry.call('_fixture.media', services.caller, {});
-    const original = Client.prototype.close;
-    let closes = 0;
-    t.mock.method(Client.prototype, 'close', async function (this: Client) {
-      closes++;
-      await original.call(this);
-      throw new Error('secret-from-sdk-cleanup');
-    });
-    await assert.rejects(manager.close(), (error: unknown) => {
-      assert.equal((error as { code?: string }).code, 'mount_cleanup_failed');
-      assert.ok(!String(error).includes('secret-from-sdk-cleanup'));
-      return true;
-    });
-    assert.equal(closes, 2, 'Caller and discovery clients must both be closed');
-    assert.deepEqual(await names(services.registry), ['native']);
-    assert.equal(manager.status()[0].errorCode, 'mount_cleanup_failed');
-  },
-);
-
-test(
   'authenticated discovery authority is isolated from callers and revoked discovery withdraws the catalog',
   { timeout: 10000 },
   async (t) => {
@@ -776,3 +744,50 @@ test(
     assert.equal(counts.nonempty, 2);
   },
 );
+
+test('a failed round and stop each end the discovery session with a DELETE', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { manager, fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  assert.equal(upstream.sessionCount, 1);
+  upstream.setTools([]);
+  await upstream.notifyToolsChanged();
+  await until(() => upstream.deletes === 1, 'A failed round did not DELETE its session');
+  assert.equal(upstream.sessionCount, 0);
+  upstream.setTools(representativeTools);
+  await manager.reconnect('fixture');
+  assert.equal(upstream.sessionCount, 1);
+  await fiber.dispose();
+  assert.equal(upstream.deletes, 2);
+  assert.equal(upstream.sessionCount, 0);
+});
+
+test('stop against an upstream that stopped answering takes about one second', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { manager, fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
+  ]);
+  assert.equal(manager.status()[0].state, 'ready');
+  upstream.stall();
+  const started = performance.now();
+  await fiber.dispose();
+  assert.ok(performance.now() - started < 1200, 'The DELETE is capped at one second');
+});
+
+test('stop after a completed round sends no notifications/cancelled', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
+  ]);
+  await fiber.dispose();
+  await sleep(100);
+  assert.deepEqual(
+    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
+    [],
+  );
+  assert.equal(upstream.deletes, 1);
+});

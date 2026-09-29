@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Context } from 'cordis';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '@merv/api';
@@ -237,28 +236,13 @@ test(
   },
 );
 
-test(
-  'unchanged toggles are idempotent and failed cleanup cannot be hidden by reactivation',
-  { timeout: 15000 },
-  async (t) => {
-    const { manager, names, nisa } = await setup(t);
-    const before = nisa.initializeAttempts;
-    await manager.setEnabled('nisa', true);
-    assert.equal(nisa.initializeAttempts, before);
-    await assert.rejects(manager.setEnabled('missing', false), { code: 'mount_not_found' });
-    await assert.rejects(manager.setEnabled('nisa', 'false' as unknown as boolean), {
-      code: 'invalid_mount_config',
-    });
-    const close = Client.prototype.close;
-    t.mock.method(Client.prototype, 'close', async function (this: Client) {
-      await close.call(this);
-      throw new Error('synthetic-cleanup-detail');
-    });
-    await assert.rejects(manager.setEnabled('nisa', false), { code: 'mount_cleanup_failed' });
-    assert.deepEqual(await names(), ['_sandbox.inspect', 'native']);
-    await assert.rejects(manager.setEnabled('nisa', false), { code: 'mount_cleanup_failed' });
-    await assert.rejects(manager.setEnabled('nisa', true), { code: 'mount_cleanup_failed' });
-    assert.equal(nisa.initializeAttempts, before);
-    await assert.rejects(manager.close(), { code: 'mount_cleanup_failed' });
-  },
-);
+test('unchanged toggles are idempotent', { timeout: 15000 }, async (t) => {
+  const { manager, nisa } = await setup(t);
+  const before = nisa.initializeAttempts;
+  await manager.setEnabled('nisa', true);
+  assert.equal(nisa.initializeAttempts, before);
+  await assert.rejects(manager.setEnabled('missing', false), { code: 'mount_not_found' });
+  await assert.rejects(manager.setEnabled('nisa', 'false' as unknown as boolean), {
+    code: 'invalid_mount_config',
+  });
+});
