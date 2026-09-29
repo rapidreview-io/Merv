@@ -358,11 +358,21 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           check(f.phase === 'exchanging', 'github_flow', 'GitHub connection was replaced', 409);
           const current = await this.row(tx, caller.projectId);
           this.revision(current, flow.revision);
+          // Reauthorizing the same identities replaces credentials, not project settings.
+          // Keep the revision fence; every later operation still checks live permissions.
+          const sameOwner =
+            current.owner === owner(caller) &&
+            current.user_json !== null &&
+            JSON.parse(current.user_json).id === user.id;
           const result = await tx.run(
-            `UPDATE code_github SET revision=revision+1,owner=?,user_json=?,repository_json=NULL,owner_source=NULL,automation='off',base_branch=NULL,
+            `UPDATE code_github SET revision=revision+1,owner=?,user_json=?,repository_json=?,owner_source=?,automation=?,base_branch=?,
           token_version=token_version+1,credentials=?,refresh_id=NULL,refresh_until=NULL WHERE project_id=? AND revision=?`,
             owner(caller),
             JSON.stringify(user),
+            sameOwner ? current.repository_json : null,
+            sameOwner ? current.owner_source : null,
+            sameOwner ? current.automation : 'off',
+            sameOwner ? current.base_branch : null,
             client.seal(tokens, `tokens:${caller.projectId}:${current.token_version + 1}`),
             caller.projectId,
             flow.revision,

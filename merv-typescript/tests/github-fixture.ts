@@ -52,6 +52,7 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
   const pulls: any[] = [];
   const calls: { path: string; method: string; body: any; authorization: string }[] = [];
   const control = {
+    user: { id: 42, login: 'fixture' },
     push: true,
     hidden: false,
     loseCreateReply: false,
@@ -105,7 +106,7 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
         expires_in: control.expiresIn,
         refresh_token_expires_in: 86400,
       };
-    else if (path === '/user') result = { id: 42, login: 'fixture' };
+    else if (path === '/user') result = control.user;
     else if (path === '/user/installations') result = { installations: [{ id: 17 }] };
     else if (path === '/user/installations/17/repositories')
       result = { repositories: control.hidden ? [] : [repo()] };
