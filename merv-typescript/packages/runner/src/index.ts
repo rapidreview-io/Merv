@@ -396,9 +396,12 @@ export class MachineRunner implements Runner {
     return this.ledger.updateMetadata(id, patch as LaunchMetadata);
   }
   private async advertise(): Promise<void> {
-    // `runner.1`: this runner ignores fields a server adds to its replies. A managed runner's
-    // capabilities must equal its enrolment, so it names only its drivers.
-    const marker = this.config.oneAssignment ? [] : ['runner.1'];
+    // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`) and names
+    // `git.local` exactly when it has a repository of its own for work that names no driver.
+    // A managed runner's capabilities must equal its enrolment, so it names only its drivers.
+    const marker = this.config.oneAssignment
+      ? []
+      : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
     const heartbeat = () =>
       this.client.presence({

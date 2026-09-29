@@ -197,12 +197,14 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
   assert.equal(resumed.snapshot!.baseOid, f.root);
   assert.equal(readFileSync(join(resumed.path, 'b.txt'), 'utf8'), 'trailing\n');
 
-  // A reviewer that changes what it judges is refused.
+  // A reviewer that changes what it judges is reported as attached, and closes.
   f.reviewer('ses_q', receipt.headOid);
   const judged = await reviewer.prepare(other.launch('ses_q'), other.session('ses_q'));
   writeFileSync(join(judged.path, 'a.txt'), 'edited\n');
+  git(judged.path, ['switch', '--quiet', '-c', 'elsewhere']);
   other.terminal.add('launch-ses_q');
-  await assert.rejects(reviewer.capture(other.launch('ses_q')), failed('workspace_readonly_dirty'));
+  assert.equal((await reviewer.capture(other.launch('ses_q')))!.headOid, receipt.headOid);
+  await reviewer.close(other.launch('ses_q'));
 });
 
 test('hosted Code checkout has independent Git metadata and its edits pass through Code capture', async (t) => {

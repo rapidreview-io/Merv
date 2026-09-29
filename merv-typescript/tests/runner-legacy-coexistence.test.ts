@@ -199,10 +199,10 @@ test(
     await modern.runner.start();
     assert.deepEqual(
       await legacy.capabilities(),
-      ['runner.1'],
-      'a machine without the driver advertises only its version marker',
+      ['git.local', 'runner.2'],
+      'a machine without the driver advertises only its repository and version marker',
     );
-    assert.deepEqual(await modern.capabilities(), ['code.v2', 'runner.1']);
+    assert.deepEqual(await modern.capabilities(), ['code.v2', 'git.local', 'runner.2']);
 
     await modern.accepting(false);
     await sessions.setDispatch(owner, { enabled: true });

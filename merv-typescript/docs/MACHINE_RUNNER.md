@@ -153,7 +153,8 @@ their sandbox. If their fixed policy grants `code.commit`, they can request a
 named commit and wait for its immutable receipt through `code.operation` before
 handoff. Runner performs the fixed commit against that worker's owned checkout;
 the request cannot supply Git arguments or paths. After confirmed termination, Runner captures writable
-changes as a bounded WIP commit. Read-only changes are refused and preserved.
+changes as a bounded WIP commit. A read-only session is reported as attached and
+its checkout put back on that commit.
 
 Code owns the durable server queue; Runner owns the durable local operation
 journal. A command freezes its parent/tree/message/timestamp before an atomic

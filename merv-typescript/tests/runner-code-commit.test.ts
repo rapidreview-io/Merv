@@ -302,7 +302,7 @@ test('a delayed old Git transaction is fenced after capture and successor owners
   );
 });
 
-test('changed files over 50 MiB and unsafe Git configuration are rejected before committing', async (t) => {
+test('changed files over 50 MiB are rejected before committing, and a gitlink is not measured', async (t) => {
   const f = fixture(t),
     first = await f.prepare();
   writeFileSync(join(first.handle.path, 'large.bin'), '');
@@ -313,12 +313,46 @@ test('changed files over 50 MiB and unsafe Git configuration are rejected before
   );
   assert.equal(f.git(first.handle.path, 'rev-parse', 'HEAD'), first.handle.snapshot!.headOid);
   assert.equal(f.git(first.handle.path, 'diff', '--cached', '--name-only'), '');
-  f.git(f.bare, 'config', 'filter.hostile.clean', 'touch /never-run');
-  await assert.rejects(
-    f.manager.checkpointCommit(first.record, first.command('unsafe-config')),
-    /workspace_unsafe_git_config/,
+  rmSync(join(first.handle.path, 'large.bin'));
+  // An embedded repository is committed as a gitlink, which names a commit this repository lacks.
+  const nested = join(first.handle.path, 'nested');
+  mkdirSync(nested);
+  f.git(nested, 'init', '-q');
+  writeFileSync(join(nested, 'inner.txt'), 'inner\n');
+  f.git(nested, 'add', '.');
+  f.git(
+    nested,
+    '-c',
+    'user.name=Agent',
+    '-c',
+    'user.email=agent@example.invalid',
+    'commit',
+    '-qm',
+    'inner',
   );
-  f.git(f.bare, 'config', '--unset', 'filter.hostile.clean');
+  const receipt = await f.manager.checkpointCommit(first.record, first.command('gitlink'));
+  assert.match(f.git(first.handle.path, 'ls-tree', receipt.headOid, 'nested'), /^160000 commit /);
+});
+
+test("an agent's configuration of the private repository is removed, never obeyed or fatal", async (t) => {
+  const f = fixture(t),
+    first = await f.prepare();
+  // Run inside the linked checkout, these write the private repository's shared config.
+  f.git(first.handle.path, 'remote', 'add', 'upstream', 'https://example.invalid/upstream.git');
+  f.git(first.handle.path, 'config', 'pull.rebase', 'false');
+  f.git(first.handle.path, 'config', 'filter.x.clean', 'cat');
+  writeFileSync(join(first.handle.path, 'seed.txt'), 'checkpointed\n');
+  const receipt = await f.manager.checkpointCommit(first.record, first.command());
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /upstream|rebase|filter/);
+  f.git(first.handle.path, 'config', 'filter.x.clean', 'cat');
+  writeFileSync(join(first.handle.path, 'seed.txt'), 'captured\n');
+  f.stop(first.record);
+  const result = await f.manager.capture(first.record);
+  assert.notEqual(result!.headOid, receipt.headOid);
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /filter/);
+  await f.manager.close(first.record);
+  const next = await f.prepare('next');
+  assert.equal(next.handle.snapshot!.headOid, result!.headOid);
 });
 
 test('a killed controller resumes the frozen tree and deterministic commit object without including later edits', async (t) => {

@@ -15,7 +15,7 @@ Start from [config/runner.git.example.json](../config/runner.git.example.json). 
 }
 ```
 
-The source must be an existing local repository. The CLI resolves relative repository paths against the configuration file. `baseRef` selects the initial commit when the private copy is first created; changing this configuration for an existing ledger is refused. The source credential remains in the environment variable named by `credentialEnv`.
+The source must be an existing local repository. The CLI resolves relative repository paths against the configuration file. `baseRef` selects the initial commit when the private copy is first created. A changed `repository` or `baseRef` for an existing ledger refuses new checkouts until it is restored; launches already running finish on the repository they started with. The source credential remains in the environment variable named by `credentialEnv`.
 
 Machine configuration supplies the repository. A workflow's immutable execution policy selects how to use it. Existing workflows that omit `workspace` continue to receive scratch directories; repository configuration alone does not change their policy.
 
@@ -143,9 +143,17 @@ A commit receipt identifies this operation's parent, tree, head, repository, wor
 
 ## Final capture
 
-Capture requires locally confirmed termination. Server-side lease closure alone is insufficient. Writable capture stages Git changes and creates a WIP commit when needed, with a fixed Runner author and the session ID in its message. Changed files larger than 50 MiB are refused before that commit; unchanged historical large files do not block new small changes. This is a per-file bound, not an aggregate repository limit. Git-ignored outputs are not automatically included.
+Capture requires locally confirmed termination. Server-side lease closure alone is insufficient. Writable capture stages Git changes and creates a WIP commit when needed, with a fixed Runner author and the session ID in its message. A changed file larger than 50 MiB (or under a symlinked directory) is never committed: the capture then reports HEAD and restores the checkout to it, so that file and the rest of the session's uncommitted work are dropped. Unchanged historical large files do not block new small changes. This is a per-file bound, not an aggregate repository limit. Git-ignored outputs are not automatically included.
 
-Read-only capture never creates a commit. A changed HEAD, dirty index or dirty worktree is refused and preserved for investigation. Checkout identity, expected branch and private Git administration paths are checked on preparation/resume and capture. Unsafe private Git configuration, symlinked ownership paths and foreign checkouts fail closed. Normal tracked file symlinks remain Git data.
+What the agent left half-done never reaches the capture or the next session: an unmerged index and MERGE_HEAD are cleared with `reset`, and the rebase, sequencer and bisect state are removed by name. A writer's lineage then continues from wherever the agent left HEAD, keeping its commits and uncommitted work: work on a side branch (or with the lineage branch deleted) becomes the lineage, and an older commit checked out rewinds it.
+
+Read-only capture never creates a commit. Its result is the attached snapshot, and the checkout is put back on it (`checkout --force` on its own ref, then `clean` without `-x`, so ignored files such as dependencies stay). Checkout identity, expected branch and private Git administration paths are checked on preparation/resume and capture. Symlinked ownership paths and foreign checkouts fail closed. Normal tracked file symlinks remain Git data.
+
+An agent's `git config` or `git remote add` inside a checkout writes the private repository's shared configuration. Every key outside the runner's own few is removed at the runner's next Git call instead of refusing all Git work; an agent in another slot can still write one between that check and a Git command, as before, and every runner Git call pins its safety settings on the command line.
+
+A capture or close that still fails after 10 minutes and three attempts (an unreadable file or directory, a stale `index.lock`, a lineage branch checked out in another worktree, a foreign checkout) is abandoned instead of retried forever. The clock is in memory, so a restart re-arms it. The checkout is moved to `<path>.abandoned-<launch>`, never deleted, with its `.git` pointer removed so that it can no longer touch the lineage's next checkout; the slot is freed, no result is reported, and a retained lineage restarts clean from its branch at the next prepare. Abandoned directories are not cleaned up.
+
+A successor offered a checkout whose owner is still running or settling is put off uncounted (`preparation_deferred`, cause `checkout_busy`); behind an owner whose process is `uncertain` it is refused and counted, because only an operator can free it.
 
 The final local snapshot is durable before reporting. A lost reply retries the same result rather than recapturing a later branch head. Each launch retains its own final snapshot even after a persistent successor adds commits. Statistics describe changes from the retained base to that head; they can include earlier work on a persistent branch.
 

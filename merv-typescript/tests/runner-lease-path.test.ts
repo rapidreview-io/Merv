@@ -296,7 +296,7 @@ test('a one-assignment runner replays only the request of its own launch', async
   assert.equal(fake.leases('codex').length, 1, 'it never asks for a successor');
 });
 
-test('presence names runner.1 on a source runner and only the enrolled drivers on a managed one', async (t) => {
+test('presence names runner.2 (and git.local) on a source runner and only the enrolled drivers on a managed one', async (t) => {
   const driver: WorkspaceDriverFactory = {
     name: 'code.v2',
     create: () => ({ get: () => undefined, dispose: () => {} }) as unknown as WorkspaceDriver,
@@ -311,8 +311,11 @@ test('presence names runner.1 on a source runner and only the enrolled drivers o
     return fake.calls.find((call) => call.path === '/sessions/runners/heartbeat')!.body!
       .capabilities;
   };
-  assert.deepEqual(await capabilities({}, []), ['runner.1']);
-  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.1']);
+  assert.deepEqual(await capabilities({}, []), ['runner.2']);
+  assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.2']);
+  // A runner with a repository of its own says so, for work that names no driver.
+  const workspace = { repository: '/nonexistent/source', baseRef: 'main' };
+  assert.deepEqual(await capabilities({ workspace }, []), ['git.local', 'runner.2']);
   const managed = { oneAssignment: true, capacity: 1 };
   assert.deepEqual(await capabilities(managed, [driver]), ['code.v2']);
   assert.equal(await capabilities(managed, []), undefined);
