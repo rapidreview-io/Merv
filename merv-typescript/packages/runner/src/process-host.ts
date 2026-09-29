@@ -167,21 +167,15 @@ export class ProcessHost {
    * ends the launch itself within 30 s. Anything else may still run, so stays uncertain.
    */
   private lost(record: LaunchRecord): void {
-    const { boot, lostAt } = record.metadata,
-      now = Date.now();
-    if (typeof boot === 'string' && this.boot && boot !== this.boot) {
+    const { boot, lostAt } = record.metadata;
+    if (typeof boot === 'string' && this.boot && boot !== this.boot)
       this.ledger.end(record.id, 'host_rebooted', 'open');
-      return;
+    else if (record.commandHash === null && ['starting', 'uncertain'].includes(record.status)) {
+      if (typeof lostAt !== 'number') this.ledger.updateMetadata(record.id, { lostAt: Date.now() });
+      else if (lostAt < Date.now() - 60_000)
+        this.ledger.end(record.id, 'guardian_lost_before_launch', 'unlaunched');
     }
-    if (record.commandHash === null && ['starting', 'uncertain'].includes(record.status)) {
-      if (typeof lostAt !== 'number') this.ledger.updateMetadata(record.id, { lostAt: now });
-      else if (
-        lostAt < now - 60_000 &&
-        this.ledger.end(record.id, 'guardian_lost_before_launch', 'unlaunched')
-      )
-        return;
-    }
-    this.ledger.markUncertain(record.id);
+    this.ledger.markUncertain(record.id); // A no-op on a launch ended above.
   }
   private required(id: string): LaunchRecord {
     const record = this.ledger.get(id);

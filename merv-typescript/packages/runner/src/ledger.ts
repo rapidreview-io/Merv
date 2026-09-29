@@ -324,11 +324,8 @@ export class LocalLedger {
       )
       .run(reason, Date.now(), id);
   }
-  /**
-   * End a launch nothing runs for, if it is still `reserved` (no guardian claimed it),
-   * `unlaunched` (claimed, no command pinned) or `open`; the SQL predicate arbitrates against
-   * the guardian's own writes.
-   */
+  // End a launch nothing runs for if still `reserved` (unclaimed), `unlaunched` (claimed, no
+  // command pinned) or `open`; the SQL predicate arbitrates against the guardian's own writes.
   end(id: string, reason: string, which: keyof typeof ending): boolean {
     const sql = `UPDATE launches SET status='stopped',reason=?,updated_at=? WHERE id=? AND ${ending[which]}`;
     return Number(this.db.prepare(sql).run(reason, Date.now(), id).changes) === 1;

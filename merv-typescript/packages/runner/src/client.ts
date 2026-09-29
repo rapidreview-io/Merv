@@ -35,33 +35,23 @@ export class RunnerControlError extends Error {
   get unavailable() {
     return this.status === 0 || this.status >= 500 || this.status === 429;
   }
-  /**
-   * The server's answer to this call, recorded once and never replayed. A 401 is retried: it
-   * can only loop while presence still authenticates. A 404 is final only because a server
-   * answers 503, never 404, while a route's owning plugin is not mounted.
-   */
+  // Recorded once, never replayed. A 404 is final because a server answers 503, never 404,
+  // while a route's owning plugin is unmounted; a 401 loops only while presence authenticates.
   get final() {
-    return (
-      this.status >= 400 &&
-      this.status < 500 &&
-      ![401, 408, 429].includes(this.status) &&
-      // `github_push_required` stays retried until GitHub mode is retired.
-      !['transaction_conflict', 'invalid_control_response', 'github_push_required'].includes(
-        this.code,
-      )
-    );
+    const retried = [401, 408, 429].includes(this.status) || retriedCodes.includes(this.code);
+    return this.status >= 400 && this.status < 500 && !retried;
   }
 }
+/** Retried whatever their status; `github_push_required` only until GitHub mode is retired. */
+const retriedCodes = ['transaction_conflict', 'invalid_control_response', 'github_push_required'];
 
 const label = z
   .string()
   .min(1)
   .max(200)
   .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
-/**
- * Replies ignore fields a server adds (this runner advertises `runner.1`). Tuned values are
- * validated again as a profile before use; only the list's own bounds are checked here.
- */
+// Replies ignore fields a server adds (`runner.1`). Tuned values are validated again as a
+// profile before use; only the list's own bounds are checked here.
 const settingsSchema = z.object({
   platforms: z
     .array(

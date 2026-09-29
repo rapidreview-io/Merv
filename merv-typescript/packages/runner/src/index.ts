@@ -182,32 +182,26 @@ function terminalReason(record: LaunchRecord): string {
   return 'local_process_finished_without_exit_status';
 }
 class RunnerSourceRefusal extends RunnerControlError {}
-/**
- * What a launch keeps of its session: the fields the runner reads back, about 1 KB, instead
- * of the whole Session with its assignment.
- */
-const view = (s: Session) => ({
-  id: s.id,
-  projectId: s.projectId,
-  actorId: s.actorId,
-  instanceId: s.instanceId,
-  expectedRevision: s.expectedRevision,
-  runnerId: s.runnerId,
-  ...(s.agentId ? { agentId: s.agentId, agentSessionId: s.agentSessionId } : {}),
-  status: s.status,
-  closeReason: s.closeReason,
-  hostRef: s.hostRef,
-  expiresAt: s.expiresAt,
-  hardDeadline: s.hardDeadline,
-  ...(s.workspace ? { workspace: s.workspace } : {}),
-  execution: {
-    policy: {
-      readOnly: s.execution.policy.readOnly,
-      workspace: s.execution.policy.workspace,
-      tools: s.execution.policy.tools.map(({ name }) => ({ name })),
-    },
-  },
-});
+/** What a launch keeps of its session: the fields it reads back, never the assignment. */
+const view = (s: Session) => {
+  const { readOnly, workspace, tools } = s.execution.policy;
+  return {
+    id: s.id,
+    projectId: s.projectId,
+    actorId: s.actorId,
+    instanceId: s.instanceId,
+    expectedRevision: s.expectedRevision,
+    runnerId: s.runnerId,
+    ...(s.agentId ? { agentId: s.agentId, agentSessionId: s.agentSessionId } : {}),
+    status: s.status,
+    closeReason: s.closeReason,
+    hostRef: s.hostRef,
+    expiresAt: s.expiresAt,
+    hardDeadline: s.hardDeadline,
+    ...(s.workspace ? { workspace: s.workspace } : {}),
+    execution: { policy: { readOnly, workspace, tools: tools.map(({ name }) => ({ name })) } },
+  };
+};
 type SessionView = ReturnType<typeof view>;
 /** What a put-off preparation recorded on the launch, as the release route carries it. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
@@ -364,10 +358,8 @@ export class MachineRunner implements Runner {
       )
     );
   }
-  /**
-   * The driver a launch was reserved for; fixed with the lease, like its policy. Undefined when
-   * this machine no longer composes it: that launch waits for it, and nothing else does.
-   */
+  // The driver a launch was reserved for, fixed with the lease like its policy. Undefined when
+  // this machine no longer composes it: that launch waits for it, and nothing else does.
   private driverOf(record: LaunchRecord): WorkspaceDriver | undefined {
     const name = record.metadata.workspaceDriver;
     return typeof name === 'string' ? this.drivers.get(name) : this.workspaces;
@@ -377,10 +369,8 @@ export class MachineRunner implements Runner {
     return typeof record.metadata.workspaceDriver !== 'string';
   }
   private occupied(record: LaunchRecord): boolean {
-    return (
-      !terminalLaunch(record) ||
-      (this.driverOf(record)?.get(record.id)?.status ?? 'closed') !== 'closed'
-    );
+    const workspace = this.driverOf(record)?.get(record.id);
+    return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
   }
   /** A managed machine admits one assignment in its lifetime. */
   private assigned(): boolean {
@@ -398,10 +388,8 @@ export class MachineRunner implements Runner {
   private async advertise(): Promise<void> {
     // `runner.1`: this runner ignores fields a server adds to its replies. A managed runner's
     // capabilities must equal its enrolment, so it names only its drivers.
-    const capabilities = [
-      ...this.drivers.keys(),
-      ...(this.config.oneAssignment ? [] : ['runner.1']),
-    ].sort();
+    const marker = this.config.oneAssignment ? [] : ['runner.1'];
+    const capabilities = [...this.drivers.keys(), ...marker].sort();
     const heartbeat = () =>
       this.client.presence({
         runnerId: this.ledger.runnerId,
@@ -502,8 +490,8 @@ export class MachineRunner implements Runner {
   }
   /**
    * One lease request's failure is that request's, never the tick's. A request is completed
-   * once reserved, declined, refused for good or replayed closed; anything else keeps it and
-   * its secret, so the next tick replays the server's receipt.
+   * once reserved, declined, refused for good (its profile may lease anew this tick) or
+   * replayed closed; anything else keeps it and its secret, so the next tick replays the receipt.
    */
   private async acquire(pending: PendingLaunchRequest): Promise<void> {
     try {
