@@ -532,7 +532,9 @@ export class SessionDispatch {
         maxWallMs:
           maxWallMinutes === undefined
             ? (old?.max_wall_ms ?? null)
-            : maxWallMinutes && maxWallMinutes * 60_000,
+            : maxWallMinutes === null
+              ? null
+              : maxWallMinutes * 60_000,
         maxTokens: maxTokens === undefined ? (old?.max_tokens ?? null) : maxTokens,
       };
       check(
