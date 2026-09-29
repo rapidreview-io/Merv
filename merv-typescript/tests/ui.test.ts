@@ -314,10 +314,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.match(String(script.headers['content-type']), /javascript/);
   assert.match(String(script.headers['cache-control']), /immutable/);
   assert.equal((await raw(url, '/ui/missing.css')).status, 404);
-  // Dot segments, encoded or not, normalize away before routing: no longer a UI path, so a token is required.
+  // Dot segments, encoded or not, normalize away before routing: no longer a UI path, and nothing
+  // serves the path they leave.
   for (const path of ['/ui/%2e%2e/secret.txt', '/ui/assets/../../secret.txt']) {
     const escaped = await raw(url, path);
-    assert.equal(escaped.status, 401, path);
+    assert.equal(escaped.status, 404, path);
     assert.doesNotMatch(escaped.body, /outside the bundle/);
   }
   assert.equal((await raw(url, '/ui/', {}, 'POST')).status, 405);
@@ -521,8 +522,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
 
   // UI removal withdraws the bundle and its tools while HTTP and MCP keep serving domain tools.
   await app.setEnabled('ui', false);
-  // With the public mount gone, /ui/ is an ordinary unauthenticated path again.
-  assert.equal((await raw(url, '/ui/')).status, 401);
+  // A withdrawn mount answers 503 until it is mounted again.
+  assert.equal((await raw(url, '/ui/')).status, 503);
   assert.equal((await tool('ui.shell', operator)).body.error.code, 'unknown_tool');
   assert.equal((await tool('task.list', operator)).status, 200);
   for (const id of [
