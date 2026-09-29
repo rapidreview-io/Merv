@@ -70,7 +70,6 @@ export type {
   CodeStoreOperation,
   CodeStoreStatus,
   CodeStoreWarning,
-  CodeBackupStatus,
   CodeMirrorStatus,
   CodeWorkspaceManifestInput,
   CodeWorkspaceManifest,

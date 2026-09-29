@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly independent Merv recovery freshness check
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Unit=recovery-snapshot-status.service
+
+[Install]
+WantedBy=timers.target

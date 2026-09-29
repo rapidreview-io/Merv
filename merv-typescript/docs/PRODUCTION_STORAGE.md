@@ -85,33 +85,18 @@ PostgreSQL is the only State provider, locally as well; a `state.sqlite` left by
 
 ## The off-host copy
 
-`repositories.backup` on the `code` plugin puts a verified copy of the database and of every repository in the bucket, so the VM disk is no longer the only copy of either. It is off unless configured, and configuring it adds no table, no migration and no workflow version. It names environment variables, never credentials:
+Disaster backups belong to deployment operations. [Recovery snapshots](RECOVERY_SNAPSHOTS.md)
+capture the PostgreSQL schema and the complete hosted Code directory while their writers are
+stopped. Every verified snapshot owns its files; retention deletes whole snapshots. Upload and
+restore verification run after Main has restarted.
 
-| Key             | Default environment variable | Purpose                                                |
-| --------------- | ---------------------------- | ------------------------------------------------------ |
-| `bucketEnv`     | `MERV_BLOB_BUCKET`           | The bucket the copies go in                            |
-| `endpointEnv`   | `MERV_BLOB_ENDPOINT_URL`     | HTTPS S3/R2 origin                                     |
-| `prefixEnv`     | `MERV_BLOB_PREFIX`           | The prefix artifacts already use                       |
-| `deploymentEnv` | `MERV_TS_DB_SCHEMA`          | The segment production and rehearsal are kept apart by |
+The former `repositories.backup` configuration, `code.backup.run` tool and application
+`code-restore` command are retired. Explicit legacy configuration fails with migration guidance.
+Keep the archived legacy reader and existing backup objects until recovery from the new format
+has been demonstrated. Application changes do not install or enable the operational backup job.
 
-`accessKeyIdEnv` and `secretAccessKeyEnv` default to `MERV_BLOB_ACCESS_KEY_ID` and `MERV_BLOB_SECRET_ACCESS_KEY`, and `regionEnv` to `MERV_BLOB_REGION`. `everySeconds` (86400) is the recovery point, `keepDays` (30) the retention, and `maxBytes` (4 GiB) the single-object ceiling. `database` selects what is copied beside the repositories: `{"backend":"postgres"}` runs `pg_dump --schema` of `schemaEnv` (`MERV_TS_DB_SCHEMA`) against `connectionStringEnv` (`MERV_DB_URL`), reaching the database through PostgreSQL's own tool under a snapshot of its own, with the password in the child's environment and never in an argument. It is the only `backend`. Merv's own connection is not used and no table is read through SQL.
-
-**This reuses the artifact key and bucket**, which is a deliberate first step and not the end state: that key can already delete every artifact, and a copy one compromised key can delete is not a backup. Giving the backup its own key — or one restricted to the `code/` and `db/` prefixes with no delete on artifacts — is a deployment change, made by changing the four `*Env` names to the new variables. Blobs itself is untouched: artifact uploads and inline reads stay limited to 2 MB, and a bundle is not an artifact.
-
-Turning it on is one block on the `code` plugin, beside `repositories.root`:
-
-```json
-{
-  "repositories": {
-    "root": "/var/lib/merv-ts/code",
-    "backup": { "database": { "backend": "postgres" } }
-  }
-}
-```
-
-**Two deployment prerequisites, neither of which this slice makes.** `pg_dump` must be on the server image — `deploy/Dockerfile` installs `git` and not `postgresql-client` — and a client at least as new as the PostgreSQL it dumps, or it refuses the server's catalogue version. And [`deploy/render-config.mjs`](../deploy/render-config.mjs) writes `code` with `repositories.root` alone, so the block above has to be added there for a release to compose it. Without both, the code below ships inert and `store.backup` stays `null`, which is exactly what it reports today.
-
-What is written, what it costs, `code.backup.run`, and the `code-restore` drill are in [Code operations](CODE_OPERATIONS.md#the-code-repository). At published R2 rates a 1 GB repository kept 30 days is about $0.45 a month; an unchanged project writes only its pointer.
+These snapshots do not contain R2-only artifacts, external machines or deployment secrets.
+Their independent protection and the recorded application image are part of operational recovery.
 
 The one-time existing-project migration ran at cutover and its importer is retired; see [Legacy import](LEGACY_IMPORT.md). The Azure staging deployment uses [its deployment renderer](../deploy/README.md) to configure shared authentication and the exact public origin. The generic storage example alone is not the complete Azure release configuration.
 

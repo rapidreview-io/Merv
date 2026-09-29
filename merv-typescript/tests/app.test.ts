@@ -46,7 +46,11 @@ test('assembled Cordis application completes MCP task review across two full res
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 93);
+    assert.equal(catalog.length, 92);
+    assert.equal(
+      catalog.some((tool) => tool.name === 'code.backup.run'),
+      false,
+    );
     for (const name of [
       'system.status',
       'session.dispatch',
@@ -394,10 +398,9 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
         offered.some((tool) => tool.name === name),
         name,
       );
-    // Whatever fails work, claims or decides a review, starts or ends a reflection wave, moves or
-    // ends a cycle, or runs a server-wide backup is proposed, by every tool that reaches it.
+    // Whatever fails work, claims or decides a review, starts or ends a reflection wave, or
+    // moves or ends a cycle is proposed, by every tool that reaches it.
     for (const name of [
-      'code.backup.run',
       'task.mark_failed',
       'review.start',
       'review.submit',

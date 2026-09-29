@@ -39,6 +39,8 @@ from pathlib import Path
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 ENV = Path('/etc/merv/typescript.env')
 HOME = Path('/var/lib/merv-fleet-pilot/hosted-release')  # lock, the open run's marker, the live pins
+MAINTENANCE = Path('/run/lock/merv-maintenance.lock')
+RECOVERY_PENDING = Path('/var/lib/merv-recovery/resume.json')
 GUARD = Path('/etc/systemd/system/merv-hosted-guard')  # .service and .timer, for the open run
 KEY, RUNTIMES = 'MERV_FLEET_RUNTIME_RELEASE_ID', 'MERV_FLEET_RUNTIMES'  # Standard's legacy key; every machine
 CATALOG, PROVIDER = 'SANDBOXES_RUNTIME_RELEASES', 'cloudflare-fleet'  # PROVIDER: the Standard app
@@ -869,7 +871,13 @@ def step(name, directory, payload):
         if name == 'pins' and directory.name.endswith('-check'):  # a --check run keeps no copy
             shutil.rmtree(directory)
         return result
-    with (HOME / 'lock').open('a') as lock:
+    # Take the shared lock first everywhere: capture must not overlap a Main recreate.
+    MAINTENANCE.parent.mkdir(parents=True, exist_ok=True)
+    with MAINTENANCE.open('a') as maintenance, (HOME / 'lock').open('a') as lock:
+        if not locked(maintenance, 0 if name == 'guard' else 1200):
+            need(name == 'guard', 'deployment or recovery snapshot held the maintenance lock for 20 minutes')
+            return {'guard': 'busy'}
+        need(not RECOVERY_PENDING.exists(), 'recovery snapshot restart is pending; recover it first')
         if not locked(lock, 0 if name == 'guard' else 1200):
             need(name == 'guard', 'another hosted-release step held the host lock for 20 minutes')
             return {'guard': 'busy'}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Merv independent database and Code recovery snapshot
+Requires=docker.service
+After=docker.service network-online.target recovery-snapshot-recover.service
+Wants=network-online.target
+OnFailure=recovery-snapshot-alert.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+EnvironmentFile=-/etc/merv/recovery.env
+ExecStart=/usr/bin/python3 /opt/merv-recovery/recovery-snapshot.py --config /etc/merv/recovery.json create
+ExecStopPost=/usr/bin/python3 /opt/merv-recovery/recovery-snapshot.py --config /etc/merv/recovery.json recover
+TimeoutStartSec=2h
+TimeoutStopSec=5min
+KillMode=control-group

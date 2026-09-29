@@ -1,0 +1,6 @@
+[Unit]
+Description=Record Merv recovery failure or stale snapshot in the host journal
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -p daemon.err -t merv-recovery -- Recovery snapshot failed, is missing, or is stale; inspect recovery-snapshot and recovery-snapshot-status unit journals

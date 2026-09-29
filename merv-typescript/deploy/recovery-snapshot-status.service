@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Merv recovery snapshot freshness independently of creation
+After=local-fs.target
+OnFailure=recovery-snapshot-alert.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/merv-recovery/recovery-snapshot.py --config /etc/merv/recovery.json status
+TimeoutStartSec=30s

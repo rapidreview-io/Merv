@@ -460,7 +460,7 @@ vm.native=lambda p='cloudflare-fleet':apps[p]
 
 // A scratch HOME and run directory, with the module's docker/pgrep calls replaced.
 const scratch = `import pathlib,tempfile,time
-t=pathlib.Path(tempfile.mkdtemp());vm.HOME=t/'home';vm.HOME.mkdir();r=t/'run1';r.mkdir()
+t=pathlib.Path(tempfile.mkdtemp());vm.MAINTENANCE=t/'maintenance.lock';vm.RECOVERY_PENDING=t/'resume.json';vm.HOME=t/'home';vm.HOME.mkdir();r=t/'run1';r.mkdir()
 `;
 
 test('one run holds the host marker, one driver the lease, and a silent lease can be taken over', () => {
@@ -859,7 +859,7 @@ test('pi-connect-project.py holds the hosted host lock and refuses while a hoste
 sys.argv=['pi-connect-project.py','main','project_1']
 spec=importlib.util.spec_from_file_location('connect',${JSON.stringify(connect)})
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-m.HOSTED=pathlib.Path(tempfile.mkdtemp())/'hosted';res={}
+m.HOSTED=pathlib.Path(tempfile.mkdtemp())/'hosted';m.MAINTENANCE=m.HOSTED.parent/'maintenance.lock';m.RECOVERY_PENDING=m.HOSTED.parent/'resume.json';res={}
 with m.exclusive():
     with (m.HOSTED/'lock').open('a') as step:
         try: fcntl.flock(step,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -872,7 +872,10 @@ except AssertionError as e: res['open']=str(e)
 print(json.dumps(res))`,
   );
   assert.equal(out.held, true);
-  assert.match(out.busy, /a hosted-release step holds the host lock/);
+  assert.match(
+    out.busy,
+    /a deployment, recovery snapshot or hosted-release step holds the host lock/,
+  );
   assert.match(out.open, /^hosted_run_open/);
 });
 
@@ -898,8 +901,14 @@ print(json.dumps({'project':m.PROJECT,'root':m.ROOT.name,'ceiling':m.OPTIONS['--
                   'literalGrant':'sbxt_' in m.SBX_ML}))`,
   );
   assert.deepEqual(out, {
-    project: '', root: '_ml', ceiling: '10000', existing: 'ml_grant_already_configured',
-    missing: 'invalid', rootCreated: false, policies: true, literalGrant: false,
+    project: '',
+    root: '_ml',
+    ceiling: '10000',
+    existing: 'ml_grant_already_configured',
+    missing: 'invalid',
+    rootCreated: false,
+    policies: true,
+    literalGrant: false,
   });
 });
 
@@ -962,4 +971,55 @@ test('the Pi runbook rolls Main back with release.mjs and its hosted run, never 
     rollback,
     /release\.mjs --skip-hosted|use `deploy\/cloudflare-sandbox\/rollout\.py`/,
   );
+});
+
+test('hosted steps exclude recovery capture and refuse pending snapshot restart', () => {
+  const out = py(`${scratch}import fcntl
+vm.os.geteuid=lambda:0
+r.chmod(0o700)
+original_stat=vm.Path.stat
+def root_stat(path,*a,**k):
+    value=original_stat(path,*a,**k)
+    if path==r:
+        fields=list(value);fields[4]=0;return vm.os.stat_result(fields)
+    return value
+vm.Path.stat=root_stat
+(r/'plan.json').write_text('{}')
+vm.Step.guard=lambda self,arg:{'guard':'ran'}
+res={}
+with vm.MAINTENANCE.open('a') as held:
+    fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    res['busy']=vm.step('guard',r,{})
+vm.RECOVERY_PENDING.write_text('{}')
+try: vm.step('guard',r,{})
+except RuntimeError as e: res['pending']=str(e)
+vm.RECOVERY_PENDING.unlink()
+res['ready']=vm.step('guard',r,{})
+print(json.dumps(res))`);
+  assert.deepEqual(out.busy, { guard: 'busy' });
+  assert.match(out.pending, /recovery snapshot restart is pending/);
+  assert.deepEqual(out.ready, { guard: 'ran' });
+});
+
+test('project connection refuses recovery capture and releases both locks on refusal', () => {
+  const connect = new URL('pi-connect-project.py', import.meta.url).pathname;
+  const out = py(`import pathlib,tempfile,fcntl
+sys.argv=['pi-connect-project.py','main','project_1']
+spec=importlib.util.spec_from_file_location('connect',${JSON.stringify(connect)})
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+t=pathlib.Path(tempfile.mkdtemp());m.HOSTED=t/'hosted';m.MAINTENANCE=t/'maintenance.lock';m.RECOVERY_PENDING=t/'resume.json'
+res={}
+with m.MAINTENANCE.open('a') as held:
+    fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    try: m.exclusive()
+    except SystemExit as e: res['busy']=str(e)
+m.RECOVERY_PENDING.write_text('{}')
+try: m.exclusive()
+except AssertionError as e: res['pending']=str(e)
+m.RECOVERY_PENDING.unlink()
+with m.exclusive(): res['released']=True
+print(json.dumps(res))`);
+  assert.match(out.busy, /holds the host lock/);
+  assert.match(out.pending, /recovery snapshot restart is pending/);
+  assert.equal(out.released, true);
 });

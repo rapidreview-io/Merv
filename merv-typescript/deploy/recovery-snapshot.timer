@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Merv independent recovery snapshot
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+Unit=recovery-snapshot.service
+
+[Install]
+WantedBy=timers.target

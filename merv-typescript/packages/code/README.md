@@ -29,8 +29,9 @@ Unloading a projection never deletes facts. Reattachment rebuilds derived resear
 
 `repositories.root`, `quotaBytes` and `reservedFreeBytes` belong to the core configuration.
 `finalizeGraceSeconds` also belongs to Code, so every writer uses the same timeout.
-Import maintenance, drain timing, automatic base merging, mirroring and
-backup settings belong to the integration's `repositories` configuration. Existing database
+Import maintenance, drain timing, automatic base merging and mirroring belong to the
+integration's `repositories` configuration. Disaster backup and restoration belong to
+[deployment operations](../../docs/RECOVERY_SNAPSHOTS.md), outside both plugins. Existing database
 migration identities and retained workflow evidence remain unchanged by the split.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and

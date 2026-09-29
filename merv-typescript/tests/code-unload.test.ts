@@ -186,7 +186,6 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
       quotaBytes: 10 * 1024 * 1024 * 1024,
       limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
       // No off-host copy is configured here, and none has ever run.
-      backup: null,
     },
     operations: [],
     mirror: {

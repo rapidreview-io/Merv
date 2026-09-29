@@ -44,6 +44,11 @@ const ssh = (script, opts = {}) =>
 // Runs as root on the VM, detached, writing <release>/deploy-status.json when finished.
 const remoteJob = ({ release, archiveSha256 }) => `
 set -euo pipefail
+# Serialize Main's entire release with recovery capture and hosted-image changes.
+mkdir -p /run/lock
+exec 9>/run/lock/merv-maintenance.lock
+flock -n 9 || { echo "another deployment or recovery snapshot holds the maintenance lock" >&2; exit 1; }
+if [ -e /var/lib/merv-recovery/resume.json ]; then echo "recovery snapshot restart is pending; recover it before releasing" >&2; exit 1; fi
 # An open hosted-image run owns Main's recreates; it checks for this job after claiming the marker.
 HOSTED=$(cat /var/lib/merv-fleet-pilot/hosted-release/active 2>/dev/null || true)
 if [ -n "$HOSTED" ]; then echo "hosted run $HOSTED is open; node deploy/hosted-release.mjs finishes it, or --abandon closes it" >&2; exit 1; fi

@@ -28,6 +28,7 @@ Never prints a secret. Every mutation follows a root-private backup and is undon
 hold secrets, so shred ROOT once the connection is verified and recorded. See deploy/PI_OPERATIONS.md.
 """
 import fcntl
+import contextlib
 import hashlib
 import json
 import os
@@ -60,6 +61,8 @@ HOST_ROOT = Path('/var/lib/merv-fleet-pilot/pi-connect/_host')
 ROOT = HOST_ROOT if PHASE == 'host' else HOST_ROOT.parent / ('_ml' if PHASE == 'ml' else PROJECT)
 ENV = Path('/etc/merv/typescript.env')
 HOSTED = Path('/var/lib/merv-fleet-pilot/hosted-release')  # deploy/hosted-release-vm.py's lock and open-run marker
+MAINTENANCE = Path('/run/lock/merv-maintenance.lock')
+RECOVERY_PENDING = Path('/var/lib/merv-recovery/resume.json')
 MAIN, CONTROL, PIPELINE = 'merv-typescript-control-1', 'sandboxes-control-1', 'sandboxes-pipelines-worker-1'
 SUFFIX = hashlib.sha256(PROJECT.encode()).hexdigest()[:20]
 NAMESPACE = 'merv-ml' if PHASE == 'ml' else 'merv-pi-' + SUFFIX
@@ -272,15 +275,23 @@ def sha(raw):
 
 
 def exclusive():
-    """The hosted-image pipeline's host lock, for the whole phase: both edit the env or the catalog, or work in Main."""
+    """Serialize configuration changes with hosted releases and recovery capture."""
     HOSTED.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lock = (HOSTED / 'lock').open('a')
+    MAINTENANCE.parent.mkdir(parents=True, exist_ok=True)
+    locks = contextlib.ExitStack()
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        sys.exit('a hosted-release step holds the host lock; rerun when it ends')
-    assert not (HOSTED / 'active').exists(), 'hosted_run_open: `node deploy/hosted-release.mjs` finishes it first'
-    return lock
+        for path in (MAINTENANCE, HOSTED / 'lock'):
+            lock = locks.enter_context(path.open('a'))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                sys.exit('a deployment, recovery snapshot or hosted-release step holds the host lock; rerun when it ends')
+        assert not RECOVERY_PENDING.exists(), 'recovery snapshot restart is pending; recover it first'
+        assert not (HOSTED / 'active').exists(), 'hosted_run_open: `node deploy/hosted-release.mjs` finishes it first'
+        return locks
+    except BaseException:
+        locks.close()
+        raise
 
 
 def now():
