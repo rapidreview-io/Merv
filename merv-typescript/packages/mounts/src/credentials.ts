@@ -10,35 +10,22 @@ const key = (projectId: string, actorId: string, mountId: string) =>
 export class Bindings {
   readonly #scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>;
   readonly #byCaller: Map<string, CredentialBinding>;
-  /** The mounts Config schema validated the bindings and their uniqueness. */
   constructor(
     scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>,
     bindings: readonly CredentialBinding[],
   ) {
-    this.#scope = scope;
-    this.#byCaller = new Map(
-      bindings.map((binding) => [
-        key(binding.projectId, binding.actorId, binding.mountId),
-        binding,
-      ]),
-    );
+    this.#scope = scope; // private: inspecting or serializing Bindings never reaches Scope
+    this.#byCaller = new Map(bindings.map((b) => [key(b.projectId, b.actorId, b.mountId), b]));
   }
 
-  /**
-   * The registry authorized the caller, and a discovery round checks its own actor. An agent
-   * session acts through its authority actor's binding.
-   */
+  /** Callers arrive authorized (discovery checks its actor); a session uses its owner's binding. */
   async select(caller: Caller, mountId: string): Promise<CredentialBinding> {
     const owner = caller.session ? await this.#scope.authorityActor(caller) : undefined;
     const binding = this.#byCaller.get(
       key(owner?.projectId ?? caller.projectId, owner?.id ?? caller.actorId, mountId),
     );
-    check(
-      binding,
-      'credential_forbidden',
-      'No credential binding grants this upstream identity',
-      403,
-    );
+    const text = 'No credential binding grants this upstream identity';
+    check(binding, 'credential_forbidden', text, 403);
     return binding;
   }
 
@@ -51,20 +38,15 @@ export class Bindings {
       'The configured upstream bearer credential is unavailable or invalid',
       503,
     );
-    // A local credential stays local after expiry, rotation or revocation.
-    // Unknown tokens still require explicit upstream operator configuration.
+    // A Merv credential stays local, even expired, rotated or revoked; others need operator setup.
     let local: boolean;
     try {
       local = await this.#scope.recognizesCredential(secret);
     } catch {
       throw new MervError('credential_unavailable', 'Upstream credential validation failed', 503);
     }
-    check(
-      !local,
-      'credential_unavailable',
-      'A Merv bearer credential cannot be used for an upstream service',
-      503,
-    );
+    const text = 'A Merv bearer credential cannot be used for an upstream service';
+    check(!local, 'credential_unavailable', text, 503);
     return { ...binding.headers, authorization: `Bearer ${secret}` };
   }
 }

@@ -12,14 +12,8 @@ const mountSchema = z
   .object({
     id: mountIdSchema,
     url: z.string().refine((value) => {
-      try {
-        const url = new URL(value);
-        return (
-          ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.hash
-        );
-      } catch {
-        return false;
-      }
+      const url = URL.parse(value);
+      return !!url && /^https?:$/.test(url.protocol) && !url.username && !url.password && !url.hash;
     }, 'Mount endpoint must be HTTP(S) without user information or a fragment'),
     tools: z
       .array(z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/))
@@ -80,18 +74,11 @@ const configuration = z
     bindings: z.array(bindingSchema).default([]),
   })
   .strict()
-  .refine(
-    (config) => distinct(config.mounts.map((mount) => mount.id)),
-    'Mount IDs must be distinct',
-  )
+  .refine((config) => distinct(config.mounts.map((m) => m.id)), 'Mount IDs must be distinct')
   .refine(
     (config) =>
-      distinct(config.bindings.map((binding) => binding.id)) &&
-      distinct(
-        config.bindings.map((binding) =>
-          JSON.stringify([binding.projectId, binding.actorId, binding.mountId]),
-        ),
-      ),
+      distinct(config.bindings.map((b) => b.id)) &&
+      distinct(config.bindings.map((b) => JSON.stringify([b.projectId, b.actorId, b.mountId]))),
     'Credential binding IDs and actor/project/mount selections must be unique',
   )
   .default({ mounts: [] });
@@ -105,9 +92,7 @@ export const mountsPlugin = {
     const runtimes: MountRuntime[] = [];
     // Registered first: if a later construction throws, unload still releases acquired namespaces.
     // Each stop withdraws its catalog before its first await, independent of status consumers.
-    ctx.effect(() => async () => {
-      await Promise.all(runtimes.map((runtime) => runtime.stop()));
-    });
+    ctx.effect(() => () => Promise.all(runtimes.map((runtime) => runtime.stop())));
     const bindings = new Bindings(ctx.scope, config.bindings);
     for (const mount of config.mounts)
       runtimes.push(new MountRuntime(ctx.tools, bindings, ctx.scope, mount));

@@ -4,8 +4,7 @@ import { ListToolsResultSchema, type ListToolsResult } from '@modelcontextprotoc
 import { check, MervError } from '@merv/contracts';
 import type { ToolDescription } from '@merv/api/types';
 
-// Validate protocol structure while retaining the original JSON, including extension metadata
-// that the SDK's ordinary object parsing can strip from nested content blocks.
+// Checks the MCP shape but keeps the original JSON: SDK parsing can strip extension metadata.
 const losslessListResult = z.custom<ListToolsResult>(
   (value) => ListToolsResultSchema.safeParse(value).success,
   'Remote tools/list returned an invalid MCP catalog',
@@ -14,8 +13,7 @@ const MAX_PAGES = 20;
 
 /**
  * Selected upstream descriptions by name, without handlers; stops once every wanted name is found.
- * `options` go to every page request: the SDK `timeout` bounds each page, and `signal` is only the
- * round's stop. Never a timer signal: its abort would send a stray notifications/cancelled.
+ * Each page gets `options`: the SDK `timeout` and the round's stop `signal`, never a timer signal.
  */
 export async function collectRemoteCatalog(
   client: Pick<Client, 'request'>,
@@ -31,14 +29,9 @@ export async function collectRemoteCatalog(
       losslessListResult,
       options,
     );
-    for (const tool of result.tools) {
-      if (!wanted.has(tool.name)) continue;
-      check(
-        !found.has(tool.name),
-        'remote_catalog_duplicate',
-        `Remote catalog repeated tool ${tool.name}`,
-        502,
-      );
+    for (const tool of result.tools.filter(({ name }) => wanted.has(name))) {
+      const repeated = `Remote catalog repeated tool ${tool.name}`;
+      check(!found.has(tool.name), 'remote_catalog_duplicate', repeated, 502);
       found.set(tool.name, tool);
     }
     if (result.nextCursor === undefined || found.size === wanted.size) return found;

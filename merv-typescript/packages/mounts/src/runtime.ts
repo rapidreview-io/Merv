@@ -12,8 +12,6 @@ export class MountRuntime {
   readonly #catalog: ToolCatalog;
   readonly #pool: Invocations;
   readonly #timeoutMs: number;
-  readonly #reconnectMs: number;
-  readonly #wanted: ReadonlySet<string>;
   #status: MountStatus;
   /** JSON of the descriptions now in the registry; a key-order change only republishes. */
   #published?: string;
@@ -21,12 +19,10 @@ export class MountRuntime {
   #running?: Promise<void>;
   /** The running round's stop signal: only stop() aborts it, and only while that round runs. */
   #round?: AbortController;
-  /** A trigger during a round reruns it once. */
-  #again = false;
+  #again = false; // a trigger during a round reruns it once
   #stopped = false;
   #timer?: NodeJS.Timeout;
-  /** Every discovery DELETE a failed round started; stop() awaits it. */
-  #ending: Promise<unknown> = Promise.resolve();
+  #ending: Promise<unknown> = Promise.resolve(); // every discovery DELETE; stop() awaits it
 
   constructor(
     tools: Tools,
@@ -34,21 +30,10 @@ export class MountRuntime {
     private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     private readonly config: MountConfig,
   ) {
-    this.#timeoutMs = config.timeoutMs ?? 5000;
-    this.#reconnectMs = config.reconnectMs ?? 60_000;
-    this.#wanted = new Set(config.tools);
-    this.#status = {
-      id: config.id,
-      origin: new URL(config.url).origin,
-      state: 'connecting',
-      toolCount: 0,
-    };
-    this.#pool = new Invocations(
-      { id: config.id, url: config.url, timeoutMs: this.#timeoutMs },
-      bindings,
-      scope.toolPolicy,
-      tools,
-    );
+    const timeoutMs = (this.#timeoutMs = config.timeoutMs ?? 5000);
+    const origin = new URL(config.url).origin;
+    this.#status = { id: config.id, origin, state: 'connecting', toolCount: 0 };
+    this.#pool = new Invocations({ ...config, timeoutMs }, bindings, scope.toolPolicy, tools);
     this.#catalog = tools.createCatalog(config.id);
   }
 
@@ -68,12 +53,12 @@ export class MountRuntime {
     this.#running = this.round(round.signal)
       .catch((error: unknown) => this.failed(error))
       .finally(() => {
+        const again = this.#again;
         this.#running = this.#round = undefined;
-        if (this.#again) {
-          this.#again = false;
-          this.refresh();
-        } else if (!this.#stopped)
-          (this.#timer = setTimeout(() => this.refresh(), this.#reconnectMs)).unref();
+        this.#again = false;
+        if (again) this.refresh();
+        else if (!this.#stopped)
+          this.#timer = setTimeout(() => this.refresh(), this.config.reconnectMs ?? 60_000).unref();
       });
   }
 
@@ -81,7 +66,7 @@ export class MountRuntime {
     // The discovery actor's credential is used only while that actor may read the project.
     if (this.config.discovery) await this.scope.require(this.config.discovery, 'read');
     this.#client ??= await this.connect(signal);
-    const found = await collectRemoteCatalog(this.#client, this.#wanted, {
+    const found = await collectRemoteCatalog(this.#client, new Set(this.config.tools), {
       signal,
       timeout: this.#timeoutMs,
     });
@@ -90,7 +75,7 @@ export class MountRuntime {
       const definition = found.get(name);
       return definition ? [{ ...definition, kind: 'mcp', handler: this.#pool.handler(name) }] : [];
     });
-    // Registry compilation only sees the selected subset and swaps the entire generation atomically.
+    // Registry compilation sees only the selected subset and swaps the whole generation atomically.
     // An unchanged catalog is not replaced: no schema compile, and no drain of admitted calls.
     const next = JSON.stringify(selected); // handlers are functions: stringify drops them
     if (next !== this.#published) {
@@ -104,17 +89,12 @@ export class MountRuntime {
 
   /** Discovery lists metadata only; its binding never carries a call (handlers use the pool). */
   private async connect(signal: AbortSignal): Promise<Client> {
-    const discovery = this.config.discovery;
-    const headers =
-      discovery &&
-      (await this.bindings.headers(await this.bindings.select(discovery, this.config.id)));
-    return await connectUpstream(this.config.url, headers, this.#timeoutMs, {
-      signal,
-      notifications: (client) =>
-        client.setNotificationHandler(ToolListChangedNotificationSchema, async () =>
-          this.refresh(),
-        ),
-    });
+    const { discovery } = this.config;
+    const binding = discovery && (await this.bindings.select(discovery, this.config.id));
+    const headers = binding && (await this.bindings.headers(binding));
+    const notifications = (client: Client) =>
+      client.setNotificationHandler(ToolListChangedNotificationSchema, async () => this.refresh());
+    return connectUpstream(this.config.url, headers, this.#timeoutMs, { signal, notifications });
   }
 
   /** Published tools stay; each call reports its own failure. */
@@ -122,10 +102,13 @@ export class MountRuntime {
     if (this.#stopped) return;
     const state = this.#published === undefined ? 'failed' : 'disconnected';
     this.#set(state, this.#status.toolCount, fault(error).code);
-    const client = this.#client;
+    this.#end();
+  }
+
+  /** Ends the discovery session, if any; stop() awaits every such DELETE. */
+  #end(): void {
+    this.#ending = Promise.all([this.#ending, this.#client && endUpstream(this.#client)]);
     this.#client = undefined;
-    const ended = client && endUpstream(client);
-    this.#ending = this.#ending.then(() => ended);
   }
 
   /** Never rejects. */
@@ -135,26 +118,13 @@ export class MountRuntime {
     this.#set('stopped', 0);
     const withdrawn = this.#catalog.dispose(); // withdraws before its first await
     this.#round?.abort(); // cuts a connect or list short
-    // Never rejects. A pending replace() drain waits for admitted calls, each bounded by its own
-    // requests.
-    await this.#running;
-    // A connect that finished during stop still gets its DELETE.
-    const client = this.#client;
-    this.#client = undefined;
-    await Promise.all([
-      withdrawn.then(() => this.#pool.close()),
-      client && endUpstream(client),
-      this.#ending,
-    ]);
+    await this.#running; // never rejects; a pending replace() drains admitted calls, each bounded
+    this.#end(); // a connect that finished during stop still gets its DELETE
+    await Promise.all([withdrawn.then(() => this.#pool.close()), this.#ending]);
   }
 
   #set(state: MountStatus['state'], toolCount: number, errorCode?: string): void {
-    this.#status = {
-      id: this.config.id,
-      origin: this.#status.origin,
-      state,
-      toolCount,
-      ...(errorCode && { errorCode }),
-    };
+    const { id, origin } = this.#status;
+    this.#status = { id, origin, state, toolCount, ...(errorCode && { errorCode }) };
   }
 }
