@@ -61,6 +61,10 @@ const enrollment = z
   })
   .strict();
 
+/** A hosted machine waits this long for a transcript its runner declared before its release,
+ *  capture and upload included. */
+const transcriptGraceMs = 30 * 60_000;
+
 /** A managed runner supervises its bound execution through its own routes: it uses no tool. */
 export const managedRunnerRules: CallerRules = {
   forbidden: new MervError('managed_runner_forbidden', 'Managed runners cannot use tools', 403),
@@ -558,6 +562,10 @@ export class ManagedRunnerBindings {
         'SELECT result_json FROM session_workspaces WHERE session_id=?',
         row.bound_session_id,
       );
+      const owed = await tx.get<{ declared_at: string }>(
+        'SELECT declared_at FROM session_transcripts WHERE session_id=? AND uploaded_at IS NULL',
+        row.bound_session_id,
+      );
       const policy = effectiveWorkspace(session.execution.policy);
       // A disposable read-only checkout has no durable workspace output to wait for.
       // Writable and retained checkouts still require their final capture.
@@ -573,7 +581,9 @@ export class ManagedRunnerBindings {
           closedAt: session.closedAt,
           outcome: session.outcome ?? null,
           releaseAcknowledged: row.runner_released_at !== null,
-          capturePending: !!workspace && workspace.result_json === null && !disposableReview,
+          capturePending:
+            (!!workspace && workspace.result_json === null && !disposableReview) ||
+            (!!owed && this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs),
         },
       };
     };

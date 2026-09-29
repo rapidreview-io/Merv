@@ -729,6 +729,71 @@ test('managed inspection does not hold a released disposable read-only checkout 
   }
 });
 
+test('managed inspection holds a released session for its declared transcript for thirty minutes', async (t) => {
+  for (const ending of ['stamped', 'expired'] as const) {
+    await t.test(ending, async (subtest) => {
+      let now = Date.now();
+      const f = await fixture(subtest, { clock: () => now });
+      // A store that signs locally and holds whatever sizes the test puts in it.
+      const stored = new Map<string, number>();
+      f.sessions.transcripts.blobs = {
+        put: async () => assert.fail('no bytes pass through Main'),
+        get: async () => assert.fail('nothing reads a transcript back'),
+        upload: async (_namespace, hash) => ({
+          url: `https://store.test/${hash}`,
+          headers: {},
+          expiresAt: new Date(now + 3_600_000).toISOString(),
+        }),
+        stored: async (namespace, hash) => stored.get(`${namespace}/${hash}`) ?? null,
+      };
+      await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+      const request = f.lease();
+      const leased = await f.sessions.lease(f.caller, request);
+      assert.ok(leased.session, leased.reason);
+      const control = { sessionId: leased.session.id, runnerId: f.runnerId };
+      await f.sessions.attach(f.caller, { ...control, hostRef: 'launch-managed' });
+      await f.sessions.authenticate(request.secret);
+      const pending = async () =>
+        (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending;
+      // No checkout and nothing declared: nothing is owed.
+      assert.equal(await pending(), false);
+      const transcript = {
+        ...control,
+        hostRef: 'launch-managed',
+        sha256: 'a'.repeat(64),
+        size: 10,
+        logBytes: 10,
+        truncated: false,
+      };
+      await f.sessions.transcript(f.caller, transcript);
+      await f.sessions.release(f.caller, control);
+      const released = (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+      assert.deepEqual(
+        [released?.status, released?.releaseAcknowledged, released?.capturePending],
+        ['released', true, true],
+      );
+      if (ending === 'stamped') {
+        now += 29 * 60_000;
+        // A delivery with nothing stored is handed a PUT and keeps the machine.
+        assert.ok((await f.sessions.transcript(f.caller, { ...transcript, deliver: true })).upload);
+        assert.equal(await pending(), true);
+        stored.set(`transcripts-${leased.session.projectId}/${transcript.sha256}`, 10);
+        const confirmed = await f.sessions.transcript(f.caller, { ...transcript, deliver: true });
+        assert.ok(confirmed.uploadedAt);
+        assert.equal(await pending(), false);
+      } else {
+        // Counted from the declaration, whether or not the upload ever arrives.
+        now += 30 * 60_000 - 1;
+        assert.equal(await pending(), true);
+        now += 1;
+        assert.equal(await pending(), false);
+      }
+    });
+  }
+});
+
 test('two concurrent managed lease requests create at most one bound session', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
