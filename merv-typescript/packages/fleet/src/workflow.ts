@@ -148,7 +148,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     private readonly scope: Scope,
     config: FleetWorkflowConfig = {},
     private readonly clock: () => number = Date.now,
-    private readonly state?: State,
+    private readonly state: State,
   ) {
     const parsed = workflowConfig.safeParse(config);
     check(
@@ -166,7 +166,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async start(): Promise<void> {
     if (!this.config.enabled) return;
-    if (this.state) await this.state.migrate('fleet_workflow', modelMigrations);
+    await this.state.migrate('fleet_workflow', modelMigrations);
     check(
       !this.closed && !this.timer,
       'fleet_workflow_started',
@@ -223,7 +223,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** The managed worker's or project's current Fleet director's budget, without private counts. */
   async modelBudget(caller: Caller) {
-    if (!this.config.enabled || !this.state) return null;
+    if (!this.config.enabled) return null;
     await this.scope.require(caller, 'read');
     let person: string;
     if (caller.session) {
@@ -280,7 +280,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** The latest retry grant of each revision in these projects, in one indexed read. */
   private async retryGrants(projectIds: string[]): Promise<Map<string, RetryGrant>> {
-    if (!this.state || !projectIds.length) return new Map();
+    if (!projectIds.length) return new Map();
     const rows = await this.state.read((sql) =>
       sql.all<RetryGrant>(
         `SELECT DISTINCT ON (project_id, instance_id, expected_revision) * FROM fleet_workflow_retry_grants
@@ -382,16 +382,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Worker sessions cannot inspect project retry status',
       403,
     );
-    if (!this.config.enabled || !this.state || !targets.length) return [];
+    if (!this.config.enabled || !targets.length) return [];
     return await this.retryState(caller, targets);
   }
   async retry(caller: Caller, raw: RetryInput) {
-    check(
-      this.config.enabled && this.state,
-      'fleet_unavailable',
-      'Managed Fleet is unavailable',
-      503,
-    );
+    check(this.config.enabled, 'fleet_unavailable', 'Managed Fleet is unavailable', 503);
     const parsed = retryInput.safeParse(raw);
     check(parsed.success, 'invalid_retry', 'Retry needs an exact revision, reason and requestId');
     const input = parsed.data;
@@ -405,7 +400,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     );
     // Demand uses Sessions' own snapshot transaction; never call it under this writer lock.
     const status = (await this.retryState(caller, [input]))[0]!;
-    const result = await this.state!.transaction(async (tx) => {
+    const result = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'admin', tx);
       const prior = await tx.get<RetryGrant>(
         'SELECT * FROM fleet_workflow_retry_grants WHERE project_id=? AND request_id=?',
@@ -454,7 +449,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         caller.actorId,
         createdAt,
       );
-      await recorded(this.state!, tx, caller, 'fleet.workflow_retry_granted', input.instanceId, {
+      await recorded(this.state, tx, caller, 'fleet.workflow_retry_granted', input.instanceId, {
         expectedRevision: input.expectedRevision,
         priorAllocations: status.allocationCount,
         reason: input.reason,
@@ -610,10 +605,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         const { actor, who, key } = await person(source);
         if (!actor || !(everyone || this.config.people.includes(who))) continue;
         const wanted = new Map<string, DelegationSource>();
-        if (
-          this.state &&
-          (await modelBudgetStatus(this.state, key, this.config.dailyTokensPerPerson)).blocked
-        ) {
+        if ((await modelBudgetStatus(this.state, key, this.config.dailyTokensPerPerson)).blocked) {
           served.set(projectId, wanted);
           continue;
         }
