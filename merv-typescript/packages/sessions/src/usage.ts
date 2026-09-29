@@ -186,13 +186,7 @@ export async function usageTotals(
     projectId,
   )) {
     const sponsors = JSON.parse(row.sponsors_json) as string[];
-    if (
-      instanceIds !== null &&
-      !(serviceScopeId
-        ? sponsors.includes(serviceScopeId)
-        : sponsors.some((id) => instanceIds.includes(id)))
-    )
-      continue;
+    if (instanceIds !== null && !sponsors.includes(serviceScopeId!)) continue;
     totals.wallMs += sum(row.wall_ms);
     if (since === null || row.settled_at < since) since = row.settled_at;
   }
