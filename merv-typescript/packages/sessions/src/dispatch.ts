@@ -127,6 +127,8 @@ const scaled = (value: number | null, unit: number): number | null =>
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
 const backoffMs = 30_000;
+const rented =
+  'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
 /**
  * A budget stops new automatic offers when a bound is reached, and also when a cost or token
  * bound cannot be judged: spending nobody reported must not pass as spending that stayed low.
@@ -833,7 +835,8 @@ export class SessionDispatch {
     );
     input = parsed.data;
     return await this.state.transaction(async (tx) => {
-      if (caller.managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
+      const managed = !!caller.managed;
+      if (managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
       // A runner is a durable presence that will take work: registering one is a write, or a
       // review for Fleet's review director, which takes only reviews.
       await this.scope.require(caller, caller.service ? 'review' : 'write', tx);
@@ -860,9 +863,9 @@ export class SessionDispatch {
       else {
         // A machine Fleet rents is a new runner each time; Fleet's own caps bound those.
         check(
-          caller.managed ||
+          managed ||
             (await tx.get<{ n: number }>(
-              'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
+              `SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented})`,
               caller.projectId,
             ))!.n < 1000,
           'runner_limit',
@@ -1136,7 +1139,7 @@ export class SessionDispatch {
   private async runners(projectId: string, tx: Transaction): Promise<RunnerPresence[]> {
     return await mapAsync(
       await tx.all<RunnerRow>(
-        'SELECT * FROM session_runners r WHERE project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id AND m.runner_released_at IS NOT NULL) ORDER BY last_seen_at DESC,id LIMIT 100',
+        `SELECT * FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY last_seen_at DESC,id LIMIT 100`,
         projectId,
       ),
       (row) => this.presence(row, tx),
@@ -1537,8 +1540,8 @@ export class SessionDispatch {
     // Only one heard from within the freshness can be present, so only those are authorized.
     const rows = await tx.all<RunnerRow & { busy: number; rented: boolean }>(
       `SELECT r.*,(SELECT COUNT(*) FROM worker_sessions s WHERE s.owner_hash=r.owner_hash AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) AS busy,
-        EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id) AS rented
-        FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
+        EXISTS (${rented}) AS rented
+        FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
       projectId,
     );
     const runners = (

@@ -1666,12 +1666,17 @@ test('upgrading the historical one-worker schema preserves a live execution and 
   const f = await fixture(t, true);
   const { token, session } = await f.offer();
   const active = await f.sessions.authenticate(token);
-  const runner = await f.sessions.heartbeatRunner(f.source, {
-    runnerId: 'runner',
-    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
-    platforms: [{ name: 'test', harness: 'command', enabled: true, parallelism: 1 }],
-    capacity: 1,
-  });
+  // Current code runs only on current tables, so the historical schema gets its row by hand.
+  const runner = { id: 'runner_legacy' };
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,'legacy-owner','runner','{}','{}','{}',?)",
+        runner.id,
+        f.source.projectId,
+        new Date().toISOString(),
+      ),
+  );
   await f.state.transaction(
     async (tx) =>
       await tx.run(
