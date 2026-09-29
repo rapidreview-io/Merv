@@ -1033,3 +1033,62 @@ test('a commit size check reads only what changed, however large the tree', asyn
   };
   await manager.checkTreeFiles(manager.row(record.id), parent, tree);
 });
+
+test('a retried capture never overwrites a rescue ref an earlier attempt wrote', async (t) => {
+  const f = setup(t),
+    record = f.reserve('retry-rescue');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  // Unique work made on a detached HEAD: only the rebase's orig-head names it.
+  agent(f, handle.path, 'checkout', '--detach');
+  writeFileSync(join(handle.path, 'detached.txt'), 'only here\n');
+  agent(f, handle.path, 'add', 'detached.txt');
+  agent(f, handle.path, 'commit', '-m', 'detached work');
+  const unique = f.git(handle.path, 'rev-parse', 'HEAD');
+  agent(f, handle.path, 'rebase', 'upstream'); // stops on the conflict
+  assert.ok(existsSync(join(adminOf(handle.path), 'rebase-merge')));
+  // A git child killed with the agent left its index lock: the first attempt fails after rescue.
+  writeFileSync(join(adminOf(handle.path), 'index.lock'), '');
+  f.stop(record.id);
+  await assert.rejects(f.manager.capture(record), /workspace_git_failed/);
+  const firstRefs = f.git(
+    f.bare,
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    'refs/merv/rescued/',
+  );
+  console.log('after attempt 1:', firstRefs);
+  rmSync(join(adminOf(handle.path), 'index.lock'));
+  await f.manager.capture(record);
+  const refs = f.git(
+    f.bare,
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    'refs/merv/rescued/',
+  );
+  console.log('after attempt 2:', refs);
+  const reachable = f.git(f.bare, 'for-each-ref', '--contains', unique, '--format=%(refname)');
+  assert.notEqual(reachable, '', `detached work ${unique} must stay reachable from some ref`);
+});
+
+test('a tracked file grown past the bound is moved aside and kept as HEAD has it; a nested untracked big file too', async (t) => {
+  const f = setup(t),
+    record = f.reserve('tracked-large');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'seed.txt'), '');
+  truncateSync(join(handle.path, 'seed.txt'), 51 * 1024 * 1024);
+  mkdirSync(join(handle.path, 'data/deep'), { recursive: true });
+  writeFileSync(join(handle.path, 'data/deep/big.csv'), '');
+  truncateSync(join(handle.path, 'data/deep/big.csv'), 51 * 1024 * 1024);
+  writeFileSync(join(handle.path, 'data/small.txt'), 'small\n');
+  writeFileSync(join(handle.path, '-dash :(glob)*.txt'), 'odd\n');
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'initial');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:data/small.txt`), 'small');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:-dash :(glob)*.txt`), 'odd');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(statSync(join(aside, 'seed.txt')).size, 51 * 1024 * 1024);
+  assert.equal(statSync(join(aside, 'data/deep/big.csv')).size, 51 * 1024 * 1024);
+  assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
+});
