@@ -785,6 +785,11 @@ test('active unchanged observations perform no writes; admission requires launch
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'running');
   assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), true);
+  // Another epoch, or an owner that no longer accepts the allocation, is never admitted.
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 2, tx)), false);
+  f.setValid(false);
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), false);
+  f.setValid(true);
   const writes = countWrites(f.state);
   const before = writes();
   f.runtimes.heartbeatOnInspect = true;

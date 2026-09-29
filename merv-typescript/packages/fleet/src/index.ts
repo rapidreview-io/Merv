@@ -483,21 +483,45 @@ export class FleetService implements Fleet {
   }
   async admits(id: string, epoch: number, tx: Transaction): Promise<boolean> {
     this.state.assertTransaction(tx);
+    return this.fence(
+      tx,
+      id,
+      (a) =>
+        a.epoch === epoch &&
+        a.intent === 'run' &&
+        ['starting', 'running'].includes(a.phase) &&
+        !!a.runtime?.ready &&
+        a.runtime.launch?.deliveryState === 'launched',
+    );
+  }
+  /**
+   * Whether an allocation may still act, read in `tx` or in a snapshot of its own: Fleet is open,
+   * its deadline and profile hold, `ok` holds of it, and its registered owner (`asker`, when
+   * given) still accepts it under current source authority.
+   */
+  private async fence(
+    tx: Transaction | null,
+    id: string,
+    ok: (a: FleetAllocation) => boolean,
+    asker?: FleetOwner,
+  ): Promise<boolean> {
+    if (!tx)
+      return this.state.snapshot(() =>
+        this.state.transaction((tx) => this.fence(tx, id, ok, asker)),
+      );
     const a = await this.get(tx, id);
+    const owner = this.owners.get(a.owner.kind);
     if (
       this.closed ||
       !this.config.enabled ||
-      a.epoch !== epoch ||
-      a.intent !== 'run' ||
-      !['starting', 'running'].includes(a.phase) ||
-      !a.runtime?.ready ||
-      a.runtime.launch?.deliveryState !== 'launched' ||
+      !owner ||
+      (asker && owner !== asker) ||
       a.deadlineAt <= this.time() ||
-      this.stale(a)
+      this.stale(a) ||
+      !ok(a)
     )
       return false;
-    const owner = this.owners.get(a.owner.kind);
-    return !!owner && this.authorized(a, owner, tx);
+    return this.authorized(a, owner, tx);
   }
   /** Current source authority, then the owner's own check; a revoked source is simply invalid. */
   private async authorized(a: FleetAllocation, owner: FleetOwner, tx: Transaction) {
@@ -654,56 +678,6 @@ export class FleetService implements Fleet {
       current.error = null;
     });
   }
-  /** Recheck durable cancellation and source authority after slow bootstrap work. */
-  private async launchAllowed(
-    a: FleetAllocation,
-    owner: FleetOwner,
-    handle: SandboxRuntimeHandle,
-  ): Promise<boolean> {
-    return this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const current = await this.get(tx, a.id);
-        if (
-          this.closed ||
-          !this.config.enabled ||
-          this.owners.get(current.owner.kind) !== owner ||
-          current.intent !== 'run' ||
-          current.phase === 'released' ||
-          current.phase === 'releasing' ||
-          current.deadlineAt <= this.time() ||
-          this.stale(current) ||
-          current.runtime?.sandboxId !== handle.sandboxId ||
-          current.runtime.launch?.deliveryState === 'launched'
-        )
-          return false;
-        return this.authorized(current, owner, tx);
-      }),
-    );
-  }
-  private async renewalAllowed(
-    a: FleetAllocation,
-    owner: FleetOwner,
-    handle: SandboxRuntimeHandle,
-  ): Promise<boolean> {
-    return this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const current = await this.get(tx, a.id);
-        if (
-          this.closed ||
-          !this.config.enabled ||
-          this.owners.get(current.owner.kind) !== owner ||
-          !['run', 'drain'].includes(current.intent) ||
-          !['starting', 'running'].includes(current.phase) ||
-          current.deadlineAt <= this.time() ||
-          this.stale(current) ||
-          current.runtime?.sandboxId !== handle.sandboxId ||
-          current.runtime.launch?.deliveryState !== 'launched'
-        )
-          return false;
-        return this.authorized(current, owner, tx);
-      }),
-    );
-  }
   private async reconcile(full = true): Promise<boolean> {
     this.awake ||= full;
     await this.reserve();
@@ -859,9 +833,16 @@ export class FleetService implements Fleet {
         });
         return;
       }
-      if (!(await this.launchAllowed(a, owner, handle))) return;
+      // Durable cancellation and source authority are checked again after slow bootstrap work.
+      const launchable = (c: FleetAllocation) =>
+        c.intent === 'run' &&
+        c.phase !== 'released' &&
+        c.phase !== 'releasing' &&
+        c.runtime?.sandboxId === handle.sandboxId &&
+        c.runtime.launch?.deliveryState !== 'launched';
+      if (!(await this.fence(null, a.id, launchable, owner))) return;
       const bootstrap = await owner.bootstrap(structuredClone(a));
-      if (!(await this.launchAllowed(a, owner, handle))) return;
+      if (!(await this.fence(null, a.id, launchable, owner))) return;
       const launched = await runtime.launch(
         place,
         handle,
@@ -892,7 +873,16 @@ export class FleetService implements Fleet {
       if (
         handle.leaseExpiresAt &&
         Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
-        (await this.renewalAllowed(a, owner, handle))
+        (await this.fence(
+          null,
+          a.id,
+          (c) =>
+            ['run', 'drain'].includes(c.intent) &&
+            ['starting', 'running'].includes(c.phase) &&
+            c.runtime?.sandboxId === handle.sandboxId &&
+            c.runtime.launch?.deliveryState === 'launched',
+          owner,
+        ))
       )
         await this.observed(a, await runtime.renew(place, exchanged, a.profileId), status);
     }
