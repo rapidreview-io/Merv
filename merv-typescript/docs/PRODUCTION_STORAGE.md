@@ -43,13 +43,6 @@ curl -si -X OPTIONS "$MERV_BLOB_ENDPOINT_URL/$MERV_BLOB_BUCKET/merv-ts/probe" \
   -H 'Access-Control-Request-Headers: x-amz-checksum-sha256,if-none-match'
 ```
 
-Temporarily, `scripts/move-large-objects.ts` first probes that the bucket enforces those signed conditions, then copies every artifact whose bytes are only in merv-sandboxes storage into Blobs. Run it again right after the release that reads them from Blobs reaches production: until it finishes, such an artifact's download answers `artifact_bytes_missing`. It reads the database only, is idempotent, prints one JSON line per probe and per artifact, and exits non-zero on any failure. The probe leaves a few 16-byte objects under `<prefix>/_probe/`. Run it in a one-off container of the current image:
-
-```sh
-MERV_TS_IMAGE=<current> docker compose -p merv-typescript run --rm --no-deps --entrypoint sh control \
-  -c 'node deploy/render-config.mjs /tmp/c.json && node dist/scripts/move-large-objects.js /tmp/c.json'
-```
-
 ## Initial operator
 
 The existing `init` and `actor` CLI commands use their local State/Scope composition and do not accept `--config`. Bootstrap a new PostgreSQL project through the selected application configuration instead. This local script starts the configured stack briefly, creates the operator, saves its credential privately, and shuts down:

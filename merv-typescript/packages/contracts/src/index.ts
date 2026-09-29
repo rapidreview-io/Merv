@@ -1216,48 +1216,17 @@ export interface ArtifactUploadStatus {
   /** Set once the upload is complete; parts is then [] and nextPart null. */
   artifactId?: string;
 }
-/** Temporary, for the move script until Release N+2: an upload plan as sandbox storage issues it. */
-export type ArtifactUploadPlan = Omit<ArtifactUploadStatus, 'uploadId' | 'artifactId'>;
-/**
- * Temporary, for the move script until Release N+2: the merv-sandboxes storage large artifacts
- * left for blobs. Missing bytes and outages use the blobs vocabulary; other `sandbox_*` errors (a
- * refused origin, a forbidden grant) pass through unchanged.
- */
-export interface LargeArtifactStorage {
-  /** Idempotent by key. Objects hold opaque bytes (application/octet-stream). */
-  begin(
-    projectId: string,
-    key: string,
-    expect: { size: number; sha256: string },
-  ): Promise<{ objectId: string; plan: ArtifactUploadPlan }>;
-  resume(projectId: string, objectId: string, startPart: number): Promise<ArtifactUploadPlan>;
-  /** The adapter validates the response shape (`sandbox_unavailable` 502 otherwise). */
-  complete(
-    projectId: string,
-    objectId: string,
-  ): Promise<{ objectId: string; size: number; sha256: string; state: string }>;
-  /** A missing object is `blob_not_found`, an outage `blob_unavailable`. */
-  download(projectId: string, objectId: string): Promise<{ url: string; expiresAt: string }>;
-  /**
-   * Reads at most maxBytes + 1 bytes, with the same error mapping as download; the caller
-   * verifies size and hash. An object's bytes are readable only while an equivalent binding
-   * (same namespace and subject) is present; Merv never migrates objects.
-   */
-  read(projectId: string, objectId: string, maxBytes: number): Promise<Buffer>;
-}
 /**
  * Immutable project files. A row implies its bytes: up to the inline limit they are in the row,
  * where a database CHECK verifies their size and SHA-256; every other row's bytes are in blobs at
- * (projectId, sha256). Rows never change, except that a server configured to backfill moves older
- * rows' bytes into their row. Bytes gone from behind a row are `artifact_bytes_missing` (500),
- * never a 404, and every byte returned is verified. `create` never does network I/O, and neither
- * do reads of bytes kept in the row. The one write a read may cause: the first `download` of such
- * bytes mirrors them into blobs (content-addressed).
+ * (projectId, sha256). Rows never change. Bytes gone from behind a row are
+ * `artifact_bytes_missing` (500), never a 404. `create` and reads do no network I/O. The one
+ * write a read may cause: the first `download` of bytes kept in the row mirrors them into blobs
+ * (content-addressed).
  *
- * Every call authorises once, at its start. A revocation that lands while bytes or a download
- * link are fetched is enforced by the ToolRegistry, which reauthorises read tools after the
- * handler; domain callers act on bytes inside their own write transactions, which authorise
- * again.
+ * Every call authorises once, at its start. A revocation that lands while a download link is
+ * signed is enforced by the ToolRegistry, which reauthorises read tools after the handler; domain
+ * callers act on bytes inside their own write transactions, which authorise again.
  */
 export interface Artifacts {
   readonly downloadAvailable: boolean;

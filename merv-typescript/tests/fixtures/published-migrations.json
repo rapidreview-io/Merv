@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a.",
   "migrations": [
     {
       "component": "identity-credentials",
@@ -47,25 +47,31 @@
       "component": "artifacts",
       "version": 2,
       "hash": "eb040da5a039e77ee7225d046fa38c3cb1a48a84af11f37753579e36c5887301",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 3,
       "hash": "0215fb87cac60080b32ec7f23a22eeb2e1715850ccb226f6d7499404cb78b53d",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 4,
       "hash": "610f7bdf32320d6f1e20908589177d981f6d7ff3c155b9d599d415b97857ab70",
-      "published": false
+      "published": true
     },
     {
       "component": "artifacts",
       "version": 5,
       "hash": "70bc1386a52005afc97a2ed1fe3f3ffd427f136756df81ac6e13b3a7e0afeac4",
-      "published": false
+      "published": true
+    },
+    {
+      "component": "artifacts",
+      "version": 6,
+      "hash": "70aa11f1ad3915ddd5b83bc1dae9e9d1a4ef1f01676453debface011f9633289",
+      "published": true
     },
     {
       "component": "claims",
@@ -188,7 +194,7 @@
       "component": "context_builder",
       "version": 3,
       "hash": "df5d4b843fa8a153f5b4dcfdf0a3d5c45e784bdfa1c8018492093b677a035370",
-      "published": false
+      "published": true
     },
     {
       "component": "domain_events",
@@ -398,13 +404,13 @@
       "component": "reviews",
       "version": 11,
       "hash": "150cc60f6af1c6431b84099ac1b70e5da0d46590277a137e9bd08c92d30ff3a5",
-      "published": false
+      "published": true
     },
     {
       "component": "reviews",
       "version": 12,
       "hash": "531997c6b0092a64419bf55c7b6fdea0c58c0a01ed679265ffca4f905fab7d15",
-      "published": false
+      "published": true
     },
     {
       "component": "scope",
@@ -458,7 +464,7 @@
       "component": "scope",
       "version": 9,
       "hash": "2eafad8c61701dc96178a14a89ef573425104522f2fc584722b12bb59b7c17f6",
-      "published": false
+      "published": true
     },
     {
       "component": "session_dispatch",
@@ -488,19 +494,19 @@
       "component": "session_dispatch",
       "version": 5,
       "hash": "51a40e9fe356a75d298a5df382f045b20e2b7b6359fed50aa07f7c0905cc0be4",
-      "published": false
+      "published": true
     },
     {
       "component": "session_dispatch",
       "version": 6,
       "hash": "9304ab85f8eee3752b13e9c1575b840045d82b79ed12272d0b6183dca11d9696",
-      "published": false
+      "published": true
     },
     {
       "component": "pi",
       "version": 3,
       "hash": "1ffe96b02c976255aa5b8ee577f887ccc164bff430f2069198bb86198ed6e9f5",
-      "published": false
+      "published": true
     },
     {
       "component": "fleet_workflow",
@@ -584,7 +590,7 @@
       "component": "sessions",
       "version": 9,
       "hash": "22a9d2206d7bc39a9ee78fae968ae1e003ea4d30621061dd42e8b2f407b25d77",
-      "published": false
+      "published": true
     },
     {
       "component": "sessions",
@@ -644,7 +650,7 @@
       "component": "tasks",
       "version": 9,
       "hash": "80c74ad88c823ae8e15302ae3f39123d04444be66a9f694055be5b40521ac6e0",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
@@ -692,13 +698,13 @@
       "component": "workflows",
       "version": 8,
       "hash": "f2376b94a2878d7a83d0598f1eccc8ea0371025ac20eb8d7cc162ec3d6c21d14",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
       "version": 9,
       "hash": "1ec9a3af66ecbf4324b60f4f7bf32c64785f9b80b90349797fabae4b3d09c57c",
-      "published": false
+      "published": true
     },
     {
       "component": "reflections",
@@ -710,7 +716,7 @@
       "component": "experiments",
       "version": 5,
       "hash": "8df80b32f36d600a661aedf909bcfecd94e53668e9a2272f8bcc00db7b50d506",
-      "published": false
+      "published": true
     }
   ]
 }

@@ -180,7 +180,7 @@ test('the first download of bytes kept in the row mirrors them into storage, onc
     ['HEAD'],
   );
   // A row whose bytes are neither in it nor in storage has lost them.
-  const lost = await legacyArtifact(app.ctx.state, caller, Buffer.from('lost'), () => undefined);
+  const lost = await legacyArtifact(app.ctx.state, caller, Buffer.from('lost'));
   await assert.rejects(app.ctx.artifacts.download(caller, lost.id), {
     code: 'artifact_bytes_missing',
     status: 500,
