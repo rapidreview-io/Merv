@@ -36,7 +36,6 @@ Install the script at `/opt/merv-recovery/recovery-snapshot.py`, owned by root a
   "max_object_bytes": 5497558138880,
   "idle_tables": [
     "worker_sessions",
-    "session_workspaces",
     "fleet_allocations",
     "code_bases",
     "code_units",
@@ -65,7 +64,7 @@ python3 /opt/merv-recovery/recovery-snapshot.py --config /etc/merv/recovery.json
 
 Manual commands use the same run and maintenance locks as the scheduled service. Prefer `systemctl start recovery-snapshot.service` for creation so supervisor failure cleanup is active. A manually SIGKILLed command leaves the durable resume record; run `recover` immediately, or reboot recovery handles it. Never delete the record to bypass the image/container identity check.
 
-Creation checks for active sessions, unreleased Fleet allocations, active/pending-cleanup Code checks, owned writers, unfinished retained workspace captures, active publication locks, Pi commands and managed compute. An unsettled human PR by itself is not a writer and does not block capture. It checks before and after stopping the service. Old receiving uploads do not block forever: their partial files are preserved. Productive work causes a failed/skipped run and keeps previous recovery points unchanged. This idle-only schedule does not guarantee a daily recovery point under continuous load. Configure an alert on staleness and agree an operator maintenance window if needed; do not silently cancel jobs.
+Creation checks for active sessions, unreleased Fleet allocations, active/pending-cleanup Code checks, owned writers, active publication locks, Pi commands and managed compute. An unsettled human PR by itself is not a writer and does not block capture. It checks before and after stopping the service. Missing final captures on ended sessions and old receiving uploads do not prove live work: their existing database records and retained files are preserved. Productive work causes a failed/skipped run and keeps previous recovery points unchanged. This idle-only schedule does not guarantee a daily recovery point under continuous load. Configure an alert on staleness and agree an operator maintenance window if needed; do not silently cancel jobs.
 
 The resume record is fsynced before shutdown. It records the exact container ID/image and prior running state. Capture occurs only after a clean stop; an already-stopped service stays stopped. Capture preserves identity markers, Git objects and refs, quarantine/held bundles, partial uploads and ordinary temporary files. Only the writer socket is omitted. Symlinks and unexpected special files are refused instead of traversed. Successful capture restarts the exact previous service before upload or verification. Systemd ExecStopPost and boot recovery recover an interrupted capture; a replaced container/image needs operator diagnosis, not an automatic override.
 
