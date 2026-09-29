@@ -71,7 +71,7 @@
       "component": "artifacts",
       "version": 6,
       "hash": "70aa11f1ad3915ddd5b83bc1dae9e9d1a4ef1f01676453debface011f9633289",
-      "published": false
+      "published": true
     },
     {
       "component": "claims",
