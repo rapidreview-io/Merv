@@ -233,10 +233,15 @@ test('Code source selection uses real machine-key membership and rejects body/pr
 
 test('Code controls answer 503 once withdrawn and are mounted by one owner at a time', async (t) => {
   const f = await fixture(t);
-  // Never mounted: an ordinary credential gets 404; a namespaced one (a runner's) gets 503.
-  assert.equal((await f.request('next')).body.error.code, 'not_found');
-  assert.equal((await f.request('next', control, { token: 'mr_absent' })).status, 503);
+  // Not mounted yet (as at boot): a runner's source credential and a namespaced one both get 503,
+  // which a runner retries; with no credential the route is unknown.
+  for (const token of [undefined, 'mr_absent']) {
+    const early = await f.request('next', control, { token });
+    assert.deepEqual([early.status, early.body.error.code], [503, 'unavailable']);
+  }
+  assert.equal((await f.request('next', control, { token: null })).status, 404);
   const first = f.register(f.provider);
+  assert.equal((await f.request('next')).status, 200, 'The same runner succeeds once mounted');
   assert.throws(() => f.register(f.provider), { code: 'mount_conflict' });
   // Sessions' credential rules refuse a session bearer before any Sessions call.
   t.after(mountSessions(f.api, {} as SessionRoutes));
@@ -261,7 +266,7 @@ test('Code controls answer 503 once withdrawn and are mounted by one owner at a 
   );
   second();
   assert.equal((await f.request('next')).status, 503);
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.length, 2);
 });
 
 test('Code routes enforce strict schemas, bounded JSON, POST-only methods and provider errors', async (t) => {

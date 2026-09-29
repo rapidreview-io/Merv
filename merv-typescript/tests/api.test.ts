@@ -1267,6 +1267,37 @@ test('mount prefixes are single segments with public paths inside them, and with
   assert.deepEqual(await (await fetch(`${url}/open`)).json(), { again: true });
 });
 
+test('before its owner mounts it, a route answers 503 to any credential and then serves it', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const paths = ['/code/commands/next', '/sessions/lease', '/pi/conversation/events'];
+  const get = async (path: string, token?: string) => {
+    const response = await fetch(`${url}${path}`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    return [response.status, (await response.json()).error?.code] as const;
+  };
+  // A runner treats 404 as final: a source credential (an actor token, a user key, a JWT) and a
+  // namespaced one both wait on 503 while the owner is absent, as at boot.
+  for (const path of paths) {
+    for (const token of ['alice-token', `mk_${'k'.repeat(43)}`, 'a.b.c', 'mr_runner'])
+      assert.deepEqual(await get(path, token), [503, 'unavailable'], `${path} ${token}`);
+    assert.deepEqual(await get(path), [404, 'not_found'], path);
+  }
+  for (const path of paths) api.mount(`/${path.split('/')[1]}` as `/${string}`, () => ({ path }));
+  for (const path of paths) {
+    const response = await fetch(`${url}${path}`, {
+      headers: { authorization: 'Bearer alice-token' },
+    });
+    assert.deepEqual(await response.json(), { path });
+  }
+});
+
 test('a mount withdrawn while its body is read answers 503 and its handler never sees the body', async (t) => {
   const { scope, tools } = fixture();
   const api = new ApiServer(scope, tools);

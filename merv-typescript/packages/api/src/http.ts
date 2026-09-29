@@ -508,10 +508,9 @@ export class ApiServer {
     const prefix = `/${url.pathname.split('/')[1]}`;
     const mounted = this.mounts.get(prefix);
     if (!mounted) {
-      // A runner treats 401, 403 and 404 as final, so a withdrawn route, or a route a namespaced
-      // bearer's owner has not mounted yet, answers 503.
-      const presented = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
-      if (mounted === null || (presented && namespaced(presented)))
+      // A runner treats 401, 403 and 404 as final, so a withdrawn route, or any credential's
+      // route whose owner has not mounted yet (as at boot), answers 503.
+      if (mounted === null || req.headers.authorization)
         throw new MervError('unavailable', 'This route is unavailable', 503);
       throw unknownEndpoint();
     }
