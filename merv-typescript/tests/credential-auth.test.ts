@@ -11,7 +11,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ProjectScope } from '@merv/scope';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { ApiServer } from '../packages/api/src/http.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
+import { Invocations } from '../packages/mounts/src/upstream.js';
 import { createApp } from './fixtures/app.js';
 import type { Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
@@ -304,20 +304,21 @@ test('mount connection setup retains the original credential fence before upstre
     release = resolve;
   });
   let calls = 0;
-  const remote = new ScopedRemoteClients(
+  // Only the SDK I/O and the binding are substituted; the cold-path re-check is real.
+  const remote = new Invocations(
+    { id: 'bridge', url: 'http://127.0.0.1:1/mcp', timeoutMs: 5000 },
     {
-      async resolve(caller) {
-        await scope.require(caller, 'read');
-        return {
-          identityKey: 'fixture-upstream',
-          headers: () => ({ authorization: 'Bearer fixture-upstream' }),
-        };
-      },
+      select: async (caller) => ({
+        id: 'fixture',
+        ...caller,
+        mountId: 'bridge',
+        secretRef: 'env:X',
+      }),
+      headers: async () => ({ authorization: 'Bearer fixture-upstream' }),
     },
     access,
+    { validateSession: async () => {} },
     {
-      mountId: 'bridge',
-      url: 'http://127.0.0.1:1/mcp',
       connect: async () => {
         await ready;
         return {
@@ -335,10 +336,10 @@ test('mount connection setup retains the original credential fence before upstre
     await remote.close();
     await state.close();
   });
-  const pending = remote.call(identity(issued), 'bridge', 'probe', {});
+  const pending = remote.handler('probe')(identity(issued), {});
   await scope.revokeCredential(identity(operator), issued.credential.id);
   release();
-  await assert.rejects(pending, { code: 'forbidden' });
+  await assert.rejects(Promise.resolve(pending), { code: 'forbidden' });
   assert.equal(calls, 0);
 });
 

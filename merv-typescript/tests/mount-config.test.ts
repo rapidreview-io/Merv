@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ProjectScope } from '@merv/scope';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
+import { Bindings } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
 import { MountManager, mountsPlugin } from '@merv/mounts';
 import { Context } from 'cordis';
@@ -13,7 +13,7 @@ test('failed multi-mount construction releases only namespaces acquired by that 
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const access = scope.toolPolicy;
-  const credentials = new EnvironmentCredentials(scope);
+  const credentials = new Bindings(scope);
   const registry = new ToolRegistry(scope, access);
   try {
     const existing = registry.createCatalog('b');

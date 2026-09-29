@@ -2,15 +2,15 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { check, MervError, type Scope } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
-import type { CredentialProvider, ResolvedCredential } from './types.js';
+import type { Bindings } from './credentials.js';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
-import { connectUpstream, endUpstream, fault, ScopedRemoteClients } from './upstream.js';
+import { connectUpstream, endUpstream, fault, Invocations } from './upstream.js';
 
-/** One dedicated discovery session; invocation connections are separately scoped by the pool. */
+/** One dedicated discovery session; each caller's invocations use its own connection in the pool. */
 export class MountRuntime {
   private readonly catalog: ToolCatalog;
-  private readonly pool: ScopedRemoteClients;
+  private readonly pool: Invocations;
   private readonly timeoutMs: number;
   private readonly reconnectMs: number;
   private readonly wanted: ReadonlySet<string>;
@@ -31,7 +31,7 @@ export class MountRuntime {
 
   constructor(
     tools: Tools,
-    private readonly credentials: CredentialProvider,
+    private readonly bindings: Pick<Bindings, 'select' | 'headers'>,
     private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     private readonly config: MountConfig,
   ) {
@@ -44,10 +44,10 @@ export class MountRuntime {
       state: 'connecting',
       toolCount: 0,
     };
-    this.pool = new ScopedRemoteClients(
-      credentials,
+    this.pool = new Invocations(
+      { id: config.id, url: config.url, timeoutMs: this.timeoutMs },
+      bindings,
       scope.toolPolicy,
-      { mountId: config.id, url: config.url, timeoutMs: this.timeoutMs },
       tools,
     );
     this.catalog = tools.createCatalog(config.id);
@@ -94,17 +94,20 @@ export class MountRuntime {
     return operation;
   }
 
-  /** Discovery lists metadata only; its tool grants never authorize a call (handlers use the pool). */
-  private async credential(): Promise<ResolvedCredential | undefined> {
+  /** Discovery lists metadata only; its binding never carries a call (handlers use the pool). */
+  private async headers(): Promise<Record<string, string> | undefined> {
     const discovery = this.config.discovery;
-    return discovery && (await this.credentials.resolve(discovery, this.config.id));
+    return (
+      discovery &&
+      (await this.bindings.headers(await this.bindings.select(discovery, this.config.id)))
+    );
   }
 
   private async refreshOnce(signal: AbortSignal): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
     // The discovery actor's credential is used only while that actor may read the project.
     if (this.config.discovery) await this.scope.require(this.config.discovery, 'read');
-    if (!this.client) await this.connect(await this.credential(), signal);
+    if (!this.client) await this.connect(await this.headers(), signal);
     const client = this.client!;
     const found = await collectRemoteCatalog(client, this.wanted, {
       signal,
@@ -122,8 +125,7 @@ export class MountRuntime {
       return {
         ...definition,
         kind: 'mcp',
-        // Every call selects its own authority; discovery's credential never invokes tools.
-        handler: async (caller, input) => this.pool.call(caller, this.config.id, name, input),
+        handler: this.pool.handler(name),
       };
     });
     // Registry compilation only sees the selected subset and swaps the entire generation atomically.
@@ -144,24 +146,19 @@ export class MountRuntime {
   }
 
   private async connect(
-    credential: ResolvedCredential | undefined,
+    headers: Record<string, string> | undefined,
     signal: AbortSignal,
   ): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
     this.snapshot = { ...this.snapshot, state: 'connecting' };
-    const client = await connectUpstream(
-      this.config.url,
-      credential && { ...credential.headers() },
-      this.timeoutMs,
-      {
-        signal,
-        notifications: (discovery) =>
-          discovery.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-            if (!this.stopping && this.client === discovery)
-              void this.refresh().catch(() => undefined);
-          }),
-      },
-    );
+    const client = await connectUpstream(this.config.url, headers, this.timeoutMs, {
+      signal,
+      notifications: (discovery) =>
+        discovery.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+          if (!this.stopping && this.client === discovery)
+            void this.refresh().catch(() => undefined);
+        }),
+    });
     if (this.stopping) {
       await endUpstream(client); // a connect that finished during stop still gets its DELETE
       throw new MervError('mounts_stopped', 'Mounts are stopped', 503);

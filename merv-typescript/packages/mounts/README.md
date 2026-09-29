@@ -33,14 +33,14 @@ Configuration explicitly selects raw upstream tool names:
 }
 ```
 
-The plugin configuration defaults to empty `mounts` and `bindings` arrays; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Scope tool grants and matching upstream credential bindings. Discovery can use the optional local identity; invocation resolves the actual caller's credentials. Credential bindings live in this same configuration; secret values remain in the server environment.
+The plugin configuration defaults to empty `mounts` and `bindings` arrays; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Scope tool grants and matching upstream credential bindings. Discovery can use the optional local identity; each invocation uses the calling actor's own binding. Credential bindings live in this same configuration; secret values remain in the server environment.
 
 Discovery, invocation, and notification requests refuse HTTP redirects. Configure the final MCP endpoint directly: a redirect does not authorize forwarding tool arguments, selector headers, or MCP session headers to another destination.
 
 The following helper modules now belong to this package:
 
 - `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection keeps only the selected names, stops once it has found them all, bounds each page by the request timeout and a whole collection by 20 pages, and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
-- `@merv/mounts/upstream` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, replaces a lane's connection when its credential identity changes, ends a connection after five idle minutes, and drains admitted calls during shutdown. Ending a connection sends the MCP DELETE, capped at one second, before closing it.
+- `@merv/mounts/upstream` exports `Invocations`. One pool serves one mount endpoint and keeps one connection per caller (project, actor), carrying the binding selected for that caller; connections are never shared across actors, even when two bindings use the same secret. The registry admits every call immediately before its handler, so a call on a connected lane goes straight upstream. A call that waited (binding selection or connection setup) re-checks the caller's grant, and a session's arguments, first. A connection ends after five idle minutes. Closing the pool refuses new calls and ends every connection. Ending a connection sends the MCP DELETE, capped at one second, before closing it.
 
 These helpers contain upstream SDK transport ownership, while the public types module remains free of runtime code.
 
@@ -58,8 +58,6 @@ The mount ID comes from configuration; dots in an upstream name are preserved.
 
 Remove the old `@merv/credentials` plugin entry and move its `config.bindings` into the `@merv/mounts` entry’s `config.bindings`, alongside `config.mounts`. There is no `ctx.credentials` service. Reload the Mounts entry to apply binding changes; unload withdraws catalogs and drains admitted calls before closing connections. Scope grants stay in Scope.
 
-The internal resolver selects exact project/actor/mount bindings and checks current Scope authority. Agent sessions resolve against their authority actor. Secrets are read from `env:NAME` on every resolution; known local Merv credentials are rejected, including revoked or rotated credentials. Bindings accept only fixed nonsecret selector headers. Missing or invalid credentials produce sanitized errors.
+The internal `Bindings` selects the exact project/actor/mount binding; the registry, not the selection, authorizes the caller. Agent sessions use their authority actor's binding. The secret is read from `env:NAME` once per connection and handed only to that connection's transport; known local Merv credentials are rejected, including revoked or rotated credentials. Bindings accept only fixed nonsecret selector headers. Missing or invalid credentials produce sanitized errors. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.
 
-Secret snapshots hide headers from JSON and diagnostic inspection. Their opaque identity includes the binding and current secret, so rotation selects a different connection. The client rechecks authority and credential identity after connection setup, before dispatch. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.
-
-Bindings are fixed for each load of the Mounts entry. A secret rotated in the environment changes the resolved identity, so the next admission retires the old connection and opens a new one; requests already sent drain with their original identity.
+Bindings are fixed for each load of the Mounts entry. A secret rotated in the environment applies to the next connection, after an idle close or a reload of the entry.

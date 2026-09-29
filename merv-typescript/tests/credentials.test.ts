@@ -6,7 +6,10 @@ import { inspect } from 'node:util';
 
 import { ProjectScope } from '@merv/scope';
 import { MervError, type Caller } from '@merv/contracts';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
+import { ToolRegistry } from '@merv/api';
+import { mountsPlugin } from '@merv/mounts';
+import { Context } from 'cordis';
+import { Bindings } from '../packages/mounts/src/credentials.js';
 import type { CredentialBinding } from '../packages/mounts/src/types.js';
 import { openState } from './fixtures/state.js';
 
@@ -49,147 +52,123 @@ const binding = (
 const code = (expected: string) => (error: unknown) =>
   error instanceof MervError && error.code === expected;
 
-test('upstream credentials select exact current project, actor and mount without role inheritance', async (t) => {
+/** The upstream headers selected for a caller, as a new connection receives them. */
+const headersFor = async (bindings: Bindings, caller: Caller, mountId = 'sandboxes') =>
+  await bindings.headers(await bindings.select(caller, mountId));
+
+test('upstream bindings select exact project, actor and mount without role inheritance', async (t) => {
   const { scope, caller, operator, readerCaller, other } = await fixture(t);
   const first = environment(t, 'first-upstream-token'),
     second = environment(t, 'second-upstream-token');
   await assert.rejects(
-    async () => await new EnvironmentCredentials(scope).resolve(caller, 'sandboxes'),
+    async () => await new Bindings(scope).select(caller, 'sandboxes'),
     code('credential_forbidden'),
   );
-  const provider = new EnvironmentCredentials(scope, [
-    binding(caller, first.ref),
-    binding(other, second.ref),
-  ]);
-  assert.deepEqual((await provider.resolve(caller, 'sandboxes')).headers(), {
+  const configured = binding(caller, first.ref, {
+    headers: { 'X-Namespace': 'project-a', 'x-subject': 'subject-a' },
+  });
+  const bindings = new Bindings(scope, [configured, binding(other, second.ref)]);
+  // Selector names are lower-cased, and the configuration is copied at construction.
+  configured.headers!['X-Namespace'] = 'mutated';
+  configured.secretRef = 'env:DOES_NOT_EXIST';
+  assert.deepEqual(await headersFor(bindings, caller), {
+    'x-namespace': 'project-a',
+    'x-subject': 'subject-a',
     authorization: 'Bearer first-upstream-token',
   });
-  assert.deepEqual((await provider.resolve(other, 'sandboxes')).headers(), {
+  assert.deepEqual(await headersFor(bindings, other), {
     authorization: 'Bearer second-upstream-token',
   });
-  for (const unbound of [operator, readerCaller])
+  // Selection does not authorize (the registry does): it only finds the exact binding.
+  for (const unbound of [
+    operator,
+    readerCaller,
+    { ...caller, projectId: other.projectId },
+    { ...other, projectId: caller.projectId },
+  ])
     await assert.rejects(
-      async () => await provider.resolve(unbound, 'sandboxes'),
+      async () => await bindings.select(unbound, 'sandboxes'),
       code('credential_forbidden'),
     );
   await assert.rejects(
-    async () => await provider.resolve(caller, 'another-mount'),
+    async () => await bindings.select(caller, 'another-mount'),
     code('credential_forbidden'),
   );
-  await assert.rejects(
-    async () => await provider.resolve({ ...caller, projectId: other.projectId }, 'sandboxes'),
-    code('forbidden'),
-  );
-  await assert.rejects(
-    async () => await provider.resolve({ ...other, projectId: caller.projectId }, 'sandboxes'),
-    code('forbidden'),
-  );
-  const reloaded = new EnvironmentCredentials(scope, [binding(readerCaller, first.ref)]);
+  const reloaded = new Bindings(scope, [binding(readerCaller, first.ref)]);
   assert.equal(
-    (await reloaded.resolve(readerCaller, 'sandboxes')).headers().authorization,
+    (await headersFor(reloaded, readerCaller)).authorization,
     'Bearer first-upstream-token',
   );
 });
 
-test('actor and binding revocation deny the next resolution, and invalid binding sets are refused whole', async (t) => {
-  const { scope, caller, operator, readerCaller } = await fixture(t);
+test('invalid binding sets are refused whole', async (t) => {
+  const { scope, caller, readerCaller } = await fixture(t);
   const env = environment(t, 'revocable-upstream-token');
   const original = binding(caller, env.ref);
-  const provider = new EnvironmentCredentials(scope, [original, binding(readerCaller, env.ref)]);
   for (const bindings of [
     [binding(readerCaller, env.ref), { ...original, secretRef: 'raw-secret' }],
     [original, { ...original, id: 'another-id' }],
     [original, binding(readerCaller, env.ref, { id: original.id })],
   ])
-    assert.throws(
-      () => new EnvironmentCredentials(scope, bindings),
-      code('invalid_credential_config'),
-    );
-  await scope.revokeActor(operator, caller.actorId);
-  await assert.rejects(async () => await provider.resolve(caller, 'sandboxes'), code('forbidden'));
-  assert.ok(await provider.resolve(readerCaller, 'sandboxes'));
-  // Binding changes apply by reloading Mounts, which constructs a new provider.
-  await assert.rejects(
-    async () => await new EnvironmentCredentials(scope, []).resolve(readerCaller, 'sandboxes'),
-    code('credential_forbidden'),
-  );
+    assert.throws(() => new Bindings(scope, bindings), code('invalid_credential_config'));
 });
 
-test('identity snapshots isolate caller configuration and change with rotation, scope or selectors', async (t) => {
-  const { scope, caller, readerCaller, other } = await fixture(t);
-  const env = environment(t, 'rotation-before');
-  const original = binding(caller, env.ref, {
-    headers: { 'X-Namespace': 'project-a', 'x-subject': 'subject-a' },
-  });
-  const provider = new EnvironmentCredentials(scope, [original]);
-  const first = await provider.resolve(caller, 'sandboxes');
-  original.headers!['X-Namespace'] = 'mutated';
-  original.secretRef = 'env:DOES_NOT_EXIST';
-  assert.deepEqual(first.headers(), {
-    'x-namespace': 'project-a',
-    'x-subject': 'subject-a',
-    authorization: 'Bearer rotation-before',
-  });
-  assert.equal((await provider.resolve(caller, 'sandboxes')).identityKey, first.identityKey);
-  const equal = binding(caller, env.ref, {
-    headers: { 'X-Subject': 'subject-a', 'x-namespace': 'project-a' },
-  });
-  const reload = (bindings: CredentialBinding[]) => new EnvironmentCredentials(scope, bindings);
-  assert.equal((await reload([equal]).resolve(caller, 'sandboxes')).identityKey, first.identityKey);
-  process.env[env.name] = 'rotation-after';
-  const rotated = await provider.resolve(caller, 'sandboxes');
-  assert.notEqual(rotated.identityKey, first.identityKey);
-  assert.equal(first.headers().authorization, 'Bearer rotation-before');
-  assert.equal(rotated.headers().authorization, 'Bearer rotation-after');
-  const changedSelector = await reload([
-    { ...equal, headers: { ...equal.headers, 'X-Subject': 'subject-b' } },
-  ]).resolve(caller, 'sandboxes');
-  assert.notEqual(changedSelector.identityKey, rotated.identityKey);
-  // Keep the binding ID, secret reference and selectors identical to isolate scope in the hash.
-  assert.notEqual(
-    (await reload([{ ...equal, ...readerCaller }]).resolve(readerCaller, 'sandboxes')).identityKey,
-    rotated.identityKey,
-  );
-  assert.notEqual(
-    (await reload([{ ...equal, ...other }]).resolve(other, 'sandboxes')).identityKey,
-    rotated.identityKey,
-  );
-  assert.notEqual(
-    (await reload([{ ...equal, mountId: 'other-mount' }]).resolve(caller, 'other-mount'))
-      .identityKey,
-    rotated.identityKey,
-  );
-});
-
-test('resolved credentials expose only an opaque identity during serialization and inspection', async (t) => {
-  const { scope, caller } = await fixture(t);
+test('mount status, errors and inspected services never contain an upstream secret', async (t) => {
+  const { scope, operator } = await fixture(t);
   const secret = 'private-upstream-secret-that-must-not-be-inspected';
   const env = environment(t, secret);
-  const provider = new EnvironmentCredentials(scope, [
-    binding(caller, env.ref, { headers: { 'x-subject': 'private-selector-value' } }),
-  ]);
-  const resolved = await provider.resolve(caller, 'sandboxes');
-  assert.match(resolved.identityKey, /^credential_[a-f0-9]{64}$/);
-  assert.deepEqual(JSON.parse(JSON.stringify(resolved)), { identityKey: resolved.identityKey });
-  assert.deepEqual(Object.keys(resolved), ['identityKey']);
+  const configured = [
+    binding(operator, env.ref, {
+      mountId: 'fixture',
+      headers: { 'x-subject': 'private-selector' },
+    }),
+  ];
+  const registry = new ToolRegistry(scope, scope.toolPolicy);
+  scope.toolPolicy.replace([{ ...operator, mountId: 'fixture', tools: ['inspect'] }]);
+  const ctx = new Context();
+  ctx.provide('tools', registry);
+  ctx.provide('scope', scope);
+  const mounts = {
+    mounts: [
+      {
+        id: 'fixture',
+        url: 'http://127.0.0.1:1/mcp',
+        tools: ['inspect'],
+        discovery: operator,
+        timeoutMs: 200,
+        reconnectMs: 60_000,
+      },
+    ],
+    bindings: configured,
+  };
+  await ctx.plugin(mountsPlugin, mounts).await();
+  t.after(async () => {
+    await ctx.fiber.dispose();
+    await registry.close();
+  });
+  const bindings = new Bindings(scope, configured);
+  const failures: unknown[] = [];
+  await headersFor(bindings, { ...operator, actorId: 'unbound' }, 'fixture').catch((error) =>
+    failures.push(error),
+  );
+  process.env[env.name] = (
+    await scope.issueActor(operator, { name: 'Local', role: 'producer' })
+  ).token;
+  await headersFor(bindings, operator, 'fixture').catch((error) => failures.push(error));
+  assert.equal(failures.length, 2);
+  assert.equal(ctx.mounts.status()[0].state, 'failed');
   for (const rendered of [
-    JSON.stringify({ resolved, provider }),
-    inspect(resolved),
-    inspect({ resolved, provider }, { showHidden: true, depth: 10 }),
-    inspect(resolved, { customInspect: false, showHidden: true }),
-    inspect(Object.getOwnPropertyDescriptors(resolved)),
+    JSON.stringify(ctx.mounts.status()),
+    inspect(ctx.mounts.status(), { showHidden: true, depth: 10 }),
+    inspect(bindings, { showHidden: true, depth: 10 }),
+    JSON.stringify(bindings),
+    ...failures.map((error) => `${String(error)} ${inspect(error)} ${JSON.stringify(error)}`),
   ]) {
     assert.ok(!rendered.includes(secret));
-    assert.ok(!rendered.includes('private-selector-value'));
+    assert.ok(!rendered.includes(process.env[env.name]!));
+    assert.ok(!rendered.includes('private-selector'));
     assert.ok(!rendered.includes(env.name));
   }
-  assert.throws(() => {
-    (resolved as { identityKey: string }).identityKey = 'changed';
-  }, TypeError);
-  assert.throws(() => {
-    (resolved.headers() as Record<string, string>).authorization = 'changed';
-  }, TypeError);
-  assert.equal(resolved.headers().authorization, `Bearer ${secret}`);
 });
 
 test('configuration rejects inline authentication, protocol headers, wildcards and unsafe selectors without echoing values', async (t) => {
@@ -233,7 +212,7 @@ test('configuration rejects inline authentication, protocol headers, wildcards a
     invalid.push(binding(caller, env.ref, { headers: { [name]: sentinel } }));
   for (const value of invalid) {
     assert.throws(
-      () => new EnvironmentCredentials(scope, [value as CredentialBinding]),
+      () => new Bindings(scope, [value as CredentialBinding]),
       (error: unknown) => {
         assert.ok(code('invalid_credential_config')(error));
         assert.ok(!String(error).includes(sentinel));
@@ -247,7 +226,7 @@ test('configuration rejects inline authentication, protocol headers, wildcards a
 test('missing or malformed environment secrets and active local tokens fail with sanitized errors', async (t) => {
   const { scope, caller, admin } = await fixture(t);
   const env = environment(t);
-  const provider = new EnvironmentCredentials(scope, [binding(caller, env.ref)]);
+  const bindings = new Bindings(scope, [binding(caller, env.ref)]);
   const unsafe = [
     '',
     ' ',
@@ -258,7 +237,7 @@ test('missing or malformed environment secrets and active local tokens fail with
   ];
   const verify = async () =>
     await assert.rejects(
-      async () => await provider.resolve(caller, 'sandboxes'),
+      async () => await headersFor(bindings, caller),
       (error: unknown) => {
         assert.ok(code('credential_unavailable')(error));
         const rendered = `${String(error)} ${inspect(error)} ${JSON.stringify(error)}`;
@@ -274,7 +253,7 @@ test('missing or malformed environment secrets and active local tokens fail with
     await verify();
   }
   process.env[env.name] = 'valid-upstream-token';
-  assert.ok(await provider.resolve(caller, 'sandboxes'));
+  assert.ok(await headersFor(bindings, caller));
 });
 
 test('known local credentials cannot become upstream bearers after expiry, rotation or revocation', async (t) => {
@@ -297,12 +276,12 @@ test('known local credentials cannot become upstream bearers after expiry, rotat
   for (const issued of [expiring, rotated, revoked, inactive])
     await assert.rejects(async () => await scope.authenticate(issued.token), code('unauthorized'));
   const env = environment(t);
-  const provider = new EnvironmentCredentials(scope, [binding(caller, env.ref)]);
+  const bindings = new Bindings(scope, [binding(caller, env.ref)]);
   const locals = [admin, expiring, rotated, successor, revoked, inactive, foreign];
   for (const issued of locals) {
     process.env[env.name] = issued.token;
     await assert.rejects(
-      async () => await provider.resolve(caller, 'sandboxes'),
+      async () => await headersFor(bindings, caller),
       (error: unknown) => {
         assert.ok(code('credential_unavailable')(error));
         assert.equal((error as Error).cause, undefined);
@@ -317,7 +296,7 @@ test('known local credentials cannot become upstream bearers after expiry, rotat
     );
   }
   process.env[env.name] = 'distinct-upstream-token';
-  assert.deepEqual((await provider.resolve(caller, 'sandboxes')).headers(), {
+  assert.deepEqual(await headersFor(bindings, caller), {
     authorization: 'Bearer distinct-upstream-token',
   });
 });
@@ -326,12 +305,12 @@ test('unexpected Scope recognition failures are sanitized and do not admit crede
   const { scope, caller } = await fixture(t);
   const secret = 'upstream-value-in-unexpected-database-error';
   const env = environment(t, secret);
-  const provider = new EnvironmentCredentials(scope, [binding(caller, env.ref)]);
+  const bindings = new Bindings(scope, [binding(caller, env.ref)]);
   t.mock.method(scope, 'recognizesCredential', () => {
     throw new Error(`Database error: ${secret}`);
   });
   await assert.rejects(
-    async () => await provider.resolve(caller, 'sandboxes'),
+    async () => await headersFor(bindings, caller),
     (error: unknown) => {
       assert.ok(code('credential_unavailable')(error));
       assert.ok(!inspect(error).includes(secret));

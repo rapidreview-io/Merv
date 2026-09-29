@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import { ProjectScope } from '@merv/scope';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
+import { Bindings } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
 import type { CredentialBinding } from '@merv/mounts/types';
 import type { MountConfig } from '@merv/mounts/types';
@@ -51,7 +51,7 @@ async function local(t: TestContext, mountIds = ['fixture']) {
     mountId,
     secretRef: `env:${env}`,
   }));
-  const credentials = new EnvironmentCredentials(scope, bindings);
+  const credentials = new Bindings(scope, bindings);
   const registry = new ToolRegistry(scope, access);
   registry.register({
     name: 'native',
@@ -560,7 +560,7 @@ test(
         headers: { 'x-sandbox-namespace': 'public', 'x-sandbox-subject': 'discovery' },
       },
     ];
-    const credentials = new EnvironmentCredentials(services.scope, bindings);
+    const credentials = new Bindings(services.scope, bindings);
     const grants = [services.caller, discovery].map((caller) => ({
       ...caller,
       mountId: 'fixture',
@@ -590,6 +590,17 @@ test(
       upstream.connections.map((connection) => connection.identity),
       ['discovery', 'caller'],
     );
+    // The discovery connection never carries a call: even the discovery actor's own call opens
+    // its own invocation connection.
+    await services.registry.call('_fixture.inspect', discovery, {});
+    assert.deepEqual(
+      upstream.calls.map((call) => call.identity),
+      ['caller', 'discovery'],
+    );
+    assert.deepEqual(
+      upstream.connections.map((connection) => connection.identity),
+      ['discovery', 'caller', 'discovery'],
+    );
     // Discovery needs no tool grants: revoking them all leaves the mount ready, and callers
     // still need their own.
     services.access.replace([]);
@@ -608,7 +619,7 @@ test(
     const before = upstream.lists;
     await until(() => upstream.lists >= before + 3, 'Discovery stopped polling');
     assert.equal(manager.status()[0].state, 'ready');
-    assert.equal(upstream.connections.length, 2);
+    assert.equal(upstream.connections.length, 3);
     await assert.rejects(manager.reconnect('fixture'), { code: 'credential_unavailable' });
     assert.equal(manager.status()[0].errorCode, 'credential_unavailable');
     assert.deepEqual(await names(services.registry), ['native']);
@@ -656,7 +667,8 @@ test('a warm discovery poll checks the actor once and resolves no credential or 
   assert.equal(manager.status()[0].state, 'ready');
   const require = t.mock.method(services.scope, 'require');
   const grants = t.mock.method(services.access, 'require');
-  const resolve = t.mock.method(EnvironmentCredentials.prototype, 'resolve');
+  const select = t.mock.method(Bindings.prototype, 'select');
+  const headers = t.mock.method(Bindings.prototype, 'headers');
   const lists = () => upstream.requests.filter((request) => request.method === 'tools/list');
   for (let poll = 1; poll <= 3; poll++) {
     const before = lists().length;
@@ -667,7 +679,8 @@ test('a warm discovery poll checks the actor once and resolves no credential or 
   await sleep(50);
   assert.equal(require.mock.callCount(), 3);
   assert.equal(grants.mock.callCount(), 0);
-  assert.equal(resolve.mock.callCount(), 0);
+  assert.equal(select.mock.callCount(), 0);
+  assert.equal(headers.mock.callCount(), 0);
   assert.equal(manager.status()[0].state, 'ready');
 });
 

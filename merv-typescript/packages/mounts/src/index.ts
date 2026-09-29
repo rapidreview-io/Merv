@@ -2,15 +2,8 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check, MervError, type Scope } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
-import { EnvironmentCredentials } from './credentials.js';
-import type {
-  CredentialBinding,
-  CredentialProvider,
-  MountConfig,
-  Mounts,
-  MountsConfig,
-  MountStatus,
-} from './types.js';
+import { Bindings } from './credentials.js';
+import type { CredentialBinding, MountConfig, Mounts, MountsConfig, MountStatus } from './types.js';
 import { MountRuntime } from './runtime.js';
 
 export type { MountConfig, Mounts, MountsConfig, MountStatus } from './types.js';
@@ -46,7 +39,7 @@ const mountSchema = z
 const configuration = z
   .object({
     mounts: z.array(mountSchema).default([]),
-    // The resolver validates exact bindings before any catalogs or connections are created.
+    // Bindings validates exact bindings before any catalogs or connections are created.
     bindings: z.array(z.custom<CredentialBinding>()).default([]),
   })
   .strict()
@@ -67,7 +60,7 @@ export class MountManager implements Mounts {
 
   constructor(
     private readonly tools: Tools,
-    private readonly credentials: CredentialProvider,
+    private readonly bindings: Pick<Bindings, 'select' | 'headers'>,
     private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     config: MountsConfig = { mounts: [] },
   ) {
@@ -77,7 +70,7 @@ export class MountManager implements Mounts {
       for (const mount of parsed.data.mounts) {
         this.configs.set(mount.id, mount);
         this.enabled.set(mount.id, true);
-        this.runtimes.set(mount.id, new MountRuntime(tools, credentials, scope, mount));
+        this.runtimes.set(mount.id, new MountRuntime(tools, bindings, scope, mount));
       }
     } catch {
       // Constructor allocations contain no admitted calls, but release every acquired namespace.
@@ -131,7 +124,7 @@ export class MountManager implements Mounts {
       check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
       const runtime = new MountRuntime(
         this.tools,
-        this.credentials,
+        this.bindings,
         this.scope,
         this.configs.get(id)!,
       );
@@ -165,8 +158,8 @@ export const mountsPlugin = {
   Config: configuration,
   inject: ['tools', 'scope'],
   async apply(ctx: Context, config: MountsConfig = { mounts: [] }) {
-    const credentials = new EnvironmentCredentials(ctx.scope, config.bindings);
-    const manager = new MountManager(ctx.tools, credentials, ctx.scope, config);
+    const bindings = new Bindings(ctx.scope, config.bindings);
+    const manager = new MountManager(ctx.tools, bindings, ctx.scope, config);
     // Keep catalog withdrawal independent of consumers draining the public status service.
     ctx.effect(() => async () => manager.close());
     ctx.provide('mounts', manager);

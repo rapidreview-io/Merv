@@ -5,10 +5,10 @@ import {
 } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { ErrorCode, McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { MervError, type Caller, type Data } from '@merv/contracts';
-import type { Tools } from '@merv/api/types';
-import type { CredentialProvider, ResolvedCredential } from './types.js';
-import type { ToolPolicy } from '@merv/contracts';
+import { check, MervError, type Caller, type Data, type ToolPolicy } from '@merv/contracts';
+import type { RemoteToolDefinition, Tools } from '@merv/api/types';
+import type { Bindings } from './credentials.js';
+import type { CredentialBinding } from './types.js';
 
 const END_MS = 1000; // cleanup is best effort: a DELETE never holds a retire, stop or unload longer
 const isSignal = (signal: AbortSignal | null | undefined): signal is AbortSignal => !!signal;
@@ -59,29 +59,6 @@ export async function endUpstream(client: Client): Promise<void> {
   await client.close().catch(() => undefined);
 }
 
-/** One pool serves one mount endpoint. */
-export interface ScopedRemoteClientOptions {
-  mountId: string;
-  url: string;
-  /** Bounds each upstream request; a DELETE gets at most one second. */
-  timeoutMs?: number;
-  /** A connection without calls for this long ends (default five minutes). */
-  idleMs?: number;
-  /** Test seam in place of connectUpstream. */
-  connect?: typeof connectUpstream;
-}
-
-interface Connection {
-  key: string;
-  lane: string;
-  identityKey: string;
-  ready: Promise<Client>;
-  users: number;
-  retired: boolean;
-  idle?: NodeJS.Timeout;
-  closing?: Promise<void>;
-}
-
 /**
  * The upstream answered over a healthy session. Limitation: upstream codes -32000 and -32001 equal
  * the SDK's local ConnectionClosed and RequestTimeout, so they count as transport faults.
@@ -114,173 +91,121 @@ export function fault(error: unknown): MervError {
   return new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
 }
 
-/** Actor/project credentials are resolved per admission; only matching identities share a client. */
-export class ScopedRemoteClients {
-  private readonly connections = new Map<string, Connection>();
-  private readonly current = new Map<string, Connection>();
-  private readonly all = new Set<Connection>();
-  private readonly running = new Set<Promise<CallToolResult>>();
-  private readonly timeoutMs: number;
-  private stopping = false;
-  private closing?: Promise<void>;
+interface Connection {
+  binding: CredentialBinding;
+  ready: Promise<Client>;
+  /** Set once connected: a call that finds it set has not waited since the registry admitted it. */
+  client?: Client;
+  users: number;
+  retired: boolean;
+  idle?: NodeJS.Timeout;
+  ended?: Promise<void>;
+}
+
+/** One connection per caller (project, actor) of one mount, carrying the binding selected for it. */
+export class Invocations {
+  readonly #open = new Map<string, Connection>();
+  #closed = false;
+  /** Every DELETE started; close() awaits it. */
+  #ending: Promise<unknown> = Promise.resolve();
 
   constructor(
-    private readonly credentials: CredentialProvider,
+    private readonly mount: { id: string; url: string; timeoutMs: number },
+    private readonly bindings: Pick<Bindings, 'select' | 'headers'>,
     private readonly access: Pick<ToolPolicy, 'require'>,
-    private readonly options: ScopedRemoteClientOptions,
-    /** Re-admits a session's bound arguments; without it every session caller is refused. */
-    private readonly sessions?: Pick<Tools, 'validateSession'>,
-  ) {
-    // The mounts Config validated the endpoint and timeout.
-    this.timeoutMs = options.timeoutMs ?? 5000;
+    private readonly tools: Pick<Tools, 'validateSession'>,
+    /** Test seams: the idle close (default five minutes) and a replacement for connectUpstream. */
+    private readonly options: { idleMs?: number; connect?: typeof connectUpstream } = {},
+  ) {}
+
+  handler(name: string): RemoteToolDefinition['handler'] {
+    return (caller, input) => this.call(caller, name, input as Data);
   }
 
-  async call(
-    caller: Caller,
-    mountId: string,
-    rawToolName: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
-    if (this.stopping)
-      return Promise.reject(new MervError('remote_closed', 'Remote client pool is closed', 503));
-    const operation = Promise.resolve().then(async () => {
-      let connection: Connection;
-      try {
-        if (mountId !== this.options.mountId)
-          throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
-        const url = this.options.url;
-        const lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
-        await this.admit(caller, mountId, rawToolName, args);
-        const credential = await this.credentials.resolve(caller, mountId);
-        const key = JSON.stringify([
-          mountId,
-          url,
-          caller.actorId,
-          caller.projectId,
-          credential.identityKey,
-        ]);
-        const previous = this.current.get(lane);
-        if (previous && previous.key !== key) this.retire(previous);
-        connection = this.connections.get(key) ?? this.createConnection(key, lane, url, credential);
-      } catch (error) {
-        // Admission and credential refusals concern this call; the connection stays.
-        throw fault(error);
-      }
-      return await this.invoke(connection, caller, mountId, rawToolName, args);
-    });
-    this.running.add(operation);
-    try {
-      return await operation;
-    } finally {
-      this.running.delete(operation);
-    }
-  }
-
-  private async admit(
-    caller: Caller,
-    mountId: string,
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<void> {
-    await this.access.require(caller, mountId, name);
-    if (!caller.session) return;
-    if (!this.sessions)
-      throw new MervError('session_unavailable', 'Session policy is unavailable', 503);
-    await this.sessions.validateSession(caller, `_${mountId}.${name}`, args as Data);
-  }
-
-  private createConnection(
-    key: string,
-    lane: string,
-    url: string,
-    credential: ResolvedCredential,
-  ): Connection {
-    const connect = this.options.connect ?? connectUpstream;
-    const connection: Connection = {
-      key,
-      lane,
-      identityKey: credential.identityKey,
-      ready: connect(url, { ...credential.headers() }, this.timeoutMs),
-      users: 0,
-      retired: false,
-    };
-    this.connections.set(key, connection);
-    this.current.set(lane, connection);
-    this.all.add(connection);
-    // A failed connect is never reused.
-    connection.ready.catch(() => this.retire(connection));
-    return connection;
-  }
-
-  private async invoke(
-    connection: Connection,
-    caller: Caller,
-    mountId: string,
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
+  /**
+   * The registry admitted this caller immediately before (its dispatch access.require). A lane's
+   * binding is a pure function of (project, actor) for this load, so a warm call crosses at once.
+   */
+  private async call(caller: Caller, name: string, input: Data): Promise<CallToolResult> {
+    const lane = JSON.stringify([caller.projectId, caller.actorId]);
+    const known = this.#open.get(lane); // read before any await: see `cold`
+    const binding = known?.binding ?? (await this.bindings.select(caller, this.mount.id));
+    check(!this.#closed, 'remote_unavailable', 'Remote tool service is unavailable', 502);
+    // Synchronous from here: concurrent first calls share one connection.
+    const connection = this.#open.get(lane) ?? this.open(lane, binding);
+    // Any wait since admission (select, connect) is followed by a re-check.
+    const cold = !known?.client;
     connection.users++;
     clearTimeout(connection.idle);
     try {
       const client = await connection.ready;
-      // Connection setup and credential resolution can yield. Rotation or revocation
-      // during either wait must be observed before an operation crosses the upstream boundary.
-      const currentCredential = await this.credentials.resolve(caller, mountId);
-      if (currentCredential.identityKey !== connection.identityKey)
-        throw new MervError(
-          'credential_changed',
-          'Upstream credential changed before dispatch',
-          409,
-        );
-      await this.admit(caller, mountId, name, args);
+      if (cold) {
+        await this.access.require(caller, this.mount.id, name);
+        if (caller.session)
+          await this.tools.validateSession(caller, `_${this.mount.id}.${name}`, input);
+      }
       // Cast on purpose: the registry's complete() is the one result validator.
       return (await client.request(
-        { method: 'tools/call', params: { name, arguments: args } },
+        { method: 'tools/call', params: { name, arguments: input } },
         z.unknown(),
-        { timeout: this.timeoutMs },
+        { timeout: this.mount.timeoutMs },
       )) as CallToolResult;
     } catch (error) {
-      // Only a transport fault retires the shared connection; refusals and upstream answers keep it.
-      if (!(error instanceof MervError) && !answered(error)) this.retire(connection);
+      // Only a transport fault retires the connection; refusals and upstream answers keep it.
+      if (!(error instanceof MervError) && !answered(error)) this.retire(lane, connection);
       throw fault(error);
     } finally {
-      // A retired connection ends after its last admitted call; an unused one ends when idle.
+      // A retired connection ends after its last call; an unused one ends when idle.
       if (--connection.users === 0) {
-        if (connection.retired) void this.dispose(connection);
+        if (connection.retired) void this.end(connection);
         else
           (connection.idle = setTimeout(
-            () => this.retire(connection),
+            () => this.retire(lane, connection),
             this.options.idleMs ?? 300_000,
           )).unref();
       }
     }
   }
 
-  private retire(connection: Connection): void {
+  private open(lane: string, binding: CredentialBinding): Connection {
+    const connection = { binding, users: 0, retired: false } as Connection;
+    // The secret is read, and checked not to be a Merv credential, once per connection.
+    connection.ready = this.bindings
+      .headers(binding)
+      .then((headers) =>
+        (this.options.connect ?? connectUpstream)(this.mount.url, headers, this.mount.timeoutMs),
+      )
+      .then((client) => (connection.client = client));
+    // A failed connect is never reused.
+    connection.ready.catch(() => this.retire(lane, connection));
+    this.#open.set(lane, connection);
+    return connection;
+  }
+
+  private retire(lane: string, connection: Connection): void {
     connection.retired = true;
-    if (this.connections.get(connection.key) === connection)
-      this.connections.delete(connection.key);
-    if (this.current.get(connection.lane) === connection) this.current.delete(connection.lane);
-    if (connection.users === 0) void this.dispose(connection);
+    if (this.#open.get(lane) === connection) this.#open.delete(lane);
+    if (connection.users === 0) void this.end(connection);
   }
 
   /** Ends a connection once; never rejects. */
-  private dispose(connection: Connection): Promise<void> {
+  private end(connection: Connection): Promise<void> {
     clearTimeout(connection.idle);
-    return (connection.closing ??= connection.ready
-      .then(endUpstream, () => undefined)
-      .finally(() => this.all.delete(connection)));
+    if (!connection.ended) {
+      const ended = (connection.ended = connection.ready.then(endUpstream, () => undefined));
+      this.#ending = this.#ending.then(() => ended);
+    }
+    return connection.ended;
   }
 
-  close(): Promise<void> {
-    if (this.closing) return this.closing;
-    this.stopping = true;
-    this.closing = (async () => {
-      await Promise.allSettled([...this.running]);
-      await Promise.all([...this.all].map(async (connection) => this.dispose(connection)));
-      this.connections.clear();
-      this.current.clear();
-    })();
-    return this.closing;
+  /**
+   * Runs after the registry drained every admitted call: refuses new calls, retires every lane
+   * and awaits every DELETE started. A straggler (only a handler taken from Tools.list()) keeps
+   * its connection until it finishes, then ends it.
+   */
+  async close(): Promise<void> {
+    this.#closed = true;
+    for (const [lane, connection] of this.#open) this.retire(lane, connection);
+    await this.#ending;
   }
 }

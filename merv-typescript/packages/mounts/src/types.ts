@@ -9,14 +9,6 @@ export interface CredentialBinding {
   secretRef: string;
   headers?: Record<string, string>;
 }
-export interface ResolvedCredential {
-  readonly identityKey: string;
-  /** Explicit server-side access; callers must not serialize or log these headers. */
-  headers(): Readonly<Record<string, string>>;
-}
-export interface CredentialProvider {
-  resolve(caller: Caller, mountId: string): Promise<ResolvedCredential>;
-}
 
 export interface MountConfig {
   id: string;

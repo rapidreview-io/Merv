@@ -10,8 +10,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { CredentialStore } from '@merv/identity/credentials';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
+import { Bindings } from '../packages/mounts/src/credentials.js';
+import { Invocations } from '../packages/mounts/src/upstream.js';
 import { createApp } from './fixtures/app.js';
 import { RunnerClient } from '../packages/runner/src/client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
@@ -692,7 +692,7 @@ test('session route and credential namespaces stay reserved when the Sessions pr
   const env = `MERV_SESSION_BIND_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = issued.secret;
   try {
-    const credentials = new EnvironmentCredentials(f.app.ctx.scope, [
+    const bindings = new Bindings(f.app.ctx.scope, [
       {
         id: 'must-stay-local',
         actorId: f.source.actorId,
@@ -701,9 +701,10 @@ test('session route and credential namespaces stay reserved when the Sessions pr
         secretRef: `env:${env}`,
       },
     ]);
-    await assert.rejects(async () => await credentials.resolve(f.source, 'remote'), {
-      code: 'credential_unavailable',
-    });
+    await assert.rejects(
+      async () => await bindings.headers(await bindings.select(f.source, 'remote')),
+      { code: 'credential_unavailable' },
+    );
   } finally {
     delete process.env[env];
   }
@@ -723,18 +724,13 @@ test('leased mounted calls require source grants and keep upstream project argum
       { name: '_sandbox.inspect', alternatives: [{ projectId: { kind: 'literal', value: 73 } }] },
     ],
   });
-  const upstream = new CredentialServer(
-    ['synthetic-session-upstream', 'synthetic-session-upstream-rotated'].map((token) => ({
-      id: 'upstream',
-      token,
-      namespace: 'ns',
-      subject: 'subject',
-    })),
-  );
+  const upstream = new CredentialServer([
+    { id: 'upstream', token: 'synthetic-session-upstream', namespace: 'ns', subject: 'subject' },
+  ]);
   await upstream.start();
   const env = `MERV_SESSION_REMOTE_${randomUUID().replaceAll('-', '')}`;
   process.env[env] = 'synthetic-session-upstream';
-  const credentials = new EnvironmentCredentials(f.app.ctx.scope, [
+  const bindings = new Bindings(f.app.ctx.scope, [
     {
       id: 'source-binding',
       actorId: f.source.actorId,
@@ -744,13 +740,13 @@ test('leased mounted calls require source grants and keep upstream project argum
       headers: { 'x-sandbox-namespace': 'ns', 'x-sandbox-subject': 'subject' },
     },
   ]);
-  const pools: ScopedRemoteClients[] = [];
-  // A refusal keeps its lane's connection, so each held-connect case below opens a fresh pool.
+  const pools: Invocations[] = [];
+  // A warm lane re-checks nothing, so each held-connect case below opens a fresh pool.
   const openPool = () => {
-    const pool = new ScopedRemoteClients(
-      credentials,
+    const pool = new Invocations(
+      { id: 'sandbox', url: upstream.url, timeoutMs: 5000 },
+      bindings,
       f.app.ctx.scope.toolPolicy,
-      { mountId: 'sandbox', url: upstream.url },
       f.app.ctx.tools,
     );
     pools.push(pool);
@@ -763,6 +759,11 @@ test('leased mounted calls require source grants and keep upstream project argum
     delete process.env[env];
   });
   let mutable: Record<string, unknown> | undefined;
+  // State access made while the pool handles a call, i.e. what the pool adds to the registry's.
+  const reads = t.mock.method(f.app.ctx.state, 'read');
+  const transactions = t.mock.method(f.app.ctx.state, 'transaction');
+  const stateAccess = () => reads.mock.callCount() + transactions.mock.callCount();
+  const handlerReads: number[] = [];
   await f.app.ctx.tools.createCatalog('sandbox').replace([
     {
       kind: 'mcp',
@@ -777,7 +778,10 @@ test('leased mounted calls require source grants and keep upstream project argum
       _meta: { extension: { retained: true } },
       handler: async (caller, input) => {
         mutable = input;
-        return await pool.call(caller, 'sandbox', 'inspect', input);
+        const before = stateAccess();
+        const result = await pool.handler('inspect')(caller, input);
+        handlerReads.push(stateAccess() - before);
+        return result;
       },
     },
   ]);
@@ -828,7 +832,12 @@ test('leased mounted calls require source grants and keep upstream project argum
     'execution_arguments_forbidden',
   );
 
-  process.env[env] = 'synthetic-session-upstream-rotated';
+  handlerReads.length = 0;
+  const warm = await client.callTool({ name: '_sandbox.inspect', arguments: { projectId: 73 } });
+  assert.equal(warm.isError, undefined, JSON.stringify(warm));
+  assert.deepEqual(handlerReads, [0], 'A warm session call adds no State access');
+
+  pool = openPool();
   const revokedGrant = upstream.holdNextInitialize();
   const withGrant = client.callTool({ name: '_sandbox.inspect', arguments: { projectId: 73 } });
   await revokedGrant.entered;
@@ -837,7 +846,7 @@ test('leased mounted calls require source grants and keep upstream project argum
   assert.equal(errorCode(await withGrant), 'tool_forbidden');
   assert.equal(
     upstream.callAttempts,
-    1,
+    2,
     'A revoked source grant cannot cross a delayed connection',
   );
   f.app.ctx.scope.toolPolicy.replace([
@@ -850,21 +859,6 @@ test('leased mounted calls require source grants and keep upstream project argum
   ]);
 
   pool = openPool();
-  const rotatedCredential = upstream.holdNextInitialize();
-  const withCredential = client.callTool({
-    name: '_sandbox.inspect',
-    arguments: { projectId: 73 },
-  });
-  await rotatedCredential.entered;
-  process.env[env] = 'synthetic-session-upstream';
-  rotatedCredential.release();
-  assert.equal(errorCode(await withCredential), 'credential_changed');
-  assert.equal(
-    upstream.callAttempts,
-    1,
-    'Credential rotation is observed at the upstream boundary',
-  );
-
   const releasedLease = upstream.holdNextInitialize();
   const withLease = client.callTool({ name: '_sandbox.inspect', arguments: { projectId: 73 } });
   await releasedLease.entered;
@@ -877,7 +871,7 @@ test('leased mounted calls require source grants and keep upstream project argum
   errorCode(await withLease);
   assert.equal(
     upstream.callAttempts,
-    1,
+    2,
     'A released lease cannot dispatch an already connected call',
   );
 });

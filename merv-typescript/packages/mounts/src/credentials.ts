@@ -1,15 +1,13 @@
-import { inspect } from 'node:util';
 import {
   check,
-  digest,
   idPattern as identifier,
   MervError,
   type Caller,
   type Scope,
 } from '@merv/contracts';
-import type { CredentialBinding, CredentialProvider, ResolvedCredential } from './types.js';
+import type { CredentialBinding } from './types.js';
 
-export type { CredentialBinding, CredentialProvider, ResolvedCredential } from './types.js';
+export type { CredentialBinding } from './types.js';
 
 const mountIdentifier = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const secretReference = /^env:[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -21,8 +19,6 @@ const plainObject = (value: unknown): value is Record<string, unknown> =>
   value !== null &&
   typeof value === 'object' &&
   [Object.prototype, null].includes(Object.getPrototypeOf(value));
-const bindingKey = (caller: Caller, mountId: string) =>
-  JSON.stringify([caller.projectId, caller.actorId, mountId]);
 
 function validateBinding(input: CredentialBinding): CredentialBinding {
   check(
@@ -86,34 +82,17 @@ function validateBinding(input: CredentialBinding): CredentialBinding {
   };
 }
 
-class CredentialSnapshot implements ResolvedCredential {
-  #headers: Readonly<Record<string, string>>;
-  constructor(
-    readonly identityKey: string,
-    headers: Record<string, string>,
-  ) {
-    this.#headers = Object.freeze({ ...headers });
-    Object.freeze(this);
-  }
-  headers(): Readonly<Record<string, string>> {
-    return this.#headers;
-  }
-  toJSON(): { identityKey: string } {
-    return { identityKey: this.identityKey };
-  }
-  [inspect.custom](): { identityKey: string } {
-    return this.toJSON();
-  }
-}
+const key = (projectId: string, actorId: string, mountId: string) =>
+  JSON.stringify([projectId, actorId, mountId]);
 
-/**
- * Exact actor/project bindings, fixed at construction; reload the Mounts entry to change them.
- * Secrets are read only when a new invocation resolves authority.
- */
-export class EnvironmentCredentials implements CredentialProvider {
-  readonly #scope: Scope;
-  readonly #bindings = new Map<string, CredentialBinding>();
-  constructor(scope: Scope, bindings: CredentialBinding[] = []) {
+/** Exact (project, actor, mount) bindings, fixed for one load of the Mounts entry. */
+export class Bindings {
+  readonly #scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>;
+  readonly #byCaller = new Map<string, CredentialBinding>();
+  constructor(
+    scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>,
+    bindings: CredentialBinding[] = [],
+  ) {
     this.#scope = scope;
     check(
       Array.isArray(bindings),
@@ -123,42 +102,40 @@ export class EnvironmentCredentials implements CredentialProvider {
     const ids = new Set<string>();
     for (const input of bindings) {
       const binding = validateBinding(input),
-        key = bindingKey(binding, binding.mountId);
+        selection = key(binding.projectId, binding.actorId, binding.mountId);
       check(
-        !ids.has(binding.id) && !this.#bindings.has(key),
+        !ids.has(binding.id) && !this.#byCaller.has(selection),
         'invalid_credential_config',
         'Credential binding IDs and actor/project/mount selections must be unique',
       );
       ids.add(binding.id);
-      this.#bindings.set(key, binding);
+      this.#byCaller.set(selection, binding);
     }
   }
 
-  async resolve(caller: Caller, mountId: string): Promise<ResolvedCredential> {
-    await this.#scope.require(caller, 'read');
-    check(
-      typeof mountId === 'string' && mountIdentifier.test(mountId),
-      'invalid_mount',
-      'A valid mount ID is required',
+  /**
+   * The registry authorized the caller, and a discovery round checks its own actor. An agent
+   * session acts through its authority actor's binding.
+   */
+  async select(caller: Caller, mountId: string): Promise<CredentialBinding> {
+    const owner = caller.session ? await this.#scope.authorityActor(caller) : undefined;
+    const binding = this.#byCaller.get(
+      key(owner?.projectId ?? caller.projectId, owner?.id ?? caller.actorId, mountId),
     );
-    const authority = caller.session ? await this.#scope.authorityActor(caller) : undefined;
-    const selection = bindingKey(
-      authority ? { actorId: authority.id, projectId: authority.projectId } : caller,
-      mountId,
-    );
-    const binding = this.#bindings.get(selection);
     check(
       binding,
       'credential_forbidden',
       'No credential binding grants this upstream identity',
       403,
     );
+    return binding;
+  }
+
+  /** Read once per connection and handed only to that connection's transport. */
+  async headers(binding: CredentialBinding): Promise<Record<string, string>> {
     const secret = process.env[binding.secretRef.slice(4)];
     check(
-      typeof secret === 'string' &&
-        secret.length >= 1 &&
-        secret.length <= 8192 &&
-        /^[A-Za-z0-9\-._~+/]+=*$/.test(secret),
+      typeof secret === 'string' && secret.length <= 8192 && /^[A-Za-z0-9\-._~+/]+=*$/.test(secret),
       'credential_unavailable',
       'The configured upstream bearer credential is unavailable or invalid',
       503,
@@ -167,10 +144,7 @@ export class EnvironmentCredentials implements CredentialProvider {
     // Unknown tokens still require explicit upstream operator configuration.
     let local: boolean;
     try {
-      // Session credentials remain reserved even when their provider is unloaded.
-      local =
-        (secret.startsWith('ms_') && !/^[A-Za-z0-9_-]{43}$/.test(secret)) ||
-        (await this.#scope.recognizesCredential(secret));
+      local = await this.#scope.recognizesCredential(secret);
     } catch {
       throw new MervError('credential_unavailable', 'Upstream credential validation failed', 503);
     }
@@ -180,9 +154,6 @@ export class EnvironmentCredentials implements CredentialProvider {
       'A Merv bearer credential cannot be used for an upstream service',
       503,
     );
-    return new CredentialSnapshot(`credential_${digest({ ...binding, secret })}`, {
-      ...binding.headers,
-      authorization: `Bearer ${secret}`,
-    });
+    return { ...binding.headers, authorization: `Bearer ${secret}` };
   }
 }

@@ -5,20 +5,23 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { MountManager } from '../packages/mounts/src/index.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
+import { Invocations } from '../packages/mounts/src/upstream.js';
+import type { Bindings } from '../packages/mounts/src/credentials.js';
 import { fixtureAccess } from './fixtures/access.js';
-import type { CredentialProvider } from '../packages/mounts/src/types.js';
 
 const caller = { projectId: 'project_redirect', actorId: 'actor_redirect' };
-const credentials: CredentialProvider = {
-  resolve: async () => ({
-    identityKey: 'fixture_identity',
-    headers: () => ({
-      authorization: 'Bearer synthetic_upstream_token',
-      'x-project': caller.projectId,
-    }),
+const credentials: Pick<Bindings, 'select' | 'headers'> = {
+  select: async () => ({ id: 'fixture', ...caller, mountId: 'fixture', secretRef: 'env:X' }),
+  headers: async () => ({
+    authorization: 'Bearer synthetic_upstream_token',
+    'x-project': caller.projectId,
   }),
 };
+/** An invocation pool for the fixture mount; the caller is never a session. */
+const invocations = (url: string) =>
+  new Invocations({ id: 'fixture', url, timeoutMs: 1000 }, credentials, fixtureAccess, {
+    validateSession: async () => {},
+  });
 /** Admits the fixture caller: redirects, not authorization, are under test. */
 const scope = {
   require: async () => ({
@@ -134,14 +137,10 @@ for (const mode of ['invocation', 'discovery']) {
         },
       ],
     });
-    const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mountId: 'fixture',
-      url,
-      timeoutMs: 1000,
-    });
+    const pool = invocations(url);
     try {
       if (mode === 'invocation') {
-        await pool.call(caller, 'fixture', 'inspect', {});
+        await pool.handler('inspect')(caller, {});
         assert.equal(gets, 0, 'invocation connections never open a notification stream');
       } else {
         await manager.start();
@@ -159,18 +158,14 @@ for (const mode of ['invocation', 'discovery']) {
 for (const redirectMethod of ['initialize', 'tools/call']) {
   test(`invocation refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
-    const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mountId: 'fixture',
-      url,
-      timeoutMs: 1000,
-    });
+    const pool = invocations(url);
     try {
-      const result = await pool
-        .call(caller, 'fixture', 'inspect', { privateInput: 'project-confidential-fixture' })
-        .then(
-          () => 'succeeded',
-          () => 'refused',
-        );
+      const result = await Promise.resolve(
+        pool.handler('inspect')(caller, { privateInput: 'project-confidential-fixture' }),
+      ).then(
+        () => 'succeeded',
+        () => 'refused',
+      );
       assert.deepEqual(
         received,
         [],
