@@ -35,14 +35,15 @@ export async function connectUpstream(
       if (stream && !options.notifications && !new Headers(init?.headers).has('last-event-id'))
         return Promise.resolve(new Response(null, { status: 405 }));
       const deadline = init?.method === 'DELETE' ? Math.min(timeoutMs, END_MS) : timeoutMs;
-      const signals = [init?.signal, stream ? undefined : AbortSignal.timeout(deadline)];
+      const timer = stream ? undefined : AbortSignal.timeout(deadline);
       // A binding authorizes this endpoint, never a redirect target. Even when fetch strips
-      // Authorization, it forwards tool bodies and MCP headers.
+      // Authorization, it forwards tool bodies and MCP headers. Node 22 can collect a timeout
+      // signal held only by AbortSignal.any(), which then never fires: hold it until fetch settles.
       return fetch(address, {
         ...init,
         redirect: 'error',
-        signal: AbortSignal.any(signals.filter(isSignal)),
-      });
+        signal: AbortSignal.any([init?.signal, timer].filter(isSignal)),
+      }).finally(() => timer);
     },
   });
   // The signal is discovery's per-round stop; the SDK closes the client when initialize fails.

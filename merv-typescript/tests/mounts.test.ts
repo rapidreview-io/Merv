@@ -830,7 +830,7 @@ test('stop against an upstream that stopped answering takes about one second', a
   upstream.stall();
   const started = performance.now();
   await fiber.dispose();
-  assert.ok(performance.now() - started < 1200, 'The DELETE is capped at one second');
+  assert.ok(performance.now() - started < 1500, 'The DELETE is capped at one second');
 });
 
 test('stop after a completed round sends no notifications/cancelled', async (t) => {

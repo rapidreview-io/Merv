@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -13,7 +15,11 @@ import { MervError } from '@merv/contracts';
 import { ToolRegistry } from '@merv/api';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { createApp } from './fixtures/app.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/upstream.js';
+import {
+  connectUpstream,
+  endUpstream,
+  ScopedRemoteClients,
+} from '../packages/mounts/src/upstream.js';
 import { CredentialServer } from './fixtures/credential-server.js';
 import { RemoteFixture, representativeResult } from './fixtures/remote-server.js';
 
@@ -546,3 +552,24 @@ test('closing the pool ends every connection with an MCP DELETE', async (t) => {
   assert.equal(remote.deletes, remote.opened);
   assert.equal(remote.opened, 3);
 });
+
+test(
+  'a DELETE to an upstream that stopped answering ends in about one second under GC',
+  { timeout: 5000 },
+  async (t) => {
+    // Collecting garbage while the DELETE waits: a timeout signal held only by AbortSignal.any()
+    // is then lost and the DELETE waits for the socket.
+    setFlagsFromString('--expose-gc');
+    const gc = runInNewContext('gc') as () => void;
+    const remote = new RemoteFixture();
+    await remote.start();
+    t.after(() => remote.close());
+    const client = await connectUpstream(remote.url, undefined, 5000);
+    remote.stall();
+    const collect = setInterval(gc, 10);
+    t.after(() => clearInterval(collect));
+    const started = performance.now();
+    await endUpstream(client);
+    assert.ok(performance.now() - started < 1500, 'The DELETE is capped at one second');
+  },
+);
