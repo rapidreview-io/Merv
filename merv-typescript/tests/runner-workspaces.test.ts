@@ -774,6 +774,24 @@ for (const operation of ['rebase', 'cherry-pick'] as const)
     assert.doesNotMatch(f.git(resumed.path, 'status'), /rebas|cherry|bisect/i);
   });
 
+test('a writer stopped mid-rebase keeps its unreplayed commits reachable from a rescue ref', async (t) => {
+  const f = setup(t),
+    record = f.reserve('rebase-work');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  conflicting(f, handle.path, handle.snapshot!.branch!);
+  writeFileSync(join(handle.path, 'later.txt'), 'committed later\n');
+  agent(f, handle.path, 'add', 'later.txt');
+  agent(f, handle.path, 'commit', '-m', 'later, committed work');
+  const committed = f.git(handle.path, 'rev-parse', 'HEAD');
+  agent(f, handle.path, 'rebase', 'upstream'); // stops on the first commit's conflict
+  f.stop(record.id);
+  await f.manager.capture(record);
+  assert.equal(f.git(f.bare, 'rev-parse', 'refs/merv/rescued/rebase-work'), committed);
+  assert.deepEqual(notes(f, record.id)?.workspace_commits_rescued, {
+    refs: ['refs/merv/rescued/rebase-work'],
+  });
+});
+
 test('a retained reviewer stopped mid-rebase is put back on what it judged', async (t) => {
   const f = setup(t),
     record = f.reserve('review');

@@ -568,10 +568,22 @@ export class GitWorkspaceManager {
         await this.revokeFence(row);
         const attached = JSON.parse(row.attachment_json!) as SessionWorkspace;
         // Nothing the agent left half-done reaches the capture or the next session (HALF_DONE).
-        const admin = await this.adminDirectory(row, await this.repository());
+        const repository = await this.repository();
+        const admin = await this.adminDirectory(row, repository);
+        // A writer's lineage continues from wherever it left HEAD. What an unfinished rebase or
+        // sequence leaves behind, its original commits, stays reachable from a rescue ref.
+        if (!row.read_only) {
+          const earlier = ['rebase-merge/orig-head', 'rebase-apply/orig-head']
+            .concat(existsSync(join(admin, 'sequencer')) ? ['ORIG_HEAD'] : [])
+            .map((name) => join(admin, name))
+            .map((path) =>
+              statIfPresent(path)?.isFile() ? readFileSync(path, 'utf8').trim() : '',
+            );
+          await this.rescue(row, earlier);
+        }
         for (const state of HALF_DONE) rmSync(join(admin, state), { recursive: true, force: true });
         // A reviewer is reported as attached, and its checkout put back on it. A writer's lineage
-        // continues from wherever it left HEAD, with its commits and uncommitted work.
+        // keeps its commits and uncommitted work.
         if (row.read_only) await this.restore(row, attached.headOid);
         else {
           await this.checkoutGit(row, ['reset', '--quiet']);
@@ -664,6 +676,21 @@ export class GitWorkspaceManager {
         throw error;
       }
     });
+  }
+  /** Each tip neither HEAD nor an earlier rescue contains is kept under `refs/merv/rescued/<launch>[-n]`. */
+  private async rescue(row: WorkspaceRow, tips: string[]): Promise<void> {
+    const name = /^[A-Za-z0-9_-]{1,180}$/.test(row.launch_id) ? row.launch_id : hash(row.launch_id);
+    const refs: string[] = [];
+    const kept = ['HEAD'];
+    for (const tip of new Set(tips.filter((tip) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tip)))) {
+      const args = ['rev-list', '-n1', '--ignore-missing', tip, '--not', ...kept];
+      if (!(await this.checkoutGit(row, args)).trim()) continue;
+      const ref = `refs/merv/rescued/${name}${refs.length ? `-${refs.length}` : ''}`;
+      await this.git(['--git-dir', (await this.repository()).bare_path, 'update-ref', ref, tip]);
+      kept.push(tip);
+      refs.push(ref);
+    }
+    if (refs.length) this.note(row, 'workspace_commits_rescued', { refs });
   }
   /** A launch's workspace diagnostic: in its ledger metadata, on stderr, and as lastError. */
   private note(row: WorkspaceRow, code: string, detail: Record<string, LocalJson>): void {

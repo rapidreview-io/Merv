@@ -50,7 +50,7 @@ The stop rule: a user-machine runner's `stop()` (Ctrl-C, systemd, an upgrade) re
 
 Capture runs only after the process group has provably stopped:
 
-- Whatever merge, rebase, cherry-pick, revert or bisect the agent left half-done is cleared first.
+- Whatever merge, rebase, cherry-pick, revert or bisect the agent left half-done is cleared first. An unfinished rebase's or sequence's original commits that HEAD does not contain are kept under `refs/merv/rescued/<launch>` in the private repository, named by `workspaceNotes.workspace_commits_rescued`.
 - A writer's lineage continues from wherever the agent left HEAD, keeping its commits and uncommitted work. Work on a side branch becomes the lineage, and an older commit checked out rewinds it, dropping checkpoint commits from the branch.
 - A changed file above 50 MiB (or a symlinked directory over tracked paths) is never committed: it is moved to `<path>.refused-<launch>/` at its relative path, a tracked path is restored from HEAD, and the rest of the work is captured. The launch's metadata (`workspaceNotes.workspace_capture_refused_file`), a stderr line and `lastError` name the moved paths.
 - Read-only work is reported as attached, and its checkout is put back on that head with ignored files kept.
