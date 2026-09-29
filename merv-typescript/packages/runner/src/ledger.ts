@@ -97,10 +97,8 @@ function launchRecord(row: Row): LaunchRecord {
   };
 }
 const limits = { depth: 32, nodes: 524288, bytes: 524288, keys: 'any', strings: 'json' } as const;
-/**
- * A detached, bounded copy. What the runner stores is its own projection of a lease and the
- * locally configured profile, whose secrets stay in the environment it names.
- */
+// A detached, bounded copy: the runner's own projection of a lease and the profile exactly as
+// configured, including its args (a profile's secret environment values are never in it).
 function encode(value: unknown): string {
   const encoded = JSON.stringify(plain(value, 'invalid_runner_metadata', limits));
   if (Buffer.byteLength(encoded) > limits.bytes) throw new Error('Runner metadata is too large');
