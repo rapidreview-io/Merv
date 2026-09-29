@@ -534,6 +534,28 @@ test('without a store that signs uploads a transcript is refused and nothing is 
     });
 });
 
+test('a failed HEAD is refused as retryable and leaves the row undelivered', async (t) => {
+  const f = await fixture(t);
+  const a = await f.project('Unreachable');
+  const { session, control } = await a.leased();
+  const body = { ...control, ...file('{"type":"result"}\n').facts };
+  await f.ok('POST', `/sessions/${session.id}/transcript`, a.token, body);
+  f.s3.server.fail(500);
+  const refused = await f.transcript(a.token, session.id, { ...body, deliver: true });
+  assert.deepEqual([refused.status, refused.body.error?.code], [503, 'blob_unavailable']);
+  assert.deepEqual(
+    (await f.rows(a.owner.projectId)).map((row) => row.uploaded_at),
+    [null],
+  );
+  // Once the store answers again, the same delivery plans the PUT.
+  f.s3.server.fail(undefined);
+  const planned = await f.ok('POST', `/sessions/${session.id}/transcript`, a.token, {
+    ...body,
+    deliver: true,
+  });
+  assert.equal(typeof planned.transcript.upload.url, 'string');
+});
+
 test('a stored object of another size is refused, and the row is write-once in the database', async (t) => {
   const f = await fixture(t);
   const a = await f.project('Guarded');
