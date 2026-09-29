@@ -1,4 +1,5 @@
 import test, { type TestContext } from 'node:test';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -759,10 +760,21 @@ test('leased mounted calls require source grants and keep upstream project argum
     delete process.env[env];
   });
   let mutable: Record<string, unknown> | undefined;
-  // State access made while the pool handles a call, i.e. what the pool adds to the registry's.
-  const reads = t.mock.method(f.app.ctx.state, 'read');
-  const transactions = t.mock.method(f.app.ctx.state, 'transaction');
-  const stateAccess = () => reads.mock.callCount() + transactions.mock.callCount();
+  // State access made by the pool's handler, i.e. what the pool adds to the registry's. Counted by
+  // async context, so background work that lands during the upstream request does not count.
+  const inHandler = new AsyncLocalStorage<true>();
+  let handlerAccess = 0;
+  const state = f.app.ctx.state;
+  const read = state.read.bind(state),
+    transaction = state.transaction.bind(state);
+  t.mock.method(state, 'read', ((...args: Parameters<typeof read>) => {
+    if (inHandler.getStore()) handlerAccess++;
+    return read(...args);
+  }) as typeof read);
+  t.mock.method(state, 'transaction', ((...args: Parameters<typeof transaction>) => {
+    if (inHandler.getStore()) handlerAccess++;
+    return transaction(...args);
+  }) as typeof transaction);
   const handlerReads: number[] = [];
   await f.app.ctx.tools.createCatalog('sandbox').replace([
     {
@@ -778,9 +790,9 @@ test('leased mounted calls require source grants and keep upstream project argum
       _meta: { extension: { retained: true } },
       handler: async (caller, input) => {
         mutable = input;
-        const before = stateAccess();
-        const result = await pool.handler('inspect')(caller, input);
-        handlerReads.push(stateAccess() - before);
+        const before = handlerAccess;
+        const result = await inHandler.run(true, () => pool.handler('inspect')(caller, input));
+        handlerReads.push(handlerAccess - before);
         return result;
       },
     },
