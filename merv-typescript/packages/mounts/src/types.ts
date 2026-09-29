@@ -20,6 +20,7 @@ export interface MountConfig {
   /** Selects the binding used only to list tools; each round requires this actor to read the project. */
   discovery?: { actorId: string; projectId: string };
   timeoutMs?: number;
+  /** Discovery interval after a success or a failure (default 60000). */
   reconnectMs?: number;
 }
 

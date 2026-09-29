@@ -590,7 +590,7 @@ test(
   },
 );
 
-test('a failed connect counts once, so the first retry waits one backoff step', async (t) => {
+test('a failed round retries after the flat interval', async (t) => {
   const services = await local(t);
   const attempts: number[] = [];
   const server = createServer((request, response) => {
@@ -604,7 +604,7 @@ test('a failed connect counts once, so the first retry waits one backoff step', 
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  const R = 100;
+  const R = 150;
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
   const { mounts } = await mounted(t, services, [
     { id: 'fixture', url, tools: ['media'], timeoutMs: 1000, reconnectMs: R },
@@ -612,7 +612,10 @@ test('a failed connect counts once, so the first retry waits one backoff step', 
   assert.equal(mounts.status()[0].state, 'failed');
   await until(() => attempts.length >= 2, 'Discovery did not retry');
   const gap = attempts[1] - attempts[0];
-  assert.ok(gap >= 2 * R && gap < 4 * R, `The first retry came after ${gap} ms`);
+  assert.ok(gap >= R && gap < 2 * R, `The first retry came after ${gap} ms`);
+  await until(() => attempts.length >= 3, 'Discovery did not retry again');
+  const next = attempts[2] - attempts[1];
+  assert.ok(next < 2 * R, `A second failure backed off to ${next} ms`);
 });
 
 test(

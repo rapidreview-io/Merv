@@ -23,7 +23,6 @@ export class MountRuntime {
   #round?: AbortController;
   /** A trigger during a round reruns it once. */
   #again = false;
-  #failures = 0;
   #stopped = false;
   #timer?: NodeJS.Timeout;
   /** Every withdrawal and discovery DELETE a failed round started; stop() awaits it. */
@@ -36,7 +35,7 @@ export class MountRuntime {
     private readonly config: MountConfig,
   ) {
     this.#timeoutMs = config.timeoutMs ?? 5000;
-    this.#reconnectMs = config.reconnectMs ?? 1000;
+    this.#reconnectMs = config.reconnectMs ?? 60_000;
     this.#wanted = new Set(config.tools);
     this.#status = {
       id: config.id,
@@ -73,7 +72,8 @@ export class MountRuntime {
         if (this.#again) {
           this.#again = false;
           this.refresh();
-        } else if (!this.#stopped) this.schedule();
+        } else if (!this.#stopped)
+          (this.#timer = setTimeout(() => this.refresh(), this.#reconnectMs)).unref();
       });
   }
 
@@ -98,7 +98,6 @@ export class MountRuntime {
       this.#published = next;
     }
     if (this.#stopped) return; // a round finishing after stop() never overwrites 'stopped'
-    this.#failures = 0;
     this.#set('ready', selected.length);
   }
 
@@ -119,7 +118,6 @@ export class MountRuntime {
 
   private failed(error: unknown): void {
     if (this.#stopped) return;
-    this.#failures++;
     this.#published = undefined; // the replace([]) below withdraws it
     this.#set(this.#status.state === 'ready' ? 'disconnected' : 'failed', 0, fault(error).code);
     // Withdrawal starts now. A held call must not delay status updates or reconnect scheduling.
@@ -128,11 +126,6 @@ export class MountRuntime {
     this.#client = undefined;
     const ended = client && endUpstream(client);
     this.#ending = this.#ending.then(() => Promise.all([withdrawn, ended]));
-  }
-
-  private schedule(): void {
-    const delay = Math.min(this.#reconnectMs * 2 ** Math.min(this.#failures, 6), 60000);
-    (this.#timer = setTimeout(() => this.refresh(), delay)).unref();
   }
 
   /** Never rejects. */
