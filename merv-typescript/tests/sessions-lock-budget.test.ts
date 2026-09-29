@@ -205,9 +205,9 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
   const f = await sourced(t);
   assert.equal((await f.poll()).reason, 'no_candidates');
   f.advance(1000);
-  // The offer's sweep, then the lease that records the same decision.
+  // The lease that records the same decision; the offer's light pass finds nothing to record.
   await f.atMost(
-    { writers: 2, checks: 0 },
+    { writers: 1, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle poll',
   );
@@ -217,10 +217,16 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
     'an unchanged presence',
   );
   for (let i = 0; i < 2; i++) await f.sessions.authenticate(await f.leased());
+  // A healthy pass decides every subject on a snapshot and records nothing.
   await f.atMost(
-    { writers: 1, checks: 2 },
+    { writers: 0, checks: 0 },
+    () => (f.sessions as unknown as { pass(full: boolean): Promise<void> }).pass(false),
+    'a light pass over two live leases',
+  );
+  await f.atMost(
+    { writers: 0, checks: 2 },
     () => f.sessions.sweep(),
-    'a healthy sweep of two live leases',
+    'a full pass over two live leases',
   );
 });
 
@@ -424,9 +430,9 @@ test('a rented machine’s idle poll stays within its lock budget', async (t) =>
     requestId: request(),
   });
   assert.equal((await f.poll()).reason, 'no_candidates');
-  // The managed pre-read, the offer's sweep, then the lease that records the same decision.
+  // The managed pre-read, then the lease that records the same decision.
   await f.atMost(
-    { writers: 3, checks: 0 },
+    { writers: 2, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle managed poll',
   );

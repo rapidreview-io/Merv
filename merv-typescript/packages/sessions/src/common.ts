@@ -1,13 +1,29 @@
 import {
   check,
   digest,
+  MervError,
   type Caller,
   type DelegationSource,
   type Scope,
+  type State,
   type Transaction,
 } from '@merv/contracts';
 
 export const isoNow = (clock: () => number) => new Date(clock()).toISOString();
+
+/** A snapshot refuses a write before any SQL runs: what it refused has something to record. */
+export const refused = (error: unknown) =>
+  error instanceof MervError && error.code === 'read_only_scope';
+/** `fn` on a snapshot, again in a writer only when it has something to record: it may run twice. */
+export async function readFirst<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  if (state.ambient) return await fn(state.ambient);
+  try {
+    return await state.snapshot(() => state.transaction(fn));
+  } catch (error) {
+    if (!refused(error)) throw error;
+    return await state.transaction(fn);
+  }
+}
 
 /** The caller's delegation source and the hash that owns what it offers, registers or runs. */
 export async function ownerOf(

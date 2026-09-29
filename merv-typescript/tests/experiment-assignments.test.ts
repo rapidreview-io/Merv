@@ -875,6 +875,7 @@ test('revoking the source fences its live reviewer before recovery and an author
   await assert.rejects(async () => await f.sessions.prepare(worker, 'review.submit', {}), {
     code: 'forbidden',
   });
+  await f.sessions.sweep();
   await f.events.drain();
   const reopened = await f.reviews.get(replacementSource, pending.reviewId!);
   assert.equal(reopened.status, 'requested');

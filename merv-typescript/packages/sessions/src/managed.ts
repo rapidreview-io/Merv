@@ -518,23 +518,15 @@ export class ManagedRunnerBindings {
       caller.managed!.allocationId,
     );
   }
-  /** Live sessions whose allocation is no longer current: Fleet stopped or is stopping the
-   *  machine, so no runner is left to release them. An unanswerable check keeps the session. */
-  /** Bound sessions whose machine is no longer current, each with whether a release retired it. */
-  async stranded(tx: Transaction): Promise<Map<string, boolean>> {
-    const ids = new Map<string, boolean>();
-    if (!this.validator) return ids;
-    for (const row of await tx.all<ManagedBindingRow>(
-      "SELECT m.* FROM session_managed_runners m JOIN worker_sessions s ON s.id=m.bound_session_id WHERE s.status IN ('offered','active')",
-    )) {
-      const binding = this.identity(row);
-      if (!(await this.validator.current(binding, tx).catch(() => true)))
-        ids.set(
-          row.bound_session_id!,
-          !!(await this.validator.retired?.(binding, tx).catch(() => false)),
-        );
-    }
-    return ids;
+  /** Whether a live session's machine is no longer current, so no runner is left to release it:
+   *  undefined while it is (or none is bound), else whether a release retired it. */
+  async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
+    const row = await tx.get<ManagedBindingRow>(
+      'SELECT * FROM session_managed_runners WHERE bound_session_id=?',
+      sessionId,
+    );
+    if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
+    return !!(await this.validator.retired?.(this.identity(row), tx));
   }
   async inspect(
     allocationId: string,

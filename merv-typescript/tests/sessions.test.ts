@@ -434,10 +434,6 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     ))!.live,
     0,
   );
-  assert.equal(
-    (await f.events.status()).find((consumer) => consumer.id === 'sessions.lifecycle.v1')!.error,
-    null,
-  );
 });
 
 test('controller polls fence changed workflow revisions and expired offers without activating or rendering', async (t) => {
@@ -586,7 +582,7 @@ test('revocation before first authentication creates no work start and sibling c
     { token, session } = await f.offer();
   const other = await f.scope.issueActorCredential(f.owner, { actorId: f.source.actorId });
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -639,7 +635,7 @@ test('durable human authority outlives the initiating JWT but never a membership
   });
   await f.scope.removeMember(refreshed, project.id, 'worker');
   await f.scope.addMember(refreshed, project.id, { subject: 'worker', role: 'producer' });
-  await f.events.drain();
+  await f.sessions.sweep();
   await assert.rejects(async () => await f.sessions.authenticate(token), {
     code: 'unauthorized',
   });
@@ -982,7 +978,7 @@ test('key revocation drains immediately and replacement keys never inherit lease
   );
   const offered = await f.offer(keyCaller);
   const replacement = await f.scope.rotateKey(human, { keyId: first.key.id });
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -1003,7 +999,7 @@ test('key revocation drains immediately and replacement keys never inherit lease
   assert.equal((await f.scope.require(replacementCaller, 'write')).id, keyCaller.actorId);
   const next = await f.offer(replacementCaller);
   await f.scope.revokeKey(human, replacement.key.id);
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -2122,7 +2118,7 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   assert.ok((await f.sessions.lease(f.source, autoInput())).session);
   assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 2);
   await f.scope.revokeActor(f.owner, f.source.actorId);
-  await f.events.drain();
+  await f.sessions.sweep();
   await assert.rejects(f.sessions.agentSelf(token), { code: 'unauthorized' });
 });
 

@@ -1709,8 +1709,8 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   await assert.rejects(h.scope.requireDelegation(allocation.source, 'review'), {
     code: 'membership_required',
   });
-  // The role change's event closes its session, so its worker's credential no longer works.
-  await h.events.drain();
+  // The next full pass closes its session, so its worker's credential no longer works.
+  await h.sessions.sweep();
   await assert.rejects(h.sessions.authenticate(machine.secret), { code: 'unauthorized' });
   await h.fleet.tick();
   assert.equal(h.stopped.size, 1);

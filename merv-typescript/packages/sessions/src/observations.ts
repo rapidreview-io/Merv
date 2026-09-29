@@ -108,11 +108,16 @@ export class AgentObservations {
     });
   }
 
-  /** An interrupted process has no known completion time or outcome. */
-  async interrupt(): Promise<void> {
+  /** Running calls started before `before` or named in `ids`, whose process has ended: an
+   * interrupted call has no known completion time or outcome. */
+  async interrupt(before: string, ids: string[] = []): Promise<void> {
     await this.state.transaction(
       async (tx) =>
-        await tx.run("UPDATE session_tool_calls SET status='interrupted' WHERE status='running'"),
+        await tx.run(
+          `UPDATE session_tool_calls SET status='interrupted' WHERE status='running' AND (started_at<? OR id IN (${['NULL', ...ids.map(() => '?')].join()}))`,
+          before,
+          ...ids,
+        ),
     );
   }
 
