@@ -1885,9 +1885,14 @@ test('agent observations retain tool timings and estimates across assignments wi
       }),
   );
   await resumed;
+  // The call ends while its process closes, before the close marks what is in flight.
+  (f.sessions as unknown as { sweeping?: Promise<unknown> }).sweeping = Promise.resolve().then(
+    async () => {
+      complete();
+      await unfinished;
+    },
+  );
   await f.restart();
-  complete();
-  await unfinished;
   observed = await f.sessions.agentObservation(f.owner, agent.id);
   assert.equal(observed.agent.id, agent.id);
   assert.equal(observed.assignments.length, 2);

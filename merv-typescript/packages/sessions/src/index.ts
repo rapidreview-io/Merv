@@ -2494,6 +2494,9 @@ export class LeasedSessions implements Sessions {
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
+    // A call that ends once closed skips its finish, so the calls in flight now are marked too.
+    const running = () => [...this.invocationIds].filter(([, c]) => c.running).map(([id]) => id);
+    const inFlight = running();
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.closing = Promise.resolve().then(async () => {
@@ -2504,11 +2507,7 @@ export class LeasedSessions implements Sessions {
         async () => {
           await this.sweeping?.catch(() => undefined);
         },
-        () =>
-          this.observations.interrupt(
-            '',
-            [...this.invocationIds].filter(([, call]) => call.running).map(([id]) => id),
-          ),
+        () => this.observations.interrupt('', [...inFlight, ...running()]),
       ]) {
         try {
           await dispose();
