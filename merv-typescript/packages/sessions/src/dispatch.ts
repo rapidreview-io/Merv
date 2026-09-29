@@ -1352,7 +1352,7 @@ export class SessionDispatch {
         next: operator
           ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
           : unaccounted.has(item.instanceId)
-            ? 'A budget covers it that cannot be judged: a closed session in its scope reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
+            ? 'A budget covers it that cannot be judged: a session in its scope ran and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
             : spent.has(item.instanceId)
               ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
               : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',

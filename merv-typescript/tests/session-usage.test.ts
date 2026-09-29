@@ -421,6 +421,31 @@ test('a token budget is judged only on complete accounting: an unreported sessio
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
 });
 
+test('a close that was never activated leaves a token budget judged; an activated silent one does not', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.setBudget(f.owner, { maxTokens: 1000 });
+  const lost = await f.offer((await f.instance()).id);
+  await f.sessions.release(f.source, { sessionId: lost.session.id, runnerId: 'machine' });
+  let read = await f.sessions.usage(f.owner);
+  assert.deepEqual(
+    [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
+    [0, [], { wallMs: 0, costMicros: 0, tokens: 0 }],
+    'a launch that never ran has nothing to report',
+  );
+  assert.deepEqual([read.totals.sessions, read.totals.reportedSessions], [1, 0]);
+  assert.ok(!('unreported' in read), 'the count stays off the usage reply');
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+
+  await f.spend((await f.instance()).id, 1000);
+  read = await f.sessions.usage(f.owner);
+  assert.deepEqual(
+    [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
+    [1, ['tokens'], { wallMs: 1000, costMicros: null, tokens: null }],
+  );
+});
+
 test('a wall-clock budget never waits on a report, and clearing a token bound lifts its wait', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });

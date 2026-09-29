@@ -312,11 +312,10 @@ test('prospective demand applies budgets, live leases, and durable holds', async
     candidates: [{ instanceId: first.id, expectedRevision: 0 }],
   });
   await f.sessions.setBudget(f.owner, { maxWallMinutes: null, maxTokens: 1 });
-  assert.deepEqual(
-    await f.sessions.dispatchDemand(f.source, profile),
-    { candidates: [] },
-    'unreported usage withholds a project budget',
-  );
+  // The only close never ran a process, so it has no usage to report: the bound is judged.
+  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+    candidates: [{ instanceId: first.id, expectedRevision: 0 }],
+  });
 });
 
 test('a project on its own machines shows Fleet no demand, and its own runner still leases', async (t) => {

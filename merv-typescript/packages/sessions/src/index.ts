@@ -1650,7 +1650,7 @@ export class LeasedSessions implements Sessions {
           : includeDependencies
             ? await this.workflows.dependencyClosure(caller, instanceId, tx)
             : [(await this.workflows.get(caller, instanceId, tx)).id];
-      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
+      const rollup = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
       return {
         scope:
           instanceId === undefined || instanceIds === null
@@ -1661,7 +1661,9 @@ export class LeasedSessions implements Sessions {
                 includeDependencies,
                 instanceCount: instanceIds.length,
               },
-        ...totals,
+        totals: rollup.totals,
+        byWorkflow: rollup.byWorkflow,
+        byInstance: rollup.byInstance,
         liveSessions: (await tx.get<{ n: number }>(
           "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
           caller.projectId,
@@ -1670,7 +1672,7 @@ export class LeasedSessions implements Sessions {
         accounting: {
           wallClock: 'measured',
           tokens: 'runner_reported',
-          since,
+          since: rollup.since,
           method: accountingMethod,
         },
       };
