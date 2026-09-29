@@ -1337,6 +1337,39 @@ test('a mount withdrawn while its body is read answers 503 and its handler never
   assert.equal(bodies, 0);
 });
 
+test('a mount withdrawn while its caller is authenticated answers 503 and its handler never runs', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  let handled = 0;
+  let entered!: () => void;
+  const authenticating = new Promise<void>((resolve) => (entered = resolve));
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  api.credential('pb_', {
+    kind: 'probe',
+    forbidden: new MervError('probe_forbidden', 'Probe credentials may only read /probe', 403),
+    routes: (method, path) => method === 'GET' && path === '/probe',
+    authenticate: async () => {
+      entered();
+      await released;
+      return { actorId: alice.id, projectId: alice.projectId };
+    },
+  });
+  const withdraw = api.mount('/probe', () => ({ handled: ++handled }));
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const response = fetch(`${url}/probe`, { headers: { authorization: 'Bearer pb_secret' } });
+  await authenticating;
+  withdraw();
+  release();
+  const answered = await response;
+  assert.deepEqual([answered.status, (await answered.json()).error.code], [503, 'unavailable']);
+  assert.equal(handled, 0);
+});
+
 test('a namespace owner authenticates its bearers on the routes it allows, and nothing else does', async (t) => {
   const { scope, tools } = fixture();
   const keys: string[] = [];

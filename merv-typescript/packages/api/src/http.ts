@@ -485,6 +485,9 @@ export class ApiServer {
       throw unknownEndpoint();
     }
     const principal = open(mounted, url.pathname) ? undefined : await this.authenticate(req, url);
+    // A route withdrawn while its caller was authenticated reaches no handler.
+    if (this.mounts.get(prefix) !== mounted)
+      throw new MervError('unavailable', 'This route was withdrawn', 503);
     const value = await mounted.handler(
       req,
       res,
