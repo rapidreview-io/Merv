@@ -144,6 +144,13 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
       'invalid_runner_config',
       'One assignment requires one isolated Codex profile and capacity one',
     );
+  // An isolated machine's Git checkouts are its workspace driver's; the runner's own
+  // repository gives it only scratch directories.
+  check(
+    !parsed.data.assignmentWorkspaceDirectory || !parsed.data.workspace,
+    'invalid_runner_config',
+    'An assignment workspace directory cannot be combined with a runner repository',
+  );
   return { ...parsed.data, profiles };
 }
 const liveSession = (session: Session) =>

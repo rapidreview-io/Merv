@@ -21,6 +21,7 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { LocalLedger } from '../packages/runner/src/ledger.js';
 import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
+import { validateRunnerConfig } from '../packages/runner/src/index.js';
 
 function setup(
   t: TestContext,
@@ -181,43 +182,34 @@ test('isolated scratch cwd is outside the private ledger while Git storage stays
   assert.equal(readFileSync(join(handle.path, 'result.txt'), 'utf8'), 'assignment output\n');
 });
 
-test('hosted Git checkout keeps complete metadata in the assignment leaf and captures edits privately', async (t) => {
-  const f = setup(t, { assignmentScratch: true });
-  const first = f.reserve('hosted-git');
-  const handle = await f.manager.prepare(first, f.session(first.id));
+test("an isolated machine takes no runner repository: its Git checkouts are its driver's", () => {
+  const isolated = {
+    directory: '/tmp/merv-runner',
+    baseUrl: 'http://127.0.0.1:7000',
+    projectId: 'project',
+    credentialEnv: 'MERV_SOURCE',
+    capacity: 1,
+    oneAssignment: true,
+    assignmentWorkspaceDirectory: '/workspace/assignments',
+    profiles: [
+      {
+        name: 'hosted-codex',
+        harness: 'codex',
+        executable: process.execPath,
+        isolatedLauncher: process.execPath,
+        enabled: true,
+        parallelism: 1,
+      },
+    ],
+  };
   assert.equal(
-    handle.path,
-    join(f.assignmentWorkspaceDirectory!, createHash('sha256').update(first.id).digest('hex')),
+    validateRunnerConfig(isolated).assignmentWorkspaceDirectory,
+    isolated.assignmentWorkspaceDirectory,
   );
-  assert.ok(statSync(join(handle.path, '.git')).isDirectory());
-  assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
-  assert.equal(f.git(handle.path, 'rev-parse', '--git-common-dir'), '.git');
-  assert.equal(f.git(handle.path, 'remote'), '');
-  assert.equal(handle.snapshot?.headOid, f.second);
-  writeFileSync(join(handle.path, 'hosted.txt'), 'assignment edit\n');
-  f.stop(first.id);
-  const result = await f.manager.capture(first);
-  assert.notEqual(result?.headOid, f.second);
-  assert.equal(f.git(f.bare, 'show', `${result!.headOid}:hosted.txt`), 'assignment edit');
-  await f.manager.close(first);
-  const second = f.reserve('hosted-resume');
-  const resumed = await f.manager.prepare(second, f.session(second.id));
-  assert.equal(resumed.snapshot?.headOid, result?.headOid);
-  assert.equal(readFileSync(join(resumed.path, 'hosted.txt'), 'utf8'), 'assignment edit\n');
-  const review = f.reserve('hosted-review');
-  const readOnly = await f.manager.prepare(
-    review,
-    f.session(
-      review.id,
-      { mode: 'ephemeral', namespace: 'tests', base: 'central', retain: false },
-      { readOnly: true },
-    ),
+  assert.throws(
+    () => validateRunnerConfig({ ...isolated, workspace: { repository: '/src', baseRef: 'main' } }),
+    { code: 'invalid_runner_config' },
   );
-  assert.equal(f.git(readOnly.path, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
-  f.stop(review.id);
-  assert.equal((await f.manager.capture(review))?.headOid, f.second);
-  await f.manager.close(review);
-  assert.equal(existsSync(readOnly.path), false);
 });
 
 test('private clone, idempotent prepare, bounded WIP capture and persistent resume preserve per-launch history', async (t) => {
