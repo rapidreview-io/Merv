@@ -1,8 +1,15 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -483,4 +490,33 @@ test('presence names runner.1 on a source runner and only the enrolled drivers o
   const managed = { oneAssignment: true, capacity: 1 };
   assert.deepEqual(await capabilities(managed, [driver]), ['code.v2']);
   assert.equal(await capabilities(managed, []), undefined);
+});
+
+test('a guardian lost before it launched anything is ended a minute later and released', async (t) => {
+  const work = offer('lost');
+  let offered = false;
+  const fake = server(() => (offered ? null : ((offered = true), work)));
+  const f = machine(t, [node('a', 'setInterval(()=>{},1000)')], fake.fetch);
+  // A socket directory the guardian refuses: it claims the launch, then exits before listening.
+  const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(resolve(f.config.directory)).digest('hex').slice(0, 16)}`;
+  symlinkSync(f.root, sockets);
+  t.after(() => rmSync(sockets, { force: true }));
+  const runner = f.make();
+  await runner.start();
+  const id = launchId(work.id);
+  const first = metadata(f.config.directory, id);
+  assert.equal(runner.snapshot().launches[0].status, 'uncertain');
+  assert.equal(first.releaseOutcome, 'launch_failed');
+  assert.equal(typeof first.lostAt, 'number');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  await runner.tick();
+  assert.equal(runner.snapshot().launches[0].status, 'uncertain');
+  assert.equal(metadata(f.config.directory, id).lostAt, first.lostAt, 'kept across saves');
+  assert.equal(fake.releases(work.id).length, 0);
+  t.mock.timers.tick(61_000);
+  await runner.tick();
+  assert.equal(runner.snapshot().launches[0].status, 'stopped');
+  assert.equal(fake.releases(work.id).length, 1);
+  assert.equal(fake.releases(work.id)[0].body?.outcome, 'launch_failed');
+  assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_guardian_lost_before_launch');
 });

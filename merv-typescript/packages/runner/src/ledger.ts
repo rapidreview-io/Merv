@@ -32,6 +32,8 @@ export interface LaunchRecord {
   exitSignal: string | null;
   reason: string | null;
   runDirectory: string;
+  /** Pinned by the guardian before it spawns anything; null means nothing was ever started. */
+  commandHash: string | null;
 }
 export interface LedgerBinding {
   baseUrl: string;
@@ -91,6 +93,7 @@ function launchRecord(row: Row): LaunchRecord {
     exitSignal: row.exit_signal === null ? null : String(row.exit_signal),
     reason: row.reason === null ? null : String(row.reason),
     runDirectory: String(row.run_directory),
+    commandHash: row.command_hash === null ? null : String(row.command_hash),
   };
 }
 const limits = { depth: 32, nodes: 524288, bytes: 524288, keys: 'any', strings: 'json' } as const;
@@ -103,6 +106,11 @@ function encode(value: unknown): string {
   if (Buffer.byteLength(encoded) > limits.bytes) throw new Error('Runner metadata is too large');
   return encoded;
 }
+const ending = {
+  reserved: "status='reserved'",
+  unlaunched: "command_hash IS NULL AND status IN ('starting','uncertain')",
+  open: "status NOT IN ('exited','stopped')",
+} as const;
 export const terminalLaunch = (record: LaunchRecord): boolean =>
   record.status === 'exited' || record.status === 'stopped';
 
@@ -318,17 +326,14 @@ export class LocalLedger {
       )
       .run(reason, Date.now(), id);
   }
-  cancelReservation(id: string): boolean {
-    return (
-      Number(
-        this.db
-          .prepare(
-            `UPDATE launches SET status='stopped',reason='cancelled_before_spawn',updated_at=?
-      WHERE id=? AND status='reserved' AND command_hash IS NULL`,
-          )
-          .run(Date.now(), id).changes,
-      ) === 1
-    );
+  /**
+   * End a launch nothing runs for, if it is still `reserved` (no guardian claimed it),
+   * `unlaunched` (claimed, no command pinned) or `open`; the SQL predicate arbitrates against
+   * the guardian's own writes.
+   */
+  end(id: string, reason: string, which: keyof typeof ending): boolean {
+    const sql = `UPDATE launches SET status='stopped',reason=?,updated_at=? WHERE id=? AND ${ending[which]}`;
+    return Number(this.db.prepare(sql).run(reason, Date.now(), id).changes) === 1;
   }
   updateMetadata(id: string, patch: LaunchMetadata): LaunchRecord {
     patch = plain(patch, 'invalid_runner_metadata', limits);

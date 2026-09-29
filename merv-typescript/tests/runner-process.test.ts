@@ -394,3 +394,91 @@ test('diagnostic redaction hooks never replace the memory-only process environme
     'http://127.0.0.1:1234/mcp the real assignment',
   );
 });
+
+test('a launch claimed in another boot is proven gone; the same boot stays uncertain', async (t) => {
+  const { ledger, host, reserve, token, command } = setup(t);
+  const record = reserve('booted');
+  await host.launch({
+    launchId: record.id,
+    sessionToken: token,
+    deadline: record.deadline,
+    command: command('process.exit(0)'),
+  });
+  assert.ok(host.boot, 'this machine names its boot');
+  assert.equal(ledger.get(record.id)?.metadata.boot, host.boot, 'recorded before the spawn');
+  const db = new DatabaseSync(ledger.path);
+  t.after(() => db.close());
+  const orphan = (id: string, boot: string) => {
+    const row = reserve(id);
+    ledger.updateMetadata(row.id, { boot });
+    db.prepare("UPDATE launches SET status='running',command_hash='pinned' WHERE id=?").run(id);
+    return row.id;
+  };
+  const same = orphan('same-boot', host.boot!);
+  const other = orphan('other-boot', 'other');
+  await host.reconcile();
+  assert.equal(ledger.get(same)?.status, 'uncertain');
+  assert.deepEqual(
+    [ledger.get(other)?.status, ledger.get(other)?.reason],
+    ['stopped', 'host_rebooted'],
+  );
+});
+
+test('a reservation no guardian could claim is cancelled, not left uncertain', async (t) => {
+  const { ledger, host, reserve, token, command } = setup(t);
+  const record = reserve('locked', 60_000);
+  ledger.updateMetadata(record.id, { boot: host.boot ?? 'unknown' });
+  // Another process holds the ledger longer than the guardian waits for its claim.
+  const holder = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const db=new (require('node:sqlite').DatabaseSync)(${JSON.stringify(ledger.path)});db.exec('BEGIN EXCLUSIVE');process.stdout.write('locked');setTimeout(()=>db.exec('COMMIT'),7000)`,
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  t.after(() => holder.kill());
+  await new Promise((resolve) => holder.stdout.once('data', resolve));
+  await assert.rejects(
+    host.launch({
+      launchId: record.id,
+      sessionToken: token,
+      deadline: record.deadline,
+      command: command('process.exit(0)'),
+    }),
+  );
+  assert.deepEqual(
+    [ledger.get(record.id)?.status, ledger.get(record.id)?.reason],
+    ['stopped', 'cancelled_before_spawn'],
+  );
+});
+
+test('a claimed launch with no pinned command ends a minute after it was first found unreachable', async (t) => {
+  const { ledger, host, reserve } = setup(t);
+  const record = reserve('unlaunched');
+  const db = new DatabaseSync(ledger.path);
+  t.after(() => db.close());
+  db.prepare("UPDATE launches SET status='starting' WHERE id=?").run(record.id);
+  await host.reconcile();
+  const first = ledger.get(record.id)!;
+  assert.equal(first.status, 'uncertain', 'a fresh loss may still be a live guardian');
+  assert.equal(typeof first.metadata.lostAt, 'number');
+  ledger.updateMetadata(record.id, { session: { status: 'active' } });
+  await host.reconcile();
+  assert.equal(ledger.get(record.id)?.metadata.lostAt, first.metadata.lostAt);
+  assert.equal(ledger.get(record.id)?.status, 'uncertain');
+  ledger.updateMetadata(record.id, { lostAt: Date.now() - 61_000 });
+  await host.reconcile();
+  assert.deepEqual(
+    [ledger.get(record.id)?.status, ledger.get(record.id)?.reason],
+    ['stopped', 'guardian_lost_before_launch'],
+  );
+  // A pinned command is never ended by that rule.
+  const pinned = reserve('pinned');
+  db.prepare("UPDATE launches SET status='uncertain',command_hash='pinned' WHERE id=?").run(
+    pinned.id,
+  );
+  ledger.updateMetadata(pinned.id, { lostAt: Date.now() - 61_000 });
+  await host.reconcile();
+  assert.equal(ledger.get(pinned.id)?.status, 'uncertain');
+});

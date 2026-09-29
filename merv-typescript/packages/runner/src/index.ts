@@ -171,6 +171,8 @@ function terminalReason(record: LaunchRecord): string {
   if (reason === 'external_stop') return 'local_process_external_stop';
   if (reason === 'guardian_lost') return 'local_process_guardian_lost';
   if (reason === 'cancelled_before_spawn') return 'local_process_not_started';
+  if (reason === 'host_rebooted') return 'local_process_host_rebooted';
+  if (reason === 'guardian_lost_before_launch') return 'local_process_guardian_lost_before_launch';
   if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
