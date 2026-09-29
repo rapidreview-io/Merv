@@ -228,7 +228,7 @@ export class ModelRelay<
     let upstreamHttpStatus: number | undefined;
     let completed = false;
     let reserved = undefined as R;
-    /** A charge a call the provider never took returns. */
+    /** Whether the call holds a charge, returned if the provider never takes the call. */
     let charged = false;
     /** Whether the provider answered with a success status, once it answered. */
     let taken: boolean | undefined;

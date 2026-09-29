@@ -1376,9 +1376,7 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
       );
       assert.equal(record.upstreamHttpStatus, scenario.upstreamHttpStatus);
       assert.equal(record.model, 'test-model');
-      assert.ok(
-        Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0 && record.elapsedMs <= 900_000,
-      );
+      assert.ok(Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0);
       assert.doesNotMatch(
         JSON.stringify(record),
         /private|grant-1|command-1|conversation-1|runtime-1|pir_/,

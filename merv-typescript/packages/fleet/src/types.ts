@@ -117,7 +117,8 @@ export interface ModelRelayFailure<E extends string = string> {
   elapsedMs: number;
   upstreamHttpStatus?: number;
 }
-/** One finished model call's tokens, for spend per model; it names no person or conversation. */
+/** One finished model call's tokens, for spend per model, or a zero refund record for a charged
+ *  call the provider never took; it names no person or conversation. */
 export interface ModelRelayUsage<E extends string = string> {
   event: E;
   model: string;
@@ -174,9 +175,11 @@ export interface ModelRelayConfig<
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
-  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
-   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
-   *  one. The charge stands for a call the provider may have run that never finishes. */
+  /** Charges a call just before its last authority read and the upstream send, and returns the
+   *  charge as the feature reads it back; throwing refuses the call with the error's `code`, or
+   *  with 503 relay_unavailable when the error's `status` is 500 or more. A call refused after the
+   *  charge, or never taken by the provider, is refunded through `onUsage`; the charge stands for
+   *  a call the provider may have run that never finishes. */
   reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
   /** A finished call's usage, or a refund of a call refused before it was sent or answered with
    *  an error status, with what `reserve` returned for it. */
