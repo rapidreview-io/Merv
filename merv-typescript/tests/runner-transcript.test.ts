@@ -44,7 +44,19 @@ const text = (path: string, ...rest: [string[]?, number?, number?]) =>
 
 const b64 = (c: string) => c.repeat(43);
 const hex = 'a1'.repeat(32);
-const tokens = [`ms_${b64('A')}`, `mi_${b64('b')}`, `mk_${b64('-')}`, `me_${hex}`, `mr_${hex}`];
+const tokens = [
+  `ms_${b64('A')}`,
+  `mi_${b64('b')}`,
+  `mk_${b64('-')}`,
+  `me_${hex}`,
+  `mr_${hex}`,
+  `pir_${'Q'.repeat(24)}`,
+  `rr_sk_${'Z'.repeat(32)}`,
+  `sk-proj-${'k'.repeat(40)}`,
+  `sk-ant-api03-${'w'.repeat(40)}`,
+  `ghp_${'G'.repeat(36)}`,
+  'AKIA' + 'ABCDEFGHIJKLMNOP',
+];
 
 test('bearers standing alone are blanked, whatever the chunk, and identifiers are kept', (t) => {
   const path = directory(t);
@@ -54,6 +66,8 @@ test('bearers standing alone are blanked, whatever the chunk, and identifiers ar
     'list_items_by_the_owner_of_the_project_and_its_members(',
     `foo_ms_${b64('C')}`,
     `ms_${b64('C')}x`,
+    'risk-assessment-for-the-project-and-its-members',
+    'task-list-by-the-owner-of-the-project',
   ];
   const lines = tokens.flatMap((token) => [
     `{"text":"${token}"}`,
