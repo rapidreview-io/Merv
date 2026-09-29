@@ -4,8 +4,6 @@ import type {
   CodeAcceptedSince,
   CodeBasePin,
   CodeBaseStatus,
-  CodeCommandCompletion,
-  CodeCommandControl,
   CodeCommandRecord,
   CodeCommitCommand,
   CodeCommitInput,
@@ -40,8 +38,9 @@ export interface CodeCommands {
   list(caller: Caller): Promise<CodeCommandRecord[]>;
   commit(caller: Caller, input: CodeCommitInput): Promise<CodeCommandRecord>;
   operation(caller: Caller, commandId: string): Promise<CodeCommandRecord>;
-  nextCommand(caller: Caller, input: CodeCommandControl): Promise<CodeCommitCommand | null>;
-  completeCommand(caller: Caller, input: CodeCommandCompletion): Promise<CodeCommandRecord>;
+  /** Each control parses its own input, so callers hand it the body they received. */
+  nextCommand(caller: Caller, input: unknown): Promise<CodeCommitCommand | null>;
+  completeCommand(caller: Caller, input: unknown): Promise<CodeCommandRecord>;
   close(): void;
 }
 export interface CodeProposalInput {
@@ -258,14 +257,12 @@ export interface Code
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;
+  /** The legacy Git transport grant and its receipt; each parses its own input. */
   transportGrant(
     caller: Caller,
-    input: import('@merv/contracts').CodeTransportInput,
+    input: unknown,
   ): Promise<import('@merv/contracts').CodeTransportGrant>;
-  verifyTransport(
-    caller: Caller,
-    input: import('@merv/contracts').CodeTransportInput,
-  ): Promise<{ verified: boolean }>;
+  verifyTransport(caller: Caller, input: unknown): Promise<{ verified: boolean }>;
   /**
    * The second workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
    * bytes of one part. Each parses what it receives. Absent where the server keeps no

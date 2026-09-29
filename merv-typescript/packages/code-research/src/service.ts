@@ -20,8 +20,6 @@ import type {
   Artifacts,
   Caller,
   CodeAcceptedSince,
-  CodeCommandCompletion,
-  CodeTransportInput,
   Scope,
   State,
   Transaction,
@@ -276,13 +274,13 @@ export class CodeService extends CodeCommandService implements Code {
   async capture(...args: Parameters<CodeCaptureReader['capture']>) {
     return await this.captureReader.capture(...args);
   }
-  transportGrant(caller: Caller, input: CodeTransportInput) {
+  transportGrant(caller: Caller, input: unknown) {
     return this.network(() => this.transport.grant(caller, input));
   }
-  verifyTransport(caller: Caller, input: CodeTransportInput) {
+  verifyTransport(caller: Caller, input: unknown) {
     return this.network(() => this.transport.verify(caller, input));
   }
-  override async completeCommand(caller: Caller, value: CodeCommandCompletion) {
+  override async completeCommand(caller: Caller, value: unknown) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codeCommandCompletionSchema, value);
     const complete = async (tx: Transaction) => {

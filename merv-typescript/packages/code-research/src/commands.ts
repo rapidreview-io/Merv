@@ -12,7 +12,6 @@ import {
   now,
   parsed,
   type Caller,
-  type CodeCommandCompletion,
   type CodeCommandControl,
   type CodeCommandRecord,
   type CodeCommitCommand,
@@ -316,7 +315,7 @@ export class CodeCommandService implements CodeCommands {
       return this.decode(await this.row(tx, command.id));
     });
   }
-  async nextCommand(caller: Caller, value: CodeCommandControl): Promise<CodeCommitCommand | null> {
+  async nextCommand(caller: Caller, value: unknown): Promise<CodeCommitCommand | null> {
     caller = structuredClone(caller);
     const input = parse(codeCommandControlSchema, value);
     return await this.transaction(async (tx) => {
@@ -348,7 +347,7 @@ export class CodeCommandService implements CodeCommands {
       return command;
     });
   }
-  async completeCommand(caller: Caller, value: CodeCommandCompletion): Promise<CodeCommandRecord> {
+  async completeCommand(caller: Caller, value: unknown): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);
     const input = parse(codeCommandCompletionSchema, value);
     return await this.transaction(async (tx) => {

@@ -89,13 +89,17 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
       return command;
     },
     async completeCommand(caller, input) {
-      parsed(codeCommandCompletionSchema, input, 'invalid_code_input');
+      const value: CodeCommandCompletion = parsed(
+        codeCommandCompletionSchema,
+        input,
+        'invalid_code_input',
+      );
       calls.push({ method: 'complete', caller: structuredClone(caller), input });
       return {
         command,
-        status: input.receipt ? 'succeeded' : 'failed',
-        receipt: input.receipt ?? null,
-        error: input.error ?? null,
+        status: value.receipt ? 'succeeded' : 'failed',
+        receipt: value.receipt ?? null,
+        error: value.error ?? null,
       };
     },
   } as CodeRoutes;
@@ -291,7 +295,9 @@ test('Code routes enforce strict schemas, bounded JSON, POST-only methods and pr
   assert.equal(get.allow, 'POST');
   assert.equal(f.calls.length, 0);
   f.provider.nextCommand = async (_caller, input) => {
-    if (input.sessionId !== control.sessionId)
+    if (
+      parsed(codeCommandControlSchema, input, 'invalid_code_input').sessionId !== control.sessionId
+    )
       throw new MervError('code_session_mismatch', 'Command belongs to another session', 403);
     return f.command;
   };

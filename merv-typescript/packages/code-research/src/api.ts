@@ -176,8 +176,8 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       const caller = await r.caller();
       const input = await r.json(undefined, 8192);
       return path.endsWith('/grant')
-        ? await code.transportGrant(caller, input as never)
-        : await code.verifyTransport(caller, input as never);
+        ? await code.transportGrant(caller, input)
+        : await code.verifyTransport(caller, input);
     }
     if (path.startsWith('/code/v2/')) {
       if (r.url.search)
@@ -214,8 +214,8 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       }
       const input = await r.json();
       return path.endsWith('/next')
-        ? { command: await code.nextCommand(caller, input as never) }
-        : { operation: await code.completeCommand(caller, input as never) };
+        ? { command: await code.nextCommand(caller, input) }
+        : { operation: await code.completeCommand(caller, input) };
     }
     throw unknownEndpoint();
   };

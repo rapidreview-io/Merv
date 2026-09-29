@@ -157,3 +157,18 @@ test('the legacy transport route never lends a GitHub token to code.v2 work', as
   });
   assert.equal(f.calls.length, before);
 });
+
+test('transport parses the body it is handed before it reaches GitHub', async (t) => {
+  const f = await setup(t);
+  const before = f.calls.length;
+  for (const body of [
+    null,
+    'fetch',
+    { ...f.fetchInput, operation: 'clone' },
+    { ...f.fetchInput, extra: 1 },
+  ]) {
+    await assert.rejects(f.service.grant(f.caller, body), { code: 'invalid_code_input' });
+    await assert.rejects(f.service.verify(f.caller, body), { code: 'invalid_code_input' });
+  }
+  assert.equal(f.calls.length, before);
+});
