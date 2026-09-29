@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3.",
   "definitions": [
     {
       "name": "consolidation",
@@ -286,49 +286,49 @@
       "name": "task",
       "version": 12,
       "fingerprint": "24fc8924fd04bf8e56677c71bc67d4ce8ebd0e5fba727f1cd3998e55edda98ab",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 13,
       "fingerprint": "49491ab437b51b63f1ae43f8852ccc125863d99a4f90081335542515ce2f2bb0",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 14,
       "fingerprint": "4f5740b5c0eb27fdf7cae77241a93a3a8e06fe534ea8523f5863590d28c44320",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 15,
       "fingerprint": "ec63b8ace11467ad9e85b7a79cc93c7f03b2ed308023e753a0d36c3a7e8ba1b8",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 16,
       "fingerprint": "36f2baa54a1f9b3a82e23174d4a235fb5967e551700e972b26a4266f8c4f6d8e",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 17,
       "fingerprint": "c13fd48829477af18e396a9526d74005429567d401fa15a124fc857d76f666c4",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 18,
       "fingerprint": "7f28eedf7aebc7ae5db9cf270323f2efee8df9376da0c88e792616aacf69ef91",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 19,
       "fingerprint": "12acbb38512801af336959589b2748c395164f4d0dc46a30043937c0ec192ef5",
-      "published": false
+      "published": true
     }
   ],
   "policies": [
@@ -1343,112 +1343,112 @@
       "version": 13,
       "state": "in_progress",
       "fingerprint": "f9fdce86794838f14e99bd5c2fa4e1269029ef8a9c3c0a8aae87c8f9e503ca76",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 12,
       "state": "in_progress",
       "fingerprint": "f3b34cb091672de300ec769647dcba0cba0acf3369d5c324978019a09bfa21dd",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 14,
       "state": "in_progress",
       "fingerprint": "f20a0181256fb6069c9ad494767c0d28ee3fab403eb0d60f8ad8d24e866ac7d9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 15,
       "state": "in_progress",
       "fingerprint": "1441cdc2a0a096e9b89179d1d6cf86c1f7a9633c1da3ae99fb0812575da8d918",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 16,
       "state": "in_progress",
       "fingerprint": "ea95e544d173e836c788dcba1450d0c4b1ac2620d25c8a90f9d42945697c2f82",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 17,
       "state": "in_progress",
       "fingerprint": "01553abf49e10df7b9519d140d2f055ba73e48289c23be5c1d6b595844729bf4",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 18,
       "state": "in_progress",
       "fingerprint": "8780babbca3fa41b8be2462f3db60ab5420c7fc75ae4cbb075b2532ecf2a1df7",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 19,
       "state": "in_progress",
       "fingerprint": "3942a40982bb7f079055af6c88cd3fd2e8f3c15e52084006083426a78617663c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 12,
       "state": "in_review",
       "fingerprint": "3724c9379be915784015635125dd70a7d0e4e7eb9d94bad5ded75d7ffbbfc11f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 13,
       "state": "in_review",
       "fingerprint": "aebb5901de5d6ad8ee06aa4e2304a544fd6dbbf950d1dd2c86835de36df15141",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 14,
       "state": "in_review",
       "fingerprint": "aebb5901de5d6ad8ee06aa4e2304a544fd6dbbf950d1dd2c86835de36df15141",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 15,
       "state": "in_review",
       "fingerprint": "8e8bdddeeba875b53fce00ab370fa5a0b9e59bd73022037f2d3fbc468c800e41",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 16,
       "state": "in_review",
       "fingerprint": "3724c9379be915784015635125dd70a7d0e4e7eb9d94bad5ded75d7ffbbfc11f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 17,
       "state": "in_review",
       "fingerprint": "aebb5901de5d6ad8ee06aa4e2304a544fd6dbbf950d1dd2c86835de36df15141",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 18,
       "state": "in_review",
       "fingerprint": "aebb5901de5d6ad8ee06aa4e2304a544fd6dbbf950d1dd2c86835de36df15141",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 19,
       "state": "in_review",
       "fingerprint": "8e8bdddeeba875b53fce00ab370fa5a0b9e59bd73022037f2d3fbc468c800e41",
-      "published": false
+      "published": true
     }
   ],
   "recipes": [
