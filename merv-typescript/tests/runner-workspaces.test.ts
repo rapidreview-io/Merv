@@ -594,6 +594,30 @@ test('unsafe private Git configuration is removed before any checkout runs its f
   assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /hostile/);
 });
 
+test('configuration an agent includes from another file is removed with its include', async (t) => {
+  // Only the file's own keys are listed: removing a key that lives in the included file alone
+  // would exit 5 and fail every runner Git call.
+  const f = setup(t),
+    record = f.reserve('include');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  const canary = join(f.directory, 'executed');
+  const included = join(f.directory, 'included.config');
+  writeFileSync(
+    included,
+    `[filter "x"]\n\tclean = touch '${canary}'; cat\n[core]\n\tpager = cat\n`,
+  );
+  mkdirSync(join(f.bare, 'info'), { recursive: true });
+  writeFileSync(join(f.bare, 'info/attributes'), '* filter=x\n');
+  agent(f, handle.path, 'config', 'include.path', included);
+  agent(f, handle.path, 'config', `includeIf.gitdir:${f.directory}/.path`, included);
+  writeFileSync(join(handle.path, 'seed.txt'), 'captured\n');
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'captured');
+  assert.equal(existsSync(canary), false);
+  assert.doesNotMatch(readFileSync(join(f.bare, 'config'), 'utf8'), /include/i);
+});
+
 test('foreign paths are not adopted and failed unstarted preparation can close while preserving files', async (t) => {
   const f = setup(t),
     first = f.reserve('prime');
