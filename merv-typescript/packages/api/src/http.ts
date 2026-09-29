@@ -1147,7 +1147,7 @@ export class ApiServer {
               request.params?._meta?.['merv/projectId'],
             ),
           );
-          // An agent over MCP is offered what a Pi conversation is; Merv's pages call /tools.
+          // MCP curates what a person's agent is offered; Merv's pages call /tools.
           return { tools: await this.tools.describe(caller, true) };
         } catch (error) {
           throw rpcError(error);

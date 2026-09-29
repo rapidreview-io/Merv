@@ -29,7 +29,7 @@ import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fi
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 
-test('Pi offers and runs system.status under the real conversation policy', async (t) => {
+test('Pi offers and runs system.status in a conversation', async (t) => {
   const f = await fixture(t);
   const sessions = {
     projectStatus: async (caller: Caller) => {
@@ -64,6 +64,20 @@ test('Pi offers and runs system.status under the real conversation policy', asyn
     ).dispatch,
     { enabled: false, state: 'paused', ownMachines: true, fleet: false },
   );
+});
+
+test("a turn is offered every native tool the person may use but Pi's own", async (t) => {
+  const f = await fixture(t);
+  f.tools.register({
+    name: 'pi.send',
+    description: 'Send a message',
+    inputSchema: z.object({}).strict(),
+    handler: () => null,
+  });
+  const offered = (await f.begun(f.operator)).work.tools.map(({ name }) => name);
+  assert.ok(offered.includes('project.get'));
+  assert.ok(!offered.includes('pi.send'));
+  assert.ok(!offered.some((name) => name.startsWith('_')), 'a mounted tool is never offered');
 });
 
 test('opening is idempotent without allocating Fleet capacity or creating a task', async (t) => {

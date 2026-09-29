@@ -269,14 +269,6 @@ export class PiService implements Pi, FleetOwner {
         require: (caller, tx) => this.requireConversation(caller, tx),
       }),
     );
-    this.disposers.push(
-      // Every native tool but Pi's own, run as the person: Scope applies their live role, and each
-      // tool's own registration says what only the person may run (ToolDefinition.conversation).
-      this.tools.registerConversationPolicy({
-        allowsTool: async (_caller, name) => !name.startsWith('pi.'),
-        validate: async () => {},
-      }),
-    );
     await this.tick();
     this.timer = setInterval(() => {
       void this.tick().catch(() => undefined);
@@ -1329,10 +1321,14 @@ export class PiService implements Pi, FleetOwner {
           'kind' in tool ? undefined : tool.conversation,
         ]),
       );
-      const described = (await this.tools.describe(caller)).flatMap((description) => {
-        const tool = piTool(description, uses.get(description.name));
-        return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
-      });
+      // Every native tool but Pi's own, run as the person: Scope applies their live role, and
+      // each tool's own registration says what only the person may run.
+      const described = (await this.tools.describe(caller))
+        .filter(({ name }) => !name.startsWith('pi.'))
+        .flatMap((description) => {
+          const tool = piTool(description, uses.get(description.name));
+          return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
+        });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
       const paper = await this.tools.call('paper.read', caller, {}).catch(() => undefined);
       const told = [...(await this.told(conversation, command, actor!.role, paper)), ...notes];

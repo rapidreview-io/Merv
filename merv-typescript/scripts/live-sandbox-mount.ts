@@ -561,7 +561,7 @@ async function live(outputDirectory: string) {
       'mount_not_ready',
     );
     requireCondition(
-      (await app.ctx.tools.list(caller))
+      (await app.ctx.tools.describe(caller))
         .filter((entry) => entry.name.startsWith('_'))
         .map((entry) => entry.name)
         .join() === tool,

@@ -3,7 +3,6 @@ import type {
   Caller,
   Data,
   SessionToolPolicy,
-  ConversationToolPolicy,
   CodeCommandCompletion,
   CodeCommandControl,
   CodeCommandRecord,
@@ -216,16 +215,18 @@ export interface Api {
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
   /** Detached public descriptions. Transports must supply the authenticated caller. agent: the
-   *  caller is a person's own agent over MCP, offered only what a Pi conversation is. */
+   *  caller is a person's own agent over MCP. MCP offers it every native tool not marked `never`
+   *  (a reader: its reads alone) plus the mounted tools its Access grants. This curates what an
+   *  agent is offered; it is not an authority boundary: the same credential may call any tool it
+   *  is permitted over POST /tools. */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
-  /** Omitting caller is trusted in-process inspection; transports must always supply it. */
-  list(caller?: Caller): Promise<ListedTool[]>;
+  /** Every registered tool, for trusted in-process code only: it takes no caller. */
+  list(): Promise<ListedTool[]>;
   call(name: string, caller: Caller, input: unknown): Promise<unknown>;
   invoke(name: string, caller: Caller, input: unknown, agent?: boolean): Promise<ToolInvocation>;
   createCatalog(mountId: string): ToolCatalog;
   /** The one provider that admits session callers; without it every session call fails closed. */
   registerSessionPolicy(provider: SessionToolPolicy): () => void;
-  registerConversationPolicy(provider: ConversationToolPolicy): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
 }

@@ -184,14 +184,7 @@ test('an open-world read is listed, admitted and checked again exactly as a read
   await assert.rejects(tools.call('remote.write', session, {}), { code: 'tool_forbidden' });
   assert.deepEqual(prepared, { 'remote.read': true, 'remote.write': false });
 
-  // A conversation may use it, and its grant is checked again after the remote answer.
-  let granted = true;
-  tools.registerConversationPolicy({
-    allowsTool: async () => granted,
-    validate: async () => {
-      if (!granted) throw new MervError('forbidden', 'Grant revoked', 403);
-    },
-  });
+  // A conversation may use it, and its person's access is checked again after the remote answer.
   const conversation: Caller = {
     actorId: 'alice',
     projectId: 'project-a',
@@ -203,13 +196,13 @@ test('an open-world read is listed, admitted and checked again exactly as a read
       readOnly: true,
       openWorld: true,
       handler: () => {
-        granted = false;
+        active = false;
         return { answered: true };
       },
     }),
   );
-  await assert.rejects(tools.call('remote.revoking', conversation, {}), { code: 'tool_forbidden' });
-  granted = true;
+  await assert.rejects(tools.call('remote.revoking', conversation, {}), { code: 'forbidden' });
+  active = true;
   tools.register(
     definition('remote.revoked', {
       readOnly: true,

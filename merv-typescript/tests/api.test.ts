@@ -229,12 +229,10 @@ test('changing a native definition cannot turn a mutation into an unrestricted s
   };
   tools.register(definition);
   definition.readOnly = true;
-  for (const method of ['describe', 'list'] as const) {
-    const source: Caller = structuredClone(sessionCaller);
-    const listing = tools[method](source);
-    delete source.session;
-    assert.deepEqual(await listing, []);
-  }
+  const listed: Caller = structuredClone(sessionCaller);
+  const listing = tools.describe(listed);
+  delete listed.session;
+  assert.deepEqual(await listing, []);
   const source: Caller = structuredClone(sessionCaller);
   const invoking = tools.call(definition.name, source, {});
   delete source.session;

@@ -250,7 +250,6 @@ test('enrollment rejects spoofed fields and managed caller cannot reach registry
   await assert.rejects(f.app.ctx.scope.delegationSource(caller), {
     code: 'managed_runner_forbidden',
   });
-  await assert.rejects(f.app.ctx.tools.list(caller), { code: 'managed_runner_forbidden' });
   await assert.rejects(f.app.ctx.tools.describe(caller), { code: 'managed_runner_forbidden' });
   await assert.rejects(f.app.ctx.tools.invoke('task.create', caller, {}), {
     code: 'managed_runner_forbidden',

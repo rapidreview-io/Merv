@@ -166,7 +166,10 @@ test('a registry without an access provider defaults to denying remote calls and
       1,
       'Embedded administration can inspect the installed catalog',
     );
-    assert.deepEqual(await registry.list(caller), []);
+    assert.deepEqual(
+      (await registry.describe(caller)).map((tool) => tool.name),
+      [],
+    );
     await assert.rejects(registry.call('_ungranted.inspect', caller, {}), {
       code: 'tool_forbidden',
       status: 403,

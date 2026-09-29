@@ -9,7 +9,6 @@ export type {
   ToolGrant,
   SessionToolPolicy,
   SessionToolInvocation,
-  ConversationToolPolicy,
 } from './tool-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { types } from 'node:util';

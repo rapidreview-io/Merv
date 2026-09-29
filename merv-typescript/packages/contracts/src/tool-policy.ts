@@ -34,10 +34,6 @@ export interface SessionToolPolicy {
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T>;
 }
-export interface ConversationToolPolicy {
-  allowsTool(caller: Caller, name: string): Promise<boolean>;
-  validate(caller: Caller, name: string, input: Data): Promise<void>;
-}
 export interface ToolPolicy {
   /** One decision for a whole listing: which exact grants the caller holds now. An ordinary
    *  authentication or permission failure grants nothing; infrastructure errors propagate. */
