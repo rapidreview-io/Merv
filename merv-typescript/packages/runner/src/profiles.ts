@@ -492,7 +492,8 @@ const searching = (web: boolean): string =>
 /**
  * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
  * a closing message after the handoff tool returns and prints its `turn.completed` only then, so
- * it gets a minute; a harness that prints nothing Merv reads is stopped at once.
+ * it gets a minute; any other harness is stopped at once (a Claude run so stopped before its
+ * `result` event reports no usage).
  */
 export const handoffGraceMs = (profile: RunnerProfile) =>
   profile.harness === 'codex' ? codexHandoffGraceMs : 0;
@@ -502,23 +503,40 @@ export const handoffGraceMs = (profile: RunnerProfile) =>
  * --json` runs one thread and ends each turn with `turn.completed`, whose usage is the thread's
  * running total (`input_tokens` includes cached input), so the last one counts. A stream cut off
  * before any turn completed reports nothing, because Codex prints no usage before a turn ends.
- * The runner checks the result against the report's closed shape, as it does a usage file.
+ * Claude's `stream-json` ends with one `result` event: its `input_tokens` excludes the cache, so
+ * cache writes and reads are added, and it carries the run's cost. The runner checks the result
+ * against the report's closed shape, as it does a usage file.
  */
 export function harnessUsage(
   profile: RunnerProfile,
   output: string,
 ): SessionUsageReport | undefined {
-  if (profile.harness !== 'codex') return;
+  if (profile.harness === 'command') return;
+  const kind = profile.harness === 'codex' ? 'turn.completed' : 'result';
   let usage: SessionUsageReport | undefined;
-  for (const line of output.split('\n').filter((line) => line.includes('"turn.completed"'))) {
+  for (const line of output.split('\n').filter((line) => line.includes(`"${kind}"`))) {
     try {
       const event = JSON.parse(line);
-      const { input_tokens: inputTokens, output_tokens: outputTokens } = event.usage;
+      const { input_tokens: input, output_tokens: outputTokens } = event.usage;
+      const cached =
+        profile.harness === 'claude'
+          ? (event.usage.cache_creation_input_tokens ?? 0) +
+            (event.usage.cache_read_input_tokens ?? 0)
+          : 0;
+      const inputTokens = input + cached;
+      const costUsd = profile.harness === 'claude' ? event.total_cost_usd : undefined;
       if (
-        event.type === 'turn.completed' &&
-        [inputTokens, outputTokens].every((count) => Number.isSafeInteger(count) && count >= 0)
+        event.type === kind &&
+        [input, inputTokens, outputTokens].every(
+          (count) => Number.isSafeInteger(count) && count >= 0,
+        )
       )
-        usage = { inputTokens, outputTokens, ...(profile.model && { model: profile.model }) };
+        usage = {
+          inputTokens,
+          outputTokens,
+          ...(typeof costUsd === 'number' && { costUsd }),
+          ...(profile.model && { model: profile.model }),
+        };
     } catch {
       // Not an event this reads.
     }

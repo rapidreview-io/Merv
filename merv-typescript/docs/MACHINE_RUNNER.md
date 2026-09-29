@@ -126,14 +126,19 @@ wrapper, or the process itself, may write one JSON object there:
 optional and nothing else allowed. Without that file the runner asks the launch's profile what its harness printed: the Codex
 profile reads the `turn.completed` usage of its own `codex exec --json` stream from the
 redacted `stdout.log` (input tokens, cached ones included, output tokens and the profile's
-model, never a cost). Codex prints it only after the closing message it writes once the
+model, never a cost); the Claude profile reads the final `result` event of its
+`stream-json` output (input tokens plus the cache it wrote and read, output tokens, its
+`total_cost_usd` and the profile's model). Only the log's last 1 MiB is read, from its first
+whole line. Codex prints it only after the closing message it writes once the
 handoff tool returns, so a Codex launch whose own handoff closed its session gets a grace of
 a minute, within its deadline, to exit by itself; any other close, and any other profile, is
 stopped at once. The grace holds the launch's capacity slot but changes no capture: the
 worker's tools are already closed, the final capture is still taken once the process has
 ended, as a Git result submission already expects, and a sealed lease's Codex sandbox is
-read-only. A Codex launch stopped before its turn completed still reports nothing, as does
-any other profile that writes nothing. When the launch is over the runner sends a regular
+read-only. A Codex launch stopped before its turn completed still reports nothing, and so
+does a Claude launch stopped before its `result` event (which, with no grace, includes one
+stopped at once when its own handoff closed its session), as does any other profile that
+writes nothing. When the launch is over the runner sends a regular
 file of at most 4 KB in that shape, or what the profile read: with its release when the
 process ended first, and on its own when the server had already closed the session, which is
 how a landed handoff ends. The ledger remembers that the report was answered, so it is

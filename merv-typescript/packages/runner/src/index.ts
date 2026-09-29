@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import { lstatSync, readFileSync } from 'node:fs';
+import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -881,13 +881,23 @@ export class MachineRunner implements Runner {
   /**
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
    * anything here, so a link, a device or a malformed report is simply not sent. Without one,
-   * what the profile's harness printed of its spending in the launch's redacted log, if any.
+   * what the profile's harness printed of its spending at the end of the launch's redacted log:
+   * its last 1 MiB, from the first whole line, however long the log grew.
    */
   private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
-    const read = (path: string, limit: number) => {
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.size > limit) throw new Error('Not a readable report');
-      return readFileSync(path, 'utf8');
+    const read = (path: string, limit: number, tail = false) => {
+      const stat = lstatSync(path),
+        size = stat.size;
+      if (!stat.isFile() || (!tail && size > limit)) throw new Error('Not a readable report');
+      const bytes = Buffer.alloc(Math.min(size, limit)),
+        fd = openSync(path, 'r');
+      try {
+        readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+      } finally {
+        closeSync(fd);
+      }
+      const text = bytes.toString('utf8');
+      return bytes.length < size ? text.slice(text.indexOf('\n') + 1) : text;
     };
     try {
       return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));
@@ -895,7 +905,7 @@ export class MachineRunner implements Runner {
       // No report of its own; the harness may have printed one.
     }
     try {
-      const log = read(join(record.runDirectory, 'stdout.log'), 64 << 20);
+      const log = read(join(record.runDirectory, 'stdout.log'), 1 << 20, true);
       return sessionUsageReportSchema.parse(
         harnessUsage(record.metadata.profile as RunnerProfile, log),
       );
