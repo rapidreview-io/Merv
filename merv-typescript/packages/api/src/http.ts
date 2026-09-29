@@ -21,8 +21,8 @@ import {
   codeTransportInputSchema,
   CODE_PART_MAX_BYTES,
   mainAgentGuide,
+  pathSegment,
   plain,
-  ROLES,
   type Caller,
   type Scope,
 } from '@merv/contracts';
@@ -198,29 +198,6 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
 }
 
 const nonblank = z.string().trim().min(1).max(512);
-const role = z.enum(ROLES);
-// Scope keys a project request by its trimmed requestId and holds it to 256 characters.
-const createProjectInput = z
-  .object({ name: nonblank, requestId: z.string().trim().min(1).max(256) })
-  .strict();
-const addMemberInput = z.object({ subject: nonblank, role }).strict();
-const changeMemberInput = z.object({ role }).strict();
-const keyExpiry = z.string().datetime({ precision: 3 }).nullable().optional();
-const keyProject = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value && !value.includes('\0'));
-const createKeyInput = z
-  .object({
-    projectId: keyProject,
-    grantScope: z.enum(['project', 'account']).optional(),
-    label: z.string().max(120).nullable().optional(),
-    expiresAt: keyExpiry,
-  })
-  .strict();
-const rotateKeyInput = z.object({ expiresAt: keyExpiry }).strict();
-
 // Sessions parses every other session body. These two unwrap the one field a method takes, and
 // a project halt refuses a body sessionId, which would halt one session and leave dispatch on.
 const agentReleaseInput = z.object({ executionId: nonblank }).strict();
@@ -269,17 +246,6 @@ function bearer(req: IncomingMessage): string {
   return authorization.slice(7);
 }
 
-function keyQuery(params: URLSearchParams, allowProject = false): string | undefined {
-  if (
-    [...params.keys()].some((key) => !allowProject || key !== 'projectId') ||
-    params.getAll('projectId').length > 1
-  )
-    throw new MervError('invalid_input', 'Unsupported or repeated key query parameter');
-  const projectId = params.get('projectId');
-  if (projectId === null) return undefined;
-  return parseInput(keyProject, projectId);
-}
-
 /** Sessions parses its own bodies; the path's identifier is bound over the body's. */
 function bound(body: unknown, key: string, value: string): unknown {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
@@ -307,16 +273,6 @@ function projectSelection(...selections: unknown[]): string | undefined {
   if (supplied.some((selection) => selection !== supplied[0]))
     throw new MervError('invalid_input', 'Conflicting Merv project selections');
   return supplied[0] as string | undefined;
-}
-
-function pathSegment(value: string): string {
-  try {
-    const decoded = decodeURIComponent(value);
-    if (!decoded.trim() || decoded.includes('/') || decoded.includes('\0')) throw new Error();
-    return decoded;
-  } catch {
-    throw new MervError('invalid_input', 'Malformed resource identifier');
-  }
 }
 
 /** One optional provider: a second registration conflicts and only its own disposer withdraws it. */
@@ -347,7 +303,7 @@ function slot<T>(code: string, label: string, unavailableMessage: string) {
 
 /**
  * One listener. Each request's first path segment names its mount: the built-ins, the owners'
- * mounts and, until their owners register them, the Sessions, Code and Scope routes. A
+ * mounts and, until their owners register them, the Sessions and Code routes. A
  * public route authenticates itself; every other one is authenticated here first. One stateless
  * MCP transport serves each MCP request.
  */
@@ -400,16 +356,14 @@ export class ApiServer {
     );
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
-    // Until their owners register them, the routes and credentials the API serves for Sessions,
-    // Code and Scope.
+    // Until their owners register them, the routes and credentials the API serves for Sessions
+    // and Code.
     this.mount('/sessions', (req, res, r) => this.sessionsRoute(req, res, r), {
       public: ['/sessions/self', '/sessions/runners/enroll'],
     });
     this.mount('/code', (req, res, r) => this.codeRoute(req, res, r), {
       public: ['/code/github/callback'],
     });
-    this.mount('/account', (req, res, r) => this.scopeRoute(req, res, r));
-    this.mount('/projects', (req, res, r) => this.scopeRoute(req, res, r));
     this.credential('ms_', {
       kind: 'session',
       forbidden: new MervError(
@@ -871,97 +825,6 @@ export class ApiServer {
           ),
         });
       return;
-    }
-    throw unknownEndpoint();
-  }
-
-  private scopeRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
-    return req.method === 'GET'
-      ? this.read(() => this.scopeRoutes(req, res, r))
-      : this.scopeRoutes(req, res, r);
-  }
-
-  private async scopeRoutes(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
-    const url = r.url;
-    const path = url.pathname;
-    const principal = r.principal!;
-    if ('caller' in principal) throw unknownEndpoint();
-    if (path === '/account' && req.method === 'GET') {
-      json(res, 200, {
-        ...(principal.kind === 'user'
-          ? { kind: 'user', user: principal.user }
-          : principal.kind === 'key'
-            ? { kind: 'key', key: principal.key }
-            : { kind: 'actor', actor: principal.actor }),
-        projects: await this.scope.projects(principal),
-      });
-      return;
-    }
-    if (path === '/account/keys') {
-      const projectId = keyQuery(url.searchParams, req.method === 'GET');
-      if (req.method === 'GET') {
-        json(res, 200, { keys: await this.scope.keys(principal, projectId) });
-        return;
-      }
-      if (req.method === 'POST') {
-        json(res, 200, await this.scope.createKey(principal, await r.json(createKeyInput)));
-        return;
-      }
-    }
-    const keyRoute = /^\/account\/keys\/([^/]+)(\/rotate)?$/.exec(path);
-    if (keyRoute) {
-      keyQuery(url.searchParams);
-      const keyId = pathSegment(keyRoute[1]!);
-      if (keyRoute[2] && req.method === 'POST') {
-        const input = await r.json(rotateKeyInput);
-        json(res, 200, await this.scope.rotateKey(principal, { keyId, ...input }));
-        return;
-      }
-      if (!keyRoute[2] && req.method === 'DELETE') {
-        await this.scope.revokeKey(principal, keyId);
-        json(res, 200, { revoked: true });
-        return;
-      }
-    }
-    if (path === '/projects' && req.method === 'GET') {
-      json(res, 200, { projects: await this.scope.projects(principal) });
-      return;
-    }
-    if (path === '/projects' && req.method === 'POST') {
-      json(res, 200, {
-        project: await this.scope.createProject(principal, await r.json(createProjectInput)),
-      });
-      return;
-    }
-    const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
-    if (memberRoute) {
-      const projectId = pathSegment(memberRoute[1]!);
-      const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
-      projectSelection(projectId, req.headers['x-merv-project-id']);
-      if (subject === undefined && req.method === 'GET') {
-        json(res, 200, { memberships: await this.scope.memberships(principal, projectId) });
-        return;
-      }
-      if (subject === undefined && req.method === 'POST') {
-        const input = await r.json(addMemberInput);
-        json(res, 200, { membership: await this.scope.addMember(principal, projectId, input) });
-        return;
-      }
-      if (subject !== undefined && req.method === 'PATCH') {
-        const input = await r.json(changeMemberInput);
-        json(res, 200, {
-          membership: await this.scope.changeMemberRole(principal, projectId, {
-            subject,
-            ...input,
-          }),
-        });
-        return;
-      }
-      if (subject !== undefined && req.method === 'DELETE') {
-        await this.scope.removeMember(principal, projectId, subject);
-        json(res, 200, { removed: true });
-        return;
-      }
     }
     throw unknownEndpoint();
   }

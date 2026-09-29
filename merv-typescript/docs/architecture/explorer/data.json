@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-28",
+  "snapshot": "2026-09-29",
   "groups": [
     {
       "id": "front",
@@ -1998,6 +1998,25 @@
       ]
     },
     {
+      "plugin": "merv-scope-api",
+      "source": "packages/scope/src/api.ts",
+      "provides": [],
+      "requires": [
+        "scope",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-scope-api",
+      "group": "front",
+      "owner": "scope",
+      "label": "Scope · api adapter",
+      "purpose": "Connects Scope to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-scope-tools",
       "source": "packages/scope/src/tools.ts",
       "provides": [],
@@ -3384,6 +3403,16 @@
       "optional": false
     },
     {
+      "from": "merv-scope-api",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-scope-api",
+      "to": "api",
+      "optional": false
+    },
+    {
       "from": "merv-scope-tools",
       "to": "scope",
       "optional": false
@@ -3560,10 +3589,10 @@
     }
   ],
   "counts": {
-    "plugins": 65,
+    "plugins": 66,
     "providers": 30,
-    "adapters": 35,
-    "dependencies": 178
+    "adapters": 36,
+    "dependencies": 180
   },
   "network": [
     {

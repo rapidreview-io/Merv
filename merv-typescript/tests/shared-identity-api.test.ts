@@ -13,6 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ProjectScope } from '@merv/scope';
 import { SupabaseIdentity } from '@merv/identity';
 import { ApiServer, ToolRegistry } from '@merv/api';
+import { scopeRoutes } from '@merv/scope/api';
 import type { Caller, Project, ProjectMembership } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
@@ -62,6 +63,7 @@ async function fixture(t: TestContext, database = ':memory:') {
     handler: async (caller) => await scope.require(caller, 'write'),
   });
   const server = new ApiServer(scope, tools, {}, identity);
+  for (const prefix of ['/account', '/projects'] as const) server.mount(prefix, scopeRoutes(scope));
   const url = await server.start();
   let closed = false;
   const close = async () => {
@@ -397,6 +399,7 @@ test('actor credentials keep one project and cannot manage human membership or f
       },
     },
   );
+  actorOnlyServer.mount('/account', scopeRoutes(f.scope));
   const actorUrl = await actorOnlyServer.start();
   t.after(() => actorOnlyServer.stop());
   const operator = await f.scope.caller({

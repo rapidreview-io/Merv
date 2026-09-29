@@ -165,6 +165,10 @@
       "name": "@merv/scope/tools"
     },
     {
+      "id": "scope-api",
+      "name": "@merv/scope/api"
+    },
+    {
       "id": "tools",
       "name": "@merv/api/tools-plugin"
     },

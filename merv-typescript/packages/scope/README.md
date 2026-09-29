@@ -2,6 +2,8 @@
 
 Scope owns project membership, actors, actor credentials and user keys, delegation and permissions. Its `toolPolicy` module also owns exact remote-tool grants; session tool enforcement registers with the tool registry instead. Scope injects only State; it does not depend on Sessions, Tools, API or Mounts.
 
+Its adapters publish it: `@merv/scope/tools`, `@merv/scope/ui`, and `@merv/scope/api`, which mounts the HTTP routes `/account` (the caller's account and user keys) and `/projects` (projects and memberships) on the API.
+
 ## Contracts kept on purpose
 
 - **Credential liveness.** Scope's `actor_credentials` and `user_keys` rows are provenance. Identity's credential ledger co-decides whether one is live, and only for a ledger row it records as owned by `scope` with the Scope row's id as subject. A ledger denial surfaces as 401, also inside a permission decision, whose other refusals are 403. Every credential or key revocation (`revokeCredential`, `revokeKey`, and the retirement of a rotated predecessor) also revokes the ledger row, adopting it first if it is missing (`ledger.ts`). A Scope row whose hash the ledger does not hold never authenticates; boot does not adopt such rows.

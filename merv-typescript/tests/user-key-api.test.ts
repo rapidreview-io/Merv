@@ -13,6 +13,7 @@ import { scopeToolsPlugin } from '@merv/scope/tools';
 import { SupabaseIdentity } from '@merv/identity';
 import { CredentialStore } from '@merv/identity/credentials';
 import { ApiServer, ToolRegistry } from '@merv/api';
+import { scopeRoutes } from '@merv/scope/api';
 import type { Caller, IssuedUserKey, Project, UserKey } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
@@ -60,6 +61,7 @@ async function fixture(t: TestContext) {
     handler: async (caller) => await scope.require(caller, 'write'),
   });
   const server = new ApiServer(scope, tools, {}, identity);
+  for (const prefix of ['/account', '/projects'] as const) server.mount(prefix, scopeRoutes(scope));
   const url = await server.start();
   t.after(async () => {
     await server.stop();

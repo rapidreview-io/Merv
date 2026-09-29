@@ -229,6 +229,17 @@ export function check(
 ): asserts condition {
   if (!condition) throw new MervError(code, message, status);
 }
+/** One decoded URL path segment: 400 `invalid_input` when it is blank, malformed or holds a
+ *  slash or NUL. */
+export function pathSegment(value: string): string {
+  try {
+    const decoded = decodeURIComponent(value);
+    if (!decoded.trim() || decoded.includes('/') || decoded.includes('\0')) throw new Error();
+    return decoded;
+  } catch {
+    throw new MervError('invalid_input', 'Malformed resource identifier');
+  }
+}
 /**
  * Whether State raised this error about its own scope, transaction or store, rather than an
  * operation refusing its input: a write under a read, a nested or closed transaction, a

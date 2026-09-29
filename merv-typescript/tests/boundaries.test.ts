@@ -808,7 +808,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['pi'],
+    api: ['pi', 'scope'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];

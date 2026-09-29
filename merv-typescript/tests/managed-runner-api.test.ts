@@ -9,6 +9,7 @@ import type { IdentityProvider } from '@merv/identity/types';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { ApiServer } from '../packages/api/src/http.js';
+import { scopeRoutes } from '../packages/scope/src/api.js';
 import type { CodeApiProvider, SessionApiProvider, Tools } from '../packages/api/src/types.js';
 
 async function fixture(t: TestContext) {
@@ -364,6 +365,7 @@ async function credentialGate(t: TestContext) {
       },
       { public: true },
     );
+  for (const prefix of ['/account', '/projects'] as const) api.mount(prefix, scopeRoutes(scope));
   const withdraw = { sessions: api.registerSessions(sessions), code: api.registerCode(code) };
   const url = await api.start();
   t.after(() => api.stop());

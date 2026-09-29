@@ -49,6 +49,7 @@ flowchart BT
     merv_sandboxes_tools["merv-sandboxes-tools"]
     merv_sandboxes_ui["merv-sandboxes-ui"]
     scope["scope"]
+    merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
     merv_scope_ui["merv-scope-ui"]
     sessions["sessions"]
@@ -211,6 +212,8 @@ flowchart BT
   merv_sandboxes_ui --> ui
   merv_sandboxes_ui --> scope
   scope --> state
+  merv_scope_api --> scope
+  merv_scope_api --> api
   merv_scope_tools --> scope
   merv_scope_tools --> tools
   merv_scope_ui --> scope
