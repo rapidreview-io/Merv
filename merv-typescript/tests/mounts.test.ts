@@ -520,7 +520,7 @@ test(
 );
 
 test(
-  'authenticated discovery authority is isolated from callers and revoked discovery withdraws the catalog',
+  'authenticated discovery is isolated from callers and needs no tool grants',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
@@ -567,7 +567,7 @@ test(
       tools: ['inspect'],
     }));
     services.access.replace(grants);
-    const manager = new MountManager(services.registry, credentials, services.access, {
+    const manager = new MountManager(services.registry, credentials, services.scope, {
       mounts: [
         {
           id: 'fixture',
@@ -590,31 +590,86 @@ test(
       upstream.connections.map((connection) => connection.identity),
       ['discovery', 'caller'],
     );
-    // Revoking only the discovery actor's grant withdraws the catalog it discovered.
-    services.access.replace(grants.slice(0, 1));
-    await until(
-      () => manager.status()[0].toolCount === 0,
-      'Revoked discovery authority remained active',
-    );
-    assert.deepEqual(await names(services.registry), ['native']);
-    assert.equal(manager.status()[0].errorCode, 'tool_forbidden');
-    services.access.replace(grants);
-    await manager.reconnect('fixture');
+    // Discovery needs no tool grants: revoking them all leaves the mount ready, and callers
+    // still need their own.
+    services.access.replace([]);
+    const lists = upstream.lists;
+    await until(() => upstream.lists >= lists + 3, 'Discovery stopped polling');
     assert.equal(manager.status()[0].state, 'ready');
-    // A discovery credential that no longer resolves withdraws the catalog too.
+    assert.deepEqual(await names(services.registry), ['_fixture.inspect', 'native']);
+    await assert.rejects(services.registry.call('_fixture.inspect', services.caller, {}), {
+      code: 'tool_forbidden',
+    });
+    services.access.replace(grants);
+    // The discovery secret is read once per connection: the warm connection keeps listing, and
+    // only the next discovery connection needs it.
     const discoveryToken = process.env[discoveryEnv]!;
     delete process.env[discoveryEnv];
-    await until(
-      () => manager.status()[0].toolCount === 0,
-      'Unresolvable discovery credential remained active',
-    );
-    assert.deepEqual(await names(services.registry), ['native']);
+    const before = upstream.lists;
+    await until(() => upstream.lists >= before + 3, 'Discovery stopped polling');
+    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(upstream.connections.length, 2);
+    await assert.rejects(manager.reconnect('fixture'), { code: 'credential_unavailable' });
     assert.equal(manager.status()[0].errorCode, 'credential_unavailable');
+    assert.deepEqual(await names(services.registry), ['native']);
     process.env[discoveryEnv] = discoveryToken;
     await manager.reconnect('fixture');
     assert.equal(manager.status()[0].state, 'ready');
   },
 );
+
+/** A mount whose discovery actor is a separate reader of the fixture project. */
+async function discovered(t: TestContext, tools = ['media']) {
+  const services = await local(t);
+  const { actor } = await services.scope.issueActor(services.caller, {
+    name: 'Discovery',
+    role: 'reader',
+  });
+  const discovery = { actorId: actor.id, projectId: actor.projectId };
+  const bindings = [
+    ...services.bindings,
+    { id: 'discovery-binding', ...discovery, mountId: 'fixture', secretRef: `env:${services.env}` },
+  ];
+  const upstream = await remote(t);
+  const mount = { id: 'fixture', url: upstream.url, tools, discovery, timeoutMs: 1000 };
+  return { services: { ...services, bindings }, upstream, mount, discovery };
+}
+
+test('removing the discovery actor fails the next round and ends its session', async (t) => {
+  const { services, upstream, mount, discovery } = await discovered(t);
+  const { manager } = await mounted(t, services, [{ ...mount, reconnectMs: 50 }]);
+  assert.equal(manager.status()[0].state, 'ready');
+  assert.equal(upstream.sessionCount, 1);
+  await services.scope.revokeActor(services.caller, discovery.actorId);
+  await until(
+    () => manager.status()[0].errorCode === 'forbidden',
+    'A removed discovery actor kept discovering',
+  );
+  await until(() => upstream.deletes === 1, 'The discovery session was not ended');
+  assert.equal(upstream.sessionCount, 0);
+  assert.deepEqual(await names(services.registry), ['native']);
+});
+
+test('a warm discovery poll checks the actor once and resolves no credential or grant', async (t) => {
+  const { services, upstream, mount } = await discovered(t, ['media', 'inspect', 'failure']);
+  const { manager } = await mounted(t, services, [{ ...mount, reconnectMs: 60000 }]);
+  assert.equal(manager.status()[0].state, 'ready');
+  const require = t.mock.method(services.scope, 'require');
+  const grants = t.mock.method(services.access, 'require');
+  const resolve = t.mock.method(EnvironmentCredentials.prototype, 'resolve');
+  const lists = () => upstream.requests.filter((request) => request.method === 'tools/list');
+  for (let poll = 1; poll <= 3; poll++) {
+    const before = lists().length;
+    await upstream.notifyToolsChanged();
+    await until(() => lists().length > before, 'The notification did not start a poll');
+    await until(() => require.mock.callCount() === poll, 'The poll did not check its actor');
+  }
+  await sleep(50);
+  assert.equal(require.mock.callCount(), 3);
+  assert.equal(grants.mock.callCount(), 0);
+  assert.equal(resolve.mock.callCount(), 0);
+  assert.equal(manager.status()[0].state, 'ready');
+});
 
 test('invalid mount configuration acquires no catalog namespaces', async (t) => {
   const services = await local(t);
@@ -628,7 +683,7 @@ test('invalid mount configuration acquires no catalog namespaces', async (t) => 
     ],
   ])
     assert.throws(
-      () => new MountManager(services.registry, services.credentials, services.access, { mounts }),
+      () => new MountManager(services.registry, services.credentials, services.scope, { mounts }),
       { code: 'invalid_mount_config' },
     );
   assert.deepEqual(await names(services.registry), ['native']);

@@ -48,6 +48,8 @@ export class CredentialServer {
   readonly connections: { identity: string; connectionId: number }[] = [];
   readonly calls: { identity: string; connectionId: number; tool: string }[] = [];
   rejected = 0;
+  /** tools/list requests answered. */
+  lists = 0;
   initializeAttempts = 0;
   callAttempts = 0;
   private http?: HttpServer;
@@ -126,12 +128,15 @@ export class CredentialServer {
       { name: 'credential-fixture', version: '1' },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: ['inspect', 'mutate'].map((name) => ({
-        name,
-        inputSchema: { type: 'object' as const, additionalProperties: false },
-      })),
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      this.lists++;
+      return {
+        tools: ['inspect', 'mutate'].map((name) => ({
+          name,
+          inputSchema: { type: 'object' as const, additionalProperties: false },
+        })),
+      };
+    });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       this.calls.push({ identity: identity.id, connectionId, tool: request.params.name });
       await this.pause(this.callHolds);

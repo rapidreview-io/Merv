@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, type ToolPolicy } from '@merv/contracts';
+import { check, MervError, type Scope } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import { EnvironmentCredentials } from './credentials.js';
 import type {
@@ -68,7 +68,7 @@ export class MountManager implements Mounts {
   constructor(
     private readonly tools: Tools,
     private readonly credentials: CredentialProvider,
-    private readonly access: ToolPolicy,
+    private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     config: MountsConfig = { mounts: [] },
   ) {
     const parsed = configuration.safeParse(config);
@@ -77,7 +77,7 @@ export class MountManager implements Mounts {
       for (const mount of parsed.data.mounts) {
         this.configs.set(mount.id, mount);
         this.enabled.set(mount.id, true);
-        this.runtimes.set(mount.id, new MountRuntime(tools, credentials, access, mount));
+        this.runtimes.set(mount.id, new MountRuntime(tools, credentials, scope, mount));
       }
     } catch {
       // Constructor allocations contain no admitted calls, but release every acquired namespace.
@@ -132,7 +132,7 @@ export class MountManager implements Mounts {
       const runtime = new MountRuntime(
         this.tools,
         this.credentials,
-        this.access,
+        this.scope,
         this.configs.get(id)!,
       );
       this.runtimes.set(id, runtime);
@@ -166,7 +166,7 @@ export const mountsPlugin = {
   inject: ['tools', 'scope'],
   async apply(ctx: Context, config: MountsConfig = { mounts: [] }) {
     const credentials = new EnvironmentCredentials(ctx.scope, config.bindings);
-    const manager = new MountManager(ctx.tools, credentials, ctx.scope.toolPolicy, config);
+    const manager = new MountManager(ctx.tools, credentials, ctx.scope, config);
     // Keep catalog withdrawal independent of consumers draining the public status service.
     ctx.effect(() => async () => manager.close());
     ctx.provide('mounts', manager);

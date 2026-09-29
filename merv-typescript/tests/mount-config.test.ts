@@ -27,7 +27,7 @@ test('failed multi-mount construction releases only namespaces acquired by that 
     ]);
     assert.throws(
       () =>
-        new MountManager(registry, credentials, access, {
+        new MountManager(registry, credentials, scope, {
           mounts: ['a', 'b'].map((id) => ({
             id,
             url: 'http://127.0.0.1:1/mcp',

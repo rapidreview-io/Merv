@@ -19,6 +19,17 @@ const credentials: CredentialProvider = {
     }),
   }),
 };
+/** Admits the fixture caller: redirects, not authorization, are under test. */
+const scope = {
+  require: async () => ({
+    ...caller,
+    id: caller.actorId,
+    name: 'Fixture',
+    role: 'operator' as const,
+    active: true,
+  }),
+  toolPolicy: fixtureAccess,
+};
 const tool = { name: 'inspect', inputSchema: { type: 'object' as const } };
 
 async function body(request: IncomingMessage) {
@@ -110,19 +121,8 @@ for (const mode of ['invocation', 'discovery']) {
         }
       },
     );
-    const registry = new ToolRegistry(
-      {
-        require: async () => ({
-          ...caller,
-          id: caller.actorId,
-          name: 'Fixture',
-          role: 'operator',
-          active: true,
-        }),
-      },
-      fixtureAccess,
-    );
-    const manager = new MountManager(registry, credentials, fixtureAccess, {
+    const registry = new ToolRegistry(scope, fixtureAccess);
+    const manager = new MountManager(registry, credentials, scope, {
       mounts: [
         {
           id: 'fixture',
@@ -186,19 +186,8 @@ for (const redirectMethod of ['initialize', 'tools/call']) {
 for (const redirectMethod of ['initialize', 'tools/list']) {
   test(`discovery refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
-    const registry = new ToolRegistry(
-      {
-        require: async () => ({
-          ...caller,
-          id: caller.actorId,
-          name: 'Fixture',
-          role: 'operator',
-          active: true,
-        }),
-      },
-      fixtureAccess,
-    );
-    const manager = new MountManager(registry, credentials, fixtureAccess, {
+    const registry = new ToolRegistry(scope, fixtureAccess);
+    const manager = new MountManager(registry, credentials, scope, {
       mounts: [
         {
           id: 'fixture',

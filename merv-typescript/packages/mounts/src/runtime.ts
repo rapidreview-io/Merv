@@ -1,9 +1,8 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { check, MervError } from '@merv/contracts';
+import { check, MervError, type Scope } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
 import type { CredentialProvider, ResolvedCredential } from './types.js';
-import type { ToolPolicy } from '@merv/contracts';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
 import { connectUpstream, endUpstream, fault, ScopedRemoteClients } from './upstream.js';
@@ -19,7 +18,6 @@ export class MountRuntime {
   /** JSON of the descriptions now in the registry; a key-order change only republishes. */
   private published?: string;
   private client?: Client;
-  private discoveryIdentity?: string;
   /** The running refresh's stop signal: only stop() aborts it, and only while that refresh runs. */
   private discoveryAbort?: AbortController;
   private current?: Promise<void>;
@@ -34,7 +32,7 @@ export class MountRuntime {
   constructor(
     tools: Tools,
     private readonly credentials: CredentialProvider,
-    private readonly access: ToolPolicy,
+    private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     private readonly config: MountConfig,
   ) {
     this.timeoutMs = config.timeoutMs ?? 5000;
@@ -48,7 +46,7 @@ export class MountRuntime {
     };
     this.pool = new ScopedRemoteClients(
       credentials,
-      access,
+      scope.toolPolicy,
       { mountId: config.id, url: config.url, timeoutMs: this.timeoutMs },
       tools,
     );
@@ -96,38 +94,22 @@ export class MountRuntime {
     return operation;
   }
 
+  /** Discovery lists metadata only; its tool grants never authorize a call (handlers use the pool). */
   private async credential(): Promise<ResolvedCredential | undefined> {
-    if (!this.config.discovery) return undefined;
-    // Discovery has its own configured actor. Its grants and credential never authorize calls.
-    for (const name of this.config.tools)
-      await this.access.require(this.config.discovery, this.config.id, name);
-    return await this.credentials.resolve(this.config.discovery, this.config.id);
+    const discovery = this.config.discovery;
+    return discovery && (await this.credentials.resolve(discovery, this.config.id));
   }
 
   private async refreshOnce(signal: AbortSignal): Promise<void> {
     check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
-    const credential = await this.credential();
-    if (this.client && this.discoveryIdentity !== credential?.identityKey)
-      await this.resetDiscovery();
-    if (!this.client) await this.connect(credential, signal);
+    // The discovery actor's credential is used only while that actor may read the project.
+    if (this.config.discovery) await this.scope.require(this.config.discovery, 'read');
+    if (!this.client) await this.connect(await this.credential(), signal);
     const client = this.client!;
     const found = await collectRemoteCatalog(client, this.wanted, {
       signal,
       timeout: this.timeoutMs,
     });
-    check(
-      !this.stopping && this.client === client,
-      'mount_disconnected',
-      'Discovery connection changed',
-      503,
-    );
-    // Credentials can change while discovery yields; do not publish a catalog using revoked authority.
-    check(
-      (await this.credential())?.identityKey === this.discoveryIdentity,
-      'credential_changed',
-      'Discovery credential changed',
-      409,
-    );
     check(
       !this.stopping && this.client === client,
       'mount_disconnected',
@@ -185,7 +167,6 @@ export class MountRuntime {
       throw new MervError('mounts_stopped', 'Mounts are stopped', 503);
     }
     this.client = client;
-    this.discoveryIdentity = credential?.identityKey;
   }
 
   private failed(error: unknown): void {
@@ -211,7 +192,6 @@ export class MountRuntime {
   private async resetDiscovery(): Promise<void> {
     const client = this.client;
     this.client = undefined;
-    this.discoveryIdentity = undefined;
     // Ending the client rejects its in-flight requests; the refresh signal is stop()'s alone.
     if (client) await endUpstream(client);
   }
