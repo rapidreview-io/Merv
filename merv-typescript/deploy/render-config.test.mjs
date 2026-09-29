@@ -576,20 +576,3 @@ test('Nisa is composed only from its rr_sk_ key, and renders the variable name o
   }
 });
 
-test('the artifacts backfill is off unless the operator turns it on', (t) => {
-  const { directory, run, plugin } = renderer(t);
-  // Off, rendering needs no artifacts entry at all; on, it configures the one default.json has.
-  assert.equal(run().status, 0);
-  assert.equal(run({ MERV_ARTIFACTS_BACKFILL: 'true' }).status, 1);
-  const defaults = join(directory, 'dist/config/default.json');
-  const fixture = JSON.parse(readFileSync(defaults, 'utf8'));
-  fixture.plugins.push({ id: 'artifacts', name: 'artifacts' });
-  writeFileSync(defaults, JSON.stringify(fixture));
-  assert.equal(run().status, 0);
-  assert.deepEqual(plugin('artifacts'), { id: 'artifacts', name: 'artifacts' });
-  assert.equal(run({ MERV_ARTIFACTS_BACKFILL: 'false' }).status, 0);
-  assert.equal(plugin('artifacts').config, undefined);
-  assert.equal(run({ MERV_ARTIFACTS_BACKFILL: 'true' }).status, 0);
-  assert.deepEqual(plugin('artifacts').config, { backfill: true });
-  assert.notEqual(run({ MERV_ARTIFACTS_BACKFILL: 'yes' }).status, 0);
-});

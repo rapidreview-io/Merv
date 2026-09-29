@@ -134,10 +134,47 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
   }
 });
 
+test('a leased task worker receives GPU tool grants bound to its task and revision', async (t) => {
+  const { offer, run, create } = await fixture(t);
+  const task = await create('gpu-grants');
+  assert.equal(task.workflow.version, 12);
+  const { worker } = await offer(task);
+  const command = {
+    key: 'smoke',
+    provider: 'test',
+    offerId: 'gpu',
+    command: 'echo ok',
+    minutes: 5,
+    maxUsd: 1,
+  };
+  const admitted = await run(worker, 'task.compute_run', command, (_caller, input) => input);
+  assert.equal(admitted.taskId, task.id);
+  assert.equal(admitted.expectedRevision, task.workflow.revision);
+  await assert.rejects(
+    run(
+      worker,
+      'task.compute_run',
+      { ...command, taskId: 'other-task' },
+      (_caller, input) => input,
+    ),
+    { code: 'execution_arguments_forbidden' },
+  );
+  const status = await run(worker, 'task.compute_status', {}, (_caller, input) => input);
+  assert.equal(status.taskId, task.id);
+});
+
 test('a review session binds the claim its lease took, and a successor binds only its own', async (t) => {
   const { app, operator, offer, release, pending } = await fixture(t);
   const task = await pending();
   const first = await offer(task);
+  assert.equal(
+    (await app.ctx.sessions.prepare(first.worker, 'task.compute_status', {})).input.taskId,
+    task.id,
+  );
+  for (const name of ['task.compute_run', 'task.compute_cancel'])
+    await assert.rejects(app.ctx.sessions.prepare(first.worker, name, {}), {
+      code: 'execution_tool_forbidden',
+    });
   const claim = (await app.ctx.reviews.get(operator, task.reviewId!)).claimId!;
   assert.ok(claim);
   assert.equal(

@@ -10,8 +10,8 @@
   "apiEntries": 37,
   "serverPlugins": 67,
   "machinePlugins": 1,
-  "directDependencyCount": 182,
-  "optionalDependencyCount": 15,
+  "directDependencyCount": 183,
+  "optionalDependencyCount": 16,
   "directConsumers": {
     "api": 6,
     "artifacts": 12,
@@ -34,7 +34,7 @@
     "research": 2,
     "reviews": 7,
     "runner": 0,
-    "sandboxes": 5,
+    "sandboxes": 6,
     "scope": 25,
     "sessions": 5,
     "state": 19,
@@ -946,7 +946,8 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch"
+        "codeResearch",
+        "sandboxes"
       ],
       "kind": "service",
       "runtime": "server",

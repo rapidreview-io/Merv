@@ -1,317 +1,130 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
-import { check, MervError } from '@merv/contracts';
+import type { Scope } from '@merv/contracts';
 import type { Tools, ToolCatalog, RemoteToolDefinition } from '@merv/api/types';
-import type { CredentialProvider, ResolvedCredential } from './types.js';
-import type { ToolPolicy } from '@merv/contracts';
+import type { Bindings } from './credentials.js';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
-import { ScopedRemoteClients, withDeadline } from './credential-client.js';
+import { connectUpstream, endUpstream, fault, Invocations } from './upstream.js';
 
-const safeCodes = new Set([
-  'forbidden',
-  'tool_forbidden',
-  'credential_forbidden',
-  'credential_unavailable',
-  'credential_changed',
-  'invalid_schema',
-  'invalid_tool',
-  'unsupported_execution',
-  'remote_catalog_limit',
-  'remote_catalog_cursor',
-  'remote_catalog_duplicate',
-  'remote_catalog_timeout',
-  'mount_missing_tool',
-  'mount_disconnected',
-  'mount_timeout',
-  'mount_cleanup_failed',
-]);
-const safeCode = (error: unknown) =>
-  error instanceof MervError && safeCodes.has(error.code) ? error.code : 'mount_unavailable';
-
-/** One dedicated discovery session; invocation connections are separately scoped by the pool. */
+/** One dedicated discovery session; each caller's invocations use its own connection in the pool. */
 export class MountRuntime {
-  private readonly catalog: ToolCatalog;
-  private readonly pool: ScopedRemoteClients;
-  private readonly timeoutMs: number;
-  private readonly reconnectMs: number;
-  private snapshot: MountStatus;
-  private client?: Client;
-  private discoveryIdentity?: string;
-  private discoveryAbort?: AbortController;
-  private current?: Promise<void>;
-  private forceNext = false;
-  private refreshAgain = false;
-  private failures = 0;
-  private cleanupFailed = false;
-  private timer?: Awaited<ReturnType<typeof setTimeout>>;
-  private readonly drains = new Set<Promise<void>>();
-  private stopping = false;
-  private closing?: Promise<void>;
+  readonly #catalog: ToolCatalog;
+  readonly #pool: Invocations;
+  readonly #timeoutMs: number;
+  #status: MountStatus;
+  /** JSON of the descriptions now in the registry; a key-order change only republishes. */
+  #published?: string;
+  #client?: Client;
+  #running?: Promise<void>;
+  /** The running round's stop signal: only stop() aborts it, and only while that round runs. */
+  #round?: AbortController;
+  #again = false; // a trigger during a round reruns it once
+  #stopped = false;
+  #timer?: NodeJS.Timeout;
+  #ending: Promise<unknown> = Promise.resolve(); // every discovery DELETE; stop() awaits it
 
   constructor(
     tools: Tools,
-    private readonly credentials: CredentialProvider,
-    private readonly access: ToolPolicy,
+    private readonly bindings: Pick<Bindings, 'select' | 'headers'>,
+    private readonly scope: Pick<Scope, 'require' | 'toolPolicy'>,
     private readonly config: MountConfig,
   ) {
-    this.timeoutMs = config.timeoutMs ?? 5000;
-    this.reconnectMs = config.reconnectMs ?? 1000;
-    this.snapshot = {
-      id: config.id,
-      origin: new URL(config.url).origin,
-      state: 'connecting',
-      toolCount: 0,
-    };
-    this.pool = new ScopedRemoteClients(
-      credentials,
-      access,
-      { mountId: config.id, url: config.url, timeoutMs: this.timeoutMs },
-      tools,
-    );
-    this.catalog = tools.createCatalog(config.id);
+    const timeoutMs = (this.#timeoutMs = config.timeoutMs ?? 5000);
+    const origin = new URL(config.url).origin;
+    this.#status = { id: config.id, origin, state: 'connecting', toolCount: 0 };
+    this.#pool = new Invocations({ ...config, timeoutMs }, bindings, scope.toolPolicy, tools);
+    this.#catalog = tools.createCatalog(config.id);
   }
 
   status(): MountStatus {
-    return { ...this.snapshot };
+    return { ...this.#status };
   }
 
-  refresh(force = false): Promise<void> {
-    if (this.stopping)
-      return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
-    if (force && this.current)
-      return this.current.catch(() => undefined).then(async () => this.refresh(true));
-    this.clearTimer();
-    if (force) this.forceNext = true;
-    else this.refreshAgain = true;
-    if (this.current) return this.current;
-    const operation = Promise.resolve()
-      .then(async () => {
-        let rounds = 0;
-        do {
-          rounds++;
-          const reconnect = this.forceNext;
-          this.forceNext = false;
-          this.refreshAgain = false;
-          if (reconnect) await this.resetDiscovery();
-          await this.refreshOnce();
-          // Continuous notifications cannot keep optional startup or one explicit refresh open forever.
-        } while (!this.stopping && rounds < 2 && (this.forceNext || this.refreshAgain));
-      })
-      .catch((error: unknown) => {
-        if (!this.stopping) this.failed(error);
-        throw new MervError(safeCode(error), 'Mount catalog is unavailable', 503);
-      })
+  /** Start, the timer and list_changed share one round at a time; status() reports its outcome. */
+  refresh(): void {
+    if (this.#stopped) return;
+    if (this.#running) {
+      this.#again = true;
+      return;
+    }
+    clearTimeout(this.#timer);
+    const round = (this.#round = new AbortController());
+    this.#running = this.round(round.signal)
+      .catch((error: unknown) => this.failed(error))
       .finally(() => {
-        this.current = undefined;
-        this.schedule();
+        const again = this.#again;
+        this.#running = this.#round = undefined;
+        this.#again = false;
+        if (again) this.refresh();
+        else if (!this.#stopped)
+          this.#timer = setTimeout(() => this.refresh(), this.config.reconnectMs ?? 60_000).unref();
       });
-    this.current = operation;
-    return operation;
   }
 
-  private async credential(): Promise<ResolvedCredential | undefined> {
-    if (!this.config.discovery) return undefined;
-    // Discovery has its own configured actor. Its grants and credential never authorize calls.
-    for (const name of this.config.tools)
-      await this.access.require(this.config.discovery, this.config.id, name);
-    return await this.credentials.resolve(this.config.discovery, this.config.id);
-  }
-
-  private async refreshOnce(): Promise<void> {
-    check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
-    const credential = await this.credential();
-    if (this.client && this.discoveryIdentity !== credential?.identityKey)
-      await this.resetDiscovery();
-    if (!this.client) await this.connect(credential);
-    const client = this.client!;
-    const definitions = await collectRemoteCatalog(client, {
-      timeoutMs: this.timeoutMs,
-      signal: this.discoveryAbort!.signal,
+  private async round(signal: AbortSignal): Promise<void> {
+    // The discovery actor's credential is used only while that actor may read the project.
+    if (this.config.discovery) await this.scope.require(this.config.discovery, 'read');
+    this.#client ??= await this.connect(signal);
+    const found = await collectRemoteCatalog(this.#client, new Set(this.config.tools), {
+      signal,
+      timeout: this.#timeoutMs,
     });
-    check(
-      !this.stopping && this.client === client,
-      'mount_disconnected',
-      'Discovery connection changed',
-      503,
-    );
-    // Credentials can change while discovery yields; do not publish a catalog using revoked authority.
-    check(
-      (await this.credential())?.identityKey === this.discoveryIdentity,
-      'credential_changed',
-      'Discovery credential changed',
-      409,
-    );
-    check(
-      !this.stopping && this.client === client,
-      'mount_disconnected',
-      'Discovery connection changed',
-      503,
-    );
-    const available = new Map(definitions.map((definition) => [definition.name, definition]));
-    const selected: RemoteToolDefinition[] = this.config.tools.map((name) => {
-      const definition = available.get(name);
-      check(definition, 'mount_missing_tool', 'A selected remote tool is missing', 502);
-      return {
-        ...definition,
-        kind: 'mcp',
-        // Every call selects its own authority; discovery's credential never invokes tools.
-        handler: async (caller, input) => this.pool.call(caller, this.config.id, name, input),
-      };
+    // The selected tools the upstream offers now; a missing one is withdrawn alone.
+    const selected: RemoteToolDefinition[] = this.config.tools.flatMap((name) => {
+      const definition = found.get(name);
+      return definition ? [{ ...definition, kind: 'mcp', handler: this.#pool.handler(name) }] : [];
     });
-    // Registry compilation only sees the selected subset and swaps the entire generation atomically.
-    await this.catalog.replace(selected);
-    if (this.stopping || this.client !== client) return;
-    this.snapshot = {
-      id: this.config.id,
-      origin: this.snapshot.origin,
-      state: 'ready',
-      toolCount: selected.length,
-    };
-    this.failures = 0;
-  }
-
-  private async connect(credential: ResolvedCredential | undefined): Promise<void> {
-    check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
-    this.snapshot = { ...this.snapshot, state: 'connecting' };
-    const client = new Client({ name: 'merv-mount-discovery', version: '1' });
-    const controller = new AbortController();
-    this.client = client;
-    this.discoveryAbort = controller;
-    this.discoveryIdentity = credential?.identityKey;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-      if (!this.stopping && this.client === client) void this.refresh().catch(() => undefined);
-    });
-    client.onclose = () => {
-      if (this.stopping || this.client !== client) return;
-      this.client = undefined;
-      controller.abort(new MervError('mount_disconnected', 'Discovery connection closed', 503));
-      this.failed(new MervError('mount_disconnected', 'Discovery connection closed', 503));
-      if (!this.current) this.schedule();
-    };
-    const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
-      ...(credential ? { requestInit: { headers: { ...credential.headers() } } } : {}),
-      fetch: async (address, init) => {
-        const lifetime = [controller.signal, ...(init?.signal ? [init.signal] : [])];
-        if (init?.method?.toUpperCase() !== 'GET')
-          return fetch(address, {
-            ...init,
-            redirect: 'error',
-            signal: AbortSignal.any([...lifetime, AbortSignal.timeout(this.timeoutMs)]),
-          });
-        // Bound opening the notification stream, not its lifetime. Timing out an
-        // established SSE body creates gaps that can permanently lose notifications.
-        const opening = new AbortController();
-        const timer = setTimeout(() => opening.abort(), this.timeoutMs);
-        try {
-          return await fetch(address, {
-            ...init,
-            // Notification session headers must stay on the configured endpoint too.
-            redirect: 'error',
-            signal: AbortSignal.any([...lifetime, opening.signal]),
-          });
-        } finally {
-          clearTimeout(timer);
-        }
-      },
-    });
-    try {
-      await withDeadline(
-        client.connect(transport, { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs }),
-        this.timeoutMs,
-        'mount_timeout',
-      );
-      check(
-        !this.stopping && this.client === client,
-        'mount_disconnected',
-        'Discovery connection changed',
-        503,
-      );
-    } catch (error) {
-      if (this.client === client) this.client = undefined;
-      controller.abort();
-      await this.closeClient(client).catch(() => undefined);
-      throw error;
+    // Registry compilation sees only the selected subset and swaps the whole generation atomically.
+    // An unchanged catalog is not replaced: no schema compile, and no drain of admitted calls.
+    const next = JSON.stringify(selected); // handlers are functions: stringify drops them
+    if (next !== this.#published) {
+      await this.#catalog.replace(selected);
+      this.#published = next;
     }
+    if (this.#stopped) return; // a round finishing after stop() never overwrites 'stopped'
+    const missing = selected.length < this.config.tools.length;
+    this.#set('ready', selected.length, missing ? 'mount_missing_tool' : undefined);
   }
 
+  /** Discovery lists metadata only; its binding never carries a call (handlers use the pool). */
+  private async connect(signal: AbortSignal): Promise<Client> {
+    const { discovery } = this.config;
+    const binding = discovery && (await this.bindings.select(discovery, this.config.id));
+    const headers = binding && (await this.bindings.headers(binding));
+    const notifications = (client: Client) =>
+      client.setNotificationHandler(ToolListChangedNotificationSchema, async () => this.refresh());
+    return connectUpstream(this.config.url, headers, this.#timeoutMs, { signal, notifications });
+  }
+
+  /** Published tools stay; each call reports its own failure. */
   private failed(error: unknown): void {
-    this.failures++;
-    this.snapshot = {
-      ...this.snapshot,
-      state:
-        this.snapshot.state === 'ready' || this.snapshot.state === 'disconnected'
-          ? 'disconnected'
-          : 'failed',
-      toolCount: 0,
-      errorCode: safeCode(error),
-    };
-    // Withdrawal starts now. A held call must not delay status updates or reconnect scheduling.
-    const drain = this.catalog.replace([]).catch(() => undefined);
-    this.drains.add(drain);
-    void drain.finally(() => this.drains.delete(drain));
-    if (this.client) {
-      const cleanup = this.resetDiscovery().catch(() => undefined);
-      this.drains.add(cleanup);
-      void cleanup.finally(() => this.drains.delete(cleanup));
-    }
+    if (this.#stopped) return;
+    const state = this.#published === undefined ? 'failed' : 'disconnected';
+    this.#set(state, this.#status.toolCount, fault(error).code);
+    this.#end();
   }
 
-  private async resetDiscovery(): Promise<void> {
-    const client = this.client;
-    this.client = undefined;
-    this.discoveryIdentity = undefined;
-    this.discoveryAbort?.abort();
-    this.discoveryAbort = undefined;
-    if (client) await this.closeClient(client);
-  }
-  private async closeClient(client: Client): Promise<void> {
-    try {
-      await withDeadline(client.close(), this.timeoutMs, 'mount_timeout');
-    } catch {
-      this.cleanupFailed = true;
-      throw new MervError('mount_cleanup_failed', 'Discovery resource cleanup failed', 503);
-    }
-  }
-  private clearTimer(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-  }
-  private schedule(): void {
-    this.clearTimer();
-    if (this.stopping) return;
-    const delay = Math.min(this.reconnectMs * 2 ** Math.min(this.failures, 6), 60000);
-    this.timer = setTimeout(() => {
-      void this.refresh().catch(() => undefined);
-    }, delay);
-    this.timer.unref();
+  /** Ends the discovery session, if any; stop() awaits every such DELETE. */
+  #end(): void {
+    this.#ending = Promise.all([this.#ending, this.#client && endUpstream(this.#client)]);
+    this.#client = undefined;
   }
 
+  /** Never rejects. */
   async stop(): Promise<void> {
-    if (this.closing) return this.closing;
-    this.stopping = true;
-    this.clearTimer();
-    this.discoveryAbort?.abort(new MervError('mounts_stopped', 'Mounts are stopped', 503));
-    this.snapshot = {
-      id: this.config.id,
-      origin: this.snapshot.origin,
-      state: 'stopped',
-      toolCount: 0,
-    };
-    const withdrawal = this.catalog.dispose();
-    this.closing = (async () => {
-      await Promise.allSettled([
-        withdrawal,
-        ...(this.current ? [this.current] : []),
-        ...this.drains,
-      ]);
-      const results = await Promise.allSettled([this.pool.close(), this.resetDiscovery()]);
-      if (this.cleanupFailed || results.some((result) => result.status === 'rejected')) {
-        this.snapshot = { ...this.snapshot, state: 'failed', errorCode: 'mount_cleanup_failed' };
-        throw new MervError('mount_cleanup_failed', 'Mount resource cleanup failed', 503);
-      }
-    })();
-    return this.closing;
+    this.#stopped = true;
+    clearTimeout(this.#timer);
+    this.#set('stopped', 0);
+    const withdrawn = this.#catalog.dispose(); // withdraws before its first await
+    this.#round?.abort(); // cuts a connect or list short
+    await this.#running; // never rejects; a pending replace() drains admitted calls, each bounded
+    this.#end(); // a connect that finished during stop still gets its DELETE
+    await Promise.all([withdrawn.then(() => this.#pool.close()), this.#ending]);
+  }
+
+  #set(state: MountStatus['state'], toolCount: number, errorCode?: string): void {
+    const { id, origin } = this.#status;
+    this.#status = { id, origin, state, toolCount, ...(errorCode && { errorCode }) };
   }
 }

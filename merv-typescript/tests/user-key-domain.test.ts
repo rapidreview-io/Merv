@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
+import { Bindings } from '../packages/mounts/src/credentials.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 
 test('machine domain writes preserve key provenance, while key withdrawal preserves the owner and review claim', async (t) => {
@@ -182,7 +182,7 @@ test('known user keys remain excluded from upstream credentials while active and
   const root = await scope.createKey(owner, { projectId: project.id });
   const successor = await scope.rotateKey(owner, { keyId: root.key.id });
   await scope.revokeKey(owner, root.key.id);
-  const provider = new EnvironmentCredentials(scope, [
+  const bindings = new Bindings(scope, [
     {
       id: 'local-user-key',
       projectId: project.id,
@@ -191,21 +191,22 @@ test('known user keys remain excluded from upstream credentials while active and
       secretRef: `env:${envName}`,
     },
   ]);
+  const binding = await bindings.select(caller, 'sandboxes');
   for (const token of [root.token, successor.token]) {
     process.env[envName] = token;
-    await assert.rejects(async () => await provider.resolve(caller, 'sandboxes'), {
+    await assert.rejects(async () => await bindings.headers(binding), {
       code: 'credential_unavailable',
     });
     assert.equal(await scope.recognizesCredential(token), true);
   }
   const active = await scope.createKey(owner, { projectId: project.id });
   process.env[envName] = active.token;
-  await assert.rejects(async () => await provider.resolve(caller, 'sandboxes'), {
+  await assert.rejects(async () => await bindings.headers(binding), {
     code: 'credential_unavailable',
   });
   process.env[envName] = 'explicitly-configured-upstream-service-token';
   assert.equal(
-    (await provider.resolve(caller, 'sandboxes')).headers().authorization,
+    (await bindings.headers(binding)).authorization,
     'Bearer explicitly-configured-upstream-service-token',
   );
 });

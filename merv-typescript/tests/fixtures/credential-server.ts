@@ -48,6 +48,8 @@ export class CredentialServer {
   readonly connections: { identity: string; connectionId: number }[] = [];
   readonly calls: { identity: string; connectionId: number; tool: string }[] = [];
   rejected = 0;
+  /** tools/list requests answered. */
+  lists = 0;
   initializeAttempts = 0;
   callAttempts = 0;
   private http?: HttpServer;
@@ -57,7 +59,7 @@ export class CredentialServer {
   private readonly callHolds: Barrier[] = [];
   private readonly initializeHolds: Barrier[] = [];
   private readonly initializeFailures: string[] = [];
-  private readonly callFailures: string[] = [];
+  private readonly callFailures: { message: string; status: number }[] = [];
   private nextConnection = 1;
 
   constructor(identities: UpstreamIdentity[]) {
@@ -72,8 +74,8 @@ export class CredentialServer {
   failNextInitialize(message: string) {
     this.initializeFailures.push(message);
   }
-  failNextCall(message: string) {
-    this.callFailures.push(message);
+  failNextCall(message: string, status = 500) {
+    this.callFailures.push({ message, status });
   }
   revoke(token: string) {
     this.identities.delete(token);
@@ -126,12 +128,15 @@ export class CredentialServer {
       { name: 'credential-fixture', version: '1' },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: ['inspect', 'mutate'].map((name) => ({
-        name,
-        inputSchema: { type: 'object' as const, additionalProperties: false },
-      })),
-    }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      this.lists++;
+      return {
+        tools: ['inspect', 'mutate'].map((name) => ({
+          name,
+          inputSchema: { type: 'object' as const, additionalProperties: false },
+        })),
+      };
+    });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       this.calls.push({ identity: identity.id, connectionId, tool: request.params.name });
       await this.pause(this.callHolds);
@@ -218,7 +223,7 @@ export class CredentialServer {
       this.callAttempts++;
       const failure = this.callFailures.shift();
       if (failure) {
-        res.writeHead(500).end(failure);
+        res.writeHead(failure.status).end(failure.message);
         return;
       }
     }

@@ -19,7 +19,7 @@ export const mountsUiPlugin = {
         // count, because a number beside a row label means open work.
         status: () => {
           const all = mounts.status();
-          const down = all.filter((mount) => mount.state !== 'ready');
+          const down = all.filter((mount) => mount.state !== 'ready' || mount.errorCode);
           return down.length
             ? { state: 'degraded', detail: `${down.length} of ${all.length} not ready` }
             : { state: 'ready' };

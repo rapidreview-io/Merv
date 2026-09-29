@@ -3,10 +3,16 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import {
+  ErrorCode,
+  McpError,
+  type CallToolResult,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
 import { MervError, type Caller, type Scope } from '@merv/contracts';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { collectRemoteCatalog } from '../packages/mounts/src/remote-catalog.js';
+import { fault } from '../packages/mounts/src/upstream.js';
 import {
   callable,
   RemoteFixture,
@@ -36,6 +42,11 @@ const simple = (name: string): Tool => ({
   inputSchema: { type: 'object', additionalProperties: false },
   annotations: { readOnlyHint: true },
 });
+const everyName = new Set([...representativeTools.map((tool) => tool.name), 'fresh']);
+/** The selected upstream descriptions in upstream order. */
+const collect = async (client: Client, wanted: ReadonlySet<string> = everyName, timeout = 5000) => [
+  ...(await collectRemoteCatalog(client, wanted, { timeout })).values(),
+];
 const names = async (registry: ToolRegistry) => (await registry.list()).map((tool) => tool.name);
 async function until(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -60,8 +71,8 @@ async function setup(t: TestContext, options: RemoteFixtureOptions = {}) {
     fixture,
     client,
     registry,
-    /** Collects the complete upstream catalog, then swaps it in as one generation. */
-    refresh: async () => catalog.replace(callable(client, await collectRemoteCatalog(client))),
+    /** Collects the selected upstream catalog, then swaps it in as one generation. */
+    refresh: async () => catalog.replace(callable(client, await collect(client))),
   };
 }
 
@@ -70,7 +81,7 @@ test(
   { timeout: 10000 },
   async (t) => {
     const { fixture, client, registry, refresh } = await setup(t, { pageSize: 1 });
-    assert.deepEqual(await collectRemoteCatalog(client), representativeTools);
+    assert.deepEqual(await collect(client), representativeTools);
     assert.deepEqual(
       fixture.requests
         .filter((request) => request.method === 'tools/list')
@@ -139,23 +150,35 @@ test(
 );
 
 test(
-  'catalog collection rejects repeated cursors and explicit page/tool limit overruns',
+  'collection reads only until every selected name is found and ignores unselected tools',
+  { timeout: 10000 },
+  async (t) => {
+    const { fixture, client } = await setup(t, { pageSize: 1 });
+    assert.deepEqual(await collect(client, new Set(['inspect'])), [representativeTools[0]]);
+    assert.equal(fixture.requests.filter((request) => request.method === 'tools/list').length, 1);
+    const unselected = await setup(t, {
+      page: (cursor) => ({
+        tools: [simple('same'), simple(cursor === undefined ? 'wanted' : 'late')],
+        ...(cursor === undefined ? { nextCursor: 'second' } : {}),
+      }),
+    });
+    assert.deepEqual(
+      (await collect(unselected.client, new Set(['wanted', 'late']))).map((tool) => tool.name),
+      ['wanted', 'late'],
+      'An unselected name may repeat',
+    );
+  },
+);
+
+test(
+  'collection ends a repeating cursor at the page limit and refuses a repeated selected name',
   { timeout: 10000 },
   async (t) => {
     const repeated = await setup(t, { page: () => ({ tools: [], nextCursor: 'loop' }) });
-    await assert.rejects(collectRemoteCatalog(repeated.client), code('remote_catalog_cursor'));
+    await assert.rejects(collect(repeated.client), code('remote_catalog_limit'));
     assert.equal(
       repeated.fixture.requests.filter((request) => request.method === 'tools/list').length,
-      2,
-    );
-    const normal = await setup(t, { pageSize: 1 });
-    await assert.rejects(
-      collectRemoteCatalog(normal.client, { maxPages: 1 }),
-      code('remote_catalog_limit'),
-    );
-    await assert.rejects(
-      collectRemoteCatalog(normal.client, { maxTools: 1 }),
-      code('remote_catalog_limit'),
+      20,
     );
     const duplicate = await setup(t, {
       page: (cursor) => ({
@@ -163,26 +186,31 @@ test(
         ...(cursor === undefined ? { nextCursor: 'second' } : {}),
       }),
     });
-    await assert.rejects(collectRemoteCatalog(duplicate.client), code('remote_catalog_duplicate'));
+    await assert.rejects(
+      collect(duplicate.client, new Set(['same', 'other'])),
+      code('remote_catalog_duplicate'),
+    );
   },
 );
 
-test(
-  'a held upstream page times out within the collection budget',
-  { timeout: 10000 },
-  async (t) => {
-    const { fixture, client } = await setup(t);
-    const held = fixture.holdNextList();
-    const collection = collectRemoteCatalog(client, { timeoutMs: 80 });
-    const rejection = assert.rejects(collection, code('remote_catalog_timeout'));
-    await held.entered;
-    try {
-      await rejection;
-    } finally {
-      held.release();
-    }
-  },
-);
+test('a held upstream page times out as a request timeout', { timeout: 10000 }, async (t) => {
+  const { fixture, client } = await setup(t);
+  const held = fixture.holdNextList();
+  const started = performance.now();
+  const collection = collect(client, everyName, 80);
+  const rejection = assert.rejects(collection, (error: unknown) => {
+    assert.ok(error instanceof McpError && error.code === ErrorCode.RequestTimeout);
+    assert.equal(fault(error).code, 'remote_timeout');
+    return true;
+  });
+  await held.entered;
+  try {
+    await rejection;
+    assert.ok(performance.now() - started < 1000);
+  } finally {
+    held.release();
+  }
+});
 
 test(
   'atomic refresh withdraws removed tools while draining an already admitted remote call',

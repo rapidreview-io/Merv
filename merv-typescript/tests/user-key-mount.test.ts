@@ -3,10 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { Caller } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
-import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { ToolRegistry } from '@merv/api';
+import { Bindings } from '../packages/mounts/src/credentials.js';
+import { Invocations } from '../packages/mounts/src/upstream.js';
 import { openState } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
 
@@ -49,7 +51,7 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
           tools: ['inspect'],
         },
       ]);
-      const credentials = new EnvironmentCredentials(scope, [
+      const bindings = new Bindings(scope, [
         {
           id: 'explicit-worker-binding',
           projectId: project.id,
@@ -62,35 +64,48 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       const release = deferred();
       const connections: { closes: number }[] = [];
       const dispatched: unknown[] = [];
-      const pool = new ScopedRemoteClients(credentials, access, {
-        mountId: 'bridge',
-        url: 'https://unused-mount.example/mcp',
-        timeoutMs: 1500,
-        clientFactory: () => {
-          const connection = { closes: 0 };
-          connections.push(connection);
-          const held = connections.length === 1;
-          // Only the SDK I/O is substituted. All caller, grant, and credential checks are real.
-          return {
-            connect: async () => {
-              if (held) {
-                entered.resolve();
-                await release.promise;
-              }
-            },
-            request: async (request: unknown) => {
-              dispatched.push(request);
-              return { content: [], structuredContent: { dispatched: true } };
-            },
-            close: async () => {
-              connection.closes++;
-            },
-          } as unknown as Client;
+      // Calls go through the registry, which admits each one as in production.
+      const registry = new ToolRegistry(scope, access);
+      const pool = new Invocations(
+        { id: 'bridge', url: 'https://unused-mount.example/mcp', timeoutMs: 1500 },
+        bindings,
+        access,
+        registry,
+        {
+          connect: async () => {
+            const connection = { closes: 0 };
+            connections.push(connection);
+            // Only the SDK I/O is substituted. All caller, grant, and credential checks are real.
+            if (connections.length === 1) {
+              entered.resolve();
+              await release.promise;
+            }
+            return {
+              request: async (request: unknown) => {
+                dispatched.push(request);
+                return { content: [], structuredContent: { dispatched: true } };
+              },
+              close: async () => {
+                connection.closes++;
+              },
+            } as unknown as Client;
+          },
         },
-      });
+      );
+      await registry.createCatalog('bridge').replace([
+        {
+          kind: 'mcp',
+          name: 'inspect',
+          inputSchema: { type: 'object' },
+          handler: pool.handler('inspect'),
+        },
+      ]);
+      const call = (caller: Caller, marker: string) =>
+        registry.call('_bridge.inspect', caller, { marker });
       t.after(async () => {
         release.resolve();
         try {
+          await registry.close();
           await pool.close();
         } finally {
           await state.close();
@@ -102,11 +117,9 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       });
 
       assert.equal((await access.granted(captured))('bridge', 'inspect'), true);
-      assert.equal(
-        (await credentials.resolve(captured, 'bridge')).headers().authorization,
-        `Bearer ${upstreamToken}`,
-      );
-      const pending = pool.call(captured, 'bridge', 'inspect', { marker: 'stale' });
+      const binding = await bindings.select(captured, 'bridge');
+      assert.equal((await bindings.headers(binding)).authorization, `Bearer ${upstreamToken}`);
+      const pending = call(captured, 'stale');
       const denied = assert.rejects(pending, {
         code: withdrawal === 'key-revocation' ? 'forbidden' : 'membership_required',
       });
@@ -123,7 +136,8 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       release.resolve();
       await denied;
       assert.equal(dispatched.length, 0, 'Withdrawn authority never crosses the upstream boundary');
-      assert.equal(connections[0].closes, 1, 'The rejected connection is cleaned up');
+      // A refusal concerns the call: the connection stays for the actor's current callers.
+      assert.equal(connections[0].closes, 0, 'A refused call keeps its connection');
 
       const currentKey = await scope.caller({
         kind: 'key',
@@ -136,14 +150,12 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       if (withdrawal === 'membership-rejoin')
         assert.notEqual(currentKey.key!.membershipId, captured.key!.membershipId);
       assert.equal((await scope.require(currentHuman, 'write')).role, 'producer');
-      assert.equal(
-        (await credentials.resolve(currentKey, 'bridge')).identityKey,
-        (await credentials.resolve(currentHuman, 'bridge')).identityKey,
-      );
+      assert.equal(await bindings.select(currentKey, 'bridge'), binding);
+      assert.equal(await bindings.select(currentHuman, 'bridge'), binding);
 
       // Keep the same explicit grant and binding: withdrawing one caller must not kill the actor.
-      await pool.call(currentKey, 'bridge', 'inspect', { marker: 'independent-key' });
-      await pool.call(currentHuman, 'bridge', 'inspect', { marker: 'human-owner' });
+      await call(currentKey, 'independent-key');
+      await call(currentHuman, 'human-owner');
       assert.deepEqual(dispatched, [
         {
           method: 'tools/call',
@@ -151,12 +163,9 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
         },
         { method: 'tools/call', params: { name: 'inspect', arguments: { marker: 'human-owner' } } },
       ]);
-      assert.equal(
-        connections.length,
-        2,
-        'Current callers can reuse their matching upstream identity',
-      );
-      await assert.rejects(pool.call(captured, 'bridge', 'inspect', { marker: 'still-stale' }), {
+      assert.equal(connections.length, 1, 'Current callers of the actor reuse its connection');
+      // The registry refuses the stale caller before the warm connection is reached.
+      await assert.rejects(call(captured, 'still-stale'), {
         code: withdrawal === 'key-revocation' ? 'forbidden' : 'membership_required',
       });
       assert.equal(

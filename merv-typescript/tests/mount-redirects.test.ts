@@ -4,22 +4,54 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { MountManager } from '../packages/mounts/src/index.js';
-import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
+import { MountRuntime } from '../packages/mounts/src/runtime.js';
+import { Invocations } from '../packages/mounts/src/upstream.js';
+import type { Bindings } from '../packages/mounts/src/credentials.js';
 import { fixtureAccess } from './fixtures/access.js';
-import type { CredentialProvider } from '../packages/mounts/src/types.js';
 
 const caller = { projectId: 'project_redirect', actorId: 'actor_redirect' };
-const credentials: CredentialProvider = {
-  resolve: async () => ({
-    identityKey: 'fixture_identity',
-    headers: () => ({
-      authorization: 'Bearer synthetic_upstream_token',
-      'x-project': caller.projectId,
-    }),
+const credentials: Pick<Bindings, 'select' | 'headers'> = {
+  select: async () => ({ id: 'fixture', ...caller, mountId: 'fixture', secretRef: 'env:X' }),
+  headers: async () => ({
+    authorization: 'Bearer synthetic_upstream_token',
+    'x-project': caller.projectId,
   }),
 };
+/** An invocation pool for the fixture mount; the caller is never a session. */
+const invocations = (url: string) =>
+  new Invocations({ id: 'fixture', url, timeoutMs: 1000 }, credentials, fixtureAccess, {
+    validateSession: async () => {},
+  });
+/** Admits the fixture caller: redirects, not authorization, are under test. */
+const scope = {
+  require: async () => ({
+    ...caller,
+    id: caller.actorId,
+    name: 'Fixture',
+    role: 'operator' as const,
+    active: true,
+  }),
+  toolPolicy: fixtureAccess,
+};
 const tool = { name: 'inspect', inputSchema: { type: 'object' as const } };
+/** The fixture mount's discovery; the caller doubles as its discovery actor. */
+const discovery = (registry: ToolRegistry, url: string) =>
+  new MountRuntime(registry, credentials, scope, {
+    id: 'fixture',
+    url,
+    tools: ['inspect'],
+    discovery: caller,
+    timeoutMs: 1000,
+    reconnectMs: 60_000,
+  });
+
+async function until(predicate: () => boolean): Promise<void> {
+  const end = Date.now() + 4000;
+  while (!predicate()) {
+    if (Date.now() >= end) throw new Error('The discovery round did not finish');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
 
 async function body(request: IncomingMessage) {
   let text = '';
@@ -93,6 +125,7 @@ for (const mode of ['invocation', 'discovery']) {
   test(`${mode} notification GET refuses cross-origin redirects`, { timeout: 5000 }, async (t) => {
     const { url, received } = await fixture(t, 'GET');
     const nativeFetch = globalThis.fetch;
+    let gets = 0;
     let settled!: () => void;
     const notification = new Promise<void>((resolve) => {
       settled = resolve;
@@ -101,6 +134,7 @@ for (const mode of ['invocation', 'discovery']) {
       globalThis,
       'fetch',
       async (address: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (init?.method === 'GET') gets++;
         try {
           return await nativeFetch(address, init);
         } finally {
@@ -108,43 +142,21 @@ for (const mode of ['invocation', 'discovery']) {
         }
       },
     );
-    const registry = new ToolRegistry(
-      {
-        require: async () => ({
-          ...caller,
-          id: caller.actorId,
-          name: 'Fixture',
-          role: 'operator',
-          active: true,
-        }),
-      },
-      fixtureAccess,
-    );
-    const manager = new MountManager(registry, credentials, fixtureAccess, {
-      mounts: [
-        {
-          id: 'fixture',
-          url,
-          tools: ['inspect'],
-          discovery: caller,
-          timeoutMs: 1000,
-          reconnectMs: 60_000,
-        },
-      ],
-    });
-    const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mountId: 'fixture',
-      url,
-      timeoutMs: 1000,
-    });
+    const registry = new ToolRegistry(scope, fixtureAccess);
+    const runtime = discovery(registry, url);
+    const pool = invocations(url);
     try {
-      if (mode === 'invocation') await pool.call(caller, 'fixture', 'inspect', {});
-      else await manager.start();
-      await notification;
+      if (mode === 'invocation') {
+        await pool.handler('inspect')(caller, {});
+        assert.equal(gets, 0, 'invocation connections never open a notification stream');
+      } else {
+        runtime.refresh();
+        await notification;
+      }
       assert.deepEqual(received, [], 'notification headers must not reach a redirect destination');
     } finally {
       await pool.close();
-      await manager.close();
+      await runtime.stop();
       await registry.close();
     }
   });
@@ -153,18 +165,14 @@ for (const mode of ['invocation', 'discovery']) {
 for (const redirectMethod of ['initialize', 'tools/call']) {
   test(`invocation refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
-    const pool = new ScopedRemoteClients(credentials, fixtureAccess, {
-      mountId: 'fixture',
-      url,
-      timeoutMs: 1000,
-    });
+    const pool = invocations(url);
     try {
-      const result = await pool
-        .call(caller, 'fixture', 'inspect', { privateInput: 'project-confidential-fixture' })
-        .then(
-          () => 'succeeded',
-          () => 'refused',
-        );
+      const result = await Promise.resolve(
+        pool.handler('inspect')(caller, { privateInput: 'project-confidential-fixture' }),
+      ).then(
+        () => 'succeeded',
+        () => 'refused',
+      );
       assert.deepEqual(
         received,
         [],
@@ -180,37 +188,16 @@ for (const redirectMethod of ['initialize', 'tools/call']) {
 for (const redirectMethod of ['initialize', 'tools/list']) {
   test(`discovery refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
-    const registry = new ToolRegistry(
-      {
-        require: async () => ({
-          ...caller,
-          id: caller.actorId,
-          name: 'Fixture',
-          role: 'operator',
-          active: true,
-        }),
-      },
-      fixtureAccess,
-    );
-    const manager = new MountManager(registry, credentials, fixtureAccess, {
-      mounts: [
-        {
-          id: 'fixture',
-          url,
-          tools: ['inspect'],
-          discovery: caller,
-          timeoutMs: 1000,
-          reconnectMs: 60_000,
-        },
-      ],
-    });
+    const registry = new ToolRegistry(scope, fixtureAccess);
+    const runtime = discovery(registry, url);
     try {
-      await manager.start();
+      runtime.refresh();
+      await until(() => runtime.status().state !== 'connecting');
       assert.deepEqual(received, [], 'discovery must stay on its configured endpoint');
       assert.deepEqual(await registry.describe(), []);
-      assert.equal(manager.status()[0].state, 'failed');
+      assert.equal(runtime.status().state, 'failed');
     } finally {
-      await manager.close();
+      await runtime.stop();
       await registry.close();
     }
   });

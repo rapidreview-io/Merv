@@ -1,13 +1,19 @@
 # Mounts
 
-Mounts owns upstream MCP discovery and connections. API owns the downstream HTTP/MCP transport and tool registry; Mounts consumes that registry through the public `@merv/api/types` contract. Scope supplies caller tool policy through `scope.toolPolicy`. Mounts owns server-side credential selection in its internal `credentials.ts` module. Its only Cordis dependencies are Tools and Scope.
+Mounts publishes an explicit selection of an external MCP server's tools as `_<mountId>.<tool>` and forwards each call over a connection that belongs to the caller and carries that caller's own credential binding. Its only Cordis dependencies are Tools and Scope. Production does not compose it.
 
-The public `@merv/mounts/types` contract defines `Context.mounts`, `Mounts`, `MountConfig`, `MountsConfig`, and `MountStatus`. `status()` reports each mount's ID, endpoint origin, state, published tool count, and an optional error code. Status never includes endpoint paths, query strings, headers, or credentials. `reconnect(id)` waits for a new forced discovery attempt for a configured mount. It queues behind an active refresh and rejects if the mount stops before that attempt.
-
-Configuration explicitly selects raw upstream tool names:
+## Configuration
 
 ```json
 {
+  "mounts": [
+    {
+      "id": "research",
+      "url": "http://127.0.0.1:4000/mcp",
+      "tools": ["search", "paper.get"],
+      "discovery": { "actorId": "actor_example", "projectId": "project_example" }
+    }
+  ],
   "bindings": [
     {
       "id": "research-example",
@@ -16,50 +22,47 @@ Configuration explicitly selects raw upstream tool names:
       "mountId": "research",
       "secretRef": "env:MERV_RESEARCH_TOKEN"
     }
-  ],
-  "mounts": [
-    {
-      "id": "research",
-      "url": "http://127.0.0.1:4000/mcp",
-      "tools": ["search", "paper.get"],
-      "discovery": {
-        "actorId": "actor_example",
-        "projectId": "project_example"
-      },
-      "timeoutMs": 5000,
-      "reconnectMs": 5000
-    }
   ]
 }
 ```
 
-The plugin configuration defaults to empty `mounts` and `bindings` arrays; the application default list does not install this optional plugin. Tool selection does not grant access: individual callers still need exact Scope tool grants and matching upstream credential bindings. Discovery can use the optional local identity; invocation resolves the actual caller's credentials. Credential bindings live in this same configuration; secret values remain in the server environment.
+`tools` lists raw upstream names, and grants use those names; `qa.ask` on mount `nisa` is published as `_nisa.qa.ask`. Selecting a tool grants nothing: each caller also needs an exact Scope tool grant and a binding here. A binding selects one (project, actor, mount) and names its secret as `env:NAME`; the value stays in the server environment. Optional binding `headers` are fixed nonsecret `x-*` selectors. `timeoutMs` (default 5000, at most 60000) bounds each upstream request. `reconnectMs` (default 60000) is the discovery interval. The entry's Config schema checks all of this before `apply`: a bad entry fails with a Cordis `ValidationError` whose issues never echo a value, and nothing is published. Bindings moved here from the retired `@merv/credentials` plugin; there is no `ctx.credentials` service.
 
-Discovery, invocation, and notification requests refuse HTTP redirects. Configure the final MCP endpoint directly: a redirect does not authorize forwarding tool arguments, selector headers, or MCP session headers to another destination.
+Loading the entry does not wait for upstreams; `status()` reads `connecting` until a mount's first round ends. **To toggle a mount or rotate a binding, reload the `mounts` entry** (`app.setEnabled('mounts', …)` or a config update). A reload withdraws the tools and ends the connections of **every** mount in the entry.
 
-The following helper modules now belong to this package:
+## Discovery
 
-- `@merv/mounts/remote-catalog` exports `collectRemoteCatalog`. Collection is bounded by page, tool, and time limits and returns upstream descriptions without handlers; each mount attaches a handler that routes every call through its scoped pool. Catalog replacement validates a complete generation before publication, and catalog disposal withdraws tools before waiting for admitted calls.
-- `@merv/mounts/credential-client` exports `ScopedRemoteClients`. One pool serves one mount endpoint and isolates connections by actor, project, and credential identity. It rechecks grants and credentials after connection setup, retires changed identities, and drains admitted calls during shutdown.
+Each mount has one discovery connection, which lists tools and listens for `tools/list_changed`. Rounds run one at a time: at load, on a notification, and `reconnectMs` after the previous round, whether it succeeded or failed. A trigger during a round reruns it once. A round reads `tools/list` pages until it has every selected name, at most 20 pages, each bounded by `timeoutMs`; a repeating cursor ends at the limit with `remote_catalog_limit`.
 
-These helpers were relocated from API without changing their tool transport behavior. Pool shutdown also retains earlier retirement cleanup failures so a later close cannot incorrectly report success. They contain upstream SDK transport ownership, while the public types module remains free of runtime code.
+- The mount publishes the selected tools the upstream offers now. A missing one is withdrawn alone, and status reads `ready` with `mount_missing_tool`.
+- An unchanged catalog is not republished: no schema compile and no drain of admitted calls.
+- A failed round keeps the last catalog published and reads `disconnected` with its error code, or `failed` if nothing was ever published. A stale tool fails per call. Any failed round ends the discovery connection; the next round opens a new one.
 
-A configured mount refreshes its catalog when notified and by bounded polling. A failed connection or unusable selected catalog withdraws its tools; exponential backoff is capped at 60 seconds. Successful polling uses `reconnectMs`; `timeoutMs` bounds connection, catalog, call, and cleanup operations. Opening the notification GET is bounded, but an established stream stays open until lifecycle cancellation so catalog notifications are not lost at each request deadline. No remote operation is retried. Discovery checks current grants and credentials before and after asynchronous work. A configured discovery credential that changes causes a new discovery connection.
+Without `discovery`, listing sends no credential. With it, listing uses that actor's binding, and each round first requires the actor to read the project: an actor who lost access fails the next round with `forbidden`, and the discovery session ends. Discovery needs no tool grants, and its binding never carries a call. Its secret is read once per discovery connection.
 
-Shutdown starts withdrawal for every namespace synchronously, including when another plugin is still draining a call to Mounts' status service. Admitted calls finish before invocation clients close. All client cleanups are attempted; failures produce fixed error codes. The upstream Cordis loader may log rather than propagate disposer failures, so use the direct manager result/status when diagnosing cleanup errors.
+## Calls
 
-Run `npm run test:mounts` for fixture regressions and `npm run test:mount-unload` for a whole-application removal report. The latter loads this package through application configuration, forwards an authenticated upstream call, removes the loader entry while that call is held, completes native task/review/feed work, and restores the same configured mount with a fresh connection. This is controlled integration evidence; authenticated real sandbox evidence is a separate gate.
+The registry admits every call (the caller's grant through Scope, and a session's arguments) immediately before the handler. Each caller lane (project, actor) of a mount has its own connection, carrying the binding selected for that caller; an agent session uses its authority actor's binding. Connections are never shared across actors, even when two bindings hold the same secret: isolation is why lanes exist. A warm call goes straight upstream with no State access. A call that waited (binding selection or connection setup) re-checks the grant, and a session's arguments, first, so a revocation during that wait never crosses.
 
-Mounted tools are published as `_<mountId>.<upstreamToolName>`; Nisa `qa.ask`
-becomes `_nisa.qa.ask`. Tool selection and grants still use raw upstream names.
-The mount ID comes from configuration; dots in an upstream name are preserved.
+The secret is read, and checked not to be a Merv credential, once per connection; a rotated environment secret applies from the next connection. Call connections open no notification stream and end after five idle minutes. Ending a connection sends the MCP DELETE, capped at one second, then closes it. **Upstream MCP session state does not survive an idle close, a transport fault or a reload**, so an upstream must key durable state by account, not by MCP session.
 
-## Credential ownership and migration
+The warm path trusts the registry's admission. Handlers taken from `Tools.list()` are trusted in-process code, as native handlers already are. No operation is retried. Every request refuses redirects: a binding authorizes the configured endpoint, never a redirect target.
 
-Remove the old `@merv/credentials` plugin entry and move its `config.bindings` into the `@merv/mounts` entry’s `config.bindings`, alongside `config.mounts`. There is no `ctx.credentials` service. Reload the Mounts entry to apply binding changes; unload withdraws catalogs and drains admitted calls before closing connections. Scope grants stay in Scope.
+## Errors and status
 
-The internal resolver selects exact project/actor/mount bindings and checks current Scope authority. Agent sessions resolve against their authority actor. Secrets are read from `env:NAME` on every resolution; known local Merv credentials are rejected, including revoked or rotated credentials. Bindings accept only fixed nonsecret selector headers. Missing or invalid credentials produce sanitized errors.
+Codes and texts are fixed: no upstream text, header or secret reaches a caller or the status.
 
-Secret snapshots hide headers from JSON and diagnostic inspection. Their opaque identity includes the binding and current secret, so rotation selects a different connection. The client rechecks authority and credential identity after connection setup, before dispatch. Upstream tokens never become agent-facing tool results. This move adds no OAuth flow or automatic token refresh.
+| Code                               | Meaning                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `remote_error` (502)               | The upstream answered with a JSON-RPC error: `Remote tool refused the request (<code>)`. A call's connection stays. |
+| `remote_credential_rejected` (502) | The upstream returned HTTP 401 or 403. The connection is retired.                                                   |
+| `remote_timeout` (504)             | A request took longer than `timeoutMs`. The connection is retired.                                                  |
+| `remote_unavailable` (502)         | Any other transport fault, local ones included; the connection is retired. Also a call reaching an unloaded mount.  |
 
-Bindings are fixed for each load of the Mounts entry. A secret rotated in the environment changes the resolved identity, so the next admission retires the old connection and opens a new one; requests already sent drain with their original identity.
+Merv codes reach callers and the status unchanged, among them `forbidden`, `credential_forbidden`, `credential_unavailable`, `tool_forbidden`, `session_invocation`, `invalid_schema`, `invalid_remote_result`, `remote_catalog_duplicate`, `remote_catalog_limit` and `mount_missing_tool`. Upstream codes −32000 and −32001 cannot be told apart from the SDK's local ConnectionClosed and RequestTimeout, so they retire the lane and report `remote_unavailable` or `remote_timeout`.
+
+`ctx.mounts.status()` gives each mount's ID, endpoint origin, published tool count, optional `errorCode` and state (`connecting`, `ready`, `disconnected`, `failed` or `stopped`), never a path, query string, header or credential. The `@merv/mounts/ui` adapter adds the Connections page, degraded while any mount is not `ready` or has an error code.
+
+Unloading withdraws every mounted tool before its first await, waits for admitted calls, refuses later ones and ends every connection with its DELETE. It never rejects.
+
+The public surface is the plugin, `@merv/mounts/types` and `@merv/mounts/ui`; the other modules are internals that only tests import. `npm run test:mounts`, `npm run test:credentials` and `npm run test:mount-unload` run the fixture regressions and a whole-application removal against a local MCP server with synthetic credentials.

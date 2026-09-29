@@ -171,6 +171,13 @@ export const representativeResult: CallToolResult = {
 /** Independent sessionful upstream with a real HTTP/SSE boundary; never records argument values or credentials. */
 export class RemoteFixture {
   readonly requests: RemoteRequestLog[] = [];
+  /** MCP sessions initialized so far. */
+  opened = 0;
+  /** GET (notification stream) and DELETE (session end) requests received. */
+  gets = 0;
+  deletes = 0;
+  /** Methods of the JSON-RPC notifications received, such as notifications/cancelled. */
+  readonly notifications: string[] = [];
   url!: string;
   private http?: HttpServer;
   private tools: Tool[];
@@ -183,6 +190,7 @@ export class RemoteFixture {
   private readonly callBarriers = new Map<string, InternalBarrier[]>();
   private readonly listBarriers: InternalBarrier[] = [];
   private streamReady = barrier();
+  private stalled = false;
 
   constructor(private readonly options: RemoteFixtureOptions = {}) {
     this.tools = structuredClone(options.tools ?? representativeTools);
@@ -199,6 +207,13 @@ export class RemoteFixture {
       },
       ...options.results,
     };
+  }
+  get sessionCount(): number {
+    return this.sessions.size;
+  }
+  /** Every later request hangs until the fixture closes. */
+  stall(): void {
+    this.stalled = true;
   }
   setTools(tools: Tool[]): void {
     this.tools = structuredClone(tools);
@@ -309,6 +324,7 @@ export class RemoteFixture {
       sessionIdGenerator: randomUUID,
       enableJsonResponse: true,
       onsessioninitialized: (sessionId) => {
+        this.opened++;
         this.sessions.set(sessionId, { server, transport });
       },
     });
@@ -322,6 +338,15 @@ export class RemoteFixture {
       res.writeHead(404).end();
       return;
     }
+    if (this.stalled) {
+      const held = barrier();
+      this.barriers.add(held);
+      await this.pause(held);
+      res.destroy();
+      return;
+    }
+    if (req.method === 'GET') this.gets++;
+    if (req.method === 'DELETE') this.deletes++;
     const sessionId =
       typeof req.headers['mcp-session-id'] === 'string' ? req.headers['mcp-session-id'] : undefined;
     if (req.method === 'GET' || req.method === 'DELETE') {
@@ -350,6 +375,8 @@ export class RemoteFixture {
       chunks.push(bytes);
     }
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (body?.id === undefined && typeof body?.method === 'string')
+      this.notifications.push(body.method);
     let session = sessionId ? this.sessions.get(sessionId) : undefined;
     if (!session && !sessionId && isInitializeRequest(body)) {
       session = this.createSession();

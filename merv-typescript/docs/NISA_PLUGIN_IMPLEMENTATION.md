@@ -77,9 +77,13 @@ MERV_NISA_PYTHON=/absolute/python \
 npm run test:nisa-mcp
 ```
 
-Trusted controls are `app.ctx.mounts.setEnabled('nisa', false)` and `true`.
+The trusted control is reloading the `mounts` entry: `app.setEnabled('mounts', false)`
+and `true`. This toggles **every** mount in that entry, not only Nisa's.
 Disabling withdraws new local calls, drains admitted transport calls, and leaves
 accepted Nisa-owned research running. Explicit `qa.cancel` is a separate action.
+The scenario was rewritten for this control on 2026-09-28 and now expects
+56 -> 49 -> 56 tools, because the sandbox mount is withdrawn too. It has not run
+since, so that version is unverified.
 
 ## Deployment limits
 

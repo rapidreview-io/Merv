@@ -304,6 +304,14 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     app = await createApp({ directory: join(directory, 'merv'), config, port: 0 });
     const running = app;
     const apiUrl = running.ctx.api.url!;
+    // createApp and a reload do not wait for optional upstreams.
+    const mountsReady = () =>
+      eventually(
+        async () =>
+          running.ctx.mounts.status().every((mount) => mount.state === 'ready' && !mount.errorCode),
+        'Mounts did not become ready',
+      );
+    await mountsReady();
     const aliceClient = await connect(apiUrl + '/mcp', identity.alice.token);
     const bobClient = await connect(apiUrl + '/mcp', identity.bob.token);
     const observer = await connect(apiUrl + '/mcp', identity.observer.token);
@@ -330,9 +338,8 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       assert.deepEqual(fromMerv, fromDirect, `${name} lost MCP result fields`);
     }
     checks.threeRetrievalToolsFullResultParity = true;
-    const sandboxBefore = payload(await call(aliceClient, '_sandbox.inspect'));
-    const sandboxConnections = structuredClone(sandbox.connections);
-    assert.equal(sandboxConnections.length, 2, 'Discovery and actor calls have separate clients');
+    payload(await call(aliceClient, '_sandbox.inspect'));
+    assert.equal(sandbox.connections.length, 2, 'Discovery and actor calls have separate clients');
     const originals = Object.fromEntries(
       [
         'state',
@@ -345,7 +352,6 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
         'blobs',
         'workflows',
         'reviews',
-        'mounts',
       ].map((name) => [name, running.ctx.get(name)]),
     );
     const askInput = { question: 'hold for unload', requestId: 'fixture-alice-question' };
@@ -365,9 +371,10 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       assert.equal(errorCode(result), 'operation_not_found');
     }
     checks.otherAccountCannotObserveOrCancel = true;
-    await running.ctx.mounts.setEnabled('nisa', false);
+    // Unloading the entry withdraws every mount in it, the sandbox included.
+    await running.setEnabled('mounts', false);
     const during = (await aliceClient.listTools()).tools.map(({ name }) => name);
-    assert.equal(during.length, 50);
+    assert.equal(during.length, 49);
     assert.ok(during.every((name) => !name.startsWith('_nisa.')));
     assert.equal(
       errorCode(await call(aliceClient, mounted('qa.get'), { operationId: operation.operationId })),
@@ -466,11 +473,8 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
       (await aliceClient.listTools()).tools.every(({ name }) => !name.startsWith('_nisa.')),
     );
     checks.nativeTaskReviewFeedCompletedWhileNisaAbsent = true;
-    const sandboxDuring = payload(await call(aliceClient, '_sandbox.inspect'));
-    assert.equal(sandboxDuring.connectionId, sandboxBefore.connectionId);
-    assert.deepEqual(sandbox.connections, sandboxConnections);
     assert.equal((await fetch(apiUrl + '/health')).status, 200);
-    checks.acceptedOperationSurvivesLocalUnmount = checks.nativeAndSandboxRemainAvailable = true;
+    checks.acceptedOperationSurvivesLocalUnmount = checks.nativeRemainAvailable = true;
     writeFileSync(release, 'release controlled operation\n');
     let complete: Record<string, any> = {};
     await eventually(async () => {
@@ -483,7 +487,10 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     assert.equal(complete.result.contextPapers[0].fixture_extra.retained, true);
     assert.equal(complete.result.sources[0].paper.fixture_extra.retained, true);
     assert.deepEqual(complete.result.usage, { input_tokens: 20, output_tokens: 10, cost_usd: 0 });
-    await running.ctx.mounts.setEnabled('nisa', true);
+    await running.setEnabled('mounts', true);
+    await mountsReady();
+    // The reload opened a new sandbox discovery connection; nothing opens another after it.
+    const sandboxRestored = structuredClone(sandbox.connections);
     const after = (await aliceClient.listTools()).tools;
     assert.deepEqual(after, before);
     const recovered = payload(
@@ -569,7 +576,7 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     for (const [name, original] of Object.entries(originals))
       assert.equal(running.ctx.get(name), original, `${name} restarted`);
     assert.equal(running.ctx.api.url, apiUrl);
-    assert.deepEqual(sandbox.connections, sandboxConnections);
+    assert.deepEqual(sandbox.connections, sandboxRestored);
     checks.unrelatedProvidersAndConnectionsUnchanged = true;
     return {
       status: 'passed',
