@@ -46,7 +46,8 @@
 --       migrations refuse the release otherwise (planRetirementPreconditionsSql).
 --
 -- A future retirement that deletes worker sessions must first delete their session_transcripts
--- rows with the session_transcripts_immutable trigger disabled (session_transcripts@1 made them write-once).
+-- rows with the session_transcripts_immutable trigger disabled (session_transcripts@1 made them
+-- write-once).
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
