@@ -2014,6 +2014,8 @@ export class LeasedSessions implements Sessions {
     const { usage, ...control } = closed(releaseSchema, input, releaseRefusals);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
+      // A closure its checks find (a revocation, a lease its domain refused) is recorded as that.
+      await this.reconcile(session, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
       if (caller.managed) await this.managed.acknowledgeRelease(caller, tx);

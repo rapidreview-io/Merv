@@ -478,6 +478,30 @@ test('controller polls fence changed workflow revisions and expired offers witho
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
 });
 
+test('a runner’s release records the closure its session’s checks find, not a release', async (t) => {
+  const f = await fixture(t);
+  const sessions = [await f.offer(), await f.offer()];
+  for (const { token } of sessions) await f.sessions.authenticate(token);
+  // The domain refuses both leases while their records stay where they were.
+  f.onLeaseCheck(() => {
+    throw new MervError('claim_lost', 'Worker no longer owns this reservation', 409);
+  });
+  // The first runner releases before anything recorded the closure; the second polled first
+  // and was told of it.
+  for (const [index, { session }] of sessions.entries()) {
+    if (index === 1) assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
+    const released = await f.sessions.release(f.source, {
+      sessionId: session.id,
+      runnerId: 'runner',
+    });
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['expired', 'claim_lost', 'expired'],
+    );
+    assert.deepEqual(await f.sessions.get(f.source, session.id), released);
+  }
+});
+
 test('controller polls preserve offered leases across provider outages and commit deadline closure', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();
