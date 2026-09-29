@@ -641,7 +641,7 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
 
 test('session route and credential namespaces stay reserved when the Sessions provider is unloaded', async (t) => {
   const f = await fixture(t);
-  assert.throws(() => f.app.ctx.api.mount('/sessions', () => {}), { code: 'invalid_mount' });
+  assert.throws(() => f.app.ctx.api.mount('/sessions', () => {}), { code: 'mount_conflict' });
   const issued = await f.offer();
   const api = f.app.ctx.api;
   await f.app.setEnabled('sessions', false);

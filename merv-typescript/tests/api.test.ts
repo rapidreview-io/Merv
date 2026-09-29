@@ -353,12 +353,20 @@ test('a refusal whose details JSON cannot carry is answered without them', async
   const api = new ApiServer(scope, tools);
   const cycle: Record<string, unknown> = {};
   cycle.self = cycle;
-  api.mount('/bigint', () => {
-    throw new MervError('odd_input', 'Odd input', 422, { count: 1n });
-  });
-  api.mount('/cycle', () => {
-    throw new MervError('odd_input', 'Odd input', 422, cycle);
-  });
+  api.mount(
+    '/bigint',
+    () => {
+      throw new MervError('odd_input', 'Odd input', 422, { count: 1n });
+    },
+    { public: true },
+  );
+  api.mount(
+    '/cycle',
+    () => {
+      throw new MervError('odd_input', 'Odd input', 422, cycle);
+    },
+    { public: true },
+  );
   const url = await api.start();
   t.after(async () => {
     await api.stop();
@@ -975,11 +983,15 @@ test('a result that cannot be serialized answers 500 once, logs no message, and 
 test('a response that fails after its head resets the connection', async () => {
   const { scope, tools } = fixture();
   const api = new ApiServer(scope, tools);
-  api.mount('/partial', (_req, res) => {
-    res.writeHead(200, { 'content-type': 'text/plain' });
-    res.write('started');
-    throw new Error('failed mid-response');
-  });
+  api.mount(
+    '/partial',
+    (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('started');
+      throw new Error('failed mid-response');
+    },
+    { public: true },
+  );
   const url = await api.start();
   const logged = await stderrOf(async () => {
     const response = await fetch(`${url}/partial`, { signal: AbortSignal.timeout(2000) });
@@ -999,11 +1011,15 @@ test('stop() lets a written response reach a slow reader whole', async () => {
   const handled = new Promise<void>((resolve) => {
     returned = resolve;
   });
-  api.mount('/large', (_req, res) => {
-    res.writeHead(200, { 'content-length': payload.length });
-    res.end(payload);
-    returned();
-  });
+  api.mount(
+    '/large',
+    (_req, res) => {
+      res.writeHead(200, { 'content-length': payload.length });
+      res.end(payload);
+      returned();
+    },
+    { public: true },
+  );
   const url = await api.start();
   const received = new Promise<number>((resolve, reject) => {
     httpRequest(`${url}/large`, (response) => {
@@ -1035,18 +1051,22 @@ test('stop() cuts a response that never ends after drainMs', async () => {
     opened = resolve;
   });
   let ended = false;
-  api.mount('/stream', (_req, res) => {
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
-    res.write('data: open\n\n');
-    opened();
-    // A stream ends when its response closes, as the relay and conversation streams do.
-    return new Promise<void>((resolve) =>
-      res.once('close', () => {
-        ended = true;
-        resolve();
-      }),
-    );
-  });
+  api.mount(
+    '/stream',
+    (_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: open\n\n');
+      opened();
+      // A stream ends when its response closes, as the relay and conversation streams do.
+      return new Promise<void>((resolve) =>
+        res.once('close', () => {
+          ended = true;
+          resolve();
+        }),
+      );
+    },
+    { public: true },
+  );
   const url = await api.start();
   const response = await fetch(`${url}/stream`);
   await streaming;
@@ -1064,11 +1084,15 @@ test('stop() closes a keep-alive connection as soon as its request completes', a
   const inFlight = new Promise<void>((resolve) => {
     started = resolve;
   });
-  api.mount('/slow', async (_req, res) => {
-    started();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    res.end('done');
-  });
+  api.mount(
+    '/slow',
+    async (_req, res) => {
+      started();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      res.end('done');
+    },
+    { public: true },
+  );
   const url = await api.start();
   // Open the keep-alive connection with one request first, then reuse it.
   await (await fetch(`${url}/health`)).text();
@@ -1157,7 +1181,7 @@ test('mounted GETs run outside the read snapshot', async (t) => {
       return fn();
     },
   });
-  api.mount('/static', (_req, res) => void res.end('asset'));
+  api.mount('/static', (_req, res) => void res.end('asset'), { public: true });
   const url = await api.start();
   t.after(async () => {
     await api.stop();
@@ -1168,4 +1192,181 @@ test('mounted GETs run outside the read snapshot', async (t) => {
   const listed = await fetch(`${url}/tools`, { headers: { authorization: 'Bearer alice-token' } });
   assert.equal(listed.status, 200);
   assert.equal(snapshots, 1);
+});
+
+test('a mount returns JSON or octets, and its caller is one decision in the selected project', async (t) => {
+  const { scope, tools } = fixture();
+  let decisions = 0;
+  const decide = scope.caller.bind(scope);
+  scope.caller = async (principal, projectId) => {
+    decisions++;
+    return await decide(principal, projectId);
+  };
+  const api = new ApiServer(scope, tools);
+  api.mount('/value', async (req, _res, r) =>
+    req.method === 'PUT'
+      ? Buffer.from(await r.bytes(16, 'application/octet-stream'))
+      : { caller: await r.caller(r.url.searchParams.get('project') ?? undefined) },
+  );
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const get = (query = '', headers: Record<string, string> = {}) =>
+    fetch(`${url}/value${query}`, { headers: { authorization: 'Bearer alice-token', ...headers } });
+  const selected = await get('', { 'x-merv-project-id': alice.projectId });
+  assert.equal(selected.status, 200);
+  assert.equal((await selected.json()).caller.projectId, alice.projectId);
+  assert.equal(decisions, 1);
+  const conflict = await get('?project=project-a', { 'x-merv-project-id': 'project-b' });
+  assert.deepEqual([conflict.status, (await conflict.json()).error.code], [400, 'invalid_input']);
+  assert.equal(decisions, 1);
+  assert.equal((await get('', { 'x-merv-project-id': bob.projectId })).status, 403);
+  const octets = await fetch(`${url}/value`, {
+    method: 'PUT',
+    headers: { authorization: 'Bearer alice-token', 'content-type': 'application/octet-stream' },
+    body: 'bytes',
+  });
+  assert.equal(octets.headers.get('content-type'), 'application/octet-stream');
+  assert.equal(await octets.text(), 'bytes');
+  assert.equal((await fetch(`${url}/value`)).status, 401);
+});
+
+test('mount prefixes are single segments with public paths inside them, and withdrawal answers 503', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  for (const [prefix, options] of [
+    ['/tools/x', {}],
+    ['/Upper', {}],
+    ['/open', { public: ['/other'] }],
+    ['/open', { public: ['/open/'] }],
+    ['/open', { public: ['/openly'] }],
+  ] as const)
+    assert.throws(() => api.mount(prefix, () => ({}), options), { code: 'invalid_mount' }, prefix);
+  for (const prefix of ['/tools', '/mcp', '/health', '/auth', '/sessions', '/code', '/account'])
+    assert.throws(() => api.mount(prefix, () => ({})), { code: 'mount_conflict' }, prefix);
+  const withdraw = api.mount('/open', (_req, _res, r) => ({ principal: r.principal ?? null }), {
+    public: ['/open/door'],
+  });
+  assert.throws(() => api.mount('/open', () => ({})), { code: 'mount_conflict' });
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  assert.deepEqual(await (await fetch(`${url}/open/door/in`)).json(), { principal: null });
+  assert.equal((await fetch(`${url}/open/doorway`)).status, 401);
+  assert.equal((await fetch(`${url}/nowhere`)).status, 404);
+  withdraw();
+  withdraw();
+  const withdrawn = await fetch(`${url}/open/door`);
+  assert.deepEqual([withdrawn.status, (await withdrawn.json()).error.code], [503, 'unavailable']);
+  // Mounted again, the prefix serves again.
+  api.mount('/open', () => ({ again: true }), { public: true });
+  assert.deepEqual(await (await fetch(`${url}/open`)).json(), { again: true });
+});
+
+test('a mount withdrawn while its body is read answers 503 and its handler never sees the body', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  let bodies = 0;
+  let startedReading!: () => void;
+  const reading = new Promise<void>((resolve) => (startedReading = resolve));
+  const withdraw = api.mount(
+    '/upload',
+    async (_req, _res, r) => {
+      startedReading();
+      await r.json();
+      bodies++;
+      return {};
+    },
+    { public: true },
+  );
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const body = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = body.writable.getWriter();
+  const response = fetch(`${url}/upload`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: body.readable,
+    duplex: 'half',
+  } as RequestInit);
+  await writer.write(new TextEncoder().encode('{"a":'));
+  await reading;
+  withdraw();
+  await writer.write(new TextEncoder().encode('1}'));
+  await writer.close();
+  const answered = await response;
+  assert.deepEqual([answered.status, (await answered.json()).error.code], [503, 'unavailable']);
+  assert.equal(bodies, 0);
+});
+
+test('a namespace owner authenticates its bearers on the routes it allows, and nothing else does', async (t) => {
+  const { scope, tools } = fixture();
+  let verified = 0;
+  const api = new ApiServer(scope, tools, {}, {
+    verify: async () => {
+      verified++;
+      throw new MervError('unauthorized', 'Invalid token', 401);
+    },
+    configuration: () => ({ enabled: true }),
+  } as never);
+  const authenticated: string[] = [];
+  const forbidden = new MervError('probe_forbidden', 'Probe credentials may only read /probe', 403);
+  for (const [namespace, kind] of [
+    ['mk_', 'probe'],
+    ['m-_', 'probe'],
+    ['ab', 'probe'],
+    ['ab_', 'user'],
+    ['ab_', 'actor'],
+  ] as const)
+    assert.throws(
+      () => api.credential(namespace, { kind, forbidden, routes: () => true }),
+      { code: 'invalid_credential' },
+      `${namespace} ${kind}`,
+    );
+  const withdraw = api.credential('pb_', {
+    kind: 'probe',
+    forbidden,
+    routes: (method, path, query) => method === 'GET' && path === '/probe' && !query,
+    authenticate: async (token) => {
+      authenticated.push(token);
+      return { actorId: alice.id, projectId: alice.projectId };
+    },
+  });
+  assert.throws(() => api.credential('pb_', { kind: 'probe', forbidden, routes: () => true }), {
+    code: 'credential_conflict',
+  });
+  api.mount('/probe', (_req, _res, r) => ({ kind: r.principal?.kind }));
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  const get = async (path: string, token: string) => {
+    const response = await fetch(`${url}${path}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return [response.status, (await response.json()).error?.code] as const;
+  };
+  const probe = await fetch(`${url}/probe`, { headers: { authorization: 'Bearer pb_secret' } });
+  assert.deepEqual(await probe.json(), { kind: 'probe' });
+  assert.deepEqual(authenticated, ['pb_secret']);
+  // Refused by the owner's allow-list before it authenticates anything.
+  assert.equal((await get('/probe?x=1', 'pb_secret'))[1], 'probe_forbidden');
+  assert.equal((await get('/tools', 'pb_secret'))[1], 'probe_forbidden');
+  assert.deepEqual(authenticated, ['pb_secret']);
+  // A namespace no owner claims never reaches Scope or JWT verification.
+  withdraw();
+  assert.deepEqual(await get('/probe', 'pb_secret'), [503, 'credential_unavailable']);
+  assert.deepEqual(await get('/tools', 'zz_bad.jwt.token'), [503, 'credential_unavailable']);
+  assert.equal(verified, 0);
+  // User keys and 43-character legacy actor tokens stay Scope's.
+  assert.equal((await get('/tools', `pb_${'a'.repeat(40)}`))[0], 401);
+  assert.equal(verified, 0);
 });

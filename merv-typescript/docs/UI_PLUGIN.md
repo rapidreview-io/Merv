@@ -85,7 +85,7 @@ The board, not the owner, decides three things: a node that lists another owner'
 
 ## Serving
 
-`@merv/ui` mounts `/ui` on the existing API server through `api.mount(prefix, handler)`. The mount is public: HTML, CSS, and JavaScript need no token. Data calls go to the same-origin `/tools/<name>` endpoints with a bearer token, so the API server now accepts requests whose `Origin` equals its own `http://<host>`; foreign origins still need `allowedOrigins`. Routes without a file extension fall back to `index.html` for the client router; dot segments never escape the bundle directory. Without a built bundle, `/ui/` answers `503 ui_not_built`.
+`@merv/ui` mounts `/ui` on the existing API server through `api.mount(prefix, handler, { public: true })`. The mount is public: HTML, CSS, and JavaScript need no token. Data calls go to the same-origin `/tools/<name>` endpoints with a bearer token, so the API server now accepts requests whose `Origin` equals its own `http://<host>`; foreign origins still need `allowedOrigins`. Routes without a file extension fall back to `index.html` for the client router; dot segments never escape the bundle directory. Without a built bundle, `/ui/` answers `503 ui_not_built`.
 
 Configuration: `{ "id": "ui", "name": "@merv/ui", "config": { "assets": "/path/to/dist" } }`. The default is `packages/ui/dist`, produced by:
 

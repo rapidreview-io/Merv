@@ -2,7 +2,6 @@ import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
-import type { MountHandler } from '@merv/api/types';
 import type { PiApiProvider } from '@merv/api/pi';
 import { piModelRelay } from './relay.js';
 import type { PiRuntime } from './types.js';
@@ -68,7 +67,7 @@ export class PiHttp implements PiApiProvider {
     private readonly holdMs = 5_000,
   ) {}
 
-  readonly worker: MountHandler = async (req, res) => {
+  readonly worker = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       check(!this.closed, 'pi_unavailable', 'Agent conversations are unavailable', 503);
       const url = new URL(req.url ?? '/', 'http://localhost');
@@ -232,7 +231,7 @@ export const piApiPlugin = {
     const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
     ctx.effect(() => () => http.close());
     ctx.effect(() => ctx.api.registerPi(http));
-    ctx.effect(() => ctx.api.mount('/pi-worker', http.worker));
+    ctx.effect(() => ctx.api.mount('/pi-worker', http.worker, { public: true }));
     ctx.effect(() =>
       ctx.api.mountModelRelay(
         '/pi-model',

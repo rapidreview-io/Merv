@@ -106,7 +106,7 @@ export const uiPlugin = {
     // The composition root's own report; composed without createApp, the table is empty.
     const plugins = () =>
       (ctx.get('composition')?.status() ?? []).map(({ id, name, state }) => ({ id, name, state }));
-    ctx.effect(() => ctx.api.mount('/ui', serveBundle(assets)));
+    ctx.effect(() => ctx.api.mount('/ui', serveBundle(assets), { public: true }));
     ctx.effect(() =>
       ctx.tools.register({
         name: 'ui.shell',

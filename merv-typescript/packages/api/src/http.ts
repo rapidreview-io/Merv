@@ -24,16 +24,19 @@ import {
   plain,
   ROLES,
   type Caller,
-  type Principal,
   type Scope,
 } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
+  ApiCredential,
+  ApiPrincipal,
+  ApiRequest,
   Tools,
   ToolInvocation,
   ModelRelayConfig,
   ModelRelayGrant,
   MountHandler,
+  MountOptions,
   SessionApiProvider,
   CodeApiProvider,
 } from './types.js';
@@ -228,12 +231,8 @@ const agentReleaseInput = z.object({ executionId: nonblank }).strict();
 const agentResetInput = z.object({ reason: nonblank }).strict();
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
 
-type ApiPrincipal =
-  Principal | { kind: 'session'; caller: Caller } | { kind: 'managed'; caller: Caller };
-const managedNamespace = (token: string, prefix: 'mr_' | 'me_') =>
-  token.startsWith(prefix) && !/^[A-Za-z0-9_-]{43}$/.test(token);
 /** Managed supervisor bearers have no general project, tool or administration transport. */
-const managedRoute = (method: string | undefined, path: string): boolean =>
+const managedRoute = (method: string, path: string): boolean =>
   (method === 'POST' &&
     [
       '/sessions/runners/heartbeat',
@@ -249,12 +248,23 @@ const managedRoute = (method: string | undefined, path: string): boolean =>
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
   (method === 'PUT' &&
     /^\/code\/v2\/uploads\/[A-Za-z0-9_]{1,80}\/parts\/(0|[1-9][0-9]{0,14})$/.test(path));
-// A legacy random actor token is exactly 43 characters even if it starts with ms_.
-const sessionNamespace = (token: string) =>
-  token.startsWith('ms_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
 /** An agent's own routes, which authenticate its key themselves. */
 const agentSelfPath = (path: string) =>
   path === '/sessions/self' || path.startsWith('/sessions/self/');
+/** A namespaced bearer (`ms_…`, `mr_…`), which only its namespace's registered owner may
+ *  authenticate. User keys (`mk_`) are Scope's, and a legacy random actor token is exactly 43
+ *  characters even when it looks namespaced. */
+const namespaced = (token: string) =>
+  /^[a-z]+_/.test(token) && !token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
+const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
+
+interface Mounted {
+  handler: MountHandler;
+  public?: true | readonly string[];
+}
+const open = (mounted: Mounted, path: string) =>
+  mounted.public === true ||
+  !!mounted.public?.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
 function bearer(req: IncomingMessage): string {
   const authorization = req.headers.authorization;
@@ -339,7 +349,12 @@ function slot<T>(code: string, label: string, unavailableMessage: string) {
   };
 }
 
-/** One stateless MCP transport per HTTP request; authentication is checked afresh each time. */
+/**
+ * One listener. Each request's first path segment names its mount: the built-ins, the owners'
+ * mounts and, until their owners register them, the Sessions, Code, Scope and Pi routes. A
+ * public route authenticates itself; every other one is authenticated here first. One stateless
+ * MCP transport serves each MCP request.
+ */
 export class ApiServer {
   private server?: HttpServer;
   private readonly sessions = slot<SessionApiProvider>(
@@ -354,7 +369,9 @@ export class ApiServer {
   private closing?: Promise<void>;
   private readonly requests = new Set<Promise<unknown>>();
   private readonly calls = new Set<Promise<unknown>>();
-  private readonly mounts = new Map<string, MountHandler>();
+  /** By prefix; null marks a withdrawn one, which answers 503. */
+  private readonly mounts = new Map<string, Mounted | null>();
+  private readonly credentials = new Map<string, { credential: ApiCredential }>();
   private readonly maxBodyBytes: number;
   private readonly drainMs: number;
   url?: string;
@@ -370,6 +387,73 @@ export class ApiServer {
     if (!Number.isSafeInteger(this.maxBodyBytes) || this.maxBodyBytes < 1)
       throw new MervError('invalid_config', 'maxBodyBytes must be a positive integer');
     this.drainMs = options.drainMs ?? 45_000;
+    this.mount(
+      '/health',
+      (req, _res, r) => {
+        if (req.method !== 'GET' || r.url.pathname !== '/health') throw unknownEndpoint();
+        return { status: 'ok' };
+      },
+      { public: true },
+    );
+    this.mount(
+      '/auth',
+      (req, _res, r) => {
+        if (req.method !== 'GET' || r.url.pathname !== '/auth/config') throw unknownEndpoint();
+        return this.identity?.configuration() ?? { enabled: false };
+      },
+      { public: true },
+    );
+    this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
+    this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
+    // Until their owners register them, the routes and credentials the API serves for Sessions,
+    // Code, Scope and Pi.
+    this.mount('/sessions', (req, res, r) => this.sessionsRoute(req, res, r), {
+      public: ['/sessions/self', '/sessions/runners/enroll'],
+    });
+    this.mount('/code', (req, res, r) => this.codeRoute(req, res, r), {
+      public: ['/code/github/callback'],
+    });
+    this.mount('/account', (req, res, r) => this.scopeRoute(req, res, r));
+    this.mount('/projects', (req, res, r) => this.scopeRoute(req, res, r));
+    this.mount('/pi', (req, res, r) => this.piRoute(req, res, r));
+    this.credential('ms_', {
+      kind: 'session',
+      forbidden: new MervError(
+        'session_transport_forbidden',
+        'Session credentials may only use POST /mcp',
+        403,
+      ),
+      routes: (method, path) => method === 'POST' && path === '/mcp',
+      authenticate: (token) => this.sessions.get().authenticate(token),
+    });
+    this.credential('mr_', {
+      kind: 'managed',
+      forbidden: new MervError(
+        'managed_runner_forbidden',
+        'Managed runner route is not allowed',
+        403,
+      ),
+      routes: (method, path, query) => !query && managedRoute(method, path),
+      authenticate: (token) => {
+        const provider = this.sessions.get();
+        if (!provider.authenticateManaged)
+          throw new MervError(
+            'managed_runner_unavailable',
+            'Managed runner authentication is unavailable',
+            503,
+          );
+        return provider.authenticateManaged(token);
+      },
+    });
+    this.credential('me_', {
+      kind: 'enrollment',
+      forbidden: new MervError(
+        'managed_runner_forbidden',
+        'Enrollment credentials may only enroll a runner',
+        403,
+      ),
+      routes: () => false,
+    });
   }
 
   start(): Promise<string> {
@@ -473,41 +557,62 @@ export class ApiServer {
     this.server = undefined;
   }
 
-  /** Serve a plugin-owned path prefix without bearer authentication; the disposer withdraws it. */
-  mount(prefix: string, handler: MountHandler): () => void {
-    if (
-      !/^\/[a-z][a-z0-9-]*$/.test(prefix) ||
-      [
-        '/health',
-        '/tools',
-        '/mcp',
-        '/auth',
-        '/account',
-        '/projects',
-        '/sessions',
-        '/code',
-        '/pi',
-      ].includes(prefix)
-    )
-      throw new MervError('invalid_mount', 'Mount prefix must be one unreserved lowercase segment');
-    if (this.mounts.has(prefix))
-      throw new MervError('mount_conflict', `Path prefix is already mounted: ${prefix}`, 409);
+  /** Serves one lowercase path segment; the disposer withdraws it, and it then answers 503. */
+  mount(prefix: string, handler: MountHandler, options: MountOptions = {}): () => void {
+    if (!/^\/[a-z][a-z0-9-]*$/.test(prefix))
+      throw new MervError('invalid_mount', 'Mount prefix must be one lowercase segment');
     if (typeof handler !== 'function')
       throw new MervError('invalid_mount', 'Mount handler is required');
-    this.mounts.set(prefix, handler);
-    let active = true;
+    const paths = options.public;
+    const within = (path: unknown) =>
+      typeof path === 'string' &&
+      /^(\/[^/?#]+)+$/.test(path) &&
+      `${path}/`.startsWith(`${prefix}/`);
+    if (paths !== undefined && paths !== true && !(Array.isArray(paths) && paths.every(within)))
+      throw new MervError('invalid_mount', 'Public paths must lie within their mount');
+    if (this.mounts.get(prefix))
+      throw new MervError('mount_conflict', `Path prefix is already mounted: ${prefix}`, 409);
+    const mounted: Mounted = { handler, public: paths === true ? true : paths && [...paths] };
+    this.mounts.set(prefix, mounted);
     return () => {
-      if (!active) return;
-      active = false;
-      if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
+      if (this.mounts.get(prefix) === mounted) this.mounts.set(prefix, null);
     };
   }
+
+  /** Authenticates the bearers of one namespace on authenticated routes; the disposer removes it. */
+  credential(namespace: string, credential: ApiCredential): () => void {
+    if (
+      !/^[a-z]+_$/.test(namespace) ||
+      namespace === 'mk_' ||
+      typeof credential?.kind !== 'string' ||
+      ['user', 'key', 'actor'].includes(credential.kind) ||
+      typeof credential.routes !== 'function' ||
+      !(credential.forbidden instanceof MervError)
+    )
+      throw new MervError(
+        'invalid_credential',
+        'A credential namespace is lowercase letters then _, never mk_, of a kind that is not user, key or actor, with its routes and refusal',
+      );
+    if (this.credentials.has(namespace))
+      throw new MervError(
+        'credential_conflict',
+        `Credential namespace is already registered: ${namespace}`,
+        409,
+      );
+    const registered = { credential };
+    this.credentials.set(namespace, registered);
+    return () => {
+      if (this.credentials.get(namespace) === registered) this.credentials.delete(namespace);
+    };
+  }
+
   mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,
     config: ModelRelayConfig<G, N, R>,
   ): () => void {
     const relay = new ModelRelay(config);
-    const unmount = this.mount(prefix, relay.handle);
+    // The relay authenticates its own bearers and answers 404 off its one route.
+    const unmount = this.mount(prefix, relay.handle, { public: true });
     return () => {
       unmount();
       relay.close();
@@ -528,48 +633,31 @@ export class ApiServer {
   /** A request's one read decision, made before any body is read. Every effect then authorizes
    *  itself in its own transaction, so nothing here re-checks after the body. */
   private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
-    if (principal.kind !== 'session' && principal.kind !== 'managed')
-      return await this.scope.caller(principal, projectId);
+    if (!('caller' in principal)) return await this.scope.caller(principal, projectId);
     projectSelection(principal.caller.projectId, projectId);
-    // A session's liveness is Sessions' guard, which this read decision consults.
+    // A credential owner's liveness rules (a session's is Sessions' guard) are part of this read
+    // decision.
     await this.scope.require(principal.caller, 'read');
     return principal.caller;
   }
 
-  private async authenticate(req: IncomingMessage): Promise<ApiPrincipal> {
+  private async authenticate(req: IncomingMessage, url: URL): Promise<ApiPrincipal> {
     const token = bearer(req);
-    if (managedNamespace(token, 'me_'))
-      throw new MervError(
-        'managed_runner_forbidden',
-        'Enrollment credentials may only enroll a runner',
-        403,
-      );
-    if (managedNamespace(token, 'mr_')) {
-      const url = new URL(req.url ?? '/', 'http://localhost');
-      if (url.search || !managedRoute(req.method, url.pathname))
-        throw new MervError('managed_runner_forbidden', 'Managed runner route is not allowed', 403);
-      const provider = this.sessions.get();
-      if (!provider.authenticateManaged)
-        throw new MervError(
-          'managed_runner_unavailable',
-          'Managed runner authentication is unavailable',
-          503,
-        );
-      const caller = await provider.authenticateManaged(token);
+    if (namespaced(token)) {
+      // Never Scope's or JWT verification: only the namespace's owner knows its bearers.
+      const registered = this.credentials.get(/^[a-z]+_/.exec(token)![0]);
+      if (!registered)
+        throw new MervError('credential_unavailable', 'This credential is unavailable', 503);
+      const { credential } = registered;
+      // The owner's allow-list, before any I/O.
+      if (
+        !credential.authenticate ||
+        !credential.routes(req.method ?? '', url.pathname, !!url.search)
+      )
+        throw credential.forbidden;
+      const caller = await credential.authenticate(token);
       projectSelection(caller.projectId, req.headers['x-merv-project-id']);
-      return { kind: 'managed', caller };
-    }
-    if (sessionNamespace(token)) {
-      const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-      if (path !== '/mcp' || req.method !== 'POST')
-        throw new MervError(
-          'session_transport_forbidden',
-          'Session credentials may only use POST /mcp',
-          403,
-        );
-      const caller = await this.sessions.get().authenticate(token);
-      projectSelection(caller.projectId, req.headers['x-merv-project-id']);
-      return { kind: 'session', caller };
+      return { kind: credential.kind, caller };
     }
     // Local credentials are opaque. Never retry revoked or expired credentials upstream.
     // Legacy actor tokens are 43 random base64url characters and may happen to
@@ -616,6 +704,11 @@ export class ApiServer {
     return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
+  /** Runs a read in a snapshot scope when the server has one: no writer lock, writes refused. */
+  private read<T>(fn: () => Promise<T>): Promise<T> {
+    return this.options.snapshot ? this.options.snapshot(fn) : fn();
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (this.stopping) {
       json(res, 503, { error: { code: 'unavailable', message: 'Server is stopping' } });
@@ -630,142 +723,106 @@ export class ApiServer {
     )
       throw new MervError('forbidden_origin', 'Origin is not allowed', 403);
     const url = new URL(req.url ?? '/', 'http://localhost');
+    const prefix = `/${url.pathname.split('/')[1]}`;
+    const mounted = this.mounts.get(prefix);
+    if (!mounted) {
+      // A runner treats 401, 403 and 404 as final, so a withdrawn route, or a route a namespaced
+      // bearer's owner has not mounted yet, answers 503.
+      const presented = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
+      if (mounted === null || (presented && namespaced(presented)))
+        throw new MervError('unavailable', 'This route is unavailable', 503);
+      throw unknownEndpoint();
+    }
+    const principal = open(mounted, url.pathname) ? undefined : await this.authenticate(req, url);
+    const value = await mounted.handler(
+      req,
+      res,
+      this.request(req, url, prefix, mounted, principal),
+    );
+    if (value === undefined) return;
+    if (Buffer.isBuffer(value)) octets(res, value);
+    else json(res, 200, value);
+  }
+
+  private request(
+    req: IncomingMessage,
+    url: URL,
+    prefix: string,
+    mounted: Mounted,
+    principal?: ApiPrincipal,
+  ): ApiRequest {
+    // A body read while its route was withdrawn reaches no handler.
+    const current = <T>(value: T): T => {
+      if (this.mounts.get(prefix) !== mounted)
+        throw new MervError('unavailable', 'This route was withdrawn', 503);
+      return value;
+    };
+    return {
+      url,
+      principal,
+      bearer: () => bearer(req),
+      caller: async (projectId) => {
+        if (!principal) throw new MervError('unauthorized', 'A bearer token is required', 401);
+        return await this.selectedCaller(
+          principal,
+          projectSelection(req.headers['x-merv-project-id'], projectId),
+        );
+      },
+      json: async (schema?: z.ZodTypeAny, maxBytes = this.maxBodyBytes) => {
+        const body = current(await readJson(req, maxBytes));
+        return schema ? parseInput(schema, body) : body;
+      },
+      bytes: async (maxBytes, mediaType) => current(await readBody(req, maxBytes, mediaType)),
+    };
+  }
+
+  private async toolsRoute(req: IncomingMessage, r: ApiRequest): Promise<unknown> {
+    const path = r.url.pathname;
+    // A verified user's first request records that user, which is a write, so the caller is
+    // authenticated before the read-only scope opens.
+    if (path === '/tools' && req.method === 'GET')
+      return await this.read(async () => ({ tools: await this.tools.describe(await r.caller()) }));
+    if (!path.startsWith('/tools/') || req.method !== 'POST') throw unknownEndpoint();
+    let name: string;
+    try {
+      name = decodeURIComponent(path.slice('/tools/'.length));
+    } catch {
+      throw new MervError('invalid_tool', 'Malformed tool name');
+    }
+    const request = await this.caller(
+      r.principal!,
+      await r.json(),
+      name,
+      req.headers['x-merv-project-id'],
+    );
+    const result = await this.call(name, request.caller, request.input);
+    return { result: result.value ?? null };
+  }
+
+  private async piRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
+    const match = /^\/pi\/([A-Za-z0-9_-]{1,200})\/events$/.exec(r.url.pathname);
+    if (req.method !== 'GET' || !match || r.url.search)
+      throw new MervError('not_found', 'Unknown conversation route', 404);
+    const caller = await r.caller();
+    await this.pi.get().stream(caller, match[1]!, req, res);
+  }
+
+  private async codeRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
+    const url = r.url;
     const path = url.pathname;
-    if (path === '/code/github/callback' && req.method === 'GET') {
+    const principal = r.principal;
+    if (!principal) {
+      // GitHub's callback, which carries no Merv credential.
+      if (path !== '/code/github/callback' || req.method !== 'GET') throw unknownEndpoint();
       const github = this.code.get().github;
       if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
       res.setHeader('referrer-policy', 'no-referrer');
       await githubCallback(req, res, github);
       return;
     }
-    if (path === '/health' && req.method === 'GET') {
-      json(res, 200, { status: 'ok' });
-      return;
-    }
-    if (path === '/auth/config' && req.method === 'GET') {
-      json(res, 200, this.identity?.configuration() ?? { enabled: false });
-      return;
-    }
-    // Every other GET is a read, so it runs in a snapshot scope. Three kinds are not: an
-    // agent's own routes may activate its lease, Code's GitHub routes sweep expired OAuth
-    // flows, claim token refreshes and complete the callback, and mounted handlers
-    // authenticate themselves and open any snapshot they need.
-    if (
-      req.method === 'GET' &&
-      this.options.snapshot &&
-      !agentSelfPath(path) &&
-      !path.startsWith('/pi/') &&
-      !path.startsWith('/code/') &&
-      !this.mounted(path)
-    ) {
-      // A verified user's first request records that user, which is a write, so the caller
-      // is authenticated before the read-only scope opens.
-      const principal = await this.authenticate(req);
-      return await this.options.snapshot(() => this.route(req, res, url, path, principal));
-    }
-    return await this.route(req, res, url, path);
-  }
-
-  private mounted(path: string): MountHandler | undefined {
-    for (const [prefix, handler] of this.mounts)
-      if (path === prefix || path.startsWith(`${prefix}/`)) return handler;
-    return undefined;
-  }
-
-  private async route(
-    req: IncomingMessage,
-    res: ServerResponse,
-    url: URL,
-    path: string,
-    authenticated?: ApiPrincipal,
-  ): Promise<void> {
-    // These namespaces must not reach independently authenticated agent/self or
-    // mounted routes. No fallthrough to legacy actor or human authentication.
-    const presented = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1];
-    if (
-      presented &&
-      managedNamespace(presented, 'mr_') &&
-      (url.search || !managedRoute(req.method, path))
-    )
-      throw new MervError('managed_runner_forbidden', 'Managed runner route is not allowed', 403);
-    if (presented && managedNamespace(presented, 'me_')) {
-      if (path !== '/sessions/runners/enroll' || req.method !== 'POST' || url.search)
-        throw new MervError(
-          'managed_runner_forbidden',
-          'Enrollment credentials may only enroll a runner',
-          403,
-        );
-      const provider = this.sessions.get();
-      if (!provider.enrollManaged)
-        throw new MervError(
-          'managed_runner_unavailable',
-          'Managed runner enrollment is unavailable',
-          503,
-        );
-      const enrolled = await provider.enrollManaged(presented, await readJson(req, 4096));
-      projectSelection(enrolled.caller.projectId, req.headers['x-merv-project-id']);
-      json(res, 200, { controlToken: enrolled.controlToken });
-      return;
-    }
-    const mounted = this.mounted(path);
-    if (mounted) {
-      await mounted(req, res);
-      return;
-    }
-    // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
-    if (agentSelfPath(path)) {
-      if ([...url.searchParams].length)
-        throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
-      // The route is matched first: an unknown one costs no authentication.
-      const action = path.slice('/sessions/self'.length);
-      if (
-        req.method === 'GET'
-          ? action !== ''
-          : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
-      )
-        throw new MervError('not_found', 'Unknown agent control route', 404);
-      const token = bearer(req),
-        provider = this.sessions.get();
-      // The key is checked before any body is read, so a bad one never buffers a body.
-      const self = await provider.agentSelf(token);
-      if (req.method === 'GET') {
-        json(res, 200, self);
-        return;
-      }
-      const body = await readJson(req, this.maxBodyBytes);
-      if (action === '/assignment')
-        json(res, 200, { execution: await provider.assignAgent(token, body) });
-      else if (action === '/release')
-        json(res, 200, {
-          execution: await provider.releaseAgentAssignment(
-            token,
-            parseInput(agentReleaseInput, body).executionId,
-          ),
-        });
-      else
-        json(res, 200, {
-          agent: await provider.resetAgentContext(token, parseInput(agentResetInput, body).reason),
-        });
-      return;
-    }
-    const principal = authenticated ?? (await this.authenticate(req));
-    if (path.startsWith('/pi/')) {
-      const match = /^\/pi\/([A-Za-z0-9_-]{1,200})\/events$/.exec(path);
-      if (req.method !== 'GET' || !match || url.search)
-        throw new MervError('not_found', 'Unknown conversation route', 404);
-      const caller = await this.selectedCaller(
-        principal,
-        projectSelection(req.headers['x-merv-project-id']),
-      );
-      await this.pi.get().stream(caller, match[1], req, res);
-      return;
-    }
     if (path === '/code/publications' || path.startsWith('/code/publications/')) {
-      const caller = await this.selectedCaller(
-        principal,
-        projectSelection(req.headers['x-merv-project-id']),
-      );
-      const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
+      const caller = await r.caller();
+      const body = req.method === 'POST' ? await r.json(undefined, 8192) : undefined;
       json(
         res,
         200,
@@ -774,435 +831,467 @@ export class ApiServer {
       return;
     }
     if (path === '/code/github' || path.startsWith('/code/github/')) {
-      const caller = await this.selectedCaller(
-        principal,
-        projectSelection(req.headers['x-merv-project-id']),
-      );
-      const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
+      const caller = await r.caller();
+      const body = req.method === 'POST' ? await r.json(undefined, 8192) : undefined;
       const github = this.code.get().github;
       if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
       json(res, 200, await githubRequest(req, res, caller, github, () => Promise.resolve(body)));
       return;
     }
-    if (principal.kind !== 'session') {
-      if (path === '/code/transport/grant' || path === '/code/transport/verify') {
-        if (req.method !== 'POST' || url.search)
-          throw new MervError('invalid_input', 'Use POST without query parameters');
-        const caller = await this.selectedCaller(
-          principal,
-          projectSelection(req.headers['x-merv-project-id']),
-        );
-        const input = parseInput(codeTransportInputSchema, await readJson(req, 8192));
-        const provider = this.code.get();
-        if (!provider.transportGrant || !provider.verifyTransport)
-          throw new MervError('github_unavailable', 'Git transport is unavailable', 503);
-        json(
-          res,
-          200,
-          path.endsWith('/grant')
-            ? await provider.transportGrant(caller, input)
-            : await provider.verifyTransport(caller, input),
-        );
-        return;
-      }
-      if (path.startsWith('/code/v2/')) {
-        if (url.search)
-          throw new MervError('invalid_input', 'Code routes do not accept query parameters');
-        const caller = await this.selectedCaller(
-          principal,
-          projectSelection(req.headers['x-merv-project-id']),
-        );
-        const route = path.slice('/code/v2/'.length);
-        const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
-        const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
-        if (req.method !== (part ? 'PUT' : 'POST')) {
-          res.setHeader('allow', part ? 'PUT' : 'POST');
-          json(res, 405, {
-            error: { code: 'method_not_allowed', message: 'Use PUT for a part and POST otherwise' },
-          });
-          return;
-        }
-        const body = part
-          ? await readBody(req, CODE_PART_MAX_BYTES, 'application/octet-stream')
-          : await readJson(req, 65536);
-        const v2 = this.code.get().v2;
-        if (!v2)
-          throw new MervError(
-            'code_store_unavailable',
-            'This server keeps no Code repositories',
-            503,
-          );
-        if (part)
-          json(res, 200, await v2.putPart(caller, part[1], Number(part[2]), body as Buffer));
-        else if (read && v2.readPart) octets(res, await v2.readPart(caller, read[1], body));
-        else json(res, 200, await v2.call(caller, route, body));
-        return;
-      }
-      if (path === '/code/commands/next' || path === '/code/commands/complete') {
-        if ([...url.searchParams].length)
-          throw new MervError('invalid_input', 'Code routes do not accept query parameters');
-        const sourceCaller = await this.selectedCaller(
-          principal,
-          projectSelection(req.headers['x-merv-project-id']),
-        );
-        if (req.method !== 'POST') {
-          res.setHeader('allow', 'POST');
-          json(res, 405, {
-            error: { code: 'method_not_allowed', message: 'Use POST for Code controls' },
-          });
-          return;
-        }
-        const body = await readJson(req, this.maxBodyBytes);
-        const input = path.endsWith('/next')
-          ? parseInput(codeCommandControlSchema, body)
-          : parseInput(codeCommandCompletionSchema, body);
-        // Lookup the current provider only after parsing; its methods are synchronous.
-        const provider = this.code.get();
-        if (path.endsWith('/next'))
-          json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
-        else
-          json(res, 200, {
-            operation: await provider.completeCommand(
-              sourceCaller,
-              input as z.infer<typeof codeCommandCompletionSchema>,
-            ),
-          });
-        return;
-      }
-      if (principal.kind !== 'managed') {
-        if (path === '/account' && req.method === 'GET') {
-          json(res, 200, {
-            ...(principal.kind === 'user'
-              ? { kind: 'user', user: principal.user }
-              : principal.kind === 'key'
-                ? { kind: 'key', key: principal.key }
-                : { kind: 'actor', actor: principal.actor }),
-            projects: await this.scope.projects(principal),
-          });
-          return;
-        }
-        if (path === '/account/keys') {
-          const projectId = keyQuery(url.searchParams, req.method === 'GET');
-          if (req.method === 'GET') {
-            json(res, 200, { keys: await this.scope.keys(principal, projectId) });
-            return;
-          }
-          if (req.method === 'POST') {
-            const input = parseInput(createKeyInput, await readJson(req, this.maxBodyBytes));
-            json(res, 200, await this.scope.createKey(principal, input));
-            return;
-          }
-        }
-        const keyRoute = /^\/account\/keys\/([^/]+)(\/rotate)?$/.exec(path);
-        if (keyRoute) {
-          keyQuery(url.searchParams);
-          const keyId = pathSegment(keyRoute[1]!);
-          if (keyRoute[2] && req.method === 'POST') {
-            const input = parseInput(rotateKeyInput, await readJson(req, this.maxBodyBytes));
-            json(res, 200, await this.scope.rotateKey(principal, { keyId, ...input }));
-            return;
-          }
-          if (!keyRoute[2] && req.method === 'DELETE') {
-            await this.scope.revokeKey(principal, keyId);
-            json(res, 200, { revoked: true });
-            return;
-          }
-        }
-        if (path === '/projects' && req.method === 'GET') {
-          json(res, 200, { projects: await this.scope.projects(principal) });
-          return;
-        }
-        if (path === '/projects' && req.method === 'POST') {
-          const input = parseInput(createProjectInput, await readJson(req, this.maxBodyBytes));
-          json(res, 200, { project: await this.scope.createProject(principal, input) });
-          return;
-        }
-        const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
-        if (memberRoute) {
-          const projectId = pathSegment(memberRoute[1]!);
-          const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
-          projectSelection(projectId, req.headers['x-merv-project-id']);
-          if (subject === undefined && req.method === 'GET') {
-            json(res, 200, { memberships: await this.scope.memberships(principal, projectId) });
-            return;
-          }
-          if (subject === undefined && req.method === 'POST') {
-            const input = parseInput(addMemberInput, await readJson(req, this.maxBodyBytes));
-            json(res, 200, { membership: await this.scope.addMember(principal, projectId, input) });
-            return;
-          }
-          if (subject !== undefined && req.method === 'PATCH') {
-            const input = parseInput(changeMemberInput, await readJson(req, this.maxBodyBytes));
-            json(res, 200, {
-              membership: await this.scope.changeMemberRole(principal, projectId, {
-                subject,
-                ...input,
-              }),
-            });
-            return;
-          }
-          if (subject !== undefined && req.method === 'DELETE') {
-            await this.scope.removeMember(principal, projectId, subject);
-            json(res, 200, { removed: true });
-            return;
-          }
-        }
-      }
-      if (path === '/sessions' || path.startsWith('/sessions/')) {
-        if ([...url.searchParams].length)
-          throw new MervError('invalid_input', 'Session routes do not accept query parameters');
-        const sourceCaller = await this.selectedCaller(
-          principal,
-          projectSelection(req.headers['x-merv-project-id']),
-        );
-        if (path === '/sessions/agents') {
-          if (req.method === 'GET') {
-            json(res, 200, { agents: await this.sessions.get().agents(sourceCaller) });
-            return;
-          }
-          if (req.method === 'POST') {
-            const input = await readJson(req, this.maxBodyBytes);
-            json(res, 200, {
-              agent: await this.sessions.get().registerAgent(sourceCaller, input),
-            });
-            return;
-          }
-        }
-        const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
-        if (observationRoute && req.method === 'GET') {
-          json(
-            res,
-            200,
-            await this.sessions
-              .get()
-              .agentObservation(sourceCaller, pathSegment(observationRoute[1]!)),
-          );
-          return;
-        }
-        const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
-        if (rotateAgentRoute && req.method === 'POST') {
-          json(
-            res,
-            200,
-            await this.sessions.get().rotateAgent(sourceCaller, pathSegment(rotateAgentRoute[1]!)),
-          );
-          return;
-        }
-        const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
-        if (agentRoute) {
-          const agentId = pathSegment(agentRoute[1]!);
-          if (req.method === 'GET') {
-            json(res, 200, await this.sessions.get().agent(sourceCaller, agentId));
-            return;
-          }
-          if (req.method === 'DELETE') {
-            json(res, 200, {
-              agent: await this.sessions.get().retireAgent(sourceCaller, agentId),
-            });
-            return;
-          }
-        }
-        if (path === '/sessions/status' && req.method === 'GET') {
-          json(res, 200, await this.sessions.get().projectStatus(sourceCaller));
-          return;
-        }
-        // Sessions parses each body and requires admin where it commits.
-        if (path === '/sessions/dispatch' && req.method === 'PUT') {
-          const input = await readJson(req, this.maxBodyBytes);
-          json(res, 200, {
-            dispatch: await this.sessions.get().setDispatch(sourceCaller, input),
-          });
-          return;
-        }
-        if (path === '/sessions/halt' && req.method === 'POST') {
-          const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
-          json(res, 200, await this.sessions.get().halt(sourceCaller, input));
-          return;
-        }
-        if (path === '/sessions/lease' && req.method === 'POST') {
-          const input = await readJson(req, this.maxBodyBytes);
-          json(res, 200, await this.sessions.get().lease(sourceCaller, input));
-          return;
-        }
-        if (path === '/sessions/runners/heartbeat' && req.method === 'POST') {
-          const input = await readJson(req, this.maxBodyBytes);
-          json(res, 200, {
-            runner: await this.sessions.get().heartbeatRunner(sourceCaller, input),
-          });
-          return;
-        }
-        const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
-        if (settingsRoute && req.method === 'PUT') {
-          const body = await readJson(req, this.maxBodyBytes);
-          json(res, 200, {
-            runner: await this.sessions
-              .get()
-              .setRunnerSettings(
-                sourceCaller,
-                bound(body, 'runnerId', pathSegment(settingsRoute[1]!)),
-              ),
-          });
-          return;
-        }
-        if (path === '/sessions' && req.method === 'GET') {
-          json(res, 200, { sessions: await this.sessions.get().list(sourceCaller) });
-          return;
-        }
-        if (path === '/sessions/offer' && req.method === 'POST') {
-          const input = await readJson(req, this.maxBodyBytes);
-          json(res, 200, { session: await this.sessions.get().offer(sourceCaller, input) });
-          return;
-        }
-        const route =
-          /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(
-            path,
-          );
-        if (route) {
-          const sessionId = pathSegment(route[1]!);
-          if (!route[2] && req.method === 'GET') {
-            json(res, 200, { session: await this.sessions.get().get(sourceCaller, sessionId) });
-            return;
-          }
-          if (req.method === 'POST' && route[2] === 'halt') {
-            const input = parseInput(haltInput, await readJson(req, this.maxBodyBytes));
-            json(res, 200, await this.sessions.get().halt(sourceCaller, { ...input, sessionId }));
-            return;
-          }
-          if (req.method === 'POST' && route[2]) {
-            const input = bound(await readJson(req, this.maxBodyBytes), 'sessionId', sessionId);
-            const provider = this.sessions.get();
-            const session =
-              route[2] === 'attach'
-                ? await provider.attach(sourceCaller, input)
-                : route[2] === 'workspace-result'
-                  ? await provider.workspaceResult(sourceCaller, input)
-                  : route[2] === 'heartbeat'
-                    ? await provider.heartbeat(sourceCaller, input)
-                    : await provider.release(sourceCaller, input);
-            json(res, 200, { session });
-            return;
-          }
-        }
-      }
-    }
-    if (path === '/tools' && req.method === 'GET') {
-      const caller = await this.selectedCaller(
-        principal,
-        projectSelection(req.headers['x-merv-project-id']),
+    if (principal.kind === 'session') throw unknownEndpoint();
+    if (path === '/code/transport/grant' || path === '/code/transport/verify') {
+      if (req.method !== 'POST' || url.search)
+        throw new MervError('invalid_input', 'Use POST without query parameters');
+      const caller = await r.caller();
+      const input = await r.json(codeTransportInputSchema, 8192);
+      const provider = this.code.get();
+      if (!provider.transportGrant || !provider.verifyTransport)
+        throw new MervError('github_unavailable', 'Git transport is unavailable', 503);
+      json(
+        res,
+        200,
+        path.endsWith('/grant')
+          ? await provider.transportGrant(caller, input)
+          : await provider.verifyTransport(caller, input),
       );
-      json(res, 200, {
-        tools: await this.tools.describe(caller),
-      });
       return;
     }
-    if (path.startsWith('/tools/') && req.method === 'POST') {
-      let name: string;
-      try {
-        name = decodeURIComponent(path.slice('/tools/'.length));
-      } catch {
-        throw new MervError('invalid_tool', 'Malformed tool name');
-      }
-      const request = await this.caller(
-        principal,
-        await readJson(req, this.maxBodyBytes),
-        name,
-        req.headers['x-merv-project-id'],
-      );
-      const result = await this.call(name, request.caller, request.input);
-      json(res, 200, { result: result.value ?? null });
-      return;
-    }
-    if (path === '/mcp') {
-      if (req.method !== 'POST') {
-        res.setHeader('allow', 'POST');
+    if (path.startsWith('/code/v2/')) {
+      if (url.search)
+        throw new MervError('invalid_input', 'Code routes do not accept query parameters');
+      const caller = await r.caller();
+      const route = path.slice('/code/v2/'.length);
+      const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
+      const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
+      if (req.method !== (part ? 'PUT' : 'POST')) {
+        res.setHeader('allow', part ? 'PUT' : 'POST');
         json(res, 405, {
-          jsonrpc: '2.0',
-          id: null,
-          error: { code: -32000, message: 'This stateless MCP endpoint supports POST only' },
+          error: { code: 'method_not_allowed', message: 'Use PUT for a part and POST otherwise' },
         });
         return;
       }
-      const body = await readJson(req, this.maxBodyBytes);
-      const incompatible = protocolError(req.headers['mcp-protocol-version'], body);
-      if (incompatible) {
-        json(res, 400, incompatible);
-        return;
-      }
-      const instance = new McpServer(
-        { name: 'merv', version: '0.1.0' },
-        {
-          capabilities: { tools: {} },
-          instructions:
-            principal.kind === 'session'
-              ? 'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.'
-              : `${mainAgentGuide}\n\nHuman sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.`,
-        },
-      );
-      instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
-        try {
-          const caller = await this.selectedCaller(
-            principal,
-            projectSelection(
-              req.headers['x-merv-project-id'],
-              request.params?._meta?.['merv/projectId'],
-            ),
-          );
-          // MCP curates what a person's agent is offered; Merv's pages call /tools.
-          return { tools: await this.tools.describe(caller, true) };
-        } catch (error) {
-          throw rpcError(error);
-        }
-      });
-      instance.setRequestHandler(CallToolRequestSchema, async (request) => {
-        try {
-          const call = await this.caller(
-            principal,
-            request.params.arguments ?? {},
-            request.params.name,
-            projectSelection(
-              req.headers['x-merv-project-id'],
-              request.params._meta?.['merv/projectId'],
-            ),
-          );
-          const result = await this.call(request.params.name, call.caller, call.input, true);
-          return result.format === 'mcp'
-            ? (result.value as CallToolResult)
-            : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
-        } catch (error) {
-          const { status, error: body } = errorBody(error);
-          logFailure(error, status, body.code, 'mcp');
-          return {
-            isError: true,
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: body }) }],
-          };
-        }
-      });
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      let closing = false;
-      const close = () => {
-        if (closing) return;
-        closing = true;
-        void instance.close().catch(() => {});
-      };
-      // In JSON-response mode the SDK transport's close() discards a reply that is still
-      // pending without settling handleRequest. A client that disconnects during a call
-      // closes the transport, so the request ends with the connection; otherwise it stays
-      // pending forever and API shutdown waits on it. The tool call itself is still drained
-      // through `calls`.
-      const disconnected = new Promise<void>((resolve) => res.once('close', resolve));
-      res.once('close', close);
-      try {
-        await instance.connect(transport);
-        await Promise.race([transport.handleRequest(req, res, body), disconnected]);
-      } catch (error) {
-        close();
-        throw error;
-      }
+      const body = part
+        ? await r.bytes(CODE_PART_MAX_BYTES, 'application/octet-stream')
+        : await r.json(undefined, 65536);
+      const v2 = this.code.get().v2;
+      if (!v2)
+        throw new MervError(
+          'code_store_unavailable',
+          'This server keeps no Code repositories',
+          503,
+        );
+      if (part) json(res, 200, await v2.putPart(caller, part[1]!, Number(part[2]), body as Buffer));
+      else if (read && v2.readPart) octets(res, await v2.readPart(caller, read[1]!, body));
+      else json(res, 200, await v2.call(caller, route, body));
       return;
     }
-    json(res, 404, { error: { code: 'not_found', message: 'Unknown endpoint' } });
+    if (path === '/code/commands/next' || path === '/code/commands/complete') {
+      if ([...url.searchParams].length)
+        throw new MervError('invalid_input', 'Code routes do not accept query parameters');
+      const sourceCaller = await r.caller();
+      if (req.method !== 'POST') {
+        res.setHeader('allow', 'POST');
+        json(res, 405, {
+          error: { code: 'method_not_allowed', message: 'Use POST for Code controls' },
+        });
+        return;
+      }
+      const body = await r.json();
+      const input = path.endsWith('/next')
+        ? parseInput(codeCommandControlSchema, body)
+        : parseInput(codeCommandCompletionSchema, body);
+      // Lookup the current provider only after parsing; its methods are synchronous.
+      const provider = this.code.get();
+      if (path.endsWith('/next'))
+        json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
+      else
+        json(res, 200, {
+          operation: await provider.completeCommand(
+            sourceCaller,
+            input as z.infer<typeof codeCommandCompletionSchema>,
+          ),
+        });
+      return;
+    }
+    throw unknownEndpoint();
+  }
+
+  private scopeRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
+    return req.method === 'GET'
+      ? this.read(() => this.scopeRoutes(req, res, r))
+      : this.scopeRoutes(req, res, r);
+  }
+
+  private async scopeRoutes(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
+    const url = r.url;
+    const path = url.pathname;
+    const principal = r.principal!;
+    if ('caller' in principal) throw unknownEndpoint();
+    if (path === '/account' && req.method === 'GET') {
+      json(res, 200, {
+        ...(principal.kind === 'user'
+          ? { kind: 'user', user: principal.user }
+          : principal.kind === 'key'
+            ? { kind: 'key', key: principal.key }
+            : { kind: 'actor', actor: principal.actor }),
+        projects: await this.scope.projects(principal),
+      });
+      return;
+    }
+    if (path === '/account/keys') {
+      const projectId = keyQuery(url.searchParams, req.method === 'GET');
+      if (req.method === 'GET') {
+        json(res, 200, { keys: await this.scope.keys(principal, projectId) });
+        return;
+      }
+      if (req.method === 'POST') {
+        json(res, 200, await this.scope.createKey(principal, await r.json(createKeyInput)));
+        return;
+      }
+    }
+    const keyRoute = /^\/account\/keys\/([^/]+)(\/rotate)?$/.exec(path);
+    if (keyRoute) {
+      keyQuery(url.searchParams);
+      const keyId = pathSegment(keyRoute[1]!);
+      if (keyRoute[2] && req.method === 'POST') {
+        const input = await r.json(rotateKeyInput);
+        json(res, 200, await this.scope.rotateKey(principal, { keyId, ...input }));
+        return;
+      }
+      if (!keyRoute[2] && req.method === 'DELETE') {
+        await this.scope.revokeKey(principal, keyId);
+        json(res, 200, { revoked: true });
+        return;
+      }
+    }
+    if (path === '/projects' && req.method === 'GET') {
+      json(res, 200, { projects: await this.scope.projects(principal) });
+      return;
+    }
+    if (path === '/projects' && req.method === 'POST') {
+      json(res, 200, {
+        project: await this.scope.createProject(principal, await r.json(createProjectInput)),
+      });
+      return;
+    }
+    const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
+    if (memberRoute) {
+      const projectId = pathSegment(memberRoute[1]!);
+      const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
+      projectSelection(projectId, req.headers['x-merv-project-id']);
+      if (subject === undefined && req.method === 'GET') {
+        json(res, 200, { memberships: await this.scope.memberships(principal, projectId) });
+        return;
+      }
+      if (subject === undefined && req.method === 'POST') {
+        const input = await r.json(addMemberInput);
+        json(res, 200, { membership: await this.scope.addMember(principal, projectId, input) });
+        return;
+      }
+      if (subject !== undefined && req.method === 'PATCH') {
+        const input = await r.json(changeMemberInput);
+        json(res, 200, {
+          membership: await this.scope.changeMemberRole(principal, projectId, {
+            subject,
+            ...input,
+          }),
+        });
+        return;
+      }
+      if (subject !== undefined && req.method === 'DELETE') {
+        await this.scope.removeMember(principal, projectId, subject);
+        json(res, 200, { removed: true });
+        return;
+      }
+    }
+    throw unknownEndpoint();
+  }
+
+  private async sessionsRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+    r: ApiRequest,
+  ): Promise<unknown> {
+    const path = r.url.pathname;
+    if (!r.principal) {
+      // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
+      if (agentSelfPath(path)) return await this.agentSelf(req, res, r);
+      // Sessions authenticates the enrollment bearer itself.
+      if (path !== '/sessions/runners/enroll' || req.method !== 'POST' || r.url.search)
+        throw unknownEndpoint();
+      const token = r.bearer();
+      const provider = this.sessions.get();
+      if (!provider.enrollManaged)
+        throw new MervError(
+          'managed_runner_unavailable',
+          'Managed runner enrollment is unavailable',
+          503,
+        );
+      const enrolled = await provider.enrollManaged(token, await r.json(undefined, 4096));
+      projectSelection(enrolled.caller.projectId, req.headers['x-merv-project-id']);
+      return { controlToken: enrolled.controlToken };
+    }
+    if (r.principal.kind === 'session') throw unknownEndpoint();
+    if ([...r.url.searchParams].length)
+      throw new MervError('invalid_input', 'Session routes do not accept query parameters');
+    return req.method === 'GET'
+      ? await this.read(() => this.sessionRoutes(req, res, r))
+      : await this.sessionRoutes(req, res, r);
+  }
+
+  private async agentSelf(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
+    if ([...r.url.searchParams].length)
+      throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
+    // The route is matched first: an unknown one costs no authentication.
+    const action = r.url.pathname.slice('/sessions/self'.length);
+    if (
+      req.method === 'GET'
+        ? action !== ''
+        : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
+    )
+      throw new MervError('not_found', 'Unknown agent control route', 404);
+    const token = r.bearer();
+    const provider = this.sessions.get();
+    // The key is checked before any body is read, so a bad one never buffers a body.
+    const self = await provider.agentSelf(token);
+    if (req.method === 'GET') {
+      json(res, 200, self);
+      return;
+    }
+    if (action === '/assignment')
+      json(res, 200, { execution: await provider.assignAgent(token, await r.json()) });
+    else if (action === '/release')
+      json(res, 200, {
+        execution: await provider.releaseAgentAssignment(
+          token,
+          (await r.json(agentReleaseInput)).executionId,
+        ),
+      });
+    else
+      json(res, 200, {
+        agent: await provider.resetAgentContext(token, (await r.json(agentResetInput)).reason),
+      });
+  }
+
+  private async sessionRoutes(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
+    const path = r.url.pathname;
+    const sourceCaller = await r.caller();
+    if (path === '/sessions/agents') {
+      if (req.method === 'GET') {
+        json(res, 200, { agents: await this.sessions.get().agents(sourceCaller) });
+        return;
+      }
+      if (req.method === 'POST') {
+        const input = await r.json();
+        json(res, 200, {
+          agent: await this.sessions.get().registerAgent(sourceCaller, input),
+        });
+        return;
+      }
+    }
+    const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
+    if (observationRoute && req.method === 'GET') {
+      json(
+        res,
+        200,
+        await this.sessions.get().agentObservation(sourceCaller, pathSegment(observationRoute[1]!)),
+      );
+      return;
+    }
+    const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
+    if (rotateAgentRoute && req.method === 'POST') {
+      json(
+        res,
+        200,
+        await this.sessions.get().rotateAgent(sourceCaller, pathSegment(rotateAgentRoute[1]!)),
+      );
+      return;
+    }
+    const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
+    if (agentRoute) {
+      const agentId = pathSegment(agentRoute[1]!);
+      if (req.method === 'GET') {
+        json(res, 200, await this.sessions.get().agent(sourceCaller, agentId));
+        return;
+      }
+      if (req.method === 'DELETE') {
+        json(res, 200, {
+          agent: await this.sessions.get().retireAgent(sourceCaller, agentId),
+        });
+        return;
+      }
+    }
+    if (path === '/sessions/status' && req.method === 'GET') {
+      json(res, 200, await this.sessions.get().projectStatus(sourceCaller));
+      return;
+    }
+    // Sessions parses each body and requires admin where it commits.
+    if (path === '/sessions/dispatch' && req.method === 'PUT') {
+      const input = await r.json();
+      json(res, 200, {
+        dispatch: await this.sessions.get().setDispatch(sourceCaller, input),
+      });
+      return;
+    }
+    if (path === '/sessions/halt' && req.method === 'POST') {
+      const input = await r.json(haltInput);
+      json(res, 200, await this.sessions.get().halt(sourceCaller, input));
+      return;
+    }
+    if (path === '/sessions/lease' && req.method === 'POST') {
+      const input = await r.json();
+      json(res, 200, await this.sessions.get().lease(sourceCaller, input));
+      return;
+    }
+    if (path === '/sessions/runners/heartbeat' && req.method === 'POST') {
+      const input = await r.json();
+      json(res, 200, {
+        runner: await this.sessions.get().heartbeatRunner(sourceCaller, input),
+      });
+      return;
+    }
+    const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
+    if (settingsRoute && req.method === 'PUT') {
+      const body = await r.json();
+      json(res, 200, {
+        runner: await this.sessions
+          .get()
+          .setRunnerSettings(sourceCaller, bound(body, 'runnerId', pathSegment(settingsRoute[1]!))),
+      });
+      return;
+    }
+    if (path === '/sessions' && req.method === 'GET') {
+      json(res, 200, { sessions: await this.sessions.get().list(sourceCaller) });
+      return;
+    }
+    if (path === '/sessions/offer' && req.method === 'POST') {
+      const input = await r.json();
+      json(res, 200, { session: await this.sessions.get().offer(sourceCaller, input) });
+      return;
+    }
+    const route =
+      /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(
+        path,
+      );
+    if (route) {
+      const sessionId = pathSegment(route[1]!);
+      if (!route[2] && req.method === 'GET') {
+        json(res, 200, { session: await this.sessions.get().get(sourceCaller, sessionId) });
+        return;
+      }
+      if (req.method === 'POST' && route[2] === 'halt') {
+        const input = await r.json(haltInput);
+        json(res, 200, await this.sessions.get().halt(sourceCaller, { ...input, sessionId }));
+        return;
+      }
+      if (req.method === 'POST' && route[2]) {
+        const input = bound(await r.json(), 'sessionId', sessionId);
+        const provider = this.sessions.get();
+        const session =
+          route[2] === 'attach'
+            ? await provider.attach(sourceCaller, input)
+            : route[2] === 'workspace-result'
+              ? await provider.workspaceResult(sourceCaller, input)
+              : route[2] === 'heartbeat'
+                ? await provider.heartbeat(sourceCaller, input)
+                : await provider.release(sourceCaller, input);
+        json(res, 200, { session });
+        return;
+      }
+    }
+    throw unknownEndpoint();
+  }
+
+  private async mcpRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
+    const principal = r.principal!;
+    if (r.url.pathname !== '/mcp') throw unknownEndpoint();
+    if (req.method !== 'POST') {
+      res.setHeader('allow', 'POST');
+      json(res, 405, {
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32000, message: 'This stateless MCP endpoint supports POST only' },
+      });
+      return;
+    }
+    const body = await r.json();
+    const incompatible = protocolError(req.headers['mcp-protocol-version'], body);
+    if (incompatible) {
+      json(res, 400, incompatible);
+      return;
+    }
+    const instance = new McpServer(
+      { name: 'merv', version: '0.1.0' },
+      {
+        capabilities: { tools: {} },
+        instructions:
+          principal.kind === 'session'
+            ? 'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.'
+            : `${mainAgentGuide}\n\nHuman sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.`,
+      },
+    );
+    instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
+      try {
+        const caller = await this.selectedCaller(
+          principal,
+          projectSelection(
+            req.headers['x-merv-project-id'],
+            request.params?._meta?.['merv/projectId'],
+          ),
+        );
+        // MCP curates what a person's agent is offered; Merv's pages call /tools.
+        return { tools: await this.tools.describe(caller, true) };
+      } catch (error) {
+        throw rpcError(error);
+      }
+    });
+    instance.setRequestHandler(CallToolRequestSchema, async (request) => {
+      try {
+        const call = await this.caller(
+          principal,
+          request.params.arguments ?? {},
+          request.params.name,
+          projectSelection(
+            req.headers['x-merv-project-id'],
+            request.params._meta?.['merv/projectId'],
+          ),
+        );
+        const result = await this.call(request.params.name, call.caller, call.input, true);
+        return result.format === 'mcp'
+          ? (result.value as CallToolResult)
+          : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };
+      } catch (error) {
+        const { status, error: body } = errorBody(error);
+        logFailure(error, status, body.code, 'mcp');
+        return {
+          isError: true,
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: body }) }],
+        };
+      }
+    });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    let closing = false;
+    const close = () => {
+      if (closing) return;
+      closing = true;
+      void instance.close().catch(() => {});
+    };
+    // In JSON-response mode the SDK transport's close() discards a reply that is still
+    // pending without settling handleRequest. A client that disconnects during a call
+    // closes the transport, so the request ends with the connection; otherwise it stays
+    // pending forever and API shutdown waits on it. The tool call itself is still drained
+    // through `calls`.
+    const disconnected = new Promise<void>((resolve) => res.once('close', resolve));
+    res.once('close', close);
+    try {
+      await instance.connect(transport);
+      await Promise.race([transport.handleRequest(req, res, body), disconnected]);
+    } catch (error) {
+      close();
+      throw error;
+    }
   }
 }

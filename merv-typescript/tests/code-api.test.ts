@@ -211,9 +211,7 @@ test('Code controls remain unavailable without the optional provider and cannot 
       f.api.mount('/code', async (_req, res) => {
         res.end('wrong');
       }),
-    {
-      code: 'invalid_mount',
-    },
+    { code: 'mount_conflict' },
   );
   assert.equal((await f.request('next')).body.error.code, 'code_unavailable');
   const first = f.api.registerCode(f.provider);
@@ -236,7 +234,7 @@ test('Code controls remain unavailable without the optional provider and cannot 
       f.api.mount('/code', async (_req, res) => {
         res.end();
       }),
-    { code: 'invalid_mount' },
+    { code: 'mount_conflict' },
   );
   for (const token of [`ms_${'s'.repeat(43)}`, 'ms_reserved']) {
     const denied = await f.request('next', control, { token });

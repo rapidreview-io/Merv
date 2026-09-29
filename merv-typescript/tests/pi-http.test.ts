@@ -137,7 +137,7 @@ function fixture(t: TestContext, rotateMs?: number) {
   } as unknown as PiService;
   const http = new PiHttp(pi, rotateMs);
   const api = new ApiServer(scope, {} as Tools);
-  const unmountWorker = api.mount('/pi-worker', http.worker);
+  const unmountWorker = api.mount('/pi-worker', http.worker, { public: true });
   const unregister = api.registerPi(http);
   t.after(async () => {
     for (const dispose of cleanup) dispose();
@@ -199,10 +199,13 @@ test('optional Pi routes require a provider and human source authentication', as
   const events = `${base}/pi/${conversationId}/events`;
   const headers = { authorization: 'Bearer actor-http-token' };
   assert.equal((await fetch(events)).status, 401);
-  assert.equal(
-    (await fetch(events, { headers: { authorization: `Bearer ${workerToken}` } })).status,
-    401,
-  );
+  // A namespaced bearer no registered credential claims never reaches Scope.
+  const unclaimed = await fetch(events, { headers: { authorization: `Bearer ${workerToken}` } });
+  assert.equal(unclaimed.status, 503);
+  assert.deepEqual((await json(unclaimed)).error, {
+    code: 'credential_unavailable',
+    message: 'This credential is unavailable',
+  });
   assert.equal(
     (await fetch(events, { headers: { ...headers, 'x-merv-project-id': 'other-project' } })).status,
     403,
@@ -412,7 +415,7 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
       );
     },
   });
-  const unmount = f.api.mount('/pi-model', relay.handle);
+  const unmount = f.api.mount('/pi-model', relay.handle, { public: true });
   f.cleanup.push(() => {
     relay.close();
     unmount();
@@ -535,7 +538,7 @@ test('relay disconnect aborts the injected upstream and releases the conversatio
       );
     },
   });
-  const unmount = f.api.mount('/pi-model', relay.handle);
+  const unmount = f.api.mount('/pi-model', relay.handle, { public: true });
   f.cleanup.push(() => {
     relay.close();
     unmount();

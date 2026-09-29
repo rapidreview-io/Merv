@@ -140,16 +140,27 @@ test('managed HTTP credentials stay on enrollment and control routes', async (t)
     f.projectId,
   );
   assert.equal(active.status, 200, JSON.stringify(active));
-  for (const path of ['/sessions/self', '/tools', '/projects', '/account', '/probe', '/mcp']) {
+  for (const path of ['/tools', '/projects', '/account', '/mcp']) {
     const result = await f.request(path, token, 'GET', undefined, f.projectId);
     assert.equal(result.status, 403, `${path}: ${JSON.stringify(result)}`);
     assert.equal(result.body.error?.code, 'managed_runner_forbidden');
   }
-  for (const path of ['/sessions/self/assignment', '/tools/task.create', '/mcp']) {
+  for (const path of ['/tools/task.create', '/mcp']) {
     const result = await f.request(path, token, 'POST', {}, f.projectId);
     assert.equal(result.status, 403, `${path}: ${JSON.stringify(result)}`);
     assert.equal(result.body.error?.code, 'managed_runner_forbidden');
   }
+  // An agent's own routes authenticate its key themselves, and refuse a runner's.
+  for (const [method, path] of [
+    ['GET', '/sessions/self'],
+    ['POST', '/sessions/self/assignment'],
+  ] as const) {
+    const result = await f.request(path, token, method, method === 'POST' ? {} : undefined);
+    assert.equal(result.status, 401, `${path}: ${JSON.stringify(result)}`);
+  }
+  // A path nothing serves yet may be its owner's, not loaded: a runner's bearer gets 503 there.
+  const unserved = await f.request('/probe', token, 'GET');
+  assert.deepEqual([unserved.status, unserved.body.error?.code], [503, 'unavailable']);
   const mounted = f.app.ctx.api.mount('/probe', (_req, res) => {
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ reached: true }));
@@ -259,7 +270,7 @@ test('enrollment rejects spoofed fields and managed caller cannot reach registry
 /**
  * The API's credential gate over stand-in owners that accept every well-formed token: which
  * owner each bearer reaches, and what is refused before any owner is asked. `changes` names the
- * step of the API plan that changes a row on purpose; every other row must hold.
+ * step of the API plan that changes (or changed) a row on purpose; every other row must hold.
  */
 async function credentialGate(t: TestContext) {
   const reached: string[] = [];
@@ -344,11 +355,15 @@ async function credentialGate(t: TestContext) {
     identity,
   );
   for (const prefix of ['/ui', '/pi-worker', '/pi-model', '/codex-model'])
-    api.mount(prefix, (_req, res) => {
-      reached.push(prefix);
-      res.setHeader('content-type', 'application/json');
-      res.end('{}');
-    });
+    api.mount(
+      prefix,
+      (_req, res) => {
+        reached.push(prefix);
+        res.setHeader('content-type', 'application/json');
+        res.end('{}');
+      },
+      { public: true },
+    );
   const withdraw = { sessions: api.registerSessions(sessions), code: api.registerCode(code) };
   const url = await api.start();
   t.after(() => api.stop());
@@ -382,8 +397,10 @@ type GateRow = {
   method: string;
   path: string;
   body?: unknown;
-  /** The owner the request reaches, or the status and code it is refused with first. */
+  /** The owner the request reaches (and its status when that owner refuses), or the status and
+   *  code it is refused with first. */
   reaches?: string;
+  answers?: number;
   refused?: [number, string];
   changes?: 'step 8' | 'step 12' | 'step 13';
 };
@@ -453,26 +470,48 @@ const ownersPresent: GateRow[] = [
       ['POST', '/sessions/halt'],
       ['POST', '/sessions/lease?probe=1'],
       ['POST', '/code/transport/grant'],
-      ['GET', '/nowhere'],
     ] as const
   ).map(([method, path]): GateRow => ({ bearer: 'mr_', method, path, refused: managedForbidden })),
-  // Routes that authenticate themselves refuse a managed bearer in the API today.
+  // A path nothing serves may belong to an owner not loaded yet.
+  {
+    bearer: 'mr_',
+    method: 'GET',
+    path: '/nowhere',
+    refused: [503, 'unavailable'],
+    changes: 'step 8',
+  },
+  // Routes that authenticate themselves get every bearer, and refuse by their own rules.
   ...(
     [
-      ['GET', '/ui'],
-      ['GET', '/pi-worker/claim'],
-      ['POST', '/pi-model/responses'],
-      ['POST', '/codex-model/responses'],
-      ['GET', '/sessions/self'],
-      ['POST', '/sessions/runners/enroll'],
+      ['GET', '/ui', '/ui'],
+      ['GET', '/pi-worker/claim', '/pi-worker'],
+      ['POST', '/pi-model/responses', '/pi-model'],
+      ['POST', '/codex-model/responses', '/codex-model'],
     ] as const
-  ).map(([method, path]): GateRow => ({
+  ).map(([method, path, reaches]): GateRow => ({
     bearer: 'mr_',
     method,
     path,
-    refused: managedForbidden,
+    reaches,
     changes: 'step 8',
   })),
+  {
+    bearer: 'mr_',
+    method: 'GET',
+    path: '/sessions/self',
+    reaches: 'sessions.agentSelf',
+    answers: 401,
+    changes: 'step 8',
+  },
+  // Sessions refuses any bearer but an enrollment credential (the stand-in accepts it).
+  {
+    bearer: 'mr_',
+    method: 'POST',
+    path: '/sessions/runners/enroll',
+    body: {},
+    reaches: 'sessions.enrollManaged',
+    changes: 'step 8',
+  },
   // GitHub's callback is served before any credential is looked at.
   { bearer: 'mr_', method: 'GET', path: '/code/github/callback', reaches: 'code.github.callback' },
   // An enrollment credential only enrolls.
@@ -489,21 +528,24 @@ const ownersPresent: GateRow[] = [
       ['POST', '/mcp'],
       ['GET', '/projects'],
       ['POST', '/sessions/lease'],
-      ['GET', '/sessions/runners/enroll'],
     ] as const
   ).map(([method, path]): GateRow => ({ bearer: 'me_', method, path, refused: managedForbidden })),
-  ...(
-    [
-      ['GET', '/ui'],
-      ['GET', '/sessions/self'],
-    ] as const
-  ).map(([method, path]): GateRow => ({
+  {
     bearer: 'me_',
-    method,
-    path,
-    refused: managedForbidden,
+    method: 'GET',
+    path: '/sessions/runners/enroll',
+    refused: [404, 'not_found'],
     changes: 'step 8',
-  })),
+  },
+  { bearer: 'me_', method: 'GET', path: '/ui', reaches: '/ui', changes: 'step 8' },
+  {
+    bearer: 'me_',
+    method: 'GET',
+    path: '/sessions/self',
+    reaches: 'sessions.agentSelf',
+    answers: 401,
+    changes: 'step 8',
+  },
   { bearer: 'me_', method: 'GET', path: '/code/github/callback', reaches: 'code.github.callback' },
   // A session credential uses only POST /mcp; an agent key its own routes.
   { bearer: 'ms_', method: 'POST', path: '/mcp', body: listTools, reaches: 'tools.describe' },
@@ -605,7 +647,10 @@ async function checkRows(
     const label = `${row.bearer} ${row.method} ${row.path}`;
     const result = await request(row.method, row.path, bearers[row.bearer], row.body);
     if (row.reaches) {
-      assert.ok(result.status < 400, `${label}: ${JSON.stringify(result)}`);
+      assert.ok(
+        row.answers ? result.status === row.answers : result.status < 400,
+        `${label}: ${JSON.stringify(result)}`,
+      );
       assert.ok(result.reached.includes(row.reaches), `${label}: ${JSON.stringify(result)}`);
     } else {
       assert.deepEqual([result.status, result.code], row.refused, label);

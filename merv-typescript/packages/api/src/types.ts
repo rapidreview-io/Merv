@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   Caller,
   Data,
+  MervError,
+  Principal,
   SessionToolPolicy,
   CodeCommandCompletion,
   CodeCommandControl,
@@ -115,8 +117,49 @@ export interface CodeApiProvider {
     readPart?(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
   };
 }
-/** An unauthenticated handler for one plugin-owned path prefix, such as a browser bundle. */
-export type MountHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+/** Who the API authenticated: a Scope principal, or the caller a registered credential's owner
+ *  authenticated (whose kind is never user, key or actor). */
+export type ApiPrincipal = Principal | { kind: string; caller: Caller };
+/** One request to a mounted handler. */
+export interface ApiRequest {
+  readonly url: URL;
+  /** Set before the handler on an authenticated route; absent on a public one. */
+  readonly principal?: ApiPrincipal;
+  /** The raw bearer, or 401 without one: a public handler authenticates it itself. */
+  bearer(): string;
+  /** The caller in the project that X-Merv-Project-Id and `projectId` select (400 when they
+   *  conflict): one read decision, made before any body. 401 on a public route. */
+  caller(projectId?: string): Promise<Caller>;
+  /** The JSON body: 415, 413 past `maxBytes` (default the server's limit), 400 `invalid_json`,
+   *  or 400 `invalid_input` with the schema's issues. */
+  json(schema?: undefined, maxBytes?: number): Promise<unknown>;
+  json<S extends ZodTypeAny>(schema: S, maxBytes?: number): Promise<z.output<S>>;
+  /** The body's bytes: 415 for any other media type, 413 past `maxBytes`. */
+  bytes(maxBytes: number, mediaType: string): Promise<Buffer>;
+  // json and bytes answer 503 `unavailable` when the mount was withdrawn while the body was read.
+}
+/**
+ * The handler of one plugin-owned path prefix. It returns undefined when it wrote the response
+ * itself; a Buffer is sent as 200 octets and any other value as 200 JSON.
+ */
+export type MountHandler = (req: IncomingMessage, res: ServerResponse, r: ApiRequest) => unknown;
+export interface MountOptions {
+  /** Served without API authentication: the whole mount, or these paths under it, each with
+   *  everything below it. A public handler authenticates any bearer itself and answers 404
+   *  outside its exact routes. */
+  public?: true | readonly `/${string}`[];
+}
+/** The bearers of one token namespace (such as `ms_`), registered by the plugin that issues them. */
+export interface ApiCredential {
+  /** The principal's kind; never user, key or actor. */
+  kind: string;
+  /** The refusal wherever `routes` is false. */
+  forbidden: MervError;
+  /** The authenticated routes this credential may use: an allow-list checked before any I/O. */
+  routes(method: string, path: string, query: boolean): boolean;
+  /** Absent: the API never authenticates the credential and answers `forbidden`. */
+  authenticate?(token: string): Promise<Caller>;
+}
 
 /** What a worker's model calls may do, read again about once a second while one streams. */
 export interface ModelRelayGrant {
@@ -202,7 +245,12 @@ export interface Api {
   readonly url?: string;
   start(): Promise<string>;
   stop(): Promise<void>;
-  mount(prefix: string, handler: MountHandler): () => void;
+  /** Serves one lowercase path segment (409 `mount_conflict` when it is taken). The disposer
+   *  withdraws it: its routes then answer 503 until it is mounted again. */
+  mount(prefix: `/${string}`, handler: MountHandler, options?: MountOptions): () => void;
+  /** Authenticates the bearers of one namespace, `/^[a-z]+_$/` but never `mk_` (409 when it is
+   *  taken). While a namespace is unregistered, its bearers get 503 on authenticated routes. */
+  credential(namespace: `${string}_`, credential: ApiCredential): () => void;
   /** Mounts a model relay; the disposer withdraws it and ends the calls it is streaming. */
   mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,

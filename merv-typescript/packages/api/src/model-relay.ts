@@ -1,11 +1,6 @@
 import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type {
-  ModelRelayConfig,
-  ModelRelayFailure,
-  ModelRelayGrant,
-  MountHandler,
-} from './types.js';
+import type { ModelRelayConfig, ModelRelayFailure, ModelRelayGrant } from './types.js';
 
 const responsesUrl = 'https://api.openai.com/v1/responses';
 
@@ -156,7 +151,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R 
     };
   }
 
-  readonly handle: MountHandler = async (req, res) => {
+  readonly handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.url !== this.config.route) {
       this.error(res, 404, 'not_found');
       return;

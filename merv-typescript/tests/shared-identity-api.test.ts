@@ -420,7 +420,7 @@ test('JWT validation rejects untrusted claims and public configuration cannot be
   const f = await fixture(t);
   assert.deepEqual(await (await fetch(`${f.url}/auth/config`)).json(), { enabled: true });
   for (const prefix of ['/auth', '/account', '/projects'])
-    assert.throws(() => f.server.mount(prefix, async () => {}), { code: 'invalid_mount' });
+    assert.throws(() => f.server.mount(prefix, async () => {}), { code: 'mount_conflict' });
   for (const overrides of [
     { iss: 'https://other.example/auth/v1' },
     { aud: 'other' },
