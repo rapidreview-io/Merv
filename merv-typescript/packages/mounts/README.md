@@ -36,7 +36,7 @@ Each mount has one discovery connection, which lists tools and listens for `tool
 
 - The mount publishes the selected tools the upstream offers now. A missing one is withdrawn alone, and status reads `ready` with `mount_missing_tool`.
 - An unchanged catalog is not republished: no schema compile and no drain of admitted calls.
-- A failed round keeps the last catalog published and reads `disconnected` with its error code, or `failed` if nothing was ever published. A stale tool fails per call.
+- A failed round keeps the last catalog published and reads `disconnected` with its error code, or `failed` if nothing was ever published. A stale tool fails per call. Any failed round ends the discovery connection; the next round opens a new one.
 
 Without `discovery`, listing sends no credential. With it, listing uses that actor's binding, and each round first requires the actor to read the project: an actor who lost access fails the next round with `forbidden`, and the discovery session ends. Discovery needs no tool grants, and its binding never carries a call. Its secret is read once per discovery connection.
 
@@ -52,12 +52,12 @@ The warm path trusts the registry's admission. Handlers taken from `Tools.list()
 
 Codes and texts are fixed: no upstream text, header or secret reaches a caller or the status.
 
-| Code                               | Meaning                                                                                                            |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `remote_error` (502)               | The upstream answered with a JSON-RPC error: `Remote tool refused the request (<code>)`. The connection stays.     |
-| `remote_credential_rejected` (502) | The upstream returned HTTP 401 or 403. The connection is retired.                                                  |
-| `remote_timeout` (504)             | A request took longer than `timeoutMs`. The connection is retired.                                                 |
-| `remote_unavailable` (502)         | Any other transport fault, local ones included; the connection is retired. Also a call reaching an unloaded mount. |
+| Code                               | Meaning                                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `remote_error` (502)               | The upstream answered with a JSON-RPC error: `Remote tool refused the request (<code>)`. A call's connection stays. |
+| `remote_credential_rejected` (502) | The upstream returned HTTP 401 or 403. The connection is retired.                                                   |
+| `remote_timeout` (504)             | A request took longer than `timeoutMs`. The connection is retired.                                                  |
+| `remote_unavailable` (502)         | Any other transport fault, local ones included; the connection is retired. Also a call reaching an unloaded mount.  |
 
 Merv codes reach callers and the status unchanged, among them `forbidden`, `credential_forbidden`, `credential_unavailable`, `tool_forbidden`, `session_invocation`, `invalid_schema`, `invalid_remote_result`, `remote_catalog_duplicate`, `remote_catalog_limit` and `mount_missing_tool`. Upstream codes −32000 and −32001 cannot be told apart from the SDK's local ConnectionClosed and RequestTimeout, so they retire the lane and report `remote_unavailable` or `remote_timeout`.
 
