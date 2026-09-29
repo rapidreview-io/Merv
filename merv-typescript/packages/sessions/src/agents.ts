@@ -177,7 +177,8 @@ export class AgentDirectory {
       )
     ).map((row) => JSON.parse(row.agent_json));
   }
-  async retire(agent: Agent, reason: string, tx: Transaction): Promise<Agent> {
+  async retire({ id }: Agent, reason: string, tx: Transaction): Promise<Agent> {
+    const agent = await this.get(id, tx);
     if (agent.status === 'retired') return agent;
     agent.status = 'retired';
     agent.retiredAt = new Date(this.clock()).toISOString();

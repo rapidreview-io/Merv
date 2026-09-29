@@ -487,6 +487,7 @@ export class LeasedSessions implements Sessions {
         workflows,
         this.clock,
         config.serviceConcurrency,
+        async (projectId, tx) => (await this.dispatcher.dispatch(projectId, tx)).enabled,
       );
       await this.serviceWork.initialize();
       try {
@@ -731,7 +732,8 @@ export class LeasedSessions implements Sessions {
       return frame.source;
     }
     check(caller.session, 'session_required', 'Worker authority requires a session', 401);
-    const session = await this.decode(await this.row(tx, caller.session.id), tx);
+    const row = await this.row(tx, caller.session.id);
+    const session = await this.decode(row, tx);
     check(
       session.actorId === caller.actorId && session.projectId === caller.projectId,
       'forbidden',
@@ -746,11 +748,7 @@ export class LeasedSessions implements Sessions {
       'Session is closed or expired',
       401,
     );
-    await this.credentials.authenticateHash(
-      (await this.row(tx, session.id)).token_hash,
-      'session-execution',
-      tx,
-    );
+    await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
     if (caller.session.agentCredentialHash)
       await this.credentials.authenticateHash(
         caller.session.agentCredentialHash,
@@ -764,10 +762,6 @@ export class LeasedSessions implements Sessions {
     ) {
       const tool = this.invocationIds.get(caller.session.invocationId)?.public.tool;
       if (tool !== 'session.messages' && tool !== 'session.message.ack') {
-        // A sender takes this same row lock before inserting. The write being submitted and
-        // the message therefore have a single order even when their requests race.
-        if (!this.state.readScope)
-          await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', session.id);
         await this.requireMessagesAcknowledged(session.id, tx);
       }
     }
@@ -849,14 +843,8 @@ export class LeasedSessions implements Sessions {
     );
     // Hosted Codex may finish its already-started model call for one minute after handoff.
     // The model relay alone grants that grace; MCP still sees the closed execution.
-    const managedTable =
-      reason === 'handoff'
-        ? await tx.get<{ name: string | null }>(
-            "SELECT to_regclass('session_managed_runners') AS name",
-          )
-        : undefined;
     const managedHandoff =
-      managedTable?.name &&
+      reason === 'handoff' &&
       (await tx.get(
         'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?',
         session.id,
@@ -872,10 +860,8 @@ export class LeasedSessions implements Sessions {
         ? 'offer_expired'
         : undefined;
     if (failure) await this.dispatcher.failed(session, failure, tx);
-    if (session.agentId) {
-      const agent = await this.directory.get(session.agentId, tx);
-      if (!agent.persistent) await this.directory.retire(agent, reason, tx);
-    } else await this.scope.retireSessionActor(session.actorId, reason, tx);
+    const agent = await this.directory.get(session.agentId!, tx);
+    if (!agent.persistent) await this.directory.retire(agent, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -1250,7 +1236,8 @@ export class LeasedSessions implements Sessions {
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
       const current = await this.currentAgentExecution(agent, tx);
-      if (current) await this.closeSession(current, 'agent_retired', tx, 'released', 'halted');
+      if (current)
+        await this.closeReleased(current, { reason: 'agent_retired', outcome: 'halted' }, tx);
       return await this.directory.retire(agent, 'agent_retired', tx);
     });
   }
@@ -1325,7 +1312,7 @@ export class LeasedSessions implements Sessions {
         'Assignment belongs to another agent',
         403,
       );
-      return await this.closeSession(session, 'released', tx, 'released');
+      return await this.closeReleased(session, {}, tx);
     });
   }
   async resetAgentContext(token: string, reason: string): Promise<Agent> {
@@ -1434,10 +1421,7 @@ export class LeasedSessions implements Sessions {
         instanceId,
       );
       const latest = rows[0] ? await this.decode(rows[0], tx) : null;
-      const currentRow = rows.find((row) => {
-        const status = (JSON.parse(row.session_json) as Session).status;
-        return status === 'offered' || status === 'active';
-      });
+      const currentRow = rows.find((row) => live(JSON.parse(row.session_json)));
       let current: Session | null = currentRow ? await this.decode(currentRow, tx) : null;
       if (current) {
         try {
@@ -1494,7 +1478,6 @@ export class LeasedSessions implements Sessions {
         'Session not found in this project',
         404,
       );
-      await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', row.id);
       const session = await this.decode(row, tx);
       check(
         live(session),
@@ -2031,10 +2014,12 @@ export class LeasedSessions implements Sessions {
     const { usage, ...control } = closed(releaseSchema, input, releaseRefusals);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
+      // A closure its checks find (a revocation, a lease its domain refused) is recorded as that.
+      // A landed handoff comes first, as closeReleased records it: expiry never hides it.
+      if (live(session) && !(await this.handedOff(session, tx))) await this.reconcile(session, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
-      if (caller.managed)
-        await this.managed.acknowledgeRelease(caller, released.id, control.runnerId, tx);
+      if (caller.managed) await this.managed.acknowledgeRelease(caller, tx);
       return released;
     });
   }
@@ -2052,6 +2037,7 @@ export class LeasedSessions implements Sessions {
       'invalid_outcome',
       'A completed outcome is recorded by the worker’s own handoff, not by a release',
     );
+    if (!live(session)) return session;
     if (input.deferral) session.deferral = structuredClone(input.deferral);
     return await this.closeSession(
       session,
@@ -2169,7 +2155,7 @@ export class LeasedSessions implements Sessions {
     token: string,
     input: unknown,
     projectId?: unknown,
-  ): Promise<{ controlToken: string; caller: Caller }> {
+  ): Promise<{ controlToken: string }> {
     this.ensureOpen();
     return await this.managed.enroll(token, input, projectId);
   }

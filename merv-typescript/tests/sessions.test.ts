@@ -478,6 +478,76 @@ test('controller polls fence changed workflow revisions and expired offers witho
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
 });
 
+test('a runner’s release records the closure its session’s checks find, not a release', async (t) => {
+  const f = await fixture(t);
+  const sessions = [await f.offer(), await f.offer()];
+  for (const { token } of sessions) await f.sessions.authenticate(token);
+  // The domain refuses both leases while their records stay where they were.
+  f.onLeaseCheck(() => {
+    throw new MervError('claim_lost', 'Worker no longer owns this reservation', 409);
+  });
+  // The first runner releases before anything recorded the closure; the second polled first
+  // and was told of it.
+  for (const [index, { session }] of sessions.entries()) {
+    if (index === 1) assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
+    const released = await f.sessions.release(f.source, {
+      sessionId: session.id,
+      runnerId: 'runner',
+    });
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['expired', 'claim_lost', 'expired'],
+    );
+    assert.deepEqual(await f.sessions.get(f.source, session.id), released);
+  }
+});
+
+test('a runner’s release of a session whose handoff landed records the handoff, even past expiry', async (t) => {
+  const f = await fixture(t);
+  const handoff = async () => {
+    const { token, session } = await f.offer(),
+      prepared = await f.sessions.prepare(await f.sessions.authenticate(token), 'finish', {});
+    await f.sessions.run(
+      prepared,
+      async (caller) =>
+        await f.state.transaction(
+          async (tx) =>
+            await f.handle.transition(
+              caller,
+              {
+                instanceId: session.instanceId,
+                expectedRevision: 0,
+                action: 'finish',
+                requestId: `finish-${session.id}`,
+              },
+              tx,
+            ),
+        ),
+    );
+    return session;
+  };
+  // A release that claims completion on a live, handed-off session is answered with the handoff.
+  const claimed = await handoff();
+  const completed = await f.sessions.release(f.source, {
+    sessionId: claimed.id,
+    runnerId: 'runner',
+    outcome: 'completed',
+  });
+  // One that arrives past expiry, before anything recorded the closure, keeps it too.
+  const late = await handoff();
+  f.advance(300_001);
+  const failed = await f.sessions.release(f.source, {
+    sessionId: late.id,
+    runnerId: 'runner',
+    outcome: 'host_failed',
+  });
+  for (const released of [completed, failed])
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['released', 'handoff', 'completed'],
+    );
+});
+
 test('controller polls preserve offered leases across provider outages and commit deadline closure', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();
@@ -1055,13 +1125,14 @@ test('automatic dispatch moves past a candidate whose offer cannot be built', as
     ).map((row) => [row.attempts, row.last_code, row.last_session_id]),
     [[1, 'context_too_large', null]],
   );
-  // With nothing else leasable, the runner sees why the remaining candidate cannot be offered.
+  // With nothing else leasable, the runner is answered with the decision, never the error.
   await f.sessions.release(f.source, { sessionId: leased.session!.id, runnerId: 'machine' });
   f.onBuild(() => {
     throw new MervError('context_too_large', 'Context exceeds the budget', 400);
   });
-  await assert.rejects(async () => await f.sessions.lease(f.source, autoInput()), {
-    code: 'context_too_large',
+  assert.deepEqual(await f.sessions.lease(f.source, autoInput()), {
+    session: null,
+    reason: 'retry_backoff',
   });
 });
 
@@ -1666,12 +1737,17 @@ test('upgrading the historical one-worker schema preserves a live execution and 
   const f = await fixture(t, true);
   const { token, session } = await f.offer();
   const active = await f.sessions.authenticate(token);
-  const runner = await f.sessions.heartbeatRunner(f.source, {
-    runnerId: 'runner',
-    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
-    platforms: [{ name: 'test', harness: 'command', enabled: true, parallelism: 1 }],
-    capacity: 1,
-  });
+  // Current code runs only on current tables, so the historical schema gets its row by hand.
+  const runner = { id: 'runner_legacy' };
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,'legacy-owner','runner','{}','{}','{}',?)",
+        runner.id,
+        f.source.projectId,
+        new Date().toISOString(),
+      ),
+  );
   await f.state.transaction(
     async (tx) =>
       await tx.run(

@@ -68,7 +68,6 @@ export const managedRunnerRules: CallerRules = {
 
 export class ManagedRunnerBindings {
   private validator?: ManagedRunnerValidator;
-  private secret?: string;
   constructor(
     private state: State,
     private scope: Scope,
@@ -105,9 +104,6 @@ export class ManagedRunnerBindings {
       'Managed runner secret is unavailable',
       503,
     );
-    if (this.secret)
-      check(this.secret === secret, 'managed_unavailable', 'Managed runner secret changed', 503);
-    this.secret = secret;
     return secret;
   }
   private token(allocationId: string, epoch: number): string {
@@ -226,13 +222,7 @@ export class ManagedRunnerBindings {
     token: string,
     input: unknown,
     projectId?: unknown,
-  ): Promise<{ controlToken: string; caller: Caller }> {
-    check(
-      typeof token === 'string' && /^me_[0-9a-f]{64}$/.test(token),
-      'unauthorized',
-      'Invalid managed enrollment',
-      401,
-    );
+  ): Promise<{ controlToken: string }> {
     const parsed = z
       .object({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
       .strict()
@@ -296,10 +286,7 @@ export class ManagedRunnerBindings {
           tx,
         );
       }
-      return {
-        controlToken,
-        caller: this.caller({ ...row, worker_nonce_hash: nonceHash, control_hash: controlHash }),
-      };
+      return { controlToken };
     });
   }
   private caller(row: ManagedBindingRow): Caller {
@@ -524,13 +511,8 @@ export class ManagedRunnerBindings {
       403,
     );
   }
-  async acknowledgeRelease(
-    caller: Caller,
-    sessionId: string,
-    runnerId: string,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.controlled(caller, sessionId, runnerId, tx);
+  /** The release of `caller`'s bound session, which the caller's control already admitted. */
+  async acknowledgeRelease(caller: Caller, tx: Transaction): Promise<void> {
     await tx.run(
       'UPDATE session_managed_runners SET runner_released_at=COALESCE(runner_released_at,?) WHERE allocation_id=?',
       new Date(this.clock()).toISOString(),
@@ -580,8 +562,7 @@ export class ManagedRunnerBindings {
         'SELECT session_json FROM worker_sessions WHERE id=?',
         row.bound_session_id,
       );
-      check(bound, 'managed_session_missing', 'Managed bound session is missing', 500);
-      const session = JSON.parse(bound.session_json) as Session;
+      const session = JSON.parse(bound!.session_json) as Session;
       const workspace = await tx.get<{ result_json: string | null }>(
         'SELECT result_json FROM session_workspaces WHERE session_id=?',
         row.bound_session_id,

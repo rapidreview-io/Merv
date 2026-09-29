@@ -265,7 +265,7 @@ test('prospective demand respects offer failure backoff without a runner-specifi
   await f.sessions.setDispatch(f.owner, { enabled: true });
   await f.runner();
   f.rejectBuild(true);
-  await assert.rejects(f.lease(), { code: 'context_too_large' });
+  assert.equal((await f.lease()).reason, 'retry_backoff');
   f.rejectBuild(false);
   assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
   f.advance(30_001);
