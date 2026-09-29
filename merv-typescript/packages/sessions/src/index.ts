@@ -76,6 +76,7 @@ import type {
   SessionLookup,
   SessionUsageReport,
   BudgetStatus,
+  StatusSection,
   UsageQuery,
   UsageRollup,
 } from './types.js';
@@ -382,6 +383,7 @@ export class LeasedSessions implements Sessions {
   private dispatcher!: SessionDispatch;
   private board!: SessionRunning;
   serviceWork!: SessionServiceWork;
+  readonly statusSections = new Map<string, StatusSection>();
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   private managed!: ManagedRunnerBindings;
@@ -2130,6 +2132,13 @@ export class LeasedSessions implements Sessions {
   registerManagedValidator(validator: ManagedRunnerValidator): () => void {
     this.ensureOpen();
     return this.managed.registerValidator(validator);
+  }
+  contributeStatus(key: string, section: StatusSection): () => void {
+    check(!this.statusSections.has(key), 'status_section_registered', `${key} is taken`, 409);
+    this.statusSections.set(key, section);
+    return () => {
+      if (this.statusSections.get(key) === section) this.statusSections.delete(key);
+    };
   }
   async ensureManagedEnrollment(
     input: ManagedEnrollmentInput,

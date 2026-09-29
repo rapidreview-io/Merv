@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
-import type { Fleet } from '@merv/fleet/types';
 import type { Sessions } from '@merv/sessions/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { conversationRules } from '../packages/pi/src/conversation-rules.js';
@@ -80,27 +79,12 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
         truncated: false,
       };
     },
+    statusSections: new Map(),
   } as unknown as Sessions;
-  const fleet = {
-    list: async (candidate: Caller) => {
-      onlyProject(candidate);
-      return [
-        {
-          id: 'allocation',
-          owner: { kind: 'workflow', id: 'secret' },
-          phase: 'running',
-          intent: 'run',
-          error: null,
-          createdAt: 'before',
-          source: { secret: 'omit' },
-        },
-      ];
-    },
-  } as unknown as Fleet;
-  const result = await systemStatus(caller, sessions, fleet);
+  const result = await systemStatus(caller, sessions);
   assert.equal(result.scope, 'project');
   if (result.scope !== 'project') throw new Error('Expected project status');
-  assert.deepEqual(seen, ['project-a', 'project-a', 'project-a']);
+  assert.deepEqual(seen, ['project-a', 'project-a']);
   assert.equal(result.dispatch.state, 'running');
   assert.equal(result.workers.liveShown, 0);
   assert.equal(result.waiting.total, 1);
@@ -109,47 +93,6 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
   assert.equal(result.blockers.items[1]?.kind, 'dispatch_failing');
   assert.equal(JSON.stringify(result).includes('private.example'), false);
   assert.equal(JSON.stringify(result).includes('secret'), false);
-  const budget = await systemStatus(caller, sessions, fleet, async () => ({
-    blocked: true,
-    blockReason: 'last_refused_reservation_unaffordable',
-    resetsAt: '2026-09-27T00:00:00.000Z',
-    tokens: 20_000_000,
-    usedToday: 19_926_575,
-  }));
-  assert.equal(budget.scope, 'project');
-  if (budget.scope !== 'project') throw new Error('Expected project status');
-  assert.deepEqual(budget.fleet.modelBudget, {
-    blocked: true,
-    reason: 'last_refused_reservation_unaffordable',
-    resetsAt: '2026-09-27T00:00:00.000Z',
-    next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
-  });
-  assert.equal(JSON.stringify(budget).includes('20000000'), false);
-  const retry = await systemStatus(caller, sessions, fleet, undefined, async (targets) => {
-    assert.deepEqual(targets, [{ instanceId: 'task-1', expectedRevision: 2 }]);
-    return [
-      {
-        instanceId: 'task-1',
-        expectedRevision: 2,
-        state: 'exhausted_unclaimed',
-        unclaimedAttempts: 2,
-        attemptLimit: 2,
-        retryAvailable: true,
-        next: 'An administrator may retry this exact revision.',
-      },
-    ];
-  });
-  assert.equal(retry.scope, 'project');
-  if (retry.scope !== 'project') throw new Error('Expected project status');
-  assert.deepEqual(retry.fleet.retryBlocked.items, [
-    {
-      instanceId: 'task-1',
-      expectedRevision: 2,
-      reason: '2/2 created Fleet machines ended before claiming work.',
-      next: 'An administrator may retry this exact revision.',
-      tool: 'fleet.workflow_retry',
-    },
-  ]);
 });
 
 test('system.status is a read-only conversation tool and project access is checked', async () => {
@@ -175,12 +118,11 @@ test('system.status is a read-only conversation tool and project access is check
       queueTotal: 0,
     }),
     stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
+    statusSections: new Map(),
   } as unknown as Sessions;
-  const fleet = { list: async () => [] } as unknown as Fleet;
   sessionsToolsPlugin.apply({
     tools,
     sessions,
-    get: (name: string) => (name === 'fleet' ? fleet : undefined),
     effect: (register: () => unknown) => register(),
   } as unknown as Context);
   const listed = await tools.describe(caller);

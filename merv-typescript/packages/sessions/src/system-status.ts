@@ -1,46 +1,24 @@
 import type { Caller } from '@merv/contracts';
-import type { Fleet } from '@merv/fleet/types';
-import type { Sessions } from './types.js';
-
-type ModelBudget = {
-  blocked: boolean;
-  blockReason: string | null;
-  resetsAt: string;
-};
-type FleetRetry = {
-  instanceId: string;
-  expectedRevision: number;
-  state: string;
-  unclaimedAttempts: number;
-  attemptLimit: number;
-  retryAvailable: boolean;
-  next: string;
-};
-const modelWait = (budget: ModelBudget | null) =>
-  budget
-    ? {
-        blocked: budget.blocked,
-        reason: budget.blockReason,
-        resetsAt: budget.resetsAt,
-        ...(budget.blocked
-          ? { next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.' }
-          : {}),
-      }
-    : null;
+import type { StatusSection, Sessions } from './types.js';
 
 /** Provider/runner diagnostics can embed private endpoints; a status overview never needs one. */
 const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitted]');
 
-/** A compact operational read. Sessions enforces the caller's authority for each view. */
-export async function systemStatus(
-  caller: Caller,
-  sessions: Sessions,
-  fleet?: Fleet,
-  modelBudget?: () => Promise<ModelBudget | null>,
-  workflowRetries?: (
-    targets: { instanceId: string; expectedRevision: number }[],
-  ) => Promise<FleetRetry[]>,
-) {
+/** Each contributed section, read in parallel and keyed as contributed; undefined is left out. */
+const contributed = async (sessions: Sessions, ...view: Parameters<StatusSection>) =>
+  Object.fromEntries(
+    (
+      await Promise.all(
+        [...sessions.statusSections].map(
+          async ([key, read]) => [key, await read(...view)] as const,
+        ),
+      )
+    ).filter(([, value]) => value !== undefined),
+  );
+
+/** A compact operational read. Sessions enforces the caller's authority for each view; other
+ * plugins' sections follow `session`, or `workers` in the project view. */
+export async function systemStatus(caller: Caller, sessions: Sessions) {
   if (caller.session) {
     const session = await sessions.describe(caller);
     return {
@@ -60,18 +38,14 @@ export async function systemStatus(
         closeReason: session.closeReason,
         outcome: session.outcome ?? null,
       },
-      modelBudget: modelWait((await modelBudget?.()) ?? null),
+      ...(await contributed(sessions, caller, null)),
     };
   }
-  const [project, blockers, allocations, budget] = await Promise.all([
+  const [project, blockers] = await Promise.all([
     sessions.projectStatus(caller),
     sessions.stuck(caller),
-    fleet?.list(caller, 0) ?? Promise.resolve(null),
-    modelBudget?.() ?? Promise.resolve(null),
   ]);
-  const retryStatuses = await workflowRetries?.(
-    project.queue.map(({ instanceId, expectedRevision }) => ({ instanceId, expectedRevision })),
-  ).catch(() => undefined);
+  const sections = await contributed(sessions, caller, project);
   return {
     scope: 'project' as const,
     projectId: caller.projectId,
@@ -94,33 +68,7 @@ export async function systemStatus(
         lastDecision: runner.lastDecision,
       })),
     },
-    fleet: {
-      available: allocations !== null,
-      modelBudget: modelWait(budget),
-      retryBlocked: {
-        available: retryStatuses !== undefined,
-        truncated: project.queueTotal > project.queue.length,
-        items: (retryStatuses ?? [])
-          .filter((status) => status.state.startsWith('exhausted_'))
-          .map((status) => ({
-            instanceId: status.instanceId,
-            expectedRevision: status.expectedRevision,
-            reason: `${status.unclaimedAttempts}/${status.attemptLimit} created Fleet machines ended before claiming work.`,
-            next: status.next,
-            ...(status.retryAvailable ? { tool: 'fleet.workflow_retry' } : {}),
-          })),
-      },
-      allocations: (allocations ?? [])
-        .filter((allocation) => allocation.phase !== 'released')
-        .map((allocation) => ({
-          id: allocation.id,
-          owner: allocation.owner.kind,
-          phase: allocation.phase,
-          intent: allocation.intent,
-          error: allocation.error,
-          createdAt: allocation.createdAt,
-        })),
-    },
+    ...sections,
     sessions: {
       live: project.liveSessionCount,
       total: project.sessionTotal,

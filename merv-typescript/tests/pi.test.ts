@@ -47,11 +47,11 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
       };
     },
     stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
+    statusSections: new Map(),
   } as unknown as Sessions;
   sessionsToolsPlugin.apply({
     sessions,
     tools: f.tools,
-    get: (name: string) => (name === 'fleet' ? f.fleet : undefined),
     effect: (register: () => unknown) => register(),
   } as unknown as Context);
   const bound = await f.begun(f.operator);

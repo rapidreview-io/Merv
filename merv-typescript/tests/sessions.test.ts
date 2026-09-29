@@ -838,14 +838,9 @@ test('system.status gives a leased worker only its authenticated session', async
   const tools = new ToolRegistry(f.scope);
   t.after(() => tools.close());
   tools.registerSessionPolicy(f.sessions);
-  let fleetReads = 0;
   sessionsToolsPlugin.apply({
     tools,
     sessions: f.sessions,
-    get: (name: string) => {
-      if (name === 'fleet') fleetReads++;
-      return undefined;
-    },
     effect: (register: () => unknown) => register(),
   } as unknown as Context);
 
@@ -854,7 +849,6 @@ test('system.status gives a leased worker only its authenticated session', async
     true,
   );
   const result = await tools.call('system.status', worker, {});
-  assert.equal(fleetReads, 0);
   assert.equal((result as { scope: string }).scope, 'session');
   assert.equal((result as { session: { id: string } }).session.id, session.id);
   assert.equal(

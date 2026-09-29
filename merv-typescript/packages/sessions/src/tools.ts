@@ -19,16 +19,7 @@ export const sessionsToolsPlugin = {
           'Read operational status. People and Pi receive project dispatch, Fleet allocations, exhausted unclaimed Fleet retry blockers and model-budget wait status, runners, sessions, caller-admissible waiting work and blockers, including unusable workspace drivers. A leased worker receives only its own authenticated session and model-budget wait status.',
         readOnly: true,
         inputSchema: z.object({}).strict(),
-        handler: async (caller: Caller) => {
-          const workflow = ctx.get('fleetWorkflow');
-          return await systemStatus(
-            caller,
-            sessions,
-            caller.session ? undefined : ctx.get('fleet'),
-            workflow ? () => workflow.modelBudget(caller) : undefined,
-            workflow ? (targets) => workflow.retryStatus(caller, targets) : undefined,
-          );
-        },
+        handler: async (caller: Caller) => await systemStatus(caller, sessions),
       }),
     );
     ctx.effect(() =>

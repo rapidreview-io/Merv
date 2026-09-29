@@ -23,6 +23,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { sessionsToolsPlugin } from '@merv/sessions/tools';
 import { FleetService } from '@merv/fleet';
+import { fleetToolsPlugin } from '@merv/fleet/tools';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
@@ -1555,16 +1556,18 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
   );
   const tools = new ToolRegistry(h.scope);
   tools.registerSessionPolicy(sessions);
-  sessionsToolsPlugin.apply({
-    tools,
-    sessions,
-    get: (name: string) => (name === 'fleetWorkflow' ? adapter : undefined),
-    effect: (register: () => unknown) => register(),
-  } as unknown as Context);
+  const ctx = new Context();
+  ctx.provide('tools', tools);
+  ctx.provide('sessions', sessions);
+  ctx.provide('fleet', fleet);
+  ctx.provide('fleetWorkflow', adapter);
+  await ctx.plugin(sessionsToolsPlugin);
+  await ctx.plugin(fleetToolsPlugin);
   const ownStatus = await tools.call('system.status', workers[0]!.worker, {});
   assert.equal((ownStatus as { scope: string }).scope, 'session');
   assert.equal((ownStatus as { modelBudget: { blocked: boolean } }).modelBudget.blocked, false);
   assert.equal(JSON.stringify(ownStatus).includes('"tokens"'), false);
+  await ctx.fiber.dispose();
   tools.close();
   assert.deepEqual(
     new Set(workers.map((worker) => worker.session.instanceId)),

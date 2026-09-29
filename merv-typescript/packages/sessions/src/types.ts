@@ -247,9 +247,19 @@ export interface ServiceWork {
   ): Promise<void>;
 }
 
+/** Another plugin's part of `system.status`: `project` is the project view's status, null in a
+ * leased worker's view. An undefined answer leaves the key out; a failure fails the read. */
+export type StatusSection = (
+  caller: Caller,
+  project: SessionsProjectStatus | null,
+) => Promise<unknown>;
+
 export interface Sessions {
   /** Server-only admission. */
   readonly serviceWork: ServiceWork;
+  readonly statusSections: ReadonlyMap<string, StatusSection>;
+  /** Adds a section to `system.status` under `key`, one plugin per key, until disposed. */
+  contributeStatus(key: string, section: StatusSection): () => void;
   registerManagedValidator(validator: ManagedRunnerValidator): () => void;
   ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
   /** `projectId`: the runner's selected project, refused unless it is the binding's. */
