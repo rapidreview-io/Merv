@@ -1,8 +1,8 @@
 # Runner control plane
 
 Workflows selects eligible assignments. Sessions reserves them, tracks runner
-presence and applies project dispatch controls. The API plugin binds Sessions optionally
-to expose its HTTP controls; the optional `sessions-ui` adapter exposes its UI.
+presence and applies project dispatch controls. Its `sessions-api` adapter
+exposes its HTTP controls; the optional `sessions-ui` adapter exposes its UI.
 There is no additional scheduling provider and no Sessions dependency on Tasks,
 Reviews or Feed.
 

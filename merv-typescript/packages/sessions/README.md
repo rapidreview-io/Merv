@@ -5,7 +5,7 @@ Continuing agent identity, authenticated sessions, and assignment execution life
 registry is loaded. The registry refuses session callers while no policy is registered. A policy decision or
 prepared invocation belongs to the registration that admitted it: withdrawing or replacing that registration,
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
-already admitted may finish. The API plugin binds Sessions optionally and withdraws its HTTP controls when Sessions unloads. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
+already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
 
 `session.find` resolves a work item's current session. `session.message` queues an operator
 message for that session; `session.messages` and the worker-only `session.message.ack`

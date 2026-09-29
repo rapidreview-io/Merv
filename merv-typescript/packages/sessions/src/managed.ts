@@ -222,7 +222,11 @@ export class ManagedRunnerBindings {
       return { enrollmentToken };
     });
   }
-  async enroll(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }> {
+  async enroll(
+    token: string,
+    input: unknown,
+    projectId?: unknown,
+  ): Promise<{ controlToken: string; caller: Caller }> {
     check(
       typeof token === 'string' && /^me_[0-9a-f]{64}$/.test(token),
       'unauthorized',
@@ -256,6 +260,12 @@ export class ManagedRunnerBindings {
         'unauthorized',
         'Invalid managed enrollment',
         401,
+      );
+      // Before anything is written: a refused selection must not leave the runner enrolled.
+      check(
+        projectId === undefined || projectId === JSON.parse(row.source_json).projectId,
+        'invalid_input',
+        'Conflicting Merv project selections',
       );
       await this.admits(row, tx);
       const nonceHash = tokenDigest(workerNonce);

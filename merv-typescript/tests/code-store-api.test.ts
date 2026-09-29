@@ -11,6 +11,7 @@ import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { mountCode, type CodeRoutes } from '@merv/code-research/api';
+import { mountSessions, type SessionRoutes } from '@merv/sessions/api';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { importRepository } from '../src/code-import.js';
@@ -174,7 +175,8 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
       400,
       'invalid_input',
     ],
-    // A worker's credential reaches its tools and nothing else, whatever it names.
+    // A worker's credential reaches its tools and nothing else, whatever it names (Sessions'
+    // credentials are registered below).
     ['/code/v2/uploads', { token: `ms_${'w'.repeat(43)}` }, 403, 'session_transport_forbidden'],
     [
       '/code/v2/uploads/cop_1/parts/0',
@@ -189,6 +191,8 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
     ],
     ['/code/v2/uploads', { token: 'not-a-credential' }, 401, 'unauthorized'],
   ];
+  // Sessions' credential rules refuse these before any Sessions call, so a stand-in serves.
+  t.after(mountSessions(f.api, {} as SessionRoutes));
   for (const [path, options, status, code] of refusals) {
     const refused = await f.send(path, options);
     assert.deepEqual([refused.status, refused.body.error?.code], [status, code], path);

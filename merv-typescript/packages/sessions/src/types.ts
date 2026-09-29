@@ -252,7 +252,12 @@ export interface Sessions {
   readonly serviceWork: ServiceWork;
   registerManagedValidator(validator: ManagedRunnerValidator): () => void;
   ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
-  enrollManaged(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }>;
+  /** `projectId`: the runner's selected project, refused unless it is the binding's. */
+  enrollManaged(
+    token: string,
+    input: unknown,
+    projectId?: unknown,
+  ): Promise<{ controlToken: string; caller: Caller }>;
   authenticateManaged(token: string): Promise<Caller>;
   /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
   managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;

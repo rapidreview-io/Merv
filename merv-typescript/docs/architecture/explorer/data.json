@@ -124,9 +124,7 @@
         "tools",
         "identity"
       ],
-      "optional": [
-        "sessions"
-      ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -2210,6 +2208,25 @@
       ]
     },
     {
+      "plugin": "merv-sessions-api",
+      "source": "packages/sessions/src/api.ts",
+      "provides": [],
+      "requires": [
+        "sessions",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-sessions-api",
+      "group": "front",
+      "owner": "sessions",
+      "label": "Agent Sessions · api adapter",
+      "purpose": "Connects Agent Sessions to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-sessions-tools",
       "source": "packages/sessions/src/tools.ts",
       "provides": [],
@@ -2719,11 +2736,6 @@
       "from": "api",
       "to": "identity",
       "optional": false
-    },
-    {
-      "from": "api",
-      "to": "sessions",
-      "optional": true
     },
     {
       "from": "merv-artifact-tools",
@@ -3481,6 +3493,16 @@
       "optional": true
     },
     {
+      "from": "merv-sessions-api",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "merv-sessions-api",
+      "to": "api",
+      "optional": false
+    },
+    {
       "from": "merv-sessions-tools",
       "to": "sessions",
       "optional": false
@@ -3612,10 +3634,10 @@
     }
   ],
   "counts": {
-    "plugins": 67,
+    "plugins": 68,
     "providers": 30,
-    "adapters": 37,
-    "dependencies": 181
+    "adapters": 38,
+    "dependencies": 182
   },
   "network": [
     {

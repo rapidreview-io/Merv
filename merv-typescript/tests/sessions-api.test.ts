@@ -657,7 +657,7 @@ test('session route and credential namespaces stay reserved when the Sessions pr
     },
   });
   assert.equal(denied.status, 503);
-  assert.equal(denied.body.error.code, 'session_unavailable');
+  assert.equal(denied.body.error.code, 'credential_unavailable');
   const malformed = await f.http('/mcp', 'ms_bad.jwt.token', {
     jsonrpc: '2.0',
     id: 1,
@@ -665,10 +665,12 @@ test('session route and credential namespaces stay reserved when the Sessions pr
   });
   assert.equal(
     malformed.body.error.code,
-    'session_unavailable',
+    'credential_unavailable',
     'Malformed session namespace never falls through to JWT verification',
   );
   assert.equal((await f.http('/account')).status, 200, 'Ordinary source credential remains usable');
+  const withdrawn = await f.http('/sessions');
+  assert.deepEqual([withdrawn.status, withdrawn.body.error.code], [503, 'unavailable']);
   // Seed a real valid legacy-format credential to make the otherwise rare prefix collision deterministic.
   const collision = `ms_${'a'.repeat(40)}`;
   await f.app.ctx.state.transaction(async (tx) => {

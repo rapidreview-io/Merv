@@ -2168,9 +2168,10 @@ export class LeasedSessions implements Sessions {
   async enrollManaged(
     token: string,
     input: unknown,
+    projectId?: unknown,
   ): Promise<{ controlToken: string; caller: Caller }> {
     this.ensureOpen();
-    return await this.managed.enroll(token, input);
+    return await this.managed.enroll(token, input, projectId);
   }
   async authenticateManaged(token: string): Promise<Caller> {
     this.ensureOpen();

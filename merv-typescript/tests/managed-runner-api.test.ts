@@ -10,8 +10,9 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import { scopeRoutes } from '../packages/scope/src/api.js';
-import type { SessionApiProvider, Tools } from '../packages/api/src/types.js';
+import type { Tools } from '../packages/api/src/types.js';
 import { mountCode, type CodeRoutes } from '../packages/code-research/src/api.js';
+import { mountSessions, type SessionRoutes } from '../packages/sessions/src/api.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-managed-api-'));
@@ -251,6 +252,15 @@ test('enrollment rejects spoofed fields and managed caller cannot reach registry
     400,
   );
   assert.equal((await f.request('/projects', f.enrollmentToken, 'GET')).status, 403);
+  // A conflicting project is refused before anything is written, so another nonce still binds.
+  const elsewhere = await f.request(
+    '/sessions/runners/enroll',
+    f.enrollmentToken,
+    'POST',
+    { workerNonce: randomBytes(32).toString('hex') },
+    'project_other',
+  );
+  assert.deepEqual([elsewhere.status, elsewhere.body.error?.code], [400, 'invalid_input']);
   const enrolled = await f.request(
     '/sessions/runners/enroll',
     f.enrollmentToken,
@@ -337,7 +347,7 @@ async function credentialGate(t: TestContext) {
       if (!token.startsWith('ms_')) throw new MervError('unauthorized', 'Invalid agent key', 401);
       return {};
     },
-  } as unknown as SessionApiProvider;
+  } as unknown as SessionRoutes;
   const code = {
     nextCommand: reach('code.nextCommand', null),
     completeCommand: reach('code.completeCommand'),
@@ -345,17 +355,11 @@ async function credentialGate(t: TestContext) {
     v2: { call: reach('code.v2.call'), putPart: reach('code.v2.putPart') },
   } as unknown as CodeRoutes;
   let snapshots = 0;
-  const api = new ApiServer(
-    scope,
-    tools,
-    {
-      snapshot: (fn) => {
-        snapshots++;
-        return fn();
-      },
-    },
-    identity,
-  );
+  const snapshot = <T>(fn: () => Promise<T>) => {
+    snapshots++;
+    return fn();
+  };
+  const api = new ApiServer(scope, tools, { snapshot }, identity);
   for (const prefix of ['/ui', '/pi-worker', '/pi-model', '/codex-model'])
     api.mount(
       prefix,
@@ -367,7 +371,10 @@ async function credentialGate(t: TestContext) {
       { public: true },
     );
   for (const prefix of ['/account', '/projects'] as const) api.mount(prefix, scopeRoutes(scope));
-  const withdraw = { sessions: api.registerSessions(sessions), code: mountCode(api, code) };
+  const withdraw = {
+    sessions: mountSessions(api, sessions, snapshot),
+    code: mountCode(api, code),
+  };
   const url = await api.start();
   t.after(() => api.stop());
   const request = async (method: string, path: string, token: string, body?: unknown) => {
@@ -506,14 +513,14 @@ const ownersPresent: GateRow[] = [
     answers: 401,
     changes: 'step 8',
   },
-  // Sessions refuses any bearer but an enrollment credential (the stand-in accepts it).
+  // Enrollment refuses any bearer but an enrollment credential before its body is read.
   {
     bearer: 'mr_',
     method: 'POST',
     path: '/sessions/runners/enroll',
     body: {},
-    reaches: 'sessions.enrollManaged',
-    changes: 'step 8',
+    refused: [401, 'unauthorized'],
+    changes: 'step 13',
   },
   // GitHub's callback is served before any credential is looked at.
   { bearer: 'mr_', method: 'GET', path: '/code/github/callback', reaches: 'code.github.callback' },
@@ -602,7 +609,7 @@ const sessionsAbsent: GateRow[] = [
     method: 'POST',
     path: '/mcp',
     body: listTools,
-    refused: [503, 'session_unavailable'],
+    refused: [503, 'credential_unavailable'],
     changes: 'step 13',
   },
   {
@@ -610,7 +617,7 @@ const sessionsAbsent: GateRow[] = [
     method: 'POST',
     path: '/sessions/lease',
     body: {},
-    refused: [503, 'session_unavailable'],
+    refused: [503, 'unavailable'],
     changes: 'step 13',
   },
   {
@@ -618,7 +625,7 @@ const sessionsAbsent: GateRow[] = [
     method: 'POST',
     path: '/sessions/runners/enroll',
     body: {},
-    refused: [503, 'session_unavailable'],
+    refused: [503, 'unavailable'],
     changes: 'step 13',
   },
   // Never JWT verification.
@@ -627,7 +634,7 @@ const sessionsAbsent: GateRow[] = [
     method: 'POST',
     path: '/mcp',
     body: listTools,
-    refused: [503, 'session_unavailable'],
+    refused: [503, 'credential_unavailable'],
     changes: 'step 13',
   },
 ];
@@ -676,6 +683,9 @@ test('credential confinement: each bearer reaches only its owner, and an absent 
   await checkRows(gate.request, codeAbsent);
   gate.withdraw.sessions();
   await checkRows(gate.request, sessionsAbsent);
+  // Withdrawn, the routes answer 503 before any credential is looked at.
+  const withdrawn = await gate.request('GET', '/sessions/status', 'actor-token');
+  assert.deepEqual([withdrawn.status, withdrawn.code], [503, 'unavailable']);
 });
 
 test('agent routes match before authenticating, and authenticate before any body', async (t) => {

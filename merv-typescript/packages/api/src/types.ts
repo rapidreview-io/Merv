@@ -66,39 +66,6 @@ export interface ToolCatalog {
   replace(definitions: RemoteToolDefinition[]): Promise<void>;
   dispose(): Promise<void>;
 }
-/**
- * Optional HTTP adapter contract. The base API does not import a Sessions implementation, and
- * it forwards request bodies as they came: the provider parses every `input` itself.
- */
-export interface SessionApiProvider {
-  /** Optional hosted-runner enrollment; absent means fail closed. */
-  enrollManaged?(token: string, input: unknown): Promise<{ controlToken: string; caller: Caller }>;
-  authenticateManaged?(token: string): Promise<Caller>;
-  registerAgent(caller: Caller, input: unknown): Promise<unknown>;
-  agents(caller: Caller): Promise<unknown[]>;
-  agent(caller: Caller, agentId: string): Promise<unknown>;
-  agentObservation(caller: Caller, agentId: string): Promise<unknown>;
-  retireAgent(caller: Caller, agentId: string): Promise<unknown>;
-  rotateAgent(caller: Caller, agentId: string): Promise<unknown>;
-  agentSelf(token: string): Promise<unknown>;
-  assignAgent(token: string, input: unknown): Promise<unknown>;
-  releaseAgentAssignment(token: string, executionId: string): Promise<unknown>;
-  resetAgentContext(token: string, reason: string): Promise<unknown>;
-  authenticate(token: string): Promise<Caller>;
-  projectStatus(caller: Caller): Promise<unknown>;
-  setDispatch(caller: Caller, input: unknown): Promise<unknown>;
-  halt(caller: Caller, input: { sessionId?: string; reason?: string }): Promise<unknown>;
-  lease(caller: Caller, input: unknown): Promise<unknown>;
-  heartbeatRunner(caller: Caller, input: unknown): Promise<unknown>;
-  setRunnerSettings(caller: Caller, input: unknown): Promise<unknown>;
-  offer(caller: Caller, input: unknown): Promise<unknown>;
-  list(caller: Caller): Promise<unknown[]>;
-  get(caller: Caller, sessionId: string): Promise<unknown>;
-  attach(caller: Caller, input: unknown): Promise<unknown>;
-  workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
-  heartbeat(caller: Caller, input: unknown): Promise<unknown>;
-  release(caller: Caller, input: unknown): Promise<unknown>;
-}
 /** Who the API authenticated: a Scope principal, or the caller a registered credential's owner
  *  authenticated (whose kind is never user, key or actor). */
 export type ApiPrincipal = Principal | { kind: string; caller: Caller };
@@ -152,7 +119,6 @@ export interface Api {
   /** Authenticates the bearers of one namespace, `/^[a-z]+_$/` but never `mk_` (409 when it is
    *  taken). While a namespace is unregistered, its bearers get 503 on authenticated routes. */
   credential(namespace: `${string}_`, credential: ApiCredential): () => void;
-  registerSessions(provider: SessionApiProvider): () => void;
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;

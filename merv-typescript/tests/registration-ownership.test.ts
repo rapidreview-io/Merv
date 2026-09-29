@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createService, type SessionAuthority, type SessionToolPolicy } from '@merv/contracts';
+import {
+  createService,
+  MervError,
+  type SessionAuthority,
+  type SessionToolPolicy,
+} from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { SessionApiProvider } from '../packages/api/src/types.js';
 import { openState } from './fixtures/state.js';
 
 test('a used event-listener disposer cannot remove a later subscription of the same callback', async (t) => {
@@ -41,7 +45,7 @@ test('a used event-listener disposer cannot remove a later subscription of the s
   later();
 });
 
-for (const kind of ['authority', 'policy', 'http-sessions', 'http-mount'] as const) {
+for (const kind of ['authority', 'policy', 'http-credential', 'http-mount'] as const) {
   test(`${kind}: a used disposer cannot withdraw a new registration of the same provider`, async (t) => {
     const state = await openState(':memory:');
     const scope = await createService(new ProjectScope(state));
@@ -57,24 +61,30 @@ for (const kind of ['authority', 'policy', 'http-sessions', 'http-mount'] as con
         throw new Error('not called');
       },
     };
-    // Registration owns an opaque provider identity; this test does not dispatch routes.
-    const sessions = {} as SessionApiProvider;
     const policy = {} as SessionToolPolicy;
     const handler = async () => {};
+    // Registration owns an opaque credential identity; this test authenticates nothing.
+    const credential = {
+      kind: 'fixture',
+      forbidden: new MervError('forbidden', 'Forbidden', 403),
+      routes: () => false,
+    };
     const register = () =>
       kind === 'authority'
         ? scope.registerSessionAuthority(authority)
         : kind === 'policy'
           ? tools.registerSessionPolicy(policy)
-          : kind === 'http-sessions'
-            ? api.registerSessions(sessions)
+          : kind === 'http-credential'
+            ? api.credential('fixture_', credential)
             : api.mount('/fixture', handler);
     const conflict =
       kind === 'authority'
         ? 'session_authority_registered'
         : kind === 'http-mount'
           ? 'mount_conflict'
-          : 'session_provider_conflict';
+          : kind === 'http-credential'
+            ? 'credential_conflict'
+            : 'session_provider_conflict';
     const old = register();
     old();
     const current = register();

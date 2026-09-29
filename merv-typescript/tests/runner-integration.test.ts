@@ -709,6 +709,50 @@ for (const linger of [false, true])
   );
 
 test(
+  'a managed runner waits offline, never unauthorized, while Sessions or its routes are unloaded',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, [], true);
+    const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
+    const validator = {
+      current: async (binding: { allocationId: string }) => binding.allocationId === allocationId,
+      admits: async () => true,
+    };
+    let unregister = f.app.ctx.sessions.registerManagedValidator(validator);
+    t.after(() => unregister());
+    const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
+      allocationId,
+      epoch: 1,
+      source: await f.app.ctx.scope.delegationSource(f.source),
+      runtimeProfileId: 'test-profile',
+      platform: { name: 'test-worker', harness: 'command', enabled: true, parallelism: 1 },
+      capabilities: [],
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
+      workerNonce: randomBytes(32).toString('hex'),
+    });
+    process.env[f.credentialEnv] = control.controlToken;
+    const runner = f.make();
+    await runner.start();
+    const online = runner.snapshot().state;
+    assert.notEqual(online, 'offline');
+    // The Sessions routes and credentials come from the sessions-api adapter: unloading it, or
+    // Sessions under it, withdraws them, and the runner's heartbeat gets 503.
+    for (const id of ['sessions-api', 'sessions']) {
+      await f.app.setEnabled(id, false);
+      await runner.tick();
+      assert.equal(runner.snapshot().state, 'offline', id);
+      await f.app.setEnabled(id, true);
+      // A restarted Sessions has lost Fleet's stand-in validator.
+      if (id === 'sessions') unregister = f.app.ctx.sessions.registerManagedValidator(validator);
+      await runner.tick();
+      assert.equal(runner.snapshot().state, online, id);
+    }
+  },
+);
+
+test(
   'ordinary runner still skips an empty report after remote closure',
   { timeout: 30_000 },
   async (t) => {

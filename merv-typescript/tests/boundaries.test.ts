@@ -137,7 +137,6 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  api: ['sessions'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],
@@ -808,7 +807,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['code-research', 'pi', 'scope'],
+    api: ['code-research', 'pi', 'scope', 'sessions'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];

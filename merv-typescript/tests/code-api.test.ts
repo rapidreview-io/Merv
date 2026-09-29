@@ -22,6 +22,7 @@ import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { apiPlugin } from '@merv/api';
 import { codeResearchApiPlugin, mountCode, type CodeRoutes } from '@merv/code-research/api';
+import { mountSessions, type SessionRoutes } from '@merv/sessions/api';
 import { identityPlugin } from '@merv/identity';
 import { openState } from './fixtures/state.js';
 
@@ -237,6 +238,8 @@ test('Code controls answer 503 once withdrawn and are mounted by one owner at a 
   assert.equal((await f.request('next', control, { token: 'mr_absent' })).status, 503);
   const first = f.register(f.provider);
   assert.throws(() => f.register(f.provider), { code: 'mount_conflict' });
+  // Sessions' credential rules refuse a session bearer before any Sessions call.
+  t.after(mountSessions(f.api, {} as SessionRoutes));
   for (const token of [`ms_${'s'.repeat(43)}`, 'ms_reserved']) {
     const denied = await f.request('next', control, { token });
     assert.equal(denied.status, 403);

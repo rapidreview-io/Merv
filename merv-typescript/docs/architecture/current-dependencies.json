@@ -1,19 +1,19 @@
 {
   "snapshot": "2026-09-29",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 67,
+  "pluginCount": 68,
   "serviceProviders": 30,
   "toolAdapters": 18,
   "uiAdapters": 16,
-  "apiAdapters": 3,
-  "defaultEntries": 49,
-  "apiEntries": 36,
-  "serverPlugins": 66,
+  "apiAdapters": 4,
+  "defaultEntries": 50,
+  "apiEntries": 37,
+  "serverPlugins": 67,
   "machinePlugins": 1,
-  "directDependencyCount": 181,
-  "optionalDependencyCount": 16,
+  "directDependencyCount": 182,
+  "optionalDependencyCount": 15,
   "directConsumers": {
-    "api": 5,
+    "api": 6,
     "artifacts": 12,
     "blobs": 2,
     "code": 1,
@@ -56,9 +56,7 @@
         "tools",
         "identity"
       ],
-      "optional": [
-        "sessions"
-      ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -851,6 +849,19 @@
         "tools"
       ],
       "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-sessions-api",
+      "source": "packages/sessions/src/api.ts",
+      "provides": [],
+      "requires": [
+        "sessions",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
       "runtime": "server",
       "defaultConfiguration": true
     },

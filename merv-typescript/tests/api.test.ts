@@ -1244,7 +1244,7 @@ test('mount prefixes are single segments with public paths inside them, and with
     ['/open', { public: ['/openly'] }],
   ] as const)
     assert.throws(() => api.mount(prefix, () => ({}), options), { code: 'invalid_mount' }, prefix);
-  for (const prefix of ['/tools', '/mcp', '/health', '/auth', '/sessions'])
+  for (const prefix of ['/tools', '/mcp', '/health', '/auth'])
     assert.throws(() => api.mount(prefix, () => ({})), { code: 'mount_conflict' }, prefix);
   const withdraw = api.mount('/open', (_req, _res, r) => ({ principal: r.principal ?? null }), {
     public: ['/open/door'],

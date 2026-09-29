@@ -13,15 +13,8 @@ import {
   ListToolsRequestSchema,
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
-import {
-  MervError,
-  mainAgentGuide,
-  pathSegment,
-  plain,
-  type Caller,
-  type Scope,
-} from '@merv/contracts';
+import type { z } from 'zod';
+import { MervError, mainAgentGuide, plain, type Caller, type Scope } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
   ApiCredential,
@@ -31,7 +24,6 @@ import type {
   ToolInvocation,
   MountHandler,
   MountOptions,
-  SessionApiProvider,
 } from './types.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
@@ -43,7 +35,8 @@ export interface HttpOptions {
   port?: number;
   maxBodyBytes?: number;
   allowedOrigins?: string[];
-  /** Runs a read-only GET route in a snapshot scope: no writer lock, writes refused. */
+  /** Runs GET /tools in a snapshot scope: no writer lock, writes refused. Owners' routes open
+   *  their own. */
   snapshot?: <T>(fn: () => Promise<T>) => Promise<T>;
   /** How long stop() lets in-flight responses finish before it cuts their sockets (default 45 s,
    *  below the deployment's 60 s stop grace period). */
@@ -190,33 +183,6 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
   }
 }
 
-const nonblank = z.string().trim().min(1).max(512);
-// Sessions parses every other session body. These two unwrap the one field a method takes, and
-// a project halt refuses a body sessionId, which would halt one session and leave dispatch on.
-const agentReleaseInput = z.object({ executionId: nonblank }).strict();
-const agentResetInput = z.object({ reason: nonblank }).strict();
-const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
-
-/** Managed supervisor bearers have no general project, tool or administration transport. */
-const managedRoute = (method: string, path: string): boolean =>
-  (method === 'POST' &&
-    [
-      '/sessions/runners/heartbeat',
-      '/sessions/lease',
-      '/code/commands/next',
-      '/code/commands/complete',
-    ].includes(path)) ||
-  (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
-  (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result)$/.test(
-      path,
-    )) ||
-  (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
-  (method === 'PUT' &&
-    /^\/code\/v2\/uploads\/[A-Za-z0-9_]{1,80}\/parts\/(0|[1-9][0-9]{0,14})$/.test(path));
-/** An agent's own routes, which authenticate its key themselves. */
-const agentSelfPath = (path: string) =>
-  path === '/sessions/self' || path.startsWith('/sessions/self/');
 /** A namespaced bearer (`ms_…`, `mr_…`), which only its namespace's registered owner may
  *  authenticate. User keys (`mk_`) are Scope's, and a legacy random actor token is exactly 43
  *  characters even when it looks namespaced. */
@@ -237,13 +203,6 @@ function bearer(req: IncomingMessage): string {
   if (!authorization || !/^Bearer [^\s]+$/i.test(authorization))
     throw new MervError('unauthorized', 'A bearer token is required', 401);
   return authorization.slice(7);
-}
-
-/** Sessions parses its own bodies; the path's identifier is bound over the body's. */
-function bound(body: unknown, key: string, value: string): unknown {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
-  if (Object.hasOwn(body, key)) throw new MervError('invalid_input', `${key} is bound by the path`);
-  return { ...body, [key]: value };
 }
 
 function parseInput<T extends z.ZodTypeAny>(schema: T, input: unknown): z.output<T> {
@@ -268,45 +227,13 @@ function projectSelection(...selections: unknown[]): string | undefined {
   return supplied[0] as string | undefined;
 }
 
-/** One optional provider: a second registration conflicts and only its own disposer withdraws it. */
-function slot<T>(code: string, label: string, unavailableMessage: string) {
-  let current: T | undefined;
-  return {
-    register(provider: T): () => void {
-      if (current)
-        throw new MervError(
-          `${code}_provider_conflict`,
-          `${label} HTTP provider is already registered`,
-          409,
-        );
-      current = provider;
-      let active = true;
-      return () => {
-        if (!active) return;
-        active = false;
-        if (current === provider) current = undefined;
-      };
-    },
-    get(): T {
-      if (!current) throw new MervError(`${code}_unavailable`, unavailableMessage, 503);
-      return current;
-    },
-  };
-}
-
 /**
- * One listener. Each request's first path segment names its mount: the built-ins, the owners'
- * mounts and, until Sessions registers them, the Sessions routes. A
- * public route authenticates itself; every other one is authenticated here first. One stateless
- * MCP transport serves each MCP request.
+ * One listener. Each request's first path segment names its mount: the built-ins or an owner's.
+ * A public route authenticates itself; every other one is authenticated here first, by Scope or
+ * by the owner of its bearer's namespace. One stateless MCP transport serves each MCP request.
  */
 export class ApiServer {
   private server?: HttpServer;
-  private readonly sessions = slot<SessionApiProvider>(
-    'session',
-    'Session',
-    'Sessions are unavailable',
-  );
   private stopping = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
@@ -348,48 +275,6 @@ export class ApiServer {
     );
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
-    // Until Sessions registers them, the routes and credentials the API serves for it.
-    this.mount('/sessions', (req, res, r) => this.sessionsRoute(req, res, r), {
-      public: ['/sessions/self', '/sessions/runners/enroll'],
-    });
-    this.credential('ms_', {
-      kind: 'session',
-      forbidden: new MervError(
-        'session_transport_forbidden',
-        'Session credentials may only use POST /mcp',
-        403,
-      ),
-      routes: (method, path) => method === 'POST' && path === '/mcp',
-      authenticate: (token) => this.sessions.get().authenticate(token),
-    });
-    this.credential('mr_', {
-      kind: 'managed',
-      forbidden: new MervError(
-        'managed_runner_forbidden',
-        'Managed runner route is not allowed',
-        403,
-      ),
-      routes: (method, path, query) => !query && managedRoute(method, path),
-      authenticate: (token) => {
-        const provider = this.sessions.get();
-        if (!provider.authenticateManaged)
-          throw new MervError(
-            'managed_runner_unavailable',
-            'Managed runner authentication is unavailable',
-            503,
-          );
-        return provider.authenticateManaged(token);
-      },
-    });
-    this.credential('me_', {
-      kind: 'enrollment',
-      forbidden: new MervError(
-        'managed_runner_forbidden',
-        'Enrollment credentials may only enroll a runner',
-        403,
-      ),
-      routes: () => false,
-    });
   }
 
   start(): Promise<string> {
@@ -532,9 +417,6 @@ export class ApiServer {
     };
   }
 
-  registerSessions(provider: SessionApiProvider): () => void {
-    return this.sessions.register(provider);
-  }
   /** A request's one read decision, made before any body is read. Every effect then authorizes
    *  itself in its own transaction, so nothing here re-checks after the body. */
   private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
@@ -609,11 +491,6 @@ export class ApiServer {
     return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
-  /** Runs a read in a snapshot scope when the server has one: no writer lock, writes refused. */
-  private read<T>(fn: () => Promise<T>): Promise<T> {
-    return this.options.snapshot ? this.options.snapshot(fn) : fn();
-  }
-
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (this.stopping) {
       json(res, 503, { error: { code: 'unavailable', message: 'Server is stopping' } });
@@ -685,8 +562,10 @@ export class ApiServer {
     const path = r.url.pathname;
     // A verified user's first request records that user, which is a write, so the caller is
     // authenticated before the read-only scope opens.
-    if (path === '/tools' && req.method === 'GET')
-      return await this.read(async () => ({ tools: await this.tools.describe(await r.caller()) }));
+    if (path === '/tools' && req.method === 'GET') {
+      const describe = async () => ({ tools: await this.tools.describe(await r.caller()) });
+      return this.options.snapshot ? await this.options.snapshot(describe) : await describe();
+    }
     if (!path.startsWith('/tools/') || req.method !== 'POST') throw unknownEndpoint();
     let name: string;
     try {
@@ -702,201 +581,6 @@ export class ApiServer {
     );
     const result = await this.call(name, request.caller, request.input);
     return { result: result.value ?? null };
-  }
-
-  private async sessionsRoute(
-    req: IncomingMessage,
-    res: ServerResponse,
-    r: ApiRequest,
-  ): Promise<unknown> {
-    const path = r.url.pathname;
-    if (!r.principal) {
-      // A continuing agent credential controls only itself. Assignment tools still enter through MCP.
-      if (agentSelfPath(path)) return await this.agentSelf(req, res, r);
-      // Sessions authenticates the enrollment bearer itself.
-      if (path !== '/sessions/runners/enroll' || req.method !== 'POST' || r.url.search)
-        throw unknownEndpoint();
-      const token = r.bearer();
-      const provider = this.sessions.get();
-      if (!provider.enrollManaged)
-        throw new MervError(
-          'managed_runner_unavailable',
-          'Managed runner enrollment is unavailable',
-          503,
-        );
-      const enrolled = await provider.enrollManaged(token, await r.json(undefined, 4096));
-      projectSelection(enrolled.caller.projectId, req.headers['x-merv-project-id']);
-      return { controlToken: enrolled.controlToken };
-    }
-    if (r.principal.kind === 'session') throw unknownEndpoint();
-    if ([...r.url.searchParams].length)
-      throw new MervError('invalid_input', 'Session routes do not accept query parameters');
-    return req.method === 'GET'
-      ? await this.read(() => this.sessionRoutes(req, res, r))
-      : await this.sessionRoutes(req, res, r);
-  }
-
-  private async agentSelf(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
-    if ([...r.url.searchParams].length)
-      throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
-    // The route is matched first: an unknown one costs no authentication.
-    const action = r.url.pathname.slice('/sessions/self'.length);
-    if (
-      req.method === 'GET'
-        ? action !== ''
-        : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
-    )
-      throw new MervError('not_found', 'Unknown agent control route', 404);
-    const token = r.bearer();
-    const provider = this.sessions.get();
-    // The key is checked before any body is read, so a bad one never buffers a body.
-    const self = await provider.agentSelf(token);
-    if (req.method === 'GET') {
-      json(res, 200, self);
-      return;
-    }
-    if (action === '/assignment')
-      json(res, 200, { execution: await provider.assignAgent(token, await r.json()) });
-    else if (action === '/release')
-      json(res, 200, {
-        execution: await provider.releaseAgentAssignment(
-          token,
-          (await r.json(agentReleaseInput)).executionId,
-        ),
-      });
-    else
-      json(res, 200, {
-        agent: await provider.resetAgentContext(token, (await r.json(agentResetInput)).reason),
-      });
-  }
-
-  private async sessionRoutes(req: IncomingMessage, res: ServerResponse, r: ApiRequest) {
-    const path = r.url.pathname;
-    const sourceCaller = await r.caller();
-    if (path === '/sessions/agents') {
-      if (req.method === 'GET') {
-        json(res, 200, { agents: await this.sessions.get().agents(sourceCaller) });
-        return;
-      }
-      if (req.method === 'POST') {
-        const input = await r.json();
-        json(res, 200, {
-          agent: await this.sessions.get().registerAgent(sourceCaller, input),
-        });
-        return;
-      }
-    }
-    const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
-    if (observationRoute && req.method === 'GET') {
-      json(
-        res,
-        200,
-        await this.sessions.get().agentObservation(sourceCaller, pathSegment(observationRoute[1]!)),
-      );
-      return;
-    }
-    const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
-    if (rotateAgentRoute && req.method === 'POST') {
-      json(
-        res,
-        200,
-        await this.sessions.get().rotateAgent(sourceCaller, pathSegment(rotateAgentRoute[1]!)),
-      );
-      return;
-    }
-    const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
-    if (agentRoute) {
-      const agentId = pathSegment(agentRoute[1]!);
-      if (req.method === 'GET') {
-        json(res, 200, await this.sessions.get().agent(sourceCaller, agentId));
-        return;
-      }
-      if (req.method === 'DELETE') {
-        json(res, 200, {
-          agent: await this.sessions.get().retireAgent(sourceCaller, agentId),
-        });
-        return;
-      }
-    }
-    if (path === '/sessions/status' && req.method === 'GET') {
-      json(res, 200, await this.sessions.get().projectStatus(sourceCaller));
-      return;
-    }
-    // Sessions parses each body and requires admin where it commits.
-    if (path === '/sessions/dispatch' && req.method === 'PUT') {
-      const input = await r.json();
-      json(res, 200, {
-        dispatch: await this.sessions.get().setDispatch(sourceCaller, input),
-      });
-      return;
-    }
-    if (path === '/sessions/halt' && req.method === 'POST') {
-      const input = await r.json(haltInput);
-      json(res, 200, await this.sessions.get().halt(sourceCaller, input));
-      return;
-    }
-    if (path === '/sessions/lease' && req.method === 'POST') {
-      const input = await r.json();
-      json(res, 200, await this.sessions.get().lease(sourceCaller, input));
-      return;
-    }
-    if (path === '/sessions/runners/heartbeat' && req.method === 'POST') {
-      const input = await r.json();
-      json(res, 200, {
-        runner: await this.sessions.get().heartbeatRunner(sourceCaller, input),
-      });
-      return;
-    }
-    const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
-    if (settingsRoute && req.method === 'PUT') {
-      const body = await r.json();
-      json(res, 200, {
-        runner: await this.sessions
-          .get()
-          .setRunnerSettings(sourceCaller, bound(body, 'runnerId', pathSegment(settingsRoute[1]!))),
-      });
-      return;
-    }
-    if (path === '/sessions' && req.method === 'GET') {
-      json(res, 200, { sessions: await this.sessions.get().list(sourceCaller) });
-      return;
-    }
-    if (path === '/sessions/offer' && req.method === 'POST') {
-      const input = await r.json();
-      json(res, 200, { session: await this.sessions.get().offer(sourceCaller, input) });
-      return;
-    }
-    const route =
-      /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(
-        path,
-      );
-    if (route) {
-      const sessionId = pathSegment(route[1]!);
-      if (!route[2] && req.method === 'GET') {
-        json(res, 200, { session: await this.sessions.get().get(sourceCaller, sessionId) });
-        return;
-      }
-      if (req.method === 'POST' && route[2] === 'halt') {
-        const input = await r.json(haltInput);
-        json(res, 200, await this.sessions.get().halt(sourceCaller, { ...input, sessionId }));
-        return;
-      }
-      if (req.method === 'POST' && route[2]) {
-        const input = bound(await r.json(), 'sessionId', sessionId);
-        const provider = this.sessions.get();
-        const session =
-          route[2] === 'attach'
-            ? await provider.attach(sourceCaller, input)
-            : route[2] === 'workspace-result'
-              ? await provider.workspaceResult(sourceCaller, input)
-              : route[2] === 'heartbeat'
-                ? await provider.heartbeat(sourceCaller, input)
-                : await provider.release(sourceCaller, input);
-        json(res, 200, { session });
-        return;
-      }
-    }
-    throw unknownEndpoint();
   }
 
   private async mcpRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
