@@ -6,6 +6,7 @@ import { MervError, type Caller } from '@merv/contracts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import type { RemoteToolDefinition, ToolDefinition } from '@merv/api/types';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { ExactToolPolicy } from '@merv/scope/tool-policy';
 
 const caller = { actorId: 'alice', projectId: 'local-project' };
 const scope = {
@@ -179,7 +180,11 @@ test('native invocation remains JSON even when its value resembles MCP, while re
 });
 
 test('remote JSON Schema validates without coercion, defaults, argument stripping, or consuming remote projectId', async () => {
-  const registry = new ToolRegistry(scope, fixtureAccess);
+  // A remote call's read decision is its grant check, so this policy authorizes through Scope.
+  const access = new ExactToolPolicy(scope, [
+    { ...caller, mountId: 'schema', tools: ['validate', 'tuple'] },
+  ]);
+  const registry = new ToolRegistry(scope, access);
   let seen: unknown;
   const catalog = registry.createCatalog('schema');
   await catalog.replace([

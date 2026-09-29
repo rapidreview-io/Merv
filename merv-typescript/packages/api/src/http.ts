@@ -525,11 +525,13 @@ export class ApiServer {
     return this.code.register(provider);
   }
 
+  /** A request's one read decision, made before any body is read. Every effect then authorizes
+   *  itself in its own transaction, so nothing here re-checks after the body. */
   private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
     if (principal.kind !== 'session' && principal.kind !== 'managed')
       return await this.scope.caller(principal, projectId);
     projectSelection(principal.caller.projectId, projectId);
-    if (principal.kind === 'session') await this.sessions.get().describe(principal.caller);
+    // A session's liveness is Sessions' guard, which this read decision consults.
     await this.scope.require(principal.caller, 'read');
     return principal.caller;
   }
@@ -611,7 +613,6 @@ export class ApiServer {
     const projectId = projectSelection(selectedProject, remote ? undefined : argumentProject);
     // actorId and other caller-shaped fields are ordinary arguments: strict feature schemas reject them.
     const caller = await this.selectedCaller(principal, projectId);
-    await this.scope.require(caller, 'read');
     return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
@@ -756,7 +757,6 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       await this.pi.get().stream(caller, match[1], req, res);
       return;
     }
@@ -765,9 +765,7 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
-      await this.scope.require(caller, 'read');
       json(
         res,
         200,
@@ -780,9 +778,7 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       const body = req.method === 'POST' ? await readJson(req, 8192) : undefined;
-      await this.scope.require(caller, 'read');
       const github = this.code.get().github;
       if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
       json(res, 200, await githubRequest(req, res, caller, github, () => Promise.resolve(body)));
@@ -796,9 +792,7 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(caller, 'read');
         const input = parseInput(codeTransportInputSchema, await readJson(req, 8192));
-        await this.scope.require(caller, 'read');
         const provider = this.code.get();
         if (!provider.transportGrant || !provider.verifyTransport)
           throw new MervError('github_unavailable', 'Git transport is unavailable', 503);
@@ -818,7 +812,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(caller, 'read');
         const route = path.slice('/code/v2/'.length);
         const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
         const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
@@ -832,8 +825,6 @@ export class ApiServer {
         const body = part
           ? await readBody(req, CODE_PART_MAX_BYTES, 'application/octet-stream')
           : await readJson(req, 65536);
-        // Body streaming may outlive credential authority or the optional adapter.
-        await this.scope.require(caller, 'read');
         const v2 = this.code.get().v2;
         if (!v2)
           throw new MervError(
@@ -854,7 +845,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(sourceCaller, 'read');
         if (req.method !== 'POST') {
           res.setHeader('allow', 'POST');
           json(res, 405, {
@@ -866,9 +856,7 @@ export class ApiServer {
         const input = path.endsWith('/next')
           ? parseInput(codeCommandControlSchema, body)
           : parseInput(codeCommandCompletionSchema, body);
-        // Body streaming may outlive credential authority or the optional adapter.
         // Lookup the current provider only after parsing; its methods are synchronous.
-        await this.scope.require(sourceCaller, 'read');
         const provider = this.code.get();
         if (path.endsWith('/next'))
           json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
@@ -967,7 +955,6 @@ export class ApiServer {
           principal,
           projectSelection(req.headers['x-merv-project-id']),
         );
-        await this.scope.require(sourceCaller, 'read');
         if (path === '/sessions/agents') {
           if (req.method === 'GET') {
             json(res, 200, { agents: await this.sessions.get().agents(sourceCaller) });
@@ -1103,7 +1090,6 @@ export class ApiServer {
         principal,
         projectSelection(req.headers['x-merv-project-id']),
       );
-      await this.scope.require(caller, 'read');
       json(res, 200, {
         tools: await this.tools.describe(caller),
       });
@@ -1161,7 +1147,6 @@ export class ApiServer {
               request.params?._meta?.['merv/projectId'],
             ),
           );
-          await this.scope.require(caller, 'read');
           // An agent over MCP is offered what a Pi conversation is; Merv's pages call /tools.
           return { tools: await this.tools.describe(caller, true) };
         } catch (error) {

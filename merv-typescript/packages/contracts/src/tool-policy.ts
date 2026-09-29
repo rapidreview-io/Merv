@@ -40,6 +40,8 @@ export interface ConversationToolPolicy {
 }
 export interface ToolPolicy {
   allows(caller: Caller, mountId: string, toolName: string): Promise<boolean>;
+  /** Authorizes the caller's read and its exact grant in one decision: the tool registry makes
+   *  no other read decision before a remote handler. */
   require(caller: Caller, mountId: string, toolName: string): Promise<void>;
   /** Trusted in-process administration. Invalid replacements leave the current policy intact. */
   replace(grants: ToolGrant[]): void;

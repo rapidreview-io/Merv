@@ -360,11 +360,18 @@ test(
 );
 
 test(
-  'Code controls recheck source credentials after an awaited request body',
+  'Code controls decide once before the body, and a control refuses a credential revoked while it arrived',
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    f.api.registerCode(f.provider);
+    // Code's own controls authorize the caller in their transaction, after the body.
+    f.api.registerCode({
+      ...f.provider,
+      nextCommand: async (caller, input) => {
+        await f.scope.require(caller, 'read');
+        return await f.provider.nextCommand(caller, input);
+      },
+    });
     const admin = await f.scope.issueActor(f.caller, { name: 'Second operator', role: 'operator' });
     const adminCaller = await f.scope.caller({
       kind: 'actor',

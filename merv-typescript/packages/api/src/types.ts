@@ -74,7 +74,6 @@ export interface SessionApiProvider {
   releaseAgentAssignment(token: string, executionId: string): Promise<unknown>;
   resetAgentContext(token: string, reason: string): Promise<unknown>;
   authenticate(token: string): Promise<Caller>;
-  describe(caller: Caller): Promise<unknown>;
   projectStatus(caller: Caller): Promise<unknown>;
   setDispatch(caller: Caller, input: unknown): Promise<unknown>;
   halt(caller: Caller, input: { sessionId?: string; reason?: string }): Promise<unknown>;

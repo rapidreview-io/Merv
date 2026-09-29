@@ -489,10 +489,6 @@ export class ToolRegistry implements Tools {
           (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
             true),
     );
-    if (conversation) {
-      await this.scope.require(caller!, 'read');
-      this.fenceConversation(conversation);
-    }
     return visible;
   }
 
@@ -535,16 +531,13 @@ export class ToolRegistry implements Tools {
     if (!entry) throw new MervError('unknown_tool', `Unknown tool: ${name}`, 404);
     if (conversation && !this.conversable(entry))
       throw new MervError('tool_forbidden', 'This tool is not offered to conversations', 403);
+    // A reader's writes are refused by their own permission check, as over /tools.
+    if (agent && !caller.session && !this.offered(entry, false))
+      throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
+    // The caller's read decision is made once, right before the handler (dispatch, below).
     const operation = Promise.resolve().then(async () => {
-      // A session caller is authorized by its admission in prepare, below.
-      if (!caller.session) {
-        await this.scope.require(caller, 'read');
-        // A reader's writes are refused by their own permission check, as over /tools.
-        if (agent && !this.offered(entry, false))
-          throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
-      }
       if (conversation) this.fenceConversation(conversation);
       if (entry.remote) {
         if (!this.access)
@@ -577,14 +570,16 @@ export class ToolRegistry implements Tools {
         await validate(dispatchCaller);
         let completed: ToolInvocation | undefined;
         const dispatch = async (activeCaller: Caller) => {
-          // The provider's run validates a session again right before this handler.
-          if (!prepared) await this.scope.require(activeCaller, 'read');
           if (conversation) this.fenceConversation(conversation);
+          // The admission immediately before a remote handler: the grant check authorizes
+          // through Scope, and Mounts relies on it (a remote tool never runs on a snapshot).
           if (entry.remote)
             await this.access!.require(activeCaller, entry.remote.mountId, entry.remote.toolName);
           const run = async () => {
+            // One read decision, inside a read's snapshot when it has one. The provider's run
+            // validates a session again right before this handler.
+            if (!prepared && !entry.remote) await this.scope.require(activeCaller, 'read');
             if (conversation) {
-              await this.scope.require(activeCaller, 'read');
               this.fenceConversation(conversation);
               await validate(activeCaller);
             }
