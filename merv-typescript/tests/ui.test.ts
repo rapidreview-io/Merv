@@ -649,6 +649,10 @@ test('the Connections row reports mount health and serves mount status through u
     },
   });
   t.after(() => app.stop());
+  // createApp does not wait for optional upstreams: wait until both mounts finish a round.
+  const settled = () => app.ctx.mounts.status().every((mount) => mount.state !== 'connecting');
+  for (let wait = 0; wait < 800 && !settled(); wait++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
   const credentials = await app.ctx.scope.bootstrap({
     projectName: 'Mounts',
     actorName: 'Operator',

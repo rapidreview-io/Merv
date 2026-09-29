@@ -21,7 +21,6 @@ export class MountRuntime {
   /** The running refresh's stop signal: only stop() aborts it, and only while that refresh runs. */
   private discoveryAbort?: AbortController;
   private current?: Promise<void>;
-  private forceNext = false;
   private refreshAgain = false;
   private failures = 0;
   private timer?: Awaited<ReturnType<typeof setTimeout>>;
@@ -57,14 +56,11 @@ export class MountRuntime {
     return { ...this.snapshot };
   }
 
-  refresh(force = false): Promise<void> {
+  refresh(): Promise<void> {
     if (this.stopping)
       return Promise.reject(new MervError('mounts_stopped', 'Mounts are stopped', 503));
-    if (force && this.current)
-      return this.current.catch(() => undefined).then(async () => this.refresh(true));
     this.clearTimer();
-    if (force) this.forceNext = true;
-    else this.refreshAgain = true;
+    this.refreshAgain = true;
     if (this.current) return this.current;
     const round = new AbortController();
     this.discoveryAbort = round;
@@ -73,13 +69,10 @@ export class MountRuntime {
         let rounds = 0;
         do {
           rounds++;
-          const reconnect = this.forceNext;
-          this.forceNext = false;
           this.refreshAgain = false;
-          if (reconnect) await this.resetDiscovery();
           await this.refreshOnce(round.signal);
-          // Continuous notifications cannot keep optional startup or one explicit refresh open forever.
-        } while (!this.stopping && rounds < 2 && (this.forceNext || this.refreshAgain));
+          // Continuous notifications cannot keep one refresh open forever.
+        } while (!this.stopping && rounds < 2 && this.refreshAgain);
       })
       .catch((error: unknown) => {
         if (!this.stopping) this.failed(error);

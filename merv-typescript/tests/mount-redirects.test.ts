@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import { MountManager } from '../packages/mounts/src/index.js';
+import { MountRuntime } from '../packages/mounts/src/runtime.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
 import type { Bindings } from '../packages/mounts/src/credentials.js';
 import { fixtureAccess } from './fixtures/access.js';
@@ -34,6 +34,16 @@ const scope = {
   toolPolicy: fixtureAccess,
 };
 const tool = { name: 'inspect', inputSchema: { type: 'object' as const } };
+/** The fixture mount's discovery; the caller doubles as its discovery actor. */
+const discovery = (registry: ToolRegistry, url: string) =>
+  new MountRuntime(registry, credentials, scope, {
+    id: 'fixture',
+    url,
+    tools: ['inspect'],
+    discovery: caller,
+    timeoutMs: 1000,
+    reconnectMs: 60_000,
+  });
 
 async function body(request: IncomingMessage) {
   let text = '';
@@ -125,31 +135,20 @@ for (const mode of ['invocation', 'discovery']) {
       },
     );
     const registry = new ToolRegistry(scope, fixtureAccess);
-    const manager = new MountManager(registry, credentials, scope, {
-      mounts: [
-        {
-          id: 'fixture',
-          url,
-          tools: ['inspect'],
-          discovery: caller,
-          timeoutMs: 1000,
-          reconnectMs: 60_000,
-        },
-      ],
-    });
+    const runtime = discovery(registry, url);
     const pool = invocations(url);
     try {
       if (mode === 'invocation') {
         await pool.handler('inspect')(caller, {});
         assert.equal(gets, 0, 'invocation connections never open a notification stream');
       } else {
-        await manager.start();
+        void runtime.refresh().catch(() => undefined);
         await notification;
       }
       assert.deepEqual(received, [], 'notification headers must not reach a redirect destination');
     } finally {
       await pool.close();
-      await manager.close();
+      await runtime.stop();
       await registry.close();
     }
   });
@@ -182,25 +181,14 @@ for (const redirectMethod of ['initialize', 'tools/list']) {
   test(`discovery refuses a cross-origin redirect during ${redirectMethod}`, async (t) => {
     const { url, received } = await fixture(t, redirectMethod);
     const registry = new ToolRegistry(scope, fixtureAccess);
-    const manager = new MountManager(registry, credentials, scope, {
-      mounts: [
-        {
-          id: 'fixture',
-          url,
-          tools: ['inspect'],
-          discovery: caller,
-          timeoutMs: 1000,
-          reconnectMs: 60_000,
-        },
-      ],
-    });
+    const runtime = discovery(registry, url);
     try {
-      await manager.start();
+      await runtime.refresh().catch(() => undefined);
       assert.deepEqual(received, [], 'discovery must stay on its configured endpoint');
       assert.deepEqual(await registry.describe(), []);
-      assert.equal(manager.status()[0].state, 'failed');
+      assert.equal(runtime.status().state, 'failed');
     } finally {
-      await manager.close();
+      await runtime.stop();
       await registry.close();
     }
   });

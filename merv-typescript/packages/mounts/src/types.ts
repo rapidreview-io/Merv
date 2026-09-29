@@ -1,12 +1,14 @@
-import type { Caller } from '@merv/contracts';
 import type {} from 'cordis';
 
+/** Configuration shape only; the plugin's Config schema validates it before apply. */
 export interface CredentialBinding {
   id: string;
   projectId: string;
   actorId: string;
   mountId: string;
+  /** env:NAME; secret values stay in the server environment. */
   secretRef: string;
+  /** Fixed nonsecret x-* selectors, lower-cased by the schema. */
   headers?: Record<string, string>;
 }
 
@@ -15,15 +17,14 @@ export interface MountConfig {
   url: string;
   /** Explicit raw upstream names to publish; there is no implicit full-catalog selection. */
   tools: string[];
-  /** Optional local identity used only for credential-scoped catalog discovery. */
-  discovery?: Caller;
+  /** Selects the binding used only to list tools; each round requires this actor to read the project. */
+  discovery?: { actorId: string; projectId: string };
   timeoutMs?: number;
   reconnectMs?: number;
 }
 
 export interface MountsConfig {
   mounts: MountConfig[];
-  /** Exact upstream credential bindings; secret values stay in the server environment. */
   bindings?: CredentialBinding[];
 }
 
@@ -36,12 +37,9 @@ export interface MountStatus {
   errorCode?: string;
 }
 
+/** To toggle a mount or rotate a binding, reload the mounts entry. */
 export interface Mounts {
   status(): MountStatus[];
-  /** Trusted host control: withdraw/drain one mount, or restore its retained configuration. */
-  setEnabled(id: string, enabled: boolean): Promise<void>;
-  /** Wait for a new forced discovery attempt, queued after any active refresh. */
-  reconnect(id: string): Promise<void>;
 }
 
 declare module 'cordis' {

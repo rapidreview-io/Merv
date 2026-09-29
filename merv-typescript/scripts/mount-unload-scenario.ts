@@ -135,11 +135,15 @@ export async function runMountUnloadScenario(
       onCheckpoint(item);
     };
     const mountedName = '_sandbox.inspect';
+    // createApp does not wait for optional upstreams.
+    await until(
+      () => running.ctx.mounts.status()[0].state === 'ready',
+      'The mount did not become ready',
+    );
     const before = (await producer.listTools()).tools.map(({ name }) => name);
     assert.equal(before.length, 95);
     assert.ok(before.includes('system.status'));
     assert.ok(before.includes(mountedName));
-    assert.equal(running.ctx.mounts.status()[0].state, 'ready');
     const denied = await reviewer.callTool({ name: mountedName, arguments: {} });
     assert.equal(denied.isError, true);
     assert.equal(upstream.calls.length, 0);
@@ -291,7 +295,10 @@ export async function runMountUnloadScenario(
 
     await running.setEnabled('mounts', true);
     assert.notEqual(running.getFiber('mounts'), provider);
-    assert.equal(running.ctx.mounts.status()[0].state, 'ready');
+    await until(
+      () => running.ctx.mounts.status()[0].state === 'ready',
+      'The restored mount did not become ready',
+    );
     const restored = (await producer.listTools()).tools.map(({ name }) => name);
     assert.deepEqual(restored, before);
     assert.equal(new Set(restored).size, restored.length);

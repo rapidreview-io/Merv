@@ -554,12 +554,15 @@ async function live(outputDirectory: string) {
       host: '127.0.0.1',
       port: 0,
     });
-    requireCondition(
-      app.ctx.mounts
+    // createApp does not wait for optional upstreams: poll, bounded by the request timeout.
+    const { mounts } = app.ctx;
+    const ready = () =>
+      mounts
         .status()
-        .some((mount) => mount.id === mountId && mount.state === 'ready' && mount.toolCount === 1),
-      'mount_not_ready',
-    );
+        .some((mount) => mount.id === mountId && mount.state === 'ready' && mount.toolCount === 1);
+    const end = Date.now() + timeoutMs;
+    while (!ready() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 50));
+    requireCondition(ready(), 'mount_not_ready');
     requireCondition(
       (await app.ctx.tools.list(caller))
         .filter((entry) => entry.name.startsWith('_'))

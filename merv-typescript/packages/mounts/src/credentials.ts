@@ -1,86 +1,7 @@
-import {
-  check,
-  idPattern as identifier,
-  MervError,
-  type Caller,
-  type Scope,
-} from '@merv/contracts';
+import { check, MervError, type Caller, type Scope } from '@merv/contracts';
 import type { CredentialBinding } from './types.js';
 
 export type { CredentialBinding } from './types.js';
-
-const mountIdentifier = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const secretReference = /^env:[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const selectorName = /^x-[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const reservedSelector =
-  /(?:^|-)(?:auth|authorization|bearer|key|keys|apikey|token|tokens|secret|secrets|credential|credentials|password|passwd|passphrase|pwd|signature|jwt|assertion|cookie|host|protocol|session|mcp|forwarded|proxy|connection|content|accept|origin|referer|transfer|upgrade)(?:-|$)/;
-const bindingFields = new Set(['id', 'projectId', 'actorId', 'mountId', 'secretRef', 'headers']);
-const plainObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null &&
-  typeof value === 'object' &&
-  [Object.prototype, null].includes(Object.getPrototypeOf(value));
-
-function validateBinding(input: CredentialBinding): CredentialBinding {
-  check(
-    plainObject(input) && Object.keys(input).every((field) => bindingFields.has(field)),
-    'invalid_credential_config',
-    'Credential bindings must contain only the supported fields',
-  );
-  for (const field of ['id', 'projectId', 'actorId'] as const)
-    check(
-      typeof input[field] === 'string' && identifier.test(input[field]),
-      'invalid_credential_config',
-      'Credential bindings require exact nonempty identifiers',
-    );
-  check(
-    typeof input.mountId === 'string' && mountIdentifier.test(input.mountId),
-    'invalid_credential_config',
-    'Credential bindings require a valid mount ID',
-  );
-  check(
-    typeof input.secretRef === 'string' && secretReference.test(input.secretRef),
-    'invalid_credential_config',
-    'Credential secrets must use an env:NAME reference',
-  );
-  const headers: Record<string, string> = {};
-  if (input.headers !== undefined) {
-    check(
-      plainObject(input.headers) && Object.keys(input.headers).length <= 16,
-      'invalid_credential_config',
-      'Credential headers must be a record of at most 16 fixed selectors',
-    );
-    for (const [name, value] of Object.entries(input.headers)) {
-      const normalized = name.toLowerCase();
-      check(
-        name.length <= 100 &&
-          selectorName.test(normalized) &&
-          !reservedSelector.test(normalized) &&
-          !Object.hasOwn(headers, normalized),
-        'invalid_credential_config',
-        'Only distinct nonsecret x-* selector headers are allowed',
-      );
-      check(
-        typeof value === 'string' &&
-          value.length >= 1 &&
-          value.length <= 1024 &&
-          value.trim() === value &&
-          /^[\x20-\x7e]+$/.test(value) &&
-          !/^(?:Bearer\s|Basic\s|env:|-----BEGIN)/i.test(value),
-        'invalid_credential_config',
-        'Selector headers require fixed printable nonsecret values',
-      );
-      headers[normalized] = value;
-    }
-  }
-  return {
-    id: input.id,
-    projectId: input.projectId,
-    actorId: input.actorId,
-    mountId: input.mountId,
-    secretRef: input.secretRef,
-    headers,
-  };
-}
 
 const key = (projectId: string, actorId: string, mountId: string) =>
   JSON.stringify([projectId, actorId, mountId]);
@@ -88,29 +9,19 @@ const key = (projectId: string, actorId: string, mountId: string) =>
 /** Exact (project, actor, mount) bindings, fixed for one load of the Mounts entry. */
 export class Bindings {
   readonly #scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>;
-  readonly #byCaller = new Map<string, CredentialBinding>();
+  readonly #byCaller: Map<string, CredentialBinding>;
+  /** The mounts Config schema validated the bindings and their uniqueness. */
   constructor(
     scope: Pick<Scope, 'authorityActor' | 'recognizesCredential'>,
-    bindings: CredentialBinding[] = [],
+    bindings: readonly CredentialBinding[],
   ) {
     this.#scope = scope;
-    check(
-      Array.isArray(bindings),
-      'invalid_credential_config',
-      'Credential bindings must be an array',
+    this.#byCaller = new Map(
+      bindings.map((binding) => [
+        key(binding.projectId, binding.actorId, binding.mountId),
+        binding,
+      ]),
     );
-    const ids = new Set<string>();
-    for (const input of bindings) {
-      const binding = validateBinding(input),
-        selection = key(binding.projectId, binding.actorId, binding.mountId);
-      check(
-        !ids.has(binding.id) && !this.#byCaller.has(selection),
-        'invalid_credential_config',
-        'Credential binding IDs and actor/project/mount selections must be unique',
-      );
-      ids.add(binding.id);
-      this.#byCaller.set(selection, binding);
-    }
   }
 
   /**

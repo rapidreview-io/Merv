@@ -5,16 +5,15 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { Context } from 'cordis';
+import { Context, ValidationError, type Plugin } from 'cordis';
 import { z } from 'zod';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import { ProjectScope } from '@merv/scope';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { ToolRegistry } from '@merv/api';
 import type { CredentialBinding } from '@merv/mounts/types';
-import type { MountConfig } from '@merv/mounts/types';
-import { MountManager, mountsPlugin } from '../packages/mounts/src/index.js';
+import type { MountConfig, Mounts } from '@merv/mounts/types';
+import { mountsPlugin } from '../packages/mounts/src/index.js';
 import {
   RemoteFixture,
   representativeTools,
@@ -51,7 +50,6 @@ async function local(t: TestContext, mountIds = ['fixture']) {
     mountId,
     secretRef: `env:${env}`,
   }));
-  const credentials = new Bindings(scope, bindings);
   const registry = new ToolRegistry(scope, access);
   registry.register({
     name: 'native',
@@ -64,7 +62,7 @@ async function local(t: TestContext, mountIds = ['fixture']) {
     await state.close();
     delete process.env[env];
   });
-  return { state, scope, caller, access, credentials, registry, bindings, env };
+  return { state, scope, caller, access, registry, bindings, env };
 }
 async function remote(
   t: TestContext,
@@ -87,8 +85,15 @@ async function mounted(
   t.after(() => ctx.fiber.dispose());
   await fiber.await();
   assert.equal(ctx.get('credentials'), undefined, 'Credentials is internal to Mounts');
-  return { ctx, fiber, manager: ctx.mounts };
+  await settled(ctx.mounts);
+  return { ctx, fiber, mounts: ctx.mounts };
 }
+/** apply does not wait for discovery: wait until every mount has finished its first round. */
+const settled = (mounts: Mounts) =>
+  until(
+    () => mounts.status().every((mount) => mount.state !== 'connecting'),
+    'A mount did not finish its first round',
+  );
 const names = async (registry: ToolRegistry) =>
   (await registry.describe()).map((tool) => tool.name);
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -111,153 +116,6 @@ function replacements(t: TestContext, registry: ToolRegistry, reject = 0) {
 }
 
 test(
-  'queued explicit reconnect retries discovery after the preceding refresh fails',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    let fail = false;
-    const upstream = await remote(t, {
-      page: () => {
-        if (fail) {
-          fail = false;
-          throw new Error('Synthetic catalog failure');
-        }
-        return { tools: structuredClone(representativeTools) };
-      },
-    });
-    const { manager } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-    ]);
-    const held = upstream.holdNextList();
-    const refreshing = manager.reconnect('fixture');
-    const failed = assert.rejects(refreshing);
-    await held.entered;
-    fail = true;
-    const requested = manager.reconnect('fixture');
-    try {
-      held.release();
-      await failed;
-      await requested;
-      assert.equal(manager.status()[0].state, 'ready');
-      assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
-    } finally {
-      held.release();
-      await Promise.allSettled([refreshing, requested]);
-    }
-  },
-);
-
-test(
-  'stopping while an explicit reconnect is queued rejects it without another connection',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const upstream = await remote(t, { pageSize: 10 });
-    const originalConnect = Client.prototype.connect;
-    let connects = 0;
-    t.mock.method(
-      Client.prototype,
-      'connect',
-      function (this: Client, ...args: Parameters<Client['connect']>) {
-        connects++;
-        return originalConnect.apply(this, args);
-      },
-    );
-    const { manager, fiber } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-    ]);
-    const held = upstream.holdNextList();
-    const refreshing = manager.reconnect('fixture');
-    const activeRejected = assert.rejects(refreshing);
-    await held.entered;
-    const before = connects;
-    const requested = manager.reconnect('fixture');
-    const queuedRejected = assert.rejects(requested, { code: 'mounts_stopped' });
-    try {
-      await fiber.dispose();
-      await Promise.all([activeRejected, queuedRejected]);
-      assert.equal(connects, before);
-      assert.equal(manager.status()[0].state, 'stopped');
-    } finally {
-      held.release();
-      await Promise.allSettled([refreshing, requested]);
-    }
-  },
-);
-
-test(
-  'explicit reconnect during a coalesced second refresh waits for its own new connection attempt',
-  { timeout: 10000 },
-  async (t) => {
-    const services = await local(t);
-    const upstream = await remote(t, { pageSize: 10 });
-    const originalConnect = Client.prototype.connect;
-    let connects = 0;
-    t.mock.method(
-      Client.prototype,
-      'connect',
-      function (this: Client, ...args: Parameters<Client['connect']>) {
-        connects++;
-        return originalConnect.apply(this, args);
-      },
-    );
-    const install = Client.prototype.setNotificationHandler;
-    let receive!: () => void;
-    const notificationReceived = new Promise<void>((resolve) => {
-      receive = resolve;
-    });
-    const observe: Client['setNotificationHandler'] = function (this: Client, schema, handler) {
-      return install.call(this, schema, (notification) => {
-        receive();
-        return handler(notification);
-      });
-    };
-    t.mock.method(Client.prototype, 'setNotificationHandler', observe);
-    const { manager } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
-    ]);
-    const firstHeld = upstream.holdNextList();
-    const secondHeld = upstream.holdNextList();
-    const ownAttemptHeld = upstream.holdNextList();
-    const refreshing = manager.reconnect('fixture');
-    await firstHeld.entered;
-    await upstream.notifyToolsChanged();
-    await notificationReceived;
-    firstHeld.release();
-    await secondHeld.entered;
-    const before = connects;
-    let settled = false;
-    const requested = manager.reconnect('fixture').then(() => {
-      settled = true;
-    });
-    try {
-      secondHeld.release();
-      await refreshing;
-      await until(
-        () => settled || connects > before,
-        'Explicit reconnect did not start after the active refresh',
-      );
-      assert.equal(
-        settled,
-        false,
-        'Reconnect cannot resolve before its own forced attempt finishes',
-      );
-      assert.equal(connects, before + 1, 'Reconnect must create a new discovery connection');
-      await ownAttemptHeld.entered;
-      assert.equal(settled, false);
-      ownAttemptHeld.release();
-      await requested;
-      assert.equal(manager.status()[0].state, 'ready');
-    } finally {
-      firstHeld.release();
-      secondHeld.release();
-      ownAttemptHeld.release();
-      await Promise.allSettled([refreshing, requested]);
-    }
-  },
-);
-
-test(
   'optional mounts select explicit tools before schema compilation and preserve native tools',
   { timeout: 10000 },
   async (t) => {
@@ -271,10 +129,10 @@ test(
         },
       ],
     });
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], reconnectMs: 60000 },
     ]);
-    assert.deepEqual(manager.status(), [
+    assert.deepEqual(mounts.status(), [
       { id: 'fixture', origin: new URL(upstream.url).origin, state: 'ready', toolCount: 1 },
     ]);
     assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
@@ -300,7 +158,7 @@ test(
     const unavailable = await remote(t);
     const unavailableUrl = unavailable.url;
     await unavailable.close();
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'good', url: healthy.url, tools: ['media'], reconnectMs: 60000 },
       {
         id: 'bad',
@@ -310,16 +168,15 @@ test(
         reconnectMs: 60000,
       },
     ]);
-    assert.equal(manager.status().find((mount) => mount.id === 'good')?.state, 'ready');
+    assert.equal(mounts.status().find((mount) => mount.id === 'good')?.state, 'ready');
     assert.ok(
       ['failed', 'disconnected'].includes(
-        manager.status().find((mount) => mount.id === 'bad')!.state,
+        mounts.status().find((mount) => mount.id === 'bad')!.state,
       ),
     );
-    assert.ok(!JSON.stringify(manager.status()).includes('do-not-return-this-value'));
+    assert.ok(!JSON.stringify(mounts.status()).includes('do-not-return-this-value'));
     assert.deepEqual(await names(services.registry), ['_good.media', 'native']);
     assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
-    await assert.rejects(manager.reconnect('missing'), { code: 'mount_not_found' });
   },
 );
 
@@ -329,20 +186,20 @@ test(
   async (t) => {
     const services = await local(t);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 500, reconnectMs: 50 },
     ]);
     upstream.setTools([]);
     await upstream.notifyToolsChanged();
     await until(
-      () => manager.status()[0].toolCount === 0,
+      () => mounts.status()[0].toolCount === 0,
       'Missing selected tool did not withdraw the catalog',
     );
-    assert.equal(manager.status()[0].errorCode, 'mount_missing_tool');
+    assert.equal(mounts.status()[0].errorCode, 'mount_missing_tool');
     assert.deepEqual(await names(services.registry), ['native']);
     upstream.setTools(representativeTools);
     await until(
-      () => manager.status()[0].state === 'ready',
+      () => mounts.status()[0].state === 'ready',
       'Automatic reconnect did not restore selected tools',
     );
     assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
@@ -354,29 +211,30 @@ test(
 );
 
 test(
-  'a stalled discovery refresh times out, withdraws its catalog, and can reconnect explicitly',
+  'a stalled discovery refresh times out, withdraws its catalog, and a later round restores it',
   { timeout: 10000 },
   async (t) => {
     const services = await local(t);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
-      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 100, reconnectMs: 60000 },
+    const { mounts } = await mounted(t, services, [
+      { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 100, reconnectMs: 200 },
     ]);
     const held = upstream.holdNextList();
-    const refresh = manager.reconnect('fixture');
-    const rejected = assert.rejects(refresh);
+    await upstream.notifyToolsChanged();
     await held.entered;
     try {
-      await rejected;
-      assert.equal(manager.status()[0].errorCode, 'remote_timeout');
-      assert.equal(manager.status()[0].toolCount, 0);
+      await until(
+        () => mounts.status()[0].errorCode === 'remote_timeout',
+        'The stalled list did not time out',
+      );
+      assert.equal(mounts.status()[0].toolCount, 0);
       assert.deepEqual(await names(services.registry), ['native']);
       assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
     } finally {
       held.release();
     }
-    await manager.reconnect('fixture');
-    assert.equal(manager.status()[0].state, 'ready');
+    await until(() => mounts.status()[0].state === 'ready', 'A later round did not restore');
+    assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
   },
 );
 
@@ -393,10 +251,10 @@ test(
         streamSignals.push(init.signal);
       return actualFetch(address, init);
     });
-    const { manager, fiber } = await mounted(t, services, [
+    const { mounts, fiber } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 250, reconnectMs: 60000 },
     ]);
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
     await upstream.waitForNotificationStream();
     await new Promise((resolve) => setTimeout(resolve, 400));
     assert.equal(streamSignals.length, 1);
@@ -420,7 +278,7 @@ test(
     assert.ok(
       upstream.requests.filter((request) => request.method === 'tools/list').length > before,
     );
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
     await fiber.dispose();
     assert.ok(
       streamSignals.every((signal) => signal.aborted),
@@ -435,19 +293,18 @@ test(
   async (t) => {
     const services = await local(t);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 100, reconnectMs: 25 },
     ]);
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
     await upstream.close();
     await until(
-      () => manager.status()[0].toolCount === 0,
+      () => mounts.status()[0].toolCount === 0,
       'Lost upstream connection remained discoverable',
     );
     assert.deepEqual(await names(services.registry), ['native']);
     assert.equal(await services.registry.call('native', services.caller, {}), 'native-alive');
-    await assert.rejects(manager.reconnect('fixture'));
-    assert.ok(manager.status()[0].errorCode);
+    assert.ok(mounts.status()[0].errorCode);
   },
 );
 
@@ -457,7 +314,7 @@ test(
   async (t) => {
     const services = await local(t, ['first', 'second']);
     const upstream = await remote(t);
-    const { ctx, fiber, manager } = await mounted(
+    const { ctx, fiber, mounts } = await mounted(
       t,
       services,
       ['first', 'second'].map((id) => ({
@@ -514,8 +371,7 @@ test(
     }
     assert.deepEqual(await second, representativeResult);
     await disposal;
-    assert.ok(manager.status().every((mount) => mount.state === 'stopped'));
-    await assert.rejects(manager.reconnect('first'), { code: 'mounts_stopped' });
+    assert.ok(mounts.status().every((mount) => mount.state === 'stopped'));
   },
 );
 
@@ -560,28 +416,23 @@ test(
         headers: { 'x-sandbox-namespace': 'public', 'x-sandbox-subject': 'discovery' },
       },
     ];
-    const credentials = new Bindings(services.scope, bindings);
     const grants = [services.caller, discovery].map((caller) => ({
       ...caller,
       mountId: 'fixture',
       tools: ['inspect'],
     }));
     services.access.replace(grants);
-    const manager = new MountManager(services.registry, credentials, services.scope, {
-      mounts: [
-        {
-          id: 'fixture',
-          url: upstream.url,
-          tools: ['inspect'],
-          discovery,
-          timeoutMs: 500,
-          reconnectMs: 50,
-        },
-      ],
-    });
-    t.after(async () => manager.close());
-    await manager.start();
-    assert.equal(manager.status()[0].state, 'ready');
+    const configured = { ...services, bindings };
+    const mount = {
+      id: 'fixture',
+      url: upstream.url,
+      tools: ['inspect'],
+      discovery,
+      timeoutMs: 500,
+      reconnectMs: 50,
+    };
+    const { mounts, fiber } = await mounted(t, configured, [mount]);
+    assert.equal(mounts.status()[0].state, 'ready');
     const result = (await services.registry.call('_fixture.inspect', services.caller, {})) as {
       structuredContent: { identity: string };
     };
@@ -606,7 +457,7 @@ test(
     services.access.replace([]);
     const lists = upstream.lists;
     await until(() => upstream.lists >= lists + 3, 'Discovery stopped polling');
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
     assert.deepEqual(await names(services.registry), ['_fixture.inspect', 'native']);
     await assert.rejects(services.registry.call('_fixture.inspect', services.caller, {}), {
       code: 'tool_forbidden',
@@ -618,14 +469,16 @@ test(
     delete process.env[discoveryEnv];
     const before = upstream.lists;
     await until(() => upstream.lists >= before + 3, 'Discovery stopped polling');
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
     assert.equal(upstream.connections.length, 3);
-    await assert.rejects(manager.reconnect('fixture'), { code: 'credential_unavailable' });
-    assert.equal(manager.status()[0].errorCode, 'credential_unavailable');
+    // Reloading the entry opens the next discovery connection.
+    await fiber.dispose();
+    const { mounts: reloaded } = await mounted(t, configured, [mount]);
+    assert.equal(reloaded.status()[0].errorCode, 'credential_unavailable');
     assert.deepEqual(await names(services.registry), ['native']);
     process.env[discoveryEnv] = discoveryToken;
-    await manager.reconnect('fixture');
-    assert.equal(manager.status()[0].state, 'ready');
+    await until(() => reloaded.status()[0].state === 'ready', 'Discovery did not recover');
+    assert.deepEqual(await names(services.registry), ['_fixture.inspect', 'native']);
   },
 );
 
@@ -648,12 +501,12 @@ async function discovered(t: TestContext, tools = ['media']) {
 
 test('removing the discovery actor fails the next round and ends its session', async (t) => {
   const { services, upstream, mount, discovery } = await discovered(t);
-  const { manager } = await mounted(t, services, [{ ...mount, reconnectMs: 50 }]);
-  assert.equal(manager.status()[0].state, 'ready');
+  const { mounts } = await mounted(t, services, [{ ...mount, reconnectMs: 50 }]);
+  assert.equal(mounts.status()[0].state, 'ready');
   assert.equal(upstream.sessionCount, 1);
   await services.scope.revokeActor(services.caller, discovery.actorId);
   await until(
-    () => manager.status()[0].errorCode === 'forbidden',
+    () => mounts.status()[0].errorCode === 'forbidden',
     'A removed discovery actor kept discovering',
   );
   await until(() => upstream.deletes === 1, 'The discovery session was not ended');
@@ -663,8 +516,8 @@ test('removing the discovery actor fails the next round and ends its session', a
 
 test('a warm discovery poll checks the actor once and resolves no credential or grant', async (t) => {
   const { services, upstream, mount } = await discovered(t, ['media', 'inspect', 'failure']);
-  const { manager } = await mounted(t, services, [{ ...mount, reconnectMs: 60000 }]);
-  assert.equal(manager.status()[0].state, 'ready');
+  const { mounts } = await mounted(t, services, [{ ...mount, reconnectMs: 60000 }]);
+  assert.equal(mounts.status()[0].state, 'ready');
   const require = t.mock.method(services.scope, 'require');
   const grants = t.mock.method(services.access, 'require');
   const select = t.mock.method(Bindings.prototype, 'select');
@@ -681,10 +534,10 @@ test('a warm discovery poll checks the actor once and resolves no credential or 
   assert.equal(grants.mock.callCount(), 0);
   assert.equal(select.mock.callCount(), 0);
   assert.equal(headers.mock.callCount(), 0);
-  assert.equal(manager.status()[0].state, 'ready');
+  assert.equal(mounts.status()[0].state, 'ready');
 });
 
-test('invalid mount configuration acquires no catalog namespaces', async (t) => {
+test('invalid mount configuration fails the entry and acquires no catalog namespaces', async (t) => {
   const services = await local(t);
   for (const mounts of [
     [{ id: 'fixture', url: 'http://user:secret@localhost/mcp', tools: ['media'] }],
@@ -694,11 +547,17 @@ test('invalid mount configuration acquires no catalog namespaces', async (t) => 
       { id: 'fixture', url: 'http://localhost/mcp', tools: ['media'] },
       { id: 'fixture', url: 'http://localhost/mcp', tools: ['media'] },
     ],
-  ])
-    assert.throws(
-      () => new MountManager(services.registry, services.credentials, services.scope, { mounts }),
-      { code: 'invalid_mount_config' },
-    );
+  ]) {
+    const ctx = new Context();
+    ctx.provide('tools', services.registry);
+    ctx.provide('scope', services.scope);
+    try {
+      await assert.rejects(ctx.plugin(mountsPlugin as Plugin, { mounts }).await(), ValidationError);
+      assert.equal(ctx.get('mounts'), undefined);
+    } finally {
+      await ctx.fiber.dispose();
+    }
+  }
   assert.deepEqual(await names(services.registry), ['native']);
   const catalog = services.registry.createCatalog('fixture');
   void catalog.dispose();
@@ -711,13 +570,13 @@ test(
     const services = await local(t);
     const counts = replacements(t, services.registry);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
     ]);
     await sleep(500);
     assert.ok(upstream.requests.filter((request) => request.method === 'tools/list').length > 3);
     assert.equal(counts.all, 1, 'Unchanged polls must not replace the catalog');
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
   },
 );
 
@@ -737,10 +596,10 @@ test('a failed connect counts once, so the first retry waits one backoff step', 
   });
   const R = 100;
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
-  const { manager } = await mounted(t, services, [
+  const { mounts } = await mounted(t, services, [
     { id: 'fixture', url, tools: ['media'], timeoutMs: 1000, reconnectMs: R },
   ]);
-  assert.equal(manager.status()[0].state, 'failed');
+  assert.equal(mounts.status()[0].state, 'failed');
   await until(() => attempts.length >= 2, 'Discovery did not retry');
   const gap = attempts[1] - attempts[0];
   assert.ok(gap >= 2 * R && gap < 4 * R, `The first retry came after ${gap} ms`);
@@ -780,17 +639,17 @@ test(
   async (t) => {
     const services = await local(t);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 50 },
     ]);
     upstream.holdNextList();
-    await until(() => manager.status()[0].toolCount === 0, 'A stalled list did not fail the round');
+    await until(() => mounts.status()[0].toolCount === 0, 'A stalled list did not fail the round');
     assert.deepEqual(await names(services.registry), ['native']);
     await until(
       async () => (await names(services.registry)).includes('_fixture.media'),
       'The unchanged catalog was not republished after the failure',
     );
-    assert.equal(manager.status()[0].state, 'ready');
+    assert.equal(mounts.status()[0].state, 'ready');
   },
 );
 
@@ -801,14 +660,11 @@ test(
     const services = await local(t);
     const counts = replacements(t, services.registry, 1);
     const upstream = await remote(t);
-    const { manager } = await mounted(t, services, [
+    const { mounts } = await mounted(t, services, [
       { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 50 },
     ]);
-    assert.equal(manager.status()[0].errorCode, 'invalid_schema');
-    await until(
-      () => manager.status()[0].state === 'ready',
-      'The rejected catalog was not retried',
-    );
+    assert.equal(mounts.status()[0].errorCode, 'invalid_schema');
+    await until(() => mounts.status()[0].state === 'ready', 'The rejected catalog was not retried');
     assert.deepEqual(await names(services.registry), ['_fixture.media', 'native']);
     assert.equal(counts.nonempty, 2);
   },
@@ -817,8 +673,8 @@ test(
 test('a failed round and stop each end the discovery session with a DELETE', async (t) => {
   const services = await local(t);
   const upstream = await remote(t);
-  const { manager, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  const { mounts, fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 100 },
   ]);
   assert.equal(upstream.sessionCount, 1);
   upstream.setTools([]);
@@ -826,7 +682,7 @@ test('a failed round and stop each end the discovery session with a DELETE', asy
   await until(() => upstream.deletes === 1, 'A failed round did not DELETE its session');
   assert.equal(upstream.sessionCount, 0);
   upstream.setTools(representativeTools);
-  await manager.reconnect('fixture');
+  await until(() => mounts.status()[0].state === 'ready', 'The next round did not reconnect');
   assert.equal(upstream.sessionCount, 1);
   await fiber.dispose();
   assert.equal(upstream.deletes, 2);
@@ -836,10 +692,10 @@ test('a failed round and stop each end the discovery session with a DELETE', asy
 test('stop against an upstream that stopped answering takes about one second', async (t) => {
   const services = await local(t);
   const upstream = await remote(t);
-  const { manager, fiber } = await mounted(t, services, [
+  const { mounts, fiber } = await mounted(t, services, [
     { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
   ]);
-  assert.equal(manager.status()[0].state, 'ready');
+  assert.equal(mounts.status()[0].state, 'ready');
   upstream.stall();
   const started = performance.now();
   await fiber.dispose();
@@ -866,12 +722,12 @@ test('a stalled discovery connect reports a timeout', async (t) => {
   const upstream = await remote(t);
   upstream.stall();
   const started = performance.now();
-  const { manager } = await mounted(t, services, [
+  const { mounts } = await mounted(t, services, [
     { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 150, reconnectMs: 60000 },
   ]);
   assert.ok(performance.now() - started < 1000, 'The SDK timeout bounds initialize');
-  assert.equal(manager.status()[0].state, 'failed');
-  assert.equal(manager.status()[0].errorCode, 'remote_timeout');
+  assert.equal(mounts.status()[0].state, 'failed');
+  assert.equal(mounts.status()[0].errorCode, 'remote_timeout');
 });
 
 test('an upstream with more than 1,000 tools mounts its selected tool', async (t) => {
@@ -881,23 +737,40 @@ test('an upstream with more than 1,000 tools mounts its selected tool', async (t
     inputSchema: { type: 'object' as const, additionalProperties: false },
   }));
   const upstream = await remote(t, { tools, pageSize: 1000 });
-  const { manager } = await mounted(t, services, [
+  const { mounts } = await mounted(t, services, [
     { id: 'fixture', url: upstream.url, tools: ['tool-1000'], reconnectMs: 60000 },
   ]);
-  assert.equal(manager.status()[0].state, 'ready');
+  assert.equal(mounts.status()[0].state, 'ready');
   assert.deepEqual(await names(services.registry), ['_fixture.tool-1000', 'native']);
 });
 
 test('a successful round leaves no notifications/cancelled behind', async (t) => {
   const services = await local(t);
   const upstream = await remote(t);
-  const { manager } = await mounted(t, services, [
+  const { mounts } = await mounted(t, services, [
     { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 60000 },
   ]);
-  assert.equal(manager.status()[0].state, 'ready');
+  assert.equal(mounts.status()[0].state, 'ready');
   await sleep(500);
   assert.deepEqual(
     upstream.notifications.filter((method) => method === 'notifications/cancelled'),
     [],
   );
+});
+
+test('a black-holed upstream does not hold up loading the entry', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  upstream.stall();
+  const ctx = new Context();
+  ctx.provide('tools', services.registry);
+  ctx.provide('scope', services.scope);
+  t.after(() => ctx.fiber.dispose());
+  const started = performance.now();
+  await ctx.plugin(mountsPlugin, {
+    mounts: [{ id: 'fixture', url: upstream.url, tools: ['media'], reconnectMs: 60000 }],
+    bindings: services.bindings,
+  });
+  assert.ok(performance.now() - started < 200, 'apply does not wait for discovery');
+  assert.equal(ctx.mounts.status()[0].state, 'connecting');
 });
