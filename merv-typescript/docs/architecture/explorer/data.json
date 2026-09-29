@@ -2329,7 +2329,7 @@
         },
         {
           "name": "task.compute_status",
-          "description": "Read every retained GPU run for this task, including earlier work revisions and finished results.",
+          "description": "List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.",
           "readOnly": true
         },
         {
@@ -2439,7 +2439,7 @@
         },
         {
           "name": "task.compute_status",
-          "description": "Read every retained GPU run for this task, including earlier work revisions and finished results.",
+          "description": "List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.",
           "readOnly": true
         },
         {
