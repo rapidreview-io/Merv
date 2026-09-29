@@ -823,6 +823,7 @@ test('Claude usage is its result event: input with the cache it wrote and read, 
   assert.equal(harnessUsage(claude, stream(init, assistant, said)), undefined);
   for (const bad of [
     result({ input_tokens: 12, output_tokens: 9, cache_read_input_tokens: '45000' }),
+    result({ input_tokens: 12, output_tokens: 9, ...cached, cache_creation_input_tokens: -3000 }),
     result({ input_tokens: -1, output_tokens: 9 }),
     result({ output_tokens: 9 }),
   ])

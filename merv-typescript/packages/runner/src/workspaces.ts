@@ -575,12 +575,7 @@ export class GitWorkspaceManager {
           await this.checkoutGit(row, ['checkout', '--quiet', ...onRef(row)]);
         }
         await this.validateCheckout(row);
-        const status = await this.checkoutGit(row, [
-          'status',
-          '--porcelain',
-          '--untracked-files=all',
-        ]);
-        if (!row.read_only && status.trim())
+        if (!row.read_only)
           try {
             await this.checkChangedFiles(row);
             await this.checkoutGit(row, ['add', '-A', '--', '.']);
@@ -634,16 +629,8 @@ export class GitWorkspaceManager {
       if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path))
         await this.bounded(row, async () => {
           await this.validateCheckout(row);
-          const repository = await this.repository();
-          await this.git([
-            '--git-dir',
-            repository.bare_path,
-            'worktree',
-            'remove',
-            '--force',
-            '--',
-            row.path,
-          ]);
+          const bare = (await this.repository()).bare_path;
+          await this.git(['--git-dir', bare, 'worktree', 'remove', '--force', '--', row.path]);
         });
       this.db.exec('BEGIN IMMEDIATE');
       try {
@@ -683,6 +670,7 @@ export class GitWorkspaceManager {
       const [since, attempts] = this.failing.get(row.launch_id) ?? [Date.now(), 0];
       this.failing.set(row.launch_id, [since, attempts + 1]);
       if (attempts < 2 || Date.now() - since < 600_000) throw error;
+      this.failing.delete(row.launch_id);
       const aside = `${row.path}.abandoned-${row.launch_id}`;
       // Its `.git` goes: the lineage's next checkout at this path reuses the admin directory it
       // names. A checkout that cannot be moved is left where it is, abandoned all the same.

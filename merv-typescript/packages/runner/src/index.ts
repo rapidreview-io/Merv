@@ -888,18 +888,17 @@ export class MachineRunner implements Runner {
    */
   private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
     const read = (path: string, limit: number, tail = false) => {
-      const stat = lstatSync(path),
-        size = stat.size;
-      if (!stat.isFile() || (!tail && size > limit)) throw new Error('Not a readable report');
-      const bytes = Buffer.alloc(Math.min(size, limit)),
+      const stat = lstatSync(path);
+      if (!stat.isFile() || (!tail && stat.size > limit)) throw new Error('Not a readable report');
+      const bytes = Buffer.alloc(Math.min(stat.size, limit)),
         fd = openSync(path, 'r');
       try {
-        readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+        readSync(fd, bytes, 0, bytes.length, stat.size - bytes.length);
       } finally {
         closeSync(fd);
       }
       const text = bytes.toString('utf8');
-      return bytes.length < size ? text.slice(text.indexOf('\n') + 1) : text;
+      return bytes.length < stat.size ? text.slice(text.indexOf('\n') + 1) : text;
     };
     try {
       return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));

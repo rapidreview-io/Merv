@@ -518,23 +518,16 @@ export function harnessUsage(
     try {
       const event = JSON.parse(line);
       const { input_tokens: input, output_tokens: outputTokens } = event.usage;
-      const cached =
+      const cache =
         profile.harness === 'claude'
-          ? (event.usage.cache_creation_input_tokens ?? 0) +
-            (event.usage.cache_read_input_tokens ?? 0)
-          : 0;
-      const inputTokens = input + cached;
-      const costUsd = profile.harness === 'claude' ? event.total_cost_usd : undefined;
-      if (
-        event.type === kind &&
-        [input, inputTokens, outputTokens].every(
-          (count) => Number.isSafeInteger(count) && count >= 0,
-        )
-      )
+          ? [event.usage.cache_creation_input_tokens ?? 0, event.usage.cache_read_input_tokens ?? 0]
+          : [];
+      const counts = [input, outputTokens, ...cache];
+      if (event.type === kind && counts.every((count) => Number.isSafeInteger(count) && count >= 0))
         usage = {
-          inputTokens,
+          inputTokens: input + cache.reduce((sum, count) => sum + count, 0),
           outputTokens,
-          ...(typeof costUsd === 'number' && { costUsd }),
+          ...(typeof event.total_cost_usd === 'number' && { costUsd: event.total_cost_usd }),
           ...(profile.model && { model: profile.model }),
         };
     } catch {
