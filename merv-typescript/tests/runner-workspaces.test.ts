@@ -438,29 +438,88 @@ test('uncertain ownership never releases a persistent checkout and branch/common
   );
 });
 
+/** The launch's workspace diagnostics, as the runner reports them. */
+const notes = (f: ReturnType<typeof setup>, id: string) =>
+  f.ledger.get(id)!.metadata.workspaceNotes as Record<string, Record<string, unknown>> | undefined;
+
 for (const retain of [true, false])
-  test(`a ${retain ? 'retained' : 'non-retained'} writer's oversized file is not captured or inherited: the result is HEAD`, async (t) => {
+  test(`a ${retain ? 'retained' : 'non-retained'} writer's oversized file is moved aside, visibly, and the rest captured`, async (t) => {
     const f = setup(t),
       record = f.reserve('large');
     const policy = retain
       ? f.policy()
       : ({ mode: 'ephemeral', namespace: 'tests', base: 'central', retain: false } as const);
     const handle = await f.manager.prepare(record, f.session(record.id, policy));
-    writeFileSync(join(handle.path, 'seed.txt'), 'dropped with the refused file\n');
+    writeFileSync(join(handle.path, 'seed.txt'), 'kept beside the refused file\n');
     writeFileSync(join(handle.path, 'large.bin'), '');
     truncateSync(join(handle.path, 'large.bin'), 51 * 1024 * 1024);
     f.stop(record.id);
-    assert.deepEqual(await f.manager.capture(record), handle.snapshot);
+    const result = (await f.manager.capture(record))!;
+    assert.equal(
+      f.git(handle.path, 'show', `${result.headOid}:seed.txt`),
+      'kept beside the refused file',
+    );
+    assert.equal(f.git(handle.path, 'ls-tree', '--name-only', result.headOid, 'large.bin'), '');
     assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
     assert.equal(
       f.git(f.bare, 'cat-file', '--batch-all-objects', '--batch-check').includes(' 53477376'),
       false,
     );
+    const aside = `${handle.path}.refused-${record.id}`;
+    assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file, {
+      aside,
+      paths: ['large.bin'],
+    });
     await f.manager.close(record);
+    assert.equal(statSync(join(aside, 'large.bin')).size, 51 * 1024 * 1024);
     const next = f.reserve('after-large');
     const resumed = await f.manager.prepare(next, f.session(next.id, policy));
-    assert.equal(resumed.snapshot!.headOid, handle.snapshot!.headOid);
+    assert.equal(resumed.snapshot!.headOid, retain ? result.headOid : handle.snapshot!.headOid);
   });
+
+test('a tracked directory a writer replaced with a symlink is moved aside and restored from HEAD', async (t) => {
+  const f = setup(t),
+    record = f.reserve('linked');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  mkdirSync(join(handle.path, 'lib'));
+  writeFileSync(join(handle.path, 'lib/a.txt'), 'tracked\n');
+  agent(f, handle.path, 'add', 'lib');
+  agent(f, handle.path, 'commit', '-m', 'lib');
+  rmSync(join(handle.path, 'lib'), { recursive: true });
+  symlinkSync(f.directory, join(handle.path, 'lib'));
+  writeFileSync(join(handle.path, 'work.txt'), 'captured\n');
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:lib/a.txt`), 'tracked');
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:work.txt`), 'captured');
+  assert.equal(f.git(handle.path, 'status', '--porcelain', '--untracked-files=all'), '');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(realpathSync(join(aside, 'lib')), realpathSync(f.directory));
+  assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file?.paths, ['lib']);
+});
+
+test("a writer's hours of work beside one oversized dataset survive on disk, and the drop is reported", async (t) => {
+  // Also what an upgraded runner does with a capture an older one left wedged on such a file.
+  const f = setup(t),
+    record = f.reserve('large-work');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'analysis.py'), 'UNIQUE-WRITER-WORK-1f3a\n');
+  writeFileSync(join(handle.path, 'seed.txt'), 'UNIQUE-WRITER-EDIT-9c2e\n');
+  writeFileSync(join(handle.path, 'dataset.csv'), '');
+  truncateSync(join(handle.path, 'dataset.csv'), 51 * 1024 * 1024);
+  f.stop(record.id);
+  const result = (await f.manager.capture(record))!;
+  assert.notEqual(result.headOid, handle.snapshot!.headOid);
+  assert.equal(
+    f.git(handle.path, 'show', `${result.headOid}:analysis.py`),
+    'UNIQUE-WRITER-WORK-1f3a',
+  );
+  assert.equal(f.git(handle.path, 'show', `${result.headOid}:seed.txt`), 'UNIQUE-WRITER-EDIT-9c2e');
+  assert.equal(readFileSync(join(handle.path, 'analysis.py'), 'utf8'), 'UNIQUE-WRITER-WORK-1f3a\n');
+  const aside = `${handle.path}.refused-${record.id}`;
+  assert.equal(statSync(join(aside, 'dataset.csv')).size, 51 * 1024 * 1024);
+  assert.deepEqual(notes(f, record.id)?.workspace_capture_refused_file?.paths, ['dataset.csv']);
+});
 
 test('an unchanged historical large file does not block small WIP capture', async (t) => {
   const f = setup(t, { largeTrackedFile: true }),

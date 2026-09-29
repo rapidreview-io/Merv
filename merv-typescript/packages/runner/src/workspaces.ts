@@ -6,6 +6,7 @@ import {
   existsSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -33,7 +34,9 @@ import {
   privateDirectory,
   syncPath,
   terminalLaunch,
+  type LaunchMetadata,
   type LaunchRecord,
+  type LocalJson,
 } from './ledger.js';
 
 export type GitWorkspaceConfig = { repository: string; baseRef: string } | { github: true };
@@ -575,35 +578,47 @@ export class GitWorkspaceManager {
           await this.checkoutGit(row, ['checkout', '--quiet', ...onRef(row)]);
         }
         await this.validateCheckout(row);
-        if (!row.read_only)
-          try {
-            await this.checkChangedFiles(row);
-            await this.checkoutGit(row, ['add', '-A', '--', '.']);
-            const staged = await this.checkoutGit(row, [
-              'diff',
-              '--cached',
-              '--no-ext-diff',
-              '--no-textconv',
-              '--name-only',
-            ]);
-            if (staged.trim())
-              await this.checkoutGit(row, [
-                '-c',
-                'user.name=Merv Agent Runner',
-                '-c',
-                'user.email=merv@localhost',
-                'commit',
-                '--no-verify',
-                '-m',
-                `merv: capture ${record.sessionId}`,
-              ]);
-          } catch (error) {
-            const code = (error as { code?: string }).code ?? '';
-            if (!['workspace_file_too_large', 'workspace_symlink'].includes(code)) throw error;
-            // What no capture may carry is not inherited either: the result is HEAD, and the
-            // session's uncommitted work is dropped with it.
-            await this.restore(row, 'HEAD');
+        if (!row.read_only) {
+          // What no capture may carry is moved aside, never deleted: the rest is captured.
+          const refused = new Set<string>();
+          await this.checkChangedFiles(row, undefined, refused);
+          if (refused.size) {
+            const aside = `${row.path}.refused-${row.launch_id}`;
+            for (const name of refused) {
+              this.within(this.root, join(aside, name));
+              mkdirSync(dirname(join(aside, name)), { recursive: true, mode: 0o700 });
+              renameSync(join(row.path, name), join(aside, name));
+            }
+            // A refused path HEAD tracks stays as HEAD has it in the capture.
+            const paths = [...refused];
+            const literal = ['--literal-pathspecs', 'ls-tree', '-r', '-z', '--name-only', 'HEAD'];
+            const tracked = (await this.checkoutGit(row, [...literal, '--', ...paths]))
+              .split('\0')
+              .filter(Boolean);
+            if (tracked.length)
+              await this.checkoutGit(row, ['--literal-pathspecs', 'restore', '--', ...tracked]);
+            this.note(row, 'workspace_capture_refused_file', { aside, paths: paths.slice(0, 100) });
           }
+          await this.checkoutGit(row, ['add', '-A', '--', '.']);
+          const staged = await this.checkoutGit(row, [
+            'diff',
+            '--cached',
+            '--no-ext-diff',
+            '--no-textconv',
+            '--name-only',
+          ]);
+          if (staged.trim())
+            await this.checkoutGit(row, [
+              '-c',
+              'user.name=Merv Agent Runner',
+              '-c',
+              'user.email=merv@localhost',
+              'commit',
+              '--no-verify',
+              '-m',
+              `merv: capture ${record.sessionId}`,
+            ]);
+        }
         const snapshot = (await this.snapshot(row))!;
         this.db
           .prepare("UPDATE runner_workspaces SET status='captured',result_json=? WHERE launch_id=?")
@@ -649,6 +664,14 @@ export class GitWorkspaceManager {
         throw error;
       }
     });
+  }
+  /** A launch's workspace diagnostic: in its ledger metadata, on stderr, and as lastError. */
+  private note(row: WorkspaceRow, code: string, detail: Record<string, LocalJson>): void {
+    const notes = this.ledger.get(row.launch_id)?.metadata.workspaceNotes as LaunchMetadata;
+    this.ledger.updateMetadata(row.launch_id, { workspaceNotes: { ...notes, [code]: detail } });
+    process.stderr.write(
+      `merv-runner: launch ${row.launch_id} ${code} ${JSON.stringify(detail)}\n`,
+    );
   }
   /** Put a checkout exactly on `target`, on its own ref; ignored files (dependencies, caches) stay. */
   private async restore(row: WorkspaceRow, target: string): Promise<void> {
@@ -867,7 +890,12 @@ export class GitWorkspaceManager {
     const line = refs.split('\n').find((entry) => entry.startsWith(`${ref} `));
     return line ? oid(line.slice(ref.length + 1)) : undefined;
   }
-  private async checkChangedFiles(row: WorkspaceRow, env?: Record<string, string>): Promise<void> {
+  /** With `refused`, collects what may not be captured (the path to move aside) instead of throwing. */
+  private async checkChangedFiles(
+    row: WorkspaceRow,
+    env?: Record<string, string>,
+    refused?: Set<string>,
+  ): Promise<void> {
     const changed = await this.checkoutGit(
       row,
       ['ls-files', '--modified', '--others', '--exclude-standard', '-z'],
@@ -881,10 +909,22 @@ export class GitWorkspaceManager {
     for (const name of new Set((changed + staged).split('\0').filter(Boolean))) {
       const file = resolve(row.path, name);
       // A tracked final-component symlink is Git data. Never traverse a symlink parent.
-      this.within(row.path, dirname(file));
+      try {
+        this.within(row.path, dirname(file));
+      } catch (error) {
+        const parts = name.split('/');
+        const link = parts.findIndex(
+          (_, i) =>
+            i > 0 && !!statIfPresent(join(row.path, ...parts.slice(0, i)))?.isSymbolicLink(),
+        );
+        if (!refused || link < 0) throw error;
+        refused.add(parts.slice(0, link).join('/'));
+        continue;
+      }
       const stat = statIfPresent(file);
       if (stat?.isFile() && stat.size > MAX_FILE)
-        throw new WorkspaceError('workspace_file_too_large');
+        if (refused) refused.add(name);
+        else throw new WorkspaceError('workspace_file_too_large');
     }
   }
   /** Only the blobs a commit adds or changes are measured; a gitlink names another repository. */

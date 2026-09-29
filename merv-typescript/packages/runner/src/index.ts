@@ -784,6 +784,9 @@ export class MachineRunner implements Runner {
     const workspace = driver.get(record.id);
     if (!workspace || workspace.status === 'closed') return true;
     const result = await driver.capture(record);
+    // Work the capture moved aside or rescued is reported, never passed over in silence.
+    const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
+    if (notes && typeof notes === 'object') this.lastError = Object.keys(notes)[0];
     await this.reconcileCodeCommands(
       record,
       record.metadata.session as unknown as SessionView | undefined,

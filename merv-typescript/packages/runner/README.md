@@ -52,7 +52,7 @@ Capture runs only after the process group has provably stopped:
 
 - Whatever merge, rebase, cherry-pick, revert or bisect the agent left half-done is cleared first.
 - A writer's lineage continues from wherever the agent left HEAD, keeping its commits and uncommitted work. Work on a side branch becomes the lineage, and an older commit checked out rewinds it, dropping checkpoint commits from the branch.
-- A changed file above 50 MiB (or under a symlinked directory) is never committed: the result is HEAD and the checkout is restored to it, **losing the session's uncommitted work**.
+- A changed file above 50 MiB (or a symlinked directory over tracked paths) is never committed: it is moved to `<path>.refused-<launch>/` at its relative path, a tracked path is restored from HEAD, and the rest of the work is captured. The launch's metadata (`workspaceNotes.workspace_capture_refused_file`), a stderr line and `lastError` name the moved paths.
 - Read-only work is reported as attached, and its checkout is put back on that head with ignored files kept.
 - A capture or close that still fails after 10 minutes and three attempts (in-memory clock) is abandoned: the checkout moves to `<path>.abandoned-<launch>` with its `.git` pointer removed, the slot is freed and no result is reported. Abandoned checkouts, scratch directories and logs are not cleaned up.
 
