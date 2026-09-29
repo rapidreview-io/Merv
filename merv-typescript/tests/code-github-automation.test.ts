@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verify, createPublicKey } from 'node:crypto';
-import { createService } from '@merv/contracts';
+import { createService, type Caller } from '@merv/contracts';
 import { GitHubClient } from '../packages/code/src/github-client.js';
 import { CodeGitHubService } from '../packages/code/src/github.js';
 // Loaded at top level so its cleanup hook belongs to the file, not to the first githubFixture test.
@@ -68,6 +68,57 @@ test('automation is explicit, owner-bound and independent of ordinary token refr
     { code: 'github_repository_forbidden' },
   );
   assert.equal(await f.github.automation(f.reviewer, 'read', binding, async () => true), true);
+});
+
+async function reconnect(github: CodeGitHubService, caller: Caller) {
+  const before = await github.status(caller);
+  const begin = await github.begin(caller, { expectedRevision: before.revision });
+  const cookie = begin.cookie.split(';')[0].slice('merv_github_flow='.length);
+  const state = new URL(begin.url).searchParams.get('state')!;
+  await github.callback({ state, code: 'synthetic-reconnect', cookie });
+  const connected = await github.finish(caller, cookie);
+  assert.deepEqual(await github.finish(caller, cookie), connected, 'completion is replayable');
+  return connected;
+}
+
+test('same-owner reconnect retains the repository and settings while fencing old bindings', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable();
+  const before = await f.github.status(f.caller);
+  const binding = await f.github.automation(f.reviewer, 'read', undefined, async (_c, _t, b) => b);
+  // A changed login is still the same stable GitHub identity.
+  f.control.user.login = 'renamed-owner';
+  const after = await reconnect(f.github, f.caller);
+  assert.deepEqual(after.repository, before.repository);
+  assert.equal(after.automation, 'write');
+  assert.equal(after.baseBranch, before.baseBranch);
+  assert.equal(after.revision, before.revision + 1);
+  await assert.rejects(
+    f.github.automation(f.reviewer, 'read', binding, async () => true),
+    { code: 'github_conflict' },
+  );
+  assert.equal(await f.github.automation(f.reviewer, 'write', undefined, async () => true), true);
+  f.control.push = false;
+  await assert.rejects(
+    f.github.automation(f.reviewer, 'write', undefined, async () => true),
+    { code: 'github_repository_forbidden' },
+  );
+});
+
+test('reconnect never inherits repository access across a changed Merv or GitHub identity', async (t) => {
+  for (const changedIdentity of ['merv', 'github']) {
+    const f = await githubFixture(t);
+    await f.enable();
+    if (changedIdentity === 'github') f.control.user.id = 99;
+    const after = await reconnect(f.github, changedIdentity === 'merv' ? f.reviewer : f.caller);
+    assert.equal(after.repository, null, changedIdentity);
+    assert.equal(after.automation, 'off', changedIdentity);
+    assert.equal(after.baseBranch, null, changedIdentity);
+    await assert.rejects(
+      f.github.automation(f.caller, 'read', undefined, async () => true),
+      { code: 'github_automation_disabled' },
+    );
+  }
 });
 
 test('relink and owner removal fence delegated automation without changing the caller', async (t) => {
