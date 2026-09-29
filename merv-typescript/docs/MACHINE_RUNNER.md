@@ -110,11 +110,11 @@ session the server no longer knows is stopped once and settled.
 The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
 that launch's private run directory, cleared before the process starts. A profile's
 wrapper, or the process itself, may write one JSON object there:
-`{"inputTokens": 0, "outputTokens": 0, "costUsd": 0.0, "model": "name"}`, the last two
-optional and nothing else allowed. Without that file the runner asks the launch's profile what its harness printed: the Codex
+`{"inputTokens": 0, "outputTokens": 0, "model": "name"}`, the model optional and nothing
+else allowed but a legacy `costUsd`, which is accepted and dropped. Without that file the runner asks the launch's profile what its harness printed: the Codex
 profile reads the `turn.completed` usage of its own `codex exec --json` stream from the
 redacted `stdout.log` (input tokens, cached ones included, output tokens and the profile's
-model, never a cost). Codex prints it only after the closing message it writes once the
+model). Codex prints it only after the closing message it writes once the
 handoff tool returns, so a Codex launch whose own handoff closed its session gets a grace of
 a minute, within its deadline, to exit by itself; any other close, and any other profile, is
 stopped at once. The grace holds the launch's capacity slot but changes no capture: the

@@ -10,6 +10,7 @@ export const sessionUsageReportSchema: z.ZodType<SessionUsageReport> = z
   .object({
     inputTokens: z.number().int().min(0).max(1e12),
     outputTokens: z.number().int().min(0).max(1e12),
+    // Older runners and wrappers still send a cost; it is accepted and dropped.
     costUsd: z.number().min(0).max(1e6).optional(),
     model: z
       .string()
@@ -18,4 +19,5 @@ export const sessionUsageReportSchema: z.ZodType<SessionUsageReport> = z
       .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value))
       .optional(),
   })
-  .strict();
+  .strict()
+  .transform(({ costUsd: _costUsd, ...report }) => report);

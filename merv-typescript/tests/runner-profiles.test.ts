@@ -814,7 +814,7 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
     assert.deepEqual(read(codex), { inputTokens: 30, outputTokens: 4 });
     assert.equal(read(command), undefined);
     writeFileSync(file, '{"inputTokens":1,"outputTokens":2,"costUsd":0.5}');
-    assert.deepEqual(read(codex), { inputTokens: 1, outputTokens: 2, costUsd: 0.5 });
+    assert.deepEqual(read(codex), { inputTokens: 1, outputTokens: 2 }, 'A legacy cost is dropped');
     writeFileSync(file, '{"inputTokens":1,"outputTokens":2,"note":"extra"}');
     assert.deepEqual(read(codex), { inputTokens: 30, outputTokens: 4 });
     rmSync(file);

@@ -13,7 +13,7 @@ const chunk = 500;
 const topInstances = 50;
 
 export const accountingMethod =
-  'Server service work adds measured wall time, or the reserved deadline duration after a lost process, once per execution. A project counts shared work once; each frozen sponsoring root counts its full cost. Service work has no worker session or model tokens. Wall-clock is lease wall-clock: Merv measures it from activation to close of each closed session, and a close may lag the death of the process by up to the expiry window; live sessions are not yet counted. Tokens, cost and model are reported by the runner that launched the process, or by the process itself, and are not verified; reportedSessions of sessions says how many reported. Model context, reasoning, provider billing and anything done outside a Merv-launched process are unknown to Merv. Counting began when this feature was installed.';
+  'Server service work adds measured wall time, or the reserved deadline duration after a lost process, once per execution. A project counts shared work once; each frozen sponsoring root counts its full cost. Service work has no worker session or model tokens. Wall-clock is lease wall-clock: Merv measures it from activation to close of each closed session, and a close may lag the death of the process by up to the expiry window; live sessions are not yet counted. Tokens and model are reported by the runner that launched the process, or by the process itself, and are not verified; reportedSessions of sessions says how many reported. Model context, reasoning, provider billing and anything done outside a Merv-launched process are unknown to Merv. Counting began when this feature was installed.';
 
 const sum = safeCount('usage_overflow', 'Usage totals exceed the supported numeric range');
 
@@ -26,13 +26,11 @@ interface GroupRow {
   wall_ms: number | string;
   input_tokens: number | string;
   output_tokens: number | string;
-  cost_micros: number | string;
   since: string | null;
 }
 interface BudgetRow {
   scope_id: string;
   max_wall_ms: number | null;
-  max_cost_micros: number | null;
   max_tokens: number | null;
   updated_at: string;
   updated_by: string;
@@ -44,7 +42,6 @@ const empty = (): UsageTotals => ({
   wallMs: 0,
   inputTokens: 0,
   outputTokens: 0,
-  costMicros: 0,
   toolCalls: 0,
   toolPayloadTokensEstimate: 0,
 });
@@ -86,25 +83,24 @@ export async function recordUsage(tx: Transaction, session: Session): Promise<vo
 
 /**
  * The first report wins and a later one is dropped without an error: a runner retries a
- * release it never saw answered, and it must never be left unable to release.
+ * release it never saw answered, and it must never be left unable to release. Answers
+ * whether this report was the one stored.
  */
 export async function reportUsage(
   tx: Transaction,
   sessionId: string,
   usage: SessionUsageReport,
   time: string,
-): Promise<{ costMicros: number | null } | undefined> {
-  const costMicros = usage.costUsd === undefined ? null : Math.round(usage.costUsd * 1e6);
+): Promise<boolean> {
   const result = await tx.run(
-    'UPDATE session_usage SET input_tokens=?,output_tokens=?,cost_micros=?,reported_model=?,reported_at=? WHERE session_id=? AND reported_at IS NULL',
+    'UPDATE session_usage SET input_tokens=?,output_tokens=?,reported_model=?,reported_at=? WHERE session_id=? AND reported_at IS NULL',
     usage.inputTokens,
     usage.outputTokens,
-    costMicros,
     usage.model ?? null,
     time,
     sessionId,
   );
-  return result.changes === 1 ? { costMicros } : undefined;
+  return result.changes === 1;
 }
 
 async function groups(
@@ -113,7 +109,7 @@ async function groups(
   instanceIds: string[] | null,
 ): Promise<{ row: GroupRow; totals: UsageTotals }[]> {
   const select =
-    'SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,COALESCE(SUM(u.cost_micros),0) AS cost_micros,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=?';
+    'SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=?';
   const calls =
     'SELECT u.instance_id,COUNT(*) AS calls,COALESCE(SUM(c.input_tokens),0)+COALESCE(SUM(c.output_tokens),0) AS payload FROM session_tool_calls c JOIN session_usage u ON u.session_id=c.execution_id WHERE u.project_id=?';
   const slices: (string[] | null)[] = [];
@@ -148,7 +144,6 @@ async function groups(
           wallMs: sum(row.wall_ms),
           inputTokens: sum(row.input_tokens),
           outputTokens: sum(row.output_tokens),
-          costMicros: sum(row.cost_micros),
           toolCalls: sum(tools?.calls ?? 0),
           toolPayloadTokensEstimate: sum(tools?.payload ?? 0),
         },
@@ -222,7 +217,7 @@ export async function budgetStatuses(
 ): Promise<(BudgetStatus & { instanceIds: string[] | null })[]> {
   const rows = (
     await tx.all<BudgetRow>(
-      'SELECT scope_id,max_wall_ms,max_cost_micros,max_tokens,updated_at,updated_by FROM session_budgets WHERE project_id=? ORDER BY scope_id',
+      'SELECT scope_id,max_wall_ms,max_tokens,updated_at,updated_by FROM session_budgets WHERE project_id=? ORDER BY scope_id',
       projectId,
     )
   ).filter((row) => !only || only.includes(row.scope_id));
@@ -250,13 +245,10 @@ export async function budgetStatuses(
     const known = unreportedSessions === 0 || totals.reportedSessions > 0;
     const used = {
       wallMs: totals.wallMs,
-      costMicros: known ? totals.costMicros : null,
       tokens: known ? totals.inputTokens + totals.outputTokens : null,
     };
     const exceeded: BudgetStatus['exceeded'] = [];
     if (row.max_wall_ms !== null && used.wallMs >= Number(row.max_wall_ms)) exceeded.push('wall');
-    if (row.max_cost_micros !== null && totals.costMicros >= Number(row.max_cost_micros))
-      exceeded.push('cost');
     if (
       row.max_tokens !== null &&
       totals.inputTokens + totals.outputTokens >= Number(row.max_tokens)
@@ -265,19 +257,18 @@ export async function budgetStatuses(
     // A bound on reported figures holds only while every activated session reported. One that
     // did not leaves the sum a floor, so the bound withholds rather than pass as unreached.
     const unavailable: BudgetStatus['unavailable'] = [];
-    if (unwalked) {
-      if (row.max_wall_ms !== null && !exceeded.includes('wall')) unavailable.push('wall');
-      if (row.max_cost_micros !== null && !exceeded.includes('cost')) unavailable.push('cost');
-      if (row.max_tokens !== null && !exceeded.includes('tokens')) unavailable.push('tokens');
-    } else if (unreportedSessions > 0) {
-      if (row.max_cost_micros !== null && !exceeded.includes('cost')) unavailable.push('cost');
-      if (row.max_tokens !== null && !exceeded.includes('tokens')) unavailable.push('tokens');
-    }
+    if (unwalked && row.max_wall_ms !== null && !exceeded.includes('wall'))
+      unavailable.push('wall');
+    if (
+      (unwalked || unreportedSessions > 0) &&
+      row.max_tokens !== null &&
+      !exceeded.includes('tokens')
+    )
+      unavailable.push('tokens');
     result.push({
       scopeId: row.scope_id,
       kind: row.scope_id === projectId ? 'project' : 'instance',
       maxWallMs: row.max_wall_ms === null ? null : Number(row.max_wall_ms),
-      maxCostMicros: row.max_cost_micros === null ? null : Number(row.max_cost_micros),
       maxTokens: row.max_tokens === null ? null : Number(row.max_tokens),
       used,
       exceeded,

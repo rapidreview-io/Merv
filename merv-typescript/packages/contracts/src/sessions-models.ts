@@ -278,48 +278,45 @@ export interface AgentObservation {
 export interface SessionUsageReport {
   inputTokens: number;
   outputTokens: number;
-  costUsd?: number;
   model?: string;
 }
 export interface UsageTotals {
   sessions: number;
-  /** How many of `sessions` carry a runner report; the token and cost sums cover only these. */
+  /** How many of `sessions` carry a runner report; the token sums cover only these. */
   reportedSessions: number;
   /** Lease wall-clock, activation to close. A close may lag the death of the process. */
   wallMs: number;
   inputTokens: number;
   outputTokens: number;
-  costMicros: number;
   toolCalls: number;
   toolPayloadTokensEstimate: number;
 }
 /**
  * A budget only pauses automatic dispatch; nothing running is stopped. Wall-clock is the
- * dimension Merv measures itself. Cost and tokens trust whatever wrote the runner's report.
+ * dimension Merv measures itself. Tokens trust whatever wrote the runner's report.
  */
 export interface BudgetStatus {
   /** The project id for the project budget, otherwise a workflow instance id. */
   scopeId: string;
   kind: 'project' | 'instance';
   maxWallMs: number | null;
-  maxCostMicros: number | null;
   maxTokens: number | null;
   /**
-   * Wall-clock is measured by Merv. Cost and tokens are only what runners reported: null
+   * Wall-clock is measured by Merv. Tokens are only what runners reported: null
    * while sessions in scope were activated and none reported, never a zero that was not measured.
    * They cover worker sessions alone; a remote job's own charges are not in them.
    */
-  used: { wallMs: number; costMicros: number | null; tokens: number | null };
-  exceeded: ('wall' | 'cost' | 'tokens')[];
+  used: { wallMs: number; tokens: number | null };
+  exceeded: ('wall' | 'tokens')[];
   /** Closed sessions in scope that were activated and reported no usage. */
   unreportedSessions: number;
   /**
-   * Bounds that cannot be judged because of them: a cost or token bound is enforced only
+   * Bounds that cannot be judged because of them: a token bound is enforced only
    * on complete accounting, so it withholds new automatic offers until the usage arrives
    * or the bound is cleared, rather than letting unreported spending pass as none. An
    * instance whose dependency closure is too large to walk leaves every bound unjudged.
    */
-  unavailable: ('wall' | 'cost' | 'tokens')[];
+  unavailable: ('wall' | 'tokens')[];
   updatedAt: string;
   updatedBy: string;
 }

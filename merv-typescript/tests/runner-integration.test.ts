@@ -467,13 +467,13 @@ test(
     await runner.tick();
     await runner.tick();
     assert.equal(reports.length, 1, 'The ledger remembers the report was answered');
-    assert.deepEqual((reports[0] as { usage: unknown }).usage, usage);
+    const { costUsd: _dropped, ...sent } = usage;
+    assert.deepEqual((reports[0] as { usage: unknown }).usage, sent);
     const read = await f.app.ctx.sessions.usage(f.source, { instanceId: f.task.id });
     assert.deepEqual(
       [read.totals.sessions, read.totals.inputTokens, read.totals.outputTokens],
       [1, 4200, 800],
     );
-    assert.equal(read.totals.costMicros, 250_000);
     assert.ok(read.totals.toolCalls >= 3, 'The worker’s own MCP calls are counted beside it');
   },
 );

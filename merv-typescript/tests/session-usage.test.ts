@@ -200,7 +200,8 @@ test('a close writes one usage row, a report lands once, and the row is then sea
         requestId: 'finish',
       }),
   );
-  // The handoff closed the session; the runner's report arrives afterwards, on release.
+  // The handoff closed the session; the runner's report arrives afterwards, on release. An
+  // older runner's cost is accepted and dropped.
   const usage = { inputTokens: 1200, outputTokens: 300, costUsd: 0.0421, model: 'reported' };
   const released = await f.sessions.release(f.source, {
     sessionId: session.id,
@@ -219,8 +220,8 @@ test('a close writes one usage row, a report lands once, and the row is then sea
     ['usage-fixture', 'working', 'producer', 'completed', 0],
   );
   assert.deepEqual(
-    [Number(row.input_tokens), Number(row.output_tokens), Number(row.cost_micros)],
-    [1200, 300, 42_100],
+    [Number(row.input_tokens), Number(row.output_tokens), row.cost_micros],
+    [1200, 300, null],
   );
   assert.equal(row.reported_model, 'reported');
 
@@ -278,7 +279,7 @@ test('usage rolls up over a dependency closure and the children a policy names',
   await f.sessions.release(f.source, {
     sessionId: closed.id,
     runnerId: 'machine',
-    usage: { inputTokens: 10, outputTokens: 5, costUsd: 1 },
+    usage: { inputTokens: 10, outputTokens: 5 },
   });
 
   const cycle = await f.sessions.usage(f.owner, { instanceId: parent.id });
@@ -291,10 +292,7 @@ test('usage rolls up over a dependency closure and the children a policy names',
   assert.equal(cycle.totals.wallMs, 23_000);
   assert.equal(cycle.totals.sessions, 4);
   assert.equal(cycle.totals.reportedSessions, 1, 'Only one runner reported');
-  assert.deepEqual(
-    [cycle.totals.inputTokens, cycle.totals.outputTokens, cycle.totals.costMicros],
-    [10, 5, 1_000_000],
-  );
+  assert.deepEqual([cycle.totals.inputTokens, cycle.totals.outputTokens], [10, 5]);
   assert.equal(cycle.byInstance[0]!.instanceId, parent.id);
   assert.deepEqual(
     cycle.byWorkflow.map((item) => [item.workflow, item.wallMs]),
@@ -336,9 +334,10 @@ test('a budget is set by an admin who is not a leased worker, and setting it aga
   await assert.rejects(async () => await f.sessions.setBudget(f.source, { maxWallMinutes: 1 }), {
     status: 403,
   });
-  await assert.rejects(async () => await f.sessions.setBudget(f.owner, {}), {
-    code: 'invalid_budget',
-  });
+  for (const input of [{}, { maxCostUsd: 1 } as never])
+    await assert.rejects(async () => await f.sessions.setBudget(f.owner, input), {
+      code: 'invalid_budget',
+    });
   await assert.rejects(async () => await f.sessions.setBudget(f.owner, { maxTokens: null }), {
     code: 'budget_not_found',
   });
@@ -346,17 +345,17 @@ test('a budget is set by an admin who is not a leased worker, and setting it aga
     async () => await f.sessions.setBudget(f.owner, { instanceId: 'missing', maxTokens: 5 }),
     { status: 404 },
   );
-  const set = await f.sessions.setBudget(f.owner, { maxWallMinutes: 2, maxCostUsd: 1.5 });
+  const set = await f.sessions.setBudget(f.owner, { maxWallMinutes: 2, maxTokens: 500 });
   assert.deepEqual(
-    [set.kind, set.scopeId, set.maxWallMs, set.maxCostMicros, set.maxTokens, set.exceeded],
-    ['project', f.owner.projectId, 120_000, 1_500_000, null, []],
+    [set.kind, set.scopeId, set.maxWallMs, set.maxTokens, set.exceeded],
+    ['project', f.owner.projectId, 120_000, 500, []],
   );
   f.advance(1000);
   const again = await f.sessions.setBudget(f.owner, { maxWallMinutes: 2 });
   assert.equal(again.updatedAt, set.updatedAt);
   assert.equal((await f.events('session.budget_changed')).length, 1);
-  const cleared = await f.sessions.setBudget(f.owner, { maxCostUsd: null });
-  assert.deepEqual([cleared.maxWallMs, cleared.maxCostMicros], [120_000, null]);
+  const cleared = await f.sessions.setBudget(f.owner, { maxTokens: null });
+  assert.deepEqual([cleared.maxWallMs, cleared.maxTokens], [120_000, null]);
   assert.equal((await f.events('session.budget_changed')).length, 2);
 });
 
@@ -431,7 +430,7 @@ test('a close that was never activated leaves a token budget judged; an activate
   let read = await f.sessions.usage(f.owner);
   assert.deepEqual(
     [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
-    [0, [], { wallMs: 0, costMicros: 0, tokens: 0 }],
+    [0, [], { wallMs: 0, tokens: 0 }],
     'a launch that never ran has nothing to report',
   );
   assert.deepEqual([read.totals.sessions, read.totals.reportedSessions], [1, 0]);
@@ -442,7 +441,7 @@ test('a close that was never activated leaves a token budget judged; an activate
   read = await f.sessions.usage(f.owner);
   assert.deepEqual(
     [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
-    [1, ['tokens'], { wallMs: 1000, costMicros: null, tokens: null }],
+    [1, ['tokens'], { wallMs: 1000, tokens: null }],
   );
 });
 

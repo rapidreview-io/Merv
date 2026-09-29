@@ -358,7 +358,7 @@ ORDER BY r.project_id, r.id;
 -- C12 measures every surviving budget as Sessions does (sessions/src/usage.ts budgetStatuses):
 -- a project scope over all of the project's usage, an instance scope over its dependency closure
 -- (dependency edges, and lenses under their wave). Service work counts toward wall time only.
--- Only an activated session (started_at set) without a report makes cost or tokens unavailable.
+-- Only an activated session (started_at set) without a report makes tokens unavailable.
 -- "After" leaves out the usage of S and every instance the closure reached only through R.
 CREATE TEMP TABLE census_budget_reach AS
 WITH RECURSIVE
@@ -381,12 +381,11 @@ SELECT project_id, scope_id, id, bool_and(through_r) AS only_through_r
 FROM reach GROUP BY project_id, scope_id, id;
 CREATE TEMP TABLE census_budget_status AS
 WITH measured AS (
-  SELECT b.project_id, b.scope_id, phase.after, b.max_wall_ms, b.max_cost_micros, b.max_tokens,
+  SELECT b.project_id, b.scope_id, phase.after, b.max_wall_ms, b.max_tokens,
     count(u.session_id) FILTER (WHERE u.reported_at IS NULL AND u.started_at IS NOT NULL)
       AS unreported,
     COALESCE(sum(u.wall_ms), 0) AS wall_ms,
-    COALESCE(sum(u.input_tokens), 0) + COALESCE(sum(u.output_tokens), 0) AS tokens,
-    COALESCE(sum(u.cost_micros), 0) AS cost_micros
+    COALESCE(sum(u.input_tokens), 0) + COALESCE(sum(u.output_tokens), 0) AS tokens
   FROM session_budgets b
   CROSS JOIN (VALUES (false), (true)) AS phase(after)
   LEFT JOIN session_usage u ON u.project_id = b.project_id
@@ -395,7 +394,7 @@ WITH measured AS (
       WHERE c.project_id = b.project_id AND c.scope_id = b.scope_id AND c.id = u.instance_id
         AND NOT (phase.after AND c.only_through_r)))
   WHERE b.scope_id NOT IN (SELECT id FROM census_r)
-  GROUP BY b.project_id, b.scope_id, phase.after, b.max_wall_ms, b.max_cost_micros, b.max_tokens
+  GROUP BY b.project_id, b.scope_id, phase.after, b.max_wall_ms, b.max_tokens
 ),
 served AS (
   SELECT b.project_id, b.scope_id, COALESCE(sum(w.wall_ms), 0) AS wall_ms
@@ -407,13 +406,9 @@ served AS (
 SELECT m.project_id, m.scope_id, m.after,
   concat_ws(',',
     CASE WHEN m.max_wall_ms IS NOT NULL AND m.wall_ms + s.wall_ms >= m.max_wall_ms THEN 'wall' END,
-    CASE WHEN m.max_cost_micros IS NOT NULL AND m.cost_micros >= m.max_cost_micros THEN 'cost' END,
     CASE WHEN m.max_tokens IS NOT NULL AND m.tokens >= m.max_tokens THEN 'tokens' END) AS exceeded,
-  concat_ws(',',
-    CASE WHEN m.unreported > 0 AND m.max_cost_micros IS NOT NULL
-      AND m.cost_micros < m.max_cost_micros THEN 'cost' END,
-    CASE WHEN m.unreported > 0 AND m.max_tokens IS NOT NULL
-      AND m.tokens < m.max_tokens THEN 'tokens' END) AS unavailable
+  CASE WHEN m.unreported > 0 AND m.max_tokens IS NOT NULL
+    AND m.tokens < m.max_tokens THEN 'tokens' ELSE '' END AS unavailable
 FROM measured m JOIN served s ON s.project_id = m.project_id AND s.scope_id = m.scope_id;
 
 -- C12

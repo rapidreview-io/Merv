@@ -89,8 +89,9 @@ it, so the figure can include dead time up to the expiry window; it is not proce
 
 ### The runner's report
 
-The release route accepts an optional `usage` object: `inputTokens`, `outputTokens`,
-optional `costUsd` and `model`, a closed shape of non-negative numbers. The first report
+The release route accepts an optional `usage` object: `inputTokens`, `outputTokens` and
+optional `model`, a closed shape of non-negative numbers. A `costUsd` from an older runner
+or wrapper is accepted and dropped. The first report
 stored for a session is kept and `session.usage_reported` is recorded once, attributed to
 `system:sessions`. A later or different report is dropped without an error, because a
 runner retries a release whose reply it lost and must never be stuck on it. This is
@@ -124,15 +125,15 @@ says how many instances were covered; a closure of more than 5,000 is refused wi
 
 The result carries `totals`, `byWorkflow`, `byInstance` (the fifty with the most
 wall-clock), `liveSessions`, the `budgets` in force for the scope, and `accounting`.
-`reportedSessions` of `sessions` says how many sessions reported; token and cost sums cover
-only those. `toolCalls` and `toolPayloadTokensEstimate` come from the
+`reportedSessions` of `sessions` says how many sessions reported; token sums cover only
+those. `toolCalls` and `toolPayloadTokensEstimate` come from the
 [tool-call observations](AGENT_CONTINUITY.md) and are payload sizes, not model usage. A
 cycle's figure follows the current dependency edges: work never attached to the cycle is
 not in it, while the project figure is complete.
 
 ## Budgets
 
-`usage.set_budget { instanceId?, maxWallMinutes?, maxCostUsd?, maxTokens? }` is for a
+`usage.set_budget { instanceId?, maxWallMinutes?, maxTokens? }` is for a
 project admin who is not a leased worker. Without `instanceId` it sets the project budget;
 with it, a budget over that instance's closure, so a cycle budget is set on the cycle's
 id. `null` clears a dimension and an omitted one is kept. It is a state-set command like
@@ -150,7 +151,7 @@ shortened or halted, a person can still begin work by hand, and explicit offers 
 unchanged. Budgets count closed sessions, so the overshoot is bounded by the sessions live
 when the bound was crossed.
 
-**A cost or token bound is enforced only on complete accounting.** Those figures exist
+**A token bound is enforced only on complete accounting.** Those figures exist
 only where a runner reported them, so a bound on them is judged while every closed session
 in its scope that was activated has reported; a session never activated is not counted,
 even if its runner spent tokens before its first call to Merv. One that closed without a report leaves the sum a floor, not a
@@ -158,8 +159,11 @@ total: the bound then withholds new automatic offers with `usage_unavailable` in
 `budget_exceeded`, and the budget's status names it under `unavailable` with
 `unreportedSessions`. It lifts when the report arrives (a release may carry it after the
 close) or when an admin clears that bound with `usage.set_budget`. A wall-clock bound never
-waits on a report. Where sessions in scope ran and none has reported, `used.costMicros` and
-`used.tokens` read `null`: unknown is never shown as zero.
+waits on a report. Where sessions in scope ran and none has reported, `used.tokens` reads
+`null`: unknown is never shown as zero.
+
+Sessions has no cost budget: model spend is capped by Fleet's relay metering (tokens per
+person per UTC day), and a local runner uses its owner's own subscription.
 
 A budget covers **worker sessions Merv launched**, and nothing else: what a remote job
 costs — a sandbox's compute, a provider's bill for a service the worker called — is not in
@@ -168,9 +172,9 @@ it, and a runner's token figures do not measure it.
 ML machine compute for eligible new projects is bounded separately by that project's
 Sandboxes monthly allowance and the shared ML account ceiling.
 
-Trust boundary: **wall-clock is the dimension Merv measures itself.** Cost and tokens are
-whatever wrote the usage file, which may be the agent process; they can be wrong in either
-direction, so a forged report can pause dispatch early or never trip a cost budget. The
+Trust boundary: **wall-clock is the dimension Merv measures itself.** Tokens are whatever
+wrote the usage file, which may be the agent process; they can be wrong in either
+direction, so a forged report can pause dispatch early or never trip a token budget. The
 pause is visible (`budgets[]`, the runner's last decision) and an admin reverses it.
 
 ## Launch retry cap
@@ -204,8 +208,8 @@ hold names one revision; ending or revising the record is how to decide not to r
 
 ## What Merv cannot know
 
-- Tokens, cost and model are self-reports. Merv verifies none of them and derives no cost
-  from a price table.
+- Tokens and model are self-reports. Merv verifies neither and derives no cost from a
+  price table.
 - Model context, reasoning usage and provider billing are invisible to it.
 - Anything done outside a Merv-launched process, and any session closed before this
   feature was installed, is not counted.

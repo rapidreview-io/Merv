@@ -111,19 +111,10 @@ export const budgetSchema = z
   .object({
     instanceId: z.string().min(1).max(200).optional(),
     maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
-    maxCostUsd: z.number().positive().max(1e6).nullable().optional(),
     maxTokens: z.number().int().min(1).max(1e13).nullable().optional(),
   })
   .strict()
-  .refine(
-    (input) =>
-      input.maxWallMinutes !== undefined ||
-      input.maxCostUsd !== undefined ||
-      input.maxTokens !== undefined,
-  );
-/** A bound is stored in the unit usage is summed in; a fraction of it still rounds to a positive bound. */
-const scaled = (value: number | null, unit: number): number | null =>
-  value === null ? null : Math.max(1, Math.round(value * unit));
+  .refine((input) => input.maxWallMinutes !== undefined || input.maxTokens !== undefined);
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
 const backoffMs = 30_000;
@@ -131,7 +122,7 @@ type Failure = Pick<Session, 'instanceId' | 'expectedRevision' | 'outcome' | 'cl
 const rented =
   'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
 /**
- * A budget stops new automatic offers when a bound is reached, and also when a cost or token
+ * A budget stops new automatic offers when a bound is reached, and also when a token
  * bound cannot be judged: spending nobody reported must not pass as spending that stayed low.
  */
 const withholds = (budget: { exceeded: unknown[]; unavailable: unknown[] }) =>
@@ -525,19 +516,15 @@ export class SessionDispatch {
     check(
       parsed.success,
       'invalid_budget',
-      'A budget names at least one of maxWallMinutes, maxCostUsd and maxTokens, each a positive bound or null',
+      'A budget names at least one of maxWallMinutes and maxTokens, each a positive bound or null',
     );
-    const { instanceId, maxWallMinutes, maxCostUsd, maxTokens } = parsed.data;
+    const { instanceId, maxWallMinutes, maxTokens } = parsed.data;
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'admin', tx);
       if (instanceId !== undefined) await this.workflows.get(caller, instanceId, tx);
       const scopeId = instanceId ?? caller.projectId;
-      const old = await tx.get<{
-        max_wall_ms: number | null;
-        max_cost_micros: number | null;
-        max_tokens: number | null;
-      }>(
-        'SELECT max_wall_ms,max_cost_micros,max_tokens FROM session_budgets WHERE project_id=? AND scope_id=?',
+      const old = await tx.get<{ max_wall_ms: number | null; max_tokens: number | null }>(
+        'SELECT max_wall_ms,max_tokens FROM session_budgets WHERE project_id=? AND scope_id=?',
         caller.projectId,
         scopeId,
       );
@@ -545,9 +532,7 @@ export class SessionDispatch {
         maxWallMs:
           maxWallMinutes === undefined
             ? (old?.max_wall_ms ?? null)
-            : scaled(maxWallMinutes, 60_000),
-        maxCostMicros:
-          maxCostUsd === undefined ? (old?.max_cost_micros ?? null) : scaled(maxCostUsd, 1e6),
+            : maxWallMinutes && maxWallMinutes * 60_000,
         maxTokens: maxTokens === undefined ? (old?.max_tokens ?? null) : maxTokens,
       };
       check(
@@ -559,15 +544,13 @@ export class SessionDispatch {
       if (
         !old ||
         Number(old.max_wall_ms ?? -1) !== (next.maxWallMs ?? -1) ||
-        Number(old.max_cost_micros ?? -1) !== (next.maxCostMicros ?? -1) ||
         Number(old.max_tokens ?? -1) !== (next.maxTokens ?? -1)
       ) {
         await tx.run(
-          'INSERT INTO session_budgets(project_id,scope_id,max_wall_ms,max_cost_micros,max_tokens,updated_at,updated_by) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,scope_id) DO UPDATE SET max_wall_ms=excluded.max_wall_ms,max_cost_micros=excluded.max_cost_micros,max_tokens=excluded.max_tokens,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
+          'INSERT INTO session_budgets(project_id,scope_id,max_wall_ms,max_tokens,updated_at,updated_by) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,scope_id) DO UPDATE SET max_wall_ms=excluded.max_wall_ms,max_tokens=excluded.max_tokens,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
           caller.projectId,
           scopeId,
           next.maxWallMs,
-          next.maxCostMicros,
           next.maxTokens,
           isoNow(this.clock),
           caller.actorId,

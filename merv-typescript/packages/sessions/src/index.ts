@@ -202,10 +202,7 @@ const releaseSchema = controlSchema
 const releaseRefusals = {
   fallback: controlRefusals.fallback,
   fields: {
-    usage: [
-      'invalid_usage',
-      'Usage reports non-negative token counts and an optional cost and model',
-    ],
+    usage: ['invalid_usage', 'Usage reports non-negative token counts and an optional model'],
     outcome: ['invalid_outcome', 'Unknown session process outcome'],
     deferral: [
       'invalid_deferral',
@@ -2050,8 +2047,7 @@ export class LeasedSessions implements Sessions {
     usage: SessionUsageReport,
     tx: Transaction,
   ): Promise<void> {
-    const stored = await reportUsage(tx, session.id, usage, isoNow(this.clock));
-    if (!stored) return;
+    if (!(await reportUsage(tx, session.id, usage, isoNow(this.clock)))) return;
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -2063,7 +2059,6 @@ export class LeasedSessions implements Sessions {
         revision: session.expectedRevision,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        costMicros: stored.costMicros,
         model: usage.model ?? null,
       },
     });

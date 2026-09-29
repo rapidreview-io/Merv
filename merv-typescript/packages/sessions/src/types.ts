@@ -415,7 +415,6 @@ export interface UsageQuery {
 export interface SessionBudgetInput {
   instanceId?: string;
   maxWallMinutes?: number | null;
-  maxCostUsd?: number | null;
   maxTokens?: number | null;
 }
 declare module 'cordis' {

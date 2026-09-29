@@ -159,12 +159,12 @@ The [runner control plane](RUNNER_CONTROL_PLANE.md) adds server-selected automat
 
 Release can carry a bounded process outcome (`completed`, `host_failed`, `launch_failed`, `workspace_failed` or `crash_loop`) separately from its explanatory reason. Automatic dispatch uses canonical outcomes for retry backoff; a freeform note cannot become scheduling policy.
 
-Release may also carry `usage`, the launching machine's unverified self-report of tokens,
-cost and model. Every close writes a `session_usage` row with the lease wall-clock; the
+Release may also carry `usage`, the launching machine's unverified self-report of tokens
+and model. Every close writes a `session_usage` row with the lease wall-clock; the
 first report for a session is stored beside it and later ones are dropped without an
 error, including for a session its own handoff already closed. Three more lease decisions
 exist: `budget_exceeded`, when a project or instance budget is reached;
-`usage_unavailable`, when a cost or token bound cannot be judged because an activated session
+`usage_unavailable`, when a token bound cannot be judged because an activated session
 in its scope reported no usage; and `retries_exhausted`, when the only queued work left has
 failed to launch `maxLaunchFailures` times on its current revision. All three only pause
 automatic offers.
