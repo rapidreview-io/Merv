@@ -56,7 +56,7 @@ export async function collectRemoteCatalog(
       const page = await client.request(
         { method: 'tools/list', ...(cursor === undefined ? {} : { params: { cursor } }) },
         losslessListResult,
-        { signal, timeout: timeoutMs, maxTotalTimeout: timeoutMs },
+        { signal, timeout: timeoutMs },
       );
       for (const description of page.tools) {
         check(

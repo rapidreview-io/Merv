@@ -81,30 +81,6 @@ interface Connection {
   closing?: Promise<void>;
 }
 
-/** Rejects with a fixed timeout code; the operation itself keeps running until its owner stops it. */
-export function withDeadline<T>(
-  operation: Promise<T>,
-  milliseconds: number,
-  code: 'mount_timeout' | 'remote_timeout',
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new MervError(code, 'Remote operation timed out', 504)),
-      milliseconds,
-    );
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 /**
  * The upstream answered over a healthy session. Limitation: upstream codes -32000 and -32001 equal
  * the SDK's local ConnectionClosed and RequestTimeout, so they count as transport faults.
@@ -144,7 +120,6 @@ export class ScopedRemoteClients {
   private readonly all = new Set<Connection>();
   private readonly running = new Set<Promise<CallToolResult>>();
   private readonly timeoutMs: number;
-  private readonly url: string;
   private stopping = false;
   private closing?: Promise<void>;
 
@@ -155,28 +130,8 @@ export class ScopedRemoteClients {
     /** Re-admits a session's bound arguments; without it every session caller is refused. */
     private readonly sessions?: Pick<Tools, 'validateSession'>,
   ) {
+    // The mounts Config validated the endpoint and timeout.
     this.timeoutMs = options.timeoutMs ?? 5000;
-    if (
-      !Number.isSafeInteger(this.timeoutMs) ||
-      this.timeoutMs < 1 ||
-      this.timeoutMs > 2_147_483_647
-    )
-      throw new MervError(
-        'invalid_remote_config',
-        'timeoutMs must be a positive supported timeout',
-      );
-    let url: URL;
-    try {
-      url = new URL(options.url);
-    } catch {
-      throw new MervError('invalid_remote_config', 'Mount endpoint must be an HTTP(S) URL');
-    }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash)
-      throw new MervError(
-        'invalid_remote_config',
-        'Mount endpoint must be an HTTP(S) URL without credentials or fragment',
-      );
-    this.url = url.href;
   }
 
   async call(
@@ -192,7 +147,7 @@ export class ScopedRemoteClients {
       try {
         if (mountId !== this.options.mountId)
           throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
-        const url = this.url;
+        const url = this.options.url;
         const lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
         await this.admit(caller, mountId, rawToolName, args);
         const credential = await this.credentials.resolve(caller, mountId);
@@ -278,13 +233,10 @@ export class ScopedRemoteClients {
         );
       await this.admit(caller, mountId, name, args);
       // Cast on purpose: the registry's complete() is the one result validator.
-      return (await withDeadline(
-        client.request({ method: 'tools/call', params: { name, arguments: args } }, z.unknown(), {
-          timeout: this.timeoutMs,
-          maxTotalTimeout: this.timeoutMs,
-        }),
-        this.timeoutMs,
-        'remote_timeout',
+      return (await client.request(
+        { method: 'tools/call', params: { name, arguments: args } },
+        z.unknown(),
+        { timeout: this.timeoutMs },
       )) as CallToolResult;
     } catch (error) {
       // Only a transport fault retires the shared connection; refusals and upstream answers keep it.

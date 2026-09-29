@@ -6,28 +6,7 @@ import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
 import type { MountConfig, MountStatus } from './types.js';
 import { collectRemoteCatalog } from './remote-catalog.js';
-import { connectUpstream, endUpstream, ScopedRemoteClients } from './upstream.js';
-
-const safeCodes = new Set([
-  'forbidden',
-  'tool_forbidden',
-  'credential_forbidden',
-  'credential_unavailable',
-  'credential_changed',
-  'invalid_schema',
-  'invalid_tool',
-  'unsupported_execution',
-  'remote_catalog_limit',
-  'remote_catalog_cursor',
-  'remote_catalog_duplicate',
-  'remote_catalog_timeout',
-  'mount_missing_tool',
-  'mount_disconnected',
-  'mount_timeout',
-  'mount_cleanup_failed',
-]);
-const safeCode = (error: unknown) =>
-  error instanceof MervError && safeCodes.has(error.code) ? error.code : 'mount_unavailable';
+import { connectUpstream, endUpstream, fault, ScopedRemoteClients } from './upstream.js';
 
 /** One dedicated discovery session; invocation connections are separately scoped by the pool. */
 export class MountRuntime {
@@ -104,7 +83,7 @@ export class MountRuntime {
       })
       .catch((error: unknown) => {
         if (!this.stopping) this.failed(error);
-        throw new MervError(safeCode(error), 'Mount catalog is unavailable', 503);
+        throw new MervError(fault(error).code, 'Mount catalog is unavailable', 503);
       })
       .finally(() => {
         this.current = undefined;
@@ -212,7 +191,7 @@ export class MountRuntime {
       ...this.snapshot,
       state: this.snapshot.state === 'ready' ? 'disconnected' : 'failed',
       toolCount: 0,
-      errorCode: safeCode(error),
+      errorCode: fault(error).code,
     };
     // Withdrawal starts now. A held call must not delay status updates or reconnect scheduling.
     const drain = this.catalog.replace([]).catch(() => undefined);

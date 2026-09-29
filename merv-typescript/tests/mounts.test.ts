@@ -791,3 +791,16 @@ test('stop after a completed round sends no notifications/cancelled', async (t) 
   );
   assert.equal(upstream.deletes, 1);
 });
+
+test('a stalled discovery connect reports a timeout', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  upstream.stall();
+  const started = performance.now();
+  const { manager } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 150, reconnectMs: 60000 },
+  ]);
+  assert.ok(performance.now() - started < 1000, 'The SDK timeout bounds initialize');
+  assert.equal(manager.status()[0].state, 'failed');
+  assert.equal(manager.status()[0].errorCode, 'remote_timeout');
+});

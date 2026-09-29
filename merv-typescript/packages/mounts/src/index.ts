@@ -126,7 +126,7 @@ export class MountManager implements Mounts {
         await previous.stop();
         return;
       }
-      // A failed prior cleanup must not be hidden by creating another resource owner.
+      // The previous generation releases its namespace before a new owner acquires it.
       await previous.stop();
       check(!this.stopping, 'mounts_stopped', 'Mounts are stopped', 503);
       const runtime = new MountRuntime(
@@ -154,11 +154,8 @@ export class MountManager implements Mounts {
     // Each stop performs withdrawal synchronously before its first await. Start all of them now.
     const stopped = [...this.runtimes.values()].map((runtime) => runtime.stop());
     const toggles = Promise.allSettled([...this.toggles.values()]);
-    this.closing = Promise.allSettled(stopped).then(async (results) => {
-      await toggles;
-      if (results.some((result) => result.status === 'rejected'))
-        throw new MervError('mount_cleanup_failed', 'Mount resource cleanup failed', 503);
-    });
+    // stop() never rejects; a toggle's own refusal belongs to its caller.
+    this.closing = Promise.all([...stopped, toggles]).then(() => undefined);
     return this.closing;
   }
 }
