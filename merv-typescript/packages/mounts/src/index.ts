@@ -116,7 +116,7 @@ export const mountsPlugin = {
         runtimes.map((runtime) => runtime.status()).sort((a, b) => a.id.localeCompare(b.id)),
     });
     // Optional upstreams never hold up apply; status() reports each mount's first round.
-    for (const runtime of runtimes) void runtime.refresh().catch(() => undefined);
+    for (const runtime of runtimes) runtime.refresh();
   },
 };
 export default mountsPlugin;

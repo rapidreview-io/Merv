@@ -14,6 +14,7 @@ import { ToolRegistry } from '@merv/api';
 import type { CredentialBinding } from '@merv/mounts/types';
 import type { MountConfig, Mounts } from '@merv/mounts/types';
 import { mountsPlugin } from '../packages/mounts/src/index.js';
+import { MountRuntime } from '../packages/mounts/src/runtime.js';
 import {
   RemoteFixture,
   representativeTools,
@@ -73,7 +74,8 @@ async function remote(
   t.after(() => fixture.close());
   return fixture;
 }
-async function mounted(
+/** Loads the mounts entry without waiting for discovery. */
+function loaded(
   t: TestContext,
   services: Awaited<ReturnType<typeof local>>,
   mounts: MountConfig[],
@@ -83,6 +85,14 @@ async function mounted(
   ctx.provide('scope', services.scope);
   const fiber = ctx.plugin(mountsPlugin, { mounts, bindings: services.bindings });
   t.after(() => ctx.fiber.dispose());
+  return { ctx, fiber };
+}
+async function mounted(
+  t: TestContext,
+  services: Awaited<ReturnType<typeof local>>,
+  mounts: MountConfig[],
+) {
+  const { ctx, fiber } = loaded(t, services, mounts);
   await fiber.await();
   assert.equal(ctx.get('credentials'), undefined, 'Credentials is internal to Mounts');
   await settled(ctx.mounts);
@@ -773,4 +783,156 @@ test('a black-holed upstream does not hold up loading the entry', async (t) => {
   });
   assert.ok(performance.now() - started < 200, 'apply does not wait for discovery');
   assert.equal(ctx.mounts.status()[0].state, 'connecting');
+});
+
+test('200 list_changed notifications during a round rerun it only once', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t, { pageSize: 10 });
+  const { mounts } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  const rounds = () =>
+    upstream.requests.filter((request) => request.method === 'tools/list' && !request.cursor)
+      .length;
+  const before = rounds();
+  const held = upstream.holdNextList();
+  await upstream.notifyToolsChanged();
+  await held.entered;
+  for (let notification = 1; notification < 200; notification++)
+    await upstream.notifyToolsChanged();
+  await sleep(100);
+  held.release();
+  await until(() => rounds() === before + 2, 'The notifications did not rerun the round');
+  await sleep(200);
+  assert.equal(rounds(), before + 2);
+  assert.equal(mounts.status()[0].state, 'ready');
+});
+
+test('stop during a black-holed discovery connect resolves at once', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  upstream.stall();
+  const { fiber } = loaded(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 5000, reconnectMs: 60000 },
+  ]);
+  await fiber.await();
+  await sleep(50);
+  const started = performance.now();
+  await fiber.dispose();
+  assert.ok(performance.now() - started < 200, 'stop aborts the round it interrupts');
+  assert.equal(upstream.opened, 0);
+  assert.equal(upstream.sessionCount, 0);
+});
+
+test('a discovery connect that completes during stop still ends with a DELETE', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const actualFetch = globalThis.fetch;
+  let entered!: () => void;
+  const initializing = new Promise<void>((resolve) => (entered = resolve));
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  // Hold the connect after initialize: the notification that completes it takes no stop signal.
+  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init?.body === 'string' && init.body.includes('notifications/initialized')) {
+      entered();
+      await released;
+    }
+    return actualFetch(address, init);
+  });
+  const { ctx, fiber } = loaded(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  await fiber.await();
+  const mounts = ctx.mounts;
+  await initializing;
+  assert.equal(upstream.sessionCount, 1);
+  const stopping = fiber.dispose();
+  await sleep(20);
+  release();
+  await stopping;
+  assert.equal(upstream.deletes, 1);
+  assert.equal(upstream.sessionCount, 0);
+  assert.equal(mounts.status()[0].state, 'stopped');
+});
+
+test("a failed round's DELETE completes before stop resolves", async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const actualFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (address: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === 'DELETE') await sleep(300);
+    return actualFetch(address, init);
+  });
+  const { mounts, fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  upstream.setTools([]);
+  await upstream.notifyToolsChanged();
+  await until(
+    () => mounts.status()[0].errorCode === 'mount_missing_tool',
+    'The round did not fail',
+  );
+  assert.equal(upstream.deletes, 0);
+  await fiber.dispose();
+  assert.equal(upstream.deletes, 1);
+});
+
+test('a round that finishes after stop leaves the mount stopped', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  const { mounts, fiber } = await mounted(t, services, [
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  ]);
+  const held = upstream.holdNextCall('media');
+  const call = services.registry.call('_fixture.media', services.caller, {});
+  let stopping: Promise<void> | undefined;
+  try {
+    await held.entered;
+    // The next round's replace() waits for the held call to drain from the old generation.
+    const changed = structuredClone(representativeTools);
+    changed.find((tool) => tool.name === 'media')!.description = 'Changed while a call is held';
+    upstream.setTools(changed);
+    await upstream.notifyToolsChanged();
+    await until(
+      async () =>
+        (await services.registry.describe()).find((tool) => tool.name === '_fixture.media')
+          ?.description === 'Changed while a call is held',
+      'The changed catalog was not published',
+    );
+    stopping = fiber.dispose();
+    await sleep(20);
+    assert.equal(mounts.status()[0].state, 'stopped');
+  } finally {
+    held.release();
+  }
+  assert.deepEqual(await call, representativeResult);
+  await stopping;
+  assert.equal(mounts.status()[0].state, 'stopped');
+});
+
+test('twelve failed rounds and stop send no notifications/cancelled', async (t) => {
+  const services = await local(t);
+  const upstream = await remote(t);
+  upstream.setTools([]);
+  const runtime = new MountRuntime(
+    services.registry,
+    new Bindings(services.scope, services.bindings),
+    services.scope,
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 1000, reconnectMs: 60000 },
+  );
+  // A failed round's DELETE starts after the round ends, so each refresh starts a new round.
+  for (let round = 1; round <= 12; round++) {
+    runtime.refresh();
+    await until(() => upstream.deletes === round, 'A failed round did not end its session');
+  }
+  assert.equal(runtime.status().errorCode, 'mount_missing_tool');
+  assert.equal(upstream.opened, 12);
+  await runtime.stop();
+  await sleep(100);
+  assert.equal(runtime.status().state, 'stopped');
+  assert.deepEqual(
+    upstream.notifications.filter((method) => method === 'notifications/cancelled'),
+    [],
+  );
 });

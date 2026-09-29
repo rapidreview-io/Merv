@@ -45,6 +45,14 @@ const discovery = (registry: ToolRegistry, url: string) =>
     reconnectMs: 60_000,
   });
 
+async function until(predicate: () => boolean): Promise<void> {
+  const end = Date.now() + 4000;
+  while (!predicate()) {
+    if (Date.now() >= end) throw new Error('The discovery round did not finish');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 async function body(request: IncomingMessage) {
   let text = '';
   for await (const part of request) text += part.toString();
@@ -142,7 +150,7 @@ for (const mode of ['invocation', 'discovery']) {
         await pool.handler('inspect')(caller, {});
         assert.equal(gets, 0, 'invocation connections never open a notification stream');
       } else {
-        void runtime.refresh().catch(() => undefined);
+        runtime.refresh();
         await notification;
       }
       assert.deepEqual(received, [], 'notification headers must not reach a redirect destination');
@@ -183,7 +191,8 @@ for (const redirectMethod of ['initialize', 'tools/list']) {
     const registry = new ToolRegistry(scope, fixtureAccess);
     const runtime = discovery(registry, url);
     try {
-      await runtime.refresh().catch(() => undefined);
+      runtime.refresh();
+      await until(() => runtime.status().state !== 'connecting');
       assert.deepEqual(received, [], 'discovery must stay on its configured endpoint');
       assert.deepEqual(await registry.describe(), []);
       assert.equal(runtime.status().state, 'failed');
