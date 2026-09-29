@@ -125,6 +125,8 @@ export interface ModelRelayUsage<E extends string = string> {
   cachedTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  /** A zero record that returns the charge of a call the provider never took. */
+  refund?: true;
 }
 /** A provider terminal frame, without its text, tool arguments, identifiers or raw reason. */
 export interface ModelRelayTerminal<E extends string = string> {
@@ -174,9 +176,10 @@ export interface ModelRelayConfig<
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
   /** Charges a call before it goes upstream, after every other refusal, and returns the charge
    *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
-   *  one. The charge stands for a call that never finishes. */
+   *  one. The charge stands for a call the provider may have run that never finishes. */
   reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
-  /** A finished call's usage, with what `reserve` returned for it. */
+  /** A finished call's usage, or a refund of a call refused before it was sent or answered with
+   *  an error status, with what `reserve` returned for it. */
   onUsage?: (
     record: ModelRelayUsage<`${N}_relay_usage`>,
     grant: G,
