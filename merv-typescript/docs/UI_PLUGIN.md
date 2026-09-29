@@ -13,7 +13,7 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 | `@merv/artifacts/ui` | `artifacts-ui` | `artifacts`, `ui` | Artifacts                                                                           |
 | `@merv/sessions/ui`  | `sessions-ui`  | `sessions`, `ui`  | Sessions, runner presence and project dispatch controls                             |
 | `@merv/feed/ui`      | `feed-ui`      | `feed`, `ui`      | Feed (posts and state changes as one column)                                        |
-| `@merv/mounts/ui`    | `mounts-ui`    | `mounts`, `ui`    | Connections (degraded when any mount is not ready; data via `ui.read`)              |
+| `@merv/mounts/ui`    | `mounts-ui`    | `mounts`, `ui`    | Connections (degraded if a mount is not ready or has an error; data via `ui.read`)  |
 
 Every entry is `required: false`. The default configuration lists all of them except `mounts-ui`, which belongs next to a `mounts` entry.
 

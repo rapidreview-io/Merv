@@ -217,7 +217,7 @@ The API plugin owns its public tool and catalog contracts in `@merv/api/types`. 
 
 Remote schemas retain their original shape. The validator supports JSON Schema 2020-12 (the default) and explicit draft-07, including local references and standard formats. Unsupported dialects, external references, unknown keywords, invalid schemas, and MCP task execution fail before publication. Inputs are validated without coercion, default insertion, or field removal. Structured successful output is checked against its declared output schema.
 
-A catalog replacement validates every tool first, publishes the complete new generation, then waits for admitted calls from the old generation. A rejected refresh leaves the previous catalog available. Catalog disposal withdraws all its tools immediately and waits for admitted calls before its owner closes the client. [`collectRemoteCatalog`](packages/mounts/src/remote-catalog.ts) collects bounded pages and rejects repeated cursors/names; each mount serializes its explicit refreshes and upstream `tools/list_changed` notifications. Merv's stateless downstream endpoint does not advertise push notifications; clients rediscover with `tools/list`.
+A catalog replacement validates every tool first, publishes the complete new generation, then waits for admitted calls from the old generation. A rejected refresh leaves the previous catalog available. Catalog disposal withdraws all its tools immediately and waits for admitted calls before its owner closes the client. [`collectRemoteCatalog`](packages/mounts/src/remote-catalog.ts) reads pages only until it has every selected name, at most 20 pages, each bounded by the request timeout, so a repeating cursor ends at that limit; it refuses a repeated selected name. Each mount runs one discovery round at a time for its interval and upstream `tools/list_changed` notifications. Merv's stateless downstream endpoint does not advertise push notifications; clients rediscover with `tools/list`.
 
 Remote `content`, `structuredContent`, `isError`, annotations, and metadata survive MCP forwarding. HTTP wraps that complete MCP result in its usual `{ "result": ... }` envelope. Native results retain their existing JSON-text MCP format.
 
@@ -266,11 +266,11 @@ Configure the Scope and External Mounts entries in the plugin list (merge these 
 ]
 ```
 
-The example tool name is illustrative; select actual names when configuring a mount. Secrets stay in the server environment. Optional fixed `x-*` selector headers are for nonsecret upstream namespace/subject values; authentication comes from the secret reference. The provider reads the environment reference on every resolution, rejects known local Merv bearer tokens, including revoked and rotated ones, and returns an opaque snapshot with explicit server-only header access. JSON and diagnostic inspection of the snapshot omit its secret.
+The example tool name is illustrative; select actual names when configuring a mount. Secrets stay in the server environment. Optional fixed `x-*` selector headers are for nonsecret upstream namespace/subject values; authentication comes from the secret reference. Mounts reads the environment reference once per upstream connection, rejects known local Merv bearer tokens, including revoked and rotated ones, and hands the secret only to that connection's transport. Mount status and errors never contain it.
 
-Scope’s `toolPolicy.replace(...)` is trusted in-process grant administration. Apply credential binding changes by updating and reloading the Mounts entry; removal withdraws tools and drains admitted calls. Persist both configurations for restart. Neither exposes credential-management tools to agents. See [the credential migration](packages/mounts/README.md#credential-ownership-and-migration).
+Scope’s `toolPolicy.replace(...)` is trusted in-process grant administration. Apply credential binding changes by updating and reloading the Mounts entry, which withdraws the tools of every mount in it and drains admitted calls. Persist both configurations for restart. Neither exposes credential-management tools to agents. See [the Mounts configuration](packages/mounts/README.md#configuration).
 
-`ScopedRemoteClients` supplies the transport consumer for these contracts. It uses a separate upstream bearer and isolates connections by mount, endpoint, actor, project, and resolved credential identity. It rechecks authority after asynchronous connection setup, retires old connections on rotation/revocation, drains admitted calls, bounds connection/call time, and does not retry operations. SDK errors are returned as fixed messages without upstream error text. The optional `@merv/mounts` plugin owns credential resolution and consumes Scope tool policy; its controlled integration is described below. A fresh agent has completed one permitted real sandbox `usage_report` call through this plugin; see [live verification](verification/step-06-live-sandbox.json).
+Each mount forwards calls over per-lane connections: one per caller (project, actor), carrying the binding selected for that caller and its separate upstream bearer, never shared across actors. The registry authorizes every call immediately before its handler; a call that waited for binding selection or connection setup is checked again first. Each upstream request is bounded by the mount's `timeoutMs`, an idle connection ends after five minutes, and no operation is retried. Errors are fixed codes and messages without upstream error text. The optional `@merv/mounts` plugin owns credential resolution and consumes Scope tool policy; its controlled integration is described below. A fresh agent has completed one permitted real sandbox `usage_report` call through this plugin; see [live verification](verification/step-06-live-sandbox.json).
 
 Run the integrated two-project demonstration and connection regressions:
 
@@ -278,7 +278,7 @@ Run the integrated two-project demonstration and connection regressions:
 npm run test:credentials
 ```
 
-It uses real local HTTP/MCP servers with different upstream identities. It verifies scoped discovery, direct-call denial, native role checks, credential isolation, revocation, rotation, sanitized results/errors, and cleanup. No cloud resources are created.
+It uses real local HTTP/MCP servers with different upstream identities. It verifies scoped discovery, direct-call denial, native role checks, credential isolation, revocation, sanitized results/errors, and cleanup. No cloud resources are created.
 
 ## Plugin service boundaries
 
@@ -357,7 +357,7 @@ flowchart TB
 | `@merv/feed`            | Immutable project posts, artifact attachments, cursor reads and durable activity          | State, scope, artifacts                                     |
 | `@merv/sessions`        | Scoped worker leases, activation, source fencing and runner controls                      | State, scope, workflows, domainEvents                       |
 | `@merv/code`            | Durable commit commands, immutable receipts and sealed proposals                          | State, scope, sessions, artifacts                           |
-| `@merv/mounts`          | External MCP connections, exact upstream credential bindings and private secret snapshots | Tools, scope                                                |
+| `@merv/mounts`          | External MCP catalogs and per-caller connections, each carrying an exact upstream binding | Tools, scope                                                |
 | `@merv/api`             | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining       | Registry: scope. Transport: scope, registry, identity       |
 | `@merv/runner`          | Machine-local process ownership, Git workspaces and fixed commit execution over HTTP      | None; separate machine context                              |
 
@@ -439,8 +439,8 @@ npm test
 | Test file                          | Coverage                                                                                                                                                               |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/access.test.ts`             | Exact grants, Scope checks, revocation, default denial, atomic configuration                                                                                           |
-| `tests/credentials.test.ts`        | Binding isolation, rotation, secret references, private snapshots, sanitized errors                                                                                    |
-| `tests/mount-upstream.test.ts`     | Scoped connections, authority rechecks, timeout/failure cleanup and draining                                                                                           |
+| `tests/credentials.test.ts`        | Exact binding selection, secret references, refusal of local Merv credentials, sanitized status and errors                                                             |
+| `tests/mount-upstream.test.ts`     | Per-caller connections, rechecks after a wait, failure classification, idle close, MCP DELETE and pool close                                                           |
 | `tests/remote-permissions.test.ts` | HTTP/MCP caller-filtered discovery, direct calls to hidden tools, current grants and native roles                                                                      |
 | `tests/config.test.ts`             | Validated plugin declarations, substitutions, explicit module bases, default selections, optional feed                                                                 |
 | `tests/plugin-config.test.ts`      | Cordis resource configuration validation, invalid inputs before acquisition, valid API defaults                                                                        |
@@ -451,7 +451,7 @@ npm test
 | `tests/workflows.test.ts`          | Exact replay, pinned versions across restart, competing revisions, atomic rollback, managed mutation ownership, graph validation and provider withdrawal               |
 | `tests/tasks.test.ts`              | Delivery/review loop, revision and replay handling, evidence and UTF-8 gates, verdict rollback, generic reviews, restart recovery, review reissue authority/rollback   |
 | `tests/remote-registry.test.ts`    | Remote schema validation, namespace collisions, atomic replacement, result validation, and draining                                                                    |
-| `tests/remote-catalog.test.ts`     | Independent MCP pagination, limits, repeated cursors/names, collection timeout, atomic replacement and drain                                                           |
+| `tests/remote-catalog.test.ts`     | Independent MCP pagination of selected names, the page limit, repeated names, page timeout, atomic replacement and drain                                               |
 | `tests/remote-http.test.ts`        | Lossless remote HTTP/MCP results, separate project selection, and withdrawal during a held call                                                                        |
 | `tests/protocol.test.ts`           | Actual legacy negotiation/list/call and explicit unsupported version behavior                                                                                          |
 | `tests/protocol-proxy.test.ts`     | Safe metadata capture and transparent JSON/SSE forwarding for live-agent evidence                                                                                      |
@@ -496,7 +496,7 @@ Add a `@merv/mounts` entry to your explicit application config alongside the def
         "url": "https://sandboxes.rapidreview.io/mcp",
         "tools": ["usage_report"],
         "timeoutMs": 5000,
-        "reconnectMs": 5000
+        "reconnectMs": 60000
       }
     ]
   }
@@ -505,7 +505,7 @@ Add a `@merv/mounts` entry to your explicit application config alongside the def
 
 This selects `_sandbox.usage_report`; callers still require an exact Scope tool grant and a credential binding in Mounts. Public catalog discovery is the default. A service that requires authenticated discovery can configure a separate local `discovery` caller. Its authority never supplies another caller's upstream credential. See the [Mounts contract and lifecycle](packages/mounts/README.md) and [sandbox preparation](docs/READ_ONLY_SANDBOX_MOUNT.md).
 
-The plugin validates only the selected tools before publication. It listens for catalog notifications and polls within configured bounds to detect loss; failure withdraws mounted tools, and bounded backoff attempts discovery again. It never retries tool operations. `app.ctx.mounts.status()` returns sanitized connection status; `reconnect(id)` requests a new discovery connection. `app.setEnabled('mounts', false)` withdraws all mount namespaces, waits for admitted calls, then closes upstream clients. Re-enable the entry to restore its configured mounts.
+The plugin validates only the selected tools before publication, and loading it does not wait for upstreams. It listens for catalog notifications and polls every `reconnectMs` (default 60 s), after a success or a failure. It publishes the selected tools the upstream offers now; a failed round keeps the last catalog published, and a stale tool fails per call. It never retries tool operations. `app.ctx.mounts.status()` returns sanitized connection status. To toggle a mount or rotate a binding, reload the whole entry: `app.setEnabled('mounts', false)` withdraws every mount namespace in it, waits for admitted calls, then ends upstream connections. Re-enable the entry to restore its configured mounts.
 
 ```sh
 npm run test:mounts
