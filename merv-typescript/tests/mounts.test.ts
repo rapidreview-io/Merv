@@ -707,7 +707,8 @@ test('a failed round and stop each end the discovery session with a DELETE', asy
   const services = await local(t);
   const upstream = await remote(t);
   const { mounts, fiber } = await mounted(t, services, [
-    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 100 },
+    // The next round waits 1 s, so the check between the rounds is not raced by a slow poll.
+    { id: 'fixture', url: upstream.url, tools: ['media'], timeoutMs: 200, reconnectMs: 1000 },
   ]);
   assert.equal(upstream.sessionCount, 1);
   const held = upstream.holdNextList();
