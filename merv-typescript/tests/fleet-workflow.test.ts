@@ -1,7 +1,9 @@
 import test, { type TestContext } from 'node:test';
-import type { Context } from 'cordis';
+import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,15 +29,25 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
-import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
+import type { Fleet, FleetAllocation, FleetOwner, ModelRelayConfig } from '@merv/fleet/types';
 import type {
   Sessions,
+  ManagedModelGrant,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
 import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
-import { FleetWorkflowAdapter, type FleetWorkflowConfig } from '../packages/fleet/src/workflow.js';
-import { modelBudgetStatus, setDailyTokens } from '../packages/fleet/src/codex-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
+import {
+  fleetWorkflowPlugin,
+  FleetWorkflowAdapter,
+  type FleetWorkflowConfig,
+} from '../packages/fleet/src/workflow.js';
+import {
+  codexModelRelay,
+  modelBudgetStatus,
+  setDailyTokens,
+} from '../packages/fleet/src/codex-relay.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaTools } from '../packages/nisa/src/tools.js';
@@ -51,6 +63,8 @@ import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
 type Target = { instanceId: string; expectedRevision: number };
+/** A machine was created for it, whether or not it ever launched. */
+const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
   Array.from({ length: count }, (_, i) => ({ instanceId: `${prefix}_${i}`, expectedRevision: 0 }));
 
@@ -79,10 +93,12 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   let now = Date.parse('2026-09-22T00:00:00Z');
   let owner: FleetOwner | undefined, validator: ManagedRunnerValidator | undefined;
   const demands = new Map<string, Target[] | Error>();
-  const refused = new Set<string>();
+  const refused = new Map<string, MervError>();
   const requests: string[] = [];
   const inspections = new Map<string, ManagedRunnerInspection>();
   const allocations: FleetAllocation[] = [];
+  /** While set, a reconcile waits at its first read. */
+  let held: Promise<void> | undefined;
   const fakeFleet = {
     registerOwner(kind: string, value: FleetOwner) {
       assert.equal(kind, 'workflow');
@@ -96,8 +112,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       input: { requestId: string; owner: { kind: string; id: string }; seconds?: number },
     ) {
       requests.push(caller.projectId);
-      if (refused.has(caller.projectId))
-        throw new MervError('sandbox_not_connected', 'Hosted agents are not set up', 403);
+      const refusal = refused.get(caller.projectId);
+      if (refusal) throw refusal;
       const source = await scope.delegationSource(caller);
       const prior = allocations.find(
         (a) =>
@@ -163,6 +179,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       return inspections.get(id) ?? null;
     },
     async servedSources() {
+      await held;
       return structuredClone(served);
     },
     async dispatchDemand(caller: Caller, input: unknown) {
@@ -225,11 +242,24 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     ensureInputs,
     owner: () => owner!,
     validator: () => validator!,
+    /** Holds the next reconcile at its first read until the returned function is called. */
+    hold: () => {
+      let release!: () => void;
+      held = new Promise((resolve) => (release = resolve));
+      return () => {
+        held = undefined;
+        release();
+      };
+    },
     serves: (projectId: string) => validator!.serves!(projectId),
     demand: (value: Target[] | Error, projectId = main.id) => {
       demands.set(projectId, value);
     },
-    refuse: (projectId: string) => refused.add(projectId),
+    refuse: (
+      projectId: string,
+      error = new MervError('sandbox_not_connected', 'Hosted agents are not set up', 403),
+    ) => refused.set(projectId, error),
+    sessions: fakeSessions,
     requests,
     advance: (ms: number) => {
       now += ms;
@@ -267,6 +297,46 @@ test('a refused model reservation stops new Fleet rents until its payer has enou
   await f.adapter.reconcile();
   assert.deepEqual(f.requests, [f.caller.projectId]);
   assert.equal((await f.adapter.modelBudget(f.caller))?.blocked, false);
+});
+
+test('a step’s payer is its person, read without a lookup; a voucher that cannot be read refuses', async (t) => {
+  const f = await fixture(t);
+  let lookups = 0;
+  const requireDelegation = f.scope.requireDelegation.bind(f.scope);
+  f.scope.requireDelegation = async (...args) => (lookups++, await requireDelegation(...args));
+  const payer = (source: DelegationSource) =>
+    f.state.transaction((tx) => f.adapter.payer(source, 'task:0', tx));
+  const founder = digest({ issuer, subject: 'founder' });
+  assert.equal(await payer(f.source), founder);
+  assert.equal(
+    await payer({
+      kind: 'service',
+      projectId: f.source.projectId,
+      actorId: 'r',
+      vouchedBy: f.source,
+    }),
+    founder,
+  );
+  assert.equal(lookups, 0);
+  // A review director vouched for by an issued actor counts toward that actor, while it lasts.
+  const issued = await f.scope.issueActor(f.caller, { name: 'Voucher', role: 'operator' });
+  const voucher = await f.scope.delegationSource({
+    actorId: issued.actor.id,
+    projectId: f.source.projectId,
+    credentialId: issued.credential.id,
+  });
+  const reviewer: DelegationSource = {
+    kind: 'service',
+    projectId: f.source.projectId,
+    actorId: 'reviewer',
+    vouchedBy: voucher,
+  };
+  assert.equal(
+    await payer(reviewer),
+    digest({ projectId: f.source.projectId, actorId: issued.actor.id }),
+  );
+  await f.scope.revokeActor(f.caller, issued.actor.id);
+  await assert.rejects(payer(reviewer), MervError);
 });
 
 test('workflow adapter covers demand with one pending slot and retries a claimed generation', async (t) => {
@@ -360,6 +430,7 @@ test('workflow bounds created but unclaimed retries across restart without block
 
   const first = f.allocations[1]!;
   first.createAttempted = true;
+  first.runtime = machine;
   first.phase = 'released';
   first.updatedAt = new Date(Date.parse(first.createdAt)).toISOString();
   await f.adapter.reconcile();
@@ -370,6 +441,7 @@ test('workflow bounds created but unclaimed retries across restart without block
 
   const second = f.allocations[2]!;
   second.createAttempted = true;
+  second.runtime = machine;
   second.phase = 'released';
   second.updatedAt = new Date(Date.parse(second.createdAt)).toISOString();
   f.advance(60_000);
@@ -393,22 +465,18 @@ test(
     const f = await fixture(t);
     const target = { instanceId: 'retry_target', expectedRevision: 2 };
     const reason = 'Ranked reflection context is deployed; retry its frozen synthesis revision.';
-    await f.state.transaction(async (tx) => {
-      await tx.run(
-        'CREATE TABLE wf_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision INTEGER NOT NULL)',
-      );
-      await tx.run(
-        'INSERT INTO wf_instances(id,project_id,revision) VALUES(?,?,?)',
-        target.instanceId,
-        f.caller.projectId,
-        target.expectedRevision,
-      );
-    });
+    // A revision with no rental yet is offered, but has nothing to retry.
     f.demand([target]);
+    assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'ready');
+    await assert.rejects(
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'nothing-to-retry' }),
+      { code: 'fleet_retry_unavailable' },
+    );
     await f.adapter.reconcile();
     for (let index = 0; index < 2; index++) {
       const allocation = f.allocations[index]!;
       allocation.createAttempted = true;
+      allocation.runtime = machine;
       allocation.phase = 'released';
       allocation.updatedAt = new Date(Date.parse(allocation.createdAt)).toISOString();
       if (index === 0) f.advance(60_000);
@@ -527,11 +595,13 @@ test(
     );
     assert.deepEqual(rows, [{ reason, prior_allocations: 2 }]);
     f.allocations[2]!.createAttempted = true;
+    f.allocations[2]!.runtime = machine;
     f.allocations[2]!.phase = 'released';
     f.advance(60_000);
     await f.adapter.reconcile();
     assert.equal(f.allocations.length, 4);
     f.allocations[3]!.createAttempted = true;
+    f.allocations[3]!.runtime = machine;
     f.allocations[3]!.phase = 'released';
     f.advance(60_000);
     await f.adapter.reconcile();
@@ -541,7 +611,9 @@ test(
       f.adapter.retry(f.caller, { ...target, reason, requestId: 'raced-2' }),
     ]);
     assert.equal(raced.filter((result) => result.status === 'fulfilled').length, 1);
-    assert.equal(raced.filter((result) => result.status === 'rejected').length, 1);
+    const lost = raced.filter((result) => result.status === 'rejected');
+    assert.equal(lost.length, 1);
+    assert.equal(lost[0]!.reason.status, 409);
     assert.equal(
       (await f.state.read((sql) => sql.all('SELECT id FROM fleet_workflow_retry_grants'))).length,
       2,
@@ -639,6 +711,168 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
   assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), false);
   allocation.phase = 'queued';
   assert.equal(await f.state.transaction((tx) => f.validator().admits(allocation.id, 1, tx)), true);
+});
+
+test('closing unregisters first: a bound session is never judged stale while a pass finishes', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  const binding = {
+    allocationId: allocation.id,
+    epoch: 1,
+    source: f.source,
+    runtimeProfileId: 'image-profile',
+    platform: hostedCodexPlatform,
+    capabilities: ['code.v2'],
+    expiresAt: allocation.deadlineAt,
+  };
+  const [owner, validator] = [f.owner(), f.validator()];
+  const release = f.hold();
+  const pass = f.adapter.reconcile();
+  const closing = f.adapter.close();
+  // Without a validator Sessions answers 503 and keeps its sessions; a Fleet pass that still
+  // holds the owner keeps its machine.
+  assert.equal(f.validator(), undefined);
+  assert.equal(f.owner(), undefined);
+  assert.equal(await f.state.transaction((tx) => validator.current(binding, tx)), true);
+  assert.equal(await f.state.transaction((tx) => owner.valid(allocation, tx)), true);
+  release();
+  await Promise.all([pass, closing]);
+  assert.equal(await f.state.transaction((tx) => validator.current(binding, tx)), true);
+});
+
+test('a relay call in flight when the adapter unloads gets 503, never 401: its route goes first', async (t) => {
+  const state = await openState();
+  const modelEnv = `MERV_WORKFLOW_MODEL_${randomUUID().replaceAll('-', '')}`;
+  process.env[modelEnv] = `sk-test-${randomBytes(32).toString('hex')}`;
+  const order: string[] = [];
+  let validator: ManagedRunnerValidator | undefined;
+  let route: ((req: IncomingMessage, res: ServerResponse) => void) | undefined;
+  let asked!: () => void;
+  const asking = new Promise<void>((resolve) => (asked = resolve));
+  let answer!: () => void;
+  const answering = new Promise<void>((resolve) => (answer = resolve));
+  const ctx = new Context();
+  ctx.provide('state', state);
+  // Fleet's model migrations reference Scope's projects table.
+  ctx.provide('scope', await createService(new ProjectScope(state)));
+  ctx.provide('tools', { register: () => () => undefined });
+  ctx.provide('api', {
+    mount: (_prefix: string, handler: typeof route) => {
+      route = handler;
+      return () => {
+        order.push('unmount');
+        route = undefined;
+      };
+    },
+  });
+  ctx.provide('fleet', {
+    registerOwner: () => () => order.push('owner'),
+    listOwned: async () => [],
+    modelRelay: (config: ModelRelayConfig<ManagedModelGrant, string, unknown>) => {
+      const relay = new ModelRelay(config);
+      const close = relay.close.bind(relay);
+      relay.close = () => (order.push('relay'), close());
+      return relay;
+    },
+  });
+  ctx.provide('sessions', {
+    registerManagedValidator: (value: ManagedRunnerValidator) => {
+      validator = value;
+      return () => {
+        order.push('validator');
+        validator = undefined;
+      };
+    },
+    servedSources: async () => [],
+    // Sessions refuses the session once its owner has gone.
+    managedModelGrant: async () => {
+      asked();
+      await answering;
+      throw new MervError('unauthorized', 'No live managed session', 401);
+    },
+  });
+  const fiber = ctx.plugin(fleetWorkflowPlugin, {
+    enabled: true,
+    people: ['*'],
+    modelApiKeyEnv: modelEnv,
+    baseUrl: 'https://merv.example.test',
+    pollIntervalMs: 60_000,
+  });
+  await fiber;
+  const server = createServer((req, res) => {
+    if (route) return void route(req, res);
+    res.writeHead(503).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.close();
+    await state.close();
+    delete process.env[modelEnv];
+  });
+  const call = fetch(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/codex-model/responses`,
+    {
+      method: 'POST',
+      headers: { authorization: `Bearer ms_${'b'.repeat(43)}` },
+      body: '{}',
+    },
+  );
+  await asking;
+  const unloading = fiber.dispose();
+  while (!order.includes('validator')) await new Promise((resolve) => setImmediate(resolve));
+  answer();
+  const response = await call;
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'relay_unavailable' });
+  await unloading;
+  assert.deepEqual(order, ['unmount', 'relay', 'validator', 'owner']);
+});
+
+test('the mounted relay reads a grant through the adapter, charged to the allocation’s person', async (t) => {
+  const state = await openState();
+  const modelEnv = `MERV_WORKFLOW_MODEL_${randomUUID().replaceAll('-', '')}`;
+  process.env[modelEnv] = `sk-test-${randomBytes(32).toString('hex')}`;
+  let relay: ModelRelayConfig<ManagedModelGrant, string, unknown> | undefined;
+  const ctx = new Context();
+  ctx.provide('state', state);
+  ctx.provide('scope', await createService(new ProjectScope(state)));
+  ctx.provide('tools', { register: () => () => undefined });
+  ctx.provide('api', { mount: () => () => undefined });
+  const kinds = new Map<string, FleetOwner>();
+  ctx.provide('fleet', {
+    registerOwner: (kind: string, owner: FleetOwner) => (kinds.set(kind, owner), () => undefined),
+    listOwned: async () => [],
+    inspectOwned: async (owner: FleetOwner, id: string) => {
+      assert.equal(owner, kinds.get('workflow'));
+      return { id, person: 'voucher' };
+    },
+    modelRelay: (config: typeof relay) => ((relay = config), new ModelRelay(config!)),
+  });
+  const grant = { id: 'session', projectId: 'p', allocationId: 'flt_1', person: 'actor' };
+  ctx.provide('sessions', {
+    registerManagedValidator: () => () => undefined,
+    servedSources: async () => [],
+    managedModelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
+  });
+  const fiber = ctx.plugin(fleetWorkflowPlugin, {
+    enabled: true,
+    people: ['*'],
+    modelApiKeyEnv: modelEnv,
+    baseUrl: 'https://merv.example.test',
+    pollIntervalMs: 60_000,
+  });
+  await fiber;
+  t.after(async () => {
+    await fiber.dispose();
+    await state.close();
+    delete process.env[modelEnv];
+  });
+  assert.equal(
+    ((await relay!.authority!.authorize(`ms_${'b'.repeat(43)}`)) as ManagedModelGrant).person,
+    'voucher',
+  );
 });
 
 test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
@@ -853,6 +1087,98 @@ test('a director who can no longer write directs nothing, and a failing project 
   await f.adapter.reconcile();
   assert.deepEqual([f.allocations[0]!.intent, f.allocations[0]!.phase], ['stop', 'released']);
   assert.equal(f.serves(f.caller.projectId), false);
+});
+
+test('a project whose demand cannot be read keeps its machines and its standing for the pass', async (t) => {
+  const f = await fixture(t);
+  f.demand(targets('kept', 1));
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), [[f.caller.projectId, 'kept_0:0']]);
+  f.allocations[0]!.phase = 'provisioning';
+  f.demand(new MervError('state_unavailable', 'Lock timeout', 503));
+  await f.adapter.reconcile();
+  assert.deepEqual(
+    f.open(),
+    [[f.caller.projectId, 'kept_0:0']],
+    'a transient error cancels nothing',
+  );
+  assert.equal(f.allocations[0]!.intent, 'run');
+  assert.equal(f.serves(f.caller.projectId), true);
+  f.demand([]);
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), [], 'work read as gone is still cancelled');
+});
+
+test('a spend cap refusal keeps the project served and passes over its other targets for the pass', async (t) => {
+  const f = await fixture(t, { maxAgents: 5 });
+  f.demand(targets('capped', 3));
+  f.refuse(
+    f.caller.projectId,
+    new MervError('fleet_compute_cap', "Today's compute is used up", 429),
+  );
+  await f.adapter.reconcile();
+  assert.deepEqual(f.requests, [f.caller.projectId], 'one request is refused, once a pass');
+  assert.equal(f.serves(f.caller.projectId), true);
+  await f.adapter.reconcile();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.serves(f.caller.projectId), true);
+});
+
+test('refusals pause renting and spend no attempt; machines that never launched exhaust a revision', async (t) => {
+  const f = await fixture(t);
+  const target = { instanceId: 'task_a', expectedRevision: 0 };
+  f.demand([target]);
+  const end = (a: FleetAllocation, fields: Partial<FleetAllocation>) =>
+    Object.assign(a, { phase: 'released', intent: 'stop', createAttempted: true, ...fields });
+  await f.adapter.reconcile();
+  for (const i of [0, 1]) {
+    end(f.allocations[i]!, { error: 'runtime_refused' });
+    f.advance(60_001);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, i + 1, 'a provider refusal pauses renting');
+    f.advance(15 * 60_000);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, i + 2, 'and spends no attempt');
+  }
+  for (const i of [2, 3]) {
+    end(f.allocations[i]!, { runtime: machine });
+    f.advance(60_001);
+    await f.adapter.reconcile();
+  }
+  assert.equal(f.allocations.length, 4, 'two machines that never claimed work exhaust it');
+  assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'exhausted_unclaimed');
+});
+
+test('an idle machine gets its grace from its launch, and work claimed while demand is read keeps it', async (t) => {
+  const f = await fixture(t);
+  f.demand(targets('task', 1));
+  await f.adapter.reconcile();
+  const a = f.allocations[0]!;
+  f.inspections.set(a.id, { runnerId: 'managed-machine', enrollmentExpiresAt, session: null });
+  f.demand([]);
+  a.phase = 'running';
+  a.updatedAt = new Date(Date.parse(a.createdAt) + 30_000).toISOString();
+  f.advance(30_000);
+  assert.equal(await f.owner().observe(a), 'running', 'counted from the launch, not the request');
+  f.advance(30_000);
+  const dispatch = f.sessions.dispatchDemand;
+  f.sessions.dispatchDemand = async (...args) => {
+    const demand = await dispatch(...args);
+    f.inspections.get(a.id)!.session = {
+      id: 'session_a',
+      ...targets('task', 1)[0]!,
+      status: 'active',
+      closedAt: null,
+      outcome: null,
+      releaseAcknowledged: false,
+      capturePending: false,
+    };
+    return demand;
+  };
+  assert.equal(await f.owner().observe(a), 'running');
+  f.sessions.dispatchDemand = dispatch;
+  f.inspections.get(a.id)!.session = null;
+  assert.equal(await f.owner().observe(a), 'finished');
 });
 
 test('the review director takes only what the admin’s own hand may not, within Fleet’s machines', async (t) => {
@@ -1120,6 +1446,7 @@ test(
         ...allocation,
         phase: 'released' as const,
         createAttempted: true,
+        runtime: machine,
         updatedAt: new Date(Date.parse(allocation.createdAt) - 60_000).toISOString(),
       };
       await h.state.transaction((tx) =>
@@ -1555,9 +1882,40 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   await assert.rejects(h.scope.requireDelegation(allocation.source, 'review'), {
     code: 'membership_required',
   });
-  // The role change's event closes its session, so its worker's credential no longer works.
-  await h.events.drain();
+  // The next full pass closes its session, so its worker's credential no longer works.
+  await h.sessions.sweep();
   await assert.rejects(h.sessions.authenticate(machine.secret), { code: 'unauthorized' });
   await h.fleet.tick();
   assert.equal(h.stopped.size, 1);
+});
+
+test('a review step’s model calls count toward the admin who vouched for its director', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Charged');
+  await h.sessions.setDispatch(caller, { enabled: true });
+  await delivered(h, caller, 'charged');
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  assert.equal(allocation?.source.kind, 'service');
+  const voucher = digest({ issuer, subject: 'founder' });
+  assert.equal(allocation.person, voucher);
+  await h.fleet.tick(); // Reserve and provision.
+  await h.fleet.tick(); // Launch.
+  const machine = await boot(h, allocation);
+  // Sessions names the review director itself; Fleet rented its machine for the voucher.
+  assert.notEqual((await h.sessions.managedModelGrant(machine.secret)).person, voucher);
+  const relay = codexModelRelay(h.sessions, h.state, {
+    providerKey: () => 'test-model-key',
+    dailyTokensPerPerson: 20_000_000,
+    authorize: (token) => h.adapter.modelGrant(token),
+  });
+  const grant = (await relay.authority!.authorize(machine.secret)) as ManagedModelGrant;
+  assert.deepEqual([grant.allocationId, grant.person], [allocation.id, voucher]);
+  const charge = await relay.reserve!(grant, { model: grant.model, input: [] });
+  assert.equal((await modelBudgetStatus(h.state, voucher, 20_000_000)).usedToday, charge.tokens);
+  // The worker's own budget is the voucher's too.
+  const worker = await h.sessions.authenticate(machine.secret);
+  assert.equal((await h.adapter.modelBudget(worker))?.blocked, false);
+  await setDailyTokens(h.state, voucher, charge.tokens + 1_000);
+  assert.equal((await h.adapter.modelBudget(worker))?.blocked, true);
 });

@@ -46,7 +46,7 @@ import type {
 } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { lastActivity, type AgentObservations } from './observations.js';
-import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
+import { isoNow, liveTargets, ownerOf, readFirst, targetKey } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 
 const label = z
@@ -127,6 +127,9 @@ const scaled = (value: number | null, unit: number): number | null =>
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
 const backoffMs = 30_000;
+type Failure = Pick<Session, 'instanceId' | 'expectedRevision' | 'outcome' | 'closedAt'>;
+const rented =
+  'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
 /**
  * A budget stops new automatic offers when a bound is reached, and also when a cost or token
  * bound cannot be judged: spending nobody reported must not pass as spending that stayed low.
@@ -359,8 +362,9 @@ class PoisonedOffer extends Error {
   constructor(
     readonly candidate: Target,
     readonly cause: unknown,
-    /** A server fault: skipped for this lease only, never held against the work. */
-    readonly transient = false,
+    readonly owner: string,
+    /** A server fault or a refusal of who asked: logged and passed over, never held. */
+    readonly silent: boolean,
   ) {
     super('Offer could not be built');
   }
@@ -368,6 +372,15 @@ class PoisonedOffer extends Error {
 export class SessionDispatch {
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
+  /** `${ownerHash} ${targetKey}` of a silent offer failure, until when that owner passes it over. */
+  private readonly passed = new Map<string, number>();
+  private passing(ownerHash: string): Set<string> {
+    const keys = new Set<string>();
+    for (const [key, until] of this.passed)
+      if (until <= this.clock()) this.passed.delete(key);
+      else if (key.startsWith(`${ownerHash} `)) keys.add(key.slice(ownerHash.length + 1));
+    return keys;
+  }
   constructor(
     private state: State,
     private scope: Scope,
@@ -445,7 +458,7 @@ export class SessionDispatch {
       )
     );
   }
-  private async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
+  async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
     const row = await tx.get<DispatchRow>(
       'SELECT * FROM project_session_dispatch WHERE project_id=?',
       projectId,
@@ -636,6 +649,9 @@ export class SessionDispatch {
       decisionSince: row.decision_since ?? null,
     };
   }
+  private fresh(at: string | null, ms: number): boolean {
+    return at !== null && Date.parse(at) + ms > this.clock();
+  }
   /**
    * The answer this runner's last lease request received, kept where the runner is. A
    * repeated answer keeps the moment it was first given, so a refusal says how long it has
@@ -650,6 +666,13 @@ export class SessionDispatch {
     tx: Transaction,
   ): Promise<void> {
     const time = isoNow(this.clock);
+    const old = await tx.get<RunnerRow>(
+      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
+      ownerHash,
+      runnerId,
+    );
+    // The same answer is refreshed at most every 15 s, so an idle poll writes nothing.
+    if (old?.last_decision === decision && this.fresh(old.last_decision_at, 15_000)) return;
     await tx.run(
       'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN COALESCE(decision_since,?) ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
       decision,
@@ -735,12 +758,11 @@ export class SessionDispatch {
    * trying again. A failure to record must not stop the queue, so a refusal is swallowed.
    */
   private async poisoned(caller: Caller, target: Target, cause: unknown): Promise<void> {
-    const status = (cause as { status?: number })?.status;
     const failure =
       cause instanceof MervError
         ? { code: cause.code, message: cause.message }
         : { code: 'offer_failed', message: cause instanceof Error ? cause.message : String(cause) };
-    if (status === 401 || status === 403 || uncountedOfferCodes.has(failure.code)) return;
+    if (uncountedOfferCodes.has(failure.code)) return;
     try {
       await this.state.transaction(async (tx) => {
         const owner = await ownerOf(this.scope, caller, tx);
@@ -832,12 +854,13 @@ export class SessionDispatch {
       'Runner heartbeat must use the closed machine, platform and capacity schema',
     );
     input = parsed.data;
-    return await this.state.transaction(async (tx) => {
-      if (caller.managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
+    return await readFirst(this.state, async (tx) => {
+      const managed = !!caller.managed;
+      const source = managed ? await this.hooks.managed.heartbeat(caller, input, tx) : caller;
       // A runner is a durable presence that will take work: registering one is a write, or a
       // review for Fleet's review director, which takes only reviews.
-      await this.scope.require(caller, caller.service ? 'review' : 'write', tx);
-      const owner = await ownerOf(this.scope, caller, tx);
+      await this.scope.require(source, source.service ? 'review' : 'write', tx);
+      const owner = await ownerOf(this.scope, source, tx);
       const old = await tx.get<RunnerRow>(
         'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
         owner.hash,
@@ -850,6 +873,9 @@ export class SessionDispatch {
       );
       const id = old?.id ?? newId('runner'),
         time = isoNow(this.clock);
+      // Fresh for 45 s, an unchanged presence (parsed, so the same text) is recorded every 10 s.
+      if (old?.presence_json === JSON.stringify(input) && this.fresh(old.last_seen_at, 10_000))
+        return await this.presence(old, tx);
       if (old)
         await tx.run(
           'UPDATE session_runners SET presence_json=?,last_seen_at=? WHERE id=?',
@@ -860,10 +886,10 @@ export class SessionDispatch {
       else {
         // A machine Fleet rents is a new runner each time; Fleet's own caps bound those.
         check(
-          caller.managed ||
+          managed ||
             (await tx.get<{ n: number }>(
-              'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
-              caller.projectId,
+              `SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented})`,
+              source.projectId,
             ))!.n < 1000,
           'runner_limit',
           'Project runner limit reached',
@@ -872,7 +898,7 @@ export class SessionDispatch {
         await tx.run(
           'INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,?,?,?,?,?,?)',
           id,
-          caller.projectId,
+          source.projectId,
           owner.hash,
           input.runnerId,
           JSON.stringify(owner.source),
@@ -880,7 +906,7 @@ export class SessionDispatch {
           JSON.stringify({ platforms: [] }),
           time,
         );
-        await recorded(this.state, tx, caller, 'session.runner_registered', id, { runnerRef: id });
+        await recorded(this.state, tx, source, 'session.runner_registered', id, { runnerRef: id });
       }
       return await this.presence(
         (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', id))!,
@@ -992,7 +1018,7 @@ export class SessionDispatch {
     caller: Caller,
     tx: Transaction,
     capabilities: ReadonlySet<string>,
-    failures: readonly Session[] = [],
+    failures: readonly Failure[] = [],
     skipped: ReadonlySet<string> = new Set(),
     localRepository = true,
   ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
@@ -1009,7 +1035,7 @@ export class SessionDispatch {
         candidates: [],
         reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
       };
-    const open = admissible.queue.filter((item) => !skipped.has(targetKey(item)));
+    const open = admissible.queue;
     // A checkout with no driver is cloned from the runner's own repository, which a machine
     // Fleet rents does not have.
     const compatible = open.filter(
@@ -1022,6 +1048,7 @@ export class SessionDispatch {
     const candidates = compatible.filter(
       (item) =>
         !admissible.backoff.has(targetKey(item)) &&
+        !skipped.has(targetKey(item)) &&
         !failures.some(
           (session) =>
             session.instanceId === item.instanceId &&
@@ -1089,16 +1116,13 @@ export class SessionDispatch {
         // Only Fleet asks: a project on its own machines has no work for a machine it rents.
         if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
           return { candidates: [] };
+        const owner = (await ownerOf(this.scope, caller, tx)).hash;
         const selected = await this.eligibleCandidates(
           caller,
           tx,
           new Set(input.capabilities ?? []),
-          await this.recentFailures(
-            tx,
-            (await ownerOf(this.scope, caller, tx)).hash,
-            input.platform.name,
-          ),
-          new Set(),
+          await this.recentFailures(tx, owner, input.platform.name),
+          this.passing(owner),
           false,
         );
         return {
@@ -1120,23 +1144,21 @@ export class SessionDispatch {
     ownerHash: string,
     platform: string,
     runnerId?: string,
-  ): Promise<Session[]> {
-    return (
-      await tx.all<SessionRow>(
-        "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR s.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?",
-        ownerHash,
-        runnerId ?? null,
-        runnerId ?? null,
-        platform,
-        new Date(this.clock() - backoffMs).toISOString(),
-      )
-    ).map((row) => JSON.parse(row.session_json) as Session);
+  ): Promise<Failure[]> {
+    return await tx.all<Failure>(
+      'SELECT u.instance_id AS "instanceId",CAST(u.revision AS INTEGER) AS "expectedRevision",u.outcome,u.closed_at AS "closedAt" FROM session_dispatch_receipts d JOIN session_usage u ON u.session_id=d.session_id WHERE d.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR d.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> \'{name}\')=? AND u.closed_at>?',
+      ownerHash,
+      runnerId ?? null,
+      runnerId ?? null,
+      platform,
+      new Date(this.clock() - backoffMs).toISOString(),
+    );
   }
   /** The most recently seen runners, which is where every live one is. */
   private async runners(projectId: string, tx: Transaction): Promise<RunnerPresence[]> {
     return await mapAsync(
       await tx.all<RunnerRow>(
-        'SELECT * FROM session_runners r WHERE project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id AND m.runner_released_at IS NOT NULL) ORDER BY last_seen_at DESC,id LIMIT 100',
+        `SELECT * FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY last_seen_at DESC,id LIMIT 100`,
         projectId,
       ),
       (row) => this.presence(row, tx),
@@ -1330,7 +1352,7 @@ export class SessionDispatch {
         next: operator
           ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
           : unaccounted.has(item.instanceId)
-            ? 'A budget covers it that cannot be judged: a closed session in its scope reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
+            ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
             : spent.has(item.instanceId)
               ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
               : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
@@ -1537,8 +1559,8 @@ export class SessionDispatch {
     // Only one heard from within the freshness can be present, so only those are authorized.
     const rows = await tx.all<RunnerRow & { busy: number; rented: boolean }>(
       `SELECT r.*,(SELECT COUNT(*) FROM worker_sessions s WHERE s.owner_hash=r.owner_hash AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) AS busy,
-        EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id) AS rented
-        FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (SELECT 1 FROM session_managed_runners m WHERE m.runner_id=r.runner_id AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
+        EXISTS (${rented}) AS rented
+        FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
       projectId,
     );
     const runners = (
@@ -1751,27 +1773,26 @@ export class SessionDispatch {
     );
     input = parsed.data;
     const preparedCaller = caller.managed
-      ? await this.state.transaction(
-          async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
+      ? await this.state.snapshot(() =>
+          this.state.transaction(
+            async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
+          ),
         )
       : caller;
     await this.hooks.prepare(preparedCaller);
     // A candidate whose offer cannot be built (a context past its recipe's budget) must
-    // not stop the queue behind it: its failure rolls the attempt back, the next
-    // candidate is tried, and the failure is what the runner sees only when nothing
-    // else is leasable.
+    // not stop the queue behind it: its failure rolls the attempt back and the next
+    // candidate is tried. The runner is answered with the decision, never one target's error.
     const skipped = new Set<string>();
-    let poison: unknown;
     for (;;) {
       try {
-        const result = await this.leaseOnce(caller, input, skipped);
-        if (!result.session && poison !== undefined) throw poison;
-        return result;
+        return await this.leaseOnce(caller, input, skipped);
       } catch (error) {
         if (!(error instanceof PoisonedOffer)) throw error;
-        skipped.add(targetKey(error.candidate));
-        poison = error.cause;
-        if (!error.transient) await this.poisoned(preparedCaller, error.candidate, error.cause);
+        const key = targetKey(error.candidate);
+        skipped.add(key);
+        if (error.silent) this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
+        else await this.poisoned(preparedCaller, error.candidate, error.cause);
       }
     }
   }
@@ -1780,7 +1801,8 @@ export class SessionDispatch {
     input: AutomaticLease,
     skipped: Set<string>,
   ): Promise<{ session: Session | null; reason: string }> {
-    return await this.state.transaction(async (tx) => {
+    // An idle poll is decided on a snapshot; an offer or a new decision takes the writer.
+    return await readFirst(this.state, async (tx) => {
       const managed = caller.managed ? await this.hooks.managed.lease(caller, input, tx) : null;
       const effectiveCaller = managed?.sourceCaller ?? caller;
       const owner = await ownerOf(this.scope, effectiveCaller, tx);
@@ -1869,7 +1891,7 @@ export class SessionDispatch {
         tx,
         capabilities,
         failures,
-        skipped,
+        new Set([...skipped, ...this.passing(owner.hash)]),
         !managed,
       );
       const candidate = selected.candidates[0];
@@ -1878,22 +1900,8 @@ export class SessionDispatch {
           session: null,
           reason: await decided(selected.reason ?? 'no_candidates'),
         };
-      // Admission callbacks cannot disable dispatch or change source permission and
-      // then still create an automatic lease within this transaction.
-      await this.scope.requireDelegation(owner.source, 'read', tx);
-      check(
-        await open(),
-        'dispatch_disabled',
-        'Automatic dispatch was disabled before the offer',
-        409,
-      );
-      const beforeOffer = await this.admitRunner(owner.hash, input, tx);
-      check(
-        beforeOffer.ok,
-        'runner_control_changed',
-        'Runner controls changed before the offer',
-        409,
-      );
+      // A snapshot found work: the writer decides again, and builds the offer.
+      if (this.state.readScope) throw new MervError('read_only_scope', 'An offer is a write', 409);
       const session = await this.hooks
         .offer(
           effectiveCaller,
@@ -1909,8 +1917,10 @@ export class SessionDispatch {
         )
         .catch((error: unknown) => {
           const status = (error as { status?: number })?.status ?? 500;
-          if (status >= 500) {
-            // The whole lease rolls back, leaving no decision, hold or event: only this says why.
+          // No hold counts a server fault or a refusal of who asked, and the whole lease rolls
+          // back, leaving no decision or event: only this says why the work is passed over.
+          const silent = status >= 500 || status === 401 || status === 403;
+          if (silent)
             process.stderr.write(
               `${JSON.stringify({
                 event: 'dispatch.offer_failed',
@@ -1920,16 +1930,11 @@ export class SessionDispatch {
                 message: String((error as Error)?.message ?? error).slice(0, 300),
               })}\n`,
             );
-            // One target's server fault must not keep every machine from the work behind it.
-            throw new PoisonedOffer(
-              { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
-              error,
-              true,
-            );
-          }
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
             error,
+            owner.hash,
+            silent,
           );
         });
       check(

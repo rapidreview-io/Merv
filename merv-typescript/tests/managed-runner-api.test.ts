@@ -341,7 +341,7 @@ async function credentialGate(t: TestContext) {
     ),
     authenticate: reach('sessions.authenticate', session),
     authenticateManaged: reach('sessions.authenticateManaged', managed),
-    enrollManaged: reach('sessions.enrollManaged', { controlToken: 'mr_new', caller: managed }),
+    enrollManaged: reach('sessions.enrollManaged', { controlToken: 'mr_new' }),
     agentSelf: async (token: string) => {
       reached.push('sessions.agentSelf');
       if (!token.startsWith('ms_')) throw new MervError('unauthorized', 'Invalid agent key', 401);

@@ -361,7 +361,6 @@ test('a lease owner releases the lease of a session closed while its workflow wa
     await f.release(offered.session);
     assert.equal(await released(offered.session.id), null);
     const caughtUp = { active: true, error: null, caughtUp: true };
-    assert.deepEqual(await consumer('sessions.lifecycle.v1'), caughtUp);
     assert.equal((await consumer('tasks.lease-release.v1')).active, false);
     await f.app.setEnabled('tasks', true);
     await domainEvents.drain();

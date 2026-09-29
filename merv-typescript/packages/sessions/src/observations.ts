@@ -90,7 +90,8 @@ export class AgentObservations {
 
   async finish(id: string, status: 'succeeded' | 'failed', result?: unknown): Promise<void> {
     if (this.state.readScope) return;
-    const now = this.clock();
+    const now = this.clock(),
+      tokens = result === undefined ? null : estimate(result);
     await this.state.transaction(async (tx) => {
       const row = await tx.get<{ started_at: string }>(
         "SELECT started_at FROM session_tool_calls WHERE id=? AND status='running'",
@@ -102,17 +103,22 @@ export class AgentObservations {
         status,
         new Date(now).toISOString(),
         Math.max(0, now - Date.parse(row.started_at)),
-        result === undefined ? null : estimate(result),
+        tokens,
         id,
       );
     });
   }
 
-  /** An interrupted process has no known completion time or outcome. */
-  async interrupt(): Promise<void> {
+  /** Running calls started before `before` or named in `ids`, whose process has ended: an
+   * interrupted call has no known completion time or outcome. */
+  async interrupt(before: string, ids: string[] = []): Promise<void> {
     await this.state.transaction(
       async (tx) =>
-        await tx.run("UPDATE session_tool_calls SET status='interrupted' WHERE status='running'"),
+        await tx.run(
+          `UPDATE session_tool_calls SET status='interrupted' WHERE status='running' AND (started_at<? OR id IN (${['NULL', ...ids.map(() => '?')].join()}))`,
+          before,
+          ...ids,
+        ),
     );
   }
 

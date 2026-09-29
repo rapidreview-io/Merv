@@ -50,6 +50,7 @@ export class SessionServiceWork implements ServiceWork {
     private readonly workflows: Workflows,
     private readonly clock: () => number,
     private readonly concurrency: number,
+    private readonly dispatching: (projectId: string, tx: Transaction) => Promise<boolean>,
   ) {}
 
   async initialize(): Promise<void> {
@@ -146,11 +147,8 @@ FOR EACH ROW EXECUTE FUNCTION session_service_work_guard();`,
       'invalid_deadline',
       'A service execution deadline must be in the future',
     );
-    const dispatch = await tx.get<{ enabled: number }>(
-      'SELECT enabled FROM project_session_dispatch WHERE project_id=?',
-      input.projectId,
-    );
-    if (!dispatch?.enabled) return { admitted: false, reason: 'dispatch_disabled' };
+    if (!(await this.dispatching(input.projectId, tx)))
+      return { admitted: false, reason: 'dispatch_disabled' };
     const active = await tx.get<{ count: number }>(
       'SELECT COUNT(*) AS count FROM session_service_work WHERE project_id=? AND settled_at IS NULL',
       input.projectId,

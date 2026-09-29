@@ -875,6 +875,7 @@ test('revoking the source fences its live reviewer before recovery and an author
   await assert.rejects(async () => await f.sessions.prepare(worker, 'review.submit', {}), {
     code: 'forbidden',
   });
+  await f.sessions.sweep();
   await f.events.drain();
   const reopened = await f.reviews.get(replacementSource, pending.reviewId!);
   assert.equal(reopened.status, 'requested');
@@ -1117,8 +1118,7 @@ test('declared producer terminal actions and owner cancellation close active wor
     'failed',
     'The owner can end work without first releasing its worker',
   );
-  await f.sessions.get(f.source, offered.session.id);
-  await f.sessions.get(f.source, active.session.id);
+  await f.sessions.sweep();
   await f.events.drain();
   assert.equal(
     await f.state.read(
@@ -1424,8 +1424,8 @@ test('historical observations stay project-scoped and pure after source revocati
   assert.equal(getters, 0);
   const operator = await f.issue('operator');
   const before = await f.code.capture(f.reviewer, ref);
-  // Stop durable delivery before the revocation: the sessions lifecycle consumer would otherwise
-  // close this session in reaction to it, concurrently with the reads measured below.
+  // Stop durable delivery before the revocation, so no consumer reacts to it concurrently with
+  // the reads measured below.
   await f.events.close();
   await f.scope.revokeCredential(operator, f.source.credentialId!);
   await assert.rejects(async () => await f.code.capture(f.source, ref), { code: 'forbidden' });

@@ -421,6 +421,31 @@ test('a token budget is judged only on complete accounting: an unreported sessio
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
 });
 
+test('a close that was never activated leaves a token budget judged; an activated silent one does not', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.setBudget(f.owner, { maxTokens: 1000 });
+  const lost = await f.offer((await f.instance()).id);
+  await f.sessions.release(f.source, { sessionId: lost.session.id, runnerId: 'machine' });
+  let read = await f.sessions.usage(f.owner);
+  assert.deepEqual(
+    [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
+    [0, [], { wallMs: 0, costMicros: 0, tokens: 0 }],
+    'a launch that never ran has nothing to report',
+  );
+  assert.deepEqual([read.totals.sessions, read.totals.reportedSessions], [1, 0]);
+  assert.ok(!('unreported' in read), 'the count stays off the usage reply');
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+
+  await f.spend((await f.instance()).id, 1000);
+  read = await f.sessions.usage(f.owner);
+  assert.deepEqual(
+    [read.budgets[0]!.unreportedSessions, read.budgets[0]!.unavailable, read.budgets[0]!.used],
+    [1, ['tokens'], { wallMs: 1000, costMicros: null, tokens: null }],
+  );
+});
+
 test('a wall-clock budget never waits on a report, and clearing a token bound lifts its wait', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
@@ -562,8 +587,9 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
   });
   f.advance(30_001);
   // Session history is retained forever and a close older than the window can hold nothing
-  // back, so the poll that follows must not read one. It runs inside the write transaction
-  // that grants the lease, where a runner's whole past would be paid for on every tick.
+  // back, so the poll that follows must not read one. It runs on the poll's snapshot and again
+  // in the write transaction that grants the lease, where a runner's whole past would be paid
+  // for on every tick.
   const read: number[] = [];
   const transaction = f.state.transaction.bind(f.state);
   t.mock.method(f.state, 'transaction', (run: Parameters<typeof transaction>[0]) =>
@@ -571,7 +597,7 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
       const all = tx.all.bind(tx);
       (tx as { all: unknown }).all = async (sql: string, ...parameters: unknown[]) => {
         const rows = await all(sql, ...(parameters as string[]));
-        if (sql.includes('session_dispatch_receipts') && sql.includes("('released','expired')"))
+        if (sql.includes('session_dispatch_receipts') && sql.includes('session_usage'))
           read.push(rows.length);
         return rows;
       };
@@ -579,7 +605,7 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
     }),
   );
   assert.ok((await f.sessions.lease(f.source, auto())).session, 'the target is offered again');
-  assert.deepEqual(read, [0], 'the backoff read no close from outside its window');
+  assert.deepEqual(read, [0, 0], 'the backoff read no close from outside its window');
 });
 
 test('sessions refuses a launch-failure cap outside 1â€“100', async (t) => {

@@ -68,7 +68,9 @@ do not rebuild prompts or fetch artifact bytes while admitting a request.
 
 The default offer lifetime is five minutes, the active sliding lifetime
 four hours, and the hard deadline twenty-four hours, capped at seven days.
-Heartbeat renews an active, unexpired lease only. Release, expiry and lost source
+Heartbeat renews an active, unexpired lease only, and records a renewal only when it moves
+`expiresAt` by 15 minutes or more, or up to the hard deadline; a heartbeat in between answers
+the stored window, which is then still over 3 h 45 min ahead. Release, expiry and lost source
 authority close the execution permanently. Continuing agents remain registered unless their source authority is lost or they are explicitly retired.
 
 A machine reports how its launch ended: `launch_failed`, `workspace_failed`, `host_failed` or
@@ -104,9 +106,8 @@ silence. Heartbeat is unchanged: it renews `expiresAt` and says nothing about pr
 | ------------------- | ------- | ------------ | ------------------------------------------------------------------------ |
 | `idleNoticeSeconds` | 1800    | 60 to 604800 | Time without a Merv tool call after which the session is reported quiet. |
 
-Only the writing sweep marks or clears, at most once a minute of clock time and only for
-sessions active longer than `idleNoticeSeconds`. A poll can run on a read snapshot, so no
-read path computes a mark. The mark is `quietSince` on the session, set once per episode
+Only the sweep's full pass marks or clears, every 30 seconds of clock time. A poll can run on
+a read snapshot, so no read path computes a mark. The mark is `quietSince` on the session, set once per episode
 with one `session.quiet` event (`lastActivityAt`, `idleSeconds`); the next tool call clears
 it on the following pass without an event. `GET /sessions/status` carries `lastActivityAt`
 and `quietSince` on every session, and `session.stuck` reports a quiet session from the same
@@ -163,7 +164,7 @@ cost and model. Every close writes a `session_usage` row with the lease wall-clo
 first report for a session is stored beside it and later ones are dropped without an
 error, including for a session its own handoff already closed. Three more lease decisions
 exist: `budget_exceeded`, when a project or instance budget is reached;
-`usage_unavailable`, when a cost or token bound cannot be judged because a closed session
+`usage_unavailable`, when a cost or token bound cannot be judged because an activated session
 in its scope reported no usage; and `retries_exhausted`, when the only queued work left has
 failed to launch `maxLaunchFailures` times on its current revision. All three only pause
 automatic offers.
@@ -240,6 +241,17 @@ and the two report thresholds of `session.stuck`, `quietReadySeconds` (60–2592
 Offer commits expired-predecessor closure and drains durable cleanup before
 starting a fresh acquisition transaction. A failing cleanup handler cannot roll
 back worker retirement or partially commit domain cleanup.
+
+The sweep runs every `sweepIntervalMs`. Each tick records the sessions whose deadline
+passed or whose workflow record moved, as every offer does first. Every 30 seconds a full
+pass re-checks every live session (a revoked or demoted source, a retired agent, a lease
+its domain refused, a machine Fleet no longer runs), every active agent and service-work
+reservations. A session's own next authentication, attach, heartbeat or release records
+such a closure sooner, and every worker call is refused at once. `GET /sessions/:id` reports
+a closure it finds without recording it. Each subject is decided
+on a read snapshot and recorded in a transaction of its own, so a healthy pass takes no
+writer lock. One that fails holds back no other: it is logged once as
+`sessions.sweep_failed` with its code and retried by the next full pass.
 
 Run `npm run test:sessions` for deterministic coverage. The separate
 `npm run test:live:sessions -- /absolute/new/run-directory` launches two real

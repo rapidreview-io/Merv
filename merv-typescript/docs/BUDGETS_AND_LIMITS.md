@@ -152,12 +152,13 @@ when the bound was crossed.
 
 **A cost or token bound is enforced only on complete accounting.** Those figures exist
 only where a runner reported them, so a bound on them is judged while every closed session
-in its scope has reported. One that closed without a report leaves the sum a floor, not a
+in its scope that was activated has reported; a session never activated is not counted,
+even if its runner spent tokens before its first call to Merv. One that closed without a report leaves the sum a floor, not a
 total: the bound then withholds new automatic offers with `usage_unavailable` instead of
 `budget_exceeded`, and the budget's status names it under `unavailable` with
 `unreportedSessions`. It lifts when the report arrives (a release may carry it after the
 close) or when an admin clears that bound with `usage.set_budget`. A wall-clock bound never
-waits on a report. Where no session in scope has reported at all, `used.costMicros` and
+waits on a report. Where sessions in scope ran and none has reported, `used.costMicros` and
 `used.tokens` read `null`: unknown is never shown as zero.
 
 A budget covers **worker sessions Merv launched**, and nothing else: what a remote job

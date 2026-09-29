@@ -407,6 +407,11 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     1,
   );
   f.advance(60_000);
+  const quiet = { sessionId: session.id, runnerId: 'runner' };
+  const unmoved = (await f.sessions.get(f.source, session.id)).expiresAt;
+  // A slide under 15 minutes rewrites nothing, and the answer keeps the stored window.
+  assert.equal((await f.sessions.heartbeat(f.source, quiet)).expiresAt, unmoved);
+  f.advance(900_000);
   const heartbeat = { sessionId: session.id, runnerId: 'runner' };
   const pendingHeartbeat = f.sessions.heartbeat(f.source, heartbeat);
   Object.assign(heartbeat, { sessionId: 'missing', runnerId: 'other' });
@@ -418,6 +423,7 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     code: 'unauthorized',
   });
   assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
+  await f.sessions.sweep();
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
   assert.equal(
     (await f.state.read(
@@ -434,10 +440,30 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
     ))!.live,
     0,
   );
-  assert.equal(
-    (await f.events.status()).find((consumer) => consumer.id === 'sessions.lifecycle.v1')!.error,
-    null,
-  );
+});
+
+test('a heartbeat within 15 minutes of the hard deadline still renews to it', async (t) => {
+  const f = await fixture(t),
+    target = await f.instance(),
+    token = secret();
+  const session = await f.sessions.offer(f.source, {
+    instanceId: target.id,
+    expectedRevision: 0,
+    runnerId: 'runner',
+    requestId: randomBytes(10).toString('hex'),
+    secret: token,
+    hardDeadlineSeconds: 5 * 3600,
+  });
+  await f.sessions.authenticate(token);
+  const control = { sessionId: session.id, runnerId: 'runner' };
+  f.advance(50 * 60_000);
+  const slid = await f.sessions.heartbeat(f.source, control);
+  assert.equal(Date.parse(slid.expiresAt), f.time() + 14_400_000);
+  // Ten minutes on, the window can move only ten minutes: it still reaches the hard deadline.
+  f.advance(10 * 60_000);
+  const last = await f.sessions.heartbeat(f.source, control);
+  assert.equal(last.expiresAt, last.hardDeadline);
+  assert.equal((await f.sessions.get(f.source, session.id)).expiresAt, last.hardDeadline);
 });
 
 test('controller polls fence changed workflow revisions and expired offers without activating or rendering', async (t) => {
@@ -470,12 +496,84 @@ test('controller polls fence changed workflow revisions and expired offers witho
   assert.equal(closed.closeReason, 'revision_conflict');
   assert.equal(f.builds, builds);
   assert.deepEqual(await f.sessions.get(f.source, session.id), closed);
+  // A poll only reports; the sweep's next pass records the moved record.
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.events(session.projectId)).filter((event) => event.type === 'session.closed')
       .length,
     1,
   );
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
+});
+
+test('a runner’s release records the closure its session’s checks find, not a release', async (t) => {
+  const f = await fixture(t);
+  const sessions = [await f.offer(), await f.offer()];
+  for (const { token } of sessions) await f.sessions.authenticate(token);
+  // The domain refuses both leases while their records stay where they were.
+  f.onLeaseCheck(() => {
+    throw new MervError('claim_lost', 'Worker no longer owns this reservation', 409);
+  });
+  // The first runner releases before anything recorded the closure; the second polled first
+  // and was told of it.
+  for (const [index, { session }] of sessions.entries()) {
+    if (index === 1) assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
+    const released = await f.sessions.release(f.source, {
+      sessionId: session.id,
+      runnerId: 'runner',
+    });
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['expired', 'claim_lost', 'expired'],
+    );
+    assert.deepEqual(await f.sessions.get(f.source, session.id), released);
+  }
+});
+
+test('a runner’s release of a session whose handoff landed records the handoff, even past expiry', async (t) => {
+  const f = await fixture(t);
+  const handoff = async () => {
+    const { token, session } = await f.offer(),
+      prepared = await f.sessions.prepare(await f.sessions.authenticate(token), 'finish', {});
+    await f.sessions.run(
+      prepared,
+      async (caller) =>
+        await f.state.transaction(
+          async (tx) =>
+            await f.handle.transition(
+              caller,
+              {
+                instanceId: session.instanceId,
+                expectedRevision: 0,
+                action: 'finish',
+                requestId: `finish-${session.id}`,
+              },
+              tx,
+            ),
+        ),
+    );
+    return session;
+  };
+  // A release that claims completion on a live, handed-off session is answered with the handoff.
+  const claimed = await handoff();
+  const completed = await f.sessions.release(f.source, {
+    sessionId: claimed.id,
+    runnerId: 'runner',
+    outcome: 'completed',
+  });
+  // One that arrives past expiry, before anything recorded the closure, keeps it too.
+  const late = await handoff();
+  f.advance(300_001);
+  const failed = await f.sessions.release(f.source, {
+    sessionId: late.id,
+    runnerId: 'runner',
+    outcome: 'host_failed',
+  });
+  for (const released of [completed, failed])
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['released', 'handoff', 'completed'],
+    );
 });
 
 test('controller polls preserve offered leases across provider outages and commit deadline closure', async (t) => {
@@ -516,7 +614,7 @@ test('revocation before first authentication creates no work start and sibling c
     { token, session } = await f.offer();
   const other = await f.scope.issueActorCredential(f.owner, { actorId: f.source.actorId });
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -569,7 +667,7 @@ test('durable human authority outlives the initiating JWT but never a membership
   });
   await f.scope.removeMember(refreshed, project.id, 'worker');
   await f.scope.addMember(refreshed, project.id, { subject: 'worker', role: 'producer' });
-  await f.events.drain();
+  await f.sessions.sweep();
   await assert.rejects(async () => await f.sessions.authenticate(token), {
     code: 'unauthorized',
   });
@@ -912,7 +1010,7 @@ test('key revocation drains immediately and replacement keys never inherit lease
   );
   const offered = await f.offer(keyCaller);
   const replacement = await f.scope.rotateKey(human, { keyId: first.key.id });
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -933,7 +1031,7 @@ test('key revocation drains immediately and replacement keys never inherit lease
   assert.equal((await f.scope.require(replacementCaller, 'write')).id, keyCaller.actorId);
   const next = await f.offer(replacementCaller);
   await f.scope.revokeKey(human, replacement.key.id);
-  await f.events.drain();
+  await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
       async (sql) =>
@@ -1055,13 +1153,14 @@ test('automatic dispatch moves past a candidate whose offer cannot be built', as
     ).map((row) => [row.attempts, row.last_code, row.last_session_id]),
     [[1, 'context_too_large', null]],
   );
-  // With nothing else leasable, the runner sees why the remaining candidate cannot be offered.
+  // With nothing else leasable, the runner is answered with the decision, never the error.
   await f.sessions.release(f.source, { sessionId: leased.session!.id, runnerId: 'machine' });
   f.onBuild(() => {
     throw new MervError('context_too_large', 'Context exceeds the budget', 400);
   });
-  await assert.rejects(async () => await f.sessions.lease(f.source, autoInput()), {
-    code: 'context_too_large',
+  assert.deepEqual(await f.sessions.lease(f.source, autoInput()), {
+    session: null,
+    reason: 'retry_backoff',
   });
 });
 
@@ -1369,7 +1468,7 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
     if (stage === 'metadata') {
       const original = f.workflows.dispatchCandidates.bind(f.workflows);
       t.mock.method(f.workflows, 'dispatchCandidates', async (caller: Caller, tx: Transaction) => {
-        const result = original(caller, tx);
+        const result = await original(caller, tx);
         await tx.run(
           "UPDATE session_runners SET presence_json=jsonb_set(presence_json::jsonb,'{platforms,0,enabled}','false')::text WHERE id=?",
           runner.id,
@@ -1404,7 +1503,8 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
     );
     assert.equal(persisted.capacity, 1);
     assert.equal(persisted.platforms[0].enabled, true);
-    assert.equal(f.builds, stage === 'metadata' ? 0 : 1);
+    // The fence after the offer catches a change either callback made; the offer rolls back.
+    assert.equal(f.builds, 1);
   }
 });
 
@@ -1666,12 +1766,17 @@ test('upgrading the historical one-worker schema preserves a live execution and 
   const f = await fixture(t, true);
   const { token, session } = await f.offer();
   const active = await f.sessions.authenticate(token);
-  const runner = await f.sessions.heartbeatRunner(f.source, {
-    runnerId: 'runner',
-    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
-    platforms: [{ name: 'test', harness: 'command', enabled: true, parallelism: 1 }],
-    capacity: 1,
-  });
+  // Current code runs only on current tables, so the historical schema gets its row by hand.
+  const runner = { id: 'runner_legacy' };
+  await f.state.transaction(
+    async (tx) =>
+      await tx.run(
+        "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,'legacy-owner','runner','{}','{}','{}',?)",
+        runner.id,
+        f.source.projectId,
+        new Date().toISOString(),
+      ),
+  );
   await f.state.transaction(
     async (tx) =>
       await tx.run(
@@ -1813,9 +1918,14 @@ test('agent observations retain tool timings and estimates across assignments wi
       }),
   );
   await resumed;
+  // The call ends while its process closes, before the close marks what is in flight.
+  (f.sessions as unknown as { sweeping?: Promise<unknown> }).sweeping = Promise.resolve().then(
+    async () => {
+      complete();
+      await unfinished;
+    },
+  );
   await f.restart();
-  complete();
-  await unfinished;
   observed = await f.sessions.agentObservation(f.owner, agent.id);
   assert.equal(observed.agent.id, agent.id);
   assert.equal(observed.assignments.length, 2);
@@ -2046,7 +2156,7 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   assert.ok((await f.sessions.lease(f.source, autoInput())).session);
   assert.equal((await f.sessions.projectStatus(f.owner)).liveSessionCount, 2);
   await f.scope.revokeActor(f.owner, f.source.actorId);
-  await f.events.drain();
+  await f.sessions.sweep();
   await assert.rejects(f.sessions.agentSelf(token), { code: 'unauthorized' });
 });
 
@@ -2063,7 +2173,8 @@ for (const boundary of ['offer expiry', 'hard deadline'] as const) {
             f.time(),
         );
     });
-    await assert.rejects(f.sessions.authenticate(token), { code: 'session_expired', status: 401 });
+    // Expired between the snapshot and the writer that would activate it: its credential with it.
+    await assert.rejects(f.sessions.authenticate(token), { status: 401 });
     assert.equal(checks, 2);
     assert.deepEqual(await f.workflows.workStarts(f.source, session.instanceId), []);
     assert.equal(
@@ -2075,6 +2186,7 @@ for (const boundary of ['offer expiry', 'hard deadline'] as const) {
     const closed = await f.sessions.get(f.source, session.id);
     assert.equal(closed.status, 'expired');
     assert.equal(closed.closeReason, 'session_expired');
+    await f.sessions.sweep();
     assert.equal(
       await f.state.read(
         async (sql) =>

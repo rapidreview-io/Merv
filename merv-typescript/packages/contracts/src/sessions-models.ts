@@ -306,12 +306,12 @@ export interface BudgetStatus {
   maxTokens: number | null;
   /**
    * Wall-clock is measured by Merv. Cost and tokens are only what runners reported: null
-   * while no closed session in scope has reported, never a zero that was not measured.
+   * while sessions in scope were activated and none reported, never a zero that was not measured.
    * They cover worker sessions alone; a remote job's own charges are not in them.
    */
   used: { wallMs: number; costMicros: number | null; tokens: number | null };
   exceeded: ('wall' | 'cost' | 'tokens')[];
-  /** Closed sessions in scope whose runner reported no usage. */
+  /** Closed sessions in scope that were activated and reported no usage. */
   unreportedSessions: number;
   /**
    * Bounds that cannot be judged because of them: a cost or token bound is enforced only

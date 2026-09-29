@@ -257,7 +257,7 @@ export interface Sessions {
     token: string,
     input: unknown,
     projectId?: unknown,
-  ): Promise<{ controlToken: string; caller: Caller }>;
+  ): Promise<{ controlToken: string }>;
   authenticateManaged(token: string): Promise<Caller>;
   /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
   managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;

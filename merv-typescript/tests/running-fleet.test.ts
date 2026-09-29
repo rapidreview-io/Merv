@@ -443,7 +443,7 @@ test('a refusal says what refused it, one word for it on the Fleet page too, and
       {
         kind: 'Fleet machine',
         title: 'Workflow agent',
-        says: ['Refused · no sandbox connection · ', { ago: b.updatedAt }],
+        says: ['Refused · no sandbox connection or price · ', { ago: b.updatedAt }],
       },
     ],
   );

@@ -354,10 +354,12 @@ from step 1 have to be done again.
   most the one call it had begun. Nothing caps it. Each
   finished call writes one `pi_relay_usage` record to Main's stderr with the
   model and its input, cached, output and reasoning tokens, and nothing about
-  the person. Spend by model for the last day:
+  the person. A call refused before it was sent, or answered with an error
+  status, writes one with zero tokens and `refund: true`, which returns its
+  charge. Spend by model for the last day:
   ```
   sudo docker logs --since 24h merv-typescript-control-1 2>&1 | grep '"pi_relay_usage"' |
-    jq -rs 'group_by(.model)[] | [.[0].model, length, (map(.inputTokens)|add), (map(.outputTokens)|add)] | @tsv'
+    jq -rs 'map(select(.refund | not)) | group_by(.model)[] | [.[0].model, length, (map(.inputTokens)|add), (map(.outputTokens)|add)] | @tsv'
   ```
   Look again when Astra passes about $50 a day.
 - **Adding a model.** Probe it first on the control host with the provider key
@@ -532,6 +534,10 @@ the only global slot held.
 - Find it with the query below. Use `->>`, because `->` never matches a JSON
   `null`.
 - A `provisioning` row may still have its create in flight; it is not a wedge.
+- Closing Fleet leaves a row with no runtime as it is. The next Fleet's first
+  pass recovers any machine by the same create key, then stops it, or launches
+  it when a workflow step still wants it. Such a row is a wedge only if it
+  outlives that pass.
 - Unless the failure provably happened before any network call, first confirm
   that Sandboxes holds no sandbox for the allocation, with the second query in
   the Sandboxes database.

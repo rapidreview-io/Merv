@@ -30,7 +30,10 @@ import { managedNoncePostgresMigration } from '../packages/sessions/src/managed-
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
-import { migration as fleetMigration } from '../packages/fleet/src/schema.js';
+import {
+  migration as fleetMigration,
+  migrationV2 as fleetMigrationV2,
+} from '../packages/fleet/src/schema.js';
 import { migration as piMigration } from '../packages/pi/src/schema.js';
 
 type DomainMigration = { owner: string; version: number; postgres: string };
@@ -109,6 +112,7 @@ test('domain migrations are PostgreSQL without SQLite constructs', () => {
   all.push(
     ...[
       { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },
+      { owner: 'fleet', version: fleetMigrationV2.version, postgres: fleetMigrationV2.sql },
       { owner: 'pi', version: piMigration.version, postgres: piMigration.sql },
     ],
   );

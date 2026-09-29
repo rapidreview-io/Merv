@@ -2,9 +2,11 @@ import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
+import { present } from './running.js';
 import { z } from 'zod';
 
-/** Allocation requests are a server-owner capability, never an agent tool. */
+/** Allocation requests are a server-owner capability, never an agent tool. The tools answer with
+ *  the redacted view the Fleet page shows. */
 export const fleetToolsPlugin = {
   name: 'merv-fleet-tools',
   inject: ['fleet', 'tools'],
@@ -17,7 +19,7 @@ export const fleetToolsPlugin = {
           'List the project’s open Fleet allocations and its 50 latest ended ones, with machine lifecycle status.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
-        handler: (caller: Caller) => ctx.fleet.list(caller, 50),
+        handler: async (caller: Caller) => (await ctx.fleet.list(caller, 50)).map(present),
       },
       {
         name: 'fleet.get',
@@ -25,7 +27,8 @@ export const fleetToolsPlugin = {
           'Read one Fleet allocation. A requested shutdown is distinct from confirmed machine deletion.',
         inputSchema: target,
         readOnly: true,
-        handler: (caller: Caller, input: { id: string }) => ctx.fleet.inspect(caller, input.id),
+        handler: async (caller: Caller, input: { id: string }) =>
+          present(await ctx.fleet.inspect(caller, input.id)),
       },
       {
         name: 'fleet.drain',
@@ -33,7 +36,8 @@ export const fleetToolsPlugin = {
         description:
           'Stop admission on this allocation, retain the current assignment’s results, then release its machine. Only its source or a project administrator can drain it.',
         inputSchema: target,
-        handler: (caller: Caller, input: { id: string }) => ctx.fleet.drain(caller, input.id),
+        handler: async (caller: Caller, input: { id: string }) =>
+          present(await ctx.fleet.drain(caller, input.id)),
       },
       {
         name: 'fleet.halt',
@@ -41,7 +45,8 @@ export const fleetToolsPlugin = {
         description:
           'Fence this allocation and request immediate machine deletion. In-flight work may be interrupted. Only its source or a project administrator can halt it.',
         inputSchema: target,
-        handler: (caller: Caller, input: { id: string }) => ctx.fleet.cancel(caller, input.id),
+        handler: async (caller: Caller, input: { id: string }) =>
+          present(await ctx.fleet.cancel(caller, input.id)),
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));

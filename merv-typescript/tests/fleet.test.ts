@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import { createService, MervError, type Caller } from '@merv/contracts';
+import { createService, MervError, type Caller, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type {
   SandboxRuntimeHandle,
   SandboxRuntimeProfileRef,
   SandboxRuntimes,
 } from '@merv/sandboxes';
+import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
+import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -436,6 +438,54 @@ test('a stopped create without a machine recovers once, then waits out the lease
   assert.equal(f.runtimes.createKeys.length, attempts, 'nothing is created while waiting');
 });
 
+test('a stopping machine is stopped once and frees its slot at releaseBy, even while still deleting', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const cancelled = await f.fleet.request(f.caller, input('cancelled'));
+  const deleting = await f.fleet.request(f.caller, input('deleting'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [stopped, gone] = [await machine(cancelled.id), await machine(deleting.id)];
+  await f.fleet.cancel(f.caller, cancelled.id);
+  // The provider itself begins deleting the other machine: it is watched, never stopped.
+  const live = [...f.runtimes.byKey.values()].find((item) => item.sandboxId === gone)!;
+  Object.assign(live, { state: 'deleting', ready: false, revision: live.revision + 1 });
+  for (const _ of [1, 2, 3, 4]) await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  const phases = async () =>
+    await Promise.all(
+      [cancelled.id, deleting.id].map(async (id) => (await f.fleet.inspect(f.caller, id)).phase),
+    );
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  // The lease is ten minutes; a minute more covers a reply in flight.
+  assert.equal(
+    (await f.fleet.inspect(f.caller, cancelled.id)).releaseBy,
+    '2026-09-22T00:11:00.000Z',
+  );
+  f.advance(659_999);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  f.advance(1);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['released', 'released']);
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  assert.equal(await f.fleet.free(f.caller.projectId), 2);
+});
+
+test('a lease written with an offset is judged by its time', async (t) => {
+  const f = await fixture(t);
+  const { id } = await f.fleet.request(f.caller, input('offset'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  // 01:00Z, an hour ahead, though it sorts before the clock's own text.
+  const live = f.runtimes.byKey.values().next().value!;
+  Object.assign(live, { leaseExpiresAt: '2026-09-21T23:00:00-02:00', revision: live.revision + 1 });
+  await f.fleet.tick();
+  f.runtimes.inspectError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  f.advance(1000);
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([current.phase, current.error], ['running', 'runtime_unavailable']);
+});
+
 test('a machine the service stops answering for keeps running, then frees its slot', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('unanswered'));
@@ -553,6 +603,52 @@ test('the Fleet page lists open work and bounded history in plain words', async 
   );
   assert.match(rows[3].attention!, /^No machine yet:/);
   assert.equal(rows[3].updatedAt, since, 'retries do not reset the standing clock');
+});
+
+test('Fleet tools answer with the redacted view, never the source, person or launch ids', async (t) => {
+  const f = await fixture(t);
+  const ctx = new Context();
+  const tools = new ToolRegistry(f.scope, f.scope.toolPolicy, (fn) => f.state.snapshot(fn));
+  ctx.provide('fleet', f.fleet);
+  ctx.provide('tools', tools);
+  await ctx.plugin(fleetToolsPlugin);
+  t.after(() => ctx.fiber.dispose());
+  f.owner.payer = async () => 'person-digest';
+  const allocation = await f.fleet.request(f.caller, input('redacted'));
+  await f.fleet.tick(); // Reserve and provision.
+  await f.fleet.tick(); // Launch.
+  const raw = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(raw.person, 'person-digest');
+  assert.equal(raw.runtime?.launch?.deliveryState, 'launched');
+  const view = {
+    id: allocation.id,
+    title: 'Workflow agent',
+    owner: { kind: 'workflow', id: 'work_1' },
+    status: 'starting',
+    phase: 'starting',
+    intent: 'run',
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    deadlineAt: raw.deadlineAt,
+    attention: null,
+    runtime: { sandboxId: 'sbx_1', state: 'ready' },
+  };
+  assert.deepEqual(await tools.call('fleet.get', f.caller, { id: allocation.id }), view);
+  assert.deepEqual(await tools.call('fleet.list', f.caller, {}), [view]);
+  const text = JSON.stringify(await tools.call('fleet.drain', f.caller, { id: allocation.id }));
+  for (const secret of [
+    'person-digest',
+    f.caller.actorId,
+    'rln_',
+    'rtj_',
+    'fixed-release',
+    ':launch',
+  ])
+    assert.equal(text.includes(secret), false, secret);
+  const halted = (await tools.call('fleet.halt', f.caller, { id: allocation.id })) as {
+    intent: string;
+  };
+  assert.equal(halted.intent, 'stop');
 });
 
 test('lost create and launch replies retry stable keys and consumed bootstrap remains live', async (t) => {
@@ -673,6 +769,7 @@ test('source revocation and missing owner stop a live allocation', async (t) => 
   const missing = await f.fleet.request(f.caller, input('missing-owner'));
   await f.fleet.tick();
   f.unregister();
+  f.advance(300_000);
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, missing.id)).intent, 'stop');
   assert.ok(f.runtimes.stopped.includes('sbx_2'));
@@ -688,6 +785,11 @@ test('active unchanged observations perform no writes; admission requires launch
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'running');
   assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), true);
+  // Another epoch, or an owner that no longer accepts the allocation, is never admitted.
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 2, tx)), false);
+  f.setValid(false);
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), false);
+  f.setValid(true);
   const writes = countWrites(f.state);
   const before = writes();
   f.runtimes.heartbeatOnInspect = true;
@@ -794,33 +896,290 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   await host.close();
 });
 
-test('a person’s machines stop renting once today’s compute is spent; another person’s still rent', async (t) => {
-  const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2 });
+/** A fixture whose owner names the person each request is for: `a_1` is for `person_a`. */
+async function capped(t: TestContext, limits: FleetConfig = {}) {
+  const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2, ...limits });
   f.unregister();
-  const payers = new Map([
-    ['a', 'person_a'],
-    ['b', 'person_b'],
-  ]);
   f.fleet.registerOwner('workflow', {
     ...f.owner,
-    payer: async (_source, ownerId) => payers.get(ownerId.split('_')[0]!) ?? null,
+    payer: async (_source, ownerId) => (ownerId.startsWith('c_') ? null : `person_${ownerId[0]}`),
   });
-  // One dollar an hour for the one machine this Fleet rents.
-  f.runtimes.describe = async () => ({
-    key: 'standard',
-    vcpu: 1,
-    memoryGiB: 4,
-    diskGB: 8,
-    maxHourlyUsd: 1,
-  });
+  const price = (maxHourlyUsd: number | null) => {
+    f.runtimes.describe = async (_projectId, key) =>
+      maxHourlyUsd === null ? null : { key, vcpu: 1, memoryGiB: 4, diskGB: 8, maxHourlyUsd };
+  };
   const ask = (id: string) =>
     f.fleet.request(f.caller, { requestId: id, owner: { kind: 'workflow', id } });
-  assert.equal((await ask('a_1')).person, 'person_a');
+  const get = (id: string) => f.fleet.inspect(f.caller, id);
+  return { ...f, price, ask, get };
+}
+
+test('a person’s machines stop renting once today’s compute is spent; another person’s still rent', async (t) => {
+  const f = await capped(t);
+  // One dollar an hour for each machine.
+  f.price(1);
+  const first = await f.ask('a_1');
+  assert.equal(first.person, 'person_a');
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).usdPerHour, 1);
   f.advance(2 * 3_600_000);
-  await assert.rejects(ask('a_2'), { code: 'fleet_compute_cap', status: 429 });
-  assert.equal((await ask('b_1')).person, 'person_b');
+  await assert.rejects(f.ask('a_2'), { code: 'fleet_compute_cap', status: 429 });
+  // Released, the machine's hours still count: a new request for the same person is refused.
+  await f.fleet.cancel(f.caller, first.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).phase, 'released');
+  await assert.rejects(f.ask('a_3'), { code: 'fleet_compute_cap', status: 429 });
+  assert.equal((await f.ask('b_1')).person, 'person_b');
   // An owner that names nobody is not counted, nor held back.
-  assert.equal((await ask('c_1')).person, undefined);
+  assert.equal((await f.ask('c_1')).person, undefined);
+});
+
+test('today’s compute counts open machines to now at the price they were reserved at, and never a request without a machine', async (t) => {
+  const f = await capped(t);
+  f.price(1);
+  // Refused before any machine existed: its time costs nothing.
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  const refused = await f.ask('a_1');
+  await f.fleet.tick();
+  const { error, usdPerHour } = await f.get(refused.id);
+  assert.deepEqual([error, usdPerHour], ['runtime_refused', 1]);
+  f.runtimes.createError = undefined;
+  const open = await f.ask('a_2');
+  await f.fleet.tick();
+  assert.ok((await f.get(open.id)).runtime);
+  // A later price is not what the machine was rented at.
+  f.price(100);
+  f.advance(90 * 60_000);
+  const queued = await f.ask('a_3');
+  f.advance(30 * 60_000);
+  // Two hours of the open machine; the queued request has no machine yet.
+  assert.equal((await f.get(queued.id)).phase, 'queued');
+  await assert.rejects(f.ask('a_4'), { code: 'fleet_compute_cap' });
+  // A new UTC day starts from nothing, though the machine is still open.
+  f.advance(22 * 3_600_000);
+  assert.equal((await f.ask('a_5')).person, 'person_a');
+});
+
+test('a capped request waits for its offer’s price, then is refused ten minutes after Fleet could first read it', async (t) => {
+  const f = await capped(t);
+  const lines: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  const unpriced = () => lines.filter((line) => line.includes('fleet.unpriced'));
+  f.price(null);
+  const waiting = await f.ask('a_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(waiting.id)).phase, 'queued');
+  assert.deepEqual(f.runtimes.createKeys, []);
+  // An offer that lists its price admits the request at that price.
+  f.price(0.5);
+  await f.fleet.tick();
+  const admitted = await f.get(waiting.id);
+  assert.deepEqual([admitted.phase, admitted.usdPerHour], ['provisioning', 0.5]);
+  assert.deepEqual(f.runtimes.createKeys, [`${waiting.id}:create`]);
+  // One that never does is refused once ten minutes have passed, and said so once.
+  f.price(null);
+  const refused = await f.ask('a_2');
+  f.advance(599_999);
+  await f.fleet.tick();
+  assert.equal((await f.get(refused.id)).phase, 'queued');
+  f.advance(1);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const current = await f.get(refused.id);
+  assert.deepEqual(
+    [current.phase, current.intent, current.error, current.runtime],
+    ['released', 'stop', 'runtime_refused', null],
+  );
+  assert.deepEqual(
+    unpriced().map((line) => JSON.parse(line)),
+    [{ event: 'fleet.unpriced', allocation: refused.id, code: 'fleet_unpriced' }],
+  );
+  // After a restart the ten minutes start again: the first options read may not have finished.
+  const late = await f.ask('a_3');
+  let now = Date.parse(late.createdAt) + 900_000;
+  const successor = await createService(
+    new FleetService(
+      f.state,
+      f.scope,
+      f.runtimes,
+      { enabled: true, dailyUsdPerPerson: 2 },
+      () => now,
+    ),
+  );
+  successor.registerOwner('workflow', { ...f.owner, payer: async () => 'person_a' });
+  await successor.tick();
+  assert.equal((await f.get(late.id)).phase, 'queued');
+  now += 600_000;
+  await successor.tick();
+  assert.equal((await f.get(late.id)).error, 'runtime_refused');
+  assert.equal(unpriced().length, 2);
+  await successor.close();
+});
+
+test('a request priced after it waited, then refused before any machine, costs nothing', async (t) => {
+  const f = await capped(t, { globalLimit: 1 });
+  f.price(3);
+  const occupant = await f.ask('c_1');
+  await f.fleet.tick();
+  const waited = await f.ask('a_1');
+  f.advance(50 * 60_000);
+  await f.fleet.cancel(f.caller, occupant.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const refused = await f.get(waited.id);
+  assert.deepEqual(
+    [refused.phase, refused.error, refused.runtime, refused.usdPerHour],
+    ['released', 'runtime_refused', null, 3],
+  );
+  // Fifty minutes from its request at $3 an hour would be over the cap, had it had a machine.
+  assert.equal((await f.ask('a_2')).person, 'person_a');
+});
+
+test('an unpriced request waits without taking the writer lock, and is refused on time while the queue is full', async (t) => {
+  const f = await capped(t, { globalLimit: 1 });
+  f.price(null);
+  const waiting = await f.ask('a_1');
+  const transactions = t.mock.method(f.state, 'transaction');
+  await f.fleet.tick();
+  assert.equal(transactions.mock.callCount(), 0, 'nothing to admit, nothing to write');
+  transactions.mock.restore();
+  // Every slot taken, the unpriced request is still refused ten minutes on.
+  const occupant = await f.ask('c_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(occupant.id)).phase, 'provisioning');
+  f.advance(600_000);
+  await f.fleet.tick();
+  const refused = await f.get(waiting.id);
+  assert.deepEqual([refused.phase, refused.error], ['released', 'runtime_refused']);
+});
+
+test('a capped request whose place loses its connection is refused at once, not after the unpriced wait', async (t) => {
+  const f = await capped(t);
+  const lines: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  f.price(1);
+  const stranded = await f.ask('a_1');
+  f.runtimes.disconnected.add(f.caller.projectId);
+  await f.fleet.tick();
+  const current = await f.get(stranded.id);
+  assert.deepEqual(
+    [current.phase, current.error, current.createAttempted, current.usdPerHour],
+    ['released', 'runtime_refused', false, undefined],
+  );
+  assert.deepEqual(f.runtimes.createKeys, []);
+  assert.deepEqual(
+    lines.filter((line) => line.includes('fleet.unpriced')),
+    [],
+    'a lost connection is not a missing price',
+  );
+});
+
+test('prices are read once per place and profile each pass, outside any transaction, and never by a request', async (t) => {
+  const f = await capped(t);
+  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 600 };
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const otherCaller: Caller = {
+    projectId: other.project.id,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  const reads: string[] = [];
+  f.runtimes.describe = async (projectId, key) => {
+    assert.equal(f.state.ambient, undefined, 'no price is read inside a transaction');
+    reads.push(`${projectId === f.caller.projectId ? 'own' : 'other'} ${key}`);
+    return { key, vcpu: 1, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.1 };
+  };
+  const ask = (
+    caller: Caller,
+    id: string,
+    profile?: string,
+    tx?: Parameters<typeof f.fleet.request>[2],
+  ) => f.fleet.request(caller, { requestId: id, owner: { kind: 'workflow', id }, profile }, tx);
+  await ask(f.caller, 'a_1');
+  await ask(f.caller, 'a_2');
+  await ask(f.caller, 'b_1', 'large');
+  await f.state.transaction((tx) => ask(f.caller, 'b_2', 'large', tx));
+  await ask(otherCaller, 'a_3');
+  assert.deepEqual(reads, [], 'a request reads no price');
+  await f.fleet.tick();
+  assert.deepEqual(reads.toSorted(), ['other standard', 'own large', 'own standard']);
+  assert.deepEqual(
+    (await f.fleet.list(f.caller)).map((a) => [a.phase, a.usdPerHour]),
+    Array.from({ length: 4 }, () => ['provisioning', 0.1]),
+  );
+});
+
+test('a storage cap refusal is a wallet refusal', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.createError = new MervError('sandbox_storage_cap_exceeded', 'Storage is full', 403);
+  const refused = await f.fleet.request(f.caller, input('storage'));
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, refused.id);
+  assert.deepEqual([current.phase, current.error], ['released', 'wallet_refused']);
+});
+
+test('the reads every pass makes walk their indexes, not the whole history', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 1, dailyUsdPerPerson: 20 });
+  f.fleet.registerOwner('paid', { ...f.owner, payer: async () => 'person_7' });
+  const template = await f.fleet.request(f.caller, input('template'));
+  const plans = await f.state.transaction(async (tx) => {
+    await tx.run('SET LOCAL enable_seqscan = off');
+    // 5,000 rows of history, one in a hundred still open, over fifty people and about 100 days.
+    await tx.run(
+      `INSERT INTO fleet_allocations(id,project_id,source_hash,request_id,input_hash,phase,created_at,data_json)
+       SELECT 'flt_seed_' || n, project_id, source_hash, 'seed_' || n, input_hash, row.phase, row.created_at,
+         (data_json::jsonb || jsonb_build_object('id', 'flt_seed_' || n, 'phase', row.phase,
+           'createdAt', row.created_at, 'person', 'person_' || n % 50,
+           'owner', jsonb_build_object('kind', 'workflow', 'id', 'work_' || n)))::text
+       FROM fleet_allocations, generate_series(1, 5000) AS n,
+         LATERAL (SELECT CASE WHEN n % 100 = 0 THEN 'queued' ELSE 'released' END AS phase,
+           to_char(timestamp '2026-06-01' + n * interval '30 minutes', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+             AS created_at) AS row
+       WHERE id=?`,
+      template.id,
+    );
+    const count = await tx.get<{ n: number }>('SELECT count(*)::int AS n FROM fleet_allocations');
+    assert.equal(count?.n, 5001);
+    const all = t.mock.method(tx, 'all');
+    const explain = async (sql: string, ...params: SqlValue[]) =>
+      (await tx.all<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, ...params))
+        .map((row) => row['QUERY PLAN'])
+        .join('\n');
+    /** EXPLAIN the one statement `read` sends, exactly as Fleet sends it. */
+    const plan = async (read: () => Promise<unknown>) => {
+      all.mock.resetCalls();
+      await read();
+      assert.equal(all.mock.callCount(), 1);
+      const [sql, ...params] = all.mock.calls[0]!.arguments;
+      return explain(sql, ...params);
+    };
+    return {
+      open: await plan(() => f.fleet.free(f.caller.projectId, tx)),
+      owned: await plan(() => f.fleet.listOwned(f.owner, ['work_7', 'work_4200'])),
+      // The spend cap's read of one person's recent rentals.
+      person: await plan(() =>
+        f.fleet.request(f.caller, { requestId: 'paid', owner: { kind: 'paid', id: 'x' } }, tx),
+      ),
+    };
+  });
+  // Which scan the planner picks depends on its estimates; that it can use the index at all
+  // depends only on the query text matching the index, which is what this guards.
+  assert.match(plans.open, /fleet_allocations_open\b/, plans.open);
+  assert.match(plans.owned, /fleet_allocations_open\b/, plans.owned);
+  assert.match(plans.owned, /fleet_allocations_owner\b/, plans.owned);
+  assert.match(plans.person, /Index Cond: .*'person'.*created_at >=/, plans.person);
+  assert.match(plans.person, /fleet_allocations_person\b/, plans.person);
 });
 
 test('missing owner releases an untouched allocation without renting a machine', async (t) => {
@@ -828,6 +1187,10 @@ test('missing owner releases an untouched allocation without renting a machine',
   const allocation = await f.fleet.request(f.caller, input('unowned'));
   assert.equal(allocation.createAttempted, false);
   f.unregister();
+  // After a restart, owners have five minutes to register before anything of theirs is judged.
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'queued');
+  f.advance(300_000);
   await f.fleet.tick();
   const current = await f.fleet.inspect(f.caller, allocation.id);
   assert.equal(current.phase, 'released');
@@ -871,17 +1234,110 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   await f.fleet.close();
   assert.deepEqual(f.runtimes.stopped, [chat1], 'only the chat machine ends with the process');
   assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
-  const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
-    ),
-  );
+  const restart = async () =>
+    await createService(
+      new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+        Date.parse('2026-09-22T00:00:00Z'),
+      ),
+    );
+  // A Fleet that closes before the owner registers again never fences what it did not own.
+  await (await restart()).close();
+  const successor = await restart();
+  // Before its owner registers again the kept machine is watched, never stopped.
+  await successor.tick();
+  assert.equal((await successor.inspect(f.caller, work.id)).intent, 'run');
+  assert.ok(!f.runtimes.stopped.includes(kept1));
   successor.registerOwner('workflow', kept);
   f.runtimes.leaseSoon(kept1);
   await successor.tick();
   assert.ok(f.runtimes.renewed.includes(kept1), 'the restarted Fleet renews the kept machine');
   assert.equal((await successor.inspect(f.caller, work.id)).intent, 'run');
   await successor.close();
+});
+
+test('closing leaves a kept owner’s queued and booting work to the successor, which waits for the owner', async (t) => {
+  const f = await fixture(t, { globalLimit: 3, projectLimit: 3 });
+  f.unregister();
+  const kept: FleetOwner = { ...f.owner, keepsRunning: true };
+  f.fleet.registerOwner('workflow', kept);
+  f.runtimes.failCreateOnce = true;
+  const lost = await f.fleet.request(f.caller, input('lost'));
+  await f.fleet.tick();
+  const booting = await f.fleet.request(f.caller, input('booting'));
+  await f.fleet.tick();
+  const queued = await f.fleet.request(f.caller, input('queued'));
+  await f.fleet.close();
+  const phases = async () =>
+    await Promise.all(
+      [lost.id, booting.id, queued.id].map(async (id) => {
+        const { phase, intent } = await f.fleet.inspect(f.caller, id);
+        return `${phase} ${intent}`;
+      }),
+    );
+  const closed = ['uncertain run', 'provisioning run', 'queued run'];
+  assert.deepEqual(await phases(), closed, 'closing admits, creates and stops nothing kept');
+  assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
+  const successor = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+      Date.parse('2026-09-22T00:00:10Z'),
+    ),
+  );
+  await successor.tick();
+  assert.deepEqual(await phases(), closed, 'nothing moves before the owner registers again');
+  assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
+  successor.registerOwner('workflow', kept);
+  await successor.tick();
+  assert.deepEqual(await phases(), ['provisioning run', 'starting run', 'provisioning run']);
+  assert.deepEqual(f.runtimes.launchKeys, [`${booting.id}:launch`]);
+  assert.equal(f.runtimes.createKeys.filter((key) => key === `${lost.id}:create`).length, 2);
+  await successor.close();
+});
+
+test('a create whose reply was lost before closing is recovered by the successor, not while closing', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.failCreateOnce = true;
+  const { id } = await f.fleet.request(f.caller, input('lost'));
+  await f.fleet.tick();
+  await f.fleet.close();
+  const closed = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(
+    [closed.intent, closed.runtime, closed.releaseBy, f.runtimes.createKeys],
+    ['stop', null, undefined, [`${id}:create`]],
+  );
+  const successor = await createService(
+    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
+    ),
+  );
+  await successor.tick();
+  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create`]);
+  await successor.tick();
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  await successor.close();
+});
+
+test('a machine without a registered owner is watched, not stopped, until the owner grace ends', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const gone = await f.fleet.request(f.caller, input('gone'));
+  const idle = await f.fleet.request(f.caller, {
+    requestId: 'idle',
+    owner: { kind: 'workflow', id: 'work_2' },
+  });
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [deleted, live] = [await machine(gone.id), await machine(idle.id)];
+  f.unregister();
+  f.runtimes.confirmStopped(deleted);
+  f.runtimes.leaseSoon(live);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, gone.id)).phase, 'released');
+  const waiting = await f.fleet.inspect(f.caller, idle.id);
+  assert.deepEqual([waiting.phase, waiting.intent], ['running', 'run']);
+  assert.deepEqual([f.runtimes.stopped, f.runtimes.renewed], [[], []]);
+  f.advance(300_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, idle.id)).intent, 'stop');
+  assert.deepEqual(f.runtimes.stopped, [live]);
 });
 
 test('drain waits for owner completion and close leaves pending delete for a successor', async (t) => {
@@ -944,11 +1400,14 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   assert.ok(inspected('sbx_1') - running <= 1, 'a running machine waits for the interval');
   f.setObservation('running');
   await within(1000, async () => (await phase()) === 'running');
+  // Work held by the caps waits for the interval too.
+  await f.fleet.request(f.caller, input('held'));
   await sleep(450);
   const before = reads;
   await sleep(800);
   // Each pass reads the allocations twice: once all are running, only the interval passes.
   assert.ok(reads - before <= 2, 'Fleet slows down once nothing is starting or stopping');
+  assert.equal(f.runtimes.createKeys.length, 2);
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {

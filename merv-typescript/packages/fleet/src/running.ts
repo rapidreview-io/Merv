@@ -1,5 +1,6 @@
 import {
   keyId,
+  type Json,
   runningKey,
   runningKeyPattern,
   type RunningAttention,
@@ -14,10 +15,10 @@ import type { RunningContribution } from '@merv/ui/types';
 import type { Fleet, FleetAllocation, FleetPhase } from './types.js';
 
 /**
- * Fleet's words, which its own page and the Running page both read, and Fleet's part of the
- * Running page. Every open allocation is a machine in the sessions lane until a session binds
- * it; then the session's node absorbs it and the Fleet machine section follows the session's
- * sidebar. Fleet adds no controls there, and no size or price.
+ * Fleet's one view: its words and the redacted allocation its page and tools show, and Fleet's
+ * part of the Running page. Every open allocation is a machine in the sessions lane until a
+ * session binds it; then the session's node absorbs it and the Fleet machine section follows the
+ * session's sidebar. Fleet adds no controls there, and no size or price.
  */
 
 /** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
@@ -51,9 +52,11 @@ export const failing = (a: FleetAllocation): string | null =>
     : null;
 
 /** On its way: no machine yet, or one not yet taking work. */
-const STARTING = new Set(['waiting', 'starting', 'launching', 'retrying']);
+const STARTING = ['waiting', 'starting', 'retrying'];
 /** Going away: finishing its work, or stopping. */
-const ENDING = new Set(['finishing', 'stopping', 'releasing']);
+const ENDING = ['finishing', 'stopping'];
+/** Every open allocation's status. */
+export const live = [...STARTING, 'running', ...ENDING];
 /** The provider's own word, shown only where it explains trouble. */
 const TROUBLE = new Set(['unknown', 'failed', 'deleting', 'stopped']);
 const who = "An operator checks the project's sandbox connection";
@@ -61,14 +64,14 @@ const who = "An operator checks the project's sandbox connection";
 const open = (a: FleetAllocation) => a.phase !== 'released';
 const failures = (n: number): RunningPhrase => [{ count: n }, n === 1 ? ' failure' : ' failures'];
 
-/** What refused a request before any machine existed; without a connection Fleet asks nobody. */
+/** What refused a request before any machine existed; without a connection or price, nobody. */
 const refusal = (a: FleetAllocation): string | null =>
   a.error === 'wallet_refused'
     ? 'Refused · spending limit · '
     : a.error !== 'runtime_refused'
       ? null
       : a.createAttempted === false
-        ? 'Refused · no sandbox connection · '
+        ? 'Refused · no sandbox connection or price · '
         : 'Refused by the sandbox service · ';
 
 /** The status word, then how long it has stood, or how often the service has failed it. */
@@ -80,6 +83,25 @@ function standing(a: FleetAllocation): RunningPhrase {
     ? [said, ...failures(a.failures)]
     : [said, { since: a.updatedAt }];
 }
+
+/** What the Fleet page and tools show of an allocation: never its source, person or the ids
+ *  of its launch. */
+export const present = (a: FleetAllocation): Json => {
+  const failure = failing(a);
+  return {
+    id: a.id,
+    title: titleOf(a),
+    owner: a.owner,
+    status: statusOf(a),
+    phase: a.phase,
+    intent: open(a) ? a.intent : null,
+    createdAt: a.createdAt,
+    updatedAt: a.updatedAt,
+    deadlineAt: open(a) ? a.deadlineAt : null,
+    attention: failure && `${failure}. Check the project's sandbox connection.`,
+    runtime: a.runtime ? { sandboxId: a.runtime.sandboxId, state: a.runtime.state } : null,
+  };
+};
 
 /**
  * A request the service keeps failing. While Fleet keeps its machine working, that is said in
@@ -111,8 +133,8 @@ export function fleetNode(a: FleetAllocation): RunningNode {
     title: titleOf(a),
     // Only a machine the service made is a VM; before that there is only the request.
     lines: a.runtime ? [standing(a), ['on a Fleet VM']] : [standing(a)],
-    look: STARTING.has(status) ? 'dashed' : ENDING.has(status) ? 'quiet' : 'solid',
-    ...(STARTING.has(status) ? { dot: 'starting' as const } : {}),
+    look: STARTING.includes(status) ? 'dashed' : ENDING.includes(status) ? 'quiet' : 'solid',
+    ...(STARTING.includes(status) ? { dot: 'starting' as const } : {}),
     ...(need ? { attention: need } : {}),
     // Why it was rented, not what it will run: its runner takes whichever work comes first.
     ...(work ? { links: [{ to: work, verb: 'rented for' as const, waiting: true }] } : {}),

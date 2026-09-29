@@ -68,7 +68,6 @@ export const managedRunnerRules: CallerRules = {
 
 export class ManagedRunnerBindings {
   private validator?: ManagedRunnerValidator;
-  private secret?: string;
   constructor(
     private state: State,
     private scope: Scope,
@@ -105,9 +104,6 @@ export class ManagedRunnerBindings {
       'Managed runner secret is unavailable',
       503,
     );
-    if (this.secret)
-      check(this.secret === secret, 'managed_unavailable', 'Managed runner secret changed', 503);
-    this.secret = secret;
     return secret;
   }
   private token(allocationId: string, epoch: number): string {
@@ -226,13 +222,7 @@ export class ManagedRunnerBindings {
     token: string,
     input: unknown,
     projectId?: unknown,
-  ): Promise<{ controlToken: string; caller: Caller }> {
-    check(
-      typeof token === 'string' && /^me_[0-9a-f]{64}$/.test(token),
-      'unauthorized',
-      'Invalid managed enrollment',
-      401,
-    );
+  ): Promise<{ controlToken: string }> {
     const parsed = z
       .object({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
       .strict()
@@ -296,10 +286,7 @@ export class ManagedRunnerBindings {
           tx,
         );
       }
-      return {
-        controlToken,
-        caller: this.caller({ ...row, worker_nonce_hash: nonceHash, control_hash: controlHash }),
-      };
+      return { controlToken };
     });
   }
   private caller(row: ManagedBindingRow): Caller {
@@ -395,6 +382,7 @@ export class ManagedRunnerBindings {
         return {
           id: session.id,
           projectId: row.project_id,
+          allocationId: row.allocation_id,
           person: digest(
             user ? { issuer: user.issuer, subject: user.subject } : { projectId, actorId: id },
           ),
@@ -496,7 +484,6 @@ export class ManagedRunnerBindings {
     return result;
   }
   async bind(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<void> {
-    await this.admits(row, tx);
     check(
       !row.bound_session_id || row.bound_session_id === sessionId,
       'managed_bound',
@@ -523,36 +510,23 @@ export class ManagedRunnerBindings {
       403,
     );
   }
-  async acknowledgeRelease(
-    caller: Caller,
-    sessionId: string,
-    runnerId: string,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.controlled(caller, sessionId, runnerId, tx);
+  /** The release of `caller`'s bound session, which the caller's control already admitted. */
+  async acknowledgeRelease(caller: Caller, tx: Transaction): Promise<void> {
     await tx.run(
       'UPDATE session_managed_runners SET runner_released_at=COALESCE(runner_released_at,?) WHERE allocation_id=?',
       new Date(this.clock()).toISOString(),
       caller.managed!.allocationId,
     );
   }
-  /** Live sessions whose allocation is no longer current: Fleet stopped or is stopping the
-   *  machine, so no runner is left to release them. An unanswerable check keeps the session. */
-  /** Bound sessions whose machine is no longer current, each with whether a release retired it. */
-  async stranded(tx: Transaction): Promise<Map<string, boolean>> {
-    const ids = new Map<string, boolean>();
-    if (!this.validator) return ids;
-    for (const row of await tx.all<ManagedBindingRow>(
-      "SELECT m.* FROM session_managed_runners m JOIN worker_sessions s ON s.id=m.bound_session_id WHERE s.status IN ('offered','active')",
-    )) {
-      const binding = this.identity(row);
-      if (!(await this.validator.current(binding, tx).catch(() => true)))
-        ids.set(
-          row.bound_session_id!,
-          !!(await this.validator.retired?.(binding, tx).catch(() => false)),
-        );
-    }
-    return ids;
+  /** Whether a live session's machine is no longer current, so no runner is left to release it:
+   *  undefined while it is (or none is bound), else whether a release retired it. */
+  async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
+    const row = await tx.get<ManagedBindingRow>(
+      'SELECT * FROM session_managed_runners WHERE bound_session_id=?',
+      sessionId,
+    );
+    if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
+    return !!(await this.validator.retired?.(this.identity(row), tx));
   }
   async inspect(
     allocationId: string,
@@ -579,8 +553,7 @@ export class ManagedRunnerBindings {
         'SELECT session_json FROM worker_sessions WHERE id=?',
         row.bound_session_id,
       );
-      check(bound, 'managed_session_missing', 'Managed bound session is missing', 500);
-      const session = JSON.parse(bound.session_json) as Session;
+      const session = JSON.parse(bound!.session_json) as Session;
       const workspace = await tx.get<{ result_json: string | null }>(
         'SELECT result_json FROM session_workspaces WHERE session_id=?',
         row.bound_session_id,

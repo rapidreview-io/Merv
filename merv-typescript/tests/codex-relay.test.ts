@@ -9,8 +9,8 @@ import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   codexModelRelay,
   codexPayload,
-  dailyTokens,
   modelBudgetStatus,
+  modelMigrations,
   setDailyTokens,
 } from '../packages/fleet/src/codex-relay.js';
 import { openState } from './fixtures/state.js';
@@ -20,6 +20,7 @@ const bearer = `ms_${'b'.repeat(43)}`;
 const grant: ManagedModelGrant = {
   id: 'session_hosted',
   projectId: 'project_hosted',
+  allocationId: 'flt_hosted',
   person: 'person_hosted',
   model: 'gpt-6-luna',
   effort: 'medium',
@@ -59,7 +60,10 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   const state = await openState();
   // Fleet's model migrations reference Scope's projects table.
   await createService(new ProjectScope(state));
+  await state.migrate('fleet_workflow', modelMigrations);
   let live = true;
+  let down = false;
+  let upstreamStatus = 200;
   const upstream: { body: Record<string, any>; authorization: string }[] = [];
   let hold: Promise<void> | undefined;
   let afterCompleted: Promise<void> | undefined;
@@ -70,6 +74,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   t.after(() => void (process.stderr.write = write));
   const sessions = {
     async managedModelGrant(presented: string) {
+      if (down) throw new MervError('database_unavailable', 'The database is unavailable', 503);
       if (!live || ![bearer, grant.id].includes(presented))
         throw new MervError('unauthorized', 'No live managed session', 401);
       return grant;
@@ -77,12 +82,13 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   } as unknown as Sessions;
   const start = async () => {
     const relay = new ModelRelay({
-      ...(await codexModelRelay(sessions, state, { providerKey: () => key, dailyTokensPerPerson })),
+      ...codexModelRelay(sessions, state, { providerKey: () => key, dailyTokensPerPerson }),
       fetchImpl: async (_url, init) => {
         upstream.push({
           body: JSON.parse(String(init!.body)),
           authorization: new Headers(init!.headers).get('authorization')!,
         });
+        if (upstreamStatus !== 200) return new Response('{}', { status: upstreamStatus });
         const held = hold;
         const finish = afterCompleted;
         return new Response(
@@ -138,6 +144,8 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
     logs,
     spent,
     revoke: () => void (live = false),
+    down: (value: boolean) => void (down = value),
+    upstreamStatus: (status: number) => void (upstreamStatus = status),
     hold: (until: Promise<void>) => void (hold = until),
     afterCompleted: (until: Promise<void>) => void (afterCompleted = until),
     respond: (frame: string) => void (terminalFrame = frame),
@@ -327,7 +335,7 @@ test('a call is charged at its most before it goes out and settled when it finis
 
 test('a call settles to the day it was charged to, even past midnight', async (t) => {
   const f = await fixture(t);
-  const relay = await codexModelRelay({} as Sessions, f.state, {
+  const relay = codexModelRelay({} as Sessions, f.state, {
     providerKey: () => key,
     dailyTokensPerPerson: 1_000_000,
   });
@@ -380,6 +388,27 @@ test('a call cut off before it finishes keeps its charge, and calls in flight co
   assert.equal(await f.spent(), most);
 });
 
+test('five calls the provider answers with 500 cost nothing, and an outage answers 503', async (t) => {
+  const f = await fixture(t);
+  f.upstreamStatus(500);
+  for (let call = 0; call < 5; call++) assert.equal((await f.call()).status, 502);
+  const deadline = Date.now() + 5000;
+  while (
+    f.logs.filter((line) => line.includes('"refund":true')).length < 5 &&
+    Date.now() < deadline
+  )
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await f.spent(), 0);
+  assert.equal(f.upstream.length, 5);
+  f.down(true);
+  const unavailable = await f.call();
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(await unavailable.json(), { error: 'relay_unavailable' });
+  f.down(false);
+  f.revoke();
+  assert.equal((await f.call()).status, 401);
+});
+
 test('a successful reservation clears the last refusal, and yesterday’s refusal does not block today', async (t) => {
   const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
   const f = await fixture(t, most - 1);
@@ -427,10 +456,12 @@ test('a person’s own daily limit governs their calls, above or below the deplo
   const deadline = Date.now() + 5000;
   while ((await f.spent()) !== 110 && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(await dailyTokens(f.state, grant.person, most - 1), {
-    tokens: most + 50,
-    usedToday: 110,
-  });
+  assert.deepEqual(
+    (({ tokens, usedToday }) => ({ tokens, usedToday }))(
+      await modelBudgetStatus(f.state, grant.person, most - 1),
+    ),
+    { tokens: most + 50, usedToday: 110 },
+  );
   await setDailyTokens(f.state, grant.person, 100);
   assert.equal((await f.call()).status, 403);
 });

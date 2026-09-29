@@ -42,16 +42,20 @@ for (const fails of [false, true])
         interrupt = barrier();
       const cleanup: string[] = [];
       const failure = new Error('Synthetic unsubscribe failure');
-      const subscribe = events.subscribe.bind(events);
-      t.mock.method(events, 'subscribe', async (...args: Parameters<typeof subscribe>) => {
-        const dispose = await subscribe(...args);
-        return async () => {
-          cleanup.push('events');
-          await unsubscribe.wait();
-          await dispose();
-          if (fails) throw failure;
-        };
-      });
+      const registerManaged = scope.registerManagedRunnerAuthority.bind(scope);
+      t.mock.method(
+        scope,
+        'registerManagedRunnerAuthority',
+        (...args: Parameters<typeof registerManaged>) => {
+          const dispose = registerManaged(...args);
+          return (async () => {
+            cleanup.push('managed');
+            await unsubscribe.wait();
+            dispose();
+            if (fails) throw failure;
+          }) as unknown as () => void;
+        },
+      );
       const registerAuthority = scope.registerSessionAuthority.bind(scope);
       t.mock.method(
         scope,
@@ -69,10 +73,10 @@ for (const fails of [false, true])
       t.mock.method(
         AgentObservations.prototype,
         'interrupt',
-        async function (this: AgentObservations) {
+        async function (this: AgentObservations, ...args: Parameters<typeof finish>) {
           cleanup.push('observations');
           await interrupt.wait();
-          await finish.call(this);
+          await finish.apply(this, args);
         },
       );
       t.after(async () => {
@@ -108,11 +112,11 @@ for (const fails of [false, true])
       await assert.rejects(sessions.sweep(), { code: 'session_unavailable' });
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(firstDone, false);
-      assert.equal(secondDone, false, 'A repeated close must still join the admitted event drain');
-      assert.deepEqual(cleanup, ['events']);
+      assert.equal(secondDone, false, 'A repeated close must still join the admitted drain');
+      assert.deepEqual(cleanup, ['managed']);
       unsubscribe.release();
       await interrupt.entered;
-      assert.deepEqual(cleanup, ['events', 'authority', 'observations']);
+      assert.deepEqual(cleanup, ['managed', 'authority', 'observations']);
       assert.equal(firstDone, false, 'A cleanup error must not end shutdown before later cleanup');
       assert.equal(secondDone, false);
       interrupt.release();

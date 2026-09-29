@@ -21,6 +21,11 @@ class RelayFailure extends Error {
 const reject = (status: number, code: string): never => {
   throw new RelayFailure(status, code);
 };
+/** A verdict the authority or ledger gave, or 503 when it could not give one. */
+const refusal = (error: unknown, status: number, code: string) =>
+  Number((error as { status?: unknown } | null)?.status) >= 500
+    ? new RelayFailure(503, 'relay_unavailable')
+    : new RelayFailure(status, code);
 /** Hands a record to its callback, which never changes the call; a failure is logged by name. */
 const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) =>
   void Promise.resolve()
@@ -45,6 +50,15 @@ type Usage = {
 };
 const tokens = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+/** Whether a frame is itself an error: its own top-level type, not one its content quotes. */
+const failedFrame = (data: string) => {
+  if (!/"type"\s*:\s*"(?:error|response\.failed)"/.test(data)) return false;
+  try {
+    return ['error', 'response.failed'].includes(JSON.parse(data)?.type);
+  } catch {
+    return true;
+  }
+};
 
 function limit(value: number | undefined, fallback = 0): number {
   const resolved = value ?? fallback;
@@ -213,6 +227,11 @@ export class ModelRelay<
     let phase: ModelRelayFailure['phase'] = 'request';
     let upstreamHttpStatus: number | undefined;
     let completed = false;
+    let reserved = undefined as R;
+    /** Whether the call holds a charge, returned if the provider never takes the call. */
+    let charged = false;
+    /** Whether the provider answered with a success status, once it answered. */
+    let taken: boolean | undefined;
     try {
       const authority = this.config.authority;
       let grant: G;
@@ -220,7 +239,7 @@ export class ModelRelay<
         grant = this.config.grant(await interruptible(authority.authorize(token), signal));
       } catch (error) {
         if (signal.aborted) throw signal.reason;
-        return this.error(res, 401, 'unauthorized');
+        throw refusal(error, 401, 'unauthorized');
       }
       let validatedAt = 0;
       const validate = async () => {
@@ -230,7 +249,7 @@ export class ModelRelay<
           await interruptible(authority.validate(grant), signal);
         } catch (error) {
           if (signal.aborted) throw signal.reason;
-          return reject(403, 'grant_forbidden');
+          throw refusal(error, 403, 'grant_forbidden');
         }
         if (expired(grant)) reject(403, 'grant_forbidden');
         // Stamped when the read returns, so a read of d seconds leaves frames an age of 1 + d.
@@ -248,7 +267,8 @@ export class ModelRelay<
       );
       const body = this.config.payload(raw, grant) ?? reject(400, 'invalid_payload');
       const effort = (body.reasoning as { effort?: unknown } | undefined)?.effort;
-      // Every refusal comes before the call is charged.
+      // Every refusal but the last authority read comes before the call is charged; that one
+      // returns the charge.
       const key = await interruptible(
         Promise.resolve().then(() => this.config.providerKey()),
         signal,
@@ -265,25 +285,29 @@ export class ModelRelay<
         (!previous && this.grants.size >= this.options.maxGrantEntries)
       )
         reject(429, 'relay_busy');
-      let reserved = undefined as R;
-      if (this.config.reserve)
+      if (this.config.reserve) {
+        // Awaited even after a disconnect, so a charge that commits late is returned below.
         try {
-          reserved = await interruptible(this.config.reserve(grant, body), signal);
+          reserved = await this.config.reserve(grant, body);
+          charged = true;
         } catch (error) {
           if (signal.aborted) throw signal.reason;
           const code = (error as { code?: unknown }).code;
-          reject(
+          throw refusal(
+            error,
             403,
             typeof code === 'string' && /^[a-z_]{1,64}$/.test(code) ? code : 'grant_forbidden',
           );
         }
-      phase = 'upstream';
+        if (signal.aborted) throw signal.reason;
+      }
       this.grants.set(grant.id, {
         count: (previous?.count ?? 0) + 1,
         expiry: Date.parse(grant.expiresAt),
         binding,
       });
       await validate();
+      phase = 'upstream';
       const upstream = await interruptible(
         (this.config.fetchImpl ?? fetch)(responsesUrl, {
           method: 'POST',
@@ -296,6 +320,7 @@ export class ModelRelay<
       );
       if (Number.isInteger(upstream.status) && upstream.status >= 100 && upstream.status <= 599)
         upstreamHttpStatus = upstream.status;
+      taken = upstream.ok;
       if (
         !upstream.ok ||
         !upstream.body ||
@@ -325,7 +350,12 @@ export class ModelRelay<
       const tick = () => {
         if (!done)
           fence = setTimeout(
-            () => void validate().then(tick, () => abort(403, 'grant_forbidden')),
+            () =>
+              void validate().then(tick, (error: unknown) =>
+                error instanceof RelayFailure
+                  ? abort(error.status, error.code)
+                  : abort(403, 'grant_forbidden'),
+              ),
             1000,
           );
       };
@@ -401,16 +431,12 @@ export class ModelRelay<
                     : reason === 'max_output_tokens' || reason === 'content_filter'
                       ? reason
                       : 'other',
-                elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
+                elapsedMs: Math.max(0, Date.now() - admittedAt),
               });
             }
           }
           completed ||= terminal === 'completed';
-          if (
-            terminal === 'failed' ||
-            /^event:\s*error\s*$/im.test(content) ||
-            /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
-          )
+          if (terminal === 'failed' || /^event:\s*error\s*$/im.test(content) || failedFrame(data))
             reject(502, 'upstream_failed');
           if (expired(grant)) reject(403, 'grant_forbidden');
           if (Date.now() - validatedAt > authorityStaleMs) reject(504, 'relay_timeout');
@@ -441,8 +467,20 @@ export class ModelRelay<
           phase,
           code: failure.code,
           model: admitted.model,
-          elapsedMs: Math.min(900_000, Math.max(0, Date.now() - admittedAt)),
+          elapsedMs: Math.max(0, Date.now() - admittedAt),
           ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
+        });
+      // Refused before it was sent, or answered with an error status, the call cost nothing. One
+      // the provider may have run (no answer, or a stream cut off) keeps its charge.
+      if (charged && (phase === 'request' || taken === false))
+        report((record) => this.config.onUsage?.(record, admitted!, reserved), {
+          event: `${this.config.name}_relay_usage` as const,
+          model: admitted!.model,
+          inputTokens: 0,
+          cachedTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          refund: true as const,
         });
       if (failure.status !== 499 && !res.destroyed) {
         if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');

@@ -38,7 +38,7 @@ import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
 import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations, lastActivity } from './observations.js';
-import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
+import { isoNow, liveTargets, ownerOf, readFirst, refused, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
 import type {
@@ -379,7 +379,7 @@ export class LeasedSessions implements Sessions {
   private readonly fenced = new WeakMap<Transaction, Set<string>>();
   private readonly disposers: (() => void | Promise<void>)[] = [];
   private timer?: ReturnType<typeof setInterval>;
-  private sweeping?: Promise<void>;
+  private sweeping?: Promise<unknown>;
   private closing?: Promise<void>;
   private closed = false;
   private dispatcher!: SessionDispatch;
@@ -487,6 +487,7 @@ export class LeasedSessions implements Sessions {
         workflows,
         this.clock,
         config.serviceConcurrency,
+        async (projectId, tx) => (await this.dispatcher.dispatch(projectId, tx)).enabled,
       );
       await this.serviceWork.initialize();
       try {
@@ -501,33 +502,12 @@ export class LeasedSessions implements Sessions {
               JSON.parse((await this.managed.require(caller, tx)).row.source_json),
           }),
         );
-        await this.observations.interrupt();
-        this.disposers.push(
-          await events.subscribe({
-            id: 'sessions.lifecycle.v1',
-            from: 'beginning',
-            types: [
-              'session.closed',
-              'actor.revoked',
-              'actor.permissions_changed',
-              'actor.credential_revoked',
-              'actor.credential_rotated',
-              'actor.key_revoked',
-              'actor.key_rotated',
-            ],
-            // Each lease owner releases its own rows from session.closed. The type stays
-            // subscribed only because a consumer's id fixes its types.
-            handle: async (event, tx) => {
-              if (event.type !== 'session.closed') await this.sweepTransaction(tx);
-            },
-          }),
-        );
-        this.timer = setInterval(async () => {
-          try {
-            await this.sweep();
-          } catch {
-            /* Durable events and the next sweep retry; no secret-bearing errors are logged. */
-          }
+        // Older than any client waits for a call: another live process's may be younger.
+        await this.observations.interrupt(isoNow(() => this.clock() - 180_000));
+        this.timer = setInterval(() => {
+          this.sweeping ??= this.alone('sweep', () =>
+            this.pass(this.clock() - this.checkedAt >= 30_000),
+          ).finally(() => (this.sweeping = undefined));
         }, config.sweepIntervalMs);
         this.timer.unref();
       } catch (error) {
@@ -538,7 +518,9 @@ export class LeasedSessions implements Sessions {
   }
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
-  private idleCheckedAt = Number.NEGATIVE_INFINITY;
+  private checkedAt = Number.NEGATIVE_INFINITY;
+  /** Each failing sweep subject with the code last logged, cleared by every full pass. */
+  private readonly failing = new Map<string, string>();
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
@@ -564,6 +546,10 @@ export class LeasedSessions implements Sessions {
   private async reading<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
     this.ensureOpen();
     return await this.state.snapshot(() => this.transaction(fn));
+  }
+  private async readFirst<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+    this.ensureOpen();
+    return await readFirst(this.state, fn);
   }
   private async row(tx: Transaction, id: string): Promise<Row> {
     const row = await tx.get<Row>('SELECT * FROM worker_sessions WHERE id=?', id);
@@ -731,7 +717,8 @@ export class LeasedSessions implements Sessions {
       return frame.source;
     }
     check(caller.session, 'session_required', 'Worker authority requires a session', 401);
-    const session = await this.decode(await this.row(tx, caller.session.id), tx);
+    const row = await this.row(tx, caller.session.id);
+    const session = await this.decode(row, tx);
     check(
       session.actorId === caller.actorId && session.projectId === caller.projectId,
       'forbidden',
@@ -746,11 +733,7 @@ export class LeasedSessions implements Sessions {
       'Session is closed or expired',
       401,
     );
-    await this.credentials.authenticateHash(
-      (await this.row(tx, session.id)).token_hash,
-      'session-execution',
-      tx,
-    );
+    await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
     if (caller.session.agentCredentialHash)
       await this.credentials.authenticateHash(
         caller.session.agentCredentialHash,
@@ -764,10 +747,6 @@ export class LeasedSessions implements Sessions {
     ) {
       const tool = this.invocationIds.get(caller.session.invocationId)?.public.tool;
       if (tool !== 'session.messages' && tool !== 'session.message.ack') {
-        // A sender takes this same row lock before inserting. The write being submitted and
-        // the message therefore have a single order even when their requests race.
-        if (!this.state.readScope)
-          await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', session.id);
         await this.requireMessagesAcknowledged(session.id, tx);
       }
     }
@@ -849,14 +828,8 @@ export class LeasedSessions implements Sessions {
     );
     // Hosted Codex may finish its already-started model call for one minute after handoff.
     // The model relay alone grants that grace; MCP still sees the closed execution.
-    const managedTable =
-      reason === 'handoff'
-        ? await tx.get<{ name: string | null }>(
-            "SELECT to_regclass('session_managed_runners') AS name",
-          )
-        : undefined;
     const managedHandoff =
-      managedTable?.name &&
+      reason === 'handoff' &&
       (await tx.get(
         'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?',
         session.id,
@@ -872,10 +845,8 @@ export class LeasedSessions implements Sessions {
         ? 'offer_expired'
         : undefined;
     if (failure) await this.dispatcher.failed(session, failure, tx);
-    if (session.agentId) {
-      const agent = await this.directory.get(session.agentId, tx);
-      if (!agent.persistent) await this.directory.retire(agent, reason, tx);
-    } else await this.scope.retireSessionActor(session.actorId, reason, tx);
+    const agent = await this.directory.get(session.agentId!, tx);
+    if (!agent.persistent) await this.directory.retire(agent, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -915,7 +886,9 @@ export class LeasedSessions implements Sessions {
     );
     return moved?.actor_id === session.actorId;
   }
-  private async reconcile(session: Session, tx: Transaction): Promise<MervError | undefined> {
+  /** The closure a live session's check finds, recorded; on a snapshot the refusal to record it
+   *  propagates, so a writer records it, unless the caller only `report`s it. */
+  private async reconcile(session: Session, tx: Transaction, report = false) {
     if (!live(session)) return ended(session);
     try {
       await this.valid(session, tx);
@@ -925,14 +898,13 @@ export class LeasedSessions implements Sessions {
       if (failure.status >= 500) return failure;
       // The record moved by this worker's own hand: that is its handoff, not a conflict.
       const handoff = failure.code === 'session_completed';
-      // A poll on a read snapshot reports the closure it found; the sweep records it.
       const close = async (
         ...rest: Parameters<typeof this.closeSession> extends [Session, ...infer R] ? R : never
       ) => {
         try {
           await this.closeSession(session, ...rest);
         } catch (error) {
-          if (!(error instanceof MervError) || error.code !== 'read_only_scope') throw error;
+          if (!report || !refused(error)) throw error;
         }
       };
       if (!handoff) {
@@ -994,7 +966,7 @@ export class LeasedSessions implements Sessions {
       'Session offers require their own control transaction',
     );
     await this.scope.delegationSource(caller);
-    await this.sweep();
+    await this.pass(false);
     await this.events.drain();
   }
   private async offerTransaction(
@@ -1250,7 +1222,8 @@ export class LeasedSessions implements Sessions {
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
       const current = await this.currentAgentExecution(agent, tx);
-      if (current) await this.closeSession(current, 'agent_retired', tx, 'released', 'halted');
+      if (current)
+        await this.closeReleased(current, { reason: 'agent_retired', outcome: 'halted' }, tx);
       return await this.directory.retire(agent, 'agent_retired', tx);
     });
   }
@@ -1325,7 +1298,7 @@ export class LeasedSessions implements Sessions {
         'Assignment belongs to another agent',
         403,
       );
-      return await this.closeSession(session, 'released', tx, 'released');
+      return await this.closeReleased(session, {}, tx);
     });
   }
   async resetAgentContext(token: string, reason: string): Promise<Agent> {
@@ -1434,10 +1407,7 @@ export class LeasedSessions implements Sessions {
         instanceId,
       );
       const latest = rows[0] ? await this.decode(rows[0], tx) : null;
-      const currentRow = rows.find((row) => {
-        const status = (JSON.parse(row.session_json) as Session).status;
-        return status === 'offered' || status === 'active';
-      });
+      const currentRow = rows.find((row) => live(JSON.parse(row.session_json)));
       let current: Session | null = currentRow ? await this.decode(currentRow, tx) : null;
       if (current) {
         try {
@@ -1494,7 +1464,6 @@ export class LeasedSessions implements Sessions {
         'Session not found in this project',
         404,
       );
-      await tx.get('SELECT id FROM worker_sessions WHERE id=? FOR UPDATE', row.id);
       const session = await this.decode(row, tx);
       check(
         live(session),
@@ -1681,7 +1650,7 @@ export class LeasedSessions implements Sessions {
           : includeDependencies
             ? await this.workflows.dependencyClosure(caller, instanceId, tx)
             : [(await this.workflows.get(caller, instanceId, tx)).id];
-      const { since, ...totals } = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
+      const rollup = await usageTotals(tx, caller.projectId, instanceIds, instanceId);
       return {
         scope:
           instanceId === undefined || instanceIds === null
@@ -1692,7 +1661,9 @@ export class LeasedSessions implements Sessions {
                 includeDependencies,
                 instanceCount: instanceIds.length,
               },
-        ...totals,
+        totals: rollup.totals,
+        byWorkflow: rollup.byWorkflow,
+        byInstance: rollup.byInstance,
         liveSessions: (await tx.get<{ n: number }>(
           "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
           caller.projectId,
@@ -1701,7 +1672,7 @@ export class LeasedSessions implements Sessions {
         accounting: {
           wallClock: 'measured',
           tokens: 'runner_reported',
-          since,
+          since: rollup.since,
           method: accountingMethod,
         },
       };
@@ -1817,14 +1788,11 @@ export class LeasedSessions implements Sessions {
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
     caller = structuredClone(caller);
-    if (caller.managed)
-      return await this.reading(
-        async (tx) => await this.controlled(caller, sessionId, undefined, tx),
-      );
-    const result = await this.transaction(async (tx) => {
+    const result = await this.reading(async (tx) => {
       const session = await this.controlled(caller, sessionId, undefined, tx);
-      const error = await this.reconcile(session, tx);
-      // A poll reports durable closure to its controller, but provider outages are retryable.
+      // A poll reports a closure to its controller, recorded only in a caller's writer, else by
+      // the sweep; provider outages are retryable. A managed poll only reads.
+      const error = caller.managed ? undefined : await this.reconcile(session, tx, true);
       return error && error.status >= 500 ? { error } : { session };
     });
     if (result.error) throw result.error;
@@ -1996,19 +1964,27 @@ export class LeasedSessions implements Sessions {
         'Only an activated session may heartbeat',
         409,
       );
-      session.expiresAt = new Date(
-        Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
-      ).toISOString();
+      // Each renewal rewrites the frozen packet, so one that slides the window by less than 15
+      // minutes is skipped; the window stays over 3h45m ahead, or reaches the hard deadline.
+      const expiresAt = this.slide(session);
+      const step = Date.parse(expiresAt) - Date.parse(session.expiresAt);
+      if (step < (expiresAt === session.hardDeadline ? 1 : 900_000)) return;
+      session.expiresAt = expiresAt;
       await this.save(tx, session);
       await this.renewSessionCredential(session, tx);
     });
+  }
+  private slide(session: Session): string {
+    return new Date(
+      Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
+    ).toISOString();
   }
   private async controlMutation(
     caller: Caller,
     input: SessionControl,
     mutate: (session: Session, tx: Transaction) => void | Promise<void>,
   ): Promise<Session> {
-    const result = await this.transaction(async (tx) => {
+    const result = await this.readFirst(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx),
         error = await this.reconcile(session, tx);
       if (error) return { error };
@@ -2031,10 +2007,12 @@ export class LeasedSessions implements Sessions {
     const { usage, ...control } = closed(releaseSchema, input, releaseRefusals);
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
+      // A closure its checks find (a revocation, a lease its domain refused) is recorded as that.
+      // A landed handoff comes first, as closeReleased records it: expiry never hides it.
+      if (live(session) && !(await this.handedOff(session, tx))) await this.reconcile(session, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
-      if (caller.managed)
-        await this.managed.acknowledgeRelease(caller, released.id, control.runnerId, tx);
+      if (caller.managed) await this.managed.acknowledgeRelease(caller, tx);
       return released;
     });
   }
@@ -2052,6 +2030,7 @@ export class LeasedSessions implements Sessions {
       'invalid_outcome',
       'A completed outcome is recorded by the worker’s own handoff, not by a release',
     );
+    if (!live(session)) return session;
     if (input.deferral) session.deferral = structuredClone(input.deferral);
     return await this.closeSession(
       session,
@@ -2090,7 +2069,7 @@ export class LeasedSessions implements Sessions {
     });
   }
   async authenticate(token: string): Promise<Caller> {
-    const result = await this.transaction(async (tx) => {
+    const result = await this.readFirst(async (tx) => {
       const credential = await this.credentials.authenticate(
         token,
         ['session-agent', 'session-execution'],
@@ -2130,9 +2109,7 @@ export class LeasedSessions implements Sessions {
         );
         session.status = 'active';
         session.activatedAt = isoNow(this.clock);
-        session.expiresAt = new Date(
-          Math.min(this.clock() + 14_400_000, Date.parse(session.hardDeadline)),
-        ).toISOString();
+        session.expiresAt = this.slide(session);
         await this.save(tx, session);
         await this.renewSessionCredential(session, tx);
         await this.state.appendEvent(tx, {
@@ -2169,7 +2146,7 @@ export class LeasedSessions implements Sessions {
     token: string,
     input: unknown,
     projectId?: unknown,
-  ): Promise<{ controlToken: string; caller: Caller }> {
+  ): Promise<{ controlToken: string }> {
     this.ensureOpen();
     return await this.managed.enroll(token, input, projectId);
   }
@@ -2346,17 +2323,14 @@ export class LeasedSessions implements Sessions {
     // Claim once before yielding so concurrent callers cannot execute one preparation twice.
     state.running = true;
     try {
-      // Authorize before recording an observation, so an unauthorized call records none. A
-      // caller that just validated (the tool registry does, right before run) is not admitted
-      // twice; the check after observation storage still runs.
-      if (!state.validated) await this.validate(invocation.caller, invocation.tool, state.input);
+      // The registry authorized this call right before run; storing the observation yields,
+      // so it is authorized again below before the tool runs.
       await this.observations.start(
         invocation.caller.session!.invocationId!,
         state.sessionId,
         invocation.tool,
         state.input,
       );
-      // Observation storage yields too; recheck authorization before invoking the tool.
       await this.validate(invocation.caller, invocation.tool, state.input);
       if (invocation.tool !== 'session.messages' && invocation.tool !== 'session.message.ack')
         await this.reading(
@@ -2366,7 +2340,7 @@ export class LeasedSessions implements Sessions {
       // assignment is an admission of somebody else, so the question is refused by name.
       const own =
         invocation.tool === 'workflow.assignment'
-          ? await this.transaction(async (tx) => await this.session(invocation.caller, tx))
+          ? await this.reading(async (tx) => await this.session(invocation.caller, tx))
           : undefined;
       const asked = (state.input as { instanceId?: string }).instanceId;
       check(
@@ -2394,6 +2368,7 @@ export class LeasedSessions implements Sessions {
           failed ? 'failed' : 'succeeded',
           result,
         );
+      state.running = false;
       return result;
     } finally {
       await this.cancel(invocation);
@@ -2415,9 +2390,7 @@ export class LeasedSessions implements Sessions {
    * locally, waiting on a sandbox job or using another service, which the server cannot
    * tell from one that is stuck. So quiet is only observed and said, never acted on; ending
    * a session stays an explicit halt or the lease's hard deadline. The mark and its clearing
-   * live only here, on the session the writing sweep just decoded. A poll may run on a read snapshot,
-   * where reconcile already has to swallow read_only_scope to report a closure it cannot
-   * record; an idle mark has no such need, so no read path computes one.
+   * live only here, in the sweep's upkeep of one session.
    */
   private async progress(
     session: Session,
@@ -2452,64 +2425,81 @@ export class LeasedSessions implements Sessions {
     });
   }
   /**
-   * Idleness moves on a scale of minutes, so the sweep looks at it at most once a minute of
-   * clock time, only at sessions active long enough to be idle, and reads every session's
-   * latest call in one statement the first time one of them needs it.
+   * Upkeep, each subject decided on a snapshot of its own and recorded in a writer only when it
+   * has something to record, so a healthy pass takes no writer lock and a failing subject holds
+   * back no other. Full: every live session, active agent and service reservation; else only the
+   * sessions whose deadline passed or whose record moved.
    */
-  private idlePass(tx: Transaction) {
-    const now = this.clock();
-    const due = now - this.idleCheckedAt >= 60_000;
-    if (due) this.idleCheckedAt = now;
-    let calls: Promise<Map<string, string>> | undefined;
-    return {
-      due: (session: Session) =>
-        due &&
-        session.status === 'active' &&
-        session.activatedAt !== null &&
-        Date.parse(session.activatedAt) + this.thresholds.idleNoticeSeconds * 1000 <= now,
-      activity: () => (calls ??= this.observations.activity(tx)),
-    };
-  }
-  private async sweepTransaction(tx: Transaction): Promise<void> {
-    await this.serviceWork.expire(tx);
-    const idle = this.idlePass(tx);
-    const stranded = await this.managed.stranded(tx);
-    for (const row of await tx.all<Row>(
-      "SELECT * FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid",
-    )) {
-      const session = await this.decode(row, tx);
-      if (await this.reconcile(session, tx)) continue;
-      if (stranded.has(session.id))
-        await this.closeSession(
-          session,
-          'managed_revoked',
-          tx,
-          'expired',
-          stranded.get(session.id) ? 'machine_retired' : 'host_failed',
-        );
-      else if (idle.due(session))
-        await this.progress(session, (await idle.activity()).get(session.id), tx);
+  private async pass(full: boolean): Promise<void> {
+    if (full) {
+      this.checkedAt = this.clock();
+      this.failing.clear();
     }
-    for (const row of await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")) {
-      const agent = await this.directory.get(row.id, tx);
-      try {
-        await this.directory.require(agent, tx);
-      } catch (error) {
-        const failure = safeError(error);
-        if (failure.status < 500) await this.directory.retire(agent, failure.code, tx);
-      }
+    const { calls, sessions, agents } = await this.reading(async (tx) => ({
+      calls: full ? await this.observations.activity(tx) : undefined,
+      sessions: await tx.all<{ id: string }>(
+        `SELECT s.id FROM worker_sessions s WHERE s.status IN ('offered','active')${full ? '' : " AND ((s.session_json::json->>'expiresAt')<=? OR s.revision IS DISTINCT FROM (SELECT revision FROM wf_instances w WHERE w.id=s.instance_id AND w.project_id=s.project_id))"} ORDER BY s._merv_rowid`,
+        ...(full ? [] : [isoNow(this.clock)]),
+      ),
+      agents: full
+        ? await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")
+        : [],
+    }));
+    // A session that failed is retried by the next full pass, not by every tick and lease.
+    for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
+      await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx, calls)));
+    for (const { id } of agents)
+      await this.alone(id, () => this.readFirst((tx) => this.lapsed(id, tx)));
+    if (full)
+      await this.alone('service-work', () => this.readFirst((tx) => this.serviceWork.expire(tx)));
+  }
+  /** One live session's upkeep: a closure found, stranding or a change of quiet. */
+  private async upkeep(id: string, tx: Transaction, calls?: Map<string, string>) {
+    const session = await this.decode(await this.row(tx, id), tx);
+    if (await this.reconcile(session, tx)) return;
+    const stranded = await this.managed.stranded(id, tx);
+    if (stranded !== undefined)
+      await this.closeSession(
+        session,
+        'managed_revoked',
+        tx,
+        'expired',
+        stranded ? 'machine_retired' : 'host_failed',
+      );
+    else if (calls && session.status === 'active') await this.progress(session, calls.get(id), tx);
+  }
+  private async lapsed(id: string, tx: Transaction): Promise<void> {
+    const agent = await this.directory.get(id, tx);
+    try {
+      await this.directory.require(agent, tx);
+    } catch (error) {
+      const failure = safeError(error);
+      if (failure.status < 500) await this.directory.retire(agent, failure.code, tx);
+    }
+  }
+  /** One subject on its own: its failure is logged once per code and never stops the rest. */
+  private async alone<T>(subject: string, fn: () => Promise<T>): Promise<T | false> {
+    try {
+      return await fn();
+    } catch (error) {
+      const code = String((error as { code?: unknown })?.code ?? 'unexpected');
+      if (!this.closed && this.failing.get(subject) !== code)
+        process.stderr.write(
+          `${JSON.stringify({ event: 'sessions.sweep_failed', subject, code })}\n`,
+        );
+      this.failing.set(subject, code);
+      return false;
     }
   }
   async sweep(): Promise<void> {
-    this.ensureOpen();
-    if (!this.sweeping)
-      this.sweeping = this.transaction((tx) => this.sweepTransaction(tx)).finally(() => {
-        this.sweeping = undefined;
-      });
-    await this.sweeping;
+    check(!this.state.ambient, 'nested_transaction', 'A sweep runs its own transactions');
+    await this.pass(true);
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
+    // A call that ends once closed skips its finish, so the calls in flight now are marked too.
+    const running = () => [...this.invocationIds].filter(([, c]) => c.running).map(([id]) => id);
+    const inFlight = running();
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.closing = Promise.resolve().then(async () => {
@@ -2520,7 +2510,7 @@ export class LeasedSessions implements Sessions {
         async () => {
           await this.sweeping?.catch(() => undefined);
         },
-        () => this.observations.interrupt(),
+        () => this.observations.interrupt('', [...inFlight, ...running()]),
       ]) {
         try {
           await dispose();

@@ -3,14 +3,7 @@ import type { MountHandler } from '@merv/api/types';
 import type { SandboxRuntimeHandle, SandboxRuntimeOffer } from '@merv/sandboxes/types';
 
 export type FleetPhase =
-  | 'queued'
-  | 'provisioning'
-  | 'launching'
-  | 'starting'
-  | 'running'
-  | 'uncertain'
-  | 'releasing'
-  | 'released';
+  'queued' | 'provisioning' | 'starting' | 'running' | 'uncertain' | 'releasing' | 'released';
 export type FleetIntent = 'run' | 'drain' | 'stop';
 export interface FleetAllocation {
   id: string;
@@ -25,6 +18,8 @@ export interface FleetAllocation {
   profileId: string;
   /** Who the machine is for, as Pi and Fleet key a person: what its day's compute counts toward. */
   person?: string;
+  /** The offer's hourly price when Fleet reserved it under a USD cap: what its time costs `person`. */
+  usdPerHour?: number;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
   phase: FleetPhase;
@@ -45,11 +40,12 @@ export interface FleetAllocation {
   error: FleetError | null;
 }
 /** runtime_unavailable: an ambiguous failure being retried with the same keys.
- * runtime_refused: the service refused before any machine could exist, so the slot was freed. */
+ * runtime_refused: the service refused before any machine could exist, so the slot was freed, or
+ * a capped request's offer listed no price for ten minutes. */
 export type FleetError = 'runtime_unavailable' | 'runtime_refused' | 'wallet_refused';
 export interface FleetRequest {
   requestId: string;
-  /** Pi hosts are kind `pi-host`, id `${hostId}:${epoch}`, requested by the Pi host identity. */
+  /** The registered owner's kind, and its own id for the work. */
   owner: { kind: string; id: string };
   /** The Sandboxes runtime profile key to rent ('standard', 'large'); absent means the default
    * (first) profile. Part of the request's fingerprint; the allocation keeps that profile's id. */
@@ -60,23 +56,6 @@ export interface FleetRequest {
 }
 /** A machine Fleet can rent, as the service's options describe the profile's offer. */
 export type FleetMachine = SandboxRuntimeOffer;
-export interface FleetConfig {
-  /** Deployment opt-in; keep false until the actual provider gates pass. */
-  enabled?: boolean;
-  globalLimit?: number;
-  projectLimit?: number;
-  /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects, e.g. the
-   * Pi host project's 50. */
-  projectLimits?: Record<string, number>;
-  /** How often running machines are checked; one starting or stopping is checked each second. */
-  pollIntervalMs?: number;
-  allocationTimeoutSeconds?: number;
-  /** MERV_FLEET_HOST_PROJECT_ID: the connected project an owner that rents in the host rents
-   * through. Limits, events and listing stay with the project the work is for. */
-  hostProjectId?: string;
-  /** What one person's machines may cost in a UTC day, at their offers' prices. */
-  dailyUsdPerPerson?: number;
-}
 /** Trusted server adapter, never an agent-supplied command or harness implementation.
  * Workflow and chat own authority, enrollment and completion. Fleet owns machines only.
  */
@@ -85,8 +64,8 @@ export interface FleetOwner {
   /** Rent through the host project, so work in a project without its own connection can rent.
    * connected(), free() and describe() still answer for the project's own connection. */
   rentsInHost?: true;
-  /** Its launched machines outlive a Main restart: closing leaves them running, and the owner
-   * registering again after the restart takes them back. Pi's end with the process. */
+  /** Its machines outlive a Main restart, launched or not: closing leaves its running work in
+   * every phase, and the owner registering again after the restart takes it back. */
   keepsRunning?: true;
   /** Who a machine for this source and owner id is for, keyed as Pi keys a person (a digest of
    * their sign-in); null when nobody's daily compute should count it. */
@@ -113,7 +92,8 @@ export interface ModelRelayFailure<E extends string = string> {
   elapsedMs: number;
   upstreamHttpStatus?: number;
 }
-/** One finished model call's tokens, for spend per model; it names no person or conversation. */
+/** One finished model call's tokens, for spend per model, or a zero refund record for a charged
+ *  call the provider never took; it names no person or conversation. */
 export interface ModelRelayUsage<E extends string = string> {
   event: E;
   model: string;
@@ -121,6 +101,8 @@ export interface ModelRelayUsage<E extends string = string> {
   cachedTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  /** A zero record that returns the charge of a call the provider never took. */
+  refund?: true;
 }
 /** A provider terminal frame, without its text, tool arguments, identifiers or raw reason. */
 export interface ModelRelayTerminal<E extends string = string> {
@@ -168,11 +150,14 @@ export interface ModelRelayConfig<
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
-  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
-   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
-   *  one. The charge stands for a call that never finishes. */
+  /** Charges a call just before its last authority read and the upstream send, and returns the
+   *  charge as the feature reads it back; throwing refuses the call with the error's `code`, or
+   *  with 503 relay_unavailable when the error's `status` is 500 or more. A call refused after the
+   *  charge, or never taken by the provider, is refunded through `onUsage`; the charge stands for
+   *  a call the provider may have run that never finishes. */
   reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
-  /** A finished call's usage, with what `reserve` returned for it. */
+  /** A finished call's usage, or a refund of a call refused before it was sent or answered with
+   *  an error status, with what `reserve` returned for it. */
   onUsage?: (
     record: ModelRelayUsage<`${N}_relay_usage`>,
     grant: G,
@@ -194,8 +179,7 @@ export interface Fleet {
   connected(projectId: string): boolean;
   /** Slots a new request in this project could take now: the smaller of the global and this
    * project's room, each less what is already open in it. Queued work counts even where its own
-   * project's cap holds it back, so this errs low; 0 when the project cannot rent. A move holds
-   * two, so Pi starts one only at ≥ 3. */
+   * project's cap holds it back, so this errs low; 0 when the project cannot rent. */
   free(projectId: string, tx?: Transaction): Promise<number>;
   /** The machine behind a profile key for this project, from Sandboxes' cached options (cheap
    * enough for every snapshot); null when the key is not configured or its offer is missing,
@@ -217,7 +201,6 @@ export interface Fleet {
   drain(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   /** Sessions must call this inside the same transaction that enrolls or claims work. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;
-  tick(): Promise<void>;
   /** A model relay for workers that hold no provider key; its owner mounts and closes it. */
   modelRelay<G extends ModelRelayGrant, N extends string, R>(
     config: ModelRelayConfig<G, N, R>,

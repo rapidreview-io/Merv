@@ -13,6 +13,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
+import type { SessionDispatch } from '../packages/sessions/src/dispatch.js';
 import { countWrites, openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -496,6 +497,52 @@ test('a failure on one rented machine holds its target back on the next, and a r
   assert.ok(!listed.includes(f.runnerId), 'a machine whose release was acknowledged is gone');
 });
 
+test('rented machines never exhaust a project’s own runners, and another project’s runner of the same name stays its own', async (t) => {
+  const f = await fixture(t);
+  const dispatcher = (f.sessions as unknown as { dispatcher: SessionDispatch }).dispatcher;
+  const machines = (caller: Caller) =>
+    f.state.transaction(async (tx) => (await dispatcher.running(caller, tx)).machines.live);
+  const listed = async (caller: Caller) =>
+    (await f.sessions.projectStatus(caller)).runners.map((runner) => runner.runnerId);
+  // A thousand of the project's own runners, long gone.
+  await f.state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) SELECT 'runner_old_'||i,?,'old','old-'||i,'{}','{}','{}','2000-01-01T00:00:00.000Z' FROM generate_series(1,1000) i",
+      f.owner.projectId,
+    ),
+  );
+  // Fleet's own caps bound the machines it rents, so the project's limit is not theirs.
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  const own = { ...f.heartbeat(1), runnerId: 'own' };
+  await assert.rejects(f.sessions.heartbeatRunner(f.owner, own), { code: 'runner_limit' });
+  // Only the project's own rows count against it: 999 of them and one rented leave room.
+  await f.state.transaction((tx) => tx.run("DELETE FROM session_runners WHERE id='runner_old_1'"));
+  await f.sessions.heartbeatRunner(f.owner, own);
+  // A live rented machine is listed, and is not one of the project's own machines.
+  assert.ok((await listed(f.owner)).includes(f.runnerId));
+  assert.equal(await machines(f.owner), 1);
+
+  // Another project's runner that happens to share the rented machine's name.
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const otherOwner: Caller = {
+    actorId: other.actor.id,
+    projectId: other.project.id,
+    credentialId: other.credential.id,
+  };
+  await f.sessions.heartbeatRunner(otherOwner, { ...f.heartbeat(1), runnerId: f.runnerId });
+  assert.equal(await machines(otherOwner), 1, 'another project’s machine is never rented');
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE session_managed_runners SET runner_released_at=? WHERE allocation_id=?',
+      new Date().toISOString(),
+      f.input.allocationId,
+    ),
+  );
+  assert.ok(!(await listed(f.owner)).includes(f.runnerId), 'the released machine leaves');
+  assert.deepEqual(await listed(otherOwner), [f.runnerId], 'and hides no other project’s');
+  assert.equal(await machines(otherOwner), 1);
+});
+
 test('a machine a release retired mid-step closes its session as machine_retired, which counts against nothing', async (t) => {
   const f = await fixture(t);
   await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
@@ -744,6 +791,7 @@ test('a hosted session’s model grant holds while it is live or just handed off
   assert.deepEqual(grant, {
     id: session.id,
     projectId: f.source.projectId,
+    allocationId: f.input.allocationId,
     // Keyed as Pi keys a person; this source is an issued actor, not a member.
     person: digest({ projectId: f.source.projectId, actorId: f.source.actorId }),
     model: profile.model,

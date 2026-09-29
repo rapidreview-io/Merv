@@ -14,7 +14,7 @@ import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
 import { createApp } from '../../src/app.js';
 import { loadConfiguration } from '../../src/config.js';
 import { useRunSchema } from '../database.js';
-import { codexModelRelay } from '../../packages/fleet/src/codex-relay.js';
+import { codexModelRelay, modelMigrations } from '../../packages/fleet/src/codex-relay.js';
 
 async function command(executable: string, args: string[], input?: string): Promise<string> {
   return new Promise((done, fail) => {
@@ -133,7 +133,9 @@ try {
     requestId: run,
   });
   await app.ctx.sessions.setDispatch(caller, { enabled: true });
-  const relay = await codexModelRelay(app.ctx.sessions, app.ctx.state, {
+  // This app's Fleet workflow owner is off, so nothing else makes the relay's tables.
+  await app.ctx.state.migrate('fleet_workflow', modelMigrations);
+  const relay = codexModelRelay(app.ctx.sessions, app.ctx.state, {
     providerKey: () => modelApiKey,
     dailyTokensPerPerson: 5_000_000,
   });

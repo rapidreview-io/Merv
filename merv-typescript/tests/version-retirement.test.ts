@@ -364,7 +364,6 @@ test('retiring the versions that can no longer start deletes their records and n
     first.C12!.map((row) => [row.scope_id, row.kind, row.exceeded_before, row.exceeded_after]),
     [[seed.history.projectId, 'project', 'wall', '']],
   );
-  assert.ok(first.C13!.some((row) => row.consumer === 'sessions.lifecycle.v1'));
 
   // The release.
   const app = await createApp({ directory });

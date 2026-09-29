@@ -22,6 +22,7 @@ interface GroupRow {
   workflow: string;
   sessions: number | string;
   reported: number | string;
+  unreported: number | string;
   wall_ms: number | string;
   input_tokens: number | string;
   output_tokens: number | string;
@@ -112,7 +113,7 @@ async function groups(
   instanceIds: string[] | null,
 ): Promise<{ row: GroupRow; totals: UsageTotals }[]> {
   const select =
-    'SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,COALESCE(SUM(u.cost_micros),0) AS cost_micros,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=?';
+    'SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,COALESCE(SUM(u.cost_micros),0) AS cost_micros,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=?';
   const calls =
     'SELECT u.instance_id,COUNT(*) AS calls,COALESCE(SUM(c.input_tokens),0)+COALESCE(SUM(c.output_tokens),0) AS payload FROM session_tool_calls c JOIN session_usage u ON u.session_id=c.execution_id WHERE u.project_id=?';
   const slices: (string[] | null)[] = [];
@@ -163,13 +164,16 @@ export async function usageTotals(
   projectId: string,
   instanceIds: string[] | null,
   serviceScopeId?: string,
-): Promise<Pick<UsageRollup, 'totals' | 'byWorkflow' | 'byInstance'> & { since: string | null }> {
+) {
   const totals = empty(),
     workflows = new Map<string, UsageTotals>(),
     byInstance: UsageRollup['byInstance'] = [];
-  let since: string | null = null;
+  let since: string | null = null,
+    // Activated sessions that reported nothing; a launch that never ran has nothing to say.
+    unreported = 0;
   for (const { row, totals: item } of await groups(tx, projectId, instanceIds)) {
     add(totals, item);
+    unreported += sum(row.unreported);
     if (!workflows.has(row.workflow)) workflows.set(row.workflow, empty());
     add(workflows.get(row.workflow)!, item);
     byInstance.push({ ...item, instanceId: row.instance_id, workflow: row.workflow });
@@ -186,13 +190,7 @@ export async function usageTotals(
     projectId,
   )) {
     const sponsors = JSON.parse(row.sponsors_json) as string[];
-    if (
-      instanceIds !== null &&
-      !(serviceScopeId
-        ? sponsors.includes(serviceScopeId)
-        : sponsors.some((id) => instanceIds.includes(id)))
-    )
-      continue;
+    if (instanceIds !== null && !sponsors.includes(serviceScopeId!)) continue;
     totals.wallMs += sum(row.wall_ms);
     if (since === null || row.settled_at < since) since = row.settled_at;
   }
@@ -205,6 +203,7 @@ export async function usageTotals(
       .sort((a, b) => b.wallMs - a.wallMs || a.instanceId.localeCompare(b.instanceId))
       .slice(0, topInstances),
     since,
+    unreported,
   };
 }
 
@@ -241,15 +240,14 @@ export async function budgetStatuses(
         if (!(error instanceof MervError) || error.code !== 'closure_too_large') throw error;
         unwalked = true;
       }
-    const { totals } = await usageTotals(
+    const { totals, unreported: unreportedSessions } = await usageTotals(
       tx,
       projectId,
       unwalked ? [row.scope_id] : instanceIds,
       row.scope_id,
     );
-    const unreportedSessions = totals.sessions - totals.reportedSessions;
     // What nobody reported is unknown, not nothing.
-    const known = totals.sessions === 0 || totals.reportedSessions > 0;
+    const known = unreportedSessions === 0 || totals.reportedSessions > 0;
     const used = {
       wallMs: totals.wallMs,
       costMicros: known ? totals.costMicros : null,
@@ -264,7 +262,7 @@ export async function budgetStatuses(
       totals.inputTokens + totals.outputTokens >= Number(row.max_tokens)
     )
       exceeded.push('tokens');
-    // A bound on reported figures holds only while every closed session reported. One that
+    // A bound on reported figures holds only while every activated session reported. One that
     // did not leaves the sum a floor, so the bound withholds rather than pass as unreached.
     const unavailable: BudgetStatus['unavailable'] = [];
     if (unwalked) {

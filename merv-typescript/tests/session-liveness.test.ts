@@ -285,6 +285,14 @@ test('a repeated dispatch decision keeps the moment it began and a new decision 
   f.advance(5000);
   await f.sessions.lease(f.source, auto());
   let runner = await f.runner();
+  // The same answer is refreshed at most every 15 s; its run still starts when it began.
+  assert.deepEqual(
+    [runner.lastDecision, runner.decisionSince, runner.lastDecisionAt],
+    ['dispatch_disabled', began, began],
+  );
+  f.advance(10_000);
+  await f.sessions.lease(f.source, auto());
+  runner = await f.runner();
   assert.deepEqual(
     [runner.lastDecision, runner.decisionSince, runner.lastDecisionAt],
     ['dispatch_disabled', began, f.time()],
@@ -468,8 +476,9 @@ test('an offer that cannot be built is counted although its lease rolled back, b
   f.onBuild(() => {
     throw new MervError('context_too_large', 'Context exceeds the budget', 400);
   });
-  await assert.rejects(async () => await f.sessions.lease(f.source, auto()), {
-    code: 'context_too_large',
+  assert.deepEqual(await f.sessions.lease(f.source, auto()), {
+    session: null,
+    reason: 'retry_backoff',
   });
   assert.deepEqual(
     (await f.holds()).map((row) => [
@@ -487,8 +496,10 @@ test('an offer that cannot be built is counted although its lease rolled back, b
   assert.equal((await f.holds())[0].attempts, 1, 'a backed-off target is not rebuilt');
 
   await f.pastBackoff();
-  await assert.rejects(async () => await f.sessions.lease(f.source, auto()), {
-    code: 'context_too_large',
+  // The second failure holds the target, and the answer is that recorded decision.
+  assert.deepEqual(await f.sessions.lease(f.source, auto()), {
+    session: null,
+    reason: 'retries_exhausted',
   });
   const held = await f.events('session.dispatch_held');
   assert.equal(held.length, 1);
@@ -509,10 +520,67 @@ test('a refusal of who asked is not counted against the target', async (t) => {
   f.onBuild(() => {
     throw new MervError('forbidden', 'The source may not read this', 403);
   });
-  await assert.rejects(async () => await f.sessions.lease(f.source, auto()), { code: 'forbidden' });
+  // Never the runner's answer: a runner takes 401/403 as its own source revoked.
+  assert.deepEqual(await f.sessions.lease(f.source, auto()), {
+    session: null,
+    reason: 'retry_backoff',
+  });
   assert.deepEqual(await f.holds(), []);
   f.onBuild();
+  // Passed over by this owner for the backoff, so a refusal is not rebuilt on every poll.
+  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');
+  await f.pastBackoff();
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+});
+
+test('a refusal of who asked moves on to the next target', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  await f.instance();
+  let builds = 0;
+  f.onBuild(() => {
+    if (builds++ === 0) throw new MervError('forbidden', 'The source may not read this', 403);
+  });
+  const leased = await f.sessions.lease(f.source, auto());
+  assert.ok(leased.session, leased.reason);
+  assert.equal(builds, 2);
+  assert.deepEqual(await f.holds(), []);
+});
+
+test('a server fault is logged and passed over for the backoff, never held, and only by its owner', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 1 });
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.heartbeatRunner(f.owner, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  let builds = 0;
+  f.onBuild(() => {
+    builds++;
+    throw new TypeError('Cannot read the recipe');
+  });
+  const logged: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array, ...rest: never[]) => {
+    if (String(chunk).includes('dispatch.offer_failed')) logged.push(String(chunk));
+    else return write(chunk, ...rest);
+    return true;
+  });
+  // Every poll is answered with the decision; the target is built once in the backoff.
+  for (let poll = 0; poll < 5; poll++)
+    assert.deepEqual(await f.sessions.lease(f.source, auto()), {
+      session: null,
+      reason: 'retry_backoff',
+    });
+  assert.equal(builds, 1);
+  assert.equal(logged.length, 1);
+  assert.equal(JSON.parse(logged[0]!).status, 500);
+  assert.deepEqual(await f.holds(), []);
+  assert.deepEqual(await f.events('session.dispatch_held'), []);
+  // Another owner's runner is not passed over by it.
+  f.onBuild();
+  assert.ok((await f.sessions.lease(f.owner, auto())).session);
 });
 
 test('an offer no process ever activated counts as a lost launch; an expiry after activation does not', async (t) => {
@@ -589,7 +657,8 @@ test('the hold tables arrive on a database whose runners already decided, and le
   const runner = await f.runner();
   assert.deepEqual([runner.lastDecision, runner.decisionSince], ['dispatch_disabled', null]);
   assert.deepEqual(await f.holds(), []);
-  f.advance(1_000);
+  // The same answer is refreshed once its last moment is 15 s old.
+  f.advance(15_000);
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'dispatch_disabled');
   const since = f.time();
   assert.equal((await f.runner()).decisionSince, since, 'the same answer starts counting');
@@ -608,10 +677,10 @@ test('a refusal of what the runner sent is not counted against any target', asyn
   await f.instance();
   const used = (await f.active()).secret;
   await f.sessions.heartbeatRunner(f.source, presence('other'));
-  await assert.rejects(
-    async () => await f.sessions.lease(f.source, { ...auto('other'), secret: used }),
-    { code: 'session_secret_used' },
-  );
+  assert.deepEqual(await f.sessions.lease(f.source, { ...auto('other'), secret: used }), {
+    session: null,
+    reason: 'retry_backoff',
+  });
   assert.deepEqual(await f.holds(), []);
   assert.deepEqual(await f.events('session.dispatch_held'), []);
 });
@@ -906,8 +975,8 @@ for (const code of ['code_base_pending', 'code_merge_required', 'code_dependenci
     f.onBuild(() => {
       throw new MervError(code, 'The base cannot be pinned yet', 409);
     });
-    // With nothing else leasable the runner is told why; the target itself is left alone.
-    await assert.rejects(async () => await f.sessions.lease(f.source, auto()), { code });
+    // A wait, not a failure: skipped for this request only, and the target is left alone.
+    assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');
     assert.deepEqual(await f.holds(), []);
     assert.deepEqual(await f.events('session.dispatch_held'), []);
     f.onBuild();

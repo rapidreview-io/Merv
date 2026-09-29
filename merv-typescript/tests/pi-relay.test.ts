@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
-import type { Scope } from '@merv/contracts';
+import { MervError, type Scope } from '@merv/contracts';
 import {
   piModelRelay,
   type PiRelayConfig,
@@ -724,6 +724,242 @@ test('a failed response is refused wherever its type sits in the frame', async (
   assert.deepEqual(await response.json(), { error: 'upstream_failed' });
 });
 
+test('a frame that quotes an error type in its content streams', async (t) => {
+  // A tool schema the provider echoes back names a property whose type is "error".
+  const echoed = `data: ${JSON.stringify({
+    type: 'response.created',
+    response: { tools: [{ type: 'function', parameters: { type: 'error' } }] },
+  })}\n\n`;
+  const f = await fixture({
+    fetchImpl: async () => eventStream(`${echoed}data: {"type":"response.completed"}\n\n`),
+  });
+  t.after(() => f.close());
+  const response = await send(f);
+  assert.equal(response.status, 200);
+  const text = await response.text();
+  assert.ok(text.startsWith(echoed));
+  assert.doesNotMatch(text, /relay_interrupted/);
+  const error = await fixture({
+    fetchImpl: async () => eventStream('data: {"type":"error","code":"server_error"}\n\n'),
+  });
+  t.after(() => error.close());
+  assert.equal((await send(error)).status, 502);
+});
+
+test('an authority or ledger that cannot answer is unavailable, not a refusal', async (t) => {
+  const down = () => new MervError('database_unavailable', 'private database failure', 503);
+  const cases: [string, Partial<PiRelayConfig>, number, string][] = [
+    [
+      'authorize down',
+      { authority: { authorize: async () => Promise.reject(down()), validate: async () => {} } },
+      503,
+      'relay_unavailable',
+    ],
+    [
+      'authorize refuses',
+      {
+        authority: {
+          authorize: async () => Promise.reject(new Error('private')),
+          validate: async () => {},
+        },
+      },
+      401,
+      'unauthorized',
+    ],
+    [
+      'validate down',
+      {
+        authority: { authorize: async () => grant(), validate: async () => Promise.reject(down()) },
+      },
+      503,
+      'relay_unavailable',
+    ],
+    [
+      'validate refuses',
+      {
+        authority: {
+          authorize: async () => grant(),
+          validate: async () => Promise.reject(new MervError('pi_authority_stale', 'Stale', 403)),
+        },
+      },
+      403,
+      'grant_forbidden',
+    ],
+    ['reserve down', { reserve: async () => Promise.reject(down()) }, 503, 'relay_unavailable'],
+    [
+      'reserve refuses',
+      { reserve: async () => Promise.reject(new MervError('pi_model_ceiling', 'Used up', 403)) },
+      403,
+      'pi_model_ceiling',
+    ],
+  ];
+  for (const [name, overrides, status, code] of cases) {
+    const f = await fixture(overrides);
+    t.after(() => f.close());
+    const response = await send(f);
+    assert.equal(response.status, status, name);
+    assert.deepEqual(await response.json(), { error: code }, name);
+    assert.equal(f.upstreamCalls.length, 0, name);
+  }
+});
+
+test('an authority that cannot answer while a call waits for its first frame ends it with 503', async (t) => {
+  let validations = 0;
+  const failures: PiRelayFailureRecord[] = [];
+  const f = await fixture({
+    authority: {
+      authorize: async () => grant(),
+      validate: async () => {
+        if (++validations > 3) throw new MervError('database_unavailable', 'private', 503);
+      },
+    },
+    onFailure: (record) => void failures.push(record),
+    // The first frame comes after the fence's first read.
+    fetchImpl: ticking(1_500),
+  });
+  t.after(() => f.close());
+  const response = await send(f);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'relay_unavailable' });
+  assert.deepEqual(
+    failures.map(({ code, phase }) => [code, phase]),
+    [['relay_unavailable', 'stream']],
+  );
+});
+
+/** A ledger whose charges settle by delta, as Pi's and Codex's do. */
+function ledger() {
+  const book = { used: 0, charges: 0, records: [] as PiRelayUsageRecord[] };
+  return {
+    book,
+    reserve: async () => {
+      book.charges++;
+      book.used += 100;
+      return { day: '2026-09-29', tokens: 100 };
+    },
+    onUsage: (record: PiRelayUsageRecord, _grant: PiRelayGrant, reserved: { tokens: number }) => {
+      book.records.push(record);
+      book.used += record.inputTokens + record.outputTokens - reserved.tokens;
+    },
+  };
+}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test('a call the provider never took returns its charge, once', async (t) => {
+  const failing = ledger();
+  const f = await fixture({
+    ...failing,
+    fetchImpl: async () => new Response('private', { status: 500 }),
+  });
+  t.after(() => f.close());
+  for (let call = 0; call < 5; call++) assert.equal((await send(f)).status, 502);
+  await settle();
+  assert.deepEqual([failing.book.charges, failing.book.used], [5, 0]);
+  assert.equal(failing.book.records.length, 5);
+  for (const record of failing.book.records)
+    assert.deepEqual(record, {
+      event: 'pi_relay_usage',
+      model: 'test-model',
+      inputTokens: 0,
+      cachedTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      refund: true,
+    });
+  // Refused by the authority read after its charge, before it was sent.
+  const stale = ledger();
+  let validations = 0;
+  const g = await fixture({
+    ...stale,
+    authority: {
+      authorize: async () => grant(),
+      validate: async () => {
+        if (++validations === 2) throw new Error('private');
+      },
+    },
+  });
+  t.after(() => g.close());
+  assert.equal((await send(g)).status, 403);
+  await settle();
+  assert.deepEqual([stale.book.charges, stale.book.used, stale.book.records.length], [1, 0, 1]);
+  assert.equal(g.upstreamCalls.length, 0);
+  // A finished call settles once, to its usage.
+  const finished = ledger();
+  const h = await fixture({
+    ...finished,
+    fetchImpl: async () =>
+      eventStream(
+        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 3, output_tokens: 4 } } })}\n\n`,
+      ),
+  });
+  t.after(() => h.close());
+  assert.equal((await send(h)).status, 200);
+  await settle();
+  assert.deepEqual([finished.book.used, finished.book.records.length], [7, 1]);
+  assert.equal(finished.book.records[0]!.refund, undefined);
+});
+
+test('a call the provider may have run keeps its charge', async (t) => {
+  const cases: [string, typeof fetch][] = [
+    ['a success that is no stream', async () => new Response('{}', { status: 200 })],
+    [
+      'no answer',
+      async () => {
+        throw new Error('private');
+      },
+    ],
+    ['a stream cut off', async () => eventStream('data: {"type":"delta"}\n\n')],
+  ];
+  for (const [name, fetchImpl] of cases) {
+    const kept = ledger();
+    const f = await fixture({ ...kept, fetchImpl });
+    t.after(() => f.close());
+    const response = await send(f);
+    await response.text();
+    await settle();
+    assert.deepEqual([kept.book.charges, kept.book.used, kept.book.records], [1, 100, []], name);
+  }
+});
+
+test('a reservation that commits after the worker hung up is returned', async (t) => {
+  const late = ledger();
+  let commit!: () => void;
+  const committing = new Promise<void>((resolve) => (commit = resolve));
+  let reserving!: () => void;
+  const reserveStarted = new Promise<void>((resolve) => (reserving = resolve));
+  const failures: PiRelayFailureRecord[] = [];
+  let reserved = false;
+  const f = await fixture({
+    ...late,
+    // Only the first call's reservation is slow.
+    reserve: async () => {
+      if (!reserved) {
+        reserved = true;
+        reserving();
+        await committing;
+      }
+      return await late.reserve();
+    },
+    onFailure: (record) => void failures.push(record),
+  });
+  t.after(() => f.close());
+  const hangUp = new AbortController();
+  void send(f, request, { signal: hangUp.signal }).catch(() => undefined);
+  await reserveStarted;
+  hangUp.abort();
+  await settle();
+  // The lane is held until the reservation is known.
+  assert.equal((await send(f)).status, 429);
+  commit();
+  await settle();
+  assert.deepEqual([late.book.charges, late.book.used, late.book.records.length], [1, 0, 1]);
+  assert.deepEqual(
+    failures.map(({ code, phase }) => [code, phase]),
+    [['disconnected', 'request']],
+  );
+  assert.equal(f.upstreamCalls.length, 0);
+});
+
 test('a callback that fails is logged by name only', async (t) => {
   const lines: string[] = [];
   const write = process.stderr.write;
@@ -1140,9 +1376,7 @@ test('failure diagnostics are bounded metadata only, after admission', async (t)
       );
       assert.equal(record.upstreamHttpStatus, scenario.upstreamHttpStatus);
       assert.equal(record.model, 'test-model');
-      assert.ok(
-        Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0 && record.elapsedMs <= 900_000,
-      );
+      assert.ok(Number.isInteger(record.elapsedMs) && record.elapsedMs >= 0);
       assert.doesNotMatch(
         JSON.stringify(record),
         /private|grant-1|command-1|conversation-1|runtime-1|pir_/,

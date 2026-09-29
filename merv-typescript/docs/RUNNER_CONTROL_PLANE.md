@@ -68,7 +68,10 @@ Switching dispatch off and on does the same for every target of the project.
 
 A runner's presence carries `decisionSince` beside `lastDecision` and `lastDecisionAt`: the
 moment the current run of the same answer began. It is per runner, so a runner that
-alternates platforms with different answers restarts it.
+alternates platforms with different answers restarts it. An idle poll is answered from a read
+snapshot, so the same answer refreshes `lastDecisionAt` at most every 15 seconds, and an
+unchanged presence refreshes `lastSeenAt` at most every 10 seconds (a runner is live for 45);
+a changed answer or presence is recorded at once.
 
 `session.stuck` is one read tool, for anyone who may read the project and never for a
 leased worker. It derives, in one transaction and without writing, everything that stopped
