@@ -51,6 +51,23 @@ test('a decline backs off only its own profile, for five seconds', async (t) => 
   assert.equal(fake.leases('a').length, 2);
 });
 
+test('a settings_pending decline sends presence at the next cycle, not 15 s later', async (t) => {
+  const fake = server(() => 'settings_pending');
+  let now = Date.now();
+  const f = machine(t, [node('a')], fake.fetch, { clock: () => now });
+  const runner = f.make();
+  await runner.start();
+  const presences = () =>
+    fake.calls.filter((call) => call.path === '/sessions/runners/heartbeat').length;
+  const before = presences();
+  now += 1_000;
+  await runner.tick();
+  assert.equal(presences(), before + 1);
+  now += 1_000;
+  await runner.tick();
+  assert.equal(presences(), before + 1, 'unchanged presence waits again once sent');
+});
+
 test('after a restart, a kept request for a changed platform is asked once and completed', async (t) => {
   const answers: Body[] = [];
   const fake = server((body) => {

@@ -73,7 +73,7 @@ export function offer(
  * `refuse` answers any call with a refusal first, as a failing or unloaded route would.
  */
 export function server(
-  lease: (body: Body) => Body | null | Refusal,
+  lease: (body: Body) => Body | null | string | Refusal,
   settings: { version: number; platforms: unknown[] } = { version: 0, platforms: [] },
   refuse: (path: string, body: Body | undefined) => Refusal | undefined = () => undefined,
 ) {
@@ -100,7 +100,9 @@ export function server(
     if (path === '/sessions/lease') {
       const answer = lease(body!);
       if (answer instanceof Refusal) return refusal(answer);
-      if (answer === null) return reply({ session: null, reason: 'no_candidates' });
+      // A string is a decline's reason; null declines with no candidates.
+      if (answer === null || typeof answer === 'string')
+        return reply({ session: null, reason: answer ?? 'no_candidates' });
       const session = sessions.get(answer.id) ?? { ...answer, runnerId: body!.runnerId };
       sessions.set(session.id, session);
       return reply({ session, reason: 'leased' });

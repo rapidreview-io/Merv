@@ -109,12 +109,17 @@ session the server no longer knows is stopped once and settled.
 
 An idle runner costs the server little. Presence is sent when it changes, 15 s
 after the last accepted one (the server holds it fresh for 45 s) and at once
-after a failure, so remote settings apply within 15 s. A profile whose lease was
-declined is not asked for again for 5 s; a request whose answer was lost is
-always replayed. Each live session is read every tick, but heartbeated only when
-that would slide its expiry by more than a minute, and its guardian's deadline is
-pushed only when the session's has moved on by more than a minute, so a launch
-that activates late is extended on the first tick that sees it active. A managed
+after a failure or a `settings_pending` decline, so remote settings apply within
+15 s. A profile whose lease was declined is not asked for again for 5 s; a
+request whose answer was lost is always replayed. Each live session is read every
+tick, but heartbeated only when that would slide its expiry by more than a
+minute, as judged by the runner's clock against the server's `expiresAt`: the
+machine's clock is assumed to be within a minute or so of the server's, as the
+local deadline check already assumes. A clock hours behind heartbeats only when
+the session is that close to expiry, and one four hours behind never does. A
+guardian's deadline is pushed only when its session's has moved on by more than a
+minute, so a launch that activates late is extended on the first tick that sees
+it active. A managed
 runner's read does not reconcile its session on the server, so it learns of a
 close that reconciling decides (an expiry, or a workflow moving on after a
 handoff) up to about a minute later than a heartbeat every tick would.

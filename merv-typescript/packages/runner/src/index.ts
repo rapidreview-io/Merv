@@ -542,6 +542,8 @@ export class MachineRunner implements Runner {
       if (session === null) {
         this.lastDeclined = result.reason;
         this.declinedAt.set(pending.platform.name, this.clock());
+        // The server waits for presence to report its settings: the next cycle sends it at once.
+        if (result.reason === 'settings_pending') this.presented = undefined;
         this.ledger.completeRequest(pending.platform.name, pending.requestId);
         return;
       }
