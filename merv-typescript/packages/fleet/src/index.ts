@@ -140,7 +140,8 @@ export class FleetService implements Fleet {
       if (this.watching) this.wake(0);
       this.watching = false;
     });
-    // The first pass waits a full interval so owners can register before anything is judged.
+    // The first full pass waits one interval so owners can register first; a missing owner's
+    // rows are judged only after ownerGraceMs.
     this.fullAt = Date.now() + this.config.pollIntervalMs;
     this.wake(this.config.pollIntervalMs);
   }
@@ -197,7 +198,7 @@ export class FleetService implements Fleet {
   }
   /** Coalesced: many kicks make one pass now and one after the next commit. */
   kick(): void {
-    // Owners register after Fleet starts and a pass stops what has none: wait for the first.
+    // Wait for the first full pass, which start() delays so owners can register first.
     if (!this.unlisten || !this.awake || this.closed) return;
     this.watching = true;
     this.wake(0);
