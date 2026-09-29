@@ -765,6 +765,25 @@ test(
 );
 
 test(
+  "a user's stop of a live worker releases its session uncounted",
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await fixture(t, ['--hold']);
+    const runner = f.make();
+    await runner.start();
+    await f.enabled(true);
+    await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
+    await f.enabled(false);
+    await runner.stop();
+    const [session] = await f.sessions();
+    assert.equal(session.status, 'released');
+    assert.equal(session.outcome, 'released');
+    assert.equal(session.closeReason, 'local_process_controller_stopped');
+    assert.equal(runner.snapshot().launches[0].releasePending, false);
+  },
+);
+
+test(
   'ordinary runner still skips an empty report after remote closure',
   { timeout: 30_000 },
   async (t) => {

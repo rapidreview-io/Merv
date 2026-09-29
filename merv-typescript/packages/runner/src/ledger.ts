@@ -191,6 +191,13 @@ export class LocalLedger {
         throw new Error('Runner directory belongs to a different server or source identity');
       this.runnerId = String(row.runner_id);
       this.machineKey = Buffer.from(row.machine_key as Uint8Array);
+      // Settled launches owe nothing, so each tick reads only the open ones.
+      const columns = this.db.prepare('PRAGMA table_info(launches)').all();
+      if (!columns.some((column) => column.name === 'settled'))
+        this.db.exec('ALTER TABLE launches ADD COLUMN settled INTEGER NOT NULL DEFAULT 0');
+      this.db.exec(
+        'CREATE INDEX IF NOT EXISTS launches_open ON launches(created_at,id) WHERE settled=0',
+      );
       this.db.exec('COMMIT');
       syncPath(this.directory);
     } catch (error) {
@@ -314,6 +321,17 @@ export class LocalLedger {
     return (this.db.prepare('SELECT * FROM launches ORDER BY created_at,id').all() as Row[]).map(
       launchRecord,
     );
+  }
+  /** Launches not yet settled: running, or ended but still owing the server something. */
+  open(): LaunchRecord[] {
+    const sql = 'SELECT * FROM launches WHERE settled=0 ORDER BY created_at,id';
+    return (this.db.prepare(sql).all() as Row[]).map(launchRecord);
+  }
+  /** Mark ended launches as owing nothing, in one statement. */
+  settle(ids: string[]): void {
+    const sql = `UPDATE launches SET settled=1
+      WHERE id IN (SELECT value FROM json_each(?)) AND status IN ('exited','stopped')`;
+    if (ids.length) this.db.prepare(sql).run(JSON.stringify(ids));
   }
   markUncertain(id: string, reason = 'supervisor_unreachable'): void {
     if (!/^[a-z_]{1,80}$/.test(reason)) throw new Error('Invalid uncertainty reason');

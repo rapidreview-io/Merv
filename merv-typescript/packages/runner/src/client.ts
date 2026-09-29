@@ -401,37 +401,24 @@ export class RunnerClient {
       throw new RunnerControlError('invalid_control_response', 0);
     return parsed.data;
   }
+  /**
+   * Close the session, or, once it is closed, report what it used. With no `outcome` a live
+   * session closes as `released`, which counts against nothing. `deferral` goes only with a
+   * deferred preparation: why the checkout was put off.
+   */
   async release(
     id: string,
     runnerId: string,
-    outcome: SessionReleaseOutcome,
-    reason: string,
-    usage?: SessionUsageReport,
-    /** Named with a deferred preparation, and only then: why the checkout was put off. */
-    deferral?: SessionDeferral,
+    input: {
+      outcome?: SessionReleaseOutcome;
+      reason?: string;
+      usage?: SessionUsageReport;
+      deferral?: SessionDeferral;
+    },
   ): Promise<Session> {
+    const body = { runnerId, ...input }; // JSON leaves out what is undefined
     return this.session(
-      (
-        await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
-          runnerId,
-          outcome,
-          reason,
-          ...(deferral ? { deferral } : {}),
-          ...(usage ? { usage } : {}),
-        })
-      )?.session,
-      { id, runnerId, statuses: ['released', 'expired'] },
-    );
-  }
-  /** The release route also acknowledges that a managed runner stopped locally. */
-  async reportUsage(id: string, runnerId: string, usage?: SessionUsageReport): Promise<Session> {
-    return this.session(
-      (
-        await this.request(`/sessions/${encodeURIComponent(id)}/release`, {
-          runnerId,
-          ...(usage ? { usage } : {}),
-        })
-      )?.session,
+      (await this.request(`/sessions/${encodeURIComponent(id)}/release`, body))?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
   }

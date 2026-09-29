@@ -157,7 +157,7 @@ export class ProcessHost {
     return this.required(id);
   }
   async reconcile(): Promise<void> {
-    for (const record of this.ledger.list()) await this.inspect(record.id);
+    for (const record of this.ledger.open()) await this.inspect(record.id);
   }
 
   /**

@@ -20,6 +20,7 @@ import type {
   RunnerPlatform,
   Session,
   SessionDeferral,
+  SessionReleaseOutcome,
   SessionUsageReport,
 } from '@merv/sessions/types';
 import { RunnerClient, RunnerControlError } from './client.js';
@@ -203,12 +204,14 @@ const view = (s: Session) => {
   };
 };
 type SessionView = ReturnType<typeof view>;
-/** What a put-off preparation recorded on the launch, as the release route carries it. */
+/** What a put-off preparation recorded, in words the release route accepts, else a default. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
   if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
-  const deferral = record.metadata.deferral as { cause?: unknown; code?: unknown } | undefined;
-  return typeof deferral?.cause === 'string' && typeof deferral.code === 'string'
-    ? { cause: deferral.cause, code: deferral.code }
+  const { cause, code } = (record.metadata.deferral ?? {}) as { cause?: unknown; code?: unknown };
+  const word = (value: unknown): value is string =>
+    typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value);
+  return word(cause) && word(code)
+    ? { cause, code }
     : { cause: 'code_unavailable', code: 'workspace_deferred' };
 };
 
@@ -424,31 +427,35 @@ export class MachineRunner implements Runner {
   private async cycle(): Promise<void> {
     this.lastError = undefined;
     await this.host.reconcile();
+    let leasing = true;
     try {
       await this.advertise();
     } catch (error) {
       this.lastError = diagnostic(error);
       if (error instanceof RunnerControlError && [401, 403].includes(error.status)) {
         this.state = 'unauthorized';
-        await this.stopOwned();
-      } else {
-        this.state = 'offline';
-        await this.enforceDeadlines();
+        return this.stopOwned();
       }
-      return;
+      if (!(error instanceof RunnerControlError && error.final)) {
+        this.state = 'offline';
+        return this.enforceDeadlines();
+      }
+      leasing = false; // Refused for good (say `runner_limit`): what runs is still supervised.
     }
-    for (const launch of this.ledger.list()) {
+    const settled: string[] = [];
+    for (const launch of this.ledger.open()) {
       if (this.stopping) break;
       try {
-        await this.reconcileLaunch(launch);
+        if (await this.reconcileLaunch(launch)) settled.push(launch.id);
       } catch (error) {
         this.lastError = diagnostic(error);
       }
     }
+    this.ledger.settle(settled);
     if (this.stopping) return;
     // Existing uncertain requests are retried first, preserving their original platform and secret.
     for (const pending of this.ledger.pendingRequests()) {
-      if (this.stopping) break;
+      if (this.stopping || !leasing) break;
       if (
         this.assigned() &&
         !this.ledger.list().some((record) => record.metadata.requestId === pending.requestId)
@@ -457,8 +464,8 @@ export class MachineRunner implements Runner {
       await this.acquire(pending);
     }
     for (const profile of this.profiles) {
-      if (this.stopping || this.assigned()) break;
-      const live = this.ledger.list().filter((record) => this.occupied(record));
+      if (this.stopping || !leasing || this.assigned()) break;
+      const live = this.ledger.open().filter((record) => this.occupied(record));
       if (
         !profile.enabled ||
         live.length >= this.capacity() ||
@@ -476,11 +483,11 @@ export class MachineRunner implements Runner {
       });
       await this.acquire(pending);
     }
-    const records = this.ledger.list();
     if (this.config.workspace && 'github' in this.config.workspace) {
       // External publication is recoverable and must not stop local worker supervision.
       await this.client.syncPublications().catch(() => {});
     }
+    const records = this.ledger.open();
     this.state =
       this.lastError || records.some((r) => r.status === 'uncertain')
         ? 'degraded'
@@ -553,7 +560,6 @@ export class MachineRunner implements Runner {
             profile,
             platform: profile.name,
             requestId: pending.requestId,
-            releasePending: false,
             attached: false,
             ...(driver === undefined ? {} : { workspaceDriver: driver }),
           } as unknown as LaunchMetadata,
@@ -572,21 +578,20 @@ export class MachineRunner implements Runner {
   private deadline(session: Session): number {
     return Math.min(Date.parse(session.expiresAt), Date.parse(session.hardDeadline));
   }
-  private async reconcileLaunch(initial: LaunchRecord): Promise<void> {
+  /** One tick of a launch's supervision; true once it has ended and owes nothing more. */
+  private async reconcileLaunch(initial: LaunchRecord): Promise<boolean> {
     let record = await this.host.inspect(initial.id);
-    if (terminalLaunch(record)) await this.captureWorkspace(record);
-    if (terminalLaunch(record) && record.metadata.remoteClosed === true) {
-      await this.reportUsage(record);
-      await this.finishWorkspace(record);
-      return;
-    }
+    if (terminalLaunch(record) && record.metadata.remoteClosed === true) return this.settle(record);
     let session: Session;
     try {
       session = await this.client.get(record.sessionId, this.ledger.runnerId);
     } catch (error) {
-      if (error instanceof RunnerControlError && [401, 403, 404, 409].includes(error.status))
-        await this.halt(record.id, { remoteRefusal: error.code });
-      else if (record.deadline <= this.clock()) await this.halt(record.id);
+      // A session refused for good is stopped once and settled with no release. A 404 is
+      // final only because a server answers 503 while a route's owning plugin is unmounted.
+      if (error instanceof RunnerControlError && error.final)
+        await this.halt(record.id, { remoteClosed: true, usageReported: true });
+      else if (!terminalLaunch(record) && record.deadline <= this.clock())
+        await this.halt(record.id, { releaseOutcome: 'host_failed' });
       throw error;
     }
     record = this.save(record.id, {
@@ -604,33 +609,23 @@ export class MachineRunner implements Runner {
         this.clock() < Math.min(record.deadline, since + grace)
       ) {
         this.save(record.id, { handedOffAt: since });
-        return;
+        return false;
       }
-      record = await this.host.stop(record.id);
-      this.save(record.id, {
-        remoteClosed: true,
-        releasePending: this.config.oneAssignment || !terminalLaunch(record),
-      });
-      if (terminalLaunch(record)) {
-        await this.reportUsage(record);
-        await this.finishWorkspace(record);
-      }
-      return;
+      record = await this.halt(record.id, { remoteClosed: true });
+      return terminalLaunch(record) && this.settle(record);
     }
-    if (record.status === 'uncertain') return;
-    if (terminalLaunch(record)) {
-      await this.release(record);
-      return;
-    }
+    if (record.status === 'uncertain') return false;
+    if (terminalLaunch(record)) return this.settle(record);
     if (this.deadline(session) <= this.clock()) {
-      record = await this.host.stop(record.id);
-      if (terminalLaunch(record)) await this.release(record);
-      return;
+      // Running out of time is the work's own ending, even when it races a stop of this runner.
+      record = await this.halt(record.id, { releaseOutcome: 'host_failed' });
+      return terminalLaunch(record) && this.settle(record);
     }
     if (record.status === 'reserved' || record.status === 'starting') {
-      if (this.stopping) return;
+      if (this.stopping) return false;
       const profile = validateProfile(record.metadata.profile);
-      let workspace;
+      // What a failure costs: the workspace before the attach, the launch after it.
+      let outcome: SessionReleaseOutcome = 'workspace_failed';
       try {
         if (
           this.local(record) &&
@@ -655,36 +650,18 @@ export class MachineRunner implements Runner {
         }
         const driver = this.driverOf(record);
         if (!driver) throw new WorkspaceDeferred('driver_absent', 'workspace_driver_missing');
-        workspace = await driver.prepare(record, session);
-      } catch (error) {
-        record = await this.host.stop(record.id);
-        // A preparation that could not happen yet is not a failure of this work or this
-        // machine: it is released as deferred and nothing counts it.
-        this.save(
+        const workspace = await driver.prepare(record, session);
+        outcome = 'launch_failed';
+        // Preparation may take time; the attach route rechecks current admission before spawn.
+        session = await this.client.attach(
+          record.sessionId,
+          this.ledger.runnerId,
           record.id,
-          error instanceof WorkspaceDeferred
-            ? {
-                releaseOutcome: 'preparation_deferred',
-                deferral: { cause: error.cause, code: error.code },
-                lastError: error.code,
-              }
-            : { releaseOutcome: 'workspace_failed' },
+          workspace.snapshot,
         );
-        if (terminalLaunch(record)) await this.release(this.ledger.get(record.id)!);
-        throw error;
-      }
-      // Preparation may take time; the attach route rechecks current admission before spawn.
-      this.save(record.id, { attachAttempted: true });
-      session = await this.client.attach(
-        record.sessionId,
-        this.ledger.runnerId,
-        record.id,
-        workspace.snapshot,
-      );
-      this.save(record.id, { session: view(session), attached: true });
-      if (!liveSession(session) || this.stopping) return;
-      const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
-      try {
+        this.save(record.id, { session: view(session), attached: true });
+        if (!liveSession(session) || this.stopping) return false;
+        const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
         const command = buildLaunch(profile, {
           session,
           secret,
@@ -711,12 +688,23 @@ export class MachineRunner implements Runner {
           deadline: record.deadline,
         });
       } catch (error) {
-        const stopped = await this.host.stop(record.id);
-        this.save(record.id, { releaseOutcome: 'launch_failed', lastError: diagnostic(error) });
-        if (terminalLaunch(stopped)) await this.release(this.ledger.get(record.id)!);
-        throw error;
+        // A reply that may yet come (a lost attach, say) is asked again on the next tick.
+        if (error instanceof RunnerControlError && !error.final) throw error;
+        this.lastError = diagnostic(error);
+        // A preparation that could not happen yet is not a failure of this work or this
+        // machine: it is released as deferred and nothing counts it.
+        record = await this.halt(
+          record.id,
+          error instanceof WorkspaceDeferred
+            ? {
+                releaseOutcome: 'preparation_deferred',
+                deferral: { cause: error.cause, code: error.code },
+              }
+            : { releaseOutcome: outcome },
+        );
+        return terminalLaunch(record) && this.settle(record);
       }
-      return;
+      return false;
     }
     if (session.status === 'active') {
       session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
@@ -724,6 +712,7 @@ export class MachineRunner implements Runner {
       const stored = view(session);
       await this.reconcileCodeCommands(this.save(record.id, { session: stored }), stored);
     }
+    return false;
   }
   private async reconcileCodeCommands(record: LaunchRecord, session?: SessionView): Promise<void> {
     const workspaces = this.driverOf(record);
@@ -742,7 +731,7 @@ export class MachineRunner implements Runner {
       // The manager distinguishes proven outcomes from an interrupted Git operation.
       if (!workspaces.commitOutcome(command.id)) {
         record = await this.host.inspect(record.id);
-        if (terminalLaunch(record)) await this.captureWorkspace(record);
+        if (terminalLaunch(record)) await workspaces.capture(record);
       }
       try {
         await workspaces.checkpointCommit(record, command);
@@ -760,7 +749,7 @@ export class MachineRunner implements Runner {
           receipt: outcome.receipt,
         });
       }
-      await this.client.completeCodeCommand(command, outcome);
+      await this.answer(() => this.client.completeCodeCommand(command, outcome));
       workspaces.acknowledgeCommit(command.id);
     };
     for (const command of workspaces.pendingCommits(record.id)) await perform(command);
@@ -772,41 +761,92 @@ export class MachineRunner implements Runner {
       !session.execution.policy.tools.some((tool) => tool.name === 'code.commit')
     )
       return;
-    const command = await this.client.nextCodeCommand(session, record.id);
+    const command = await this.answer(() => this.client.nextCodeCommand(session, record.id));
     if (!command) return;
     // A lost next-command response may have left only a server-side dispatch.
     // Terminal launches recover its descriptor after capture has revoked the
     // workspace owner fence; perform can then report a stopped-safe outcome.
     await perform(command);
   }
-  private async release(record: LaunchRecord): Promise<void> {
-    if (!terminalLaunch(record)) return;
-    await this.finishWorkspace(record);
-    this.save(record.id, { releasePending: true });
-    const requested = record.metadata.releaseOutcome;
-    // A successful process exit does not prove that its workflow gate was completed.
-    const outcome =
-      requested === 'launch_failed' ||
-      requested === 'workspace_failed' ||
-      requested === 'preparation_deferred'
-        ? requested
-        : this.clock() - record.createdAt < 10_000
-          ? 'crash_loop'
-          : 'host_failed';
-    const session = await this.client.release(
-      record.sessionId,
-      this.ledger.runnerId,
-      outcome,
-      terminalReason(record),
-      this.readUsage(record),
-      deferralOf(record),
+  /**
+   * What an ended launch owes, in order: its release, capture, owed Code receipts, workspace
+   * result and closed checkout; true once nothing is. One whose driver is gone waits for it.
+   */
+  private async settle(record: LaunchRecord): Promise<boolean> {
+    if (record.metadata.usageReported !== true) record = await this.release(record);
+    const driver = this.driverOf(record);
+    if (!driver) {
+      this.lastError = 'workspace_driver_missing';
+      return false;
+    }
+    const workspace = driver.get(record.id);
+    if (!workspace || workspace.status === 'closed') return true;
+    const result = await driver.capture(record);
+    await this.reconcileCodeCommands(
+      record,
+      record.metadata.session as unknown as SessionView | undefined,
     );
-    this.save(record.id, {
-      session: view(session),
-      releasePending: false,
+    // Only an attached checkout has a result to report; the session is closed by now.
+    if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
+      if (this.local(record) && result.repositoryId.startsWith('github:') && !workspace.readOnly) {
+        await this.publishGit({
+          sessionId: record.sessionId,
+          runnerId: this.ledger.runnerId,
+          hostRef: record.id,
+          operation: 'capture',
+          workspace: result,
+        });
+      }
+      await this.answer(() =>
+        this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
+      );
+      record = this.save(record.id, { workspaceReported: true });
+    }
+    await driver.close(record);
+    return true;
+  }
+  /** The one release: its outcome, or only its usage once closed. The reply says if attached. */
+  private async release(record: LaunchRecord): Promise<LaunchRecord> {
+    const { metadata } = record,
+      remote = metadata.remoteClosed === true,
+      usage = this.readUsage(record);
+    // A stop the user made on their own machine is nobody's failure; an ending that merely
+    // raced it still counts. Hosted stops and source-refusal halts stay counted: `released`
+    // has no backoff, so a repeated eviction or a poison 401 would re-offer the work at once.
+    const byStop =
+      !this.config.oneAssignment &&
+      (this.stopping || metadata.runnerStopped === true) &&
+      ['controller_stop', 'external_stop', 'cancelled_before_spawn'].includes(record.reason ?? '');
+    // A successful process exit does not prove that its workflow gate was completed.
+    const failed = this.clock() - record.createdAt < 10_000 ? 'crash_loop' : 'host_failed';
+    const outcome =
+      (metadata.releaseOutcome as SessionReleaseOutcome | undefined) ??
+      (byStop ? undefined : failed);
+    let session: Session | undefined;
+    // A managed runner acknowledges its local stop even when a handoff left no usage.
+    if (!remote || usage || this.config.oneAssignment) {
+      const input = remote
+        ? { usage }
+        : { outcome, reason: terminalReason(record), usage, deferral: deferralOf(record) };
+      session = await this.answer(() =>
+        this.client.release(record.sessionId, this.ledger.runnerId, input),
+      );
+    }
+    return this.save(record.id, {
+      ...(session ? { session: view(session), attached: session.hostRef === record.id } : {}),
       remoteClosed: true,
       usageReported: true,
     });
+  }
+  /** A final refusal is that call's answer: recorded once, never replayed. */
+  private async answer<T>(call: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await call();
+    } catch (error) {
+      if (!(error instanceof RunnerControlError) || !error.final) throw error;
+      this.lastError = error.code;
+      return undefined;
+    }
   }
   /**
    * A regular file of at most 4 KB in the one closed shape: a launched process can write
@@ -833,40 +873,24 @@ export class MachineRunner implements Runner {
       return;
     }
   }
-  /** A managed runner acknowledges local stop even when a remote handoff left no usage file. */
-  private async reportUsage(record: LaunchRecord): Promise<void> {
-    if (record.metadata.usageReported === true) return;
-    const usage = this.readUsage(record);
-    if (this.config.oneAssignment) this.save(record.id, { releasePending: true });
-    try {
-      if (usage || this.config.oneAssignment)
-        await this.client.reportUsage(record.sessionId, this.ledger.runnerId, usage);
-    } catch (error) {
-      if (!(error instanceof RunnerControlError) || error.unavailable) throw error;
-    }
-    this.save(record.id, {
-      usageReported: true,
-      ...(this.config.oneAssignment ? { releasePending: false } : {}),
-    });
-  }
-  /** Stop a launch, capture what an ended one left, and owe the server its release. */
-  private async halt(id: string, patch: Record<string, unknown> = {}): Promise<void> {
-    const stopped = await this.host.stop(id);
-    if (terminalLaunch(stopped)) await this.captureWorkspace(stopped);
-    this.save(id, { releasePending: true, ...patch });
+  /** Stop a launch, having recorded why first; an ended launch is then settled. */
+  private async halt(id: string, patch: Record<string, unknown>): Promise<LaunchRecord> {
+    this.save(id, patch);
+    return this.host.stop(id);
   }
   private async enforceDeadlines(): Promise<void> {
-    for (const record of this.ledger.list())
-      if (!terminalLaunch(record) && record.deadline <= this.clock()) await this.halt(record.id);
+    for (const record of this.ledger.open())
+      if (!terminalLaunch(record) && record.deadline <= this.clock())
+        await this.halt(record.id, { releaseOutcome: 'host_failed' });
   }
   private async stopOwned(): Promise<void> {
     await Promise.all(
       this.ledger
-        .list()
+        .open()
         .filter((record) => !terminalLaunch(record))
         .map(async (record) => {
           try {
-            await this.halt(record.id);
+            await this.host.stop(record.id);
           } catch {
             this.lastError = 'local_stop_unconfirmed';
           }
@@ -884,65 +908,6 @@ export class MachineRunner implements Runner {
         : this.ledger.pendingRequests().length,
       launches: this.stopped ? this.finalLaunches : this.summaries(),
     };
-  }
-  /** What a launch's driver still holds; a launch whose driver is gone waits for it. */
-  private workspaceOf(record: LaunchRecord) {
-    const driver = this.driverOf(record);
-    if (!driver) this.lastError = 'workspace_driver_missing';
-    const workspace = driver?.get(record.id);
-    return driver && workspace && workspace.status !== 'closed' ? { driver, workspace } : undefined;
-  }
-  private async captureWorkspace(record: LaunchRecord): Promise<void> {
-    await this.workspaceOf(record)?.driver.capture(record);
-  }
-  private async finishWorkspace(record: LaunchRecord): Promise<void> {
-    const held = this.workspaceOf(record);
-    if (!held) return;
-    const { driver, workspace } = held;
-    const result = await driver.capture(record);
-    await this.reconcileCodeCommands(
-      record,
-      record.metadata.session as unknown as SessionView | undefined,
-    );
-    if (result && record.metadata.attachAttempted === true && record.metadata.attached !== true) {
-      // A lost attach reply is ambiguous. Close the lease before interpreting a null host,
-      // so no delayed attach can commit after we release the local checkout reservation.
-      const deferral = deferralOf(record);
-      const session = await this.client.release(
-        record.sessionId,
-        this.ledger.runnerId,
-        deferral ? 'preparation_deferred' : 'launch_failed',
-        'stopped_before_attach_confirmed',
-        undefined,
-        deferral,
-      );
-      record = this.save(record.id, {
-        session: view(session),
-        attached: session.hostRef === record.id,
-        remoteClosed: true,
-        releasePending: false,
-      });
-    }
-    // A capture from an unstarted/unattached checkout has no remote attachment to finalize.
-    if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
-      if (this.local(record) && result.repositoryId.startsWith('github:') && !workspace.readOnly) {
-        await this.publishGit({
-          sessionId: record.sessionId,
-          runnerId: this.ledger.runnerId,
-          hostRef: record.id,
-          operation: 'capture',
-          workspace: result,
-        });
-      }
-      const session = await this.client.workspaceResult(
-        record.sessionId,
-        this.ledger.runnerId,
-        record.id,
-        result,
-      );
-      this.save(record.id, { session: view(session), workspaceReported: true });
-    }
-    await driver.close(record);
   }
   private async publishGit(input: import('@merv/contracts').CodeTransportInput) {
     const grant = await this.client.transportGrant(input);
@@ -975,13 +940,13 @@ export class MachineRunner implements Runner {
         platform: String(r.metadata.platform ?? ''),
         deadline: r.deadline,
         exitCode: r.exitCode,
-        releasePending: r.metadata.releasePending === true,
+        releasePending: terminalLaunch(r) && r.metadata.usageReported !== true,
         ...(workspace
           ? {
               workspace: {
                 status: workspace.status,
                 headOid: workspace.snapshot?.headOid,
-                capturePending: !['captured', 'closed'].includes(workspace.status),
+                capturePending: workspace.status !== 'closed',
               },
             }
           : {}),
@@ -996,17 +961,22 @@ export class MachineRunner implements Runner {
     return (this.stopPromise = (async () => {
       // A failed lock acquisition never grants authority over another controller's children.
       if (!this.started) return this.finalize();
+      // What this stop ends is released uncounted (see release()). The flag outlives a
+      // controller that exits before those releases go out, and ended launches carry it too:
+      // the same stop's group SIGTERM may have reached their guardian first.
+      if (!this.config.oneAssignment)
+        for (const record of this.ledger.open())
+          if (record.metadata.usageReported !== true) this.save(record.id, { runnerStopped: true });
       await this.current;
       await this.stopOwned();
-      for (const record of this.ledger.list())
-        if (terminalLaunch(record)) {
-          try {
-            if (record.metadata.remoteClosed !== true) await this.release(record);
-            else await this.finishWorkspace(record);
-          } catch {
-            /* Persisted cleanup remains retryable on restart. */
-          }
+      const settled: string[] = [];
+      for (const record of this.ledger.open())
+        try {
+          if (terminalLaunch(record) && (await this.settle(record))) settled.push(record.id);
+        } catch {
+          /* Persisted cleanup remains retryable on restart. */
         }
+      this.ledger.settle(settled);
       this.finalize();
     })());
   }

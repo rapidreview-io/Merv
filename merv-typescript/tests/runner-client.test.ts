@@ -268,8 +268,7 @@ test('only an active matching heartbeat can renew a watchdog; release must ackno
         await client({ session: session({ status }) }).release(
           'session_fixture',
           heartbeat.runnerId,
-          'crash_loop',
-          'premature_exit',
+          { outcome: 'crash_loop', reason: 'premature_exit' },
         )
       ).status,
       status,
@@ -282,12 +281,10 @@ test('only an active matching heartbeat can renew a watchdog; release must ackno
   ])
     await assert.rejects(
       async () =>
-        client({ session: session(patch) }).release(
-          'session_fixture',
-          heartbeat.runnerId,
-          'completed',
-          'finished',
-        ),
+        client({ session: session(patch) }).release('session_fixture', heartbeat.runnerId, {
+          outcome: 'completed',
+          reason: 'finished',
+        }),
       invalid,
     );
 });
@@ -367,7 +364,10 @@ test('control transport keeps the source bearer in its authorization header and 
       return Response.json({ session: session({ status: 'released' }) });
     },
   );
-  await connection.release('session_fixture', heartbeat.runnerId, 'crash_loop', 'premature_exit');
+  await connection.release('session_fixture', heartbeat.runnerId, {
+    outcome: 'crash_loop',
+    reason: 'premature_exit',
+  });
   assert.equal(calls[0].url, 'https://merv.example/sessions/session_fixture/release');
   const headers = new Headers(calls[0].init?.headers);
   assert.equal(headers.get('authorization'), `Bearer ${bearer}`);
@@ -430,4 +430,15 @@ test('runner replies reject invalid UTF-8 without changing valid Unicode', async
     reason = Buffer.from(bytes);
     await assert.rejects(connection.lease(lease), invalid);
   }
+});
+
+test('a refusal is final only when asking again cannot change the answer', () => {
+  const final = (status: number, code = 'refused') => new RunnerControlError(code, status).final;
+  for (const status of [400, 403, 404, 409, 410, 422])
+    assert.equal(final(status), true, `${status}`);
+  // Authentication, timeouts, rate limits, unreachable or failing servers are asked again.
+  for (const status of [0, 401, 408, 429, 500, 503])
+    assert.equal(final(status), false, `${status}`);
+  for (const code of ['transaction_conflict', 'invalid_control_response', 'github_push_required'])
+    assert.equal(final(409, code), false, code);
 });
