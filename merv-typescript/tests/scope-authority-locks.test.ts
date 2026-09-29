@@ -181,8 +181,9 @@ const decisions: [string, Operation][] = [
     async (f) => assert.equal((await f.scope.authorityActor(f.session)).id, f.owner.actorId),
   ],
   [
-    'toolPolicy.allows(session)',
-    async (f) => assert.equal(await f.scope.toolPolicy.allows(f.session, 'fixture', 'look'), true),
+    'toolPolicy.granted(session)',
+    async (f) =>
+      assert.equal((await f.scope.toolPolicy.granted(f.session))('fixture', 'look'), true),
   ],
   [
     "require(conversation, 'read')",
@@ -486,7 +487,10 @@ test('the tool policy authorizes a session once, without the writer lock', async
     ],
   );
   const checks: [string, () => Promise<unknown>][] = [
-    ['allows', async () => assert.equal(await policy.allows(f.session, 'fixture', 'look'), true)],
+    [
+      'granted',
+      async () => assert.equal((await policy.granted(f.session))('fixture', 'look'), true),
+    ],
     ['require', async () => await policy.require(f.session, 'fixture', 'look')],
   ];
   for (const [name, check] of checks)
@@ -538,8 +542,10 @@ test('a tool request makes one read decision per decision point', async (t) => {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.bootstrap({ projectName: 'Decisions', actorName: 'Owner' });
+  // Twenty granted mounted tools, so a listing shows what its grant check costs.
+  const mounted = Array.from({ length: 20 }, (_, n) => (n ? `look${n}` : 'look'));
   (scope.toolPolicy as ExactToolPolicy).replace([
-    { projectId: boot.project.id, actorId: boot.actor.id, mountId: 'fixture', tools: ['look'] },
+    { projectId: boot.project.id, actorId: boot.actor.id, mountId: 'fixture', tools: mounted },
   ]);
   const tools = new ToolRegistry(scope, scope.toolPolicy, (fn) => state.snapshot(fn));
   const api = new ApiServer(scope, tools, { port: 0 });
@@ -565,14 +571,14 @@ test('a tool request makes one read decision per decision point', async (t) => {
     inputSchema: empty,
     handler: () => ({}),
   });
-  await tools.createCatalog('fixture').replace([
-    {
-      kind: 'mcp',
-      name: 'look',
-      inputSchema: { type: 'object' },
+  await tools.createCatalog('fixture').replace(
+    mounted.map((name) => ({
+      kind: 'mcp' as const,
+      name,
+      inputSchema: { type: 'object' as const },
       handler: async () => ({ content: [] }),
-    },
-  ]);
+    })),
+  );
   await client.connect(
     new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
       requestInit: { headers: { authorization: `Bearer ${boot.token}` } },
@@ -607,7 +613,9 @@ test('a tool request makes one read decision per decision point', async (t) => {
     {
       'native read': await counted(post('fixture.read')),
       'native write': await counted(post('fixture.write')),
-      'MCP tools/list': await counted(() => client.listTools()),
+      'MCP tools/list': await counted(async () =>
+        assert.equal((await client.listTools()).tools.length, 22),
+      ),
       'MCP native read': await counted(call('fixture.read')),
       // Mounts' own connection pool adds its two when the tool is a real mount.
       'MCP remote call': await counted(call('_fixture.look')),
@@ -615,7 +623,7 @@ test('a tool request makes one read decision per decision point', async (t) => {
     {
       'native read': 3,
       'native write': 2,
-      // Its grant check for the mounted tool is the third.
+      // One grant check for all twenty mounted tools is the third.
       'MCP tools/list': 3,
       'MCP native read': 3,
       'MCP remote call': 3,

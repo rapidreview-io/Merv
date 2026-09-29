@@ -39,7 +39,9 @@ export interface ConversationToolPolicy {
   validate(caller: Caller, name: string, input: Data): Promise<void>;
 }
 export interface ToolPolicy {
-  allows(caller: Caller, mountId: string, toolName: string): Promise<boolean>;
+  /** One decision for a whole listing: which exact grants the caller holds now. An ordinary
+   *  authentication or permission failure grants nothing; infrastructure errors propagate. */
+  granted(caller: Caller): Promise<(mountId: string, toolName: string) => boolean>;
   /** Authorizes the caller's read and its exact grant in one decision: the tool registry makes
    *  no other read decision before a remote handler. */
   require(caller: Caller, mountId: string, toolName: string): Promise<void>;

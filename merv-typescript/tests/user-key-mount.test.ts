@@ -101,7 +101,7 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
         assert.fail('The mount fixture must never make a network request');
       });
 
-      assert.equal(await access.allows(captured, 'bridge', 'inspect'), true);
+      assert.equal((await access.granted(captured))('bridge', 'inspect'), true);
       assert.equal(
         (await credentials.resolve(captured, 'bridge')).headers().authorization,
         `Bearer ${upstreamToken}`,

@@ -115,7 +115,7 @@ export class ToolRegistry implements Tools {
 
   constructor(
     private readonly scope: Pick<Scope, 'require'>,
-    private readonly access?: Pick<ToolPolicy, 'allows' | 'require'>,
+    private readonly access?: Pick<ToolPolicy, 'granted' | 'require'>,
     /** Runs a read-only tool's handler in a snapshot scope: no writer lock, writes refused. */
     private readonly readScope?: <T>(fn: () => Promise<T>) => Promise<T>,
   ) {}
@@ -468,6 +468,11 @@ export class ToolRegistry implements Tools {
     const reader = actor?.role === 'reader';
     if (conversation) this.fenceConversation(conversation);
     const session = caller?.session ? this.sessionPolicy() : undefined;
+    // One grant decision covers every mounted tool in the listing.
+    const grant =
+      caller && this.access && [...this.entries.values()].some((entry) => entry.remote)
+        ? await this.access.granted(caller)
+        : undefined;
     const visible = await filterAsync(
       [...this.entries.values()],
       async (entry) =>
@@ -484,10 +489,7 @@ export class ToolRegistry implements Tools {
             session,
             session.provider.allowsTool(caller, entry.name, this.reads(entry)),
           ))) &&
-        (!caller ||
-          !entry.remote ||
-          (await this.access?.allows(caller, entry.remote.mountId, entry.remote.toolName)) ===
-            true),
+        (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true),
     );
     return visible;
   }

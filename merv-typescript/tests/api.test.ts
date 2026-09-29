@@ -201,7 +201,10 @@ test('native read protection stays paired with published metadata despite defini
 test('changing a native definition cannot turn a mutation into an unrestricted session read', async (t) => {
   const { scope } = fixture();
   const sessionCaller = { ...caller, session: { id: 'session_readonly' } };
-  const tools = new ToolRegistry(scope, { allows: async () => false, require: async () => {} });
+  const tools = new ToolRegistry(scope, {
+    granted: async () => () => false,
+    require: async () => {},
+  });
   tools.registerSessionPolicy({
     allowsTool: async (_caller, _name, read) => !!read,
     prepare: async (caller, tool, input, read) => {

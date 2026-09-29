@@ -43,7 +43,7 @@ test('default policy grants no authority to readers or operators and does not in
   const policy = new ExactToolPolicy(scope);
   for (const caller of [operator, reader, other, otherReader])
     for (const tool of ['search', 'read', 'list', 'write']) {
-      assert.equal(await policy.allows(caller, 'research', tool), false);
+      assert.equal((await policy.granted(caller))('research', tool), false);
       await assert.rejects(async () => await policy.require(caller, 'research', tool), {
         code: 'tool_forbidden',
         status: 403,
@@ -57,15 +57,15 @@ test('grants match exact projects, actors, mounts and raw names without changing
     grant(reader, ['search', 'paper.write']),
     grant(other, ['search']),
   ]);
-  assert.equal(await policy.allows(reader, 'research', 'search'), true);
+  assert.equal((await policy.granted(reader))('research', 'search'), true);
   await assert.doesNotReject(async () => await policy.require(reader, 'research', 'paper.write'));
-  assert.equal(await policy.allows(other, 'research', 'search'), true);
+  assert.equal((await policy.granted(other))('research', 'search'), true);
   for (const caller of [operator, otherReader])
-    assert.equal(await policy.allows(caller, 'research', 'search'), false);
-  assert.equal(await policy.allows(reader, 'Research', 'search'), false);
-  assert.equal(await policy.allows(reader, 'research', 'Search'), false);
-  assert.equal(await policy.allows(reader, 'research', 'paper.read'), false);
-  assert.equal(await policy.allows(reader, 'research', '_research.search'), false);
+    assert.equal((await policy.granted(caller))('research', 'search'), false);
+  assert.equal((await policy.granted(reader))('Research', 'search'), false);
+  assert.equal((await policy.granted(reader))('research', 'Search'), false);
+  assert.equal((await policy.granted(reader))('research', 'paper.read'), false);
+  assert.equal((await policy.granted(reader))('research', '_research.search'), false);
   await assert.rejects(async () => await scope.require(reader, 'write'), { code: 'forbidden' });
   await assert.rejects(
     async () => await scope.issueActor(reader, { name: 'Escalated', role: 'operator' }),
@@ -75,7 +75,7 @@ test('grants match exact projects, actors, mounts and raw names without changing
   );
   const crossed = { ...reader, projectId: other.projectId };
   policy.replace([grant(crossed)]);
-  assert.equal(await policy.allows(crossed, 'research', 'search'), false);
+  assert.equal((await policy.granted(crossed))('research', 'search'), false);
   await assert.rejects(async () => await policy.require(crossed, 'research', 'search'), {
     code: 'forbidden',
   });
@@ -84,20 +84,20 @@ test('grants match exact projects, actors, mounts and raw names without changing
 test('replacement and actor revocation take effect on every later check without a restart', async (t) => {
   const { scope, operator, reader } = await setup(t);
   const policy = new ExactToolPolicy(scope, [grant(reader)]);
-  assert.equal(await policy.allows(reader, 'research', 'search'), true);
+  assert.equal((await policy.granted(reader))('research', 'search'), true);
   policy.replace([grant(reader, ['paper.get'])]);
-  assert.equal(await policy.allows(reader, 'research', 'search'), false);
+  assert.equal((await policy.granted(reader))('research', 'search'), false);
   await assert.rejects(async () => await policy.require(reader, 'research', 'search'), {
     code: 'tool_forbidden',
   });
-  assert.equal(await policy.allows(reader, 'research', 'paper.get'), true);
+  assert.equal((await policy.granted(reader))('research', 'paper.get'), true);
   await scope.revokeActor(operator, reader.actorId);
-  assert.equal(await policy.allows(reader, 'research', 'paper.get'), false);
+  assert.equal((await policy.granted(reader))('research', 'paper.get'), false);
   await assert.rejects(async () => await policy.require(reader, 'research', 'paper.get'), {
     code: 'forbidden',
   });
   policy.replace([]);
-  assert.equal(await policy.allows(operator, 'research', 'paper.get'), false);
+  assert.equal((await policy.granted(operator))('research', 'paper.get'), false);
 });
 
 test('invalid replacement never partially publishes and mutable grant inputs cannot change authority', async (t) => {
@@ -107,9 +107,9 @@ test('invalid replacement never partially publishes and mutable grant inputs can
   source[0].tools.push('mutated');
   source[0].actorId = operator.actorId;
   source.push(grant(operator));
-  assert.equal(await policy.allows(reader, 'research', 'search'), true);
-  assert.equal(await policy.allows(reader, 'research', 'mutated'), false);
-  assert.equal(await policy.allows(operator, 'research', 'search'), false);
+  assert.equal((await policy.granted(reader))('research', 'search'), true);
+  assert.equal((await policy.granted(reader))('research', 'mutated'), false);
+  assert.equal((await policy.granted(operator))('research', 'search'), false);
   const malformed: unknown[] = [
     null,
     {},
@@ -125,15 +125,15 @@ test('invalid replacement never partially publishes and mutable grant inputs can
   ];
   for (const invalid of malformed) {
     assert.throws(() => policy.replace(invalid as ToolGrant[]), { code: 'invalid_access_grants' });
-    assert.equal(await policy.allows(reader, 'research', 'search'), true);
-    assert.equal(await policy.allows(operator, 'research', 'search'), false);
+    assert.equal((await policy.granted(reader))('research', 'search'), true);
+    assert.equal((await policy.granted(operator))('research', 'search'), false);
   }
   policy.replace([grant(reader, []), grant(reader, ['paper.get']), grant(reader, ['search'])]);
-  assert.equal(await policy.allows(reader, 'research', 'search'), true);
-  assert.equal(await policy.allows(reader, 'research', 'paper.get'), true);
+  assert.equal((await policy.granted(reader))('research', 'search'), true);
+  assert.equal((await policy.granted(reader))('research', 'paper.get'), true);
 });
 
-test('allows does not hide infrastructure failures as an ordinary missing grant', async () => {
+test('granted does not hide infrastructure failures as an ordinary missing grant', async () => {
   const failure = new MervError('state_closed', 'State is closed', 503);
   const policy = new ExactToolPolicy({
     async require() {
@@ -141,7 +141,7 @@ test('allows does not hide infrastructure failures as an ordinary missing grant'
     },
   });
   await assert.rejects(
-    async () => await policy.allows({ actorId: 'actor', projectId: 'project' }, 'remote', 'read'),
+    async () => await policy.granted({ actorId: 'actor', projectId: 'project' }),
     failure,
   );
 });
@@ -160,16 +160,16 @@ test('Scope owns tool policy, defaults and suspension with only State as its dep
     assert.equal(ctx.get('access'), undefined);
     const owner = await ctx.scope.bootstrap({ projectName: 'Standalone', actorName: 'Operator' });
     const caller = { projectId: owner.project.id, actorId: owner.actor.id };
-    assert.equal(await ctx.scope.toolPolicy.allows(caller, 'research', 'search'), false);
+    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), false);
     ctx.scope.toolPolicy.replace([grant(caller)]);
-    assert.equal(await ctx.scope.toolPolicy.allows(caller, 'research', 'search'), true);
+    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), true);
     await scope.dispose();
     assert.equal(ctx.get('scope'), undefined);
     const restored = await ctx.plugin(scopePlugin);
-    assert.equal(await ctx.scope.toolPolicy.allows(caller, 'research', 'search'), false);
+    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), false);
     await restored.dispose();
     await ctx.plugin(scopePlugin, { grants: [grant(caller)] });
-    assert.equal(await ctx.scope.toolPolicy.allows(caller, 'research', 'search'), true);
+    assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), true);
   } finally {
     await ctx.fiber.dispose();
   }

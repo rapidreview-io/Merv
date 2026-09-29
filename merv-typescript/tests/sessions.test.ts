@@ -376,7 +376,9 @@ test('the tool policy asks the Sessions guard once for a worker, while another w
     const waiting = new Promise<'queued'>((resolve) => {
       timer = setTimeout(resolve, 5_000, 'queued');
     });
-    assert.equal(await Promise.race([policy.allows(worker, 'fixture', 'look'), waiting]), true);
+    const granted = await Promise.race([policy.granted(worker), waiting]);
+    assert.notEqual(granted, 'queued');
+    assert.equal(granted !== 'queued' && granted('fixture', 'look'), true);
     assert.deepEqual(calls, { require: 0, authorityActor: 1 });
     assert.equal(
       await Promise.race([policy.require(worker, 'fixture', 'look'), waiting]),

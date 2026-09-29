@@ -451,7 +451,7 @@ test('compact mounted names preserve raw tool identities for grants and do not r
   const rawName = 'qa.ask_more__detail';
   const checks: [string, string][] = [];
   const registry = new ToolRegistry(scope, {
-    allows: async (_caller, mountId, toolName) => mountId === 'nisa' && toolName === rawName,
+    granted: async () => (mountId, toolName) => mountId === 'nisa' && toolName === rawName,
     require: async (_caller, mountId, toolName) => {
       checks.push([mountId, toolName]);
       if (mountId !== 'nisa' || toolName !== rawName)
