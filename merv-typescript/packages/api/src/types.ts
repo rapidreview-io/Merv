@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
-import type {} from 'cordis';
 
 export type ConversationUse = 'never' | 'propose' | 'secret';
 /** A tool whose handler receives the input its schema parsed. */
@@ -11,18 +10,15 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
   description: string;
   inputSchema: S;
   readOnly?: boolean;
-  /** The tool calls a service outside Merv (published as the MCP openWorldHint). A read like this
-   * runs its handler outside the PostgreSQL snapshot every other read holds for its whole run, so
-   * a slow remote call keeps none of the few reader connections. It is admitted and checked again
-   * after its result exactly as any read. Nothing refuses a write there: the handler must not
-   * write, and a database read it needs opens its own. */
+  /** The tool calls a service outside Merv (the MCP openWorldHint). A read like this runs outside
+   *  the snapshot other reads hold, so a slow remote call keeps no reader connection; it is
+   *  admitted and re-checked as any read. It must not write; a database read opens its own. */
   openWorld?: boolean;
-  /** How an agent conversation may use this tool (everything a conversation reads reaches the
-   * model provider). Omitted: the agent runs it as its person. 'propose': the agent only proposes
-   * the exact call, which runs as the person when they press Run. 'secret': as 'propose', and its
-   * result (a bearer secret or signed URL) is shown only to the person. 'never': offered to no person's
-   * agent, in a conversation or over MCP (only a leased worker or Merv's own pages run it). A function of the parsed input returns 'propose' | 'secret' |
-   * undefined for tools where only some uses need the person. */
+  /** How an agent conversation may use this tool (what it reads reaches the model provider).
+   *  Omitted: the agent runs it as its person. 'propose': the person runs the proposed call.
+   *  'secret': as 'propose', and only the person sees its result (a bearer secret or signed URL).
+   *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
+   *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
 }
@@ -34,22 +30,16 @@ export interface RemoteToolDefinition extends ToolDescription {
   handler(caller: Caller, input: any): CallToolResult | Promise<CallToolResult>;
 }
 export type AnyToolDefinition = ToolDefinition | RemoteToolDefinition;
-/** A registered tool as Tools.list() shows it: a native definition, or a remote tool's
- *  description without its handler, which only the registry's admission may call. */
+/** A native definition, or a remote tool's description without its handler (Tools.list()). */
 export type ListedTool = ToolDefinition | (ToolDescription & { kind: 'mcp' });
-/** A tool as caller rules see it: as it was registered, whatever its definition reads now.
- *  `remote` marks a mounted tool, which has no `conversation`. */
+/** A tool as caller rules see it: as registered. A mounted (`remote`) tool has no `conversation`. */
 export type RegisteredTool = Pick<ToolDefinition, 'name' | 'conversation'> & { remote: boolean };
-/** The callers one plugin issues, by the Caller field it sets: Pi's conversations and Sessions'
- *  managed runners. */
+/** The callers one plugin issues: Pi's conversations and Sessions' managed runners. */
 export type CallerKind = 'conversation' | 'managed';
-/**
- * How the plugin that issues one kind of caller limits that caller's tools (registered with
- * Tools.registerCallerRules). While none is registered, such a caller is refused 503.
- */
+/** How the plugin that issues one kind of caller limits its tools; without them, 503. */
 export interface CallerRules {
-  /** Whether such a caller is offered the tool: describe lists it, and invoke refuses any other
-   *  with `forbidden`. Absent: such a caller may use no tool, and describe refuses it too. */
+  /** Whether describe lists the tool to such a caller; invoke refuses any other with
+   *  `forbidden`. Absent: such a caller may use no tool, and describe refuses it too. */
   offers?(tool: RegisteredTool): boolean;
   forbidden: MervError;
   /** Throws to refuse one call with its parsed input, before its handler runs. */
@@ -66,8 +56,7 @@ export interface ToolCatalog {
   replace(definitions: RemoteToolDefinition[]): Promise<void>;
   dispose(): Promise<void>;
 }
-/** Who the API authenticated: a Scope principal, or the caller a registered credential's owner
- *  authenticated (whose kind is never user, key or actor). */
+/** A Scope principal, or the caller a registered credential's owner authenticated. */
 export type ApiPrincipal = Principal | { kind: string; caller: Caller };
 /** One request to a mounted handler. */
 export interface ApiRequest {
@@ -80,32 +69,28 @@ export interface ApiRequest {
    *  conflict): one read decision, made before any body. 401 on a public route. */
   caller(projectId?: string): Promise<Caller>;
   /** The JSON body: 415, 413 past `maxBytes` (default the server's limit), 400 `invalid_json`,
-   *  or 400 `invalid_input` with the schema's issues. */
+   *  or 400 `invalid_input` with the schema's issues. Both body readers answer 503 when the
+   *  mount was withdrawn during the read. */
   json<T = unknown>(schema?: ZodType<T, ZodTypeDef, unknown>, maxBytes?: number): Promise<T>;
   /** The body's bytes: 415 for any other media type, 413 past `maxBytes`. */
   bytes(maxBytes: number, mediaType: string): Promise<Buffer>;
-  // json and bytes answer 503 `unavailable` when the mount was withdrawn while the body was read.
 }
-/**
- * The handler of one plugin-owned path prefix. It returns undefined when it wrote the response
- * itself; a Buffer is sent as 200 octets and any other value as 200 JSON.
- */
+/** A path prefix's handler: undefined when it responded itself, a Buffer as 200 octets, any
+ *  other value as 200 JSON. */
 export type MountHandler = (req: IncomingMessage, res: ServerResponse, r: ApiRequest) => unknown;
 export interface MountOptions {
-  /** Served without API authentication: the whole mount, or these paths under it, each with
-   *  everything below it. A public handler authenticates any bearer itself and answers 404
-   *  outside its exact routes. */
+  /** Served without API authentication: the whole mount, or these paths and all below them. Its
+   *  handler authenticates any bearer itself and answers 404 outside its exact routes. */
   public?: true | readonly `/${string}`[];
 }
 /** The bearers of one token namespace (such as `ms_`), registered by the plugin that issues them. */
 export interface ApiCredential {
   /** The principal's kind; never user, key or actor. */
   kind: string;
-  /** The refusal wherever `routes` is false. */
+  /** The refusal wherever `routes`, the allow-list checked before any I/O, is false, and on
+   *  every route when `authenticate` is absent. */
   forbidden: MervError;
-  /** The authenticated routes this credential may use: an allow-list checked before any I/O. */
   routes(method: string, path: string, query: boolean): boolean;
-  /** Absent: the API never authenticates the credential and answers `forbidden`. */
   authenticate?(token: string): Promise<Caller>;
 }
 
@@ -113,8 +98,8 @@ export interface Api {
   readonly url?: string;
   start(): Promise<string>;
   stop(): Promise<void>;
-  /** Serves one lowercase path segment (409 `mount_conflict` when it is taken). The disposer
-   *  withdraws it: its routes then answer 503 until it is mounted again. */
+  /** Serves one lowercase path segment (409 when taken). Until it is mounted, and once its
+   *  disposer withdraws it, a credential's request to it answers 503. */
   mount(prefix: `/${string}`, handler: MountHandler, options?: MountOptions): () => void;
   /** Authenticates the bearers of one namespace, `/^[a-z]+_$/` but never `mk_` (409 when it is
    *  taken). While a namespace is unregistered, its bearers get 503 on authenticated routes. */
@@ -122,11 +107,9 @@ export interface Api {
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;
-  /** Detached public descriptions. Transports must supply the authenticated caller. agent: the
-   *  caller is a person's own agent over MCP. MCP offers it every native tool not marked `never`
-   *  (a reader: its reads alone) plus the mounted tools its Access grants. This curates what an
-   *  agent is offered; it is not an authority boundary: the same credential may call any tool it
-   *  is permitted over POST /tools. */
+  /** Detached public descriptions for the authenticated caller. agent: a person's own agent over
+   *  MCP, offered every native tool not marked `never` (a reader: its reads alone) plus the mounted
+   *  tools its Access grants. That curates; it is no authority boundary (see POST /tools). */
   describe(caller?: Caller, agent?: boolean): Promise<ToolDescription[]>;
   /** Every registered tool, for trusted in-process code only: it takes no caller. */
   list(): Promise<ListedTool[]>;

@@ -43,10 +43,7 @@ export interface HttpOptions {
   drainMs?: number;
 }
 
-function errorBody(error: unknown): {
-  error: { code: string; message: string; details?: unknown };
-  status: number;
-} {
+function errorBody(error: unknown) {
   if (error instanceof MervError)
     return {
       status: error.status,
@@ -71,11 +68,15 @@ function serializable(details: unknown): boolean {
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
-  if (res.headersSent || res.destroyed) return;
   // Serialize first: a value that cannot be written fails while a 500 can still be sent.
-  const body = JSON.stringify(value);
+  send(res, status, 'application/json; charset=utf-8', JSON.stringify(value));
+}
+
+function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
+  if (res.headersSent || res.destroyed) return;
   res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+    'content-type': type,
+    ...(typeof body !== 'string' && { 'content-length': body.length }),
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     ...(status === 401 && { 'www-authenticate': 'Bearer' }),
@@ -120,17 +121,6 @@ function rpcError(error: unknown): Error {
     code: status >= 500 ? -32603 : -32600,
     data: body,
   });
-}
-
-function octets(res: ServerResponse, value: Buffer): void {
-  if (res.headersSent || res.destroyed) return;
-  res.writeHead(200, {
-    'content-type': 'application/octet-stream',
-    'content-length': value.length,
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
-  res.end(value);
 }
 
 /** The request's path without its query, which a log must never carry. */
@@ -281,11 +271,8 @@ export class ApiServer {
     if (this.server || this.starting || this.closing)
       return Promise.reject(new MervError('already_started', 'API server is already started', 409));
     this.stopping = false;
-    const starting = this.listen();
-    this.starting = starting;
-    const settled = () => {
-      this.starting = undefined;
-    };
+    const starting = (this.starting = this.listen());
+    const settled = () => void (this.starting = undefined);
     void starting.then(settled, settled);
     return starting;
   }
@@ -329,27 +316,16 @@ export class ApiServer {
       this.server = undefined;
       throw error;
     }
-    const address = server.address() as AddressInfo;
-    const publicHost =
-      host === '0.0.0.0'
-        ? '127.0.0.1'
-        : host === '::'
-          ? '[::1]'
-          : host.includes(':')
-            ? `[${host}]`
-            : host;
-    this.url = `http://${publicHost}:${address.port}`;
-    return this.url;
+    const local = host === '0.0.0.0' ? '127.0.0.1' : host === '::' ? '::1' : host;
+    const { port } = server.address() as AddressInfo;
+    return (this.url = `http://${local.includes(':') ? `[${local}]` : local}:${port}`);
   }
 
   stop(): Promise<void> {
     if (this.closing) return this.closing;
     this.stopping = true;
-    const closing = this.shutdown(this.starting);
-    this.closing = closing;
-    const settled = () => {
-      this.closing = undefined;
-    };
+    const closing = (this.closing = this.shutdown(this.starting));
+    const settled = () => void (this.closing = undefined);
     void closing.then(settled, settled);
     return closing;
   }
@@ -458,37 +434,31 @@ export class ApiServer {
     return await this.scope.acceptVerifiedIdentity(verified);
   }
 
+  /** One tool call. A native tool's `projectId` argument selects its project; a mounted tool's
+   *  arguments are all its own (the reserved namespace routes even while a catalog is withdrawn).
+   *  actorId and other caller-shaped fields are ordinary arguments that strict schemas reject. */
   private async call(
+    principal: ApiPrincipal,
     name: string,
-    caller: Caller,
     input: unknown,
+    selectedProject: unknown,
     agent = false,
   ): Promise<ToolInvocation> {
-    const operation = this.tools.invoke(name, caller, input, agent);
+    if (input === null || typeof input !== 'object' || Array.isArray(input))
+      throw new MervError('invalid_input', 'Tool arguments must be an object');
+    const remote = isMountedToolName(name);
+    const { projectId, ...native } = input as Record<string, unknown>;
+    const caller = await this.selectedCaller(
+      principal,
+      projectSelection(selectedProject, remote ? undefined : projectId),
+    );
+    const operation = this.tools.invoke(name, caller, remote ? input : native, agent);
     this.calls.add(operation);
     try {
       return await operation;
     } finally {
       this.calls.delete(operation);
     }
-  }
-
-  private async caller(
-    principal: ApiPrincipal,
-    input: unknown,
-    name: string,
-    selectedProject?: unknown,
-  ): Promise<{ caller: Caller; input: Record<string, unknown> }> {
-    if (input === null || typeof input !== 'object' || Array.isArray(input))
-      throw new MervError('invalid_input', 'Tool arguments must be an object');
-    const argumentsObject = input as Record<string, unknown>;
-    // The reserved namespace determines routing even while a catalog is being withdrawn.
-    const remote = isMountedToolName(name);
-    const { projectId: argumentProject, ...nativeArguments } = argumentsObject;
-    const projectId = projectSelection(selectedProject, remote ? undefined : argumentProject);
-    // actorId and other caller-shaped fields are ordinary arguments: strict feature schemas reject them.
-    const caller = await this.selectedCaller(principal, projectId);
-    return { caller, input: remote ? argumentsObject : nativeArguments };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -521,7 +491,7 @@ export class ApiServer {
       this.request(req, url, prefix, mounted, principal),
     );
     if (value === undefined) return;
-    if (Buffer.isBuffer(value)) octets(res, value);
+    if (Buffer.isBuffer(value)) send(res, 200, 'application/octet-stream', value);
     else json(res, 200, value);
   }
 
@@ -572,13 +542,8 @@ export class ApiServer {
     } catch {
       throw new MervError('invalid_tool', 'Malformed tool name');
     }
-    const request = await this.caller(
-      r.principal!,
-      await r.json(),
-      name,
-      req.headers['x-merv-project-id'],
-    );
-    const result = await this.call(name, request.caller, request.input);
+    const body = await r.json();
+    const result = await this.call(r.principal!, name, body, req.headers['x-merv-project-id']);
     return { result: result.value ?? null };
   }
 
@@ -610,15 +575,11 @@ export class ApiServer {
             : `${mainAgentGuide}\n\nHuman sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.`,
       },
     );
+    const selected = (meta?: Record<string, unknown>) =>
+      projectSelection(req.headers['x-merv-project-id'], meta?.['merv/projectId']);
     instance.setRequestHandler(ListToolsRequestSchema, async (request) => {
       try {
-        const caller = await this.selectedCaller(
-          principal,
-          projectSelection(
-            req.headers['x-merv-project-id'],
-            request.params?._meta?.['merv/projectId'],
-          ),
-        );
+        const caller = await this.selectedCaller(principal, selected(request.params?._meta));
         // MCP curates what a person's agent is offered; Merv's pages call /tools.
         return { tools: await this.tools.describe(caller, true) };
       } catch (error) {
@@ -627,16 +588,8 @@ export class ApiServer {
     });
     instance.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
-        const call = await this.caller(
-          principal,
-          request.params.arguments ?? {},
-          request.params.name,
-          projectSelection(
-            req.headers['x-merv-project-id'],
-            request.params._meta?.['merv/projectId'],
-          ),
-        );
-        const result = await this.call(request.params.name, call.caller, call.input, true);
+        const { name, arguments: input = {}, _meta } = request.params;
+        const result = await this.call(principal, name, input, selected(_meta), true);
         return result.format === 'mcp'
           ? (result.value as CallToolResult)
           : { content: [{ type: 'text' as const, text: JSON.stringify(result.value ?? null) }] };

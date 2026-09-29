@@ -1,9 +1,6 @@
 import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
-import type {} from './types.js';
 import { z } from 'zod';
-import '@merv/contracts';
-import type {} from '@merv/identity/types';
 import { ApiServer, type HttpOptions } from './http.js';
 import { ToolRegistry } from './registry.js';
 

@@ -1,7 +1,7 @@
-import { filterAsync, plain } from '@merv/contracts';
+import { filterAsync, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
+import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CallToolResultSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
-import { MervError, type Caller, type Data, type Scope } from '@merv/contracts';
 import type {
   AnyToolDefinition,
   CallerKind,
@@ -17,7 +17,6 @@ import type {
 } from './types.js';
 import type { ValidateFunction } from 'ajv';
 import { cloneJson, compileSchema } from './schema.js';
-import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 
 export type { ToolDescription } from './types.js';
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
@@ -150,12 +149,11 @@ export class ToolRegistry implements Tools {
     }
     if (!ToolSchema.safeParse(description).success)
       throw new MervError('invalid_tool', 'Remote tool description is not valid MCP');
-    if (description.execution?.taskSupport && description.execution.taskSupport !== 'forbidden') {
+    if (description.execution?.taskSupport && description.execution.taskSupport !== 'forbidden')
       throw new MervError(
         'unsupported_execution',
         'Remote MCP tasks are not supported; taskSupport must be absent or forbidden',
       );
-    }
     const validate = compile(description.inputSchema);
     const validateOutput =
       description.outputSchema === undefined ? undefined : compile(description.outputSchema);
@@ -201,17 +199,12 @@ export class ToolRegistry implements Tools {
             'Remote tool returned an invalid MCP result',
             502,
           );
-        if (
-          !parsed.data.isError &&
-          validateOutput &&
-          !validateOutput(parsed.data.structuredContent)
-        ) {
+        if (!parsed.data.isError && validateOutput?.(parsed.data.structuredContent) === false)
           throw new MervError(
             'invalid_remote_result',
             'Remote structured content failed its declared output schema',
             502,
           );
-        }
         // Validate without returning the SDK's parsed copy: parsing may strip extension metadata.
         return { format: 'mcp', value: result };
       },
@@ -379,9 +372,7 @@ export class ToolRegistry implements Tools {
   private snapshotted(entry: Entry): boolean {
     return this.reads(entry) && entry.description.annotations?.openWorldHint !== true;
   }
-  /** MCP offers a person's agent every native tool not marked `never` (a reader: its reads alone)
-   *  plus the mounted tools its Access grants. This curates what an agent is offered; it is not an
-   *  authority boundary: the same credential may call any tool it is permitted over POST /tools. */
+  /** What MCP offers a person's agent (see Tools.describe); it curates, it does not authorize. */
   private offered(entry: Entry, reader: boolean): boolean {
     return (
       !!entry.remote || (entry.tool.conversation !== 'never' && (!reader || this.reads(entry)))
@@ -403,7 +394,7 @@ export class ToolRegistry implements Tools {
       caller && this.access && offered.some((entry) => entry.remote)
         ? await this.access.granted(caller)
         : undefined;
-    const visible = await filterAsync(
+    return await filterAsync(
       offered,
       async (entry) =>
         (!caller ||
@@ -414,10 +405,9 @@ export class ToolRegistry implements Tools {
           ))) &&
         (!caller || !entry.remote || grant?.(entry.remote.mountId, entry.remote.toolName) === true),
     );
-    return visible;
   }
 
-  /** agent: the caller is a person's own agent over MCP (never a leased worker); see offered(). */
+  /** agent: a person's own agent over MCP, never a leased worker. */
   async describe(caller?: Caller, agent = false): Promise<ToolDescription[]> {
     return (await this.visible(caller, agent && !caller?.session))
       .map((entry) => structuredClone(entry.description))
@@ -434,8 +424,7 @@ export class ToolRegistry implements Tools {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** agent: as for describe; such a caller cannot run what it is not offered. That curates; the
-   *  same credential may call any tool it is permitted over POST /tools. */
+  /** agent: as for describe; such a caller cannot run what it is not offered. */
   async invoke(
     name: string,
     caller: Caller,
