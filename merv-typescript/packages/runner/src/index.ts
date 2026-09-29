@@ -170,6 +170,7 @@ function terminalReason(record: LaunchRecord): string {
   if (reason === 'controller_stop') return 'local_process_controller_stopped';
   if (reason === 'external_stop') return 'local_process_external_stop';
   if (reason === 'guardian_lost') return 'local_process_guardian_lost';
+  if (reason === 'cancelled_before_spawn') return 'local_process_not_started';
   if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
@@ -179,6 +180,33 @@ function terminalReason(record: LaunchRecord): string {
   return 'local_process_finished_without_exit_status';
 }
 class RunnerSourceRefusal extends RunnerControlError {}
+/**
+ * What a launch keeps of its session: the fields the runner reads back, about 1 KB, instead
+ * of the whole Session with its assignment.
+ */
+const view = (s: Session) => ({
+  id: s.id,
+  projectId: s.projectId,
+  actorId: s.actorId,
+  instanceId: s.instanceId,
+  expectedRevision: s.expectedRevision,
+  runnerId: s.runnerId,
+  ...(s.agentId ? { agentId: s.agentId, agentSessionId: s.agentSessionId } : {}),
+  status: s.status,
+  closeReason: s.closeReason,
+  hostRef: s.hostRef,
+  expiresAt: s.expiresAt,
+  hardDeadline: s.hardDeadline,
+  ...(s.workspace ? { workspace: s.workspace } : {}),
+  execution: {
+    policy: {
+      readOnly: s.execution.policy.readOnly,
+      workspace: s.execution.policy.workspace,
+      tools: s.execution.policy.tools.map(({ name }) => ({ name })),
+    },
+  },
+});
+type SessionView = ReturnType<typeof view>;
 /** What a put-off preparation recorded on the launch, as the release route carries it. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
   if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
@@ -334,21 +362,27 @@ export class MachineRunner implements Runner {
       )
     );
   }
-  /** The driver a launch was reserved for; fixed with the lease, like its policy. */
-  private driverFor(record: LaunchRecord): WorkspaceDriver {
+  /**
+   * The driver a launch was reserved for; fixed with the lease, like its policy. Undefined when
+   * this machine no longer composes it: that launch waits for it, and nothing else does.
+   */
+  private driverOf(record: LaunchRecord): WorkspaceDriver | undefined {
     const name = record.metadata.workspaceDriver;
-    if (typeof name !== 'string') return this.workspaces;
-    const driver = this.drivers.get(name);
-    check(driver, 'workspace_driver_missing', 'This runner does not carry that workspace driver');
-    return driver;
+    return typeof name === 'string' ? this.drivers.get(name) : this.workspaces;
   }
   /** Whether the launch uses the runner's own repository, which alone may involve GitHub. */
   private local(record: LaunchRecord): boolean {
     return typeof record.metadata.workspaceDriver !== 'string';
   }
   private occupied(record: LaunchRecord): boolean {
-    const workspace = this.driverFor(record).get(record.id);
-    return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
+    return (
+      !terminalLaunch(record) ||
+      (this.driverOf(record)?.get(record.id)?.status ?? 'closed') !== 'closed'
+    );
+  }
+  /** A managed machine admits one assignment in its lifetime. */
+  private assigned(): boolean {
+    return !!this.config.oneAssignment && this.ledger.count() > 0;
   }
   /** The ledger detaches and bounds the patch; only the source bearer is known here. */
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
@@ -360,14 +394,20 @@ export class MachineRunner implements Runner {
     return this.ledger.updateMetadata(id, patch as LaunchMetadata);
   }
   private async advertise(): Promise<void> {
+    // `runner.1`: this runner ignores fields a server adds to its replies. A managed runner's
+    // capabilities must equal its enrolment, so it names only its drivers.
+    const capabilities = [
+      ...this.drivers.keys(),
+      ...(this.config.oneAssignment ? [] : ['runner.1']),
+    ].sort();
     const heartbeat = () =>
       this.client.presence({
         runnerId: this.ledger.runnerId,
         machine: { hostname: hostname(), system: process.platform, architecture: process.arch },
         platforms: this.profiles.map(platformOf),
-        capacity: this.config.oneAssignment && this.ledger.list().length > 0 ? 0 : this.capacity(),
+        capacity: this.assigned() ? 0 : this.capacity(),
         appliedVersion: this.appliedVersion,
-        ...(this.drivers.size ? { capabilities: [...this.drivers.keys()].sort() } : {}),
+        ...(capabilities.length ? { capabilities } : {}),
       });
     const presence = await heartbeat();
     if (presence.desiredVersion !== this.appliedVersion) {
@@ -420,15 +460,14 @@ export class MachineRunner implements Runner {
     for (const pending of this.ledger.pendingRequests()) {
       if (this.stopping) break;
       if (
-        this.config.oneAssignment &&
-        this.ledger.list().length > 0 &&
+        this.assigned() &&
         !this.ledger.list().some((record) => record.metadata.requestId === pending.requestId)
       )
         continue;
       await this.acquire(pending);
     }
     for (const profile of this.profiles) {
-      if (this.stopping || (this.config.oneAssignment && this.ledger.list().length > 0)) break;
+      if (this.stopping || this.assigned()) break;
       const live = this.ledger.list().filter((record) => this.occupied(record));
       if (
         !profile.enabled ||
@@ -459,72 +498,86 @@ export class MachineRunner implements Runner {
           ? 'running'
           : 'idle';
   }
+  /**
+   * One lease request's failure is that request's, never the tick's. A request is completed
+   * once reserved, declined, refused for good or replayed closed; anything else keeps it and
+   * its secret, so the next tick replays the server's receipt.
+   */
   private async acquire(pending: PendingLaunchRequest): Promise<void> {
-    const result = await this.client
-      .lease({
-        runnerId: this.ledger.runnerId,
-        ...pending,
-        platform: pending.platform as RunnerPlatform,
-      })
-      .catch((error: unknown) => {
-        // Only source-level admission proves that all this runner's authority is gone.
-        // A concurrent halt of one session can also return 401 from its own controls.
-        if (error instanceof RunnerControlError && [401, 403].includes(error.status))
-          throw new RunnerSourceRefusal(error.code, error.status);
-        throw error;
-      });
-    const session = result.session;
-    if (session === null) {
-      this.lastDeclined = result.reason;
-      this.ledger.completeRequest(pending.platform.name, pending.requestId);
-      return;
-    }
-    this.lastDeclined = undefined;
-    check(
-      !this.config.oneAssignment ||
-        this.ledger.list().every((record) => record.sessionId === session.id),
-      'invalid_control_response',
-      'One-assignment runner received a second session',
-    );
-    check(
-      session.runnerId === this.ledger.runnerId,
-      'invalid_control_response',
-      'Lease names another runner',
-    );
-    const id = `launch_${createHash('sha256').update(session.id).digest('hex').slice(0, 32)}`;
-    let record = this.ledger.get(id);
-    if (!record && !liveSession(session)) {
-      this.ledger.completeRequest(pending.platform.name, pending.requestId);
-      return;
-    }
-    if (!record) {
-      const configured = this.config.profiles.find((p) => p.name === pending.platform.name);
+    try {
+      const result = await this.client
+        .lease({
+          runnerId: this.ledger.runnerId,
+          ...pending,
+          platform: pending.platform as RunnerPlatform,
+        })
+        .catch((error: unknown) => {
+          // Only source-level admission proves that all this runner's authority is gone.
+          // A concurrent halt of one session can also return 401 from its own controls.
+          if (error instanceof RunnerControlError && [401, 403].includes(error.status))
+            throw new RunnerSourceRefusal(error.code, error.status);
+          throw error;
+        });
+      const session = result.session;
+      if (session === null) {
+        this.lastDeclined = result.reason;
+        this.ledger.completeRequest(pending.platform.name, pending.requestId);
+        return;
+      }
+      this.lastDeclined = undefined;
       check(
-        configured,
-        'runner_profile_missing',
-        'The pending lease profile is no longer configured',
+        !this.config.oneAssignment ||
+          this.ledger.list().every((record) => record.sessionId === session.id),
+        'invalid_control_response',
+        'One-assignment runner received a second session',
       );
-      const profile = validateProfile({ ...configured, ...pending.platform });
-      const workspace = effectiveWorkspace(session.execution.policy);
-      const driver = workspace.mode === 'none' ? undefined : workspace.driver;
-      record = this.ledger.reserve({
-        id,
-        sessionId: session.id,
-        deadline: this.deadline(session),
-        metadata: {
-          session,
-          profile,
-          platform: profile.name,
-          requestId: pending.requestId,
-          releasePending: false,
-          attached: false,
-          ...(driver === undefined ? {} : { workspaceDriver: driver }),
-        } as unknown as LaunchMetadata,
-      });
-      if (session.status === 'active') this.ledger.markUncertain(id);
+      check(
+        session.runnerId === this.ledger.runnerId,
+        'invalid_control_response',
+        'Lease names another runner',
+      );
+      const id = `launch_${createHash('sha256').update(session.id).digest('hex').slice(0, 32)}`;
+      let record = this.ledger.get(id);
+      if (!record && !liveSession(session)) {
+        this.ledger.completeRequest(pending.platform.name, pending.requestId);
+        return;
+      }
+      if (!record) {
+        const configured = this.config.profiles.find((p) => p.name === pending.platform.name);
+        check(
+          configured,
+          'runner_profile_missing',
+          'The pending lease profile is no longer configured',
+        );
+        // It runs as leased: the locally trusted executable with the leased model and effort.
+        const { model: _model, effort: _effort, ...local } = configured as Record<string, unknown>;
+        const profile = validateProfile({ ...local, ...pending.platform, enabled: true });
+        const workspace = effectiveWorkspace(session.execution.policy);
+        const driver = workspace.mode === 'none' ? undefined : workspace.driver;
+        record = this.ledger.reserve({
+          id,
+          sessionId: session.id,
+          deadline: this.deadline(session),
+          metadata: {
+            session: view(session),
+            profile,
+            platform: profile.name,
+            requestId: pending.requestId,
+            releasePending: false,
+            attached: false,
+            ...(driver === undefined ? {} : { workspaceDriver: driver }),
+          } as unknown as LaunchMetadata,
+        });
+        if (session.status === 'active') this.ledger.markUncertain(id);
+      }
+      this.ledger.completeRequest(pending.platform.name, pending.requestId);
+      await this.reconcileLaunch(this.ledger.get(id)!);
+    } catch (error) {
+      if (error instanceof RunnerSourceRefusal) throw error;
+      this.lastError = diagnostic(error);
+      if (error instanceof RunnerControlError && error.final)
+        this.ledger.completeRequest(pending.platform.name, pending.requestId);
     }
-    this.ledger.completeRequest(pending.platform.name, pending.requestId);
-    await this.reconcileLaunch(this.ledger.get(id)!);
   }
   private deadline(session: Session): number {
     return Math.min(Date.parse(session.expiresAt), Date.parse(session.hardDeadline));
@@ -547,7 +600,7 @@ export class MachineRunner implements Runner {
       throw error;
     }
     record = this.save(record.id, {
-      session,
+      session: view(session),
       ...(session.hostRef === record.id ? { attached: true } : {}),
     });
     if (!liveSession(session)) {
@@ -610,7 +663,9 @@ export class MachineRunner implements Runner {
             await this.client.revokeGrant(grant);
           }
         }
-        workspace = await this.driverFor(record).prepare(record, session);
+        const driver = this.driverOf(record);
+        if (!driver) throw new WorkspaceDeferred('driver_absent', 'workspace_driver_missing');
+        workspace = await driver.prepare(record, session);
       } catch (error) {
         record = await this.host.stop(record.id);
         // A preparation that could not happen yet is not a failure of this work or this
@@ -636,7 +691,7 @@ export class MachineRunner implements Runner {
         record.id,
         workspace.snapshot,
       );
-      this.save(record.id, { session, attached: true });
+      this.save(record.id, { session: view(session), attached: true });
       if (!liveSession(session) || this.stopping) return;
       const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
       try {
@@ -676,12 +731,13 @@ export class MachineRunner implements Runner {
     if (session.status === 'active') {
       session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
       await this.host.extendDeadline(record.id, this.deadline(session));
-      this.save(record.id, { session });
-      await this.reconcileCodeCommands(this.ledger.get(record.id)!, session);
+      const stored = view(session);
+      await this.reconcileCodeCommands(this.save(record.id, { session: stored }), stored);
     }
   }
-  private async reconcileCodeCommands(record: LaunchRecord, session?: Session): Promise<void> {
-    const workspaces = this.driverFor(record);
+  private async reconcileCodeCommands(record: LaunchRecord, session?: SessionView): Promise<void> {
+    const workspaces = this.driverOf(record);
+    check(workspaces, 'workspace_driver_missing', 'This runner does not carry that driver');
     if (!commits(workspaces)) {
       check(
         !session?.execution.policy.tools.some((tool) => tool.name === 'code.commit'),
@@ -756,7 +812,7 @@ export class MachineRunner implements Runner {
       deferralOf(record),
     );
     this.save(record.id, {
-      session,
+      session: view(session),
       releasePending: false,
       remoteClosed: true,
       usageReported: true,
@@ -839,18 +895,24 @@ export class MachineRunner implements Runner {
       launches: this.stopped ? this.finalLaunches : this.summaries(),
     };
   }
+  /** What a launch's driver still holds; a launch whose driver is gone waits for it. */
+  private workspaceOf(record: LaunchRecord) {
+    const driver = this.driverOf(record);
+    if (!driver) this.lastError = 'workspace_driver_missing';
+    const workspace = driver?.get(record.id);
+    return driver && workspace && workspace.status !== 'closed' ? { driver, workspace } : undefined;
+  }
   private async captureWorkspace(record: LaunchRecord): Promise<void> {
-    const workspace = this.driverFor(record).get(record.id);
-    if (!workspace || workspace.status === 'closed') return;
-    await this.driverFor(record).capture(record);
+    await this.workspaceOf(record)?.driver.capture(record);
   }
   private async finishWorkspace(record: LaunchRecord): Promise<void> {
-    const workspace = this.driverFor(record).get(record.id);
-    if (!workspace || workspace.status === 'closed') return;
-    const result = await this.driverFor(record).capture(record);
+    const held = this.workspaceOf(record);
+    if (!held) return;
+    const { driver, workspace } = held;
+    const result = await driver.capture(record);
     await this.reconcileCodeCommands(
       record,
-      record.metadata.session as unknown as Session | undefined,
+      record.metadata.session as unknown as SessionView | undefined,
     );
     if (result && record.metadata.attachAttempted === true && record.metadata.attached !== true) {
       // A lost attach reply is ambiguous. Close the lease before interpreting a null host,
@@ -865,7 +927,7 @@ export class MachineRunner implements Runner {
         deferral,
       );
       record = this.save(record.id, {
-        session,
+        session: view(session),
         attached: session.hostRef === record.id,
         remoteClosed: true,
         releasePending: false,
@@ -888,9 +950,9 @@ export class MachineRunner implements Runner {
         record.id,
         result,
       );
-      this.save(record.id, { session, workspaceReported: true });
+      this.save(record.id, { session: view(session), workspaceReported: true });
     }
-    await this.driverFor(record).close(record);
+    await driver.close(record);
   }
   private async publishGit(input: import('@merv/contracts').CodeTransportInput) {
     const grant = await this.client.transportGrant(input);
@@ -908,12 +970,8 @@ export class MachineRunner implements Runner {
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {
     return this.ledger.list().map((r) => {
-      const session = r.metadata.session as unknown as Session | undefined;
-      const workspace = (
-        typeof r.metadata.workspaceDriver === 'string'
-          ? this.drivers.get(r.metadata.workspaceDriver)
-          : this.workspaces
-      )?.get(r.id);
+      const session = r.metadata.session as unknown as SessionView | undefined;
+      const workspace = this.driverOf(r)?.get(r.id);
       return {
         id: r.id,
         sessionId: r.sessionId,

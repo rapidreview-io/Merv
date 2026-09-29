@@ -720,12 +720,24 @@ test(
     };
     let unregister = f.app.ctx.sessions.registerManagedValidator(validator);
     t.after(() => unregister());
+    // As every managed machine runs: one isolated Codex assignment, advertising its enrolment.
+    f.config.oneAssignment = true;
+    f.config.profiles = [
+      {
+        name: 'test-worker',
+        harness: 'codex',
+        executable,
+        isolatedLauncher: process.execPath,
+        enabled: true,
+        parallelism: 1,
+      },
+    ];
     const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
       allocationId,
       epoch: 1,
       source: await f.app.ctx.scope.delegationSource(f.source),
       runtimeProfileId: 'test-profile',
-      platform: { name: 'test-worker', harness: 'command', enabled: true, parallelism: 1 },
+      platform: { name: 'test-worker', harness: 'codex', enabled: true, parallelism: 1 },
       capabilities: [],
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });

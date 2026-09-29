@@ -35,6 +35,22 @@ export class RunnerControlError extends Error {
   get unavailable() {
     return this.status === 0 || this.status >= 500 || this.status === 429;
   }
+  /**
+   * The server's answer to this call, recorded once and never replayed. A 401 is retried: it
+   * can only loop while presence still authenticates. A 404 is final only because a server
+   * answers 503, never 404, while a route's owning plugin is not mounted.
+   */
+  get final() {
+    return (
+      this.status >= 400 &&
+      this.status < 500 &&
+      ![401, 408, 429].includes(this.status) &&
+      // `github_push_required` stays retried until GitHub mode is retired.
+      !['transaction_conflict', 'invalid_control_response', 'github_push_required'].includes(
+        this.code,
+      )
+    );
+  }
 }
 
 const label = z
@@ -343,7 +359,13 @@ export class RunnerClient {
       { id, runnerId, statuses: ['active'] },
     );
   }
-  async nextCodeCommand(session: Session, hostRef: string): Promise<CodeCommitCommand | null> {
+  async nextCodeCommand(
+    session: Pick<
+      Session,
+      'id' | 'runnerId' | 'actorId' | 'instanceId' | 'expectedRevision' | 'workspace'
+    >,
+    hostRef: string,
+  ): Promise<CodeCommitCommand | null> {
     session = structuredClone(session);
     const value = await this.request('/code/commands/next', {
       sessionId: session.id,

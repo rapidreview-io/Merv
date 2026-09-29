@@ -78,7 +78,7 @@ export function syncPath(path: string): void {
     closeSync(fd);
   }
 }
-export function launchRecord(row: Row): LaunchRecord {
+function launchRecord(row: Row): LaunchRecord {
   return {
     id: String(row.id),
     sessionId: String(row.session_id),
@@ -94,21 +94,14 @@ export function launchRecord(row: Row): LaunchRecord {
   };
 }
 const limits = { depth: 32, nodes: 524288, bytes: 524288, keys: 'any', strings: 'json' } as const;
-function safeData<T>(value: T): T {
-  const detached = plain<T>(value, 'invalid_runner_metadata', limits);
-  const encoded = JSON.stringify(detached, (key, item: unknown) => {
-    if (
-      /^(token|secret|authorization|password|bearer|env|sourceToken|sessionToken|__proto__|constructor|prototype)$/i.test(
-        key,
-      ) ||
-      (typeof item === 'string' &&
-        /m[sk]_[A-Za-z0-9_-]{32,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(item))
-    )
-      throw new Error('Credentials must not be persisted in runner metadata');
-    return item;
-  });
+/**
+ * A detached, bounded copy. What the runner stores is its own projection of a lease and the
+ * locally configured profile, whose secrets stay in the environment it names.
+ */
+function encode(value: unknown): string {
+  const encoded = JSON.stringify(plain(value, 'invalid_runner_metadata', limits));
   if (Buffer.byteLength(encoded) > limits.bytes) throw new Error('Runner metadata is too large');
-  return detached;
+  return encoded;
 }
 export const terminalLaunch = (record: LaunchRecord): boolean =>
   record.status === 'exited' || record.status === 'stopped';
@@ -228,7 +221,7 @@ export class LocalLedger {
   }
 
   request(platform: LaunchPlatform): PendingLaunchRequest {
-    platform = safeData(platform);
+    platform = plain(platform, 'invalid_runner_metadata', limits);
     if (!platform.name || platform.name.length > 200 || !platform.harness)
       throw new Error('Invalid runner platform');
     const encoded = JSON.stringify({ platform });
@@ -286,55 +279,26 @@ export class LocalLedger {
       input.deadline <= Date.now()
     )
       throw new Error('Invalid launch reservation');
-    const metadata = safeData(input.metadata ?? {});
-    const encodedMetadata = JSON.stringify(metadata);
-    const canonical = JSON.stringify({
-      id: input.id,
-      sessionId: input.sessionId,
-      deadline: input.deadline,
-      metadata: Object.fromEntries(Object.entries(metadata).sort(([a], [b]) => a.localeCompare(b))),
-    });
-    const fingerprint = createHash('sha256').update(canonical).digest('hex');
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const old = this.db
-        .prepare('SELECT * FROM launches WHERE id=? OR session_id=?')
-        .get(input.id, input.sessionId) as Row | undefined;
-      if (old) {
-        if (old.id !== input.id || old.fingerprint !== fingerprint)
-          throw new Error('Launch reservation conflicts with an existing intent');
-        this.db.exec('COMMIT');
-        return launchRecord(old);
-      }
-      const now = Date.now();
-      const runDirectory = join(
-        this.directory,
-        'launches',
-        createHash('sha256').update(input.id).digest('hex'),
-      );
-      privateDirectory(runDirectory);
-      syncPath(join(this.directory, 'launches'));
-      this.db
-        .prepare(
-          `INSERT INTO launches(id,session_id,fingerprint,deadline,metadata_json,status,created_at,updated_at,run_directory)
-        VALUES(?,?,?,?,?,'reserved',?,?,?)`,
-        )
-        .run(
-          input.id,
-          input.sessionId,
-          fingerprint,
-          input.deadline,
-          encodedMetadata,
-          now,
-          now,
-          runDirectory,
-        );
-      this.db.exec('COMMIT');
-      return this.get(input.id)!;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    const metadata = encode(input.metadata ?? {});
+    const now = Date.now();
+    const runDirectory = join(
+      this.directory,
+      'launches',
+      createHash('sha256').update(input.id).digest('hex'),
+    );
+    privateDirectory(runDirectory);
+    syncPath(join(this.directory, 'launches'));
+    // `fingerprint` is a retired column the identity trigger still names.
+    this.db
+      .prepare(
+        `INSERT INTO launches(id,session_id,fingerprint,deadline,metadata_json,status,created_at,updated_at,run_directory)
+      VALUES(?,?,'',?,?,'reserved',?,?,?)`,
+      )
+      .run(input.id, input.sessionId, input.deadline, metadata, now, now, runDirectory);
+    return this.get(input.id)!;
+  }
+  count(): number {
+    return Number(this.db.prepare('SELECT count(*) AS n FROM launches').get()!.n);
   }
   get(id: string): LaunchRecord | undefined {
     const row = this.db.prepare('SELECT * FROM launches WHERE id=?').get(id) as Row | undefined;
@@ -367,18 +331,12 @@ export class LocalLedger {
     );
   }
   updateMetadata(id: string, patch: LaunchMetadata): LaunchRecord {
-    patch = safeData(patch);
+    patch = plain(patch, 'invalid_runner_metadata', limits);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const record = this.get(id);
       if (!record) throw new Error('Unknown launch');
-      // The patch was scanned above, as the stored metadata was when it was saved. Only the
-      // merged object's bounds are new.
-      const encoded = JSON.stringify(
-        plain({ ...record.metadata, ...patch }, 'invalid_runner_metadata', limits),
-      );
-      if (Buffer.byteLength(encoded) > limits.bytes)
-        throw new Error('Runner metadata is too large');
+      const encoded = encode({ ...record.metadata, ...patch });
       this.db
         .prepare('UPDATE launches SET metadata_json=?,updated_at=? WHERE id=?')
         .run(encoded, Date.now(), id);

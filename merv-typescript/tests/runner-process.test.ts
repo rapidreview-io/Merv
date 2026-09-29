@@ -66,10 +66,6 @@ test('local ledger binds identity, persists exact retry inputs without bearers, 
     deadline: Date.now() + 10000,
     metadata: { profile: { executable: '/bin/echo', args: ['hello'] } },
   });
-  assert.throws(
-    () => ledger.updateMetadata(record.id, { sessionToken: pending.secret }),
-    /Credentials/,
-  );
   ledger.updateMetadata(record.id, {
     attached: true,
     session: { source: { credentialId: 'credential-id' } },
@@ -229,7 +225,7 @@ test('cancellation before atomic claim prevents a later launch and rejects ident
   const record = reserve('cancel');
   assert.throws(
     () => ledger.reserve({ id: record.id, sessionId: 'different', deadline: record.deadline }),
-    /conflicts/,
+    /UNIQUE constraint/,
   );
   assert.equal((await host.stop(record.id)).status, 'stopped');
   assert.equal(
