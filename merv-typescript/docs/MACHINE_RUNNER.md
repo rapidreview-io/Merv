@@ -102,7 +102,9 @@ Each ended launch makes one release call. A user's own stop of the runner
 outcome, which counts against nothing. A hosted runner's stop, a halt after a
 source refusal, a deadline, and an ending that merely raced the stop keep their
 counted outcome. A refusal that asking again cannot change (any 4xx except 401,
-408 and 429) is that call's answer: it is recorded once and never replayed, so a
+408 and 429, and except the codes `transaction_conflict`,
+`invalid_control_response` and `github_push_required`, which are retried whatever
+their status) is that call's answer: it is recorded once and never replayed, so a
 session the server no longer knows is stopped once and settled.
 
 The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
