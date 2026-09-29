@@ -134,6 +134,7 @@ test('mount status, errors and inspected services never contain an upstream secr
   // apply does not wait for discovery: the refused endpoint fails the first round.
   for (let wait = 0; wait < 400 && ctx.mounts.status()[0].state === 'connecting'; wait++)
     await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.notEqual(ctx.mounts.status()[0].state, 'connecting', 'the mount never settled');
   const bindings = new Bindings(scope, configured);
   const failures: unknown[] = [];
   await headersFor(bindings, { ...operator, actorId: 'unbound' }, 'fixture').catch((error) =>
