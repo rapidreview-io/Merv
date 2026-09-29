@@ -17,7 +17,7 @@
       "component": "fleet",
       "version": 2,
       "hash": "cba39e4cc3b89e4be24a27b51deeadb03313d4bdee307de96a62e7e289e0cc23",
-      "published": false
+      "published": true
     },
     {
       "component": "fleet_workflow",
