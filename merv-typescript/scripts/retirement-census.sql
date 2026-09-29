@@ -358,6 +358,7 @@ ORDER BY r.project_id, r.id;
 -- C12 measures every surviving budget as Sessions does (sessions/src/usage.ts budgetStatuses):
 -- a project scope over all of the project's usage, an instance scope over its dependency closure
 -- (dependency edges, and lenses under their wave). Service work counts toward wall time only.
+-- Only an activated session (started_at set) without a report makes cost or tokens unavailable.
 -- "After" leaves out the usage of S and every instance the closure reached only through R.
 CREATE TEMP TABLE census_budget_reach AS
 WITH RECURSIVE
@@ -381,7 +382,8 @@ FROM reach GROUP BY project_id, scope_id, id;
 CREATE TEMP TABLE census_budget_status AS
 WITH measured AS (
   SELECT b.project_id, b.scope_id, phase.after, b.max_wall_ms, b.max_cost_micros, b.max_tokens,
-    count(u.session_id) AS sessions, count(u.reported_at) AS reported,
+    count(u.session_id) FILTER (WHERE u.reported_at IS NULL AND u.started_at IS NOT NULL)
+      AS unreported,
     COALESCE(sum(u.wall_ms), 0) AS wall_ms,
     COALESCE(sum(u.input_tokens), 0) + COALESCE(sum(u.output_tokens), 0) AS tokens,
     COALESCE(sum(u.cost_micros), 0) AS cost_micros
@@ -408,9 +410,9 @@ SELECT m.project_id, m.scope_id, m.after,
     CASE WHEN m.max_cost_micros IS NOT NULL AND m.cost_micros >= m.max_cost_micros THEN 'cost' END,
     CASE WHEN m.max_tokens IS NOT NULL AND m.tokens >= m.max_tokens THEN 'tokens' END) AS exceeded,
   concat_ws(',',
-    CASE WHEN m.sessions > m.reported AND m.max_cost_micros IS NOT NULL
+    CASE WHEN m.unreported > 0 AND m.max_cost_micros IS NOT NULL
       AND m.cost_micros < m.max_cost_micros THEN 'cost' END,
-    CASE WHEN m.sessions > m.reported AND m.max_tokens IS NOT NULL
+    CASE WHEN m.unreported > 0 AND m.max_tokens IS NOT NULL
       AND m.tokens < m.max_tokens THEN 'tokens' END) AS unavailable
 FROM measured m JOIN served s ON s.project_id = m.project_id AND s.scope_id = m.scope_id;
 
