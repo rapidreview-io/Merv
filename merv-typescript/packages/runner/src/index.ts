@@ -726,7 +726,7 @@ export class MachineRunner implements Runner {
     const driver = this.driverOf(record);
     check(driver, 'workspace_driver_missing', 'This runner does not carry that driver');
     if (!driver.pendingCommits) return; // A lifecycle-only driver runs no Code commands.
-    const workspaces = driver as Required<WorkspaceDriver>;
+    const workspaces = driver as Required<WorkspaceDriver>; // The contract: all four or none.
     const local = this.local(record);
     const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.
