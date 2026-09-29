@@ -33,12 +33,8 @@ import type {
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
-import {
-  FleetWorkflowAdapter,
-  type FleetWorkflowConfig,
-  hostedCodexCapabilities,
-  hostedCodexPlatform,
-} from '../packages/fleet/src/workflow.js';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
+import { FleetWorkflowAdapter, type FleetWorkflowConfig } from '../packages/fleet/src/workflow.js';
 import { modelBudgetStatus, setDailyTokens } from '../packages/fleet/src/codex-relay.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { NisaService } from '../packages/nisa/src/index.js';

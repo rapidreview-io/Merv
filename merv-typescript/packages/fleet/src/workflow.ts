@@ -4,6 +4,8 @@ import {
   canonical,
   check,
   digest,
+  hostedCodexCapabilities,
+  hostedCodexPlatform,
   MervError,
   recorded,
   sourceCaller,
@@ -79,15 +81,6 @@ type RetrySnapshot = {
   current: Set<string>;
   active: Set<string>;
 };
-/** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
-export const hostedCodexPlatform = Object.freeze({
-  name: 'hosted-codex',
-  harness: 'codex' as const,
-  model: 'gpt-6-luna',
-  enabled: true,
-  parallelism: 1,
-});
-export const hostedCodexCapabilities = Object.freeze(['code.v2']);
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;
 const occupied = (allocation: FleetAllocation) => allocation.phase !== 'released';
