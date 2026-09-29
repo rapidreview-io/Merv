@@ -792,6 +792,27 @@ test('a writer stopped mid-rebase keeps its unreplayed commits reachable from a 
   });
 });
 
+test("a writer that rewinds its lineage keeps the old tip under a rescue ref; one that doesn't, none", async (t) => {
+  const f = setup(t),
+    record = f.reserve('rewind');
+  const handle = await f.manager.prepare(record, f.session(record.id));
+  writeFileSync(join(handle.path, 'kept.txt'), 'acknowledged\n');
+  f.stop(record.id);
+  const first = (await f.manager.capture(record))!;
+  await f.manager.close(record);
+  assert.equal(notes(f, record.id), undefined);
+  const next = f.reserve('rewinder');
+  const resumed = await f.manager.prepare(next, f.session(next.id));
+  agent(f, resumed.path, 'reset', '--hard', handle.snapshot!.headOid);
+  f.stop(next.id);
+  const second = (await f.manager.capture(next))!;
+  assert.equal(second.headOid, handle.snapshot!.headOid);
+  assert.equal(f.git(f.bare, 'rev-parse', 'refs/merv/rescued/rewinder'), first.headOid);
+  assert.deepEqual(notes(f, next.id)?.workspace_commits_rescued, {
+    refs: ['refs/merv/rescued/rewinder'],
+  });
+});
+
 test('a retained reviewer stopped mid-rebase is put back on what it judged', async (t) => {
   const f = setup(t),
     record = f.reserve('review');

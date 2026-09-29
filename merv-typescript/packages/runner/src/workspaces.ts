@@ -570,8 +570,9 @@ export class GitWorkspaceManager {
         // Nothing the agent left half-done reaches the capture or the next session (HALF_DONE).
         const repository = await this.repository();
         const admin = await this.adminDirectory(row, repository);
-        // A writer's lineage continues from wherever it left HEAD. What an unfinished rebase or
-        // sequence leaves behind, its original commits, stays reachable from a rescue ref.
+        // A writer's lineage continues from wherever it left HEAD. What that leaves behind, newest
+        // first: an unfinished rebase's or sequence's original commits, the lineage's tip, the
+        // session's receipted checkpoints and where it started, stays reachable from a rescue ref.
         if (!row.read_only) {
           const earlier = ['rebase-merge/orig-head', 'rebase-apply/orig-head']
             .concat(existsSync(join(admin, 'sequencer')) ? ['ORIG_HEAD'] : [])
@@ -579,6 +580,16 @@ export class GitWorkspaceManager {
             .map((path) =>
               statIfPresent(path)?.isFile() ? readFileSync(path, 'utf8').trim() : '',
             );
+          if (row.branch)
+            earlier.push(
+              (await this.optionalRef(repository.bare_path, `refs/heads/${row.branch}`)) ?? '',
+            );
+          const checkpoints = this.db
+            .prepare(
+              'SELECT target_oid FROM runner_code_commits WHERE launch_id=? AND receipt_json IS NOT NULL ORDER BY rowid DESC',
+            )
+            .all(row.launch_id) as { target_oid: string }[];
+          earlier.push(...checkpoints.map((commit) => commit.target_oid), attached.headOid);
           await this.rescue(row, earlier);
         }
         for (const state of HALF_DONE) rmSync(join(admin, state), { recursive: true, force: true });
