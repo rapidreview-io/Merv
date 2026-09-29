@@ -4,8 +4,10 @@
  * read snapshot and outside another transaction; a failed attempt counts too. Durable events'
  * own deliveries run on the uncounted state, so the numbers are Sessions' alone.
  *
- * Each bound is the measured cost: an idle poll, an unchanged presence, a healthy sweep and a
- * worker's calls on a live session are answered from read snapshots and take no writer.
+ * Each number is the measured cost, asserted exactly, so a path that stops recording where it
+ * should fails as surely as one that takes more: an idle poll, an unchanged presence, a healthy
+ * sweep and a worker's calls on a live session are answered from read snapshots and take no
+ * writer.
  */
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,20 +69,16 @@ async function counted(t: TestContext, clock?: () => number) {
     workflows,
     events,
     disposers,
-    /** The operation costs at most `ceiling`; earlier events are delivered first, uncounted. */
-    async atMost(
-      ceiling: { writers: number; checks: number },
+    /** The operation costs exactly `cost`; earlier events are delivered first, uncounted. */
+    async costs(
+      cost: { writers: number; checks: number },
       operation: () => Promise<unknown>,
       what: string,
     ) {
       await events.drain();
       writers = checks = 0;
       await operation();
-      const cost = { writers, checks };
-      assert.ok(
-        cost.writers <= ceiling.writers && cost.checks <= ceiling.checks,
-        `${what}: ${JSON.stringify(cost)} exceeds ${JSON.stringify(ceiling)}`,
-      );
+      assert.deepEqual({ writers, checks }, cost, what);
     },
   };
 }
@@ -207,17 +205,17 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
   assert.equal((await f.poll()).reason, 'no_candidates');
   f.advance(1000);
   // The same decision, 1 s after it was recorded; the offer's light pass finds nothing.
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle poll',
   );
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 0 },
     () => f.sessions.heartbeatRunner(f.source, f.presence),
     'an unchanged presence',
   );
-  await f.atMost(
+  await f.costs(
     { writers: 1, checks: 0 },
     () =>
       f.sessions.heartbeatRunner(f.source, {
@@ -227,19 +225,19 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
     'a changed presence',
   );
   f.advance(15_000);
-  await f.atMost(
+  await f.costs(
     { writers: 1, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'the same decision refreshed after 15 s',
   );
   for (let i = 0; i < 2; i++) await f.sessions.authenticate(await f.leased());
   // A healthy pass decides every subject on a snapshot and records nothing.
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 0 },
     () => (f.sessions as unknown as { pass(full: boolean): Promise<void> }).pass(false),
     'a light pass over two live leases',
   );
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 2 },
     () => f.sessions.sweep(),
     'a full pass over two live leases',
@@ -252,31 +250,31 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
   const session = (await f.sessions.list(f.source))[0]!;
   let worker!: Caller;
   // An activation is decided on a snapshot and again in the writer that records it.
-  await f.atMost(
+  await f.costs(
     { writers: 1, checks: 2 },
     async () => (worker = await f.sessions.authenticate(token)),
     'activation',
   );
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 1 },
     () => f.sessions.authenticate(token),
     'an active session',
   );
   f.advance(60_000);
   const control = { sessionId: session.id, runnerId: 'machine' };
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 1 },
     () => f.sessions.heartbeat(f.source, control),
     'a heartbeat a minute later',
   );
   f.advance(900_000);
-  await f.atMost(
+  await f.costs(
     { writers: 1, checks: 2 },
     () => f.sessions.heartbeat(f.source, control),
     'a heartbeat that slides the window 15 minutes',
   );
   const input = { instanceId: session.instanceId, expectedRevision: 0 };
-  await f.atMost(
+  await f.costs(
     { writers: 2, checks: 6 },
     async () => {
       const invocation = await f.sessions.prepare(worker, 'finish', input);
@@ -286,7 +284,7 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
     'a tool call: prepare, the registry’s validate and run',
   );
   await f.sessions.release(f.source, control);
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 0 },
     () => assert.rejects(f.sessions.authenticate(token), { status: 401 }),
     'a closed session',
@@ -457,7 +455,7 @@ test('a rented machine’s idle poll and presence stay within their lock budget'
   });
   assert.equal((await f.poll()).reason, 'no_candidates');
   // The managed pre-read and the lease, both on snapshots: the decision is the same.
-  await f.atMost(
+  await f.costs(
     { writers: 0, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle managed poll',
@@ -472,6 +470,6 @@ test('a rented machine’s idle poll and presence stay within their lock budget'
     checked.push(!f.state.readScope);
     return await heartbeat(...args);
   });
-  await f.atMost({ writers: 1, checks: 0 }, () => f.beat('renamed'), 'a changed managed presence');
+  await f.costs({ writers: 1, checks: 0 }, () => f.beat('renamed'), 'a changed managed presence');
   assert.deepEqual(checked, [false, true], 'on the snapshot, then in the writer');
 });
