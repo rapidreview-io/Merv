@@ -61,14 +61,14 @@ const who = "An operator checks the project's sandbox connection";
 const open = (a: FleetAllocation) => a.phase !== 'released';
 const failures = (n: number): RunningPhrase => [{ count: n }, n === 1 ? ' failure' : ' failures'];
 
-/** What refused a request before any machine existed; without a connection Fleet asks nobody. */
+/** What refused a request before any machine existed; without a connection or price, nobody. */
 const refusal = (a: FleetAllocation): string | null =>
   a.error === 'wallet_refused'
     ? 'Refused · spending limit · '
     : a.error !== 'runtime_refused'
       ? null
       : a.createAttempted === false
-        ? 'Refused · no sandbox connection · '
+        ? 'Refused · no sandbox connection or price · '
         : 'Refused by the sandbox service · ';
 
 /** The status word, then how long it has stood, or how often the service has failed it. */
