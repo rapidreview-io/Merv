@@ -77,11 +77,16 @@ type RetryGrant = {
   actor_id: string;
   created_at: string;
 };
-type RetrySnapshot = {
-  allocations: FleetAllocation[];
-  grants: Map<string, RetryGrant>;
-  current: Set<string>;
-  active: Set<string>;
+/** What can be done about a revision in each retry state. */
+const retryNext = {
+  exhausted_unclaimed:
+    'A project administrator can use fleet.workflow_retry with this exact revision, a reason and a stable requestId. The two failed rentals remain in Fleet history.',
+  exhausted_cooldown:
+    'Two unclaimed rentals exhausted this revision. Wait for the cooldown, then a project administrator can use fleet.workflow_retry.',
+  cooldown: 'Fleet will try again after the cooldown if capacity and budgets allow.',
+  not_current_demand: 'This exact revision is not currently offered for managed dispatch.',
+  active: 'An active machine already covers this target.',
+  ready: 'Fleet may allocate when capacity, wallet and model budgets allow.',
 };
 /** The image-owned runner advertises this exact profile; Git is transport inside Code v2. */
 export const hostedCodexPlatform = Object.freeze({
@@ -94,6 +99,7 @@ export const hostedCodexPlatform = Object.freeze({
 export const hostedCodexCapabilities = Object.freeze(['code.v2']);
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;
+const grantKey = (projectId: string, id: string) => `${projectId} ${id}`;
 const occupied = (allocation: FleetAllocation) => allocation.phase !== 'released';
 /** The wallet or the provider refused its machine, or no price was listed for it. */
 const refused = (a: FleetAllocation) =>
@@ -272,104 +278,99 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }
     return current;
   }
-  /** A narrow, auditable window after two rentals failed before any work was claimed. */
-  private async retrySituation(
-    caller: Caller,
-    target: { instanceId: string; expectedRevision: number },
-    tx?: Transaction,
-    currentDemand?: boolean,
-    snapshot?: RetrySnapshot,
-  ) {
-    const id = targetId(target);
-    const allocations = snapshot?.allocations ?? (await this.fleet.listOwned(this, [id]));
-    const attempts = allocations.filter(
-      (a) => a.projectId === caller.projectId && a.owner.id === id,
+  /** The latest retry grant of each revision in these projects, in one indexed read. */
+  private async retryGrants(projectIds: string[]): Promise<Map<string, RetryGrant>> {
+    if (!this.state || !projectIds.length) return new Map();
+    const rows = await this.state.read((sql) =>
+      sql.all<RetryGrant>(
+        `SELECT DISTINCT ON (project_id, instance_id, expected_revision) * FROM fleet_workflow_retry_grants
+         WHERE project_id IN (${projectIds.map(() => '?').join(',')})
+         ORDER BY project_id, instance_id, expected_revision, id DESC`,
+        ...projectIds,
+      ),
     );
-    const latest = attempts.at(-1);
-    const grant = snapshot
-      ? snapshot.grants.get(id)
-      : tx
-        ? await tx.get<RetryGrant>(
-            'SELECT * FROM fleet_workflow_retry_grants WHERE project_id=? AND instance_id=? AND expected_revision=? ORDER BY id DESC LIMIT 1',
-            caller.projectId,
-            target.instanceId,
-            target.expectedRevision,
-          )
-        : await this.state!.read((sql) =>
-            sql.get<RetryGrant>(
-              'SELECT * FROM fleet_workflow_retry_grants WHERE project_id=? AND instance_id=? AND expected_revision=? ORDER BY id DESC LIMIT 1',
-              caller.projectId,
-              target.instanceId,
-              target.expectedRevision,
-            ),
-          );
-    let active = snapshot?.active.has(id) ?? false;
-    if (!snapshot)
-      for (const allocation of allocations.filter(
-        (a) => a.projectId === caller.projectId && occupied(a),
-      )) {
-        const session = (await this.sessions.inspectManaged(allocation.id, allocation.epoch, tx))
-          ?.session;
-        if (allocation.owner.id === id || (session && targetId(session) === id)) active = true;
-      }
-    const current =
-      currentDemand ??
-      (snapshot ? snapshot.current.has(id) : undefined) ??
-      (!!latest && (await this.demandTargets(caller.projectId, [latest.source])).has(id));
-    const streak = await this.streak(attempts, grant?.prior_allocations, tx);
-    const unclaimed = streak.unclaimed;
-    const cooldownUntil =
-      streak.cooldownUntil > this.clock() ? new Date(streak.cooldownUntil).toISOString() : null;
-    const state = active
-      ? 'active'
-      : !current
-        ? 'not_current_demand'
-        : unclaimed >= unclaimedAttemptLimit
-          ? cooldownUntil
-            ? 'exhausted_cooldown'
-            : 'exhausted_unclaimed'
-          : cooldownUntil
-            ? 'cooldown'
-            : 'ready';
-    return {
-      instanceId: target.instanceId,
-      expectedRevision: target.expectedRevision,
-      state,
-      unclaimedAttempts: unclaimed,
-      attemptLimit: unclaimedAttemptLimit,
-      allocationCount: attempts.length,
-      cooldownUntil,
-      retryAvailable: state === 'exhausted_unclaimed',
-      next:
-        state === 'exhausted_unclaimed'
-          ? 'A project administrator can use fleet.workflow_retry with this exact revision, a reason and a stable requestId. The two failed rentals remain in Fleet history.'
-          : state === 'exhausted_cooldown'
-            ? 'Two unclaimed rentals exhausted this revision. Wait for the cooldown, then a project administrator can use fleet.workflow_retry.'
-            : state === 'cooldown'
-              ? 'Fleet will try again after the cooldown if capacity and budgets allow.'
-              : state === 'not_current_demand'
-                ? 'This exact revision is not currently offered for managed dispatch.'
-                : state === 'active'
-                  ? 'An active machine already covers this target.'
-                  : 'Fleet may allocate when capacity, wallet and model budgets allow.',
-    };
+    return new Map(
+      rows.map((row) => [
+        grantKey(
+          row.project_id,
+          targetId({ instanceId: row.instance_id, expectedRevision: row.expected_revision }),
+        ),
+        row,
+      ]),
+    );
   }
   /**
    * The machines since a revision's latest grant that no session claimed, newest first, up to
    * the limit, and when the cooldown after the newest ends. A claimed session starts a new
    * streak; a refused create made no machine and is not one, but a machine never launched is.
    */
-  private async streak(attempts: FleetAllocation[], prior = 0, tx?: Transaction) {
+  private async streak(attempts: FleetAllocation[], prior = 0) {
     let unclaimed = 0;
     let newest = 0;
     for (const a of attempts.slice(prior).toReversed()) {
       if (a.phase !== 'released' || !a.runtime) continue;
-      if ((await this.sessions.inspectManaged(a.id, a.epoch, tx))?.session) break;
+      if ((await this.sessions.inspectManaged(a.id, a.epoch))?.session) break;
       unclaimed++;
       newest ||= Date.parse(a.updatedAt);
       if (unclaimed === unclaimedAttemptLimit) break;
     }
     return { unclaimed, cooldownUntil: unclaimed ? newest + unclaimedRetryCooldownMs : 0 };
+  }
+  /**
+   * A narrow, auditable window after two rentals failed before any work was claimed: where each
+   * exact revision stands. Demand is read for every revision, whether or not it has attempts,
+   * through Sessions' own snapshot transaction, so this never runs under the writer lock.
+   */
+  private async retryState(
+    caller: Caller,
+    targets: { instanceId: string; expectedRevision: number }[],
+  ) {
+    const ids = targets.map(targetId);
+    const allocations = (await this.fleet.listOwned(this, ids)).filter(
+      (a) => a.projectId === caller.projectId,
+    );
+    const grants = await this.retryGrants([caller.projectId]);
+    const latest = new Map(
+      allocations.filter((a) => ids.includes(a.owner.id)).map((a) => [a.owner.id, a.source]),
+    );
+    const current = await this.demandTargets(caller.projectId, [...latest.values()]);
+    const active = new Set<string>();
+    for (const a of allocations.filter(occupied)) {
+      active.add(a.owner.id);
+      const session = (await this.sessions.inspectManaged(a.id, a.epoch))?.session;
+      if (session) active.add(targetId(session));
+    }
+    return await Promise.all(
+      targets.map(async ({ instanceId, expectedRevision }) => {
+        const id = targetId({ instanceId, expectedRevision });
+        const attempts = allocations.filter((a) => a.owner.id === id);
+        const prior = grants.get(grantKey(caller.projectId, id))?.prior_allocations;
+        const { unclaimed, cooldownUntil: until } = await this.streak(attempts, prior);
+        const cooldownUntil = until > this.clock() ? new Date(until).toISOString() : null;
+        const state: keyof typeof retryNext = active.has(id)
+          ? 'active'
+          : !current.has(id)
+            ? 'not_current_demand'
+            : unclaimed >= unclaimedAttemptLimit
+              ? cooldownUntil
+                ? 'exhausted_cooldown'
+                : 'exhausted_unclaimed'
+              : cooldownUntil
+                ? 'cooldown'
+                : 'ready';
+        return {
+          instanceId,
+          expectedRevision,
+          state,
+          unclaimedAttempts: unclaimed,
+          attemptLimit: unclaimedAttemptLimit,
+          allocationCount: attempts.length,
+          cooldownUntil,
+          retryAvailable: state === 'exhausted_unclaimed',
+          next: retryNext[state],
+        };
+      }),
+    );
   }
   async retryStatus(caller: Caller, targets: { instanceId: string; expectedRevision: number }[]) {
     await this.scope.require(caller, 'read');
@@ -379,42 +380,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Worker sessions cannot inspect project retry status',
       403,
     );
-    if (!this.config.enabled || !this.state) return [];
-    if (!targets.length) return [];
-    const ids = [...new Set(targets.map(targetId))];
-    const allocations = await this.fleet.listOwned(this, ids);
-    const rows = await this.state.read((sql) =>
-      sql.all<RetryGrant>(
-        'SELECT * FROM fleet_workflow_retry_grants WHERE project_id=? ORDER BY id DESC',
-        caller.projectId,
-      ),
-    );
-    const grants = new Map<string, RetryGrant>();
-    for (const row of rows) {
-      const id = targetId({ instanceId: row.instance_id, expectedRevision: row.expected_revision });
-      if (!grants.has(id)) grants.set(id, row);
-    }
-    const sources = new Map<string, DelegationSource>();
-    for (const id of ids) {
-      const latest = allocations
-        .filter((a) => a.projectId === caller.projectId && a.owner.id === id)
-        .at(-1);
-      if (latest) sources.set(digest(latest.source), latest.source);
-    }
-    const current = await this.demandTargets(caller.projectId, [...sources.values()]);
-    const active = new Set<string>();
-    for (const allocation of allocations.filter(
-      (a) => a.projectId === caller.projectId && occupied(a),
-    )) {
-      active.add(allocation.owner.id);
-      const session = (await this.sessions.inspectManaged(allocation.id, allocation.epoch))
-        ?.session;
-      if (session) active.add(targetId(session));
-    }
-    const snapshot = { allocations, grants, current, active };
-    return await Promise.all(
-      targets.map((target) => this.retrySituation(caller, target, undefined, undefined, snapshot)),
-    );
+    if (!this.config.enabled || !this.state || !targets.length) return [];
+    return await this.retryState(caller, targets);
   }
   async retry(caller: Caller, raw: RetryInput) {
     check(
@@ -435,19 +402,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
       403,
     );
     // Demand uses Sessions' own snapshot transaction; never call it under this writer lock.
-    const observed = await this.retrySituation(caller, input);
+    const status = (await this.retryState(caller, [input]))[0]!;
     const result = await this.state!.transaction(async (tx) => {
       await this.scope.require(caller, 'admin', tx);
-      check(
-        !caller.session && !caller.key,
-        'fleet_forbidden',
-        'Only a project administrator may retry a workflow rental',
-        403,
-      );
-      await tx.get(
-        'SELECT pg_advisory_xact_lock(hashtext(?))',
-        `${caller.projectId}:${input.instanceId}:${input.expectedRevision}`,
-      );
       const prior = await tx.get<RetryGrant>(
         'SELECT * FROM fleet_workflow_retry_grants WHERE project_id=? AND request_id=?',
         caller.projectId,
@@ -469,22 +426,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
           createdAt: prior.created_at,
         };
       }
-      const current = await tx.get<{ revision: number }>(
-        'SELECT revision FROM wf_instances WHERE project_id=? AND id=? FOR UPDATE',
-        caller.projectId,
-        input.instanceId,
-      );
       check(
-        current?.revision === input.expectedRevision,
+        status.state !== 'not_current_demand',
         'revision_conflict',
-        'Workflow revision changed before Fleet retry',
+        'This workflow revision is stale, or not offered for managed dispatch',
         409,
-      );
-      const status = await this.retrySituation(
-        caller,
-        input,
-        tx,
-        observed.state !== 'not_current_demand',
       );
       check(
         status.retryAvailable,
@@ -492,6 +438,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         `Fleet retry is unavailable: ${status.state}`,
         409,
       );
+      // Another retry of the same window already recorded fails the UNIQUE constraint (409).
       const createdAt = new Date(this.clock()).toISOString();
       const row = await tx.get<{ id: number }>(
         'INSERT INTO fleet_workflow_retry_grants(project_id,instance_id,expected_revision,prior_allocations,request_id,input_hash,reason,actor_id,created_at) VALUES(?,?,?,?,?,?,?,?,?) RETURNING id',
@@ -717,22 +664,16 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
+    const grants = await this.retryGrants([...new Set(queue.map((item) => item.projectId))]);
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
       const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === id);
-      const grant = this.state
-        ? await this.state.read((sql) =>
-            sql.get<{ prior_allocations: number }>(
-              'SELECT prior_allocations FROM fleet_workflow_retry_grants WHERE project_id=? AND instance_id=? AND expected_revision=? ORDER BY id DESC LIMIT 1',
-              projectId,
-              id.slice(0, id.lastIndexOf(':')),
-              Number(id.slice(id.lastIndexOf(':') + 1)),
-            ),
-          )
-        : null;
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work.
-      const { unclaimed, cooldownUntil } = await this.streak(attempts, grant?.prior_allocations);
+      const { unclaimed, cooldownUntil } = await this.streak(
+        attempts,
+        grants.get(grantKey(projectId, id))?.prior_allocations,
+      );
       if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.

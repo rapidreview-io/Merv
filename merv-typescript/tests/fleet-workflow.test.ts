@@ -466,18 +466,13 @@ test(
     const f = await fixture(t);
     const target = { instanceId: 'retry_target', expectedRevision: 2 };
     const reason = 'Ranked reflection context is deployed; retry its frozen synthesis revision.';
-    await f.state.transaction(async (tx) => {
-      await tx.run(
-        'CREATE TABLE wf_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision INTEGER NOT NULL)',
-      );
-      await tx.run(
-        'INSERT INTO wf_instances(id,project_id,revision) VALUES(?,?,?)',
-        target.instanceId,
-        f.caller.projectId,
-        target.expectedRevision,
-      );
-    });
+    // A revision with no rental yet is offered, but has nothing to retry.
     f.demand([target]);
+    assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'ready');
+    await assert.rejects(
+      f.adapter.retry(f.caller, { ...target, reason, requestId: 'nothing-to-retry' }),
+      { code: 'fleet_retry_unavailable' },
+    );
     await f.adapter.reconcile();
     for (let index = 0; index < 2; index++) {
       const allocation = f.allocations[index]!;
@@ -617,7 +612,9 @@ test(
       f.adapter.retry(f.caller, { ...target, reason, requestId: 'raced-2' }),
     ]);
     assert.equal(raced.filter((result) => result.status === 'fulfilled').length, 1);
-    assert.equal(raced.filter((result) => result.status === 'rejected').length, 1);
+    const lost = raced.filter((result) => result.status === 'rejected');
+    assert.equal(lost.length, 1);
+    assert.equal(lost[0]!.reason.status, 409);
     assert.equal(
       (await f.state.read((sql) => sql.all('SELECT id FROM fleet_workflow_retry_grants'))).length,
       2,
