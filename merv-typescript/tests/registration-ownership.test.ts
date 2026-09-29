@@ -9,6 +9,7 @@ import {
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
+import { mountSessions, type SessionRoutes } from '../packages/sessions/src/api.js';
 import { openState } from './fixtures/state.js';
 
 test('a used event-listener disposer cannot remove a later subscription of the same callback', async (t) => {
@@ -99,3 +100,34 @@ for (const kind of ['authority', 'policy', 'http-credential', 'http-mount'] as c
     register()();
   });
 }
+
+test('a Sessions adapter that conflicts registers nothing, and one that mounts owns all four', async (t) => {
+  const state = await openState(':memory:');
+  const scope = await createService(new ProjectScope(state));
+  const tools = new ToolRegistry(scope);
+  const api = new ApiServer(scope, tools);
+  t.after(async () => {
+    await tools.close();
+    await state.close();
+  });
+  const sessions = {} as SessionRoutes;
+  const squatter = api.mount('/sessions', async () => {});
+  assert.throws(() => mountSessions(api, sessions), { code: 'mount_conflict' });
+  squatter();
+  const mounted = mountSessions(api, sessions);
+  for (const namespace of ['ms_', 'mr_', 'me_'] as const)
+    assert.throws(
+      () =>
+        api.credential(namespace, {
+          kind: 'x',
+          forbidden: new MervError('x', 'x'),
+          routes: () => false,
+        }),
+      {
+        code: 'credential_conflict',
+      },
+    );
+  mounted();
+  mounted();
+  mountSessions(api, sessions)();
+});
