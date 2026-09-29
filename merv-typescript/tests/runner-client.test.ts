@@ -54,7 +54,7 @@ const client = (value: unknown) =>
   );
 const invalid = { code: 'invalid_control_response', status: 0 };
 
-test('runner presence accepts only closed bounded tuning settings', async () => {
+test('runner presence keeps only bounded tuning settings and ignores fields it does not know', async () => {
   const input = structuredClone(heartbeat);
   const pending = client(presence()).presence(input);
   input.runnerId = 'changed_runner';
@@ -64,18 +64,36 @@ test('runner presence accepts only closed bounded tuning settings', async () => 
   assert.deepEqual((await client(presence([])).presence(heartbeat)).desiredSettings, {
     platforms: [],
   });
-  const bad = [
+  // A field a newer server adds is dropped, never applied: no reply can name an executable.
+  for (const platforms of [
     [{ ...desired, executable: '/bin/evil' }],
     [{ ...desired, harness: 'command' }],
     [{ ...desired, args: ['remote command'] }],
     [{ ...desired, env: {} }],
+  ])
+    assert.deepEqual((await client(presence(platforms)).presence(heartbeat)).desiredSettings, {
+      platforms: [desired],
+    });
+  assert.deepEqual(
+    (
+      await client(
+        presence([desired], { desiredSettings: { platforms: [desired], executable: '/bin/evil' } }),
+      ).presence(heartbeat)
+    ).desiredSettings,
+    { platforms: [desired] },
+  );
+  // A tuned model or effort is validated again as a profile before it is used.
+  const model = { ...desired, model: 'x'.repeat(201) };
+  assert.deepEqual((await client(presence([model])).presence(heartbeat)).desiredSettings, {
+    platforms: [model],
+  });
+  const bad = [
     [desired, desired],
     [{ ...desired, name: '../outside' }],
     [{ ...desired, parallelism: 0 }],
     [{ ...desired, parallelism: 33 }],
     [{ ...desired, enabled: 'true' }],
-    [{ ...desired, model: 'x'.repeat(201) }],
-    [{ ...desired, effort: 'high\nextra' }],
+    [{ ...desired, model: 1 }],
     Array.from({ length: 33 }, (_, i) => ({ ...desired, name: `p${i}` })),
     null,
     {},
@@ -87,7 +105,6 @@ test('runner presence accepts only closed bounded tuning settings', async () => 
     { desiredVersion: -1 },
     { desiredVersion: Number.MAX_SAFE_INTEGER + 1 },
     { runnerId: 'different_runner' },
-    { desiredSettings: { platforms: [desired], executable: '/bin/evil' } },
   ])
     await assert.rejects(
       async () => client(presence([desired], extra)).presence(heartbeat),
@@ -120,17 +137,13 @@ test('lease replies bind the server-selected session to this project and runner,
       async () => client({ session: session(patch), reason: 'leased' }).lease(lease),
       invalid,
     );
-  for (const body of [
-    null,
-    1,
-    'text',
-    [],
-    {},
-    { reason: 'no_candidates' },
-    { session: null },
-    { session: null, reason: 'empty', unexpected: true },
-  ])
+  for (const body of [null, 1, 'text', [], {}, { reason: 'no_candidates' }, { session: null }])
     await assert.rejects(async () => client(body).lease(lease), invalid);
+  assert.deepEqual(
+    await client({ session: null, reason: 'empty', unexpected: true }).lease(lease),
+    { session: null, reason: 'empty' },
+    'a field a newer server adds to the envelope is ignored',
+  );
 });
 
 test('pending presence and lease replies cannot adopt a replacement runner identity', async () => {
@@ -167,6 +180,18 @@ test('workspace acknowledgements compare against the attachment originally sent'
       else assert.deepEqual((await pending).workspace?.attachment, workspace);
     }
   }
+  // The session's workspace record may gain fields; the attachment and result stay closed.
+  const tolerated = await client({
+    session: session({ workspace: { attachment: workspace, result: null, capturedAt: 'x' } }),
+  }).get('session_fixture', heartbeat.runnerId);
+  assert.deepEqual(tolerated.workspace, { attachment: workspace, result: null });
+  await assert.rejects(
+    async () =>
+      client({
+        session: session({ workspace: { attachment: { ...workspace, extra: 1 }, result: null } }),
+      }).get('session_fixture', heartbeat.runnerId),
+    invalid,
+  );
 });
 
 test('get rejects a same-project response for any different session or runner', async () => {
@@ -243,8 +268,7 @@ test('only an active matching heartbeat can renew a watchdog; release must ackno
         await client({ session: session({ status }) }).release(
           'session_fixture',
           heartbeat.runnerId,
-          'crash_loop',
-          'premature_exit',
+          { outcome: 'crash_loop', reason: 'premature_exit' },
         )
       ).status,
       status,
@@ -257,12 +281,10 @@ test('only an active matching heartbeat can renew a watchdog; release must ackno
   ])
     await assert.rejects(
       async () =>
-        client({ session: session(patch) }).release(
-          'session_fixture',
-          heartbeat.runnerId,
-          'completed',
-          'finished',
-        ),
+        client({ session: session(patch) }).release('session_fixture', heartbeat.runnerId, {
+          outcome: 'completed',
+          reason: 'finished',
+        }),
       invalid,
     );
 });
@@ -342,7 +364,10 @@ test('control transport keeps the source bearer in its authorization header and 
       return Response.json({ session: session({ status: 'released' }) });
     },
   );
-  await connection.release('session_fixture', heartbeat.runnerId, 'crash_loop', 'premature_exit');
+  await connection.release('session_fixture', heartbeat.runnerId, {
+    outcome: 'crash_loop',
+    reason: 'premature_exit',
+  });
   assert.equal(calls[0].url, 'https://merv.example/sessions/session_fixture/release');
   const headers = new Headers(calls[0].init?.headers);
   assert.equal(headers.get('authorization'), `Bearer ${bearer}`);
@@ -405,4 +430,15 @@ test('runner replies reject invalid UTF-8 without changing valid Unicode', async
     reason = Buffer.from(bytes);
     await assert.rejects(connection.lease(lease), invalid);
   }
+});
+
+test('a refusal is final only when asking again cannot change the answer', () => {
+  const final = (status: number, code = 'refused') => new RunnerControlError(code, status).final;
+  for (const status of [400, 403, 404, 409, 410, 422])
+    assert.equal(final(status), true, `${status}`);
+  // Authentication, timeouts, rate limits, unreachable or failing servers are asked again.
+  for (const status of [0, 401, 408, 429, 500, 503])
+    assert.equal(final(status), false, `${status}`);
+  for (const code of ['transaction_conflict', 'invalid_control_response', 'github_push_required'])
+    assert.equal(final(409, code), false, code);
 });

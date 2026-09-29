@@ -97,6 +97,15 @@ before its handoff, the runner releases unfinished work with a canonical failure
 outcome; short exits use `crash_loop` so server backoff prevents tight retries.
 Successful handoffs are established by durable workflow transitions. Release
 reporting is retryable and happens only after local termination is confirmed.
+Each ended launch makes one release call. A user's own stop of the runner
+(Ctrl-C, systemd, an upgrade) releases the launches that stop ended with no
+outcome, which counts against nothing. A hosted runner's stop, a halt after a
+source refusal, a deadline, and an ending that merely raced the stop keep their
+counted outcome. A refusal that asking again cannot change (any 4xx except 401,
+408 and 429, and except the codes `transaction_conflict`,
+`invalid_control_response` and `github_push_required`, which are retried whatever
+their status) is that call's answer: it is recorded once and never replayed, so a
+session the server no longer knows is stopped once and settled.
 
 The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
 that launch's private run directory, cleared before the process starts. A profile's
@@ -154,7 +163,8 @@ Capture permanently closes the owner fence before final HEAD work; ambiguous
 operations are reconciled and acknowledged before releasing the checkout.
 See [Code operations](CODE_OPERATIONS.md) for admission, retries and receipts.
 
-Capture precedes a fresh server request, so an outage does not discard local work.
+An ended launch is released first, then captured, reported and closed; an outage only
+delays those steps, and the checkout stays reserved until they are done.
 One immutable final snapshot is reported under the original source authority;
 identical retries survive lost replies and controller restarts. Closed sessions
 can receive their exact late result without reactivation. A persistent successor

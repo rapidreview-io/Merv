@@ -8,8 +8,10 @@ import type {
   SandboxRuntimeProfileRef,
   SandboxRuntimes,
 } from '@merv/sandboxes';
+import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
+import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -436,6 +438,54 @@ test('a stopped create without a machine recovers once, then waits out the lease
   assert.equal(f.runtimes.createKeys.length, attempts, 'nothing is created while waiting');
 });
 
+test('a stopping machine is stopped once and frees its slot at releaseBy, even while still deleting', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const cancelled = await f.fleet.request(f.caller, input('cancelled'));
+  const deleting = await f.fleet.request(f.caller, input('deleting'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [stopped, gone] = [await machine(cancelled.id), await machine(deleting.id)];
+  await f.fleet.cancel(f.caller, cancelled.id);
+  // The provider itself begins deleting the other machine: it is watched, never stopped.
+  const live = [...f.runtimes.byKey.values()].find((item) => item.sandboxId === gone)!;
+  Object.assign(live, { state: 'deleting', ready: false, revision: live.revision + 1 });
+  for (const _ of [1, 2, 3, 4]) await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  const phases = async () =>
+    await Promise.all(
+      [cancelled.id, deleting.id].map(async (id) => (await f.fleet.inspect(f.caller, id)).phase),
+    );
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  // The lease is ten minutes; a minute more covers a reply in flight.
+  assert.equal(
+    (await f.fleet.inspect(f.caller, cancelled.id)).releaseBy,
+    '2026-09-22T00:11:00.000Z',
+  );
+  f.advance(659_999);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  f.advance(1);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['released', 'released']);
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  assert.equal(await f.fleet.free(f.caller.projectId), 2);
+});
+
+test('a lease written with an offset is judged by its time', async (t) => {
+  const f = await fixture(t);
+  const { id } = await f.fleet.request(f.caller, input('offset'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  // 01:00Z, an hour ahead, though it sorts before the clock's own text.
+  const live = f.runtimes.byKey.values().next().value!;
+  Object.assign(live, { leaseExpiresAt: '2026-09-21T23:00:00-02:00', revision: live.revision + 1 });
+  await f.fleet.tick();
+  f.runtimes.inspectError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  f.advance(1000);
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([current.phase, current.error], ['running', 'runtime_unavailable']);
+});
+
 test('a machine the service stops answering for keeps running, then frees its slot', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('unanswered'));
@@ -553,6 +603,52 @@ test('the Fleet page lists open work and bounded history in plain words', async 
   );
   assert.match(rows[3].attention!, /^No machine yet:/);
   assert.equal(rows[3].updatedAt, since, 'retries do not reset the standing clock');
+});
+
+test('Fleet tools answer with the redacted view, never the source, person or launch ids', async (t) => {
+  const f = await fixture(t);
+  const ctx = new Context();
+  const tools = new ToolRegistry(f.scope, f.scope.toolPolicy, (fn) => f.state.snapshot(fn));
+  ctx.provide('fleet', f.fleet);
+  ctx.provide('tools', tools);
+  await ctx.plugin(fleetToolsPlugin);
+  t.after(() => ctx.fiber.dispose());
+  f.owner.payer = async () => 'person-digest';
+  const allocation = await f.fleet.request(f.caller, input('redacted'));
+  await f.fleet.tick(); // Reserve and provision.
+  await f.fleet.tick(); // Launch.
+  const raw = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(raw.person, 'person-digest');
+  assert.equal(raw.runtime?.launch?.deliveryState, 'launched');
+  const view = {
+    id: allocation.id,
+    title: 'Workflow agent',
+    owner: { kind: 'workflow', id: 'work_1' },
+    status: 'starting',
+    phase: 'starting',
+    intent: 'run',
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    deadlineAt: raw.deadlineAt,
+    attention: null,
+    runtime: { sandboxId: 'sbx_1', state: 'ready' },
+  };
+  assert.deepEqual(await tools.call('fleet.get', f.caller, { id: allocation.id }), view);
+  assert.deepEqual(await tools.call('fleet.list', f.caller, {}), [view]);
+  const text = JSON.stringify(await tools.call('fleet.drain', f.caller, { id: allocation.id }));
+  for (const secret of [
+    'person-digest',
+    f.caller.actorId,
+    'rln_',
+    'rtj_',
+    'fixed-release',
+    ':launch',
+  ])
+    assert.equal(text.includes(secret), false, secret);
+  const halted = (await tools.call('fleet.halt', f.caller, { id: allocation.id })) as {
+    intent: string;
+  };
+  assert.equal(halted.intent, 'stop');
 });
 
 test('lost create and launch replies retry stable keys and consumed bootstrap remains live', async (t) => {
@@ -689,6 +785,11 @@ test('active unchanged observations perform no writes; admission requires launch
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'running');
   assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), true);
+  // Another epoch, or an owner that no longer accepts the allocation, is never admitted.
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 2, tx)), false);
+  f.setValid(false);
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx)), false);
+  f.setValid(true);
   const writes = countWrites(f.state);
   const before = writes();
   f.runtimes.heartbeatOnInspect = true;
@@ -1299,11 +1400,14 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   assert.ok(inspected('sbx_1') - running <= 1, 'a running machine waits for the interval');
   f.setObservation('running');
   await within(1000, async () => (await phase()) === 'running');
+  // Work held by the caps waits for the interval too.
+  await f.fleet.request(f.caller, input('held'));
   await sleep(450);
   const before = reads;
   await sleep(800);
   // Each pass reads the allocations twice: once all are running, only the interval passes.
   assert.ok(reads - before <= 2, 'Fleet slows down once nothing is starting or stopping');
+  assert.equal(f.runtimes.createKeys.length, 2);
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {

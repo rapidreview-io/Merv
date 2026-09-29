@@ -791,6 +791,7 @@ test('a hosted session’s model grant holds while it is live or just handed off
   assert.deepEqual(grant, {
     id: session.id,
     projectId: f.source.projectId,
+    allocationId: f.input.allocationId,
     // Keyed as Pi keys a person; this source is an issued actor, not a member.
     person: digest({ projectId: f.source.projectId, actorId: f.source.actorId }),
     model: profile.model,

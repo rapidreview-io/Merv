@@ -21,7 +21,6 @@ import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
   FleetAllocation,
-  FleetConfig,
   FleetError,
   FleetIntent,
   FleetOwner,
@@ -50,22 +49,32 @@ const requestSchema = z
   .strict();
 export const fleetConfig = z
   .object({
+    /** Deployment opt-in; keep false until the actual provider gates pass. */
     enabled: z.boolean().default(false),
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
+    /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects. */
     projectLimits: z.record(token, z.number().int().min(1).max(64)).default({}),
+    /** How often running machines are checked; one starting or stopping is checked each second. */
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
     allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
+    /** MERV_FLEET_HOST_PROJECT_ID: the connected project an owner that rents in the host rents
+     * through. Limits, events and listing stay with the project the work is for. */
     hostProjectId: token.optional(),
     /** What one person's machines may cost in a UTC day, at their offers' prices. */
     dailyUsdPerPerson: z.number().positive().max(100_000).optional(),
   })
   .strict();
+export type FleetConfig = z.input<typeof fleetConfig>;
 type Row = { data_json: string };
 const decode = (row: Row): FleetAllocation => JSON.parse(row.data_json);
 const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 'released';
-/** A machine in use needs only the slow watch; one on its way up or down is watched often. */
-const steady = (a: FleetAllocation) => a.phase === 'running' && a.intent !== 'stop';
+/** A machine in use, or one that only waits to be gone, needs only the slow watch; one on its
+ * way up or down is watched often. */
+const steady = (a: FleetAllocation) =>
+  (a.phase === 'running' && a.intent !== 'stop') ||
+  a.runtime?.state === 'deleting' ||
+  (!a.runtime && !!a.releaseBy);
 /** A 4xx other than timeout, conflict or rate limit, or a local precondition: nothing was made. */
 const refused = (error: unknown) =>
   error instanceof MervError &&
@@ -479,21 +488,45 @@ export class FleetService implements Fleet {
   }
   async admits(id: string, epoch: number, tx: Transaction): Promise<boolean> {
     this.state.assertTransaction(tx);
+    return this.fence(
+      tx,
+      id,
+      (a) =>
+        a.epoch === epoch &&
+        a.intent === 'run' &&
+        ['starting', 'running'].includes(a.phase) &&
+        !!a.runtime?.ready &&
+        a.runtime.launch?.deliveryState === 'launched',
+    );
+  }
+  /**
+   * Whether an allocation may still act, read in `tx` or in a snapshot of its own: Fleet is open,
+   * its deadline and profile hold, `ok` holds of it, and its registered owner (`asker`, when
+   * given) still accepts it under current source authority.
+   */
+  private async fence(
+    tx: Transaction | null,
+    id: string,
+    ok: (a: FleetAllocation) => boolean,
+    asker?: FleetOwner,
+  ): Promise<boolean> {
+    if (!tx)
+      return this.state.snapshot(() =>
+        this.state.transaction((tx) => this.fence(tx, id, ok, asker)),
+      );
     const a = await this.get(tx, id);
+    const owner = this.owners.get(a.owner.kind);
     if (
       this.closed ||
       !this.config.enabled ||
-      a.epoch !== epoch ||
-      a.intent !== 'run' ||
-      !['starting', 'running'].includes(a.phase) ||
-      !a.runtime?.ready ||
-      a.runtime.launch?.deliveryState !== 'launched' ||
+      !owner ||
+      (asker && owner !== asker) ||
       a.deadlineAt <= this.time() ||
-      this.stale(a)
+      this.stale(a) ||
+      !ok(a)
     )
       return false;
-    const owner = this.owners.get(a.owner.kind);
-    return !!owner && this.authorized(a, owner, tx);
+    return this.authorized(a, owner, tx);
   }
   /** Current source authority, then the owner's own check; a revoked source is simply invalid. */
   private async authorized(a: FleetAllocation, owner: FleetOwner, tx: Transaction) {
@@ -505,6 +538,7 @@ export class FleetService implements Fleet {
     }
     return owner.valid(a, tx);
   }
+  /** A full pass now: the test hook, not part of `Fleet`. */
   async tick(): Promise<void> {
     await this.run(true);
   }
@@ -650,56 +684,6 @@ export class FleetService implements Fleet {
       current.error = null;
     });
   }
-  /** Recheck durable cancellation and source authority after slow bootstrap work. */
-  private async launchAllowed(
-    a: FleetAllocation,
-    owner: FleetOwner,
-    handle: SandboxRuntimeHandle,
-  ): Promise<boolean> {
-    return this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const current = await this.get(tx, a.id);
-        if (
-          this.closed ||
-          !this.config.enabled ||
-          this.owners.get(current.owner.kind) !== owner ||
-          current.intent !== 'run' ||
-          current.phase === 'released' ||
-          current.phase === 'releasing' ||
-          current.deadlineAt <= this.time() ||
-          this.stale(current) ||
-          current.runtime?.sandboxId !== handle.sandboxId ||
-          current.runtime.launch?.deliveryState === 'launched'
-        )
-          return false;
-        return this.authorized(current, owner, tx);
-      }),
-    );
-  }
-  private async renewalAllowed(
-    a: FleetAllocation,
-    owner: FleetOwner,
-    handle: SandboxRuntimeHandle,
-  ): Promise<boolean> {
-    return this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const current = await this.get(tx, a.id);
-        if (
-          this.closed ||
-          !this.config.enabled ||
-          this.owners.get(current.owner.kind) !== owner ||
-          !['run', 'drain'].includes(current.intent) ||
-          !['starting', 'running'].includes(current.phase) ||
-          current.deadlineAt <= this.time() ||
-          this.stale(current) ||
-          current.runtime?.sandboxId !== handle.sandboxId ||
-          current.runtime.launch?.deliveryState !== 'launched'
-        )
-          return false;
-        return this.authorized(current, owner, tx);
-      }),
-    );
-  }
   private async reconcile(full = true): Promise<boolean> {
     this.awake ||= full;
     await this.reserve();
@@ -733,7 +717,7 @@ export class FleetService implements Fleet {
               else if (
                 !booting &&
                 (!['starting', 'running'].includes(current.phase) ||
-                  (current.runtime?.leaseExpiresAt ?? '') <= this.time())
+                  !(Date.parse(current.runtime?.leaseExpiresAt ?? '') > this.clock()))
               )
                 current.phase = 'uncertain';
               if (!launching) current.failures++;
@@ -746,14 +730,36 @@ export class FleetService implements Fleet {
           }
         }),
     );
-    return allocations.some((a) => !steady(a));
+    // Another pass within a second only while something not yet steady is due by then.
+    return allocations.some(
+      (a) =>
+        occupied(a) && !steady(a) && (!a.retryAt || Date.parse(a.retryAt) <= this.clock() + 1000),
+    );
   }
   private async advance(a: FleetAllocation): Promise<void> {
     // Closing stops only machines Fleet has seen: a kept one is left as it is, and a create
     // whose reply was lost is left to the successor, which recovers it by its key.
     if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
+    // Past releaseBy the lease has ended any machine it held: its slot is free.
+    if (a.intent === 'stop' && a.releaseBy && a.releaseBy <= this.time()) {
+      await this.update(a.id, (current) => {
+        current.phase = 'released';
+      });
+      return;
+    }
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
+    // One stop per machine, which sets releaseBy; a machine the provider reports deleting is
+    // then only watched, until it is gone or releaseBy. A provider that still reports it up is
+    // asked again, at most once a pass.
+    const stop = async (a: FleetAllocation, handle: SandboxRuntimeHandle) => {
+      if (handle.state !== 'deleting')
+        a = await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
+      if (!a.releaseBy)
+        await this.update(a.id, (current) => {
+          if (current.phase !== 'released') this.waitOutLease(current);
+        });
+    };
     const owner = this.owners.get(a.owner.kind);
     if (
       a.intent !== 'stop' &&
@@ -824,10 +830,7 @@ export class FleetService implements Fleet {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
-    if (a.intent === 'stop') {
-      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
-      return;
-    }
+    if (a.intent === 'stop') return await stop(a, handle);
     if (!owner || !handle.ready) return;
     if (handle.launch?.deliveryState !== 'launched') {
       if (a.intent === 'drain') {
@@ -836,9 +839,16 @@ export class FleetService implements Fleet {
         });
         return;
       }
-      if (!(await this.launchAllowed(a, owner, handle))) return;
+      // Durable cancellation and source authority are checked again after slow bootstrap work.
+      const launchable = (c: FleetAllocation) =>
+        c.intent === 'run' &&
+        c.phase !== 'released' &&
+        c.phase !== 'releasing' &&
+        c.runtime?.sandboxId === handle.sandboxId &&
+        c.runtime.launch?.deliveryState !== 'launched';
+      if (!(await this.fence(null, a.id, launchable, owner))) return;
       const bootstrap = await owner.bootstrap(structuredClone(a));
-      if (!(await this.launchAllowed(a, owner, handle))) return;
+      if (!(await this.fence(null, a.id, launchable, owner))) return;
       const launched = await runtime.launch(
         place,
         handle,
@@ -863,13 +873,22 @@ export class FleetService implements Fleet {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
-      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
+      await stop(a, handle);
     } else {
       if (status === 'starting') await this.observed(a, handle, status);
       if (
         handle.leaseExpiresAt &&
         Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
-        (await this.renewalAllowed(a, owner, handle))
+        (await this.fence(
+          null,
+          a.id,
+          (c) =>
+            ['run', 'drain'].includes(c.intent) &&
+            ['starting', 'running'].includes(c.phase) &&
+            c.runtime?.sandboxId === handle.sandboxId &&
+            c.runtime.launch?.deliveryState === 'launched',
+          owner,
+        ))
       )
         await this.observed(a, await runtime.renew(place, exchanged, a.profileId), status);
     }

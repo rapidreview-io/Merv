@@ -197,8 +197,12 @@ test(
     });
     await legacy.runner.start();
     await modern.runner.start();
-    assert.equal(await legacy.capabilities(), undefined, 'an older machine advertises none');
-    assert.deepEqual(await modern.capabilities(), ['code.v2']);
+    assert.deepEqual(
+      await legacy.capabilities(),
+      ['runner.1'],
+      'a machine without the driver advertises only its version marker',
+    );
+    assert.deepEqual(await modern.capabilities(), ['code.v2', 'runner.1']);
 
     await modern.accepting(false);
     await sessions.setDispatch(owner, { enabled: true });

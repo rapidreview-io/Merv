@@ -624,7 +624,7 @@ try {
           sessionId: launch.session_id,
           status: launch.status,
           reason: launch.reason,
-          releasePending: JSON.parse(String(launch.metadata_json)).releasePending,
+          usageReported: JSON.parse(String(launch.metadata_json)).usageReported,
         })),
         pendingRequests: ledger.prepare('SELECT COUNT(*) AS n FROM launch_requests').get()!.n,
         ownedSlots: ledger
@@ -644,7 +644,8 @@ try {
         assert.ok(
           cleanup.launches.every(
             (launch) =>
-              ['stopped', 'exited'].includes(String(launch.status)) && !launch.releasePending,
+              ['stopped', 'exited'].includes(String(launch.status)) &&
+              launch.usageReported === true,
           ),
         );
         assert.equal(failures.length, 0);

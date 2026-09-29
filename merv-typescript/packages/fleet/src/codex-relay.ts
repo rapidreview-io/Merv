@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, sessionSecretPattern, type State } from '@merv/contracts';
+import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import type { ModelRelayConfig } from './types.js';
 
@@ -139,8 +139,10 @@ const fetches = (value: unknown, depth = 0): boolean => {
   );
 };
 
-/** The upstream body for a hosted Codex call, or null: the binding's model, its effort whatever
- *  the worker asked, and the relay's own output cap. */
+/** The upstream body for a hosted Codex call, or null: the binding's model and the relay's own
+ *  output cap. When the worker sends `reasoning`, its effort becomes the binding's, or none (the
+ *  provider's default) when the binding sets none; a call without `reasoning` is sent without
+ *  one, whatever the binding sets. */
 export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
   const parsed = codexRequest.safeParse(raw);
   if (!parsed.success || parsed.data.model !== grant.model || fetches(raw)) return null;
@@ -154,29 +156,19 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
 
 const day = () => new Date().toISOString().slice(0, 10);
 
-/** A person's daily Fleet model tokens: their own limit, else the deployment's; and today's use. */
-export async function dailyTokens(state: State, person: string, fallback: number) {
-  return await state.read(async (sql) => {
-    const own = await sql.get<{ tokens: number | string }>(
-      'SELECT tokens FROM fleet_model_limits WHERE person=?',
-      person,
-    );
-    const used = await sql.get<{ tokens: number | string }>(
-      'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
-      person,
-      day(),
-    );
-    return { tokens: Number(own?.tokens ?? fallback), usedToday: Number(used?.tokens ?? 0) };
-  });
+/** A person's daily Fleet model tokens: their own limit, else the deployment's. */
+async function ceiling(sql: Sql, person: string, fallback: number) {
+  const own = await sql.get<{ tokens: number | string }>(
+    'SELECT tokens FROM fleet_model_limits WHERE person=?',
+    person,
+  );
+  return Number(own?.tokens ?? fallback);
 }
 /** A refusal stops new Fleet rent while today's remaining tokens cannot fund that last request. */
 export async function modelBudgetStatus(state: State, person: string, fallback: number) {
   const today = day();
   return await state.read(async (sql) => {
-    const own = await sql.get<{ tokens: number | string }>(
-      'SELECT tokens FROM fleet_model_limits WHERE person=?',
-      person,
-    );
+    const tokens = await ceiling(sql, person, fallback);
     const used = await sql.get<{ tokens: number | string }>(
       'SELECT tokens FROM fleet_model_usage WHERE person=? AND day=?',
       person,
@@ -187,7 +179,6 @@ export async function modelBudgetStatus(state: State, person: string, fallback: 
       person,
       today,
     );
-    const tokens = Number(own?.tokens ?? fallback);
     const usedToday = Number(used?.tokens ?? 0);
     const lastRefusedTokens = refusal ? Number(refusal.required_tokens) : null;
     const remaining = Math.max(0, tokens - usedToday);
@@ -223,14 +214,20 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
  * provider key. Each session has one call in flight. A call is charged to its person's day before
  * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
- * when it finishes; one that never finishes keeps its charge. The day's total, kept in the
- * database across restarts, refuses any call that would pass the ceiling. Its tables are made by
- * `modelMigrations`, which the workflow adapter runs when it starts.
+ * when it finishes; one refused before it is sent, or answered with an error status, is refunded,
+ * and one cut off keeps its charge. The day's total, kept in the database across restarts,
+ * refuses any call that would pass the ceiling. Its tables are made by `modelMigrations`, which
+ * the workflow adapter runs when it starts.
  */
 export function codexModelRelay(
   sessions: Sessions,
   state: State,
-  options: { providerKey: () => string; dailyTokensPerPerson: number },
+  options: {
+    providerKey: () => string;
+    dailyTokensPerPerson: number;
+    /** Reads a bearer's grant; Sessions' by default, the workflow adapter's in Main. */
+    authorize?: (token: string) => Promise<ManagedModelGrant>;
+  },
 ): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
   return {
     name: 'codex',
@@ -239,26 +236,22 @@ export function codexModelRelay(
     enabled: true,
     providerKey: options.providerKey,
     authority: {
-      authorize: (token) => sessions.managedModelGrant(token),
+      authorize: options.authorize ?? ((token) => sessions.managedModelGrant(token)),
       validate: async (grant) => void (await sessions.managedModelGrant(grant.id)),
     },
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
       const today = day();
       const charged = await state.transaction(async (tx) => {
-        const own = await tx.get<{ tokens: number | string }>(
-          'SELECT tokens FROM fleet_model_limits WHERE person=?',
-          grant.person,
-        );
-        const ceiling = Number(own?.tokens ?? options.dailyTokensPerPerson);
+        const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         const admitted =
-          most <= ceiling &&
+          most <= limit &&
           (await tx.get(
             'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens WHERE fleet_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
             grant.person,
             today,
             most,
-            ceiling,
+            limit,
           ));
         if (admitted)
           await tx.run(
