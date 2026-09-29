@@ -38,6 +38,7 @@ export interface SessionRoutes {
   get(caller: Caller, sessionId: string): Promise<unknown>;
   attach(caller: Caller, input: unknown): Promise<unknown>;
   workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
+  transcript(caller: Caller, input: unknown): Promise<unknown>;
   heartbeat(caller: Caller, input: unknown): Promise<unknown>;
   release(caller: Caller, input: unknown): Promise<unknown>;
 }
@@ -63,7 +64,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -148,7 +149,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript))?$/.exec(
       path,
     );
   if (route) {
@@ -157,6 +158,10 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       return { session: await sessions.get(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
       return await sessions.halt(caller, { ...(await r.json(haltInput)), sessionId });
+    if (req.method === 'POST' && route[2] === 'transcript') {
+      const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
+      return { transcript: await sessions.transcript(caller, input) };
+    }
     if (req.method === 'POST' && route[2]) {
       const input = bound(await r.json(), 'sessionId', sessionId);
       const session =

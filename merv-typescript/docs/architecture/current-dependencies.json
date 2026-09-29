@@ -10,12 +10,12 @@
   "apiEntries": 37,
   "serverPlugins": 67,
   "machinePlugins": 1,
-  "directDependencyCount": 183,
-  "optionalDependencyCount": 16,
+  "directDependencyCount": 184,
+  "optionalDependencyCount": 17,
   "directConsumers": {
     "api": 6,
     "artifacts": 12,
-    "blobs": 2,
+    "blobs": 3,
     "code": 1,
     "codeResearch": 7,
     "contextBuilder": 3,
@@ -846,7 +846,8 @@
         "domainEvents"
       ],
       "optional": [
-        "tools"
+        "tools",
+        "blobs"
       ],
       "kind": "service",
       "runtime": "server",

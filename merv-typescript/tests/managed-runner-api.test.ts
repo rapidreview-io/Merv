@@ -333,6 +333,7 @@ async function credentialGate(t: TestContext) {
         'heartbeat',
         'release',
         'workspaceResult',
+        'transcript',
         'projectStatus',
         'assignAgent',
         'releaseAgentAssignment',
@@ -437,6 +438,7 @@ const ownersPresent: GateRow[] = [
       ['POST', '/sessions/session_1/heartbeat', 'sessions.heartbeat'],
       ['POST', '/sessions/session_1/release', 'sessions.release'],
       ['POST', '/sessions/session_1/workspace-result', 'sessions.workspaceResult'],
+      ['POST', '/sessions/session_1/transcript', 'sessions.transcript'],
       ['POST', '/code/v2/uploads/begin', 'code.v2.call'],
     ] as const
   ).map(([method, path, reaches]): GateRow => ({

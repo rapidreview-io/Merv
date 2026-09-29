@@ -111,6 +111,7 @@ export {
   codexHandoffGraceMs,
   hostedCodexCapabilities,
   hostedCodexPlatform,
+  MAX_TRANSCRIPT_BYTES,
   RUNNER_HARNESSES,
   sessionSecretPattern,
 } from './session-inputs.js';

@@ -169,6 +169,25 @@ export interface SessionControl {
   sessionId: string;
   runnerId: string;
 }
+/** What a runner says about the transcript file it holds; Sessions derives every other column. */
+export interface SessionTranscriptDeclaration {
+  hostRef: string;
+  sha256: string;
+  size: number;
+  /** The log's own size before truncation. */
+  logBytes: number;
+  truncated: boolean;
+  /** Ready to deliver: Sessions HEADs the store and records the upload once the bytes are there, else signs one PUT. */
+  deliver?: true;
+}
+export interface SessionTranscript {
+  sessionId: string;
+  sha256: string;
+  size: number;
+  uploadedAt: string | null;
+  /** On a delivery with nothing stored: the store's signed PUT (1 h, exact size, x-amz-checksum-sha256, If-None-Match:*). */
+  upload?: { url: string; headers: Record<string, string>; expiresAt: string };
+}
 export interface SessionMessage {
   id: string;
   sessionId: string;
@@ -383,6 +402,11 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & { hostRef: string; workspace: SessionWorkspace },
   ): Promise<Session>;
+  /** Runner-only, live or closed session. Backend only: nothing reads a transcript back. */
+  transcript(
+    caller: Caller,
+    input: SessionControl & SessionTranscriptDeclaration,
+  ): Promise<SessionTranscript>;
   heartbeat(caller: Caller, input: SessionControl): Promise<Session>;
   release(
     caller: Caller,

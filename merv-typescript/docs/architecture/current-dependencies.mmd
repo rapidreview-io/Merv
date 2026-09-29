@@ -225,6 +225,7 @@ flowchart BT
   sessions --> workflows
   sessions --> domainEvents
   sessions -. optional .-> tools
+  sessions -. optional .-> blobs
   merv_sessions_api --> sessions
   merv_sessions_api --> api
   merv_sessions_tools --> sessions

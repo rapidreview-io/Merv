@@ -2124,7 +2124,8 @@
         "domainEvents"
       ],
       "optional": [
-        "tools"
+        "tools",
+        "blobs"
       ],
       "kind": "service",
       "runtime": "server",
@@ -3524,6 +3525,11 @@
       "optional": true
     },
     {
+      "from": "sessions",
+      "to": "blobs",
+      "optional": true
+    },
+    {
       "from": "merv-sessions-api",
       "to": "sessions",
       "optional": false
@@ -3673,7 +3679,7 @@
     "plugins": 68,
     "providers": 30,
     "adapters": 38,
-    "dependencies": 183
+    "dependencies": 184
   },
   "network": [
     {

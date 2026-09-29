@@ -14,6 +14,7 @@ import {
   delegationEnd,
   digest,
   effectiveWorkspace,
+  MAX_TRANSCRIPT_BYTES,
   MervError,
   newId,
   parsed,
@@ -41,6 +42,7 @@ import { AgentObservations, lastActivity } from './observations.js';
 import { isoNow, liveTargets, ownerOf, readFirst, refused, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
+import { SessionTranscripts } from './transcripts.js';
 import type {
   ManagedEnrollmentInput,
   ManagedModelGrant,
@@ -53,6 +55,8 @@ import type {
   Session,
   SessionControl,
   SessionInvocation,
+  SessionTranscript,
+  SessionTranscriptDeclaration,
   SessionOffer,
   Sessions,
   AutomaticLease,
@@ -170,6 +174,21 @@ const controlRefusals = {
     hostRef: ['invalid_host', 'A nonempty host reference is required'],
     workspace: ['invalid_workspace', 'Workspace metadata must match the closed schema'],
   },
+} as const;
+const transcriptSchema = controlSchema.extend({
+  hostRef: trimmed(512),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  size: z.number().int().min(1).max(MAX_TRANSCRIPT_BYTES),
+  logBytes: z.number().int().nonnegative().safe(),
+  truncated: z.boolean(),
+  deliver: z.literal(true).optional(),
+});
+const transcriptRefusals = {
+  ...controlRefusals,
+  fallback: [
+    'invalid_transcript',
+    'A transcript names its host, SHA-256, size, log size and truncation',
+  ],
 } as const;
 const releaseSchema = controlSchema
   .extend({
@@ -383,6 +402,8 @@ export class LeasedSessions implements Sessions {
   private dispatcher!: SessionDispatch;
   private board!: SessionRunning;
   serviceWork!: SessionServiceWork;
+  /** Public so the plugin can bind Blobs to it late. */
+  transcripts!: SessionTranscripts;
   private readonly sections = new Map<string, StatusSection>();
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
@@ -477,6 +498,12 @@ export class LeasedSessions implements Sessions {
           },
           this.clock,
           this.thresholds,
+        ),
+      );
+      // After the session and dispatch tables, which a transcript row names and reads.
+      this.transcripts = await createService(
+        new SessionTranscripts(state, this.clock, (caller, id, runnerId, tx) =>
+          this.controlled(caller, id, runnerId, tx),
         ),
       );
       this.board = new SessionRunning(state, scope, this.dispatcher, this.clock, this.thresholds);
@@ -1953,6 +1980,18 @@ export class LeasedSessions implements Sessions {
       return session;
     });
   }
+  /** Runner-only, live or closed: the runner that held the session declares and delivers what it printed. */
+  async transcript(
+    caller: Caller,
+    input: SessionControl & SessionTranscriptDeclaration,
+  ): Promise<SessionTranscript> {
+    caller = structuredClone(caller);
+    this.ensureOpen();
+    return await this.transcripts.record(
+      caller,
+      closed(transcriptSchema, input, transcriptRefusals),
+    );
+  }
   async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
     caller = structuredClone(caller);
     input = closed(controlSchema, input, controlRefusals);
@@ -2547,6 +2586,15 @@ export const sessionsPlugin = {
       ctx.inject(['tools'], (ctx) => {
         ctx.effect(() => ctx.tools.registerSessionPolicy(sessions));
         ctx.effect(() => ctx.tools.registerCallerRules('managed', managedRunnerRules));
+      });
+      // Transcripts go to the object store; while Blobs is unloaded a runner is told to retry.
+      ctx.inject(['blobs'], (ctx) => {
+        ctx.effect(() => {
+          sessions.transcripts.blobs = ctx.blobs;
+          return () => {
+            sessions.transcripts.blobs = undefined;
+          };
+        });
       });
       yield ctx.provide('sessions', sessions);
     });

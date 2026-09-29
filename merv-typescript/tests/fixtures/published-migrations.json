@@ -545,6 +545,12 @@
       "published": true
     },
     {
+      "component": "session_transcripts",
+      "version": 1,
+      "hash": "7ef0bfd48afc38dbb53888dc7ca9693913a600c36a5b6e4bc8367f689048dd60",
+      "published": false
+    },
+    {
       "component": "sessions",
       "version": 1,
       "hash": "49920f9a53de8d7461134d607dc51ec7e004adcb9ddaa48728f718269d547177",
