@@ -486,6 +486,33 @@ test('compact mounted names preserve raw tool identities for grants and do not r
   }
 });
 
+test('a conversation listing offers no mounted tool and asks no grant decision', async () => {
+  let decisions = 0;
+  const registry = new ToolRegistry(scope, {
+    granted: async () => {
+      decisions++;
+      return () => true;
+    },
+    require: async () => undefined,
+  });
+  const conversation = {
+    ...caller,
+    conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
+  };
+  try {
+    await registry.createCatalog('research').replace([remote('search')]);
+    assert.deepEqual(await registry.describe(conversation), []);
+    assert.equal(decisions, 0);
+    assert.deepEqual(
+      (await registry.describe(caller)).map((tool) => tool.name),
+      ['_research.search'],
+    );
+    assert.equal(decisions, 1);
+  } finally {
+    await registry.close();
+  }
+});
+
 test('replacement publishes immediately, drains old calls, and disposal tracks both generations', async () => {
   const registry = new ToolRegistry(scope, fixtureAccess),
     catalog = registry.createCatalog('generations');

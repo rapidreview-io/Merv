@@ -202,11 +202,12 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
 });
 
 test(
-  'a part is stored only while the credential that sent it still holds, however long its bytes took',
+  'the API decides once before a part and leaves a credential revoked while its bytes arrived to Code',
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    // The API decides once, before the bytes; Code's putPart authorizes in its own transaction.
+    // The API decides once, before the bytes. The stubbed putPart stands in for Code's, which
+    // authorizes in its own transaction; code-operations.test.ts proves the real putPart refuses.
     f.api.registerCode({
       ...f.provider,
       v2: {

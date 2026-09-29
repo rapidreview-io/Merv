@@ -392,9 +392,12 @@ export class ToolRegistry implements Tools {
     const actor = caller ? await this.scope.require(caller, 'read') : undefined;
     const reader = actor?.role === 'reader';
     const session = caller?.session ? this.sessionPolicy() : undefined;
-    // One grant decision covers every mounted tool in the listing.
+    // One grant decision covers every mounted tool in the listing; a conversation is offered none.
     const grant =
-      caller && this.access && [...this.entries.values()].some((entry) => entry.remote)
+      caller &&
+      !caller.conversation &&
+      this.access &&
+      [...this.entries.values()].some((entry) => entry.remote)
         ? await this.access.granted(caller)
         : undefined;
     const visible = await filterAsync(
@@ -455,7 +458,8 @@ export class ToolRegistry implements Tools {
       throw new MervError('tool_forbidden', 'This tool is not offered to agents', 403);
     input = plain(input);
     // Admission owns the entire operation, including asynchronous authentication and parsing.
-    // The caller's read decision is made once, right before the handler (dispatch, below).
+    // A native tool's read decision is made once, right before its handler (dispatch, below); a
+    // remote tool's is its grant check (ToolPolicy.require).
     const operation = Promise.resolve().then(async () => {
       if (entry.remote) {
         if (!this.access)

@@ -360,11 +360,12 @@ test(
 );
 
 test(
-  'Code controls decide once before the body, and a control refuses a credential revoked while it arrived',
+  'Code controls decide once before the body and leave a credential revoked while it arrived to Code',
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    // Code's own controls authorize the caller in their transaction, after the body.
+    // The stubbed control stands in for Code's, which authorizes the caller in its transaction
+    // after the body; code-commands.test.ts proves the real nextCommand and completeCommand refuse.
     f.api.registerCode({
       ...f.provider,
       nextCommand: async (caller, input) => {

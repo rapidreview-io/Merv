@@ -81,6 +81,15 @@ test('grants match exact projects, actors, mounts and raw names without changing
   });
 });
 
+test('a granted answer keeps the grants it decided with across a later replacement', async (t) => {
+  const { scope, reader } = await setup(t);
+  const policy = new ExactToolPolicy(scope, [grant(reader)]);
+  const decided = await policy.granted(reader);
+  policy.replace([]);
+  assert.equal(decided('research', 'search'), true);
+  assert.equal((await policy.granted(reader))('research', 'search'), false);
+});
+
 test('replacement and actor revocation take effect on every later check without a restart', async (t) => {
   const { scope, operator, reader } = await setup(t);
   const policy = new ExactToolPolicy(scope, [grant(reader)]);
