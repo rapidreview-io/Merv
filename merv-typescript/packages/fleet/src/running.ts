@@ -16,9 +16,9 @@ import type { Fleet, FleetAllocation, FleetPhase } from './types.js';
 
 /**
  * Fleet's one view: its words and the redacted allocation its page and tools show, and Fleet's
- * part of the Running page. Every open allocation is a machine in the sessions lane until a session binds
- * it; then the session's node absorbs it and the Fleet machine section follows the session's
- * sidebar. Fleet adds no controls there, and no size or price.
+ * part of the Running page. Every open allocation is a machine in the sessions lane until a
+ * session binds it; then the session's node absorbs it and the Fleet machine section follows the
+ * session's sidebar. Fleet adds no controls there, and no size or price.
  */
 
 /** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
