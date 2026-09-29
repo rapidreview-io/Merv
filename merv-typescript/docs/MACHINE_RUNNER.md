@@ -90,7 +90,8 @@ PID read from disk. Confirmed shutdown permits local capture. A Git launch keeps
 its slot until result acknowledgment and checkout cleanup complete. If the
 guardian is unreachable or cannot confirm termination, the launch remains
 `uncertain`, consumes capacity and is not respawned—even if the server lease
-has closed. Historical launch and redacted log records remain inspectable.
+has closed—until it is proven gone: claimed in an earlier boot, or with no
+command pinned a minute after it was first found unreachable. Historical launch and redacted log records remain inspectable.
 
 A zero process exit code is not a completed workflow gate. If the agent exits
 before its handoff, the runner releases unfinished work with a canonical failure
