@@ -30,6 +30,7 @@ import {
   type PendingLaunchRequest,
 } from './ledger.js';
 import { ProcessHost, usageFile } from './process-host.js';
+import { readTranscript, type TranscriptFacts } from './transcript.js';
 import { GitWorkspaceManager } from './workspaces.js';
 import {
   buildLaunch,
@@ -197,6 +198,14 @@ const view = (s: Session) => {
   };
 };
 type SessionView = ReturnType<typeof view>;
+/** What a launch owes of its transcript, kept in its metadata: hashes and sizes, never bytes. */
+type Transcript =
+  | { state: 'none' | 'uploaded' }
+  | { state: 'refused'; code: string }
+  | ({ state: 'owed'; tries?: number } & TranscriptFacts);
+/** Ten deliveries at most, a minute apart after a failure; one PUT at a time, off the tick. */
+const transcriptTries = 10,
+  transcriptRetryMs = 60_000;
 /** What a put-off preparation recorded, in words the release route accepts, else a default. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
   if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
@@ -240,6 +249,9 @@ export class MachineRunner implements Runner {
   private current?: Promise<void>;
   private stopPromise?: Promise<void>;
   private finalPendingRequests = 0;
+  /** The one transcript PUT in flight; it writes no ledger state, so it may outlive a stop. */
+  private uploading?: AbortController;
+  private readonly transcriptRetry = new Map<string, number>();
 
   constructor(
     config: RunnerConfig,
@@ -774,18 +786,22 @@ export class MachineRunner implements Runner {
     await perform(command);
   }
   /**
-   * What an ended launch owes, in order: its release, capture, owed Code receipts, workspace
-   * result and closed checkout; true once nothing is. One whose driver is gone waits for it.
+   * What an ended launch owes, in order: its transcript's declaration and its release, capture,
+   * owed Code receipts, workspace result, closed checkout and last the transcript itself; true
+   * once nothing is. One whose driver is gone waits for it.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
-    if (record.metadata.usageReported !== true) record = await this.release(record);
+    if (record.metadata.usageReported !== true) {
+      record = await this.declare(record);
+      record = await this.release(record);
+    }
     const driver = this.driverOf(record);
     if (!driver) {
       this.lastError = 'workspace_driver_missing';
       return false;
     }
     const workspace = driver.get(record.id);
-    if (!workspace || workspace.status === 'closed') return true;
+    if (!workspace || workspace.status === 'closed') return await this.deliver(record);
     const result = await driver.capture(record);
     // Work the capture moved aside or rescued is reported, never passed over in silence.
     const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
@@ -811,6 +827,100 @@ export class MachineRunner implements Runner {
       record = this.save(record.id, { workspaceReported: true });
     }
     await driver.close(record);
+    return await this.deliver(record);
+  }
+  /**
+   * Before the release: what the process printed, declared (no store I/O on the server) so a
+   * hosted machine is kept for it. A final refusal or a local fault ends it; the release never
+   * waits on it. The file is read once; each release try declares it again.
+   */
+  private async declare(record: LaunchRecord): Promise<LaunchRecord> {
+    try {
+      let t = record.metadata.transcript as Transcript | undefined;
+      if (!t) {
+        const file = readTranscript(record.runDirectory, [this.sourceBearer]);
+        t = file ? { state: 'owed', ...file.facts } : { state: 'none' };
+        record = this.save(record.id, { transcript: t });
+      }
+      if (t.state === 'owed') {
+        const { state: _state, tries: _tries, ...facts } = t;
+        await this.client.transcript(record.sessionId, this.ledger.runnerId, {
+          hostRef: record.id,
+          ...facts,
+        });
+      }
+    } catch (error) {
+      if (error instanceof RunnerControlError && !error.final) this.lastError = error.code;
+      else
+        record = this.save(record.id, {
+          transcript: {
+            state: 'refused',
+            code: error instanceof RunnerControlError ? error.code : 'transcript_unreadable',
+          },
+        });
+    }
+    return record;
+  }
+  /**
+   * Last, after everything workflow-visible: one background PUT at a time, recorded once
+   * Sessions' HEAD finds the bytes. Every call is a delivery, so a lost PUT, a 412 or a restart
+   * between them takes the same path. True once nothing is owed.
+   */
+  private async deliver(record: LaunchRecord): Promise<boolean> {
+    const t = record.metadata.transcript as Transcript | undefined;
+    if (t?.state !== 'owed') return true;
+    if (
+      this.uploading ||
+      this.stopping ||
+      (this.transcriptRetry.get(record.id) ?? 0) > this.clock()
+    )
+      return false;
+    const tries = (t.tries ?? 0) + 1;
+    if (tries > transcriptTries) return this.delivered(record.id, 'transcript_abandoned');
+    this.save(record.id, { transcript: { ...t, tries } });
+    const { state: _state, tries: _tries, ...facts } = t;
+    try {
+      const reply = await this.client.transcript(record.sessionId, this.ledger.runnerId, {
+        hostRef: record.id,
+        ...facts,
+        deliver: true,
+      });
+      if (reply.uploadedAt) return this.delivered(record.id);
+      // The declaration is write-once: a log changed or removed since cannot be delivered.
+      const file = readTranscript(record.runDirectory, [this.sourceBearer]);
+      if (file?.facts.sha256 !== t.sha256) return this.delivered(record.id, 'transcript_changed');
+      const abort = (this.uploading = new AbortController());
+      // Off the tick: presence, leases and other launches go on. 128 KiB/s (~1 Mbit/s) is the
+      // slowest link it waits for.
+      void this.client
+        .putSigned(
+          reply.upload!,
+          file.bytes,
+          AbortSignal.any([
+            abort.signal,
+            AbortSignal.timeout(60_000 + Math.ceil(file.bytes.length / 128)),
+          ]),
+        )
+        .catch((error: unknown) => {
+          this.lastError = diagnostic(error);
+          this.transcriptRetry.set(record.id, this.clock() + transcriptRetryMs);
+        })
+        .finally(() => {
+          this.uploading = undefined;
+        });
+    } catch (error) {
+      if (error instanceof RunnerControlError && error.final)
+        return this.delivered(record.id, error.code);
+      this.lastError = diagnostic(error);
+      this.transcriptRetry.set(record.id, this.clock() + transcriptRetryMs);
+    }
+    return false;
+  }
+  private delivered(id: string, refused?: string): true {
+    this.transcriptRetry.delete(id);
+    this.save(id, {
+      transcript: refused ? { state: 'refused', code: refused } : { state: 'uploaded' },
+    });
     return true;
   }
   /** The one release: its outcome, or only its usage once closed. The reply says if attached. */
@@ -958,6 +1068,8 @@ export class MachineRunner implements Runner {
         deadline: r.deadline,
         exitCode: r.exitCode,
         releasePending: terminalLaunch(r) && r.metadata.usageReported !== true,
+        transcriptPending:
+          terminalLaunch(r) && (r.metadata.transcript as Transcript | undefined)?.state === 'owed',
         ...(workspace
           ? {
               workspace: {
@@ -985,6 +1097,7 @@ export class MachineRunner implements Runner {
         for (const record of this.ledger.open())
           if (record.metadata.usageReported !== true) this.save(record.id, { runnerStopped: true });
       await this.current;
+      this.uploading?.abort(); // the next start delivers it
       await this.stopOwned();
       const settled: string[] = [];
       for (const record of this.ledger.open())

@@ -152,6 +152,12 @@ how a landed handoff ends. The ledger remembers that the report was answered, so
 retried across restarts and sent once. The figures are a self-report from whatever could
 write the file; see [usage and budgets](BUDGETS_AND_LIMITS.md).
 
+Each launch that printed anything also delivers one redacted copy of its `stdout.log`, for
+operators: it declares the file before each release try and, after its workspace result and
+checkout close, PUTs it in the background to the object store through a signed URL Sessions
+gives it. Nothing waits on the store, and a server without the route costs one call. See
+[the runner README](../packages/runner/README.md#settling-an-ended-launch).
+
 Sessions' source-owned `get` now reconciles current expiry and workflow admission
 without activating work or rebuilding context. That lets the runner discover
 closed or invalid assignments even when the child makes no further MCP calls.

@@ -109,6 +109,9 @@ export function server(
       return reply({ session, reason: 'leased' });
     }
     const [, , id, action] = path.split('/');
+    // As a server from before transcripts answers: final, so a launch that printed calls once.
+    if (action === 'transcript')
+      return reply({ error: { code: 'not_found', message: 'No route' } }, 404);
     const session = sessions.get(decodeURIComponent(id ?? ''));
     if (!session) return reply({ error: { code: 'session_not_found', message: 'No' } }, 404);
     if (action === 'attach') {

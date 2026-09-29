@@ -19,6 +19,8 @@ import type {
   Session,
   SessionDeferral,
   SessionReleaseOutcome,
+  SessionTranscript,
+  SessionTranscriptDeclaration,
   SessionUsageReport,
   SessionWorkspace,
 } from '@merv/sessions/types';
@@ -98,6 +100,23 @@ const sessionSchema = z
   })
   .passthrough();
 const leaseSchema = z.object({ session: z.union([z.null(), sessionSchema]), reason: label });
+const transcriptSchema = z.object({
+  transcript: z
+    .object({
+      sessionId: z.string(),
+      sha256: z.string(),
+      size: z.number(),
+      uploadedAt: z.string().nullable(),
+      upload: z
+        .object({ url: z.string().url(), headers: z.record(z.string()), expiresAt: z.string() })
+        .optional(),
+    })
+    .passthrough(),
+});
+/** Where a bearer or transcript may go: https, or plain http to this machine only. */
+const secureUrl = (url: URL) =>
+  url.protocol === 'https:' ||
+  (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname));
 
 export class RunnerClient {
   readonly baseUrl: string;
@@ -120,10 +139,7 @@ export class RunnerClient {
       url.search ||
       url.hash ||
       url.pathname !== '/' ||
-      !(
-        url.protocol === 'https:' ||
-        (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))
-      )
+      !secureUrl(url)
     )
       throw new RunnerControlError('invalid_runner_url', 400);
     this.baseUrl = url.origin;
@@ -417,6 +433,48 @@ export class RunnerClient {
       (await this.request(`/sessions/${encodeURIComponent(id)}/release`, body))?.session,
       { id, runnerId, statuses: ['released', 'expired'] },
     );
+  }
+  /** Declare the launch's transcript, or with `deliver` confirm it stored or get its PUT. */
+  async transcript(
+    id: string,
+    runnerId: string,
+    input: SessionTranscriptDeclaration,
+  ): Promise<SessionTranscript> {
+    const t = transcriptSchema.safeParse(
+      await this.request(`/sessions/${encodeURIComponent(id)}/transcript`, { runnerId, ...input }),
+    ).data?.transcript;
+    // It names this session and file; a delivery not yet stored carries a PUT to https or loopback.
+    if (
+      !t ||
+      t.sessionId !== id ||
+      t.sha256 !== input.sha256 ||
+      (input.deliver && !t.uploadedAt && !(t.upload && secureUrl(new URL(t.upload.url))))
+    )
+      throw new RunnerControlError('invalid_control_response', 0);
+    return t;
+  }
+  /** The store's signed PUT: its own headers and the bytes, never a Merv bearer. 412 is stored. */
+  async putSigned(
+    upload: { url: string; headers: Record<string, string> },
+    bytes: Uint8Array,
+    signal: AbortSignal,
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await this.fetcher(upload.url, {
+        method: 'PUT',
+        headers: upload.headers,
+        body: bytes as Uint8Array<ArrayBuffer>,
+        redirect: 'error',
+        credentials: 'omit',
+        signal,
+      });
+      await response.body?.cancel();
+    } catch {
+      throw new RunnerControlError('transcript_upload_failed', 0);
+    }
+    if (!response.ok && response.status !== 412)
+      throw new RunnerControlError('transcript_upload_failed', 0);
   }
   async transportGrant(input: CodeTransportInput): Promise<CodeTransportGrant> {
     const parsed = codeTransportGrantSchema.safeParse(

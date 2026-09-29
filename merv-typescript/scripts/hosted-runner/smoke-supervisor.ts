@@ -106,6 +106,7 @@ async function main() {
         launch &&
         ['exited', 'stopped'].includes(launch.status) &&
         !launch.releasePending &&
+        !launch.transcriptPending &&
         !launch.workspace?.capturePending
       ) {
         status('finished');
