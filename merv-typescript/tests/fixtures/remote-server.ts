@@ -171,6 +171,8 @@ export const representativeResult: CallToolResult = {
 /** Independent sessionful upstream with a real HTTP/SSE boundary; never records argument values or credentials. */
 export class RemoteFixture {
   readonly requests: RemoteRequestLog[] = [];
+  /** MCP sessions initialized so far. */
+  opened = 0;
   url!: string;
   private http?: HttpServer;
   private tools: Tool[];
@@ -309,6 +311,7 @@ export class RemoteFixture {
       sessionIdGenerator: randomUUID,
       enableJsonResponse: true,
       onsessioninitialized: (sessionId) => {
+        this.opened++;
         this.sessions.set(sessionId, { server, transport });
       },
     });

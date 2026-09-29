@@ -57,7 +57,7 @@ export class CredentialServer {
   private readonly callHolds: Barrier[] = [];
   private readonly initializeHolds: Barrier[] = [];
   private readonly initializeFailures: string[] = [];
-  private readonly callFailures: string[] = [];
+  private readonly callFailures: { message: string; status: number }[] = [];
   private nextConnection = 1;
 
   constructor(identities: UpstreamIdentity[]) {
@@ -72,8 +72,8 @@ export class CredentialServer {
   failNextInitialize(message: string) {
     this.initializeFailures.push(message);
   }
-  failNextCall(message: string) {
-    this.callFailures.push(message);
+  failNextCall(message: string, status = 500) {
+    this.callFailures.push({ message, status });
   }
   revoke(token: string) {
     this.identities.delete(token);
@@ -218,7 +218,7 @@ export class CredentialServer {
       this.callAttempts++;
       const failure = this.callFailures.shift();
       if (failure) {
-        res.writeHead(500).end(failure);
+        res.writeHead(failure.status).end(failure.message);
         return;
       }
     }

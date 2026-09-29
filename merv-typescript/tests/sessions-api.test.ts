@@ -744,15 +744,22 @@ test('leased mounted calls require source grants and keep upstream project argum
       headers: { 'x-sandbox-namespace': 'ns', 'x-sandbox-subject': 'subject' },
     },
   ]);
-  const pool = new ScopedRemoteClients(
-    credentials,
-    f.app.ctx.scope.toolPolicy,
-    { mountId: 'sandbox', url: upstream.url },
-    f.app.ctx.tools,
-  );
+  const pools: ScopedRemoteClients[] = [];
+  // A refusal keeps its lane's connection, so each held-connect case below opens a fresh pool.
+  const openPool = () => {
+    const pool = new ScopedRemoteClients(
+      credentials,
+      f.app.ctx.scope.toolPolicy,
+      { mountId: 'sandbox', url: upstream.url },
+      f.app.ctx.tools,
+    );
+    pools.push(pool);
+    return pool;
+  };
+  let pool = openPool();
   f.cleanup.push(async () => {
     await upstream.close();
-    await pool.close();
+    await Promise.all(pools.map((pool) => pool.close()));
     delete process.env[env];
   });
   let mutable: Record<string, unknown> | undefined;
@@ -842,6 +849,7 @@ test('leased mounted calls require source grants and keep upstream project argum
     },
   ]);
 
+  pool = openPool();
   const rotatedCredential = upstream.holdNextInitialize();
   const withCredential = client.callTool({
     name: '_sandbox.inspect',

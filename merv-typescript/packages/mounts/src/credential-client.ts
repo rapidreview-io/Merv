@@ -1,21 +1,14 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
-  CallToolResultSchema,
-  ErrorCode,
-  McpError,
-  type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ErrorCode, McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MervError, type Caller, type Data } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { CredentialProvider, ResolvedCredential } from './types.js';
 import type { ToolPolicy } from '@merv/contracts';
-
-const losslessResult = z.custom<CallToolResult>(
-  (value) => CallToolResultSchema.safeParse(value).success,
-  'Remote tool returned an invalid MCP result',
-);
 
 /** One pool serves one mount endpoint. */
 export interface ScopedRemoteClientOptions {
@@ -36,10 +29,6 @@ interface Connection {
   users: number;
   retired: boolean;
   closing?: Promise<void>;
-}
-
-function unavailable(): MervError {
-  return new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
 }
 
 /** Rejects with a fixed timeout code; the operation itself keeps running until its owner stops it. */
@@ -66,13 +55,36 @@ export function withDeadline<T>(
   });
 }
 
-function transportError(error: unknown): MervError {
+/**
+ * The upstream answered over a healthy session. Limitation: upstream codes -32000 and -32001 equal
+ * the SDK's local ConnectionClosed and RequestTimeout, so they count as transport faults.
+ */
+export const answered = (error: unknown) =>
+  error instanceof McpError &&
+  error.code !== ErrorCode.RequestTimeout &&
+  error.code !== ErrorCode.ConnectionClosed;
+
+/** Fixed codes and texts only: no upstream text, header or secret reaches a caller or a status. */
+export function fault(error: unknown): MervError {
+  if (error instanceof MervError) return error;
+  if (answered(error))
+    return new MervError(
+      'remote_error',
+      `Remote tool refused the request (${(error as McpError).code})`,
+      502,
+    );
+  if (error instanceof StreamableHTTPError && (error.code === 401 || error.code === 403))
+    return new MervError(
+      'remote_credential_rejected',
+      'The upstream service refused its configured credential',
+      502,
+    );
   if (
-    (error instanceof MervError && error.code === 'remote_timeout') ||
-    (error instanceof McpError && error.code === ErrorCode.RequestTimeout)
+    (error instanceof McpError && error.code === ErrorCode.RequestTimeout) ||
+    (error as Error)?.name === 'TimeoutError'
   )
-    return new MervError('remote_timeout', 'Remote tool operation timed out', 504);
-  return unavailable();
+    return new MervError('remote_timeout', 'Remote operation timed out', 504);
+  return new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
 }
 
 /** Actor/project credentials are resolved per admission; only matching identities share a client. */
@@ -128,12 +140,11 @@ export class ScopedRemoteClients {
       return Promise.reject(new MervError('remote_closed', 'Remote client pool is closed', 503));
     const operation = Promise.resolve().then(async () => {
       let connection: Connection;
-      let lane: string | undefined;
       try {
         if (mountId !== this.options.mountId)
           throw new MervError('remote_mount_not_found', 'Remote mount is not configured', 404);
         const url = this.url;
-        lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
+        const lane = JSON.stringify([mountId, url, caller.actorId, caller.projectId]);
         await this.admit(caller, mountId, rawToolName, args);
         const credential = await this.credentials.resolve(caller, mountId);
         const key = JSON.stringify([
@@ -147,9 +158,8 @@ export class ScopedRemoteClients {
         if (previous && previous.key !== key) this.retire(previous);
         connection = this.connections.get(key) ?? this.createConnection(key, lane, url, credential);
       } catch (error) {
-        const previous = lane ? this.current.get(lane) : undefined;
-        if (previous) this.retire(previous);
-        throw error instanceof MervError ? error : unavailable();
+        // Admission and credential refusals concern this call; the connection stays.
+        throw fault(error);
       }
       return await this.invoke(connection, caller, mountId, rawToolName, args);
     });
@@ -217,7 +227,7 @@ export class ScopedRemoteClients {
         );
       } catch (error) {
         this.retire(connection);
-        throw transportError(error);
+        throw fault(error);
       }
     })();
     return connection;
@@ -243,18 +253,20 @@ export class ScopedRemoteClients {
           409,
         );
       await this.admit(caller, mountId, name, args);
-      return await withDeadline(
+      // Cast on purpose: the registry's complete() is the one result validator.
+      return (await withDeadline(
         connection.client.request(
           { method: 'tools/call', params: { name, arguments: args } },
-          losslessResult,
+          z.unknown(),
           { timeout: this.timeoutMs, maxTotalTimeout: this.timeoutMs },
         ),
         this.timeoutMs,
         'remote_timeout',
-      );
+      )) as CallToolResult;
     } catch (error) {
-      this.retire(connection);
-      throw error instanceof MervError ? error : transportError(error);
+      // Only a transport fault retires the shared connection; refusals and upstream answers keep it.
+      if (!(error instanceof MervError) && !answered(error)) this.retire(connection);
+      throw fault(error);
     } finally {
       connection.users--;
       // A failed shared connection is withdrawn immediately; other admitted calls retain it.
@@ -281,7 +293,7 @@ export class ScopedRemoteClients {
         // Retirements can finish before shutdown snapshots the live clients.
         // Retain their cleanup outcome after removing the connection itself.
         this.cleanupFailed = true;
-        throw transportError(error);
+        throw fault(error);
       })
       .finally(() => this.all.delete(connection)));
   }
@@ -297,7 +309,7 @@ export class ScopedRemoteClients {
       this.connections.clear();
       this.current.clear();
       if (this.cleanupFailed || results.some((result) => result.status === 'rejected'))
-        throw unavailable();
+        throw new MervError('remote_unavailable', 'Remote tool service is unavailable', 502);
     })();
     return this.closing;
   }

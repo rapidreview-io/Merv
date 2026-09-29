@@ -123,7 +123,8 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       release.resolve();
       await denied;
       assert.equal(dispatched.length, 0, 'Withdrawn authority never crosses the upstream boundary');
-      assert.equal(connections[0].closes, 1, 'The rejected connection is cleaned up');
+      // A refusal concerns the call: the connection stays for the actor's current callers.
+      assert.equal(connections[0].closes, 0, 'A refused call keeps its connection');
 
       const currentKey = await scope.caller({
         kind: 'key',
@@ -153,8 +154,8 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       ]);
       assert.equal(
         connections.length,
-        2,
-        'Current callers can reuse their matching upstream identity',
+        1,
+        'Current callers reuse the connection of their matching upstream identity',
       );
       await assert.rejects(pool.call(captured, 'bridge', 'inspect', { marker: 'still-stale' }), {
         code: withdrawal === 'key-revocation' ? 'forbidden' : 'membership_required',

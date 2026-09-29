@@ -4,12 +4,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, McpError, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { MervError } from '@merv/contracts';
+import { ToolRegistry } from '@merv/api';
 import { EnvironmentCredentials } from '../packages/mounts/src/credentials.js';
 import { createApp } from './fixtures/app.js';
 import { ScopedRemoteClients } from '../packages/mounts/src/credential-client.js';
 import { CredentialServer } from './fixtures/credential-server.js';
+import { RemoteFixture, representativeResult } from './fixtures/remote-server.js';
 
 function data(result: CallToolResult) {
   return result.structuredContent as {
@@ -144,12 +150,12 @@ test('same identity deduplicates concurrent connections; actors and projects rec
   assert.deepEqual(results[0].content[0]._meta, { retained: true });
 });
 
-test('grant and credential revocation stop new calls and retire an idle privileged connection', async (t) => {
+test('grant and credential revocation stop new calls without tearing down the idle connection', async (t) => {
   const { pool, upstream, a, b, access, grants, bindings, clients, scope } = await fixture(t);
   await pool.call(a, 'sandbox', 'inspect', {});
   access.replace(grants.filter((grant) => grant.actorId !== a.actorId));
   await assert.rejects(pool.call(a, 'sandbox', 'inspect', {}), { code: 'tool_forbidden' });
-  assert.equal(clients[0].closeCalls, 1);
+  assert.equal(clients[0].closeCalls, 0, 'A refusal concerns the call, not the connection');
   access.replace(grants);
   // Binding changes apply by reloading Mounts, which builds a new provider and pool.
   const reloaded = new ScopedRemoteClients(
@@ -234,8 +240,13 @@ for (const change of ['grant', 'credential'] as const) {
       code: change === 'grant' ? 'tool_forbidden' : 'credential_changed',
     });
     assert.equal(upstream.callAttempts, 0);
-    // The connection opened with the superseded identity is retired, not reused.
-    assert.ok(clients[0].closeCalls >= 1);
+    // A refusal keeps the connection; one opened with a superseded identity is never reused.
+    assert.equal(clients[0].closeCalls, 0);
+    if (change === 'credential') {
+      await pool.call(a, 'sandbox', 'inspect', {});
+      assert.equal(upstream.initializeAttempts, 2);
+      assert.equal(clients[0].closeCalls, 1);
+    }
   });
 }
 
@@ -269,7 +280,7 @@ test('grant revocation during the final credential resolution prevents upstream 
   }
   await rejected;
   assert.equal(upstream.callAttempts, 0);
-  assert.equal(clients[0].closeCalls, 1);
+  assert.equal(clients[0].closeCalls, 0);
 });
 
 test('pool shutdown closes admission immediately and waits for the held call before closing its client', async (t) => {
@@ -392,3 +403,126 @@ for (const phase of ['connect', 'call'] as const) {
     held.release();
   });
 }
+
+async function remotePool(t: TestContext, f: Awaited<ReturnType<typeof fixture>>) {
+  const remote = new RemoteFixture();
+  await remote.start();
+  const pool = new ScopedRemoteClients(f.credentials, f.access, {
+    mountId: 'sandbox',
+    url: remote.url,
+    timeoutMs: 1500,
+  });
+  t.after(async () => {
+    await pool.close();
+    await remote.close();
+  });
+  return { remote, pool };
+}
+
+test('an upstream JSON-RPC error keeps the connection and reports only its code', async (t) => {
+  const f = await fixture(t);
+  const { remote, pool } = await remotePool(t, f);
+  remote.setResult('inspect', () => {
+    throw new McpError(ErrorCode.InvalidParams, `upstream echo Bearer ${f.tokens.a}`);
+  });
+  for (let call = 0; call < 3; call++)
+    await assert.rejects(pool.call(f.a, 'sandbox', 'inspect', {}), (error: unknown) => {
+      assert.ok(error instanceof MervError);
+      assert.equal(error.code, 'remote_error');
+      assert.equal(error.message, `Remote tool refused the request (${ErrorCode.InvalidParams})`);
+      for (const text of [JSON.stringify(error), String(error)])
+        assert.ok(!text.includes(f.tokens.a) && !text.includes('upstream echo'));
+      return true;
+    });
+  assert.equal(remote.opened, 1);
+});
+
+test('upstream code -32000 counts as a closed connection: it retires with remote_unavailable', async (t) => {
+  const f = await fixture(t);
+  const { remote, pool } = await remotePool(t, f);
+  remote.setResult('inspect', () => {
+    throw new McpError(ErrorCode.ConnectionClosed, 'Upstream closed');
+  });
+  await assert.rejects(pool.call(f.a, 'sandbox', 'inspect', {}), { code: 'remote_unavailable' });
+  remote.setResult('inspect', representativeResult);
+  assert.deepEqual(await pool.call(f.a, 'sandbox', 'inspect', {}), representativeResult);
+  assert.equal(remote.opened, 2);
+});
+
+test('an upstream credential refusal retires the connection with a fixed code', async (t) => {
+  const { pool, upstream, a, tokens } = await fixture(t);
+  await pool.call(a, 'sandbox', 'inspect', {});
+  upstream.failNextCall(`denied Bearer ${tokens.a}`, 403);
+  await assert.rejects(pool.call(a, 'sandbox', 'inspect', {}), (error: unknown) => {
+    assert.equal((error as MervError).code, 'remote_credential_rejected');
+    for (const text of [JSON.stringify(error), String(error)])
+      assert.ok(!text.includes(tokens.a) && !text.includes('denied'));
+    return true;
+  });
+  await pool.call(a, 'sandbox', 'inspect', {});
+  assert.equal(upstream.initializeAttempts, 2);
+});
+
+test('a refused admission between two calls keeps their connection', async (t) => {
+  const { pool, upstream, a, access, grants, clients } = await fixture(t);
+  const first = await pool.call(a, 'sandbox', 'inspect', {});
+  access.replace(grants.filter((grant) => grant.actorId !== a.actorId));
+  await assert.rejects(pool.call(a, 'sandbox', 'inspect', {}), { code: 'tool_forbidden' });
+  access.replace(grants);
+  const second = await pool.call(a, 'sandbox', 'inspect', {});
+  assert.equal(data(second).connectionId, data(first).connectionId);
+  assert.equal(upstream.initializeAttempts, 1);
+  assert.equal(clients[0].closeCalls, 0);
+});
+
+test('the registry refuses an invalid MCP result and the connection stays', async (t) => {
+  const f = await fixture(t);
+  let initializes = 0;
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.method !== 'POST') return void response.writeHead(405).end();
+      let text = '';
+      for await (const part of request) text += String(part);
+      const message = JSON.parse(text) as { id?: number; method: string };
+      if (message.id === undefined) return void response.writeHead(202).end();
+      if (message.method === 'initialize') initializes++;
+      const result =
+        message.method === 'initialize'
+          ? {
+              protocolVersion: '2025-03-26',
+              capabilities: { tools: {} },
+              serverInfo: { name: 'fixture', version: '1' },
+            }
+          : { content: 'not-an-array' };
+      response
+        .writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'fixture' })
+        .end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+    })();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const pool = new ScopedRemoteClients(f.credentials, f.access, {
+    mountId: 'sandbox',
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`,
+  });
+  const registry = new ToolRegistry(f.scope, f.access);
+  t.after(async () => {
+    await registry.close();
+    await pool.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  await registry.createCatalog('sandbox').replace([
+    {
+      kind: 'mcp',
+      name: 'inspect',
+      inputSchema: { type: 'object' },
+      handler: (caller, input) => pool.call(caller, 'sandbox', 'inspect', input),
+    },
+  ]);
+  for (let call = 0; call < 2; call++)
+    await assert.rejects(registry.call('_sandbox.inspect', f.a, {}), {
+      code: 'invalid_remote_result',
+    });
+  assert.equal(initializes, 1);
+});
