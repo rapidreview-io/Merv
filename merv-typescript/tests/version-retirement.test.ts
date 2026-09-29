@@ -549,14 +549,14 @@ test('retiring the versions that can no longer start deletes their records and n
   const { tasks, experiments, research, reflections, workflows } = app.ctx;
   const input = { goal: 'Still works.', checks: ['It runs.'] };
   const scratch = await tasks.create(live, { ...input, title: 'Scratch', requestId: 'scratch' });
-  assert.equal(scratch.workflow.version, 2);
+  assert.equal(scratch.workflow.version, 12);
   const git = await tasks.create(live, {
     ...input,
     title: 'Git',
     workspace: 'git',
     requestId: 'git',
   });
-  assert.equal(git.workflow.version, 3);
+  assert.equal(git.workflow.version, 13);
   const work = await tasks.create(live, {
     ...input,
     title: 'Work 4',

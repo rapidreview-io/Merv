@@ -2064,6 +2064,8 @@ export interface Task {
   /** The commit the current delivery names; the review pins its rendered record. */
   deliveryCode?: TaskDeliveryCode;
   deliveryCodeArtifactId?: string;
+  /** Recent compact managed GPU run summaries across work revisions, when ML is available. */
+  compute?: { key: string; runId: string; generation: number; state: string; cost: unknown }[];
 }
 /**
  * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
@@ -2279,6 +2281,29 @@ export interface ServiceTaskCreator {
 
 import type { RunningNode, RunningPanelPart } from './running.js';
 export interface Tasks {
+  computeOffers(caller: Caller): Promise<unknown>;
+  computeStatus(
+    caller: Caller,
+    taskId: string,
+    runId?: string,
+    generation?: number,
+  ): Promise<unknown>;
+  computeRun(
+    caller: Caller,
+    input: {
+      taskId: string;
+      expectedRevision: number;
+      key: string;
+      provider: string;
+      offerId: string;
+      command: string;
+      minutes: number;
+      maxUsd: number;
+      commandId?: string;
+    },
+  ): Promise<unknown>;
+  computeCancel(caller: Caller, taskId: string, runId: string): Promise<unknown>;
+  computeTick(): Promise<void>;
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;
