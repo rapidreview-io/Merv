@@ -502,6 +502,52 @@ test('a runner’s release records the closure its session’s checks find, not 
   }
 });
 
+test('a runner’s release of a session whose handoff landed records the handoff, even past expiry', async (t) => {
+  const f = await fixture(t);
+  const handoff = async () => {
+    const { token, session } = await f.offer(),
+      prepared = await f.sessions.prepare(await f.sessions.authenticate(token), 'finish', {});
+    await f.sessions.run(
+      prepared,
+      async (caller) =>
+        await f.state.transaction(
+          async (tx) =>
+            await f.handle.transition(
+              caller,
+              {
+                instanceId: session.instanceId,
+                expectedRevision: 0,
+                action: 'finish',
+                requestId: `finish-${session.id}`,
+              },
+              tx,
+            ),
+        ),
+    );
+    return session;
+  };
+  // A release that claims completion on a live, handed-off session is answered with the handoff.
+  const claimed = await handoff();
+  const completed = await f.sessions.release(f.source, {
+    sessionId: claimed.id,
+    runnerId: 'runner',
+    outcome: 'completed',
+  });
+  // One that arrives past expiry, before anything recorded the closure, keeps it too.
+  const late = await handoff();
+  f.advance(300_001);
+  const failed = await f.sessions.release(f.source, {
+    sessionId: late.id,
+    runnerId: 'runner',
+    outcome: 'host_failed',
+  });
+  for (const released of [completed, failed])
+    assert.deepEqual(
+      [released.status, released.closeReason, released.outcome],
+      ['released', 'handoff', 'completed'],
+    );
+});
+
 test('controller polls preserve offered leases across provider outages and commit deadline closure', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();

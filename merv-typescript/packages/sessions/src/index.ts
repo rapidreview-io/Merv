@@ -2015,7 +2015,8 @@ export class LeasedSessions implements Sessions {
     return await this.transaction(async (tx) => {
       const session = await this.controlled(caller, control.sessionId, control.runnerId, tx);
       // A closure its checks find (a revocation, a lease its domain refused) is recorded as that.
-      await this.reconcile(session, tx);
+      // A landed handoff comes first, as closeReleased records it: expiry never hides it.
+      if (live(session) && !(await this.handedOff(session, tx))) await this.reconcile(session, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
       if (caller.managed) await this.managed.acknowledgeRelease(caller, tx);
