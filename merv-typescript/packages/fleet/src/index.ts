@@ -64,8 +64,12 @@ export const fleetConfig = z
 type Row = { data_json: string };
 const decode = (row: Row): FleetAllocation => JSON.parse(row.data_json);
 const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 'released';
-/** A machine in use needs only the slow watch; one on its way up or down is watched often. */
-const steady = (a: FleetAllocation) => a.phase === 'running' && a.intent !== 'stop';
+/** A machine in use, or one that only waits to be gone, needs only the slow watch; one on its
+ * way up or down is watched often. */
+const steady = (a: FleetAllocation) =>
+  (a.phase === 'running' && a.intent !== 'stop') ||
+  a.runtime?.state === 'deleting' ||
+  (!a.runtime && !!a.releaseBy);
 /** A 4xx other than timeout, conflict or rate limit, or a local precondition: nothing was made. */
 const refused = (error: unknown) =>
   error instanceof MervError &&
@@ -733,7 +737,7 @@ export class FleetService implements Fleet {
               else if (
                 !booting &&
                 (!['starting', 'running'].includes(current.phase) ||
-                  (current.runtime?.leaseExpiresAt ?? '') <= this.time())
+                  !(Date.parse(current.runtime?.leaseExpiresAt ?? '') > this.clock()))
               )
                 current.phase = 'uncertain';
               if (!launching) current.failures++;
@@ -746,14 +750,36 @@ export class FleetService implements Fleet {
           }
         }),
     );
-    return allocations.some((a) => !steady(a));
+    // Another pass within a second only while something not yet steady is due by then.
+    return allocations.some(
+      (a) =>
+        occupied(a) && !steady(a) && (!a.retryAt || Date.parse(a.retryAt) <= this.clock() + 1000),
+    );
   }
   private async advance(a: FleetAllocation): Promise<void> {
     // Closing stops only machines Fleet has seen: a kept one is left as it is, and a create
     // whose reply was lost is left to the successor, which recovers it by its key.
     if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
+    // Past releaseBy the lease has ended any machine it held: its slot is free.
+    if (a.intent === 'stop' && a.releaseBy && a.releaseBy <= this.time()) {
+      await this.update(a.id, (current) => {
+        current.phase = 'released';
+      });
+      return;
+    }
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
+    /** One stop per machine, which sets releaseBy; a machine the provider reports deleting is
+     * then only watched, until it is gone or releaseBy. A provider that still reports it up is
+     * asked again, at most once a pass. */
+    const stop = async (a: FleetAllocation, handle: SandboxRuntimeHandle) => {
+      if (handle.state !== 'deleting')
+        a = await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
+      if (!a.releaseBy)
+        await this.update(a.id, (current) => {
+          if (current.phase !== 'released') this.waitOutLease(current);
+        });
+    };
     const owner = this.owners.get(a.owner.kind);
     if (
       a.intent !== 'stop' &&
@@ -824,10 +850,7 @@ export class FleetService implements Fleet {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
-    if (a.intent === 'stop') {
-      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
-      return;
-    }
+    if (a.intent === 'stop') return await stop(a, handle);
     if (!owner || !handle.ready) return;
     if (handle.launch?.deliveryState !== 'launched') {
       if (a.intent === 'drain') {
@@ -863,7 +886,7 @@ export class FleetService implements Fleet {
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
-      await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
+      await stop(a, handle);
     } else {
       if (status === 'starting') await this.observed(a, handle, status);
       if (

@@ -436,6 +436,54 @@ test('a stopped create without a machine recovers once, then waits out the lease
   assert.equal(f.runtimes.createKeys.length, attempts, 'nothing is created while waiting');
 });
 
+test('a stopping machine is stopped once and frees its slot at releaseBy, even while still deleting', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  const cancelled = await f.fleet.request(f.caller, input('cancelled'));
+  const deleting = await f.fleet.request(f.caller, input('deleting'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const machine = async (id: string) => (await f.fleet.inspect(f.caller, id)).runtime!.sandboxId;
+  const [stopped, gone] = [await machine(cancelled.id), await machine(deleting.id)];
+  await f.fleet.cancel(f.caller, cancelled.id);
+  // The provider itself begins deleting the other machine: it is watched, never stopped.
+  const live = [...f.runtimes.byKey.values()].find((item) => item.sandboxId === gone)!;
+  Object.assign(live, { state: 'deleting', ready: false, revision: live.revision + 1 });
+  for (const _ of [1, 2, 3, 4]) await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  const phases = async () =>
+    await Promise.all(
+      [cancelled.id, deleting.id].map(async (id) => (await f.fleet.inspect(f.caller, id)).phase),
+    );
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  // The lease is ten minutes; a minute more covers a reply in flight.
+  assert.equal(
+    (await f.fleet.inspect(f.caller, cancelled.id)).releaseBy,
+    '2026-09-22T00:11:00.000Z',
+  );
+  f.advance(659_999);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['releasing', 'releasing']);
+  f.advance(1);
+  await f.fleet.tick();
+  assert.deepEqual(await phases(), ['released', 'released']);
+  assert.deepEqual(f.runtimes.stopped, [stopped]);
+  assert.equal(await f.fleet.free(f.caller.projectId), 2);
+});
+
+test('a lease written with an offset is judged by its time', async (t) => {
+  const f = await fixture(t);
+  const { id } = await f.fleet.request(f.caller, input('offset'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  // 01:00Z, an hour ahead, though it sorts before the clock's own text.
+  const live = f.runtimes.byKey.values().next().value!;
+  Object.assign(live, { leaseExpiresAt: '2026-09-21T23:00:00-02:00', revision: live.revision + 1 });
+  await f.fleet.tick();
+  f.runtimes.inspectError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  f.advance(1000);
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([current.phase, current.error], ['running', 'runtime_unavailable']);
+});
+
 test('a machine the service stops answering for keeps running, then frees its slot', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('unanswered'));
@@ -1299,11 +1347,14 @@ test('a started Fleet acts on a request at once, watches start-up often, then sl
   assert.ok(inspected('sbx_1') - running <= 1, 'a running machine waits for the interval');
   f.setObservation('running');
   await within(1000, async () => (await phase()) === 'running');
+  // Work held by the caps waits for the interval too.
+  await f.fleet.request(f.caller, input('held'));
   await sleep(450);
   const before = reads;
   await sleep(800);
   // Each pass reads the allocations twice: once all are running, only the interval passes.
   assert.ok(reads - before <= 2, 'Fleet slows down once nothing is starting or stopping');
+  assert.equal(f.runtimes.createKeys.length, 2);
 });
 
 test('a kick from inside a transaction runs outside it', async (t) => {
