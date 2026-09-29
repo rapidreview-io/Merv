@@ -622,7 +622,7 @@ test('GitHub client rejects malformed/oversized replies and does not reflect ups
   ]) {
     const client = new GitHubClient(config, fake);
     await assert.rejects(client.user('synthetic-token'), (e: any) => {
-      assert.ok(['github_unavailable', 'github_response'].includes(e.code));
+      assert.ok(['github_forbidden', 'github_unavailable', 'github_response'].includes(e.code));
       assert.ok(!e.message.includes('upstream-private-token'));
       return true;
     });

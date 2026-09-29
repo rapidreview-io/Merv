@@ -309,3 +309,33 @@ test('rules inspect a caller-selected App status and comments preserve caller te
   await api.commentOnce('private-test-token', 'example/research', 3, body);
   assert.deepEqual(comments, [{ body }]);
 });
+
+test('a forbidden ruleset detail is incomplete visibility, not a broken connection', async (t) => {
+  const api = client((url) => {
+    if (url.pathname.endsWith('/rules/branches/main')) return [{ type: 'pull_request' }];
+    if (url.pathname.endsWith('/rulesets')) return [{ id: 1, source_type: 'Repository' }];
+    if (url.pathname.endsWith('/rulesets/1')) return new Response('{}', { status: 403 });
+    if (url.pathname === '/apps/merv') return { id: 7 };
+    assert.fail(url.pathname);
+  });
+  t.after(() => api.close());
+  const rules = await api.rules('private-test-token', 'example/research', 'main', 'approval');
+  assert.equal(rules.incomplete, true);
+  assert.deepEqual(rules.rules, [{ type: 'pull_request' }]);
+  assert.equal(rules.strict, false, 'missing protection is still not approval');
+});
+
+test('GitHub rate limits stay retryable instead of becoming permission refusals', async (t) => {
+  for (const [status, headers, body] of [
+    [403, { 'x-ratelimit-remaining': '0' }, '{}'],
+    [403, { 'retry-after': '60' }, '{}'],
+    [403, {}, '{"message":"You have exceeded a secondary rate limit. private-test-token"}'],
+    [429, {}, '{}'],
+  ] as const) {
+    const api = client(() => new Response(body, { status, headers }));
+    t.after(() => api.close());
+    await assert.rejects(api.branches('private-test-token', 'example/research'), {
+      code: 'github_unavailable',
+    });
+  }
+});

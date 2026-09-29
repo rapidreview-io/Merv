@@ -362,9 +362,36 @@ export class GitHubClient {
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
       if (!response.ok) {
-        await response.body?.cancel();
+        // Secondary limits may only be named in the body. Inspect a bounded prefix, never
+        // surface upstream diagnostics (which can contain private repository details).
+        let diagnostic = '';
+        const reader = response.status === 403 ? response.body?.getReader() : undefined;
+        if (reader) {
+          try {
+            while (diagnostic.length < 16_384) {
+              const part = await reader.read();
+              if (part.done) break;
+              diagnostic += new TextDecoder().decode(
+                part.value.subarray(0, 16_384 - diagnostic.length),
+              );
+            }
+          } finally {
+            await reader.cancel().catch(() => {});
+          }
+        } else await response.body?.cancel();
         if (response.status === 404)
           throw new MervError('github_not_found', 'GitHub resource is absent or inaccessible', 404);
+        if (
+          response.status === 403 &&
+          response.headers.get('x-ratelimit-remaining') !== '0' &&
+          !response.headers.has('retry-after') &&
+          !/rate limit|abuse detection/i.test(diagnostic)
+        )
+          throw new MervError(
+            'github_forbidden',
+            'GitHub refused access; check the App installation and repository permissions',
+            403,
+          );
         if (response.status === 409 || response.status === 422)
           throw new MervError(
             'github_conflict',

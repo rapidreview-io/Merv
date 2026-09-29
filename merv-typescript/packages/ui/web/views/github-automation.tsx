@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
-import { StatusPill } from '../components';
 
 export function GitHubAutomation({
   status,
@@ -46,26 +45,27 @@ export function GitHubAutomation({
       if (current()) setBusy(false);
     }
   };
+  const changed =
+    mode !== status.automation ||
+    (mode !== 'off' && base !== (status.baseBranch ?? status.repository.defaultBranch ?? ''));
   return (
-    <section className="stack" aria-label="Repository automation">
-      {/* What agents may do is a pill, and the branch they do it against wears the branch's own. */}
-      <div className="cluster">
-        <h3>Repository automation</h3>
-        <StatusPill
-          value={
-            status.automation === 'off'
-              ? 'off'
+    <section className="github-automation stack" aria-label="Repository automation">
+      {!status.canManage && (
+        <div className="github-setting">
+          <span>Agent access</span>
+          <span className="muted">
+            {status.automation === 'off'
+              ? 'Off'
               : status.automation === 'read'
-                ? 'read only'
-                : 'read and publish'
-          }
-        />
-        {status.baseBranch && <span className="branch branch--ref">{status.baseBranch}</span>}
-      </div>
+                ? 'Read only'
+                : 'Read and publish reviewable changes'}
+          </span>
+        </div>
+      )}
       {status.canManage && (
         <>
-          <label className="stack">
-            Agent access
+          <label className="github-setting">
+            <span>Agent access</span>
             <select
               className="input"
               value={mode}
@@ -82,11 +82,12 @@ export function GitHubAutomation({
             </select>
           </label>
           {mode !== 'off' && (
-            <label className="stack">
-              Base branch
+            <div className="github-setting">
+              <span>Base branch</span>
               {branches ? (
                 <select
                   className="input"
+                  aria-label="Base branch"
                   value={base}
                   disabled={busy}
                   onChange={(e) => setBase(e.target.value)}
@@ -115,31 +116,31 @@ export function GitHubAutomation({
                   </button>
                 </div>
               )}
-            </label>
+            </div>
           )}
-          <div>
-            <button
-              className="btn"
-              disabled={
-                busy ||
-                (mode !== 'off' && (!base || !status.canBrowse || !status.automationConfigured)) ||
-                (mode === status.automation &&
-                  base === (status.baseBranch ?? status.repository.defaultBranch ?? ''))
-              }
-              onClick={() =>
-                void act(async () => {
-                  await request('automation', {
-                    expectedRevision: status.revision,
-                    mode,
-                    baseBranch: mode === 'off' ? null : base,
-                  });
-                  if (current()) onChanged();
-                })
-              }
-            >
-              {busy ? 'Saving…' : 'Save automation'}
-            </button>
-          </div>
+          {changed && (
+            <div className="github-save">
+              <button
+                className="btn github-primary"
+                disabled={
+                  busy ||
+                  (mode !== 'off' && (!base || !status.canBrowse || !status.automationConfigured))
+                }
+                onClick={() =>
+                  void act(async () => {
+                    await request('automation', {
+                      expectedRevision: status.revision,
+                      mode,
+                      baseBranch: mode === 'off' ? null : base,
+                    });
+                    if (current()) onChanged();
+                  })
+                }
+              >
+                {busy ? 'Saving…' : 'Save automation'}
+              </button>
+            </div>
+          )}
         </>
       )}
       {error && <p role="alert">{error}</p>}

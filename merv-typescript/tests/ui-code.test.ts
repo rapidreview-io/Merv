@@ -2190,7 +2190,62 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     assert.doesNotMatch(text(), /GitHub default: main/);
   });
 
-  test('repository automation is a pill and its controls, never a sentence about them', async (t) => {
+  test('repository picker can be cancelled without changing the connection; account actions stay tucked away', async (t) => {
+    t.after(unmount);
+    serve('/code/github', { body: { ...status, automation: 'off' } });
+    serve('/code/github/repositories', { body: { repositories: [status.repository] } });
+    await mount(createElement(GitHubConnection));
+    assert.equal(document.querySelector('details')!.open, false);
+    assert.equal(
+      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save automation'),
+      false,
+    );
+    await click('Change repository');
+    const picker = document.querySelector('.github-picker')!;
+    assert.ok(picker);
+    const select = picker.querySelector('select')!;
+    await act(async () => {
+      select.value = '8:42';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await click('Cancel');
+    assert.equal(document.querySelector('.github-picker'), null);
+    assert.ok(text().includes('research/project'));
+    assert.ok(!requests.some((r) => r.startsWith('POST ')), requests.join('\n'));
+  });
+
+  test('agent access changes require an explicit save and can be reverted without a request', async (t) => {
+    t.after(unmount);
+    let sent: Record<string, unknown> | undefined;
+    serve('/code/github/automation', (_call, body) => {
+      sent = body;
+      return { body: {} };
+    });
+    await mount(
+      createElement(GitHubAutomation, {
+        status: { ...status, automation: 'off' },
+        onChanged: () => {},
+      }),
+    );
+    const select = document.querySelector('select')!;
+    const choose = async (mode: string) =>
+      act(async () => {
+        select.value = mode;
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+      });
+    await choose('read');
+    assert.equal(sent, undefined);
+    await choose('off');
+    assert.equal(
+      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save automation'),
+      false,
+    );
+    await choose('read');
+    await click('Save automation');
+    assert.deepEqual(sent, { expectedRevision: 1, mode: 'read', baseBranch: 'research-base' });
+  });
+
+  test('agent access retains unavailable permission constraints without implementation details', async (t) => {
     t.after(unmount);
     // The one state each sentence was written for: no App key yet, and a mode chosen.
     await mount(

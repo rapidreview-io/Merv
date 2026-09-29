@@ -179,30 +179,43 @@ export class CodeMirrorService {
     this.running ??= (async () => {
       try {
         const at = now();
-        const due = await this.state.read(
-          async (sql) =>
-            await sql.all<MirrorRow>(
-              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) ORDER BY next_at,created_at,id LIMIT 50`,
-              at,
-            ),
-        );
-        // A project with nothing linked is left exactly as it is: its refs wait without being
-        // touched, so a server that never publishes writes nothing and says so in its status.
         const linked = new Map<string, boolean>();
-        for (const row of due) {
-          if (this.closed) return;
-          if (!linked.has(row.project_id))
-            linked.set(
-              row.project_id,
-              !(
-                'blocked' in
-                (await this.transport.target(row.project_id).catch(() => ({
-                  blocked: 'code_mirror_unavailable',
-                })))
+        let cursor: MirrorRow | undefined;
+        let remaining = 50;
+        // Page past disconnected projects without modifying their waiting work. The cursor
+        // belongs to this pass; only eligible rows consume its bounded execution allowance.
+        while (!this.closed && remaining > 0) {
+          const after = cursor ? [cursor.next_at ?? '', cursor.created_at, cursor.id] : [];
+          const due: MirrorRow[] = await this.state.read(
+            async (sql) =>
+              await sql.all<MirrorRow>(
+                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
+              ${cursor ? "AND (COALESCE(next_at,''),created_at,id) > (?,?,?)" : ''}
+              ORDER BY COALESCE(next_at,''),created_at,id LIMIT 50`,
+                at,
+                at,
+                ...after,
               ),
-            );
-          if (!linked.get(row.project_id)) continue;
-          await this.one(row).catch(() => {});
+          );
+          if (!due.length) break;
+          cursor = due[due.length - 1];
+          for (const row of due) {
+            if (this.closed || remaining === 0) return;
+            if (!linked.has(row.project_id))
+              linked.set(
+                row.project_id,
+                !(
+                  'blocked' in
+                  (await this.transport
+                    .target(row.project_id)
+                    .catch(() => ({ blocked: 'code_mirror_unavailable' })))
+                ),
+              );
+            if (!linked.get(row.project_id)) continue;
+            remaining--;
+            await this.one(row).catch(() => {});
+          }
+          if (due.length < 50) break;
         }
       } finally {
         this.running = undefined;

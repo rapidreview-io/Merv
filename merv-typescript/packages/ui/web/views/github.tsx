@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
-import { LoadState, StatusPill } from '../components';
+import { LoadState } from '../components';
+import { Icon } from '../icons';
 import { GitHubAutomation } from './github-automation';
 import { GitHubPreparation } from './github-prepare';
 
@@ -103,103 +104,244 @@ export function GitHubConnection() {
     }
   }
   const selected = repositories?.find((repo) => `${repo.installationId}:${repo.id}` === selection);
+  const connect = () =>
+    void act(async () => {
+      const result = await request<{ url: string }>('/begin', {
+        expectedRevision: status!.revision,
+      });
+      if (current()) window.location.assign(result.url);
+    });
+  const browse = () =>
+    void act(async () => {
+      const result = await request<{ repositories: GitHubRepository[] }>('/repositories');
+      if (current()) {
+        setRepositories(result.repositories);
+        setSelection('');
+      }
+    });
+  const needsConnection = status?.status === 'disconnected' || status?.status === 'needs_reconnect';
   return (
-    <section className="stack" aria-label="GitHub repository">
-      {/* How the connection stands is the pill beside its name, never a clause of a sentence. */}
-      <div className="cluster">
-        <h2 className="section-title">GitHub repository</h2>
+    <section className="github-connection" aria-label="GitHub repository" aria-busy={busy}>
+      <header className="github-header">
+        <span className="github-mark">
+          <Icon name="code" size={24} />
+        </span>
+        <div className="github-heading">
+          <h2>GitHub</h2>
+          <p className="muted">Your project's code, connected.</p>
+        </div>
         {status && (
-          <StatusPill value={status.status === 'disconnected' ? 'not connected' : status.status} />
+          <span className="github-state" data-connected={status.status === 'connected'}>
+            {status.status === 'connected'
+              ? 'Connected'
+              : status.status === 'needs_reconnect'
+                ? 'Reconnect needed'
+                : status.status === 'refreshing'
+                  ? 'Refreshing'
+                  : 'Not connected'}
+          </span>
+        )}
+      </header>
+      <div className="github-body stack">
+        {error && <p role="alert">{error}</p>}
+        {!status && !error && <LoadState loading />}
+        {!status && error && (
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                finishing.current = undefined;
+                const value = callback ? await finish() : await request<GitHubStatus>();
+                if (current()) setStatus(value);
+              })
+            }
+          >
+            Try again
+          </button>
+        )}
+        {status && (
+          <>
+            {status.repository && (
+              <div className="github-repository">
+                <div className="github-identity">
+                  <a href={status.repository.url} target="_blank" rel="noreferrer">
+                    {status.repository.fullName}
+                    <Icon name="external" size={14} />
+                  </a>
+                  <p className="faint">
+                    {status.repository.private ? 'Private' : 'Public'} ·{' '}
+                    {status.baseBranch
+                      ? `Research base: ${status.baseBranch}`
+                      : `GitHub default: ${status.repository.defaultBranch ?? 'No default branch'}`}
+                  </p>
+                </div>
+                {status.configured && status.canManage && status.canBrowse && !repositories && (
+                  <button className="btn" disabled={busy} onClick={browse}>
+                    Change repository
+                  </button>
+                )}
+              </div>
+            )}
+            {!status.configured ? (
+              <p className="muted">GitHub is not configured on this server.</p>
+            ) : (
+              <>
+                {needsConnection ? (
+                  <div className="github-connect stack">
+                    <p className="muted">
+                      {status.status === 'needs_reconnect'
+                        ? 'Reconnect your account to restore repository access.'
+                        : 'Connect a repository to bring code into your research.'}
+                    </p>
+                    {status.canManage && (
+                      <button className="btn github-primary" disabled={busy} onClick={connect}>
+                        {status.status === 'disconnected' ? 'Connect GitHub' : 'Reconnect GitHub'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  !status.repository &&
+                  !repositories && (
+                    <div className="github-connect stack">
+                      <p className="muted">Choose a repository for this project.</p>
+                      {status.canManage && status.canBrowse && (
+                        <button className="btn github-primary" disabled={busy} onClick={browse}>
+                          Select repository
+                        </button>
+                      )}
+                    </div>
+                  )
+                )}
+                {repositories && (
+                  <div className="github-picker stack">
+                    {repositories.length ? (
+                      <>
+                        <label className="stack">
+                          Repository
+                          <select
+                            className="input"
+                            value={selection}
+                            disabled={busy}
+                            onChange={(event) => setSelection(event.target.value)}
+                          >
+                            <option value="">Select a repository</option>
+                            {repositories.map((repo) => (
+                              <option
+                                key={`${repo.installationId}:${repo.id}`}
+                                value={`${repo.installationId}:${repo.id}`}
+                              >
+                                {repo.fullName}
+                                {repo.private ? ' (private)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="cluster">
+                          <button
+                            className="btn github-primary"
+                            disabled={busy || !selected}
+                            onClick={() =>
+                              selected &&
+                              void act(() =>
+                                update('/repository', {
+                                  expectedRevision: status.revision,
+                                  installationId: selected.installationId,
+                                  repositoryId: selected.id,
+                                }),
+                              )
+                            }
+                          >
+                            Link repository
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={busy}
+                            onClick={() => {
+                              setRepositories(undefined);
+                              setSelection('');
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="muted">
+                          No repositories available. Check repository access on GitHub, then try
+                          again.
+                        </p>
+                        {status.installUrl && (
+                          <a
+                            className="btn"
+                            href={status.installUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Manage access on GitHub <Icon name="external" />
+                          </a>
+                        )}
+                        <div className="cluster">
+                          <button className="btn" disabled={busy} onClick={browse}>
+                            Refresh repositories
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={busy}
+                            onClick={() => setRepositories(undefined)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            <GitHubAutomation
+              status={status}
+              onChanged={() =>
+                void act(async () => {
+                  const value = await request<GitHubStatus>();
+                  if (current()) setStatus(value);
+                })
+              }
+            />
+            {status.repository &&
+              status.canManage &&
+              status.automation !== 'off' &&
+              status.baseBranch && (
+                <div className="github-preparation">
+                  <GitHubPreparation key={`${epoch}:${status.revision}`} status={status} />
+                </div>
+              )}
+          </>
         )}
       </div>
-      {error && <p role="alert">{error}</p>}
-      {!status && !error && <LoadState loading />}
-      {!status && error && (
-        <button
-          className="btn"
-          disabled={busy}
-          onClick={() =>
-            void act(async () => {
-              finishing.current = undefined;
-              const value = callback ? await finish() : await request<GitHubStatus>();
-              if (current()) setStatus(value);
-            })
-          }
-        >
-          Try again
-        </button>
-      )}
-      {status && (
-        <>
-          {status.repository ? (
-            <div>
-              <a href={status.repository.url} target="_blank" rel="noreferrer">
-                <strong>{status.repository.fullName}</strong>
-              </a>
+      {status?.configured &&
+        (status.user || (status.canManage && status.status !== 'disconnected')) && (
+          <footer className="github-footer">
+            {status.user && (
               <p className="faint">
-                {status.repository.private ? 'Private' : 'Public'} ·{' '}
-                {status.baseBranch
-                  ? `Research base: ${status.baseBranch}`
-                  : `GitHub default: ${status.repository.defaultBranch ?? 'No default branch'}`}
+                Connected by <span>{status.user.login}</span>
               </p>
-            </div>
-          ) : (
-            status.status !== 'disconnected' && <p className="muted">No repository linked</p>
-          )}
-          {!status.configured ? (
-            <p className="faint">Not configured on this server</p>
-          ) : (
-            <>
-              {status.user && <p className="faint">Connected by {status.user.login}</p>}
-              {status.canManage && (
-                <div className="cluster">
-                  <button
-                    className="btn btn--primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        const result = await request<{ url: string }>('/begin', {
-                          expectedRevision: status.revision,
-                        });
-                        if (current()) window.location.assign(result.url);
-                      })
-                    }
-                  >
-                    {status.status === 'disconnected' ? 'Connect GitHub' : 'Reconnect GitHub'}
-                  </button>
+            )}
+            {status.canManage && status.status !== 'disconnected' && (
+              <details className="github-manage" key={`${epoch}:${status.revision}`}>
+                <summary>
+                  Manage connection <Icon name="chevron-right" size={14} />
+                </summary>
+                <div className="github-management">
                   {status.installUrl && (
                     <a className="btn" href={status.installUrl} target="_blank" rel="noreferrer">
-                      Choose repositories on GitHub
+                      Manage access on GitHub <Icon name="external" size={14} />
                     </a>
                   )}
-                  {status.canBrowse && (
-                    <button
-                      className="btn"
-                      disabled={busy}
-                      onClick={() =>
-                        void act(async () => {
-                          const result = await request<{ repositories: GitHubRepository[] }>(
-                            '/repositories',
-                          );
-                          if (current()) {
-                            setRepositories(result.repositories);
-                            setSelection('');
-                          }
-                        })
-                      }
-                    >
-                      Select repository
-                    </button>
-                  )}
-                  {status.status !== 'disconnected' && (
-                    <button
-                      className="btn"
-                      disabled={busy}
-                      onClick={() =>
-                        void act(() => update('/disconnect', { expectedRevision: status.revision }))
-                      }
-                    >
-                      Disconnect
+                  {!needsConnection && (
+                    <button className="btn" disabled={busy} onClick={connect}>
+                      Reconnect GitHub
                     </button>
                   )}
                   {status.repository && (
@@ -219,77 +361,19 @@ export function GitHubConnection() {
                       Unlink repository
                     </button>
                   )}
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    onClick={() =>
+                      void act(() => update('/disconnect', { expectedRevision: status.revision }))
+                    }
+                  >
+                    Disconnect GitHub
+                  </button>
                 </div>
-              )}
-              {repositories && (
-                <div className="stack">
-                  {repositories.length ? (
-                    <>
-                      <label className="stack">
-                        Repository
-                        <select
-                          className="input"
-                          value={selection}
-                          disabled={busy}
-                          onChange={(event) => setSelection(event.target.value)}
-                        >
-                          <option value="">Select a repository</option>
-                          {repositories.map((repo) => (
-                            <option
-                              key={`${repo.installationId}:${repo.id}`}
-                              value={`${repo.installationId}:${repo.id}`}
-                            >
-                              {repo.fullName}
-                              {repo.private ? ' (private)' : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        className="btn btn--primary"
-                        disabled={busy || !selected}
-                        onClick={() =>
-                          selected &&
-                          void act(() =>
-                            update('/repository', {
-                              expectedRevision: status.revision,
-                              installationId: selected.installationId,
-                              repositoryId: selected.id,
-                            }),
-                          )
-                        }
-                      >
-                        Link repository
-                      </button>
-                    </>
-                  ) : (
-                    <p className="muted">
-                      No accessible repositories. Grant access with “Choose repositories on GitHub”,
-                      then select again.
-                    </p>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
-      {status && (
-        <GitHubAutomation
-          status={status}
-          onChanged={() =>
-            void act(async () => {
-              const value = await request<GitHubStatus>();
-              if (current()) setStatus(value);
-            })
-          }
-        />
-      )}
-      {status?.repository &&
-        status.canManage &&
-        status.automation !== 'off' &&
-        status.baseBranch && (
-          <GitHubPreparation key={`${epoch}:${status.revision}`} status={status} />
+              </details>
+            )}
+          </footer>
         )}
     </section>
   );

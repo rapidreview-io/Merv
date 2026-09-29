@@ -581,7 +581,7 @@ export class CodePublicationService implements CodePublicationApi {
         'This publication belongs to a retired workflow',
         409,
       );
-      await this.state.transaction(async (tx) => {
+      const replay = await this.state.transaction(async (tx) => {
         await this.scope.require(caller, 'admin', tx);
         const old = await tx.get<{ input_hash: string }>(
           'SELECT input_hash FROM code_publication_requests WHERE project_id=? AND actor_id=? AND request_id=?',
@@ -604,6 +604,7 @@ export class CodePublicationService implements CodePublicationApi {
             digest(input),
             canonical({ proposalId: input.proposalId }),
           );
+        return !!old;
       });
       check(
         !record.incident,
@@ -629,6 +630,19 @@ export class CodePublicationService implements CodePublicationApi {
         'The selected commit differs from the reviewed proposal',
         409,
       );
+      // A lost HTTP reply must be recoverable from the immutable, verified receipt even if
+      // GitHub has since been disconnected. This replays only this actor's exact merge intent.
+      if (
+        replay &&
+        row.settled &&
+        record.pull.merged &&
+        record.merge?.requestId === input.requestId &&
+        record.merge.actorId === caller.actorId &&
+        record.merge.commitSha === record.pull.mergeCommitSha &&
+        !!record.merge.commitSha &&
+        (!record.approval || record.verified)
+      )
+        return record;
       // A released publication keeps a passing review and an open pull request, so only its
       // ending refuses it here. This comes last because a closed, incident or stale publication
       // is already refused above with the reason that fits it.
