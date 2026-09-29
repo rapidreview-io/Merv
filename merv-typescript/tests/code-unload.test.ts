@@ -232,7 +232,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
 
   await app.setEnabled('code', false);
   assert.equal(app.status().find((entry) => entry.id === 'code')?.state, 'disabled');
-  for (const id of ['code-tools', 'code-ui']) {
+  for (const id of ['code-tools', 'code-ui', 'code-research-api']) {
     const entry = app.status().find((entry) => entry.id === id);
     assert.equal(entry?.state, 'pending', id);
     assert.deepEqual(entry?.missingDependencies, ['codeResearch'], id);
@@ -254,7 +254,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   assert.equal((await http('/tools/code.status', {})).body.error.code, 'unknown_tool');
   const absent = await http('/code/commands/next', control);
   assert.equal(absent.status, 503);
-  assert.equal(absent.body.error.code, 'code_unavailable');
+  assert.equal(absent.body.error.code, 'unavailable');
   await assert.rejects(async () => await originalProvider.operation(source, queued.command.id), {
     code: 'code_unavailable',
   });

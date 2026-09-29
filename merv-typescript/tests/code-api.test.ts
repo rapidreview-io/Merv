@@ -6,7 +6,11 @@ import { Context } from 'cordis';
 
 import { ProjectScope } from '@merv/scope';
 import {
+  codeCommandCompletionSchema,
+  codeCommandControlSchema,
+  codeTransportInputSchema,
   MervError,
+  parsed,
   type Caller,
   type CodeCommandCompletion,
   type CodeCommandControl,
@@ -16,8 +20,8 @@ import {
 } from '@merv/contracts';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { CodeApiProvider } from '../packages/api/src/types.js';
 import { apiPlugin } from '@merv/api';
+import { codeResearchApiPlugin, mountCode, type CodeRoutes } from '@merv/code-research/api';
 import { identityPlugin } from '@merv/identity';
 import { openState } from './fixtures/state.js';
 
@@ -77,12 +81,15 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
     },
   };
   const calls: { method: 'next' | 'complete'; caller: Caller; input: unknown }[] = [];
-  const provider: CodeApiProvider = {
+  // Code parses each body it is handed; this stand-in parses as Code does.
+  const provider = {
     async nextCommand(caller, input) {
+      parsed(codeCommandControlSchema, input, 'invalid_code_input');
       calls.push({ method: 'next', caller: structuredClone(caller), input });
       return command;
     },
     async completeCommand(caller, input) {
+      parsed(codeCommandCompletionSchema, input, 'invalid_code_input');
       calls.push({ method: 'complete', caller: structuredClone(caller), input });
       return {
         command,
@@ -91,7 +98,8 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
         error: input.error ?? null,
       };
     },
-  };
+  } as CodeRoutes;
+  const register = (code: CodeRoutes) => mountCode(api, code);
   async function request(
     route: 'next' | 'complete' | string,
     body: unknown = control,
@@ -122,12 +130,26 @@ async function fixture(t: TestContext, maxBodyBytes?: number) {
       allow: response.headers.get('allow'),
     };
   }
-  return { state, scope, boot, caller, tools, api, ctx, url, command, provider, calls, request };
+  return {
+    state,
+    scope,
+    boot,
+    caller,
+    tools,
+    api,
+    ctx,
+    url,
+    command,
+    provider,
+    calls,
+    register,
+    request,
+  };
 }
 
 test('Code controls pass the authenticated source and exact command envelope, including null and failure results', async (t) => {
   const f = await fixture(t);
-  const dispose = f.api.registerCode(f.provider);
+  const dispose = f.register(f.provider);
   t.after(dispose);
   assert.deepEqual(await f.request('next'), {
     status: 200,
@@ -159,7 +181,7 @@ test('Code controls pass the authenticated source and exact command envelope, in
 
 test('Code source selection uses real machine-key membership and rejects body/project/auth substitutions', async (t) => {
   const f = await fixture(t);
-  f.api.registerCode(f.provider);
+  f.register(f.provider);
   const owner = await f.scope.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'code-owner',
@@ -204,24 +226,26 @@ test('Code source selection uses real machine-key membership and rejects body/pr
   assert.equal(f.calls.length, before);
 });
 
-test('Code controls remain unavailable without the optional provider and cannot be replaced by an unauthenticated mount', async (t) => {
+test('Code controls answer 503 once withdrawn and are mounted by one owner at a time', async (t) => {
   const f = await fixture(t);
-  assert.throws(
-    () =>
-      f.api.mount('/code', async (_req, res) => {
-        res.end('wrong');
-      }),
-    { code: 'mount_conflict' },
-  );
-  assert.equal((await f.request('next')).body.error.code, 'code_unavailable');
-  const first = f.api.registerCode(f.provider);
-  assert.throws(() => f.api.registerCode(f.provider), { code: 'code_provider_conflict' });
+  // Never mounted: an ordinary credential gets 404; a namespaced one (a runner's) gets 503.
+  assert.equal((await f.request('next')).body.error.code, 'not_found');
+  assert.equal((await f.request('next', control, { token: 'mr_absent' })).status, 503);
+  const first = f.register(f.provider);
+  assert.throws(() => f.register(f.provider), { code: 'mount_conflict' });
+  for (const token of [`ms_${'s'.repeat(43)}`, 'ms_reserved']) {
+    const denied = await f.request('next', control, { token });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error.code, 'session_transport_forbidden');
+  }
   first();
-  assert.equal(
-    (await f.request('complete', { ...control, commandId: receipt.commandId, receipt })).status,
-    503,
-  );
-  const second = f.api.registerCode(f.provider);
+  const withdrawn = await f.request('complete', {
+    ...control,
+    commandId: receipt.commandId,
+    receipt,
+  });
+  assert.deepEqual([withdrawn.status, withdrawn.body.error.code], [503, 'unavailable']);
+  const second = f.register(f.provider);
   first();
   assert.equal(
     (await f.request('next')).status,
@@ -229,24 +253,13 @@ test('Code controls remain unavailable without the optional provider and cannot 
     'A stale disposer cannot remove a later registration of the same provider',
   );
   second();
-  assert.throws(
-    () =>
-      f.api.mount('/code', async (_req, res) => {
-        res.end();
-      }),
-    { code: 'mount_conflict' },
-  );
-  for (const token of [`ms_${'s'.repeat(43)}`, 'ms_reserved']) {
-    const denied = await f.request('next', control, { token });
-    assert.equal(denied.status, 403);
-    assert.equal(denied.body.error.code, 'session_transport_forbidden');
-  }
+  assert.equal((await f.request('next')).status, 503);
   assert.equal(f.calls.length, 1);
 });
 
 test('Code routes enforce strict schemas, bounded JSON, POST-only methods and provider errors', async (t) => {
   const f = await fixture(t, 2048);
-  f.api.registerCode(f.provider);
+  f.register(f.provider);
   for (const body of [
     null,
     [],
@@ -254,7 +267,7 @@ test('Code routes enforce strict schemas, bounded JSON, POST-only methods and pr
     { ...control, argv: [] },
     { ...control, hostRef: '/tmp/escape' },
   ])
-    assert.equal((await f.request('next', body)).body.error.code, 'invalid_input');
+    assert.equal((await f.request('next', body)).body.error.code, 'invalid_code_input');
   for (const body of [
     { ...control, commandId: receipt.commandId },
     { ...control, commandId: receipt.commandId, receipt, error: 'ambiguous' },
@@ -262,7 +275,7 @@ test('Code routes enforce strict schemas, bounded JSON, POST-only methods and pr
     { ...control, commandId: receipt.commandId, receipt: { ...receipt, executable: '/bin/sh' } },
     { ...control, commandId: receipt.commandId, receipt: { ...receipt, headOid: '2'.repeat(64) } },
   ])
-    assert.equal((await f.request('complete', body)).body.error.code, 'invalid_input');
+    assert.equal((await f.request('complete', body)).body.error.code, 'invalid_code_input');
   assert.equal((await f.request('next?projectId=elsewhere')).status, 400);
   assert.equal(
     (await f.request('next', control, { raw: '{invalid' })).body.error.code,
@@ -330,6 +343,7 @@ test(
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
+    await f.ctx.plugin(codeResearchApiPlugin);
     const provider = await f.ctx.plugin((ctx: Context) => {
       ctx.provide('codeResearch', {
         ...f.provider,
@@ -352,7 +366,7 @@ test(
     waiting.finish();
     const result = await waiting.response;
     assert.equal(result.status, 503);
-    assert.equal(result.body.error.code, 'code_unavailable');
+    assert.equal(result.body.error.code, 'unavailable');
     assert.equal(f.calls.length, 1, 'A withdrawn provider must not receive the delayed request');
   },
 );
@@ -364,7 +378,7 @@ test(
     const f = await fixture(t);
     // The stubbed control stands in for Code's, which authorizes the caller in its transaction
     // after the body; code-commands.test.ts proves the real nextCommand and completeCommand refuse.
-    f.api.registerCode({
+    f.register({
       ...f.provider,
       nextCommand: async (caller, input) => {
         await f.scope.require(caller, 'read');
@@ -404,13 +418,15 @@ test('GitHub publication and transport HTTP routes enforce authentication, proje
   f.provider.mergePublication = async () => {
     throw new Error('unused');
   };
-  f.provider.transportGrant = async () => {
+  // Code parses the transport body itself; this stand-in parses as Code does.
+  f.provider.transportGrant = async (_caller, input) => {
+    parsed(codeTransportInputSchema, input, 'invalid_code_input');
     throw new Error('unused');
   };
   f.provider.verifyTransport = async () => {
     throw new Error('unused');
   };
-  const dispose = f.api.registerCode(f.provider);
+  const dispose = f.register(f.provider);
   t.after(dispose);
   const headers = { authorization: `Bearer ${f.boot.token}`, 'content-type': 'application/json' };
   assert.equal((await fetch(`${f.url}/code/publications`)).status, 401);

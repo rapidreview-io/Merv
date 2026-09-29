@@ -16,10 +16,6 @@ import {
 import { z } from 'zod';
 import {
   MervError,
-  codeCommandCompletionSchema,
-  codeCommandControlSchema,
-  codeTransportInputSchema,
-  CODE_PART_MAX_BYTES,
   mainAgentGuide,
   pathSegment,
   plain,
@@ -36,12 +32,9 @@ import type {
   MountHandler,
   MountOptions,
   SessionApiProvider,
-  CodeApiProvider,
 } from './types.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
-import { githubCallback, githubRequest } from './code-github.js';
-import { publicationRequest } from './code-publications.js';
 
 export { describeTool } from './registry.js';
 
@@ -303,7 +296,7 @@ function slot<T>(code: string, label: string, unavailableMessage: string) {
 
 /**
  * One listener. Each request's first path segment names its mount: the built-ins, the owners'
- * mounts and, until their owners register them, the Sessions and Code routes. A
+ * mounts and, until Sessions registers them, the Sessions routes. A
  * public route authenticates itself; every other one is authenticated here first. One stateless
  * MCP transport serves each MCP request.
  */
@@ -314,7 +307,6 @@ export class ApiServer {
     'Session',
     'Sessions are unavailable',
   );
-  private readonly code = slot<CodeApiProvider>('code', 'Code', 'Code controls are unavailable');
   private stopping = false;
   private starting?: Promise<string>;
   private closing?: Promise<void>;
@@ -356,13 +348,9 @@ export class ApiServer {
     );
     this.mount('/tools', (req, _res, r) => this.toolsRoute(req, r));
     this.mount('/mcp', (req, res, r) => this.mcpRoute(req, res, r));
-    // Until their owners register them, the routes and credentials the API serves for Sessions
-    // and Code.
+    // Until Sessions registers them, the routes and credentials the API serves for it.
     this.mount('/sessions', (req, res, r) => this.sessionsRoute(req, res, r), {
       public: ['/sessions/self', '/sessions/runners/enroll'],
-    });
-    this.mount('/code', (req, res, r) => this.codeRoute(req, res, r), {
-      public: ['/code/github/callback'],
     });
     this.credential('ms_', {
       kind: 'session',
@@ -547,10 +535,6 @@ export class ApiServer {
   registerSessions(provider: SessionApiProvider): () => void {
     return this.sessions.register(provider);
   }
-  registerCode(provider: CodeApiProvider): () => void {
-    return this.code.register(provider);
-  }
-
   /** A request's one read decision, made before any body is read. Every effect then authorizes
    *  itself in its own transaction, so nothing here re-checks after the body. */
   private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
@@ -718,115 +702,6 @@ export class ApiServer {
     );
     const result = await this.call(name, request.caller, request.input);
     return { result: result.value ?? null };
-  }
-
-  private async codeRoute(req: IncomingMessage, res: ServerResponse, r: ApiRequest): Promise<void> {
-    const url = r.url;
-    const path = url.pathname;
-    const principal = r.principal;
-    if (!principal) {
-      // GitHub's callback, which carries no Merv credential.
-      if (path !== '/code/github/callback' || req.method !== 'GET') throw unknownEndpoint();
-      const github = this.code.get().github;
-      if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
-      res.setHeader('referrer-policy', 'no-referrer');
-      await githubCallback(req, res, github);
-      return;
-    }
-    if (path === '/code/publications' || path.startsWith('/code/publications/')) {
-      const caller = await r.caller();
-      const body = req.method === 'POST' ? await r.json(undefined, 8192) : undefined;
-      json(
-        res,
-        200,
-        await publicationRequest(req, caller, this.code.get(), () => Promise.resolve(body)),
-      );
-      return;
-    }
-    if (path === '/code/github' || path.startsWith('/code/github/')) {
-      const caller = await r.caller();
-      const body = req.method === 'POST' ? await r.json(undefined, 8192) : undefined;
-      const github = this.code.get().github;
-      if (!github) throw new MervError('github_unavailable', 'GitHub is unavailable', 503);
-      json(res, 200, await githubRequest(req, res, caller, github, () => Promise.resolve(body)));
-      return;
-    }
-    if (principal.kind === 'session') throw unknownEndpoint();
-    if (path === '/code/transport/grant' || path === '/code/transport/verify') {
-      if (req.method !== 'POST' || url.search)
-        throw new MervError('invalid_input', 'Use POST without query parameters');
-      const caller = await r.caller();
-      const input = await r.json(codeTransportInputSchema, 8192);
-      const provider = this.code.get();
-      if (!provider.transportGrant || !provider.verifyTransport)
-        throw new MervError('github_unavailable', 'Git transport is unavailable', 503);
-      json(
-        res,
-        200,
-        path.endsWith('/grant')
-          ? await provider.transportGrant(caller, input)
-          : await provider.verifyTransport(caller, input),
-      );
-      return;
-    }
-    if (path.startsWith('/code/v2/')) {
-      if (url.search)
-        throw new MervError('invalid_input', 'Code routes do not accept query parameters');
-      const caller = await r.caller();
-      const route = path.slice('/code/v2/'.length);
-      const part = /^uploads\/([A-Za-z0-9_]{1,80})\/parts\/(0|[1-9][0-9]{0,14})$/.exec(route);
-      const read = /^downloads\/([A-Za-z0-9_]{1,80})\/read$/.exec(route);
-      if (req.method !== (part ? 'PUT' : 'POST')) {
-        res.setHeader('allow', part ? 'PUT' : 'POST');
-        json(res, 405, {
-          error: { code: 'method_not_allowed', message: 'Use PUT for a part and POST otherwise' },
-        });
-        return;
-      }
-      const body = part
-        ? await r.bytes(CODE_PART_MAX_BYTES, 'application/octet-stream')
-        : await r.json(undefined, 65536);
-      const v2 = this.code.get().v2;
-      if (!v2)
-        throw new MervError(
-          'code_store_unavailable',
-          'This server keeps no Code repositories',
-          503,
-        );
-      if (part) json(res, 200, await v2.putPart(caller, part[1]!, Number(part[2]), body as Buffer));
-      else if (read && v2.readPart) octets(res, await v2.readPart(caller, read[1]!, body));
-      else json(res, 200, await v2.call(caller, route, body));
-      return;
-    }
-    if (path === '/code/commands/next' || path === '/code/commands/complete') {
-      if ([...url.searchParams].length)
-        throw new MervError('invalid_input', 'Code routes do not accept query parameters');
-      const sourceCaller = await r.caller();
-      if (req.method !== 'POST') {
-        res.setHeader('allow', 'POST');
-        json(res, 405, {
-          error: { code: 'method_not_allowed', message: 'Use POST for Code controls' },
-        });
-        return;
-      }
-      const body = await r.json();
-      const input = path.endsWith('/next')
-        ? parseInput(codeCommandControlSchema, body)
-        : parseInput(codeCommandCompletionSchema, body);
-      // Lookup the current provider only after parsing; its methods are synchronous.
-      const provider = this.code.get();
-      if (path.endsWith('/next'))
-        json(res, 200, { command: await provider.nextCommand(sourceCaller, input) });
-      else
-        json(res, 200, {
-          operation: await provider.completeCommand(
-            sourceCaller,
-            input as z.infer<typeof codeCommandCompletionSchema>,
-          ),
-        });
-      return;
-    }
-    throw unknownEndpoint();
   }
 
   private async sessionsRoute(

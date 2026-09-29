@@ -10,7 +10,8 @@ import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import { scopeRoutes } from '../packages/scope/src/api.js';
-import type { CodeApiProvider, SessionApiProvider, Tools } from '../packages/api/src/types.js';
+import type { SessionApiProvider, Tools } from '../packages/api/src/types.js';
+import { mountCode, type CodeRoutes } from '../packages/code-research/src/api.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-managed-api-'));
@@ -342,7 +343,7 @@ async function credentialGate(t: TestContext) {
     completeCommand: reach('code.completeCommand'),
     github: { callback: reach('code.github.callback', '/') },
     v2: { call: reach('code.v2.call'), putPart: reach('code.v2.putPart') },
-  } as unknown as CodeApiProvider;
+  } as unknown as CodeRoutes;
   let snapshots = 0;
   const api = new ApiServer(
     scope,
@@ -366,7 +367,7 @@ async function credentialGate(t: TestContext) {
       { public: true },
     );
   for (const prefix of ['/account', '/projects'] as const) api.mount(prefix, scopeRoutes(scope));
-  const withdraw = { sessions: api.registerSessions(sessions), code: api.registerCode(code) };
+  const withdraw = { sessions: api.registerSessions(sessions), code: mountCode(api, code) };
   const url = await api.start();
   t.after(() => api.stop());
   const request = async (method: string, path: string, token: string, body?: unknown) => {
@@ -636,7 +637,7 @@ const codeAbsent: GateRow[] = [
     method: 'POST',
     path: '/code/commands/next',
     body: control,
-    refused: [503, 'code_unavailable'],
+    refused: [503, 'unavailable'],
     changes: 'step 12',
   },
 ];

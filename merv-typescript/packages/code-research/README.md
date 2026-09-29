@@ -15,8 +15,9 @@ never grants acceptance or erases an existing Git obligation.
 | --------------------------- | ------------------- | ------------------------------------------------------------ |
 | `@merv/code-research/tools` | CodeResearch, Tools | `code.*` tools                                               |
 | `@merv/code-research/ui`    | CodeResearch, UI    | Repository connection, selected base and retained operations |
+| `@merv/code-research/api`   | CodeResearch, API   | The `/code/*` machine and GitHub routes                      |
 
-The API plugin binds CodeResearch optionally to serve the existing `/code/*` machine and GitHub routes. Unloading CodeResearch withdraws those controls without stopping the API.
+The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeResearch withdraws those routes, which then answer 503, without stopping the API.
 
 The default composition enables the integration, with both Code and CodeResearch optional.
 Disable Code to suspend all its adapters, or disable CodeResearch to retain a standalone Git

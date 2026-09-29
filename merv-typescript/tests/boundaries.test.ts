@@ -137,7 +137,7 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  api: ['sessions', 'codeResearch'],
+  api: ['sessions'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],
@@ -462,10 +462,10 @@ function assertComponentReferences(
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           (!['node:http', 'node:https', 'express', 'fastify'].includes(specifier) ||
-            // Pi's worker routes and Fleet's model relay name the request types their handlers take.
+            // API adapters and Fleet's model relay name the request types their handlers take.
             (specifier === 'node:http' &&
               typeOnly &&
-              ((owner === 'pi' && path.split(sep).at(-1) === 'api.ts') ||
+              (adapterKind(path) === 'api' ||
                 (owner === 'fleet' && path.split(sep).at(-1) === 'model-relay.ts')))),
         `${path} embeds an API transport`,
       );
@@ -808,7 +808,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['pi', 'scope'],
+    api: ['code-research', 'pi', 'scope'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];

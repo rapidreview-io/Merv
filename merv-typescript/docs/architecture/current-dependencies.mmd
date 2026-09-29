@@ -7,6 +7,7 @@ flowchart BT
     blobs["blobs"]
     code["code"]
     codeResearch["codeResearch"]
+    merv_code_research_api["merv-code-research-api"]
     merv_code_tools["merv-code-tools"]
     merv_code_ui["merv-code-ui"]
     contextBuilder["contextBuilder"]
@@ -73,7 +74,6 @@ flowchart BT
   api --> tools
   api --> identity
   api -. optional .-> sessions
-  api -. optional .-> codeResearch
   merv_artifact_tools --> artifacts
   merv_artifact_tools --> tools
   merv_artifact_ui --> artifacts
@@ -92,6 +92,8 @@ flowchart BT
   codeResearch --> domainEvents
   codeResearch -. optional .-> reviews
   codeResearch -. optional .-> sandboxes
+  merv_code_research_api --> codeResearch
+  merv_code_research_api --> api
   merv_code_tools --> codeResearch
   merv_code_tools --> tools
   merv_code_ui --> codeResearch

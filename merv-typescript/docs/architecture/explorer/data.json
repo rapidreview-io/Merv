@@ -125,8 +125,7 @@
         "identity"
       ],
       "optional": [
-        "sessions",
-        "codeResearch"
+        "sessions"
       ],
       "kind": "service",
       "runtime": "server",
@@ -428,6 +427,25 @@
           "readOnly": true
         }
       ]
+    },
+    {
+      "plugin": "merv-code-research-api",
+      "source": "packages/code-research/src/api.ts",
+      "provides": [],
+      "requires": [
+        "codeResearch",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-research-api",
+      "group": "front",
+      "owner": "codeResearch",
+      "label": "codeResearch · api adapter",
+      "purpose": "Connects codeResearch to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
     },
     {
       "plugin": "merv-code-tools",
@@ -2708,11 +2726,6 @@
       "optional": true
     },
     {
-      "from": "api",
-      "to": "codeResearch",
-      "optional": true
-    },
-    {
       "from": "merv-artifact-tools",
       "to": "artifacts",
       "optional": false
@@ -2801,6 +2814,16 @@
       "from": "codeResearch",
       "to": "sandboxes",
       "optional": true
+    },
+    {
+      "from": "merv-code-research-api",
+      "to": "codeResearch",
+      "optional": false
+    },
+    {
+      "from": "merv-code-research-api",
+      "to": "api",
+      "optional": false
     },
     {
       "from": "merv-code-tools",
@@ -3589,10 +3612,10 @@
     }
   ],
   "counts": {
-    "plugins": 66,
+    "plugins": 67,
     "providers": 30,
-    "adapters": 36,
-    "dependencies": 180
+    "adapters": 37,
+    "dependencies": 181
   },
   "network": [
     {

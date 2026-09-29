@@ -26,7 +26,7 @@ merely because this optional service changes.
 | ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Code       | State, Scope, Sessions, Artifacts | Durable command identity, worker admission, source ownership, immutable receipts and proposals |
 | code-tools | Code, Tools                       | `code.commit` and `code.operation`                                                             |
-| API        | Scope, Tools, Identity; optional CodeResearch and Sessions | Source-authenticated command retrieval and completion |
+| code-api   | Code, API                         | Source-authenticated command retrieval and completion over `/code`                             |
 | code-ui    | Code, UI                          | Recent operations and sealed proposals in the Code page                                        |
 | Runner     | None; separate machine context    | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts     |
 
@@ -261,12 +261,12 @@ session, review and acceptance goes on exactly as before.
 
 ## The machine protocol on the wire
 
-Machines reach all of this under `/code/v2/`, inside the same non-session branch of the HTTP
-API as `/code/commands/*`: a leased worker's credential can never reach it. The API forwards
-opaque JSON bodies (at most 64 KiB) and the bytes of one part (`application/octet-stream`, at
-most 4 MiB) and reads neither; only Code interprets them. `workspace` gives a machine the
-manifest of what to prepare, `uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>`
-carry it, `uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a
+Machines reach all of this under `/code/v2/`, which Code's API adapter
+(`@merv/code-research/api`) mounts beside `/code/commands/*`: a leased worker's credential is
+confined to `POST /mcp` and can never reach it. The adapter forwards opaque JSON bodies (at most
+64 KiB) and the bytes of one part (`application/octet-stream`, at most 4 MiB) and reads neither;
+only Code interprets them. `workspace` gives a machine the manifest of what to prepare,
+`uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>` carry it, `uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a
 bundle back. The legacy `/code/transport/*` grant routes are untouched and still serve
 GitHub-mode machines on the legacy workflow versions.
 

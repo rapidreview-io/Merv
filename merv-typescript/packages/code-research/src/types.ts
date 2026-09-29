@@ -266,6 +266,16 @@ export interface Code
     caller: Caller,
     input: import('@merv/contracts').CodeTransportInput,
   ): Promise<{ verified: boolean }>;
+  /**
+   * The second workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
+   * bytes of one part. Each parses what it receives. Absent where the server keeps no
+   * repositories, and once Code is closing.
+   */
+  readonly v2?: {
+    call(caller: Caller, route: string, body: unknown): Promise<unknown>;
+    putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer): Promise<unknown>;
+    readPart(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
+  };
   source(
     projectId: string,
     instanceId: string,

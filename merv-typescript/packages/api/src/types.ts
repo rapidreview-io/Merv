@@ -1,15 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type {
-  Caller,
-  Data,
-  MervError,
-  Principal,
-  SessionToolPolicy,
-  CodeCommandCompletion,
-  CodeCommandControl,
-  CodeCommandRecord,
-  CodeCommitCommand,
-} from '@merv/contracts';
+import type { Caller, Data, MervError, Principal, SessionToolPolicy } from '@merv/contracts';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { z, ZodType, ZodTypeAny, ZodTypeDef } from 'zod';
 import type {} from 'cordis';
@@ -109,34 +99,6 @@ export interface SessionApiProvider {
   heartbeat(caller: Caller, input: unknown): Promise<unknown>;
   release(caller: Caller, input: unknown): Promise<unknown>;
 }
-/** Optional authenticated machine controls; no Code implementation is imported by the API. */
-export interface CodeApiProvider {
-  publications?: import('@merv/contracts').CodePublicationApi['publications'];
-  syncPublications?: import('@merv/contracts').CodePublicationApi['syncPublications'];
-  publicationDetails?: import('@merv/contracts').CodePublicationApi['publicationDetails'];
-  mergePublication?: import('@merv/contracts').CodePublicationApi['mergePublication'];
-  readonly github?: import('@merv/contracts').CodeGitHub;
-  transportGrant?(
-    caller: Caller,
-    input: import('@merv/contracts').CodeTransportInput,
-  ): Promise<import('@merv/contracts').CodeTransportGrant>;
-  verifyTransport?(
-    caller: Caller,
-    input: import('@merv/contracts').CodeTransportInput,
-  ): Promise<{ verified: boolean }>;
-  nextCommand(caller: Caller, input: CodeCommandControl): Promise<CodeCommitCommand | null>;
-  completeCommand(caller: Caller, input: CodeCommandCompletion): Promise<CodeCommandRecord>;
-  /**
-   * The second workspace protocol. The API authenticates, bounds and forwards: a route below
-   * `/code/v2/` with its JSON body, or the bytes of one part. Only Code reads either, and it
-   * is absent where the server keeps no repositories.
-   */
-  readonly v2?: {
-    call(caller: Caller, route: string, body: unknown): Promise<unknown>;
-    putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer): Promise<unknown>;
-    readPart?(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
-  };
-}
 /** Who the API authenticated: a Scope principal, or the caller a registered credential's owner
  *  authenticated (whose kind is never user, key or actor). */
 export type ApiPrincipal = Principal | { kind: string; caller: Caller };
@@ -191,7 +153,6 @@ export interface Api {
    *  taken). While a namespace is unregistered, its bearers get 503 on authenticated routes. */
   credential(namespace: `${string}_`, credential: ApiCredential): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
-  registerCode(provider: CodeApiProvider): () => void;
 }
 export interface Tools {
   register(definition: AnyToolDefinition): () => Promise<void>;

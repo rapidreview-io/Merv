@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { ProjectScope } from '@merv/scope';
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
-import type { CodeApiProvider } from '../packages/api/src/types.js';
+import { mountCode, type CodeRoutes } from '@merv/code-research/api';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { importRepository } from '../src/code-import.js';
@@ -34,7 +34,7 @@ async function fixture(t: TestContext) {
     await state.close();
   });
   const calls: unknown[][] = [];
-  const v2: NonNullable<CodeApiProvider['v2']> = {
+  const v2: NonNullable<CodeRoutes['v2']> = {
     call: async (caller, route, body) => (
       calls.push(['call', caller.projectId, route, body]),
       { ok: route }
@@ -48,11 +48,11 @@ async function fixture(t: TestContext) {
       Buffer.from([0, 1, 2, 255])
     ),
   };
-  const provider: CodeApiProvider = {
+  const provider = {
     nextCommand: async () => null,
     completeCommand: async () => assert.fail('unused'),
     v2,
-  };
+  } as unknown as CodeRoutes;
   const send = async (
     path: string,
     options: { method?: string; body?: BodyInit; type?: string; token?: string } = {},
@@ -74,7 +74,8 @@ async function fixture(t: TestContext) {
       body: json ? JSON.parse(bytes.toString('utf8')) : bytes,
     };
   };
-  return { scope, api, url, boot, caller, calls, provider, v2, send };
+  const register = (code: CodeRoutes) => mountCode(api, code);
+  return { scope, api, url, boot, caller, calls, provider, v2, register, send };
 }
 
 test('the second workspace protocol is forwarded unread, under the bounds of its own routes', async (t) => {
@@ -85,10 +86,10 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
       (await f.send('/code/v2/workspace')).status,
       (await f.send('/code/v2/workspace')).body.error.code,
     ],
-    [503, 'code_unavailable'],
+    [404, 'not_found'],
   );
   // Code that keeps no repositories offers the rest of its controls and not this protocol.
-  const withdraw = f.api.registerCode({ ...f.provider, v2: undefined });
+  const withdraw = f.register({ ...f.provider, v2: undefined });
   assert.deepEqual(
     [
       (await f.send('/code/v2/workspace')).status,
@@ -97,7 +98,14 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
     [503, 'code_store_unavailable'],
   );
   withdraw();
-  f.api.registerCode(f.provider);
+  assert.deepEqual(
+    [
+      (await f.send('/code/v2/workspace')).status,
+      (await f.send('/code/v2/workspace')).body.error.code,
+    ],
+    [503, 'unavailable'],
+  );
+  f.register(f.provider);
 
   const begun = await f.send('/code/v2/uploads', { body: JSON.stringify({ any: ['shape', 1] }) });
   assert.deepEqual([begun.status, begun.body], [200, { ok: 'uploads' }]);
@@ -208,7 +216,7 @@ test(
     const f = await fixture(t);
     // The API decides once, before the bytes. The stubbed putPart stands in for Code's, which
     // authorizes in its own transaction; code-operations.test.ts proves the real putPart refuses.
-    f.api.registerCode({
+    f.register({
       ...f.provider,
       v2: {
         ...f.v2,

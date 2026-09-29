@@ -15,6 +15,7 @@ import {
   type GitHubConfig,
 } from '../packages/code/src/github-client.js';
 import { ApiServer } from '../packages/api/src/http.js';
+import { mountCode, type CodeRoutes } from '../packages/code-research/src/api.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { openState, schemaFor } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';
@@ -521,13 +522,7 @@ test('actual HTTP routes authenticate Merv, keep callback cookies out of JSON, a
       },
     },
   );
-  const dispose = api.registerCode({
-    github: f.service,
-    nextCommand: async () => null,
-    completeCommand: async () => {
-      throw new Error('unused');
-    },
-  });
+  const dispose = mountCode(api, { github: f.service } as unknown as CodeRoutes);
   const url = await api.start();
   t.after(async () => {
     dispose();
