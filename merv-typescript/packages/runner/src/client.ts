@@ -58,25 +58,24 @@ const label = z
   .min(1)
   .max(200)
   .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/);
-const settingsSchema = z
-  .object({
-    platforms: z
-      .array(
-        z
-          .object({
-            name,
-            enabled: z.boolean(),
-            model: label.optional(),
-            effort: label.optional(),
-            parallelism: z.number().int().min(1).max(32),
-          })
-          .strict(),
-      )
-      .max(32)
-      .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
-  })
-  .strict();
+/**
+ * Replies ignore fields a server adds (this runner advertises `runner.1`). Tuned values are
+ * validated again as a profile before use; only the list's own bounds are checked here.
+ */
+const settingsSchema = z.object({
+  platforms: z
+    .array(
+      z.object({
+        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
+        enabled: z.boolean(),
+        model: z.string().optional(),
+        effort: z.string().optional(),
+        parallelism: z.number().int().min(1).max(32),
+      }),
+    )
+    .max(32)
+    .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
+});
 const presenceSchema = z
   .object({
     runnerId: label,
@@ -105,13 +104,10 @@ const sessionSchema = z
       .passthrough(),
     workspace: z
       .object({ attachment: workspaceSchema, result: workspaceSchema.nullable() })
-      .strict()
       .optional(),
   })
   .passthrough();
-const leaseSchema = z
-  .object({ session: z.union([z.null(), sessionSchema]), reason: label })
-  .strict();
+const leaseSchema = z.object({ session: z.union([z.null(), sessionSchema]), reason: label });
 
 export class RunnerClient {
   readonly baseUrl: string;

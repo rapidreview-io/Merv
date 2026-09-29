@@ -54,7 +54,7 @@ const client = (value: unknown) =>
   );
 const invalid = { code: 'invalid_control_response', status: 0 };
 
-test('runner presence accepts only closed bounded tuning settings', async () => {
+test('runner presence keeps only bounded tuning settings and ignores fields it does not know', async () => {
   const input = structuredClone(heartbeat);
   const pending = client(presence()).presence(input);
   input.runnerId = 'changed_runner';
@@ -64,18 +64,36 @@ test('runner presence accepts only closed bounded tuning settings', async () => 
   assert.deepEqual((await client(presence([])).presence(heartbeat)).desiredSettings, {
     platforms: [],
   });
-  const bad = [
+  // A field a newer server adds is dropped, never applied: no reply can name an executable.
+  for (const platforms of [
     [{ ...desired, executable: '/bin/evil' }],
     [{ ...desired, harness: 'command' }],
     [{ ...desired, args: ['remote command'] }],
     [{ ...desired, env: {} }],
+  ])
+    assert.deepEqual((await client(presence(platforms)).presence(heartbeat)).desiredSettings, {
+      platforms: [desired],
+    });
+  assert.deepEqual(
+    (
+      await client(
+        presence([desired], { desiredSettings: { platforms: [desired], executable: '/bin/evil' } }),
+      ).presence(heartbeat)
+    ).desiredSettings,
+    { platforms: [desired] },
+  );
+  // A tuned model or effort is validated again as a profile before it is used.
+  const model = { ...desired, model: 'x'.repeat(201) };
+  assert.deepEqual((await client(presence([model])).presence(heartbeat)).desiredSettings, {
+    platforms: [model],
+  });
+  const bad = [
     [desired, desired],
     [{ ...desired, name: '../outside' }],
     [{ ...desired, parallelism: 0 }],
     [{ ...desired, parallelism: 33 }],
     [{ ...desired, enabled: 'true' }],
-    [{ ...desired, model: 'x'.repeat(201) }],
-    [{ ...desired, effort: 'high\nextra' }],
+    [{ ...desired, model: 1 }],
     Array.from({ length: 33 }, (_, i) => ({ ...desired, name: `p${i}` })),
     null,
     {},
@@ -87,7 +105,6 @@ test('runner presence accepts only closed bounded tuning settings', async () => 
     { desiredVersion: -1 },
     { desiredVersion: Number.MAX_SAFE_INTEGER + 1 },
     { runnerId: 'different_runner' },
-    { desiredSettings: { platforms: [desired], executable: '/bin/evil' } },
   ])
     await assert.rejects(
       async () => client(presence([desired], extra)).presence(heartbeat),
@@ -120,17 +137,13 @@ test('lease replies bind the server-selected session to this project and runner,
       async () => client({ session: session(patch), reason: 'leased' }).lease(lease),
       invalid,
     );
-  for (const body of [
-    null,
-    1,
-    'text',
-    [],
-    {},
-    { reason: 'no_candidates' },
-    { session: null },
-    { session: null, reason: 'empty', unexpected: true },
-  ])
+  for (const body of [null, 1, 'text', [], {}, { reason: 'no_candidates' }, { session: null }])
     await assert.rejects(async () => client(body).lease(lease), invalid);
+  assert.deepEqual(
+    await client({ session: null, reason: 'empty', unexpected: true }).lease(lease),
+    { session: null, reason: 'empty' },
+    'a field a newer server adds to the envelope is ignored',
+  );
 });
 
 test('pending presence and lease replies cannot adopt a replacement runner identity', async () => {
@@ -167,6 +180,18 @@ test('workspace acknowledgements compare against the attachment originally sent'
       else assert.deepEqual((await pending).workspace?.attachment, workspace);
     }
   }
+  // The session's workspace record may gain fields; the attachment and result stay closed.
+  const tolerated = await client({
+    session: session({ workspace: { attachment: workspace, result: null, capturedAt: 'x' } }),
+  }).get('session_fixture', heartbeat.runnerId);
+  assert.deepEqual(tolerated.workspace, { attachment: workspace, result: null });
+  await assert.rejects(
+    async () =>
+      client({
+        session: session({ workspace: { attachment: { ...workspace, extra: 1 }, result: null } }),
+      }).get('session_fixture', heartbeat.runnerId),
+    invalid,
+  );
 });
 
 test('get rejects a same-project response for any different session or runner', async () => {
