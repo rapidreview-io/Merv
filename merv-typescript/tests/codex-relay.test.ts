@@ -11,6 +11,7 @@ import {
   codexPayload,
   dailyTokens,
   modelBudgetStatus,
+  modelMigrations,
   setDailyTokens,
 } from '../packages/fleet/src/codex-relay.js';
 import { openState } from './fixtures/state.js';
@@ -59,6 +60,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   const state = await openState();
   // Fleet's model migrations reference Scope's projects table.
   await createService(new ProjectScope(state));
+  await state.migrate('fleet_workflow', modelMigrations);
   let live = true;
   const upstream: { body: Record<string, any>; authorization: string }[] = [];
   let hold: Promise<void> | undefined;
@@ -77,7 +79,7 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   } as unknown as Sessions;
   const start = async () => {
     const relay = new ModelRelay({
-      ...(await codexModelRelay(sessions, state, { providerKey: () => key, dailyTokensPerPerson })),
+      ...codexModelRelay(sessions, state, { providerKey: () => key, dailyTokensPerPerson }),
       fetchImpl: async (_url, init) => {
         upstream.push({
           body: JSON.parse(String(init!.body)),
@@ -327,7 +329,7 @@ test('a call is charged at its most before it goes out and settled when it finis
 
 test('a call settles to the day it was charged to, even past midnight', async (t) => {
   const f = await fixture(t);
-  const relay = await codexModelRelay({} as Sessions, f.state, {
+  const relay = codexModelRelay({} as Sessions, f.state, {
     providerKey: () => key,
     dailyTokensPerPerson: 1_000_000,
   });

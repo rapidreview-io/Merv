@@ -224,14 +224,14 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
  * provider key. Each session has one call in flight. A call is charged to its person's day before
  * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
  * when it finishes; one that never finishes keeps its charge. The day's total, kept in the
- * database across restarts, refuses any call that would pass the ceiling.
+ * database across restarts, refuses any call that would pass the ceiling. Its tables are made by
+ * `modelMigrations`, which the workflow adapter runs when it starts.
  */
-export async function codexModelRelay(
+export function codexModelRelay(
   sessions: Sessions,
   state: State,
   options: { providerKey: () => string; dailyTokensPerPerson: number },
-): Promise<ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }>> {
-  await state.migrate('fleet_workflow', modelMigrations);
+): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
   return {
     name: 'codex',
     route: '/codex-model/responses',

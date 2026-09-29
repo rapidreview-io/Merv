@@ -177,7 +177,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   async valid(a: FleetAllocation, tx: Transaction): Promise<boolean> {
     return (
-      !this.closed &&
       this.accepted(a) &&
       a.deadlineAt > new Date(this.clock()).toISOString() &&
       !!(await this.director(a.source, tx))
@@ -526,7 +525,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
-      this.closed ||
       canonical(binding.platform) !== canonical(hostedCodexPlatform) ||
       canonical(binding.capabilities) !== canonical([...hostedCodexCapabilities])
     )
@@ -744,9 +742,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.timer);
-    await this.pending?.catch(() => undefined);
+    // Unregister first: Sessions then answers 503 instead of revoking live sessions, and a pass
+    // in flight can no longer request or cancel anything.
     for (const dispose of this.disposers.reverse()) dispose();
     this.disposers = [];
+    await this.pending?.catch(() => undefined);
   }
 }
 
@@ -772,7 +772,7 @@ export const fleetWorkflowPlugin = {
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.
     if (adapter.config.enabled) {
-      const relay = await codexModelRelay(ctx.sessions, ctx.state, {
+      const relay = codexModelRelay(ctx.sessions, ctx.state, {
         providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
         dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       });

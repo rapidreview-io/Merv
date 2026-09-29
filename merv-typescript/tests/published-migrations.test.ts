@@ -9,7 +9,7 @@ import { createApp } from './fixtures/app.js';
 import { initializeLegacyFoundationImports } from '../src/legacy-import.js';
 import { initializeLegacyHistory } from '../src/legacy-history.js';
 import { FleetService } from '../packages/fleet/src/index.js';
-import { codexModelRelay } from '../packages/fleet/src/codex-relay.js';
+import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
 import { PiService } from '../packages/pi/src/index.js';
 
 interface Row {
@@ -70,8 +70,8 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   for (const start of [
     () => initializeLegacyFoundationImports(recorder),
     () => new FleetService(recorder, {} as never, undefined).initialize(),
-    // Only where the Fleet workflow owner is enabled, which the census app leaves off.
-    () => codexModelRelay({} as never, recorder, {} as never),
+    // The Fleet workflow owner's start(), only where it is enabled: the census app leaves it off.
+    () => recorder.migrate('fleet_workflow', modelMigrations),
     () => new PiService(recorder, {} as never, {} as never, {} as never, {} as never).initialize(),
     () => initializeLegacyHistory(recorder),
   ]) {

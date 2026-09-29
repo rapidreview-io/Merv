@@ -1,7 +1,9 @@
 import test, { type TestContext } from 'node:test';
-import type { Context } from 'cordis';
+import { Context } from 'cordis';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,13 +29,16 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
-import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
+import type { Fleet, FleetAllocation, FleetOwner, ModelRelayConfig } from '@merv/fleet/types';
 import type {
   Sessions,
+  ManagedModelGrant,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
+  fleetWorkflowPlugin,
   FleetWorkflowAdapter,
   type FleetWorkflowConfig,
   hostedCodexCapabilities,
@@ -87,6 +92,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   const requests: string[] = [];
   const inspections = new Map<string, ManagedRunnerInspection>();
   const allocations: FleetAllocation[] = [];
+  /** While set, a reconcile waits at its first read. */
+  let held: Promise<void> | undefined;
   const fakeFleet = {
     registerOwner(kind: string, value: FleetOwner) {
       assert.equal(kind, 'workflow');
@@ -167,6 +174,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       return inspections.get(id) ?? null;
     },
     async servedSources() {
+      await held;
       return structuredClone(served);
     },
     async dispatchDemand(caller: Caller, input: unknown) {
@@ -229,6 +237,15 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     ensureInputs,
     owner: () => owner!,
     validator: () => validator!,
+    /** Holds the next reconcile at its first read until the returned function is called. */
+    hold: () => {
+      let release!: () => void;
+      held = new Promise((resolve) => (release = resolve));
+      return () => {
+        held = undefined;
+        release();
+      };
+    },
     serves: (projectId: string) => validator!.serves!(projectId),
     demand: (value: Target[] | Error, projectId = main.id) => {
       demands.set(projectId, value);
@@ -643,6 +660,123 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
   assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), false);
   allocation.phase = 'queued';
   assert.equal(await f.state.transaction((tx) => f.validator().admits(allocation.id, 1, tx)), true);
+});
+
+test('closing unregisters first: a bound session is never judged stale while a pass finishes', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  const binding = {
+    allocationId: allocation.id,
+    epoch: 1,
+    source: f.source,
+    runtimeProfileId: 'image-profile',
+    platform: hostedCodexPlatform,
+    capabilities: ['code.v2'],
+    expiresAt: allocation.deadlineAt,
+  };
+  const [owner, validator] = [f.owner(), f.validator()];
+  const release = f.hold();
+  const pass = f.adapter.reconcile();
+  const closing = f.adapter.close();
+  // Without a validator Sessions answers 503 and keeps its sessions; a Fleet pass that still
+  // holds the owner keeps its machine.
+  assert.equal(f.validator(), undefined);
+  assert.equal(f.owner(), undefined);
+  assert.equal(await f.state.transaction((tx) => validator.current(binding, tx)), true);
+  assert.equal(await f.state.transaction((tx) => owner.valid(allocation, tx)), true);
+  release();
+  await Promise.all([pass, closing]);
+  assert.equal(await f.state.transaction((tx) => validator.current(binding, tx)), true);
+});
+
+test('a relay call in flight when the adapter unloads gets 503, never 401: its route goes first', async (t) => {
+  const state = await openState();
+  const modelEnv = `MERV_WORKFLOW_MODEL_${randomUUID().replaceAll('-', '')}`;
+  process.env[modelEnv] = `sk-test-${randomBytes(32).toString('hex')}`;
+  const order: string[] = [];
+  let validator: ManagedRunnerValidator | undefined;
+  let route: ((req: IncomingMessage, res: ServerResponse) => void) | undefined;
+  let asked!: () => void;
+  const asking = new Promise<void>((resolve) => (asked = resolve));
+  let answer!: () => void;
+  const answering = new Promise<void>((resolve) => (answer = resolve));
+  const ctx = new Context();
+  ctx.provide('state', state);
+  // Fleet's model migrations reference Scope's projects table.
+  ctx.provide('scope', await createService(new ProjectScope(state)));
+  ctx.provide('tools', { register: () => () => undefined });
+  ctx.provide('api', {
+    mount: (_prefix: string, handler: typeof route) => {
+      route = handler;
+      return () => {
+        order.push('unmount');
+        route = undefined;
+      };
+    },
+  });
+  ctx.provide('fleet', {
+    registerOwner: () => () => order.push('owner'),
+    listOwned: async () => [],
+    modelRelay: (config: ModelRelayConfig<ManagedModelGrant, string, unknown>) => {
+      const relay = new ModelRelay(config);
+      const close = relay.close.bind(relay);
+      relay.close = () => (order.push('relay'), close());
+      return relay;
+    },
+  });
+  ctx.provide('sessions', {
+    registerManagedValidator: (value: ManagedRunnerValidator) => {
+      validator = value;
+      return () => {
+        order.push('validator');
+        validator = undefined;
+      };
+    },
+    servedSources: async () => [],
+    // Sessions refuses the session once its owner has gone.
+    managedModelGrant: async () => {
+      asked();
+      await answering;
+      throw new MervError('unauthorized', 'No live managed session', 401);
+    },
+  });
+  const fiber = ctx.plugin(fleetWorkflowPlugin, {
+    enabled: true,
+    people: ['*'],
+    modelApiKeyEnv: modelEnv,
+    baseUrl: 'https://merv.example.test',
+    pollIntervalMs: 60_000,
+  });
+  await fiber;
+  const server = createServer((req, res) => {
+    if (route) return void route(req, res);
+    res.writeHead(503).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    server.close();
+    await state.close();
+    delete process.env[modelEnv];
+  });
+  const call = fetch(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/codex-model/responses`,
+    {
+      method: 'POST',
+      headers: { authorization: `Bearer ms_${'b'.repeat(43)}` },
+      body: '{}',
+    },
+  );
+  await asking;
+  const unloading = fiber.dispose();
+  while (!order.includes('validator')) await new Promise((resolve) => setImmediate(resolve));
+  answer();
+  const response = await call;
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: 'relay_unavailable' });
+  await unloading;
+  assert.deepEqual(order, ['unmount', 'relay', 'validator', 'owner']);
 });
 
 test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
