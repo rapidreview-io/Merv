@@ -64,6 +64,8 @@ import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
 type Target = { instanceId: string; expectedRevision: number };
+/** A machine was created for it, whether or not it ever launched. */
+const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
   Array.from({ length: count }, (_, i) => ({ instanceId: `${prefix}_${i}`, expectedRevision: 0 }));
 
@@ -92,7 +94,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   let now = Date.parse('2026-09-22T00:00:00Z');
   let owner: FleetOwner | undefined, validator: ManagedRunnerValidator | undefined;
   const demands = new Map<string, Target[] | Error>();
-  const refused = new Set<string>();
+  const refused = new Map<string, MervError>();
   const requests: string[] = [];
   const inspections = new Map<string, ManagedRunnerInspection>();
   const allocations: FleetAllocation[] = [];
@@ -111,8 +113,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       input: { requestId: string; owner: { kind: string; id: string }; seconds?: number },
     ) {
       requests.push(caller.projectId);
-      if (refused.has(caller.projectId))
-        throw new MervError('sandbox_not_connected', 'Hosted agents are not set up', 403);
+      const refusal = refused.get(caller.projectId);
+      if (refusal) throw refusal;
       const source = await scope.delegationSource(caller);
       const prior = allocations.find(
         (a) =>
@@ -254,7 +256,11 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     demand: (value: Target[] | Error, projectId = main.id) => {
       demands.set(projectId, value);
     },
-    refuse: (projectId: string) => refused.add(projectId),
+    refuse: (
+      projectId: string,
+      error = new MervError('sandbox_not_connected', 'Hosted agents are not set up', 403),
+    ) => refused.set(projectId, error),
+    sessions: fakeSessions,
     requests,
     advance: (ms: number) => {
       now += ms;
@@ -425,6 +431,7 @@ test('workflow bounds created but unclaimed retries across restart without block
 
   const first = f.allocations[1]!;
   first.createAttempted = true;
+  first.runtime = machine;
   first.phase = 'released';
   first.updatedAt = new Date(Date.parse(first.createdAt)).toISOString();
   await f.adapter.reconcile();
@@ -435,6 +442,7 @@ test('workflow bounds created but unclaimed retries across restart without block
 
   const second = f.allocations[2]!;
   second.createAttempted = true;
+  second.runtime = machine;
   second.phase = 'released';
   second.updatedAt = new Date(Date.parse(second.createdAt)).toISOString();
   f.advance(60_000);
@@ -474,6 +482,7 @@ test(
     for (let index = 0; index < 2; index++) {
       const allocation = f.allocations[index]!;
       allocation.createAttempted = true;
+      allocation.runtime = machine;
       allocation.phase = 'released';
       allocation.updatedAt = new Date(Date.parse(allocation.createdAt)).toISOString();
       if (index === 0) f.advance(60_000);
@@ -592,11 +601,13 @@ test(
     );
     assert.deepEqual(rows, [{ reason, prior_allocations: 2 }]);
     f.allocations[2]!.createAttempted = true;
+    f.allocations[2]!.runtime = machine;
     f.allocations[2]!.phase = 'released';
     f.advance(60_000);
     await f.adapter.reconcile();
     assert.equal(f.allocations.length, 4);
     f.allocations[3]!.createAttempted = true;
+    f.allocations[3]!.runtime = machine;
     f.allocations[3]!.phase = 'released';
     f.advance(60_000);
     await f.adapter.reconcile();
@@ -1098,6 +1109,78 @@ test('a project whose demand cannot be read keeps its machines and its standing 
   assert.deepEqual(f.open(), [], 'work read as gone is still cancelled');
 });
 
+test('a spend cap refusal keeps the project served and passes over its other targets for the pass', async (t) => {
+  const f = await fixture(t, { maxAgents: 5 });
+  f.demand(targets('capped', 3));
+  f.refuse(
+    f.caller.projectId,
+    new MervError('fleet_compute_cap', "Today's compute is used up", 429),
+  );
+  await f.adapter.reconcile();
+  assert.deepEqual(f.requests, [f.caller.projectId], 'one request is refused, once a pass');
+  assert.equal(f.serves(f.caller.projectId), true);
+  await f.adapter.reconcile();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.serves(f.caller.projectId), true);
+});
+
+test('refusals pause renting and spend no attempt; machines that never launched exhaust a revision', async (t) => {
+  const f = await fixture(t);
+  const target = { instanceId: 'task_a', expectedRevision: 0 };
+  f.demand([target]);
+  const end = (a: FleetAllocation, fields: Partial<FleetAllocation>) =>
+    Object.assign(a, { phase: 'released', intent: 'stop', createAttempted: true, ...fields });
+  await f.adapter.reconcile();
+  for (const i of [0, 1]) {
+    end(f.allocations[i]!, { error: 'runtime_refused' });
+    f.advance(60_001);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, i + 1, 'a provider refusal pauses renting');
+    f.advance(15 * 60_000);
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, i + 2, 'and spends no attempt');
+  }
+  for (const i of [2, 3]) {
+    end(f.allocations[i]!, { runtime: machine });
+    f.advance(60_001);
+    await f.adapter.reconcile();
+  }
+  assert.equal(f.allocations.length, 4, 'two machines that never claimed work exhaust it');
+  assert.equal((await f.adapter.retryStatus(f.caller, [target]))[0]?.state, 'exhausted_unclaimed');
+});
+
+test('an idle machine gets its grace from its launch, and work claimed while demand is read keeps it', async (t) => {
+  const f = await fixture(t);
+  f.demand(targets('task', 1));
+  await f.adapter.reconcile();
+  const a = f.allocations[0]!;
+  f.inspections.set(a.id, { runnerId: 'managed-machine', enrollmentExpiresAt, session: null });
+  f.demand([]);
+  a.phase = 'running';
+  a.updatedAt = new Date(Date.parse(a.createdAt) + 30_000).toISOString();
+  f.advance(30_000);
+  assert.equal(await f.owner().observe(a), 'running', 'counted from the launch, not the request');
+  f.advance(30_000);
+  const dispatch = f.sessions.dispatchDemand;
+  f.sessions.dispatchDemand = async (...args) => {
+    const demand = await dispatch(...args);
+    f.inspections.get(a.id)!.session = {
+      id: 'session_a',
+      ...targets('task', 1)[0]!,
+      status: 'active',
+      closedAt: null,
+      outcome: null,
+      releaseAcknowledged: false,
+      capturePending: false,
+    };
+    return demand;
+  };
+  assert.equal(await f.owner().observe(a), 'running');
+  f.sessions.dispatchDemand = dispatch;
+  f.inspections.get(a.id)!.session = null;
+  assert.equal(await f.owner().observe(a), 'finished');
+});
+
 test('the review director takes only what the admin’s own hand may not, within Fleet’s machines', async (t) => {
   const f = await fixture(t, { maxAgents: 2 });
   f.demand(targets('shared', 1));
@@ -1363,6 +1446,7 @@ test(
         ...allocation,
         phase: 'released' as const,
         createAttempted: true,
+        runtime: machine,
         updatedAt: new Date(Date.parse(allocation.createdAt) - 60_000).toISOString(),
       };
       await h.state.transaction((tx) =>

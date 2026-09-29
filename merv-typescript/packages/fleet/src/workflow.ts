@@ -55,7 +55,7 @@ const emptyRunnerGraceMs = 30_000;
 const releaseAckGraceMs = 120_000;
 const unclaimedRetryCooldownMs = 60_000;
 const unclaimedAttemptLimit = 2;
-const walletRetryCooldownMs = 15 * 60_000;
+const refusedRetryCooldownMs = 15 * 60_000;
 const retryInput = z
   .object({
     instanceId: z.string().min(1).max(200),
@@ -95,6 +95,9 @@ export const hostedCodexCapabilities = Object.freeze(['code.v2']);
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;
 const occupied = (allocation: FleetAllocation) => allocation.phase !== 'released';
+/** The wallet or the provider refused its machine, or no price was listed for it. */
+const refused = (a: FleetAllocation) =>
+  a.error === 'runtime_refused' || a.error === 'wallet_refused';
 /** Before Fleet observes the launch no runner can have enrolled, so nothing claimed is at stake. */
 const launched = (a: FleetAllocation) => a.runtime?.launch?.deliveryState === 'launched';
 const demandInput = { platform: hostedCodexPlatform, capabilities: [...hostedCodexCapabilities] };
@@ -313,24 +316,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       currentDemand ??
       (snapshot ? snapshot.current.has(id) : undefined) ??
       (!!latest && (await this.demandTargets(caller.projectId, [latest.source])).has(id));
-    let unclaimed = 0;
-    let lastUnclaimedAt = 0;
-    for (const allocation of attempts.slice(Number(grant?.prior_allocations ?? 0)).toReversed()) {
-      if (
-        allocation.phase !== 'released' ||
-        !allocation.createAttempted ||
-        allocation.error === 'wallet_refused'
-      )
-        continue;
-      if ((await this.sessions.inspectManaged(allocation.id, allocation.epoch, tx))?.session) break;
-      unclaimed++;
-      if (!lastUnclaimedAt) lastUnclaimedAt = Date.parse(allocation.updatedAt);
-      if (unclaimed === unclaimedAttemptLimit) break;
-    }
+    const streak = await this.streak(attempts, grant?.prior_allocations, tx);
+    const unclaimed = streak.unclaimed;
     const cooldownUntil =
-      unclaimed && lastUnclaimedAt + unclaimedRetryCooldownMs > this.clock()
-        ? new Date(lastUnclaimedAt + unclaimedRetryCooldownMs).toISOString()
-        : null;
+      streak.cooldownUntil > this.clock() ? new Date(streak.cooldownUntil).toISOString() : null;
     const state = active
       ? 'active'
       : !current
@@ -364,6 +353,23 @@ export class FleetWorkflowAdapter implements FleetOwner {
                   ? 'An active machine already covers this target.'
                   : 'Fleet may allocate when capacity, wallet and model budgets allow.',
     };
+  }
+  /**
+   * The machines since a revision's latest grant that no session claimed, newest first, up to
+   * the limit, and when the cooldown after the newest ends. A claimed session starts a new
+   * streak; a refused create made no machine and is not one, but a machine never launched is.
+   */
+  private async streak(attempts: FleetAllocation[], prior = 0, tx?: Transaction) {
+    let unclaimed = 0;
+    let newest = 0;
+    for (const a of attempts.slice(prior).toReversed()) {
+      if (a.phase !== 'released' || !a.runtime) continue;
+      if ((await this.sessions.inspectManaged(a.id, a.epoch, tx))?.session) break;
+      unclaimed++;
+      newest ||= Date.parse(a.updatedAt);
+      if (unclaimed === unclaimedAttemptLimit) break;
+    }
+    return { unclaimed, cooldownUntil: unclaimed ? newest + unclaimedRetryCooldownMs : 0 };
   }
   async retryStatus(caller: Caller, targets: { instanceId: string; expectedRevision: number }[]) {
     await this.scope.require(caller, 'read');
@@ -605,8 +611,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
     const demand = await this.sessions.dispatchDemand(sourceCaller(a.source), demandInput);
+    // Counted from the launch, or the runner's enrollment. Work claimed after the first read
+    // keeps its machine; a claim after the second is refused once the stop commits.
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
-    if (!demand.candidates.length && this.clock() - Date.parse(a.createdAt) >= grace)
+    if (
+      !demand.candidates.length &&
+      this.clock() - Date.parse(a.updatedAt) >= grace &&
+      !(await this.sessions.inspectManaged(a.id, a.epoch))?.session
+    )
       return 'finished';
     return observed?.runnerId ? 'running' : 'starting';
   }
@@ -642,6 +654,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const everyone = this.config.people.includes('*');
     // Each target a project wants, with the director whose machine takes it.
     const served = new Map<string, Map<string, DelegationSource>>();
+    // Projects passed over this pass: their reads failed, or Fleet refused one of their requests.
     const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
@@ -672,17 +685,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
       this,
       [...served.values()].flatMap((wanted) => [...wanted.keys()]),
     );
-    const newestWallet = Math.max(
+    const newestRefused = Math.max(
       0,
-      ...allocations
-        .filter((a) => a.error === 'wallet_refused')
-        .map((a) => Date.parse(a.updatedAt)),
+      ...allocations.filter(refused).map((a) => Date.parse(a.updatedAt)),
     );
     const newestAdmitted = Math.max(
       0,
       ...allocations.filter((a) => a.runtime).map((a) => Date.parse(a.updatedAt)),
     );
-    const walletPaused = newestWallet > newestAdmitted;
+    // Workflow machines rent in the host project, so one refusal there pauses them all; after
+    // the pause, one target at a time is tried until one is admitted.
+    const paused = newestRefused > newestAdmitted;
     const active = allocations.filter(occupied);
     for (const a of active)
       if (
@@ -692,7 +705,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         !served.get(a.projectId)?.has(a.owner.id)
       )
         await this.fleet.cancelOwned(this, a.id);
-    if (walletPaused && this.clock() - newestWallet < walletRetryCooldownMs) return;
+    if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
     const covered = new Set<string>();
     for (const a of active.filter((a) => a.intent === 'run')) {
       // The allocation names why Fleet rented the runner, but Sessions may assign it another
@@ -705,7 +718,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
     for (const { projectId, source, id } of queue) {
-      if (!slots || covered.has(id) || !this.served.has(projectId)) continue;
+      if (!slots || covered.has(id) || failed.has(projectId)) continue;
       const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === id);
       const grant = this.state
         ? await this.state.read((sql) =>
@@ -717,25 +730,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
             ),
           )
         : null;
-      const released = attempts
-        .slice(Number(grant?.prior_allocations ?? 0))
-        .filter((a) => a.phase === 'released');
-      let unclaimed = 0;
-      let lastUnclaimedAt = 0;
       // A new task revision has a new id. For this exact revision, stop paying for
-      // repeated machines that never claimed work; a claimed session starts a new streak.
-      for (const a of released.toReversed()) {
-        if (!a.createAttempted || a.error === 'wallet_refused') continue;
-        if ((await this.sessions.inspectManaged(a.id, a.epoch))?.session) break;
-        unclaimed++;
-        if (!lastUnclaimedAt) lastUnclaimedAt = Date.parse(a.updatedAt);
-        if (unclaimed === unclaimedAttemptLimit) break;
-      }
-      if (
-        unclaimed >= unclaimedAttemptLimit ||
-        (unclaimed > 0 && this.clock() - lastUnclaimedAt < unclaimedRetryCooldownMs)
-      )
-        continue;
+      // repeated machines that never claimed work.
+      const { unclaimed, cooldownUntil } = await this.streak(attempts, grant?.prior_allocations);
+      if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
       const generation = attempts.length;
@@ -746,14 +744,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
           seconds: this.config.stepMinutes * 60 + 600,
         });
       } catch (error) {
-        // Fleet refuses this project (no connection, say): it is not served.
+        // A refusal, such as the payer's spend cap, passes over the project's other targets this
+        // pass; only a project without a connection is no longer served.
         skipped(projectId, error);
-        this.served.delete(projectId);
+        failed.add(projectId);
+        if (error instanceof MervError && error.code === 'sandbox_not_connected')
+          this.served.delete(projectId);
         continue;
       }
       covered.add(id);
       slots--;
-      if (walletPaused) break;
+      if (paused) break;
     }
   }
   async close(): Promise<void> {
