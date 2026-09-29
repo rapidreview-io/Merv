@@ -562,8 +562,9 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
   });
   f.advance(30_001);
   // Session history is retained forever and a close older than the window can hold nothing
-  // back, so the poll that follows must not read one. It runs inside the write transaction
-  // that grants the lease, where a runner's whole past would be paid for on every tick.
+  // back, so the poll that follows must not read one. It runs on the poll's snapshot and again
+  // in the write transaction that grants the lease, where a runner's whole past would be paid
+  // for on every tick.
   const read: number[] = [];
   const transaction = f.state.transaction.bind(f.state);
   t.mock.method(f.state, 'transaction', (run: Parameters<typeof transaction>[0]) =>
@@ -571,7 +572,7 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
       const all = tx.all.bind(tx);
       (tx as { all: unknown }).all = async (sql: string, ...parameters: unknown[]) => {
         const rows = await all(sql, ...(parameters as string[]));
-        if (sql.includes('session_dispatch_receipts') && sql.includes("('released','expired')"))
+        if (sql.includes('session_dispatch_receipts') && sql.includes('session_usage'))
           read.push(rows.length);
         return rows;
       };
@@ -579,7 +580,7 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
     }),
   );
   assert.ok((await f.sessions.lease(f.source, auto())).session, 'the target is offered again');
-  assert.deepEqual(read, [0], 'the backoff read no close from outside its window');
+  assert.deepEqual(read, [0, 0], 'the backoff read no close from outside its window');
 });
 
 test('sessions refuses a launch-failure cap outside 1â€“100', async (t) => {

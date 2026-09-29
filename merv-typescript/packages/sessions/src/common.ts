@@ -14,7 +14,7 @@ export const isoNow = (clock: () => number) => new Date(clock()).toISOString();
 /** A snapshot refuses a write before any SQL runs: what it refused has something to record. */
 export const refused = (error: unknown) =>
   error instanceof MervError && error.code === 'read_only_scope';
-/** `fn` on a snapshot, again in a writer only when it has something to record: it may run twice. */
+/** `fn` on a snapshot, again in a writer when it has something to record: it changes only `tx`. */
 export async function readFirst<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
   if (state.ambient) return await fn(state.ambient);
   try {

@@ -1468,7 +1468,7 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
     if (stage === 'metadata') {
       const original = f.workflows.dispatchCandidates.bind(f.workflows);
       t.mock.method(f.workflows, 'dispatchCandidates', async (caller: Caller, tx: Transaction) => {
-        const result = original(caller, tx);
+        const result = await original(caller, tx);
         await tx.run(
           "UPDATE session_runners SET presence_json=jsonb_set(presence_json::jsonb,'{platforms,0,enabled}','false')::text WHERE id=?",
           runner.id,
@@ -1503,7 +1503,8 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
     );
     assert.equal(persisted.capacity, 1);
     assert.equal(persisted.platforms[0].enabled, true);
-    assert.equal(f.builds, stage === 'metadata' ? 0 : 1);
+    // The fence after the offer catches a change either callback made; the offer rolls back.
+    assert.equal(f.builds, 1);
   }
 });
 

@@ -483,7 +483,6 @@ export class ManagedRunnerBindings {
     return result;
   }
   async bind(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<void> {
-    await this.admits(row, tx);
     check(
       !row.bound_session_id || row.bound_session_id === sessionId,
       'managed_bound',

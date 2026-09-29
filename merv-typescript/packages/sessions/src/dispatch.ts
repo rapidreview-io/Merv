@@ -46,7 +46,7 @@ import type {
 } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { lastActivity, type AgentObservations } from './observations.js';
-import { isoNow, liveTargets, ownerOf, targetKey } from './common.js';
+import { isoNow, liveTargets, ownerOf, readFirst, targetKey } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 
 const label = z
@@ -127,6 +127,7 @@ const scaled = (value: number | null, unit: number): number | null =>
 /** How long a runner's last heartbeat keeps it present. */
 export const freshForMs = 45_000;
 const backoffMs = 30_000;
+type Failure = Pick<Session, 'instanceId' | 'expectedRevision' | 'outcome' | 'closedAt'>;
 const rented =
   'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
 /**
@@ -648,6 +649,9 @@ export class SessionDispatch {
       decisionSince: row.decision_since ?? null,
     };
   }
+  private fresh(at: string | null, ms: number): boolean {
+    return at !== null && Date.parse(at) + ms > this.clock();
+  }
   /**
    * The answer this runner's last lease request received, kept where the runner is. A
    * repeated answer keeps the moment it was first given, so a refusal says how long it has
@@ -662,6 +666,13 @@ export class SessionDispatch {
     tx: Transaction,
   ): Promise<void> {
     const time = isoNow(this.clock);
+    const old = await tx.get<RunnerRow>(
+      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
+      ownerHash,
+      runnerId,
+    );
+    // The same answer is refreshed at most every 15 s, so an idle poll writes nothing.
+    if (old?.last_decision === decision && this.fresh(old.last_decision_at, 15_000)) return;
     await tx.run(
       'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN COALESCE(decision_since,?) ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
       decision,
@@ -843,13 +854,13 @@ export class SessionDispatch {
       'Runner heartbeat must use the closed machine, platform and capacity schema',
     );
     input = parsed.data;
-    return await this.state.transaction(async (tx) => {
+    return await readFirst(this.state, async (tx) => {
       const managed = !!caller.managed;
-      if (managed) caller = await this.hooks.managed.heartbeat(caller, input, tx);
+      const source = managed ? await this.hooks.managed.heartbeat(caller, input, tx) : caller;
       // A runner is a durable presence that will take work: registering one is a write, or a
       // review for Fleet's review director, which takes only reviews.
-      await this.scope.require(caller, caller.service ? 'review' : 'write', tx);
-      const owner = await ownerOf(this.scope, caller, tx);
+      await this.scope.require(source, source.service ? 'review' : 'write', tx);
+      const owner = await ownerOf(this.scope, source, tx);
       const old = await tx.get<RunnerRow>(
         'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
         owner.hash,
@@ -862,6 +873,9 @@ export class SessionDispatch {
       );
       const id = old?.id ?? newId('runner'),
         time = isoNow(this.clock);
+      // Fresh for 45 s, an unchanged presence (parsed, so the same text) is recorded every 10 s.
+      if (old?.presence_json === JSON.stringify(input) && this.fresh(old.last_seen_at, 10_000))
+        return await this.presence(old, tx);
       if (old)
         await tx.run(
           'UPDATE session_runners SET presence_json=?,last_seen_at=? WHERE id=?',
@@ -875,7 +889,7 @@ export class SessionDispatch {
           managed ||
             (await tx.get<{ n: number }>(
               `SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented})`,
-              caller.projectId,
+              source.projectId,
             ))!.n < 1000,
           'runner_limit',
           'Project runner limit reached',
@@ -884,7 +898,7 @@ export class SessionDispatch {
         await tx.run(
           'INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,?,?,?,?,?,?)',
           id,
-          caller.projectId,
+          source.projectId,
           owner.hash,
           input.runnerId,
           JSON.stringify(owner.source),
@@ -892,7 +906,7 @@ export class SessionDispatch {
           JSON.stringify({ platforms: [] }),
           time,
         );
-        await recorded(this.state, tx, caller, 'session.runner_registered', id, { runnerRef: id });
+        await recorded(this.state, tx, source, 'session.runner_registered', id, { runnerRef: id });
       }
       return await this.presence(
         (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', id))!,
@@ -1004,7 +1018,7 @@ export class SessionDispatch {
     caller: Caller,
     tx: Transaction,
     capabilities: ReadonlySet<string>,
-    failures: readonly Session[] = [],
+    failures: readonly Failure[] = [],
     skipped: ReadonlySet<string> = new Set(),
     localRepository = true,
   ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
@@ -1130,17 +1144,15 @@ export class SessionDispatch {
     ownerHash: string,
     platform: string,
     runnerId?: string,
-  ): Promise<Session[]> {
-    return (
-      await tx.all<SessionRow>(
-        "SELECT s.session_json FROM worker_sessions s JOIN session_dispatch_receipts d ON d.session_id=s.id WHERE s.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR s.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> '{name}')=? AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')>?",
-        ownerHash,
-        runnerId ?? null,
-        runnerId ?? null,
-        platform,
-        new Date(this.clock() - backoffMs).toISOString(),
-      )
-    ).map((row) => JSON.parse(row.session_json) as Session);
+  ): Promise<Failure[]> {
+    return await tx.all<Failure>(
+      'SELECT u.instance_id AS "instanceId",CAST(u.revision AS INTEGER) AS "expectedRevision",u.outcome,u.closed_at AS "closedAt" FROM session_dispatch_receipts d JOIN session_usage u ON u.session_id=d.session_id WHERE d.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR d.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> \'{name}\')=? AND u.closed_at>?',
+      ownerHash,
+      runnerId ?? null,
+      runnerId ?? null,
+      platform,
+      new Date(this.clock() - backoffMs).toISOString(),
+    );
   }
   /** The most recently seen runners, which is where every live one is. */
   private async runners(projectId: string, tx: Transaction): Promise<RunnerPresence[]> {
@@ -1761,8 +1773,10 @@ export class SessionDispatch {
     );
     input = parsed.data;
     const preparedCaller = caller.managed
-      ? await this.state.transaction(
-          async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
+      ? await this.state.snapshot(() =>
+          this.state.transaction(
+            async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
+          ),
         )
       : caller;
     await this.hooks.prepare(preparedCaller);
@@ -1787,7 +1801,8 @@ export class SessionDispatch {
     input: AutomaticLease,
     skipped: Set<string>,
   ): Promise<{ session: Session | null; reason: string }> {
-    return await this.state.transaction(async (tx) => {
+    // An idle poll is decided on a snapshot; an offer or a new decision takes the writer.
+    return await readFirst(this.state, async (tx) => {
       const managed = caller.managed ? await this.hooks.managed.lease(caller, input, tx) : null;
       const effectiveCaller = managed?.sourceCaller ?? caller;
       const owner = await ownerOf(this.scope, effectiveCaller, tx);
@@ -1885,22 +1900,8 @@ export class SessionDispatch {
           session: null,
           reason: await decided(selected.reason ?? 'no_candidates'),
         };
-      // Admission callbacks cannot disable dispatch or change source permission and
-      // then still create an automatic lease within this transaction.
-      await this.scope.requireDelegation(owner.source, 'read', tx);
-      check(
-        await open(),
-        'dispatch_disabled',
-        'Automatic dispatch was disabled before the offer',
-        409,
-      );
-      const beforeOffer = await this.admitRunner(owner.hash, input, tx);
-      check(
-        beforeOffer.ok,
-        'runner_control_changed',
-        'Runner controls changed before the offer',
-        409,
-      );
+      // A snapshot found work: the writer decides again, and builds the offer.
+      if (this.state.readScope) throw new MervError('read_only_scope', 'An offer is a write', 409);
       const session = await this.hooks
         .offer(
           effectiveCaller,

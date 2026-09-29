@@ -285,6 +285,14 @@ test('a repeated dispatch decision keeps the moment it began and a new decision 
   f.advance(5000);
   await f.sessions.lease(f.source, auto());
   let runner = await f.runner();
+  // The same answer is refreshed at most every 15 s; its run still starts when it began.
+  assert.deepEqual(
+    [runner.lastDecision, runner.decisionSince, runner.lastDecisionAt],
+    ['dispatch_disabled', began, began],
+  );
+  f.advance(10_000);
+  await f.sessions.lease(f.source, auto());
+  runner = await f.runner();
   assert.deepEqual(
     [runner.lastDecision, runner.decisionSince, runner.lastDecisionAt],
     ['dispatch_disabled', began, f.time()],
@@ -649,7 +657,8 @@ test('the hold tables arrive on a database whose runners already decided, and le
   const runner = await f.runner();
   assert.deepEqual([runner.lastDecision, runner.decisionSince], ['dispatch_disabled', null]);
   assert.deepEqual(await f.holds(), []);
-  f.advance(1_000);
+  // The same answer is refreshed once its last moment is 15 s old.
+  f.advance(15_000);
   assert.equal((await f.sessions.lease(f.source, auto())).reason, 'dispatch_disabled');
   const since = f.time();
   assert.equal((await f.runner()).decisionSince, since, 'the same answer starts counting');

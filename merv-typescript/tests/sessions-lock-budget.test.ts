@@ -4,7 +4,8 @@
  * read snapshot and outside another transaction; a failed attempt counts too. Durable events'
  * own deliveries run on the uncounted state, so the numbers are Sessions' alone.
  *
- * Each bound is a ceiling at today's cost; the hardening waves lower them as they land.
+ * Each bound is the measured cost: an idle poll, an unchanged presence, a healthy sweep and a
+ * worker's calls on a live session are answered from read snapshots and take no writer.
  */
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -205,16 +206,31 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
   const f = await sourced(t);
   assert.equal((await f.poll()).reason, 'no_candidates');
   f.advance(1000);
-  // The lease that records the same decision; the offer's light pass finds nothing to record.
+  // The same decision, 1 s after it was recorded; the offer's light pass finds nothing.
   await f.atMost(
-    { writers: 1, checks: 0 },
+    { writers: 0, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle poll',
   );
   await f.atMost(
-    { writers: 1, checks: 0 },
+    { writers: 0, checks: 0 },
     () => f.sessions.heartbeatRunner(f.source, f.presence),
     'an unchanged presence',
+  );
+  await f.atMost(
+    { writers: 1, checks: 0 },
+    () =>
+      f.sessions.heartbeatRunner(f.source, {
+        ...f.presence,
+        machine: { ...f.presence.machine, hostname: 'renamed' },
+      }),
+    'a changed presence',
+  );
+  f.advance(15_000);
+  await f.atMost(
+    { writers: 1, checks: 0 },
+    async () => assert.equal((await f.poll()).reason, 'no_candidates'),
+    'the same decision refreshed after 15 s',
   );
   for (let i = 0; i < 2; i++) await f.sessions.authenticate(await f.leased());
   // A healthy pass decides every subject on a snapshot and records nothing.
@@ -400,19 +416,22 @@ async function rented(t: TestContext) {
   });
   const managed = await sessions.authenticateManaged(enrolled.controlToken);
   const runnerId = `managed-${allocation.id}`;
-  await sessions.heartbeatRunner(managed, {
-    runnerId,
-    machine: { hostname: runnerId, system: 'Linux', architecture: 'x64' },
-    platforms: [hostedCodexPlatform],
-    capabilities: [...hostedCodexCapabilities],
-    capacity: 1,
-  });
+  const beat = async (hostname = runnerId) =>
+    await sessions.heartbeatRunner(managed, {
+      runnerId,
+      machine: { hostname, system: 'Linux', architecture: 'x64' },
+      platforms: [hostedCodexPlatform],
+      capabilities: [...hostedCodexCapabilities],
+      capacity: 1,
+    });
+  await beat();
   return {
     ...f,
     sessions,
     caller,
     target,
     handle,
+    beat,
     poll: async () =>
       await sessions.lease(managed, {
         runnerId,
@@ -427,7 +446,7 @@ async function rented(t: TestContext) {
   };
 }
 
-test('a rented machine’s idle poll stays within its lock budget', async (t) => {
+test('a rented machine’s idle poll and presence stay within their lock budget', async (t) => {
   const f = await rented(t);
   // Its work was done another way, so the machine finds none.
   await f.handle.transition(f.caller, {
@@ -437,10 +456,22 @@ test('a rented machine’s idle poll stays within its lock budget', async (t) =>
     requestId: request(),
   });
   assert.equal((await f.poll()).reason, 'no_candidates');
-  // The managed pre-read, then the lease that records the same decision.
+  // The managed pre-read and the lease, both on snapshots: the decision is the same.
   await f.atMost(
-    { writers: 2, checks: 0 },
+    { writers: 0, checks: 0 },
     async () => assert.equal((await f.poll()).reason, 'no_candidates'),
     'an idle managed poll',
   );
+  // A changed presence runs again in a writer, which checks the machine's binding again too.
+  const bindings = (
+    f.sessions as unknown as { managed: { heartbeat(...args: unknown[]): Promise<unknown> } }
+  ).managed;
+  const checked: boolean[] = [];
+  const heartbeat = bindings.heartbeat.bind(bindings);
+  t.mock.method(bindings, 'heartbeat', async (...args: unknown[]) => {
+    checked.push(!f.state.readScope);
+    return await heartbeat(...args);
+  });
+  await f.atMost({ writers: 1, checks: 0 }, () => f.beat('renamed'), 'a changed managed presence');
+  assert.deepEqual(checked, [false, true], 'on the snapshot, then in the writer');
 });
