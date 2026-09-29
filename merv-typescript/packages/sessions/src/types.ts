@@ -257,9 +257,13 @@ export type StatusSection = (
 export interface Sessions {
   /** Server-only admission. */
   readonly serviceWork: ServiceWork;
-  readonly statusSections: ReadonlyMap<string, StatusSection>;
   /** Adds a section to `system.status` under `key`, one plugin per key, until disposed. */
   contributeStatus(key: string, section: StatusSection): () => void;
+  /** Every contributed section, read in parallel and keyed as contributed. */
+  statusSections(
+    caller: Caller,
+    project: SessionsProjectStatus | null,
+  ): Promise<Record<string, unknown>>;
   registerManagedValidator(validator: ManagedRunnerValidator): () => void;
   ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
   /** `projectId`: the runner's selected project, refused unless it is the binding's. */

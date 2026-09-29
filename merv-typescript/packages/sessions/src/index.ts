@@ -383,7 +383,7 @@ export class LeasedSessions implements Sessions {
   private dispatcher!: SessionDispatch;
   private board!: SessionRunning;
   serviceWork!: SessionServiceWork;
-  readonly statusSections = new Map<string, StatusSection>();
+  private readonly sections = new Map<string, StatusSection>();
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   private managed!: ManagedRunnerBindings;
@@ -2134,11 +2134,17 @@ export class LeasedSessions implements Sessions {
     return this.managed.registerValidator(validator);
   }
   contributeStatus(key: string, section: StatusSection): () => void {
-    check(!this.statusSections.has(key), 'status_section_registered', `${key} is taken`, 409);
-    this.statusSections.set(key, section);
+    check(!this.sections.has(key), 'status_section_registered', `${key} is taken`, 409);
+    this.sections.set(key, section);
     return () => {
-      if (this.statusSections.get(key) === section) this.statusSections.delete(key);
+      if (this.sections.get(key) === section) this.sections.delete(key);
     };
+  }
+  async statusSections(...view: Parameters<StatusSection>): Promise<Record<string, unknown>> {
+    const read = await Promise.all(
+      [...this.sections].map(async ([key, section]) => [key, await section(...view)] as const),
+    );
+    return Object.fromEntries(read.filter(([, value]) => value !== undefined));
   }
   async ensureManagedEnrollment(
     input: ManagedEnrollmentInput,

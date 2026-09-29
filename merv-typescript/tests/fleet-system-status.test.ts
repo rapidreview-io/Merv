@@ -26,8 +26,9 @@ async function status(t: TestContext) {
   const listed: number[] = [];
   const retried: unknown[] = [];
   const sessions = {
-    statusSections: new Map(),
+    sections: new Map(),
     contributeStatus: LeasedSessions.prototype.contributeStatus,
+    statusSections: LeasedSessions.prototype.statusSections,
     registerManagedValidator: () => () => undefined,
     projectStatus: async () => ({
       observedAt: 'now',

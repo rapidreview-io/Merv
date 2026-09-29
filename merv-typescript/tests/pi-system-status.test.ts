@@ -79,7 +79,7 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
         truncated: false,
       };
     },
-    statusSections: new Map(),
+    statusSections: async () => ({}),
   } as unknown as Sessions;
   const result = await systemStatus(caller, sessions);
   assert.equal(result.scope, 'project');
@@ -118,7 +118,7 @@ test('system.status is a read-only conversation tool and project access is check
       queueTotal: 0,
     }),
     stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
-    statusSections: new Map(),
+    statusSections: async () => ({}),
   } as unknown as Sessions;
   sessionsToolsPlugin.apply({
     tools,

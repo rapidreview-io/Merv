@@ -1,20 +1,8 @@
 import type { Caller } from '@merv/contracts';
-import type { StatusSection, Sessions } from './types.js';
+import type { Sessions } from './types.js';
 
 /** Provider/runner diagnostics can embed private endpoints; a status overview never needs one. */
 const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitted]');
-
-/** Each contributed section, read in parallel and keyed as contributed; undefined is left out. */
-const contributed = async (sessions: Sessions, ...view: Parameters<StatusSection>) =>
-  Object.fromEntries(
-    (
-      await Promise.all(
-        [...sessions.statusSections].map(
-          async ([key, read]) => [key, await read(...view)] as const,
-        ),
-      )
-    ).filter(([, value]) => value !== undefined),
-  );
 
 /** A compact operational read. Sessions enforces the caller's authority for each view; other
  * plugins' sections follow `session`, or `workers` in the project view. */
@@ -38,14 +26,14 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
         closeReason: session.closeReason,
         outcome: session.outcome ?? null,
       },
-      ...(await contributed(sessions, caller, null)),
+      ...(await sessions.statusSections(caller, null)),
     };
   }
   const [project, blockers] = await Promise.all([
     sessions.projectStatus(caller),
     sessions.stuck(caller),
   ]);
-  const sections = await contributed(sessions, caller, project);
+  const sections = await sessions.statusSections(caller, project);
   return {
     scope: 'project' as const,
     projectId: caller.projectId,
