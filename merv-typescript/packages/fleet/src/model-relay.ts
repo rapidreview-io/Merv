@@ -1,6 +1,11 @@
 import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ModelRelayConfig, ModelRelayFailure, ModelRelayGrant } from './types.js';
+import type {
+  ModelRelayConfig,
+  ModelRelayFailure,
+  ModelRelayGrant,
+  ModelRelayHandle,
+} from './types.js';
 
 const responsesUrl = 'https://api.openai.com/v1/responses';
 
@@ -114,7 +119,11 @@ async function writeChunk(
 }
 
 /** Streams a worker's Responses call upstream under the provider key the worker never holds. */
-export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R = unknown> {
+export class ModelRelay<
+  G extends ModelRelayGrant,
+  N extends string = string,
+  R = unknown,
+> implements ModelRelayHandle {
   private readonly options: Required<
     Pick<
       ModelRelayConfig<G, N, R>,

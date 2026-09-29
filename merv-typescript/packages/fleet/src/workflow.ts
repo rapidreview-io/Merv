@@ -776,7 +776,14 @@ export const fleetWorkflowPlugin = {
         providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
         dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       });
-      ctx.effect(() => ctx.api.mountModelRelay('/codex-model', relay));
+      ctx.effect(() => {
+        const model = ctx.fleet.modelRelay(relay);
+        const unmount = ctx.api.mount('/codex-model', model.handle, { public: true });
+        return () => {
+          unmount();
+          model.close();
+        };
+      });
       // A person's own daily limit: only they, signed in, read or change it, never an agent.
       const person = (caller: Caller) => {
         check(

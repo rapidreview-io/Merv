@@ -33,14 +33,11 @@ import type {
   ApiRequest,
   Tools,
   ToolInvocation,
-  ModelRelayConfig,
-  ModelRelayGrant,
   MountHandler,
   MountOptions,
   SessionApiProvider,
   CodeApiProvider,
 } from './types.js';
-import { ModelRelay } from './model-relay.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
 import { githubCallback, githubRequest } from './code-github.js';
@@ -603,19 +600,6 @@ export class ApiServer {
     this.credentials.set(namespace, registered);
     return () => {
       if (this.credentials.get(namespace) === registered) this.credentials.delete(namespace);
-    };
-  }
-
-  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
-    prefix: string,
-    config: ModelRelayConfig<G, N, R>,
-  ): () => void {
-    const relay = new ModelRelay(config);
-    // The relay authenticates its own bearers and answers 404 off its one route.
-    const unmount = this.mount(prefix, relay.handle, { public: true });
-    return () => {
-      unmount();
-      relay.close();
     };
   }
 

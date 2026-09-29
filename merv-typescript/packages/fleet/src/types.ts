@@ -1,4 +1,5 @@
 import type { Caller, DelegationSource, Transaction } from '@merv/contracts';
+import type { MountHandler } from '@merv/api/types';
 import type { SandboxRuntimeHandle, SandboxRuntimeOffer } from '@merv/sandboxes/types';
 
 export type FleetPhase =
@@ -97,6 +98,93 @@ export interface FleetOwner {
   /** finished means all required capture/checkpoint work has been retained. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
 }
+/** What a worker's model calls may do, read again about once a second while one streams. */
+export interface ModelRelayGrant {
+  id: string;
+  model: string;
+  expiresAt: string;
+}
+export interface ModelRelayFailure<E extends string = string> {
+  event: E;
+  phase: 'request' | 'upstream' | 'stream';
+  /** The code the worker was answered with, such as relay_timeout or upstream_failed. */
+  code: string;
+  model: string;
+  elapsedMs: number;
+  upstreamHttpStatus?: number;
+}
+/** One finished model call's tokens, for spend per model; it names no person or conversation. */
+export interface ModelRelayUsage<E extends string = string> {
+  event: E;
+  model: string;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+/** A provider terminal frame, without its text, tool arguments, identifiers or raw reason. */
+export interface ModelRelayTerminal<E extends string = string> {
+  event: E;
+  model: string;
+  status: 'completed' | 'incomplete' | 'failed';
+  incompleteReason: 'max_output_tokens' | 'content_filter' | 'other' | null;
+  elapsedMs: number;
+}
+/**
+ * A relay that holds the provider key for the workers Fleet launches, which hold none
+ * (model-relay.ts). A feature
+ * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
+ * what the relay sets in them, and the lane that allows one call in flight.
+ */
+export interface ModelRelayConfig<
+  G extends ModelRelayGrant,
+  N extends string = string,
+  R = unknown,
+> {
+  /** Names the records, `${name}_relay_usage`, `${name}_relay_failure` and `${name}_relay_terminal`. */
+  name: N;
+  route: string;
+  token: RegExp;
+  enabled?: boolean;
+  providerKey: () => string | Promise<string>;
+  authority?: {
+    authorize(token: string): Promise<unknown>;
+    validate(grant: G): Promise<void>;
+  };
+  /** Throws for a grant the relay must not honour. */
+  grant(raw: unknown): G;
+  /** The body sent upstream, with the relay's own settings, or null to refuse the request. */
+  payload(raw: unknown, grant: G): Record<string, unknown> | null;
+  lane(grant: G): string;
+  fetchImpl?: typeof fetch;
+  maxRequestBytes: number;
+  maxResponseBytes?: number;
+  totalTimeoutMs: number;
+  idleTimeoutMs?: number;
+  /** For calls whose effort is not `none`, which may reason in silence. */
+  reasoningIdleTimeoutMs?: number;
+  maxConcurrent?: number;
+  maxRequestsPerGrant?: number;
+  maxGrantEntries?: number;
+  onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
+  onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
+  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
+   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
+   *  one. The charge stands for a call that never finishes. */
+  reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
+  /** A finished call's usage, with what `reserve` returned for it. */
+  onUsage?: (
+    record: ModelRelayUsage<`${N}_relay_usage`>,
+    grant: G,
+    reserved: R,
+  ) => void | Promise<void>;
+}
+/** A model relay: its HTTP handler, which answers 404 off its one route and authenticates its own
+ *  bearers, so its owner mounts it public; and close(), which ends the calls it is streaming. */
+export interface ModelRelayHandle {
+  readonly handle: MountHandler;
+  close(): void;
+}
 export interface Fleet {
   /** Look again now, not at the next tick, at everything not yet running steadily (requests,
    * starts, stops). Safe at any time, even inside a transaction; a no-op until the first full
@@ -130,6 +218,10 @@ export interface Fleet {
   /** Sessions must call this inside the same transaction that enrolls or claims work. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;
   tick(): Promise<void>;
+  /** A model relay for workers that hold no provider key; its owner mounts and closes it. */
+  modelRelay<G extends ModelRelayGrant, N extends string, R>(
+    config: ModelRelayConfig<G, N, R>,
+  ): ModelRelayHandle;
 }
 declare module 'cordis' {
   interface Context {

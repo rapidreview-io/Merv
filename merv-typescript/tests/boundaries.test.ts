@@ -463,10 +463,11 @@ function assertComponentReferences(
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           (!['node:http', 'node:https', 'express', 'fastify'].includes(specifier) ||
-            (owner === 'pi' &&
-              specifier === 'node:http' &&
+            // Pi's worker routes and Fleet's model relay name the request types their handlers take.
+            (specifier === 'node:http' &&
               typeOnly &&
-              path.split(sep).at(-1) === 'api.ts')),
+              ((owner === 'pi' && path.split(sep).at(-1) === 'api.ts') ||
+                (owner === 'fleet' && path.split(sep).at(-1) === 'model-relay.ts')))),
         `${path} embeds an API transport`,
       );
     }

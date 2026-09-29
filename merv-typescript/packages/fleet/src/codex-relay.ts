@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { check, sessionSecretPattern, type State } from '@merv/contracts';
-import type { ModelRelayConfig } from '@merv/api/types';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
+import type { ModelRelayConfig } from './types.js';
 
 /** Published migration text is immutable after release. */
 export const usageMigration = {

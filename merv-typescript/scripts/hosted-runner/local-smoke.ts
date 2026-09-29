@@ -143,7 +143,7 @@ try {
     providerKey: () => modelApiKey,
     dailyTokensPerPerson: 5_000_000,
   });
-  app.ctx.api.mountModelRelay('/codex-model', relay);
+  app.ctx.api.mount('/codex-model', app.ctx.fleet.modelRelay(relay).handle, { public: true });
   const port = new URL(app.ctx.api.url!).port;
   const image = (
     await docker(['image', 'inspect', '--format', '{{.Id}}', 'merv-hosted-codex:acceptance'])

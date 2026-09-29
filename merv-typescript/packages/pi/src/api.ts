@@ -3,7 +3,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
 import type { PiApiProvider } from '@merv/api/pi';
-import { piModelRelay } from './relay.js';
 import type { PiRuntime } from './types.js';
 
 function json(res: ServerResponse, status: number, value: unknown): void {
@@ -228,30 +227,17 @@ export const piApiPlugin = {
   inject: ['pi', 'api'],
   apply(ctx: Context) {
     const http = new PiHttp(ctx.pi);
-    const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
     ctx.effect(() => () => http.close());
     ctx.effect(() => ctx.api.registerPi(http));
     ctx.effect(() => ctx.api.mount('/pi-worker', http.worker, { public: true }));
-    ctx.effect(() =>
-      ctx.api.mountModelRelay(
-        '/pi-model',
-        piModelRelay({
-          enabled: ctx.pi.config.enabled,
-          models: ctx.pi.config.models,
-          providerKey: () => process.env[ctx.pi.config.modelApiKeyEnv] ?? '',
-          authority: {
-            authorize: (token) => ctx.pi.authorizeModel(token),
-            validate: (grant) => ctx.pi.validateModel(grant),
-          },
-          onFailure: log,
-          reserve: (grant, body) => ctx.pi.reserveModel(grant, body),
-          onUsage: async (record, grant, reserved) => {
-            log(record);
-            await ctx.pi.settleModel(record, grant, reserved);
-          },
-        }),
-      ),
-    );
+    ctx.effect(() => {
+      const relay = ctx.pi.modelRelay();
+      const unmount = ctx.api.mount('/pi-model', relay.handle, { public: true });
+      return () => {
+        unmount();
+        relay.close();
+      };
+    });
   },
 };
 export default piApiPlugin;

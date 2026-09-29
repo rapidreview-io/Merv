@@ -161,86 +161,6 @@ export interface ApiCredential {
   authenticate?(token: string): Promise<Caller>;
 }
 
-/** What a worker's model calls may do, read again about once a second while one streams. */
-export interface ModelRelayGrant {
-  id: string;
-  model: string;
-  expiresAt: string;
-}
-export interface ModelRelayFailure<E extends string = string> {
-  event: E;
-  phase: 'request' | 'upstream' | 'stream';
-  /** The code the worker was answered with, such as relay_timeout or upstream_failed. */
-  code: string;
-  model: string;
-  elapsedMs: number;
-  upstreamHttpStatus?: number;
-}
-/** One finished model call's tokens, for spend per model; it names no person or conversation. */
-export interface ModelRelayUsage<E extends string = string> {
-  event: E;
-  model: string;
-  inputTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
-  reasoningTokens: number;
-}
-/** A provider terminal frame, without its text, tool arguments, identifiers or raw reason. */
-export interface ModelRelayTerminal<E extends string = string> {
-  event: E;
-  model: string;
-  status: 'completed' | 'incomplete' | 'failed';
-  incompleteReason: 'max_output_tokens' | 'content_filter' | 'other' | null;
-  elapsedMs: number;
-}
-/**
- * A relay that holds the provider key for workers that hold none (model-relay.ts). A feature
- * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
- * what the relay sets in them, and the lane that allows one call in flight.
- */
-export interface ModelRelayConfig<
-  G extends ModelRelayGrant,
-  N extends string = string,
-  R = unknown,
-> {
-  /** Names the records, `${name}_relay_usage`, `${name}_relay_failure` and `${name}_relay_terminal`. */
-  name: N;
-  route: string;
-  token: RegExp;
-  enabled?: boolean;
-  providerKey: () => string | Promise<string>;
-  authority?: {
-    authorize(token: string): Promise<unknown>;
-    validate(grant: G): Promise<void>;
-  };
-  /** Throws for a grant the relay must not honour. */
-  grant(raw: unknown): G;
-  /** The body sent upstream, with the relay's own settings, or null to refuse the request. */
-  payload(raw: unknown, grant: G): Record<string, unknown> | null;
-  lane(grant: G): string;
-  fetchImpl?: typeof fetch;
-  maxRequestBytes: number;
-  maxResponseBytes?: number;
-  totalTimeoutMs: number;
-  idleTimeoutMs?: number;
-  /** For calls whose effort is not `none`, which may reason in silence. */
-  reasoningIdleTimeoutMs?: number;
-  maxConcurrent?: number;
-  maxRequestsPerGrant?: number;
-  maxGrantEntries?: number;
-  onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
-  onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
-  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
-   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
-   *  one. The charge stands for a call that never finishes. */
-  reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
-  /** A finished call's usage, with what `reserve` returned for it. */
-  onUsage?: (
-    record: ModelRelayUsage<`${N}_relay_usage`>,
-    grant: G,
-    reserved: R,
-  ) => void | Promise<void>;
-}
 export interface Api {
   readonly url?: string;
   start(): Promise<string>;
@@ -251,11 +171,6 @@ export interface Api {
   /** Authenticates the bearers of one namespace, `/^[a-z]+_$/` but never `mk_` (409 when it is
    *  taken). While a namespace is unregistered, its bearers get 503 on authenticated routes. */
   credential(namespace: `${string}_`, credential: ApiCredential): () => void;
-  /** Mounts a model relay; the disposer withdraws it and ends the calls it is streaming. */
-  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
-    prefix: string,
-    config: ModelRelayConfig<G, N, R>,
-  ): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;
   registerPi(provider: import('./pi.js').PiApiProvider): () => void;

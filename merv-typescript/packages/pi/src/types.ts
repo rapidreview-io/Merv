@@ -1,4 +1,5 @@
 import type { Caller, Data, DelegationSource } from '@merv/contracts';
+import type { ModelRelayHandle } from '@merv/fleet/types';
 import type { PiModelConfig } from './schema.js';
 
 export type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
@@ -411,15 +412,9 @@ export interface PiRuntime extends Pi {
   progress(token: string, input: unknown): Promise<{ accepted: true }>;
   complete(token: string, input: unknown): Promise<{ saved: boolean }>;
   fail(token: string, input: unknown): Promise<{ interrupted: true }>;
-  authorizeModel(token: string): Promise<PiRelayGrant>;
-  validateModel(grant: PiRelayGrant): Promise<void>;
-  /** Charges a call to its person's Agent tokens today and returns the charge; refuses at the ceiling. */
-  reserveModel(grant: PiRelayGrant, body: Record<string, unknown>): Promise<PiModelCharge>;
-  settleModel(
-    usage: { inputTokens: number; outputTokens: number },
-    grant: PiRelayGrant,
-    reserved: PiModelCharge,
-  ): Promise<void>;
+  /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it
+   *  public and closes it with the mount. */
+  modelRelay(): ModelRelayHandle;
 }
 declare module 'cordis' {
   interface Context {

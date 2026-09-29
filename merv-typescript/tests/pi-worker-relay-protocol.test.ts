@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
-import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import type { Scope } from '@merv/contracts';
@@ -1210,30 +1210,31 @@ test('API shutdown ends an open relay stream after its drain window, as a discon
   const failures: PiRelayFailureRecord[] = [];
   const signals: AbortSignal[] = [];
   const api = new ApiServer({} as Scope, {} as Tools, { drainMs: 200 });
-  const unmount = api.mountModelRelay(
-    '/pi-model',
-    piModelRelay({
-      enabled: true,
-      models: [{ id: 'test-model', effort: 'none' }],
-      providerKey: () => 'private-provider-key',
-      authority: { authorize: async () => grant(), validate: async () => {} },
-      fetchImpl: async (_url, init) => {
-        signals.push(init!.signal!);
-        return new Response(
-          new ReadableStream({
-            start(stream) {
-              stream.enqueue(new TextEncoder().encode('data: first\n\n'));
-            },
-          }),
-          { headers: { 'content-type': 'text/event-stream' } },
-        );
-      },
-      onFailure: (record) => {
-        failures.push(record);
-      },
-    }),
-  );
-  t.after(unmount);
+  const relay = piRelay({
+    enabled: true,
+    models: [{ id: 'test-model', effort: 'none' }],
+    providerKey: () => 'private-provider-key',
+    authority: { authorize: async () => grant(), validate: async () => {} },
+    fetchImpl: async (_url, init) => {
+      signals.push(init!.signal!);
+      return new Response(
+        new ReadableStream({
+          start(stream) {
+            stream.enqueue(new TextEncoder().encode('data: first\n\n'));
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    },
+    onFailure: (record) => {
+      failures.push(record);
+    },
+  });
+  const unmount = api.mount('/pi-model', relay.handle, { public: true });
+  t.after(() => {
+    unmount();
+    relay.close();
+  });
   const url = await api.start();
   const response = await fetch(`${url}/pi-model/responses`, {
     method: 'POST',

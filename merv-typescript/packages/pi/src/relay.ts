@@ -1,4 +1,4 @@
-import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/api/types';
+import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
 import {

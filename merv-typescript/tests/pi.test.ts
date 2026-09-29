@@ -16,7 +16,7 @@ import {
   type Role,
 } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { CredentialStore, tokenDigest } from '../packages/identity/src/credentials.js';

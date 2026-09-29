@@ -19,7 +19,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
-import type { Fleet, FleetAllocation, FleetOwner } from '@merv/fleet/types';
+import type { Fleet, FleetAllocation, FleetOwner, ModelRelayHandle } from '@merv/fleet/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import {
   commandInput,
@@ -43,7 +43,7 @@ import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
-import { piTitle } from './relay.js';
+import { piModelRelay, piTitle } from './relay.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
 import { piInstructions, turnNotes } from './prompt.js';
@@ -2264,6 +2264,29 @@ export class PiService implements Pi, FleetOwner {
     });
     this.streams.nudge(id);
     return this.snapshot(caller, id);
+  }
+
+  /** The relay for this Pi's workers' model calls, which Fleet builds: its owner mounts it and
+   *  closes it with the mount. Its failure and usage records go to stderr. */
+  modelRelay(): ModelRelayHandle {
+    const log = (record: object) => void process.stderr.write(`${JSON.stringify(record)}\n`);
+    return this.fleet.modelRelay(
+      piModelRelay({
+        enabled: this.config.enabled,
+        models: this.config.models,
+        providerKey: () => process.env[this.config.modelApiKeyEnv] ?? '',
+        authority: {
+          authorize: (token) => this.authorizeModel(token),
+          validate: (grant) => this.validateModel(grant),
+        },
+        onFailure: log,
+        reserve: (grant, body) => this.reserveModel(grant, body),
+        onUsage: async (record, grant, reserved) => {
+          log(record);
+          await this.settleModel(record, grant, reserved);
+        },
+      }),
+    );
   }
 
   async authorizeModel(token: string) {

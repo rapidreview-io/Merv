@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { createService, MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
-import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   codexModelRelay,
   codexPayload,

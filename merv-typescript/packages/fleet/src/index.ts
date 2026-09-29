@@ -17,6 +17,7 @@ import {
 } from '@merv/contracts';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
 import { migration } from './schema.js';
+import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
   FleetAllocation,
@@ -25,6 +26,9 @@ import type {
   FleetIntent,
   FleetOwner,
   FleetRequest,
+  ModelRelayConfig,
+  ModelRelayGrant,
+  ModelRelayHandle,
 } from './types.js';
 export type * from './types.js';
 
@@ -487,6 +491,11 @@ export class FleetService implements Fleet {
   }
   async tick(): Promise<void> {
     await this.run(true);
+  }
+  modelRelay<G extends ModelRelayGrant, N extends string, R>(
+    config: ModelRelayConfig<G, N, R>,
+  ): ModelRelayHandle {
+    return new ModelRelay(config);
   }
   /** Only a full pass looks at steady machines; true while anything is not steady. */
   private run(full: boolean): Promise<boolean> {

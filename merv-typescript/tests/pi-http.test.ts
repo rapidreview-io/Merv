@@ -4,7 +4,7 @@ import { MervError, type Caller, type Principal, type Scope } from '@merv/contra
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { ModelRelay } from '../packages/api/src/model-relay.js';
+import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 import { PiStreams } from '../packages/pi/src/stream.js';
 import type { PiService } from '../packages/pi/src/service.js';
