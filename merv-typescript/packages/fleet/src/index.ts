@@ -21,7 +21,6 @@ import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
   FleetAllocation,
-  FleetConfig,
   FleetError,
   FleetIntent,
   FleetOwner,
@@ -50,17 +49,23 @@ const requestSchema = z
   .strict();
 export const fleetConfig = z
   .object({
+    /** Deployment opt-in; keep false until the actual provider gates pass. */
     enabled: z.boolean().default(false),
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
+    /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects. */
     projectLimits: z.record(token, z.number().int().min(1).max(64)).default({}),
+    /** How often running machines are checked; one starting or stopping is checked each second. */
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
     allocationTimeoutSeconds: z.number().int().min(60).max(86_400).default(86_400),
+    /** MERV_FLEET_HOST_PROJECT_ID: the connected project an owner that rents in the host rents
+     * through. Limits, events and listing stay with the project the work is for. */
     hostProjectId: token.optional(),
     /** What one person's machines may cost in a UTC day, at their offers' prices. */
     dailyUsdPerPerson: z.number().positive().max(100_000).optional(),
   })
   .strict();
+export type FleetConfig = z.input<typeof fleetConfig>;
 type Row = { data_json: string };
 const decode = (row: Row): FleetAllocation => JSON.parse(row.data_json);
 const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 'released';
@@ -533,6 +538,7 @@ export class FleetService implements Fleet {
     }
     return owner.valid(a, tx);
   }
+  /** A full pass now: the test hook, not part of `Fleet`. */
   async tick(): Promise<void> {
     await this.run(true);
   }
