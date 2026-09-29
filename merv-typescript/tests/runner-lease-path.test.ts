@@ -135,13 +135,17 @@ test('a final lease refusal completes that request and later profiles lease on t
 test('a kept request for a removed profile does not stop the other profiles', async (t) => {
   const kept = offer('kept');
   const fake = server((body) => (body.platform.name === 'gone' ? kept : null));
-  const f = machine(t, [node('b')], fake.fetch);
+  // Each tick comes 5 s after the last, past b's back-off after its decline.
+  let now = Date.now();
+  const f = machine(t, [node('b')], fake.fetch, { clock: () => now });
   const ledger = f.ledger();
   const pending = ledger.request({ name: 'gone', harness: 'command' });
   ledger.close();
   const runner = f.make();
   await runner.start();
+  now += 5_000;
   await runner.tick();
+  now += 5_000;
   await runner.tick();
   assert.equal(fake.leases('b').length, 3, 'b asks on every tick');
   assert.deepEqual(

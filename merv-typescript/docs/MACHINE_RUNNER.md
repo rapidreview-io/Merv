@@ -107,6 +107,18 @@ counted outcome. A refusal that asking again cannot change (any 4xx except 401,
 their status) is that call's answer: it is recorded once and never replayed, so a
 session the server no longer knows is stopped once and settled.
 
+An idle runner costs the server little. Presence is sent when it changes, 15 s
+after the last accepted one (the server holds it fresh for 45 s) and at once
+after a failure, so remote settings apply within 15 s. A profile whose lease was
+declined is not asked for again for 5 s; a request whose answer was lost is
+always replayed. Each live session is read every tick, but heartbeated only when
+that would slide its expiry by more than a minute, and its guardian's deadline is
+pushed only when the session's has moved on by more than a minute, so a launch
+that activates late is extended on the first tick that sees it active. A managed
+runner's read does not reconcile its session on the server, so it learns of a
+close that reconciling decides (an expiry, or a workflow moving on after a
+handoff) up to about a minute later than a heartbeat every tick would.
+
 The runner sets `MERV_USAGE_FILE` for each launched process: the path of `usage.json` in
 that launch's private run directory, cleared before the process starts. A profile's
 wrapper, or the process itself, may write one JSON object there:

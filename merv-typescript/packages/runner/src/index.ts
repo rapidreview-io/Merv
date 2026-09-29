@@ -236,6 +236,9 @@ export class MachineRunner implements Runner {
    */
   private readonly drivers = new Map<string, WorkspaceDriver>();
   private lastDeclined?: string;
+  /** The last presence the server accepted, and when; a declined profile's last decline. */
+  private presented?: [body: string, at: number];
+  private readonly declinedAt = new Map<string, number>();
   private profiles: RunnerProfile[];
   private appliedVersion = 0;
   private readonly clock: () => number;
@@ -403,17 +406,24 @@ export class MachineRunner implements Runner {
       ? []
       : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
-    const heartbeat = () =>
-      this.client.presence({
+    // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
+    const heartbeat = async () => {
+      const body = {
         runnerId: this.ledger.runnerId,
         machine: { hostname: hostname(), system: process.platform, architecture: process.arch },
         platforms: this.profiles.map(platformOf),
         capacity: this.assigned() ? 0 : this.capacity(),
         appliedVersion: this.appliedVersion,
         ...(capabilities.length ? { capabilities } : {}),
-      });
+      };
+      const key = JSON.stringify(body);
+      if (this.presented?.[0] === key && this.clock() - this.presented[1] < 15_000) return;
+      const reply = await this.client.presence(body);
+      this.presented = [key, this.clock()];
+      return reply;
+    };
     const presence = await heartbeat();
-    if (presence.desiredVersion !== this.appliedVersion) {
+    if (presence && presence.desiredVersion !== this.appliedVersion) {
       this.profiles = this.config.profiles.map((profile) => {
         const desired = presence.desiredSettings.platforms.find(
           (item) => item.name === profile.name,
@@ -442,6 +452,7 @@ export class MachineRunner implements Runner {
       await this.advertise();
     } catch (error) {
       this.lastError = diagnostic(error);
+      this.presented = undefined; // the next cycle asks again at once
       if (error instanceof RunnerControlError && [401, 403].includes(error.status)) {
         this.state = 'unauthorized';
         return this.stopOwned();
@@ -481,6 +492,8 @@ export class MachineRunner implements Runner {
         live.length >= this.capacity() ||
         live.filter((record) => record.metadata.platform === profile.name).length >=
           profile.parallelism ||
+        // A decline is answered for this profile for 5 s; kept requests above are always replayed.
+        this.clock() - (this.declinedAt.get(profile.name) ?? -Infinity) < 5_000 ||
         this.ledger.pendingRequests().some((p) => p.platform.name === profile.name)
       )
         continue;
@@ -528,6 +541,7 @@ export class MachineRunner implements Runner {
       const session = result.session;
       if (session === null) {
         this.lastDeclined = result.reason;
+        this.declinedAt.set(pending.platform.name, this.clock());
         this.ledger.completeRequest(pending.platform.name, pending.requestId);
         return;
       }
@@ -717,10 +731,16 @@ export class MachineRunner implements Runner {
       return false;
     }
     if (session.status === 'active') {
-      session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
-      await this.host.extendDeadline(record.id, this.deadline(session));
-      const stored = view(session);
-      await this.reconcileCodeCommands(this.save(record.id, { session: stored }), stored);
+      // Each only when it moves something by over a minute, read afresh from this tick's GET: a
+      // heartbeat slides the session to min(now + 4 h, hardDeadline); the guardian follows it.
+      const slid = Math.min(this.clock() + 4 * 3_600_000, Date.parse(session.hardDeadline));
+      if (slid - Date.parse(session.expiresAt) > 60_000) {
+        session = await this.client.heartbeat(record.sessionId, this.ledger.runnerId);
+        record = this.save(record.id, { session: view(session) });
+      }
+      if (this.deadline(session) > record.deadline + 60_000)
+        await this.host.extendDeadline(record.id, this.deadline(session));
+      await this.reconcileCodeCommands(record, view(session));
     }
     return false;
   }
