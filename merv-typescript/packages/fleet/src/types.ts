@@ -25,6 +25,8 @@ export interface FleetAllocation {
   profileId: string;
   /** Who the machine is for, as Pi and Fleet key a person: what its day's compute counts toward. */
   person?: string;
+  /** The offer's hourly price when Fleet reserved it under a USD cap: what its time costs `person`. */
+  usdPerHour?: number;
   /** One allocation never changes epoch or rents a successor machine. */
   epoch: number;
   phase: FleetPhase;
@@ -45,7 +47,8 @@ export interface FleetAllocation {
   error: FleetError | null;
 }
 /** runtime_unavailable: an ambiguous failure being retried with the same keys.
- * runtime_refused: the service refused before any machine could exist, so the slot was freed. */
+ * runtime_refused: the service refused before any machine could exist, so the slot was freed, or
+ * a capped request's offer listed no price for ten minutes. */
 export type FleetError = 'runtime_unavailable' | 'runtime_refused' | 'wallet_refused';
 export interface FleetRequest {
   requestId: string;

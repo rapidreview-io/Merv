@@ -80,12 +80,15 @@ const walletRefused = (error: unknown) =>
     'sandbox_provider_disabled',
     'sandbox_usage_unresolved',
     'sandbox_concurrency_exceeded',
+    'sandbox_storage_cap_exceeded',
   ].includes(error.code);
 /** Provider and owner messages may carry credentials; operators get the finite code only. */
 const report = (event: string, a: FleetAllocation, error: unknown) => {
   const code = error instanceof MervError ? error.code : 'unexpected';
   process.stderr.write(`${JSON.stringify({ event, allocation: a.id, code })}\n`);
 };
+/** How long a capped request waits for its offer to list a price, as after a restart. */
+const unpricedMs = 600_000;
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
@@ -104,6 +107,7 @@ export class FleetService implements Fleet {
   private readonly detached = AsyncResource.bind((fn: () => void) => fn());
   private closed = false;
   private closing?: Promise<void>;
+  private readonly startedAt: number;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -114,6 +118,7 @@ export class FleetService implements Fleet {
     const parsed = fleetConfig.safeParse(config);
     check(parsed.success, 'invalid_fleet_config', 'Fleet configuration is invalid');
     this.config = parsed.data;
+    this.startedAt = clock();
     check(
       !this.config.enabled || runtimes,
       'fleet_runtime_unavailable',
@@ -158,21 +163,25 @@ export class FleetService implements Fleet {
     return this.config.projectLimits[projectId] ?? this.config.projectLimit;
   }
   /**
-   * What a person's machines have cost today (UTC) at their offers' hourly prices, each from its
-   * request to its release (or now). Time in the queue counts, so it errs high.
+   * What a person's machines have cost today (UTC) at the prices stamped when Fleet reserved
+   * them, each from its request to its release (or now). Time in the queue counts, so it errs
+   * high; a request that never had a machine costs nothing. Reads the database only.
    */
   private async spentToday(person: string, sql: Sql): Promise<number> {
     const now = this.clock();
     const day = now - (now % 86_400_000);
+    // A machine of today can be older: a day in the queue, a day of work and a lease to stop.
+    const rows = await sql.all<Row>(
+      "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
+      person,
+      new Date(day - 3 * 86_400_000).toISOString(),
+    );
     let usd = 0;
-    for (const a of await this.all(sql)) {
-      if (a.person !== person) continue;
+    for (const a of rows.map(decode)) {
+      if (!a.runtime) continue;
       const from = Math.max(day, Date.parse(a.createdAt));
       const to = a.phase === 'released' ? Date.parse(a.updatedAt) : now;
-      if (to <= from) continue;
-      const key = this.runtimes?.profiles.find((p) => p.id === a.profileId)?.key;
-      const offer = key ? await this.describe(a.rentedIn ?? a.projectId, key) : null;
-      usd += ((to - from) / 3_600_000) * (offer?.maxHourlyUsd ?? 0);
+      if (to > from) usd += ((to - from) / 3_600_000) * (a.usdPerHour ?? 0);
     }
     return usd;
   }
@@ -509,6 +518,24 @@ export class FleetService implements Fleet {
     const waiting = await this.state.read((sql) => this.all(sql));
     const queued = waiting.filter((a) => a.phase === 'queued');
     if (!queued.length) return;
+    // A capped request is admitted at its offer's price, read once per place and profile before
+    // the writer lock: Sandboxes answers from its cache, or within its client's timeout.
+    const cap = this.config.dailyUsdPerPerson;
+    const capped = (a: FleetAllocation) => !!a.person && cap !== undefined;
+    const offer = (a: FleetAllocation) =>
+      `${a.rentedIn ?? a.projectId} ${this.runtimes!.profiles.find((p) => p.id === a.profileId)?.key}`;
+    const prices = new Map<string, number>();
+    await Promise.all(
+      [...new Set(queued.filter(capped).map(offer))].map(async (key) => {
+        const [place, profile] = key.split(' ');
+        const usd = (await this.describe(place!, profile!).catch(() => null))?.maxHourlyUsd;
+        if (usd !== undefined) prices.set(key, usd);
+      }),
+    );
+    const priced = (a: FleetAllocation) => !capped(a) || prices.has(offer(a));
+    /** An offer that lists no price is withdrawn, or no options read has succeeded since boot. */
+    const unpriced = (a: FleetAllocation) =>
+      !priced(a) && this.clock() - Math.max(Date.parse(a.createdAt), this.startedAt) >= unpricedMs;
     const active = waiting.filter(occupied);
     const projectCount = new Map<string, number>();
     for (const a of active) projectCount.set(a.projectId, (projectCount.get(a.projectId) ?? 0) + 1);
@@ -520,7 +547,7 @@ export class FleetService implements Fleet {
     const hasRoom =
       active.length < this.config.globalLimit &&
       queued.some((a) => (projectCount.get(a.projectId) ?? 0) < this.limit(a.projectId));
-    if (!queued.some(dropped) && !hasRoom) return;
+    if (!queued.some((a) => dropped(a) || unpriced(a)) && !hasRoom) return;
     await this.state.transaction(async (tx) => {
       const allocations = await this.all(tx);
       let count = allocations.filter(occupied).length;
@@ -529,16 +556,22 @@ export class FleetService implements Fleet {
         byProject.set(active.projectId, (byProject.get(active.projectId) ?? 0) + 1);
       for (const a of allocations.filter((a) => a.phase === 'queued')) {
         const before = structuredClone(a);
-        if (dropped(a)) {
+        if (dropped(a) || unpriced(a)) {
+          if (!dropped(a)) {
+            a.error = 'runtime_refused';
+            report('fleet.unpriced', a, new MervError('fleet_unpriced', 'No price is listed'));
+          }
           a.intent = 'stop';
           a.phase = 'released';
         } else if (
+          priced(a) &&
           count < this.config.globalLimit &&
           (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
         ) {
           a.phase = 'provisioning';
           // The machine's time starts here; waiting in the queue does not spend it.
           a.deadlineAt = this.deadline(a.seconds);
+          if (capped(a)) a.usdPerHour = prices.get(offer(a));
           count++;
           byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
         }

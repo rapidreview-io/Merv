@@ -794,37 +794,178 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   await host.close();
 });
 
-test('a person’s machines stop renting once today’s compute is spent; another person’s still rent', async (t) => {
-  const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2 });
+/** A fixture whose owner names the person each request is for: `a_1` is for `person_a`. */
+async function capped(t: TestContext, limits: FleetConfig = {}) {
+  const f = await fixture(t, { globalLimit: 5, projectLimit: 5, dailyUsdPerPerson: 2, ...limits });
   f.unregister();
-  const payers = new Map([
-    ['a', 'person_a'],
-    ['b', 'person_b'],
-  ]);
   f.fleet.registerOwner('workflow', {
     ...f.owner,
-    payer: async (_source, ownerId) => payers.get(ownerId.split('_')[0]!) ?? null,
+    payer: async (_source, ownerId) => (ownerId.startsWith('c_') ? null : `person_${ownerId[0]}`),
   });
-  // One dollar an hour for the one machine this Fleet rents.
-  f.runtimes.describe = async () => ({
-    key: 'standard',
-    vcpu: 1,
-    memoryGiB: 4,
-    diskGB: 8,
-    maxHourlyUsd: 1,
-  });
+  const price = (maxHourlyUsd: number | null) => {
+    f.runtimes.describe = async (_projectId, key) =>
+      maxHourlyUsd === null ? null : { key, vcpu: 1, memoryGiB: 4, diskGB: 8, maxHourlyUsd };
+  };
   const ask = (id: string) =>
     f.fleet.request(f.caller, { requestId: id, owner: { kind: 'workflow', id } });
-  assert.equal((await ask('a_1')).person, 'person_a');
+  const get = (id: string) => f.fleet.inspect(f.caller, id);
+  return { ...f, price, ask, get };
+}
+
+test('a person’s machines stop renting once today’s compute is spent; another person’s still rent', async (t) => {
+  const f = await capped(t);
+  // One dollar an hour for each machine.
+  f.price(1);
+  const first = await f.ask('a_1');
+  assert.equal(first.person, 'person_a');
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).usdPerHour, 1);
   f.advance(2 * 3_600_000);
-  await assert.rejects(ask('a_2'), { code: 'fleet_compute_cap', status: 429 });
-  assert.equal((await ask('b_1')).person, 'person_b');
+  await assert.rejects(f.ask('a_2'), { code: 'fleet_compute_cap', status: 429 });
+  // Released, the machine's hours still count: a new request for the same person is refused.
+  await f.fleet.cancel(f.caller, first.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).phase, 'released');
+  await assert.rejects(f.ask('a_3'), { code: 'fleet_compute_cap', status: 429 });
+  assert.equal((await f.ask('b_1')).person, 'person_b');
   // An owner that names nobody is not counted, nor held back.
-  assert.equal((await ask('c_1')).person, undefined);
+  assert.equal((await f.ask('c_1')).person, undefined);
+});
+
+test('today’s compute counts open machines to now at the price they were reserved at, and never a request without a machine', async (t) => {
+  const f = await capped(t);
+  f.price(1);
+  // Refused before any machine existed: its time costs nothing.
+  f.runtimes.createError = new MervError('sandbox_forbidden', 'The grant has expired', 403);
+  const refused = await f.ask('a_1');
+  await f.fleet.tick();
+  const { error, usdPerHour } = await f.get(refused.id);
+  assert.deepEqual([error, usdPerHour], ['runtime_refused', 1]);
+  f.runtimes.createError = undefined;
+  const open = await f.ask('a_2');
+  await f.fleet.tick();
+  assert.ok((await f.get(open.id)).runtime);
+  // A later price is not what the machine was rented at.
+  f.price(100);
+  f.advance(90 * 60_000);
+  const queued = await f.ask('a_3');
+  f.advance(30 * 60_000);
+  // Two hours of the open machine; the queued request has no machine yet.
+  assert.equal((await f.get(queued.id)).phase, 'queued');
+  await assert.rejects(f.ask('a_4'), { code: 'fleet_compute_cap' });
+  // A new UTC day starts from nothing, though the machine is still open.
+  f.advance(22 * 3_600_000);
+  assert.equal((await f.ask('a_5')).person, 'person_a');
+});
+
+test('a capped request waits for its offer’s price, then is refused ten minutes after Fleet could first read it', async (t) => {
+  const f = await capped(t);
+  const lines: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: string | Uint8Array) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  const unpriced = () => lines.filter((line) => line.includes('fleet.unpriced'));
+  f.price(null);
+  const waiting = await f.ask('a_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(waiting.id)).phase, 'queued');
+  assert.deepEqual(f.runtimes.createKeys, []);
+  // An offer that lists its price admits the request at that price.
+  f.price(0.5);
+  await f.fleet.tick();
+  const admitted = await f.get(waiting.id);
+  assert.deepEqual([admitted.phase, admitted.usdPerHour], ['provisioning', 0.5]);
+  assert.deepEqual(f.runtimes.createKeys, [`${waiting.id}:create`]);
+  // One that never does is refused once ten minutes have passed, and said so once.
+  f.price(null);
+  const refused = await f.ask('a_2');
+  f.advance(599_999);
+  await f.fleet.tick();
+  assert.equal((await f.get(refused.id)).phase, 'queued');
+  f.advance(1);
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const current = await f.get(refused.id);
+  assert.deepEqual(
+    [current.phase, current.intent, current.error, current.runtime],
+    ['released', 'stop', 'runtime_refused', null],
+  );
+  assert.deepEqual(
+    unpriced().map((line) => JSON.parse(line)),
+    [{ event: 'fleet.unpriced', allocation: refused.id, code: 'fleet_unpriced' }],
+  );
+  // After a restart the ten minutes start again: the first options read may not have finished.
+  const late = await f.ask('a_3');
+  let now = Date.parse(late.createdAt) + 900_000;
+  const successor = await createService(
+    new FleetService(
+      f.state,
+      f.scope,
+      f.runtimes,
+      { enabled: true, dailyUsdPerPerson: 2 },
+      () => now,
+    ),
+  );
+  successor.registerOwner('workflow', { ...f.owner, payer: async () => 'person_a' });
+  await successor.tick();
+  assert.equal((await f.get(late.id)).phase, 'queued');
+  now += 600_000;
+  await successor.tick();
+  assert.equal((await f.get(late.id)).error, 'runtime_refused');
+  assert.equal(unpriced().length, 2);
+  await successor.close();
+});
+
+test('prices are read once per place and profile each pass, outside any transaction, and never by a request', async (t) => {
+  const f = await capped(t);
+  f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 600 };
+  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const otherCaller: Caller = {
+    projectId: other.project.id,
+    actorId: other.actor.id,
+    credentialId: other.credential.id,
+  };
+  const reads: string[] = [];
+  f.runtimes.describe = async (projectId, key) => {
+    assert.equal(f.state.ambient, undefined, 'no price is read inside a transaction');
+    reads.push(`${projectId === f.caller.projectId ? 'own' : 'other'} ${key}`);
+    return { key, vcpu: 1, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.1 };
+  };
+  const ask = (
+    caller: Caller,
+    id: string,
+    profile?: string,
+    tx?: Parameters<typeof f.fleet.request>[2],
+  ) => f.fleet.request(caller, { requestId: id, owner: { kind: 'workflow', id }, profile }, tx);
+  await ask(f.caller, 'a_1');
+  await ask(f.caller, 'a_2');
+  await ask(f.caller, 'b_1', 'large');
+  await f.state.transaction((tx) => ask(f.caller, 'b_2', 'large', tx));
+  await ask(otherCaller, 'a_3');
+  assert.deepEqual(reads, [], 'a request reads no price');
+  await f.fleet.tick();
+  assert.deepEqual(reads.toSorted(), ['other standard', 'own large', 'own standard']);
+  assert.deepEqual(
+    (await f.fleet.list(f.caller)).map((a) => [a.phase, a.usdPerHour]),
+    Array.from({ length: 4 }, () => ['provisioning', 0.1]),
+  );
+});
+
+test('a storage cap refusal is a wallet refusal', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.createError = new MervError('sandbox_storage_cap_exceeded', 'Storage is full', 403);
+  const refused = await f.fleet.request(f.caller, input('storage'));
+  await f.fleet.tick();
+  const current = await f.fleet.inspect(f.caller, refused.id);
+  assert.deepEqual([current.phase, current.error], ['released', 'wallet_refused']);
 });
 
 test('the reads every pass makes walk their indexes, not the whole history', async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 1, dailyUsdPerPerson: 20 });
+  f.fleet.registerOwner('paid', { ...f.owner, payer: async () => 'person_7' });
   const template = await f.fleet.request(f.caller, input('template'));
   const plans = await f.state.transaction(async (tx) => {
     await tx.run('SET LOCAL enable_seqscan = off');
@@ -860,11 +1001,9 @@ test('the reads every pass makes walk their indexes, not the whole history', asy
     return {
       open: await plan(() => f.fleet.free(f.caller.projectId, tx)),
       owned: await plan(() => f.fleet.listOwned(f.owner, ['work_7', 'work_4200'])),
-      // The read the spend cap is to make of one person's recent rentals.
-      person: await explain(
-        "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
-        'person_7',
-        '2026-09-01T00:00:00.000Z',
+      // The spend cap's read of one person's recent rentals.
+      person: await plan(() =>
+        f.fleet.request(f.caller, { requestId: 'paid', owner: { kind: 'paid', id: 'x' } }, tx),
       ),
     };
   });
