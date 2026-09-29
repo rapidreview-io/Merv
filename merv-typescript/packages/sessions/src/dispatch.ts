@@ -445,7 +445,7 @@ export class SessionDispatch {
       )
     );
   }
-  private async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
+  async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
     const row = await tx.get<DispatchRow>(
       'SELECT * FROM project_session_dispatch WHERE project_id=?',
       projectId,

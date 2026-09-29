@@ -9,7 +9,7 @@ import { LeasedSessions } from '@merv/sessions';
 import { SessionServiceWork } from '../packages/sessions/src/service-work.js';
 import { openState } from './fixtures/state.js';
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, dispatchByDefault?: boolean) {
   let time = Date.parse('2026-09-21T00:00:00Z');
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
@@ -20,6 +20,7 @@ async function fixture(t: TestContext) {
       clock: () => time,
       sweepIntervalMs: 60_000,
       serviceConcurrency: 1,
+      dispatchByDefault,
     }),
   );
   t.after(async () => {
@@ -72,7 +73,7 @@ async function fixture(t: TestContext) {
   const settle = (value = input, outcome: 'completed' | 'failed' | 'expired' = 'completed') =>
     state.transaction((tx) => sessions.serviceWork.settle(tx, value, outcome));
   const usage = (instanceId?: string) => sessions.usage(caller, instanceId ? { instanceId } : {});
-  await sessions.setDispatch(caller, { enabled: true });
+  if (dispatchByDefault === undefined) await sessions.setDispatch(caller, { enabled: true });
   return {
     state,
     scope,
@@ -101,7 +102,14 @@ test('service reservations and settlements survive every transactional boundary 
     }),
   );
   assert.equal((await f.admit()).admitted, true);
-  const restarted = new SessionServiceWork(f.state, f.scope, f.workflows, f.clock, 1);
+  const restarted = new SessionServiceWork(
+    f.state,
+    f.scope,
+    f.workflows,
+    f.clock,
+    1,
+    async () => true,
+  );
   await restarted.initialize();
   assert.deepEqual(
     await f.admit(),
@@ -215,4 +223,14 @@ test('a sponsor is found through workflow dependencies and remains charged after
     0,
     'a changed closure cannot adopt old shared charges',
   );
+});
+
+test('service admission follows the dispatcher: no dispatch row means dispatchByDefault', async (t) => {
+  const on = await fixture(t, true);
+  assert.equal((await on.admit()).admitted, true);
+  const off = await fixture(t, false);
+  assert.deepEqual(await off.admit(), { admitted: false, reason: 'dispatch_disabled' });
+  await on.sessions.setDispatch(on.caller, { enabled: false });
+  const other = { ...on.input, operationId: 'two' };
+  assert.deepEqual(await on.admit(other), { admitted: false, reason: 'dispatch_disabled' });
 });

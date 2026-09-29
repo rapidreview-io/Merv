@@ -487,6 +487,7 @@ export class LeasedSessions implements Sessions {
         workflows,
         this.clock,
         config.serviceConcurrency,
+        async (projectId, tx) => (await this.dispatcher.dispatch(projectId, tx)).enabled,
       );
       await this.serviceWork.initialize();
       try {
