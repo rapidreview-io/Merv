@@ -260,7 +260,6 @@ export class RunnerClient {
     return result.data as unknown as Session;
   }
   async presence(input: RunnerHeartbeat): Promise<RunnerPresence> {
-    input = { ...input };
     const result = presenceSchema.safeParse(
       (await this.request('/sessions/runners/heartbeat', input))?.runner,
     );
@@ -269,7 +268,6 @@ export class RunnerClient {
     return result.data as unknown as RunnerPresence;
   }
   async lease(input: AutomaticLease): Promise<{ session: Session | null; reason: string }> {
-    input = { ...input };
     const result = leaseSchema.safeParse(await this.request('/sessions/lease', input));
     if (!result.success) throw new RunnerControlError('invalid_control_response', 0);
     const value = result.data;
@@ -352,7 +350,6 @@ export class RunnerClient {
     >,
     hostRef: string,
   ): Promise<CodeCommitCommand | null> {
-    session = structuredClone(session);
     const value = await this.request('/code/commands/next', {
       sessionId: session.id,
       runnerId: session.runnerId,
@@ -379,7 +376,6 @@ export class RunnerClient {
     command: CodeCommitCommand,
     outcome: { receipt: NonNullable<CodeCommandRecord['receipt']> } | { error: string },
   ): Promise<CodeCommandRecord> {
-    ({ command, outcome } = structuredClone({ command, outcome }));
     const input: CodeCommandCompletion = {
       sessionId: command.sessionId,
       runnerId: command.runnerId,
@@ -423,7 +419,6 @@ export class RunnerClient {
     );
   }
   async transportGrant(input: CodeTransportInput): Promise<CodeTransportGrant> {
-    input = structuredClone(input);
     const parsed = codeTransportGrantSchema.safeParse(
       await this.request('/code/transport/grant', input),
     );

@@ -11,10 +11,8 @@ import {
   sessionUsageReportSchema,
   WorkspaceDeferred,
   type CodeCommitCommand,
-  type CodeCommitReceipt,
   type WorkspaceDriver,
   type WorkspaceDriverFactory,
-  type WorkspaceLaunch,
 } from '@merv/contracts';
 import type {
   RunnerPlatform,
@@ -43,19 +41,6 @@ import {
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
 export type * from './types.js';
-
-/** Optional Git command capability; ordinary workspace drivers only own their lifecycle. */
-interface CommitDriver extends WorkspaceDriver {
-  checkpointCommit(launch: WorkspaceLaunch, command: CodeCommitCommand): Promise<CodeCommitReceipt>;
-  pendingCommits(launchId: string): CodeCommitCommand[];
-  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
-  acknowledgeCommit(commandId: string): void;
-}
-function commits(driver: WorkspaceDriver): driver is CommitDriver {
-  return ['checkpointCommit', 'pendingCommits', 'commitOutcome', 'acknowledgeCommit'].every(
-    (method) => typeof (driver as unknown as Record<string, unknown>)[method] === 'function',
-  );
-}
 
 /** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 const configSchema = z
@@ -303,7 +288,7 @@ export class MachineRunner implements Runner {
         sourceId: createHash('sha256').update(source).digest('hex'),
       },
     });
-    this.host = new ProcessHost(this.ledger);
+    this.host = new ProcessHost(this.ledger, source);
     try {
       this.workspaces = new GitWorkspaceManager(
         this.ledger,
@@ -697,16 +682,6 @@ export class MachineRunner implements Runner {
             ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
             : {}),
         });
-        check(
-          !JSON.stringify({ args: command.args, stdin: command.stdin }).includes(this.sourceBearer),
-          'unsafe_runner_launch',
-          'Source credential cannot enter the agent launch',
-        );
-        check(
-          !Object.values(command.env).some((value) => value?.includes(this.sourceBearer)),
-          'unsafe_runner_launch',
-          'Source credential cannot enter the agent environment',
-        );
         await this.host.launch({
           launchId: record.id,
           command,
@@ -747,16 +722,10 @@ export class MachineRunner implements Runner {
     return false;
   }
   private async reconcileCodeCommands(record: LaunchRecord, session?: SessionView): Promise<void> {
-    const workspaces = this.driverOf(record);
-    check(workspaces, 'workspace_driver_missing', 'This runner does not carry that driver');
-    if (!commits(workspaces)) {
-      check(
-        !session?.execution.policy.tools.some((tool) => tool.name === 'code.commit'),
-        'workspace_commit_unsupported',
-        'This workspace driver does not support Code commands',
-      );
-      return;
-    }
+    const driver = this.driverOf(record);
+    check(driver, 'workspace_driver_missing', 'This runner does not carry that driver');
+    if (!driver.pendingCommits) return; // A lifecycle-only driver runs no Code commands.
+    const workspaces = driver as Required<WorkspaceDriver>;
     const local = this.local(record);
     const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.

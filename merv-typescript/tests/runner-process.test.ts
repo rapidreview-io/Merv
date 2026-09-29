@@ -27,7 +27,8 @@ function setup(t: TestContext) {
     projectId: 'project-a',
   };
   const ledger = new LocalLedger({ directory, binding });
-  const host = new ProcessHost(ledger);
+  const source = `mr_${randomBytes(32).toString('hex')}`;
+  const host = new ProcessHost(ledger, source);
   t.after(async () => {
     for (const launch of ledger.list()) if (!terminalLaunch(launch)) await host.stop(launch.id);
     ledger.close();
@@ -42,7 +43,7 @@ function setup(t: TestContext) {
     cwd: directory,
     env: { PATH: process.env.PATH ?? '' },
   });
-  return { directory, binding, ledger, host, reserve, token, command };
+  return { directory, binding, ledger, host, reserve, token, command, source };
 }
 
 test('local ledger binds identity, persists exact retry inputs without bearers, and holds one controller lock', (t) => {
@@ -152,7 +153,7 @@ test('two guardian attempts execute an exact durable launch once and redact spli
 });
 
 test('reopened controller reconnects to its guardian and stop proves the entire inherited process group ended', async (t) => {
-  const { directory, binding, ledger, host, reserve, token, command } = setup(t);
+  const { directory, binding, ledger, host, reserve, token, command, source } = setup(t);
   const record = reserve('tree');
   const child = `const fs=require('fs'); process.on('SIGTERM',()=>{}); setInterval(()=>fs.appendFileSync('ticks','x'),15)`;
   await host.launch({
@@ -166,7 +167,7 @@ test('reopened controller reconnects to its guardian and stop proves the entire 
   await until(() => ledger.get(record.id)?.status === 'running');
   const reopened = new LocalLedger({ directory, binding });
   try {
-    const recovered = new ProcessHost(reopened);
+    const recovered = new ProcessHost(reopened, source);
     assert.equal((await recovered.inspect(record.id)).status, 'running');
     await delay(100);
     const stopped = await recovered.stop(record.id);
@@ -221,7 +222,7 @@ test('claimed intent without a reachable guardian stays uncertain and cannot be 
 });
 
 test('cancellation before atomic claim prevents a later launch and rejects identity/credential confusion', async (t) => {
-  const { ledger, host, reserve, token, command } = setup(t);
+  const { ledger, host, reserve, token, command, source } = setup(t);
   const record = reserve('cancel');
   assert.throws(
     () => ledger.reserve({ id: record.id, sessionId: 'different', deadline: record.deadline }),
@@ -260,6 +261,22 @@ test('cancellation before atomic claim prevents a later launch and rejects ident
       }),
     /source credentials/,
   );
+  // The runner's own bearer is refused wherever it appears: arguments, stdin or environment.
+  for (const leak of [
+    { args: ['-e', `//${source}`] },
+    { stdin: `{"brief":"${source}"}` },
+    { env: { NOTE: `x${source}` } },
+  ])
+    await assert.rejects(
+      async () =>
+        host.launch({
+          launchId: active.id,
+          sessionToken: token,
+          deadline: active.deadline,
+          command: { ...command(''), ...leak },
+        }),
+      { code: 'unsafe_runner_launch' },
+    );
   assert.equal(ledger.get(active.id)?.status, 'reserved');
 });
 

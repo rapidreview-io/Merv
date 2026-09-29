@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import {
   WorkspaceDeferred,
+  type CodeCommitCommand,
   type WorkspaceDriverFactory,
   type WorkspaceHandle,
 } from '@merv/contracts';
@@ -386,7 +387,7 @@ test('a Code receipt refused until GitHub is pushed is kept and replayed on the 
         : undefined,
   );
   const acknowledged: string[] = [];
-  let command: Body | undefined;
+  let command: CodeCommitCommand | undefined;
   // The stand-in knows no Code route; once pushed, it answers the completion as Code would.
   const fetcher: typeof fetch = async (input, init) => {
     const reply = await fake.fetch(input as string, init);
@@ -421,7 +422,7 @@ test('a Code receipt refused until GitHub is pushed is kept and replayed on the 
     create: (host, transport) => ({
       ...stub.factory.create(host, transport),
       checkpointCommit: async () => assert.fail('its outcome is already proven'),
-      pendingCommits: () => (acknowledged.length ? [] : [command]),
+      pendingCommits: () => (acknowledged.length ? [] : [command!]),
       commitOutcome: () => ({ error: 'workspace_stopped' }),
       acknowledgeCommit: (commandId: string) => acknowledged.push(commandId),
     }),

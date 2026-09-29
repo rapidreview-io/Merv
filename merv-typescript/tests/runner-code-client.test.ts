@@ -64,11 +64,7 @@ const client = (value: unknown) =>
   );
 
 test('Code command replies bind project, lease, worker, revision, runner, host and the complete workspace attachment', async () => {
-  const source = structuredClone(session);
-  const pending = client({ command }).nextCodeCommand(source, command.hostRef);
-  source.id = 'session_other';
-  source.workspace!.attachment.stats.insertions = 1;
-  assert.deepEqual(await pending, command);
+  assert.deepEqual(await client({ command }).nextCodeCommand(session, command.hostRef), command);
   assert.equal(await client({ command: null }).nextCodeCommand(session, command.hostRef), null);
   for (const patch of [
     { projectId: 'project_other' },
@@ -136,12 +132,10 @@ test('malformed Code commands never reach the continuation that performs a local
 });
 
 test('Code completion must acknowledge the exact command and successful receipt before local acknowledgement', async () => {
-  const input = structuredClone(command),
-    outcome = { receipt: structuredClone(receipt) };
-  const pending = client({ operation: succeeded }).completeCodeCommand(input, outcome);
-  input.id = 'command_other';
-  outcome.receipt.stats.insertions = 2;
-  assert.deepEqual(await pending, succeeded);
+  assert.deepEqual(
+    await client({ operation: succeeded }).completeCodeCommand(command, { receipt }),
+    succeeded,
+  );
   const wrongCommands = [
     { ...command, id: 'command_other' },
     { ...command, projectId: 'project_other' },
@@ -186,10 +180,10 @@ test('Code completion must acknowledge the exact command and successful receipt 
 
 test('Code failure acknowledgement must match the local terminal error, never a success, cancellation or pending operation', async () => {
   const outcome = { error: failed.error! };
-  const input = { ...outcome };
-  const pending = client({ operation: failed }).completeCodeCommand(command, input);
-  input.error = 'changed_error';
-  assert.deepEqual(await pending, failed);
+  assert.deepEqual(
+    await client({ operation: failed }).completeCodeCommand(command, outcome),
+    failed,
+  );
   for (const operation of [
     succeeded,
     { ...failed, error: 'different_error' },
@@ -208,7 +202,7 @@ test('Code failure acknowledgement must match the local terminal error, never a 
     await assert.rejects(async () => client(body).completeCodeCommand(command, outcome), invalid);
 });
 
-test('transport grants cannot match a push target changed while the request is pending', async () => {
+test('transport grants must name the push target that was asked for', async () => {
   const grant = {
     repositoryId: 'github:101',
     repository: 'fixture/private',
@@ -225,12 +219,11 @@ test('transport grants cannot match a push target changed while the request is p
       runnerId: session.runnerId,
       hostRef: command.hostRef,
       operation: 'checkpoint' as const,
-      receipt: structuredClone(receipt),
+      receipt,
     };
     const reply = structuredClone(grant);
     if (changedReply) reply.target.headOid = '4'.repeat(40);
     const pending = client(reply).transportGrant(input);
-    input.receipt.headOid = '4'.repeat(40);
     if (changedReply) await assert.rejects(pending, invalid);
     else assert.deepEqual(await pending, grant);
   }

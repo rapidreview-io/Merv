@@ -4,7 +4,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sessionSecretPattern } from '@merv/contracts';
+import { check, sessionSecretPattern } from '@merv/contracts';
 import { LocalLedger, terminalLaunch, type LaunchRecord } from './ledger.js';
 
 export interface ProcessCommand {
@@ -45,7 +45,11 @@ const bootId = (): string | undefined => {
 /** Controls only authenticated supervisors. A saved PID is never evidence or a kill target. */
 export class ProcessHost {
   readonly boot = bootId();
-  constructor(private readonly ledger: LocalLedger) {}
+  /** `source` is the runner's own bearer, which no launched command may carry anywhere. */
+  constructor(
+    private readonly ledger: LocalLedger,
+    private readonly source: string,
+  ) {}
 
   async launch(input: ProcessLaunch): Promise<LaunchRecord> {
     input = { ...input };
@@ -205,8 +209,14 @@ export class ProcessHost {
         throw new Error('Process environment must not contain source credentials');
       }
     }
-    if (Buffer.byteLength(JSON.stringify(command)) > 800000)
-      throw new Error('Process command is too large');
+    // The source bearer nowhere: executable, arguments, stdin or environment, as JSON writes it.
+    const json = JSON.stringify(command);
+    check(
+      !json.includes(JSON.stringify(this.source).slice(1, -1)),
+      'unsafe_runner_launch',
+      'Source credential cannot enter an agent launch',
+    );
+    if (Buffer.byteLength(json) > 800000) throw new Error('Process command is too large');
   }
   private unreachable(error: unknown): boolean {
     return ['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(
