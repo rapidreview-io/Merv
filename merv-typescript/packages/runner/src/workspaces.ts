@@ -1228,7 +1228,7 @@ export class GitWorkspaceManager {
       '--list',
     ]);
     // An agent's `git config` or `git remote add` in a linked checkout writes this shared file.
-    // What it added is removed, never obeyed: every key outside the runner's own few.
+    // What it added is removed before the runner's next Git work: every key but the runner's own.
     const keys = new Set(config.split('\0').map((entry) => entry.split('\n', 1)[0]));
     for (const key of keys)
       if (
