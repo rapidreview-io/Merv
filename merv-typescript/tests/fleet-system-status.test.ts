@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { Context } from 'cordis';
-import type { Caller } from '@merv/contracts';
+import type { Context } from 'cordis';
+import type { Caller, Scope, State } from '@merv/contracts';
 import { LeasedSessions } from '@merv/sessions';
+import type { Sessions } from '@merv/sessions/types';
 import { sessionsToolsPlugin } from '@merv/sessions/tools';
-import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
+import type { Fleet } from '@merv/fleet/types';
+import { FleetWorkflowAdapter } from '../packages/fleet/src/workflow.js';
 
 const person: Caller = { actorId: 'person', projectId: 'project-a' };
 const worker: Caller = { ...person, actorId: 'worker', session: { id: 'session-1' } };
@@ -12,26 +14,21 @@ const queue = [
   { instanceId: 'task-1', expectedRevision: 2 },
   { instanceId: 'task-2', expectedRevision: 5 },
 ];
+const budget = (blocked: boolean) => ({
+  blocked,
+  blockReason: blocked ? 'last_refused_reservation_unaffordable' : null,
+  resetsAt: '2026-09-27T00:00:00.000Z',
+});
 
-async function status(t: TestContext, workflow?: { blocked: boolean; retryFails?: boolean }) {
+/** system.status over Sessions' own seam and a stub of its reads, with a started workflow
+ * adapter whose Fleet, model budget and retry reads are stubbed. */
+async function status(t: TestContext) {
   const listed: number[] = [];
   const retried: unknown[] = [];
-  const handlers = new Map<string, (caller: Caller, input: object) => Promise<unknown>>();
-  const ctx = new Context();
-  t.after(() => ctx.fiber.dispose());
-  ctx.provide('tools', {
-    register: (tool: {
-      name: string;
-      handler: (caller: Caller, input: object) => Promise<unknown>;
-    }) => {
-      handlers.set(tool.name, tool.handler);
-      return () => handlers.delete(tool.name);
-    },
-  });
-  // Sessions' own seam over a stub of the reads system.status makes.
-  ctx.provide('sessions', {
+  const sessions = {
     statusSections: new Map(),
     contributeStatus: LeasedSessions.prototype.contributeStatus,
+    registerManagedValidator: () => () => undefined,
     projectStatus: async () => ({
       observedAt: 'now',
       dispatch: { enabled: true, ownMachines: false, fleet: true },
@@ -45,8 +42,9 @@ async function status(t: TestContext, workflow?: { blocked: boolean; retryFails?
     }),
     stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
     describe: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
-  });
-  ctx.provide('fleet', {
+  } as unknown as Sessions;
+  const fleet = {
+    registerOwner: () => () => undefined,
     list: async (caller: Caller, limit: number) => {
       assert.equal(caller, person);
       listed.push(limit);
@@ -71,48 +69,59 @@ async function status(t: TestContext, workflow?: { blocked: boolean; retryFails?
         },
       ];
     },
-  });
-  if (workflow)
-    ctx.provide('fleetWorkflow', {
-      modelBudget: async () => ({
-        blocked: workflow.blocked,
-        blockReason: workflow.blocked ? 'last_refused_reservation_unaffordable' : null,
-        resetsAt: '2026-09-27T00:00:00.000Z',
-        tokens: 20_000_000,
-      }),
-      retryStatus: async (_caller: Caller, targets: typeof queue) => {
-        retried.push(
-          targets.map(({ instanceId, expectedRevision }) => ({ instanceId, expectedRevision })),
-        );
-        if (workflow.retryFails) throw new Error('down');
-        return [
-          {
-            instanceId: 'task-1',
-            expectedRevision: 2,
-            state: 'exhausted_unclaimed',
-            unclaimedAttempts: 2,
-            attemptLimit: 2,
-            retryAvailable: true,
-            next: 'An administrator may retry this exact revision.',
-          },
-          { ...queue[1], state: 'exhausted_unclaimed', unclaimedAttempts: 1, attemptLimit: 1 },
-          { ...queue[0], state: 'retrying', unclaimedAttempts: 1, attemptLimit: 2 },
-        ].map((item) => ({ retryAvailable: false, next: 'Wait.', ...item }));
+  } as unknown as Fleet;
+  const adapter = new FleetWorkflowAdapter(
+    fleet,
+    sessions,
+    {} as Scope,
+    {
+      enabled: true,
+      people: ['*'],
+      // Unset, so the adapter's first pass rents nothing.
+      modelApiKeyEnv: 'MERV_FLEET_STATUS_TEST_UNSET',
+      baseUrl: 'https://merv.example.test',
+      pollIntervalMs: 60_000,
+    },
+    Date.now,
+    { migrate: async () => undefined } as unknown as State,
+  );
+  t.after(() => adapter.close());
+  await adapter.start();
+  const workflow = { budget: budget(true) as ReturnType<typeof budget> | null, retryFails: false };
+  adapter.modelBudget = async () =>
+    workflow.budget && ({ ...workflow.budget, tokens: 20_000_000 } as typeof workflow.budget);
+  adapter.retryStatus = async (_caller, targets) => {
+    retried.push(
+      targets.map(({ instanceId, expectedRevision }) => ({ instanceId, expectedRevision })),
+    );
+    if (workflow.retryFails) throw new Error('down');
+    return [
+      {
+        instanceId: 'task-1',
+        expectedRevision: 2,
+        state: 'exhausted_unclaimed',
+        unclaimedAttempts: 2,
+        attemptLimit: 2,
+        retryAvailable: true,
+        next: 'An administrator may retry this exact revision.',
       },
-    });
-  await ctx.plugin(sessionsToolsPlugin);
-  const fleetTools = ctx.plugin(fleetToolsPlugin);
-  await fleetTools;
-  // One plugin per key: a second 'fleet' section is refused.
-  assert.throws(() => ctx.sessions.contributeStatus('fleet', async () => null), {
-    code: 'status_section_registered',
-  });
+      { ...queue[1], state: 'exhausted_unclaimed', unclaimedAttempts: 1, attemptLimit: 1 },
+      { ...queue[0], state: 'retrying', unclaimedAttempts: 1, attemptLimit: 2 },
+    ].map((item) => ({ retryAvailable: false, next: 'Wait.', ...item })) as never;
+  };
+  let handler!: (caller: Caller, input: object) => Promise<unknown>;
+  sessionsToolsPlugin.apply({
+    sessions,
+    tools: {
+      register: (tool: { name: string; handler: typeof handler }) => {
+        if (tool.name === 'system.status') handler = tool.handler;
+      },
+    },
+    effect: (register: () => unknown) => register(),
+  } as unknown as Context);
   const read = async (caller: Caller) =>
-    JSON.parse(JSON.stringify(await handlers.get('system.status')!(caller, {}))) as Record<
-      string,
-      unknown
-    >;
-  return { read, listed, retried, fleetTools };
+    JSON.parse(JSON.stringify(await handler(caller, {}))) as Record<string, unknown>;
+  return { read, listed, retried, workflow, adapter, sessions };
 }
 
 const allocations = [
@@ -133,18 +142,20 @@ const allocations = [
     createdAt: 'later',
   },
 ];
-const projectKeys = ['scope', 'projectId', 'observedAt', 'dispatch', 'workers', 'fleet'];
 const blocked = {
   blocked: true,
   reason: 'last_refused_reservation_unaffordable',
   resetsAt: '2026-09-27T00:00:00.000Z',
   next: 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.',
 };
+const projectKeys = ['scope', 'projectId', 'observedAt', 'dispatch', 'workers'];
+const sessionKeys = ['scope', 'projectId', 'session'];
+const rest = ['sessions', 'waiting', 'blockers'];
 
 test('Fleet contributes its system.status sections where Sessions put them', async (t) => {
-  const { read, listed, retried } = await status(t, { blocked: true });
+  const { read, listed, retried, sessions } = await status(t);
   const project = await read(person);
-  assert.deepEqual(Object.keys(project), [...projectKeys, 'sessions', 'waiting', 'blockers']);
+  assert.deepEqual(Object.keys(project), [...projectKeys, 'fleet', ...rest]);
   assert.deepEqual(project.fleet, {
     available: true,
     modelBudget: blocked,
@@ -174,34 +185,28 @@ test('Fleet contributes its system.status sections where Sessions put them', asy
   assert.equal(JSON.stringify(project).includes('20000000'), false);
   // A leased worker reads its own model budget, never the project's machines.
   const session = await read(worker);
-  assert.deepEqual(Object.keys(session), ['scope', 'projectId', 'session', 'modelBudget']);
+  assert.deepEqual(Object.keys(session), [...sessionKeys, 'modelBudget']);
   assert.deepEqual(session.modelBudget, blocked);
   assert.deepEqual(listed, [0]);
+  // One plugin per key.
+  assert.throws(() => sessions.contributeStatus('fleet', async () => null), {
+    code: 'status_section_registered',
+  });
 });
 
-test('without the workflow Fleet reports allocations alone, and nothing once unloaded', async (t) => {
-  const open = await status(t, { blocked: false, retryFails: true });
-  assert.deepEqual((await open.read(person)).fleet, {
+test('Fleet reports what it cannot read, and nothing once its adapter closes', async (t) => {
+  const { read, workflow, adapter } = await status(t);
+  workflow.budget = budget(false);
+  workflow.retryFails = true;
+  assert.deepEqual((await read(person)).fleet, {
     available: true,
     modelBudget: { blocked: false, reason: null, resetsAt: '2026-09-27T00:00:00.000Z' },
     retryBlocked: { available: false, truncated: true, items: [] },
     allocations,
   });
-  const alone = await status(t);
-  const project = await alone.read(person);
-  assert.deepEqual(project.fleet, {
-    available: true,
-    modelBudget: null,
-    retryBlocked: { available: false, truncated: true, items: [] },
-    allocations,
-  });
-  assert.equal((await alone.read(worker)).modelBudget, null);
-  await alone.fleetTools.dispose();
-  assert.deepEqual(Object.keys(await alone.read(person)), [
-    ...projectKeys.slice(0, -1),
-    'sessions',
-    'waiting',
-    'blockers',
-  ]);
-  assert.deepEqual(Object.keys(await alone.read(worker)), ['scope', 'projectId', 'session']);
+  workflow.budget = null;
+  assert.equal((await read(worker)).modelBudget, null);
+  await adapter.close();
+  assert.deepEqual(Object.keys(await read(person)), [...projectKeys, ...rest]);
+  assert.deepEqual(Object.keys(await read(worker)), sessionKeys);
 });

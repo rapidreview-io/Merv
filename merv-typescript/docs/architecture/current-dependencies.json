@@ -10,8 +10,8 @@
   "apiEntries": 37,
   "serverPlugins": 67,
   "machinePlugins": 1,
-  "directDependencyCount": 184,
-  "optionalDependencyCount": 17,
+  "directDependencyCount": 183,
+  "optionalDependencyCount": 16,
   "directConsumers": {
     "api": 6,
     "artifacts": 12,
@@ -36,7 +36,7 @@
     "runner": 0,
     "sandboxes": 6,
     "scope": 25,
-    "sessions": 6,
+    "sessions": 5,
     "state": 19,
     "tasks": 4,
     "tools": 24,
@@ -338,9 +338,7 @@
         "fleet",
         "tools"
       ],
-      "optional": [
-        "sessions"
-      ],
+      "optional": [],
       "kind": "tools",
       "runtime": "server",
       "defaultConfiguration": false

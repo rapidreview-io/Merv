@@ -17,6 +17,7 @@ import type {
   ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   Sessions,
+  SessionsProjectStatus,
 } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
 import {
@@ -97,6 +98,7 @@ export const hostedCodexPlatform = Object.freeze({
   parallelism: 1,
 });
 export const hostedCodexCapabilities = Object.freeze(['code.v2']);
+const raiseLimit = 'Raise the Fleet daily token limit in Settings or wait for the UTC reset.';
 const targetId = (candidate: { instanceId: string; expectedRevision: number }) =>
   `${candidate.instanceId}:${candidate.expectedRevision}`;
 const grantKey = (projectId: string, id: string) => `${projectId} ${id}`;
@@ -184,6 +186,15 @@ export class FleetWorkflowAdapter implements FleetOwner {
           retired: async (binding, tx) => await this.fleet.retired(binding.allocationId, tx),
         }),
       );
+      // Fleet's sections of system.status: the project's, and a leased worker's own budget.
+      this.disposers.push(
+        this.sessions.contributeStatus('fleet', async (caller, project) =>
+          project ? await this.status(caller, project) : undefined,
+        ),
+        this.sessions.contributeStatus('modelBudget', async (caller, project) =>
+          project ? undefined : await this.modelWait(caller),
+        ),
+      );
     } catch (error) {
       await this.close();
       throw error;
@@ -248,6 +259,41 @@ export class FleetWorkflowAdapter implements FleetOwner {
       this.config.dailyTokensPerPerson,
     );
     return { blocked, blockReason, resetsAt };
+  }
+  private async modelWait(caller: Caller) {
+    const budget = await this.modelBudget(caller);
+    if (!budget) return null;
+    const { blocked, blockReason: reason, resetsAt } = budget;
+    return { blocked, reason, resetsAt, ...(blocked ? { next: raiseLimit } : {}) };
+  }
+  private async status(caller: Caller, project: SessionsProjectStatus) {
+    const [allocations, modelBudget, retries] = await Promise.all([
+      this.fleet.list(caller, 0),
+      this.modelWait(caller),
+      this.retryStatus(caller, project.queue).catch(() => undefined),
+    ]);
+    return {
+      available: true,
+      modelBudget,
+      retryBlocked: {
+        available: retries !== undefined,
+        truncated: project.queueTotal > project.queue.length,
+        items: (retries ?? [])
+          .filter((status) => status.state.startsWith('exhausted_'))
+          .map((status) => ({
+            instanceId: status.instanceId,
+            expectedRevision: status.expectedRevision,
+            reason: `${status.unclaimedAttempts}/${status.attemptLimit} created Fleet machines ended before claiming work.`,
+            next: status.next,
+            ...(status.retryAvailable ? { tool: 'fleet.workflow_retry' } : {}),
+          })),
+      },
+      allocations: allocations
+        .filter(({ phase }) => phase !== 'released')
+        .map(({ id, owner, phase, intent, error, createdAt }) => {
+          return { id, owner: owner.kind, phase, intent, error, createdAt };
+        }),
+    };
   }
   /** Retry status follows the current director, even when the last failed rent names an old one. */
   private async demandTargets(projectId: string, historical: DelegationSource[]) {

@@ -23,7 +23,6 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { sessionsToolsPlugin } from '@merv/sessions/tools';
 import { FleetService } from '@merv/fleet';
-import { fleetToolsPlugin } from '@merv/fleet/tools';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { RecipeContextBuilder } from '@merv/context-builder';
@@ -167,6 +166,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   } as unknown as Fleet;
   const ensureInputs: unknown[] = [];
   const fakeSessions = {
+    contributeStatus: () => () => undefined,
     registerManagedValidator(value: ManagedRunnerValidator) {
       validator = value;
       return () => {
@@ -780,6 +780,7 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
     },
   });
   ctx.provide('sessions', {
+    contributeStatus: () => () => undefined,
     registerManagedValidator: (value: ManagedRunnerValidator) => {
       validator = value;
       return () => {
@@ -854,6 +855,7 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
   });
   const grant = { id: 'session', projectId: 'p', allocationId: 'flt_1', person: 'actor' };
   ctx.provide('sessions', {
+    contributeStatus: () => () => undefined,
     registerManagedValidator: () => () => undefined,
     servedSources: async () => [],
     managedModelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
@@ -1556,18 +1558,15 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
   );
   const tools = new ToolRegistry(h.scope);
   tools.registerSessionPolicy(sessions);
-  const ctx = new Context();
-  ctx.provide('tools', tools);
-  ctx.provide('sessions', sessions);
-  ctx.provide('fleet', fleet);
-  ctx.provide('fleetWorkflow', adapter);
-  await ctx.plugin(sessionsToolsPlugin);
-  await ctx.plugin(fleetToolsPlugin);
+  sessionsToolsPlugin.apply({
+    tools,
+    sessions,
+    effect: (register: () => unknown) => register(),
+  } as unknown as Context);
   const ownStatus = await tools.call('system.status', workers[0]!.worker, {});
   assert.equal((ownStatus as { scope: string }).scope, 'session');
   assert.equal((ownStatus as { modelBudget: { blocked: boolean } }).modelBudget.blocked, false);
   assert.equal(JSON.stringify(ownStatus).includes('"tokens"'), false);
-  await ctx.fiber.dispose();
   tools.close();
   assert.deepEqual(
     new Set(workers.map((worker) => worker.session.instanceId)),

@@ -919,9 +919,7 @@
         "fleet",
         "tools"
       ],
-      "optional": [
-        "sessions"
-      ],
+      "optional": [],
       "kind": "tools",
       "runtime": "server",
       "defaultConfiguration": false,
@@ -3051,11 +3049,6 @@
       "optional": false
     },
     {
-      "from": "merv-fleet-tools",
-      "to": "sessions",
-      "optional": true
-    },
-    {
       "from": "merv-fleet-ui",
       "to": "fleet",
       "optional": false
@@ -3690,7 +3683,7 @@
     "plugins": 68,
     "providers": 30,
     "adapters": 38,
-    "dependencies": 184
+    "dependencies": 183
   },
   "network": [
     {
