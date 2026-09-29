@@ -126,7 +126,7 @@ MCP-only session secret. Operator controls require project administration.
 | Method and route                     | Purpose                                                                      |
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `GET /sessions/status`               | Sanitized project session history, runner presence and caller-eligible queue |
-| `PUT /sessions/dispatch`             | Set `{ enabled?, ownMachines? }`; the admin who set it last directs Fleet    |
+| `PUT /sessions/dispatch`             | Set `{ enabled?, ownMachines? }`; Fleet acts as the project owner            |
 | `POST /sessions/halt`                | Disable dispatch and halt project sessions                                   |
 | `POST /sessions/:id/halt`            | Halt one project session                                                     |
 | `POST /sessions/runners/heartbeat`   | Register or refresh this source's machine inventory and capacity             |

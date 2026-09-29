@@ -346,7 +346,10 @@ export interface Sessions {
     caller: Caller,
     input: AutomaticLease,
   ): Promise<{ session: Session | null; reason: string }>;
-  /** Server-only: every project whose admin chose Fleet, as the source of the admin who chose. */
+  /** Server-only: every project with dispatch on Fleet's machines, as its owner. The billing
+   * rule: Fleet acts as, and charges the person-day budget of, the project's owner
+   * (`Scope.projectOwners`), never whoever switched dispatch; a project without one is not
+   * served, and its queued work shows `no_live_runner`. */
   servedSources(): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** Advisory, source-scoped automatic work for a prospective profile; no runner is required. */
   dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand>;

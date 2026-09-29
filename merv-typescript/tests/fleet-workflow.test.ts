@@ -79,7 +79,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
   const founder = await login('founder');
-  /** What Sessions serves: each project whose admin chose Fleet, as that admin. */
+  /** What Sessions serves: each project, as its owner. */
   const served: { projectId: string; source: DelegationSource }[] = [];
   const project = async (person = founder, name = 'Fleet workflow') => {
     const { id } = await scope.createProject(person, { name, requestId: randomUUID() });
@@ -957,7 +957,7 @@ test('a new director lets in-flight work finish under its own source, and direct
     capabilities: ['code.v2'],
     expiresAt: allocation.deadlineAt,
   };
-  // Another admin chooses Fleet here, and becomes the director.
+  // Sessions now serves the project as the colleague, who directs what follows.
   await f.scope.addMember(f.founder, f.caller.projectId, {
     subject: 'colleague',
     role: 'operator',
@@ -973,7 +973,7 @@ test('a new director lets in-flight work finish under its own source, and direct
   assert.deepEqual(f.allocations[1]?.source, f.served[0]!.source);
 });
 
-test('Fleet serves each project whose admin chose it, as that admin, within its machines', async (t) => {
+test('Fleet serves each project as its owner, within its machines', async (t) => {
   const f = await fixture(t, {
     people: [`${issuer} founder`, `${issuer} colleague`],
     maxAgents: 5,
@@ -981,21 +981,10 @@ test('Fleet serves each project whose admin chose it, as that admin, within its 
   const second = await f.project(f.founder, 'Second');
   const theirs = await f.project(await f.login('colleague'), 'Colleague');
   const outsider = await f.project(await f.login('stranger'), 'Stranger');
-  // A machine actor is no sign-in identity: it is served only when everyone is.
-  const machine = await f.scope.bootstrap({ projectName: 'Machine', actorName: 'Machine' });
-  f.served.push({
-    projectId: machine.project.id,
-    source: await f.scope.delegationSource({
-      actorId: machine.actor.id,
-      projectId: machine.project.id,
-      credentialId: machine.credential.id,
-    }),
-  });
   f.demand(targets('first', 2));
   f.demand(targets('second', 2), second.id);
   f.demand(targets('theirs', 3), theirs.id);
   f.demand(targets('outsider', 1), outsider.id);
-  f.demand(targets('machine', 1), machine.project.id);
   await f.adapter.reconcile();
   // Five machines in all, taken in the order the projects are served.
   const first = f.caller.projectId;
@@ -1008,11 +997,10 @@ test('Fleet serves each project whose admin chose it, as that admin, within its 
   ]);
   for (const a of f.allocations)
     assert.deepEqual(a.source, f.served.find((row) => row.projectId === a.projectId)!.source);
-  assert.deepEqual([first, second.id, theirs.id, outsider.id, machine.project.id].map(f.serves), [
+  assert.deepEqual([first, second.id, theirs.id, outsider.id].map(f.serves), [
     true,
     true,
     true,
-    false,
     false,
   ]);
 
@@ -1045,9 +1033,8 @@ test('Fleet serves each project whose admin chose it, as that admin, within its 
   assert.deepEqual(f.open().slice(5), [
     [theirs.id, 'theirs_2:0'],
     [outsider.id, 'outsider_0:0'],
-    [machine.project.id, 'machine_0:0'],
   ]);
-  assert.deepEqual([outsider.id, machine.project.id].map(f.serves), [true, true]);
+  assert.equal(f.serves(outsider.id), true);
 });
 
 test('a director who can no longer write directs nothing, and a failing project leaves the others served', async (t) => {
@@ -1182,7 +1169,7 @@ test('an idle machine gets its grace from its launch, and work claimed while dem
   assert.equal(await f.owner().observe(a), 'finished');
 });
 
-test('the review director takes only what the admin’s own hand may not, within Fleet’s machines', async (t) => {
+test('the review director takes only what the owner’s own hand may not, within Fleet’s machines', async (t) => {
   const f = await fixture(t, { maxAgents: 2 });
   f.demand(targets('shared', 1));
   f.demand([...targets('shared', 1), ...targets('review', 3)], `review:${f.caller.projectId}`);
@@ -1493,7 +1480,7 @@ const claim = (runnerId: string) => ({
   },
 });
 
-/** Two projects whose founder chose Fleet; the first also has an external runner's work. */
+/** Two projects the founder owns and runs on Fleet; the first also has an external runner's work. */
 async function managedFleetScenario(t: TestContext, workerCount: number) {
   const h = await hosted(t, workerCount, workerCount === 3);
   const { sessions, fleet, adapter } = h;
@@ -1610,31 +1597,37 @@ for (const workerCount of [1, 3]) {
     managedFleetScenario(t, workerCount));
 }
 
-test('real Fleet stops the machine of a director who may no longer write, and the stuck report says so', async (t) => {
+test('real Fleet acts as and bills the project owner, whoever switched it on, and stops them once they may not write', async (t) => {
   const h = await hosted(t, 1);
-  const founder = await h.project('Demoted');
+  const founder = await h.project('Owned');
   await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
-  const colleague = await h.scope.caller(await h.login('colleague'), founder.projectId);
-  await h.sessions.setDispatch(colleague, { enabled: true });
+  const signedIn = await h.login('colleague');
+  await h.sessions.setDispatch(await h.scope.caller(signedIn, founder.projectId), {
+    enabled: true,
+  });
   await h.start(founder);
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
   assert.equal(
     allocation && 'subject' in allocation.source && allocation.source.subject,
-    'colleague',
+    'founder',
   );
+  assert.equal(allocation.person, digest({ issuer, subject: 'founder' }));
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
   const kinds = async () => (await h.sessions.stuck(founder)).items.map((item) => item.kind);
   assert.deepEqual(await kinds(), [], 'Fleet serves the work, so no runner is missing');
-  await h.scope.changeMemberRole(h.founder, founder.projectId, {
-    subject: 'colleague',
+  // Demoted, the founder directs nothing: their machine stops, and the colleague owns what follows.
+  await h.scope.changeMemberRole(signedIn, founder.projectId, {
+    subject: 'founder',
     role: 'reader',
   });
   await h.fleet.tick();
   assert.equal(h.stopped.size, 1);
+  h.advance(60_000); // The unclaimed rental's cooldown.
   await h.adapter.reconcile();
-  assert.deepEqual(await kinds(), ['no_live_runner']);
+  const next = (await h.fleet.listOwned(h.adapter, [])).find((a) => a.id !== allocation.id);
+  assert.equal(next && 'subject' in next.source && next.source.subject, 'colleague');
 });
 
 test('a target that returns after more than 200 released allocations gets a new machine', async (t) => {
@@ -1788,7 +1781,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
   assert.deepEqual([tavily.seen.length, nisa.seen.length], [1, 1]);
 });
 
-test('Fleet produces Pi-directed work and its review director reviews the admin’s desk delivery', async (t) => {
+test('Fleet produces Pi-directed work and its review director reviews the owner’s desk delivery', async (t) => {
   const h = await hosted(t, 2);
   const caller = await h.project('Reviewed');
   await h.sessions.setDispatch(caller, { enabled: true });
@@ -1861,13 +1854,12 @@ test('Fleet produces Pi-directed work and its review director reviews the admin�
   );
 });
 
-test('Fleet’s review director and its machine stop when the admin who vouched for it may no longer write', async (t) => {
+test('Fleet’s review director and its machine stop when the owner who vouched for it may no longer write', async (t) => {
   const h = await hosted(t, 1);
   const founder = await h.project('Vouched');
   await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
-  const colleague = await h.scope.caller(await h.login('colleague'), founder.projectId);
-  await h.sessions.setDispatch(colleague, { enabled: true });
-  await delivered(h, colleague, 'colleague');
+  await h.sessions.setDispatch(founder, { enabled: true });
+  await delivered(h, founder, 'founder');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
   assert.equal(allocation?.source.kind, 'service');
@@ -1875,8 +1867,8 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
   await h.sessions.authenticate(machine.secret);
-  await h.scope.changeMemberRole(h.founder, founder.projectId, {
-    subject: 'colleague',
+  await h.scope.changeMemberRole(await h.login('colleague'), founder.projectId, {
+    subject: 'founder',
     role: 'reader',
   });
   // A demoted member no longer holds the membership the voucher named.
@@ -1890,7 +1882,7 @@ test('Fleet’s review director and its machine stop when the admin who vouched 
   assert.equal(h.stopped.size, 1);
 });
 
-test('a review step’s model calls count toward the admin who vouched for its director', async (t) => {
+test('a review step’s model calls count toward the owner who vouched for its director', async (t) => {
   const h = await hosted(t, 1);
   const caller = await h.project('Charged');
   await h.sessions.setDispatch(caller, { enabled: true });

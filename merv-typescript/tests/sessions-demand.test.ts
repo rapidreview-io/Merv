@@ -333,30 +333,37 @@ test('a project on its own machines shows Fleet no demand, and its own runner st
   assert.equal(leased.session?.instanceId, target.id, leased.reason);
 });
 
-test('Fleet serves each project an admin turned on for it, as the admin who chose last', async (t) => {
+test('Fleet serves each project turned on for it as its earliest operator, whoever switched it', async (t) => {
   const f = await fixture(t);
-  const project = async (name: string): Promise<Caller> => {
-    const boot = await f.scope.bootstrap({ projectName: name, actorName: 'Owner' });
-    return { actorId: boot.actor.id, projectId: boot.project.id, credentialId: boot.credential.id };
-  };
+  const login = async (subject: string) =>
+    await f.scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example/auth/v1',
+      subject,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+  const founder = await login('founder');
+  const project = async (name: string) =>
+    await f.scope.caller(
+      founder,
+      (await f.scope.createProject(founder, { name, requestId: name })).id,
+    );
+  const main = await project('Main');
   const own = await project('Own machines');
   const halted = await project('Halted');
-  await project('Never chosen');
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await project('Never switched');
+  f.advance(1000);
+  await f.scope.addMember(founder, main.projectId, { subject: 'colleague', role: 'operator' });
+  const colleague = await f.scope.caller(await login('colleague'), main.projectId);
+  await f.sessions.setDispatch(colleague, { enabled: true });
   await f.sessions.setDispatch(own, { enabled: true, ownMachines: true });
   await f.sessions.setDispatch(halted, { enabled: true });
   await f.sessions.halt(halted);
-  const issued = await f.scope.issueActor(f.owner, { name: 'Second admin', role: 'operator' });
-  const second = {
-    actorId: issued.actor.id,
-    projectId: f.owner.projectId,
-    credentialId: issued.credential.id,
-  };
-  await f.sessions.setDispatch(second, { ownMachines: true });
-  await f.sessions.setDispatch(second, { ownMachines: false });
+  // A project with no signed-in operator has no owner: switched on, it is still not served.
+  await f.sessions.setDispatch(f.owner, { enabled: true });
   assert.deepEqual(await f.sessions.servedSources(), [
-    { projectId: f.owner.projectId, source: await f.scope.delegationSource(second) },
+    { projectId: main.projectId, source: await f.scope.delegationSource(main) },
   ]);
+  assert.equal((await f.sessions.projectStatus(main)).dispatch.updatedBy, colleague.actorId);
 });
 
 test('every project runs its work on Fleet’s machines after the upgrade, whatever it was before', async (t) => {

@@ -1070,8 +1070,8 @@ export interface ProjectMembership {
   revokedAt: string | null;
 }
 export interface Scope {
-  /** Each project's longest-standing signed-in operator, as a person: who directs its automatic
-   * work until an admin chooses. A project with none is left out. */
+  /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
+   * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
   /** A credential-free producer owned by a server provider, scoped to one project; only
    * Fleet's review director, 'fleet-review', is a reviewer instead. `provider` is a lowercase

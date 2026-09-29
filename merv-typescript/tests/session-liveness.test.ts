@@ -822,7 +822,9 @@ test('the stuck report leaves out no_live_runner while Fleet rents for the proje
   const kinds = async () => (await f.sessions.stuck(f.owner)).items.map((item) => item.kind);
   assert.deepEqual(await kinds(), []);
   served = false;
-  assert.deepEqual(await kinds(), ['no_live_runner']);
+  const [item] = (await f.sessions.stuck(f.owner)).items;
+  assert.equal(item?.kind, 'no_live_runner');
+  assert.match(item.next, /Fleet serves a project as its owner/, 'the key-made project has none');
 });
 
 test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {

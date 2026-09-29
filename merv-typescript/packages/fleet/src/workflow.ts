@@ -238,11 +238,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
         (entry) => entry.projectId === caller.projectId,
       );
       if (!selected) return null;
-      const source =
-        selected.source.kind === 'service' ? selected.source.vouchedBy : selected.source;
-      const actor = await this.director(source);
+      const actor = await this.director(selected.source);
       if (!actor) return null;
-      person = personOf(actor.user, source);
+      person = personOf(actor.user, selected.source);
     }
     const { blocked, blockReason, resetsAt } = await modelBudgetStatus(
       this.state,
@@ -477,7 +475,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         throw error;
       });
   }
-  /** Fleet's own reviewer in the admin's project, vouched for by that admin, so a fresh agent
+  /** Fleet's own reviewer in the owner's project, vouched for by that owner, so a fresh agent
    * reviews what their hand may not: their and Pi's deliveries, and Code-provenance reviews. */
   private async reviewer(source: DelegationSource): Promise<DelegationSource> {
     const { projectId } = source;
@@ -573,8 +571,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
       this.pending = undefined;
     }));
   }
-  /** Serves each project whose admin chose Fleet, as that admin, while they may write and are
-   * one of its people, and its reviews that admin may not direct through its review director;
+  /** Serves each project as its owner (Sessions.servedSources), while they may write and are
+   * one of its people, and its reviews the owner may not direct through its review director;
    * a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
     // The key stays on Main for the relay; without it no machine is rented to call the model.
@@ -584,16 +582,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet model key is unavailable',
       503,
     );
-    // One person across projects: their sign-in identity, else the machine actor itself, which
-    // only '*' lists, since an identity is two words. A review director counts as its voucher.
+    // One person across projects: the owner's sign-in identity, while they may write.
     const person = async (source: DelegationSource) => {
-      if (source.kind === 'service') source = source.vouchedBy;
-      const actor = await this.director(source);
-      return {
-        actor,
-        who: actor?.user ? `${actor.user.issuer} ${actor.user.subject}` : source.actorId,
-        key: personOf(actor?.user, source),
-      };
+      const user = (await this.director(source))?.user;
+      return { who: user && `${user.issuer} ${user.subject}`, key: personOf(user, source) };
     };
     const everyone = this.config.people.includes('*');
     // Each target a project wants, with the director whose machine takes it.
@@ -602,8 +594,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.servedSources()) {
       try {
-        const { actor, who, key } = await person(source);
-        if (!actor || !(everyone || this.config.people.includes(who))) continue;
+        const { who, key } = await person(source);
+        if (!who || !(everyone || this.config.people.includes(who))) continue;
         const wanted = new Map<string, DelegationSource>();
         if ((await modelBudgetStatus(this.state, key, this.config.dailyTokensPerPerson)).blocked) {
           served.set(projectId, wanted);

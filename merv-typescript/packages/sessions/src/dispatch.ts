@@ -417,7 +417,8 @@ export class SessionDispatch {
           sql: postgresMigrations[4],
         },
         {
-          // Where automatic work may run, and whose authority chose it.
+          // Where automatic work may run. Its source_json, the chooser's authority, is no longer
+          // read or written: Fleet acts as the project's owner (Sessions.servedSources).
           version: 5,
           sql: postgresMigrations[5],
         },
@@ -479,13 +480,11 @@ export class SessionDispatch {
     };
     if (next.enabled === old.enabled && next.ownMachines === old.ownMachines) return old;
     const time = isoNow(this.clock);
-    // The admin who chose last directs what Fleet runs here: their source, taken as they act.
     await tx.run(
-      'INSERT INTO project_session_dispatch(project_id,enabled,own_machines,source_json,updated_at,updated_by) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,own_machines=excluded.own_machines,source_json=excluded.source_json,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
+      'INSERT INTO project_session_dispatch(project_id,enabled,own_machines,updated_at,updated_by) VALUES(?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,own_machines=excluded.own_machines,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
       caller.projectId,
       next.enabled ? 1 : 0,
       next.ownMachines ? 1 : 0,
-      JSON.stringify(await this.scope.delegationSource(caller, tx)),
       time,
       caller.actorId,
     );
@@ -1076,33 +1075,18 @@ export class SessionDispatch {
                 : 'no_candidates',
     };
   }
-  /**
-   * Every project Fleet serves, with who directs its work: the admin who chose last, else, where
-   * nobody has chosen, the project's longest-standing signed-in operator.
-   */
+  /** Every project Fleet serves, as its owner (see `Sessions.servedSources`). */
   async servedSources(): Promise<{ projectId: string; source: DelegationSource }[]> {
     const rows = await this.state.read((sql) =>
-      sql.all<{
-        project_id: string;
-        enabled: number;
-        own_machines: number;
-        source_json: string | null;
-      }>(
-        'SELECT project_id,enabled,own_machines,source_json FROM project_session_dispatch ORDER BY updated_at,project_id',
+      sql.all<{ project_id: string; enabled: number; own_machines: number }>(
+        'SELECT project_id,enabled,own_machines FROM project_session_dispatch',
       ),
     );
     const chosen = new Map(rows.map((row) => [row.project_id, row]));
-    const on = (projectId: string) => {
+    return (await this.scope.projectOwners()).filter(({ projectId }) => {
       const row = chosen.get(projectId);
       return row ? !!row.enabled && !row.own_machines : this.hooks.byDefault;
-    };
-    const served = rows
-      .filter((row) => row.source_json && on(row.project_id))
-      .map((row) => ({ projectId: row.project_id, source: JSON.parse(row.source_json!) }));
-    const directed = new Set(served.map((project) => project.projectId));
-    for (const owner of await this.scope.projectOwners())
-      if (!directed.has(owner.projectId) && on(owner.projectId)) served.push(owner);
-    return served;
+    });
   }
   /** A read-only hint for a configured source and a prospective runner profile. */
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
@@ -1380,7 +1364,10 @@ export class SessionDispatch {
         why: runners.length
           ? `Dispatch is on and work is queued, but no authorized runner has been seen in the last ${freshForMs / 1000} seconds.`
           : 'Dispatch is on and work is queued, but no runner has ever registered in this project.',
-        next: 'Start a runner on a machine that holds a write key of this project.',
+        next:
+          dispatch.fleet && !dispatch.ownMachines
+            ? 'Fleet serves a project as its owner, its longest-standing signed-in operator, while they may write and Fleet lists them; otherwise start a runner on a machine that holds a write key of this project.'
+            : 'Start a runner on a machine that holds a write key of this project.',
       });
     if (queue.length && dispatch.enabled)
       for (const runner of runners) {

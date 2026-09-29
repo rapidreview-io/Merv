@@ -254,15 +254,16 @@ smoke passed, alongside 27 focused provider/launch tests.
   continue to use their existing authentication.
 - The optional `@merv/fleet/workflow` entry connects shared Sessions demand to
   Fleet with the fixed `hosted-codex` / `gpt-6-luna` profile and code.v2 support.
-  It serves every project whose admin turned dispatch on without choosing own
-  machines, acting as the admin who chose last, while that admin can write and
+  It serves every project with dispatch on and not on its own machines, acting
+  as and billing the project's owner (its longest-standing signed-in operator,
+  never the member who switched dispatch on), while that owner can write and
   is listed in `MERV_FLEET_WORKFLOW_PEOPLE` (or it is `["*"]`). Machines are
   capped in total across projects, and projects without their
-  own connection rent through the host project. Reviews that admin may not
+  own connection rent through the host project. Reviews the owner may not
   direct (their own and Pi's deliveries, and Code-provenance reviews) go to a
   second director: the project's credential-free `fleet-review` service actor, a
-  reviewer (scope@9), vouched for by the admin and valid only while they can
-  write. Its machines count against the admin and can lease only reviews.
+  reviewer (scope@9), vouched for by the owner and valid only while they can
+  write. Its machines count against the owner and can lease only reviews.
   It carries enrollment and model credentials only through protected bootstrap,
   and waits for the supervisor's release acknowledgement and workspace capture
   before treating an assignment as finished. It adds no research dependency or
