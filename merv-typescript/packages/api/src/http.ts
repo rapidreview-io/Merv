@@ -68,10 +68,21 @@ function errorBody(error: unknown): {
       error: {
         code: error.code,
         message: error.message,
-        ...(error.details ? { details: error.details } : {}),
+        ...(error.details && serializable(error.details) ? { details: error.details } : {}),
       },
     };
   return { status: 500, error: { code: 'internal_error', message: 'Internal server error' } };
+}
+
+/** Details that JSON cannot carry (a BigInt, a cycle) are dropped, so the refusal still reaches
+ *  its caller instead of failing while it is written. */
+function serializable(details: unknown): boolean {
+  try {
+    JSON.stringify(details);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {

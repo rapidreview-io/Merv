@@ -347,6 +347,31 @@ test('HTTP uses bearer identity, validates caller project, input, request size a
   assert.equal((await post({ message: 'after revocation' })).status, 401);
 });
 
+test('a refusal whose details JSON cannot carry is answered without them', async (t) => {
+  const { scope, tools } = fixture();
+  const api = new ApiServer(scope, tools);
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  api.mount('/bigint', () => {
+    throw new MervError('odd_input', 'Odd input', 422, { count: 1n });
+  });
+  api.mount('/cycle', () => {
+    throw new MervError('odd_input', 'Odd input', 422, cycle);
+  });
+  const url = await api.start();
+  t.after(async () => {
+    await api.stop();
+    await tools.close();
+  });
+  for (const path of ['/bigint', '/cycle']) {
+    const response = await fetch(`${url}${path}`, { signal: AbortSignal.timeout(5_000) });
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), {
+      error: { code: 'odd_input', message: 'Odd input' },
+    });
+  }
+});
+
 test('official MCP client initializes, lists tools and calls with isolated authenticated scope', async (t) => {
   const { scope, tools, actors } = fixture();
   const server = new ApiServer(scope, tools);
