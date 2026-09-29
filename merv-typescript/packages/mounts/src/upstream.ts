@@ -129,6 +129,8 @@ export class Invocations {
   private async call(caller: Caller, name: string, input: Data): Promise<CallToolResult> {
     const lane = JSON.stringify([caller.projectId, caller.actorId]);
     const known = this.#open.get(lane); // read before any await: see `cold`
+    // Checked before and after the one wait here: a closed pool selects nothing and opens nothing.
+    check(!this.#closed, 'remote_unavailable', 'Remote tool service is unavailable', 502);
     const binding = known?.binding ?? (await this.bindings.select(caller, this.mount.id));
     check(!this.#closed, 'remote_unavailable', 'Remote tool service is unavailable', 502);
     // Synchronous from here: concurrent first calls share one connection.

@@ -371,12 +371,16 @@ test('two sessions acting for one owner get separate connections with the same h
 });
 
 test('a call held across close() completes, then its connection ends; later calls are refused', async (t) => {
-  const { pool, call, upstream, a, clients } = await fixture(t);
+  const { pool, call, upstream, a, a2, bindings, clients } = await fixture(t);
   const held = upstream.holdNextCall();
   const admitted = call(a);
   await held.entered;
   await pool.close();
   await assert.rejects(call(a), { code: 'remote_unavailable' });
+  // A caller with no lane yet is refused the same way, before any binding selection.
+  const select = t.mock.method(bindings, 'select');
+  await assert.rejects(call(a2), { code: 'remote_unavailable' });
+  assert.equal(select.mock.callCount(), 0);
   assert.equal(clients[0].closeCalls, 0);
   held.release();
   assert.equal(data(await admitted).identity, 'upstream-a');
