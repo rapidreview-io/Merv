@@ -1,7 +1,7 @@
 // Runtime resource: copied alongside process-host.js by the build. No loader or dependencies.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -187,16 +187,6 @@ function guardian(path, id) {
   const ipcToken = createHmac('sha256', machine.machine_key)
     .update(`ipc:${id}`)
     .digest('base64url');
-  const socketDir = `/tmp/merv-runner-${process.getuid()}-${createHash('sha256').update(dirname(path)).digest('hex').slice(0, 16)}`;
-  mkdirSync(socketDir, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(socketDir);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
-    process.exit(70);
-  chmodSync(socketDir, 0o700);
-  const socketPath = join(
-    socketDir,
-    `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`,
-  );
   let owner,
     shutdown,
     killProof = false,
@@ -211,6 +201,28 @@ function guardian(path, id) {
       'UPDATE launches SET status=?,reason=?,exit_code=?,exit_signal=?,updated_at=? WHERE id=?',
     ).run(status, reason, code, signal, Date.now(), id);
   };
+  // Without an owner nothing was spawned, so the launch has provably ended.
+  const socketFailed = () => {
+    update(owner ? 'uncertain' : 'stopped', 'socket_failed');
+    db.close();
+    process.exit(70);
+  };
+  const socketDir = `/tmp/merv-runner-${process.getuid()}-${createHash('sha256').update(dirname(path)).digest('hex').slice(0, 16)}`;
+  const socketPath = join(
+    socketDir,
+    `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`,
+  );
+  try {
+    mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(socketDir);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
+      throw new Error('foreign socket directory');
+    chmodSync(socketDir, 0o700);
+    // Only this launch's one claimed guardian listens here: whatever is left is stale.
+    rmSync(socketPath, { force: true });
+  } catch {
+    socketFailed();
+  }
   const finish = (status, reason, code = null, signal = null) => {
     update(status, reason, code, signal);
     finished = true;
@@ -284,7 +296,7 @@ function guardian(path, id) {
             row.status === 'uncertain' &&
             observedState !== 'uncertain' &&
             ((!owner && !row.command_hash) ||
-              (owner.connected && owner.exitCode === null && owner.signalCode === null))
+              (owner?.connected && owner.exitCode === null && owner.signalCode === null))
           ) {
             update(
               observedState,
@@ -347,11 +359,17 @@ function guardian(path, id) {
           id,
         );
         clearTimeout(startupTimer);
-        owner = spawn(process.execPath, [resource, 'group'], {
-          detached: true,
-          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-          env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
-        });
+        try {
+          owner = spawn(process.execPath, [resource, 'group'], {
+            detached: true,
+            stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+          });
+        } catch {
+          finish('exited', 'launch_failed', 127); // nothing was spawned
+          reply({ ok: true });
+          return;
+        }
         owner.on('message', (message) => {
           if (message.type === 'running') {
             if (current().status !== 'stopping') update('running');
@@ -398,11 +416,7 @@ function guardian(path, id) {
     });
     socket.on('error', () => {});
   });
-  server.on('error', () => {
-    update('uncertain', 'socket_failed');
-    db.close();
-    process.exit(70);
-  });
+  server.on('error', socketFailed);
   server.listen(socketPath, () => chmodSync(socketPath, 0o600));
   startupTimer = setTimeout(
     () => {

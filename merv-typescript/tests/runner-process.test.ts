@@ -1,10 +1,19 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -468,6 +477,38 @@ test('a reservation no guardian could claim is cancelled, not left uncertain', a
     [ledger.get(record.id)?.status, ledger.get(record.id)?.reason],
     ['stopped', 'cancelled_before_spawn'],
   );
+});
+
+test('a guardian that cannot own its socket ends its claim as stopped, and replaces a stale socket file', async (t) => {
+  const { directory, ledger, host, reserve, token, command } = setup(t);
+  const sockets = `/tmp/merv-runner-${process.getuid!()}-${createHash('sha256').update(ledger.directory).digest('hex').slice(0, 16)}`;
+  const socket = (id: string) =>
+    join(sockets, `${createHash('sha256').update(id).digest('hex').slice(0, 24)}.sock`);
+  t.after(() => rmSync(sockets, { recursive: true, force: true }));
+  // A socket directory that is not this user's own directory: nothing was spawned.
+  symlinkSync(directory, sockets);
+  const refused = reserve('foreign-socket-directory');
+  const input = (id: string, deadline: number) => ({
+    launchId: id,
+    sessionToken: token,
+    deadline,
+    command: command('process.exit(0)'),
+  });
+  const ended = await host.launch(input(refused.id, refused.deadline));
+  assert.deepEqual([ended.status, ended.reason], ['stopped', 'socket_failed']);
+  rmSync(sockets);
+  // A socket an earlier process left behind when it was killed: this claim listens anyway.
+  const stale = reserve('stale-socket');
+  mkdirSync(sockets, { mode: 0o700 });
+  const path = JSON.stringify(socket(stale.id));
+  spawnSync(process.execPath, [
+    '-e',
+    `require('net').createServer().listen(${path},()=>process.kill(process.pid,'SIGKILL'))`,
+  ]);
+  assert.ok(statSync(socket(stale.id)).isSocket());
+  await host.launch(input(stale.id, stale.deadline));
+  await until(() => ledger.get(stale.id)?.status === 'exited');
+  assert.equal(ledger.get(stale.id)?.exitCode, 0);
 });
 
 test('a claimed launch with no pinned command ends a minute after it was first found unreachable', async (t) => {
