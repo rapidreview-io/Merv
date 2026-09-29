@@ -46,6 +46,7 @@ export function offer(
     expectedRevision: 0,
     status: 'offered',
     closeReason: null as string | null,
+    outcome: null as string | null,
     expiresAt: patch.expiresAt ?? new Date(Date.now() + 3_600_000).toISOString(),
     hardDeadline: new Date(Date.now() + 4 * 3_600_000).toISOString(),
     assignment: {
@@ -112,7 +113,8 @@ export function server(
       if (body!.workspace) session.workspace = { attachment: body!.workspace, result: null };
     } else if (action === 'release' && ['offered', 'active'].includes(session.status)) {
       session.status = 'released';
-      session.closeReason = body!.outcome ?? 'released';
+      session.closeReason = body!.reason ?? 'released';
+      session.outcome = body!.outcome ?? 'released';
     } else if (action === 'workspace-result') session.workspace.result = body!.workspace;
     return reply({ session });
   };

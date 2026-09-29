@@ -142,7 +142,8 @@ test("a user's stop releases the launch it ended with no outcome", async (t) => 
     fake.releases(work.id).map((call) => call.body),
     [{ runnerId: runner.snapshot().runnerId, reason: 'local_process_controller_stopped' }],
   );
-  assert.equal(fake.sessions.get(work.id)?.closeReason, 'released');
+  assert.equal(fake.sessions.get(work.id)?.outcome, 'released');
+  assert.equal(fake.sessions.get(work.id)?.closeReason, 'local_process_controller_stopped');
   assert.deepEqual(open(f), []);
 });
 
@@ -372,6 +373,74 @@ test('a launch whose driver is not composed is released but settles only once it
   assert.equal(fake.releases(session.id).length, 1);
 });
 
+test('a Code receipt refused until GitHub is pushed is kept and replayed on the next tick', async (t) => {
+  let pushed = false;
+  const fake = server(
+    () => null,
+    undefined,
+    (path) =>
+      !pushed && path === '/code/commands/complete'
+        ? new Refusal(409, 'github_push_required')
+        : undefined,
+  );
+  const acknowledged: string[] = [];
+  let command: Body | undefined;
+  // The stand-in knows no Code route; once pushed, it answers the completion as Code would.
+  const fetcher: typeof fetch = async (input, init) => {
+    const reply = await fake.fetch(input as string, init);
+    if (!pushed || !String(input).endsWith('/code/commands/complete')) return reply;
+    return Response.json({
+      operation: { command, status: 'failed', receipt: null, error: 'workspace_stopped' },
+    });
+  };
+  const f = machine(t, [node('a')], fetcher);
+  const session = seed(f, fake, 'receipt', {}, { workspaceDriver: 'code.v2' });
+  session.workspace = { attachment, result: null };
+  const id = launchId(session.id);
+  command = {
+    id: 'command_receipt',
+    projectId: session.projectId,
+    sessionId: session.id,
+    actorId: session.actorId,
+    instanceId: session.instanceId,
+    expectedRevision: 0,
+    runnerId: session.runnerId,
+    hostRef: id,
+    workspace: attachment,
+    expectedHead: attachment.headOid,
+    message: 'Checkpoint',
+    createdAt: '2026-09-15T00:00:00.000Z',
+  };
+  const stub = driver(f.root);
+  const handle = { path: f.root, snapshot: attachment, retain: false, readOnly: false };
+  stub.handles.set(id, { ...handle, status: 'ready' });
+  const factory: WorkspaceDriverFactory = {
+    name: 'code.v2',
+    create: (host, transport) => ({
+      ...stub.factory.create(host, transport),
+      checkpointCommit: async () => assert.fail('its outcome is already proven'),
+      pendingCommits: () => (acknowledged.length ? [] : [command]),
+      commitOutcome: () => ({ error: 'workspace_stopped' }),
+      acknowledgeCommit: (commandId: string) => acknowledged.push(commandId),
+    }),
+  };
+  const completions = () => fake.calls.filter((call) => call.path === '/code/commands/complete');
+  const runner = f.make([factory]);
+  await runner.start();
+  assert.equal(completions().length, 1);
+  assert.equal(runner.snapshot().lastError, 'github_push_required');
+  assert.deepEqual(acknowledged, [], 'a retried refusal is not an answer');
+  await runner.tick();
+  assert.equal(completions().length, 2, 'replayed on the next tick');
+  assert.deepEqual(acknowledged, []);
+  assert.deepEqual(open(f), [id]);
+  pushed = true;
+  await runner.tick();
+  assert.equal(completions().length, 3);
+  assert.deepEqual(acknowledged, ['command_receipt']);
+  assert.deepEqual(open(f), []);
+});
+
 test('a final presence refusal keeps supervising launches and stops leasing', async (t) => {
   const work = offer('limited');
   let limited = false;
@@ -416,10 +485,11 @@ function history(t: TestContext, count: number, settled: boolean) {
   return { fake, f };
 }
 
-test('settled history is never read by a tick', async (t) => {
+test('open launches are read through an index that skips settled history', async (t) => {
   const { fake, f } = history(t, 1000, true);
   const runner = f.make();
   await runner.start();
+  await runner.tick();
   const ledger = f.ledger();
   t.after(() => ledger.close());
   const started = performance.now();
@@ -431,7 +501,11 @@ test('settled history is never read by a tick', async (t) => {
     .all();
   db.close();
   assert.ok(plan.some((row) => String(row.detail).includes('launches_open')));
-  assert.equal(fake.calls.filter((call) => call.path.startsWith('/sessions/session_')).length, 0);
+  assert.equal(
+    fake.calls.filter((call) => call.path.startsWith('/sessions/session_')).length,
+    0,
+    'no tick asks about a settled launch',
+  );
   assert.equal(runner.snapshot().launches.length, 1000, 'summaries still list every launch');
 });
 
