@@ -136,10 +136,10 @@ export async function runMountUnloadScenario(
     };
     const mountedName = '_sandbox.inspect';
     // createApp does not wait for optional upstreams.
-    await until(
-      () => running.ctx.mounts.status()[0].state === 'ready',
-      'The mount did not become ready',
-    );
+    await until(() => {
+      const [mount] = running.ctx.mounts.status();
+      return mount.state === 'ready' && !mount.errorCode;
+    }, 'The mount did not become ready');
     const before = (await producer.listTools()).tools.map(({ name }) => name);
     assert.equal(before.length, 95);
     assert.ok(before.includes('system.status'));
@@ -295,10 +295,10 @@ export async function runMountUnloadScenario(
 
     await running.setEnabled('mounts', true);
     assert.notEqual(running.getFiber('mounts'), provider);
-    await until(
-      () => running.ctx.mounts.status()[0].state === 'ready',
-      'The restored mount did not become ready',
-    );
+    await until(() => {
+      const [mount] = running.ctx.mounts.status();
+      return mount.state === 'ready' && !mount.errorCode;
+    }, 'The restored mount did not become ready');
     const restored = (await producer.listTools()).tools.map(({ name }) => name);
     assert.deepEqual(restored, before);
     assert.equal(new Set(restored).size, restored.length);

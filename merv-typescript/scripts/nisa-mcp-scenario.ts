@@ -307,7 +307,8 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     // createApp and a reload do not wait for optional upstreams.
     const mountsReady = () =>
       eventually(
-        async () => running.ctx.mounts.status().every((mount) => mount.state === 'ready'),
+        async () =>
+          running.ctx.mounts.status().every((mount) => mount.state === 'ready' && !mount.errorCode),
         'Mounts did not become ready',
       );
     await mountsReady();
