@@ -172,6 +172,16 @@ test('only the verified owner manages key metadata, rotation lineage and strict 
     '?projectId=a&unexpected=1',
   ])
     assert.equal((await f.request(`/account/keys${query}`)).status, 400);
+  const malformed = await f.request<{ error: { message: string; details: unknown[] } }>(
+    '/account/keys?projectId=%20padded',
+  );
+  assert.equal(malformed.body.error.message, 'Request body failed validation');
+  assert.equal(malformed.body.error.details.length, 1);
+  const blank = await f.request(`/projects/${f.project.id}/members`, { projectId: ' ' });
+  assert.equal(blank.status, 400);
+  assert.equal(blank.body.error.message, 'projectId must be a non-empty string');
+  const conflicting = await f.request(`/projects/${f.project.id}/members`, { projectId: 'other' });
+  assert.equal(conflicting.body.error.message, 'Conflicting Merv project selections');
   for (const extra of [
     { owner: { issuer, subject: 'bob' } },
     { role: 'operator' },

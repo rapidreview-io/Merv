@@ -30,14 +30,23 @@ const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404
 
 /** A key route takes no query, except that a listing may name one project. */
 function keyQuery(params: URLSearchParams, allowProject = false): string | undefined {
-  const projectId = params.get('projectId') ?? undefined;
   if (
     [...params.keys()].some((key) => !allowProject || key !== 'projectId') ||
-    params.getAll('projectId').length > 1 ||
-    (projectId !== undefined && !keyProject.safeParse(projectId).success)
+    params.getAll('projectId').length > 1
   )
     throw new MervError('invalid_input', 'Unsupported or repeated key query parameter');
-  return projectId;
+  const projectId = params.get('projectId');
+  if (projectId === null) return undefined;
+  // The same 400, details included, as a key body naming a malformed project.
+  const parsed = keyProject.safeParse(projectId);
+  if (!parsed.success)
+    throw new MervError(
+      'invalid_input',
+      'Request body failed validation',
+      400,
+      parsed.error.issues.map(({ path, message, code }) => ({ path, message, code })),
+    );
+  return parsed.data;
 }
 
 /**
@@ -85,6 +94,8 @@ export function scopeRoutes(scope: Scope): MountHandler {
       const projectId = pathSegment(memberRoute[1]!);
       const subject = memberRoute[2] === undefined ? undefined : pathSegment(memberRoute[2]);
       const selected = req.headers['x-merv-project-id'];
+      if (selected !== undefined && (typeof selected !== 'string' || !selected.trim()))
+        throw new MervError('invalid_input', 'projectId must be a non-empty string');
       if (selected !== undefined && selected !== projectId)
         throw new MervError('invalid_input', 'Conflicting Merv project selections');
       if (subject === undefined && req.method === 'GET')
