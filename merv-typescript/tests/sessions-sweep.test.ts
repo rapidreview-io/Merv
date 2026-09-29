@@ -139,14 +139,15 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
     logged,
     async offer() {
       const target = await handle.start(source, { workflow: 'sweep', requestId: request() });
+      const token = secret();
       const session = await sessions.offer(source, {
         instanceId: target.id,
         expectedRevision: 0,
         runnerId: 'runner',
         requestId: request(),
-        secret: secret(),
+        secret: token,
       });
-      return { session, target };
+      return { session, target, token };
     },
     async status(id: string) {
       return (await state.read(
@@ -222,6 +223,16 @@ test('a revoked source is recorded by the next full pass, not by a light one', a
   assert.equal(await f.status(session.id), 'offered');
   await f.pass(true);
   assert.equal(await f.status(session.id), 'expired');
+});
+
+test('a revoked source refuses its worker’s next call at once, before any pass', async (t) => {
+  const f = await fixture(t);
+  const { session, token } = await f.offer();
+  await f.sessions.authenticate(token);
+  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await assert.rejects(f.sessions.authenticate(token), { status: 403 });
+  assert.equal(await f.status(session.id), 'expired', 'the refusal records the closure');
+  await assert.rejects(f.sessions.authenticate(token), { status: 401 });
 });
 
 test('the timer’s pass is full once 30 seconds have passed since the last', async (t) => {
