@@ -461,7 +461,9 @@ class Recovery:
                 deadline = time.monotonic() + 90
                 while True:
                     try:
-                        self.run(['docker', 'exec', container, 'pg_isready', '-U', 'postgres'])
+                        # The image's temporary init server accepts Unix sockets before
+                        # shutdown. TCP becomes ready only when the final server starts.
+                        self.run(['docker', 'exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'])
                         break
                     except Failure:
                         require(time.monotonic() < deadline, 'isolated verification database did not start')
