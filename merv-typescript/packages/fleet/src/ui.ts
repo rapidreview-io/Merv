@@ -1,10 +1,8 @@
 import type { Context } from 'cordis';
 import { check, type Json, type UiCollectionSpec, type UiRecordSpec } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import { failing, fleetRunning, statusOf, titleOf } from './running.js';
-import type { FleetAllocation } from './types.js';
+import { fleetRunning, live, present } from './running.js';
 
-const live = ['waiting', 'starting', 'running', 'retrying', 'finishing', 'stopping'];
 const collection: UiCollectionSpec = {
   noun: { singular: 'agent', plural: 'agents' },
   read: '/v1/fleet',
@@ -57,22 +55,6 @@ const record: UiRecordSpec = {
     { label: 'Provider state', field: 'runtime.state' },
     { label: 'Deadline', field: 'deadlineAt', unit: 'instant' },
   ],
-};
-const present = (a: FleetAllocation): Json => {
-  const open = a.phase !== 'released';
-  const failure = failing(a);
-  return {
-    id: a.id,
-    title: titleOf(a),
-    owner: a.owner,
-    status: statusOf(a),
-    intent: open ? a.intent : null,
-    createdAt: a.createdAt,
-    updatedAt: a.updatedAt,
-    deadlineAt: open ? a.deadlineAt : null,
-    attention: failure && `${failure}. Check the project's sandbox connection.`,
-    runtime: a.runtime ? { sandboxId: a.runtime.sandboxId, state: a.runtime.state } : null,
-  };
 };
 /** Uses the existing collection view; no browser bundle or research dependency. */
 export const fleetUiPlugin = {

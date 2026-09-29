@@ -8,8 +8,10 @@ import type {
   SandboxRuntimeProfileRef,
   SandboxRuntimes,
 } from '@merv/sandboxes';
+import { ToolRegistry } from '@merv/api/registry';
 import { UiRegistry } from '@merv/ui';
 import { FleetService, type FleetConfig, type FleetOwner } from '../packages/fleet/src/index.js';
+import { fleetToolsPlugin } from '../packages/fleet/src/tools.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { countWrites, openState } from './fixtures/state.js';
 
@@ -601,6 +603,52 @@ test('the Fleet page lists open work and bounded history in plain words', async 
   );
   assert.match(rows[3].attention!, /^No machine yet:/);
   assert.equal(rows[3].updatedAt, since, 'retries do not reset the standing clock');
+});
+
+test('Fleet tools answer with the redacted view, never the source, person or launch ids', async (t) => {
+  const f = await fixture(t);
+  const ctx = new Context();
+  const tools = new ToolRegistry(f.scope, f.scope.toolPolicy, (fn) => f.state.snapshot(fn));
+  ctx.provide('fleet', f.fleet);
+  ctx.provide('tools', tools);
+  await ctx.plugin(fleetToolsPlugin);
+  t.after(() => ctx.fiber.dispose());
+  f.owner.payer = async () => 'person-digest';
+  const allocation = await f.fleet.request(f.caller, input('redacted'));
+  await f.fleet.tick(); // Reserve and provision.
+  await f.fleet.tick(); // Launch.
+  const raw = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(raw.person, 'person-digest');
+  assert.equal(raw.runtime?.launch?.deliveryState, 'launched');
+  const view = {
+    id: allocation.id,
+    title: 'Workflow agent',
+    owner: { kind: 'workflow', id: 'work_1' },
+    status: 'starting',
+    phase: 'starting',
+    intent: 'run',
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    deadlineAt: raw.deadlineAt,
+    attention: null,
+    runtime: { sandboxId: 'sbx_1', state: 'ready' },
+  };
+  assert.deepEqual(await tools.call('fleet.get', f.caller, { id: allocation.id }), view);
+  assert.deepEqual(await tools.call('fleet.list', f.caller, {}), [view]);
+  const text = JSON.stringify(await tools.call('fleet.drain', f.caller, { id: allocation.id }));
+  for (const secret of [
+    'person-digest',
+    f.caller.actorId,
+    'rln_',
+    'rtj_',
+    'fixed-release',
+    ':launch',
+  ])
+    assert.equal(text.includes(secret), false, secret);
+  const halted = (await tools.call('fleet.halt', f.caller, { id: allocation.id })) as {
+    intent: string;
+  };
+  assert.equal(halted.intent, 'stop');
 });
 
 test('lost create and launch replies retry stable keys and consumed bootstrap remains live', async (t) => {

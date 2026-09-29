@@ -3,14 +3,7 @@ import type { MountHandler } from '@merv/api/types';
 import type { SandboxRuntimeHandle, SandboxRuntimeOffer } from '@merv/sandboxes/types';
 
 export type FleetPhase =
-  | 'queued'
-  | 'provisioning'
-  | 'launching'
-  | 'starting'
-  | 'running'
-  | 'uncertain'
-  | 'releasing'
-  | 'released';
+  'queued' | 'provisioning' | 'starting' | 'running' | 'uncertain' | 'releasing' | 'released';
 export type FleetIntent = 'run' | 'drain' | 'stop';
 export interface FleetAllocation {
   id: string;

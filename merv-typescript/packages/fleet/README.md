@@ -1,6 +1,6 @@
 # Fleet
 
-Fleet is a default-disabled, server-side capacity and sandbox lifecycle service. It does not run research work or expose allocation requests as agent tools. A trusted owner registers to validate authority, provide stable bootstrap bytes, and report when capture or checkpoint work has finished: Pi registers `pi` whenever it is enabled, and the optional workflow adapter registers `workflow`.
+Fleet is a default-disabled, server-side capacity and sandbox lifecycle service. It does not run research work or expose allocation requests as agent tools; its list, get, drain and halt tools answer with the same redacted view as its page, without an allocation's source, person or launch ids. A trusted owner registers to validate authority, provide stable bootstrap bytes, and report when capture or checkpoint work has finished: Pi registers `pi-host` whenever it is enabled, and the optional workflow adapter registers `workflow`.
 
 An allocation uses one immutable runtime profile and one stable create and launch key. Global and per-project limits count every allocation that has left the queue until the sandbox provider reports `stopped`, Fleet can prove no machine is left, or the lease of a stopped machine has passed. A queued request gives up at its deadline; once reserved, the machine gets the full allocation timeout. `drain` prevents new admission and launch while renewing a running sandbox until its owner finishes or the deadline expires. One failed call keeps a launched machine's phase, and its worker's admission, while its lease lasts.
 
