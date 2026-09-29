@@ -157,7 +157,11 @@ export interface ModelRelayTerminal<E extends string = string> {
  * supplies what differs: its route and bearer, how a grant reads, which request bodies pass and
  * what the relay sets in them, and the lane that allows one call in flight.
  */
-export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = string> {
+export interface ModelRelayConfig<
+  G extends ModelRelayGrant,
+  N extends string = string,
+  R = unknown,
+> {
   /** Names the records, `${name}_relay_usage`, `${name}_relay_failure` and `${name}_relay_terminal`. */
   name: N;
   route: string;
@@ -185,14 +189,15 @@ export interface ModelRelayConfig<G extends ModelRelayGrant, N extends string = 
   maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
-  /** Charges a call before it goes upstream and returns what it charged; throwing refuses it,
-   *  with the error's `code` when it has one. The charge stands for a call that never finishes. */
-  reserve?: (grant: G, body: Record<string, unknown>) => Promise<number>;
-  /** A finished call's usage, with what `reserve` charged for it. */
+  /** Charges a call before it goes upstream, after every other refusal, and returns the charge
+   *  as the feature reads it back; throwing refuses the call, with the error's `code` when it has
+   *  one. The charge stands for a call that never finishes. */
+  reserve?: (grant: G, body: Record<string, unknown>) => Promise<R>;
+  /** A finished call's usage, with what `reserve` returned for it. */
   onUsage?: (
     record: ModelRelayUsage<`${N}_relay_usage`>,
     grant: G,
-    reserved: number,
+    reserved: R,
   ) => void | Promise<void>;
 }
 export interface Api {
@@ -201,9 +206,9 @@ export interface Api {
   stop(): Promise<void>;
   mount(prefix: string, handler: MountHandler): () => void;
   /** Mounts a model relay; the disposer withdraws it and ends the calls it is streaming. */
-  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,
-    config: ModelRelayConfig<G, N>,
+    config: ModelRelayConfig<G, N, R>,
   ): () => void;
   registerSessions(provider: SessionApiProvider): () => void;
   registerCode(provider: CodeApiProvider): () => void;

@@ -21,12 +21,21 @@ class RelayFailure extends Error {
 const reject = (status: number, code: string): never => {
   throw new RelayFailure(status, code);
 };
-/** Hands a record to its callback, which never changes the call. */
-const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) => {
-  try {
-    void Promise.resolve(callback?.(record)).catch(() => {});
-  } catch {}
-};
+/** Hands a record to its callback, which never changes the call; a failure is logged by name. */
+const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) =>
+  void Promise.resolve()
+    .then(() => callback?.(record))
+    .catch((error: unknown) => {
+      const name = String((error as Error | null)?.name);
+      process.stderr.write(`${JSON.stringify({ event: 'model_relay_callback_failed', name })}\n`);
+    });
+/** A content type's media type, without its parameters. */
+const mediaType = (value: string | null | undefined) => value?.split(';')[0]?.trim().toLowerCase();
+/** A grant whose expiry is past, or unreadable, is expired. */
+const expired = (grant: ModelRelayGrant) => !(Date.parse(grant.expiresAt) > Date.now());
+/** Streamed frames rely on an authority read at most this old; an authority that stops answering
+ *  ends the stream. */
+const authorityStaleMs = 5_000;
 /** The Responses API's `usage`, as a finished call's last frame carries it. */
 type Usage = {
   input_tokens?: unknown;
@@ -61,7 +70,7 @@ async function readRequest(
   signal: AbortSignal,
 ): Promise<unknown> {
   if (req.destroyed || req.aborted) reject(400, 'request_aborted');
-  if (req.headers['content-type']?.toLowerCase() !== 'application/json')
+  if (mediaType(req.headers['content-type']) !== 'application/json')
     reject(415, 'unsupported_media_type');
   const declared = req.headers['content-length'];
   if (declared && Number(declared) > maxBytes) reject(413, 'request_too_large');
@@ -110,10 +119,10 @@ async function writeChunk(
 }
 
 /** Streams a worker's Responses call upstream under the provider key the worker never holds. */
-export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
+export class ModelRelay<G extends ModelRelayGrant, N extends string = string, R = unknown> {
   private readonly options: Required<
     Pick<
-      ModelRelayConfig<G, N>,
+      ModelRelayConfig<G, N, R>,
       | 'maxRequestBytes'
       | 'maxResponseBytes'
       | 'totalTimeoutMs'
@@ -129,7 +138,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
   private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
   private stopped = false;
 
-  constructor(private readonly config: ModelRelayConfig<G, N>) {
+  constructor(private readonly config: ModelRelayConfig<G, N, R>) {
     if (typeof config.providerKey !== 'function')
       throw new Error('Model relay requires a provider key source');
     // No output cap is added here: a feature's payload sets one where it wants it. A maximal
@@ -176,8 +185,9 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
 
     const controller = new AbortController();
     const { signal } = controller;
+    let done = false;
     const abort = (status: number, code: string) => {
-      if (!signal.aborted) {
+      if (!done && !signal.aborted) {
         controller.abort(new RelayFailure(status, code));
         if (!req.complete) req.destroy();
       }
@@ -209,11 +219,9 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         return this.error(res, 401, 'unauthorized');
       }
       let validatedAt = 0;
-      // Streamed frames reuse an authority read up to a second old; the fence refreshes it.
-      const validate = async (recent = false) => {
+      const validate = async () => {
         if (signal.aborted) throw signal.reason;
-        if (Date.parse(grant.expiresAt) <= Date.now()) reject(403, 'grant_forbidden');
-        if (recent && Date.now() - validatedAt < 1000) return;
+        if (expired(grant)) reject(403, 'grant_forbidden');
         const started = Date.now();
         try {
           await interruptible(authority.validate(grant), signal);
@@ -221,7 +229,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
           if (signal.aborted) throw signal.reason;
           return reject(403, 'grant_forbidden');
         }
-        if (Date.parse(grant.expiresAt) <= Date.now()) reject(403, 'grant_forbidden');
+        if (expired(grant)) reject(403, 'grant_forbidden');
         validatedAt = started;
       };
       await validate();
@@ -236,7 +244,22 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
       );
       const body = this.config.payload(raw, grant) ?? reject(400, 'invalid_payload');
       const effort = (body.reasoning as { effort?: unknown } | undefined)?.effort;
-      let reserved = 0;
+      // Every refusal comes before the call is charged.
+      const key = await interruptible(
+        Promise.resolve().then(() => this.config.providerKey()),
+        signal,
+      );
+      if (typeof key !== 'string' || !key.trim()) reject(503, 'relay_unavailable');
+      for (const [id, entry] of this.grants) if (entry.expiry <= Date.now()) this.grants.delete(id);
+      const previous = this.grants.get(grant.id);
+      const binding = JSON.stringify(grant);
+      if (previous && previous.binding !== binding) reject(403, 'grant_forbidden');
+      if (
+        (previous?.count ?? 0) >= this.options.maxRequestsPerGrant ||
+        (!previous && this.grants.size >= this.options.maxGrantEntries)
+      )
+        reject(429, 'relay_busy');
+      let reserved = undefined as R;
       if (this.config.reserve)
         try {
           reserved = await interruptible(this.config.reserve(grant, body), signal);
@@ -249,26 +272,12 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
           );
         }
       phase = 'upstream';
-      const key = await interruptible(
-        Promise.resolve().then(() => this.config.providerKey()),
-        signal,
-      );
-      await validate();
-      if (typeof key !== 'string' || !key.trim()) reject(503, 'relay_unavailable');
-      for (const [id, entry] of this.grants) if (entry.expiry <= Date.now()) this.grants.delete(id);
-      const previous = this.grants.get(grant.id);
-      const binding = JSON.stringify(grant);
-      if (previous && previous.binding !== binding) reject(403, 'grant_forbidden');
-      if (
-        (previous?.count ?? 0) >= this.options.maxRequestsPerGrant ||
-        (!previous && this.grants.size >= this.options.maxGrantEntries)
-      )
-        reject(429, 'relay_busy');
       this.grants.set(grant.id, {
         count: (previous?.count ?? 0) + 1,
         expiry: Date.parse(grant.expiresAt),
         binding,
       });
+      await validate();
       const upstream = await interruptible(
         (this.config.fetchImpl ?? fetch)(responsesUrl, {
           method: 'POST',
@@ -284,7 +293,7 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
       if (
         !upstream.ok ||
         !upstream.body ||
-        !upstream.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')
+        mediaType(upstream.headers.get('content-type')) !== 'text/event-stream'
       )
         reject(502, 'upstream_failed');
       await validate();
@@ -306,9 +315,15 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         );
       };
       resetIdle();
-      fence = setInterval(() => {
-        void validate().catch(() => abort(403, 'grant_forbidden'));
-      }, 1000);
+      // One authority read in flight at a time, a second after the last; frames never wait on one.
+      const tick = () => {
+        if (!done)
+          fence = setTimeout(
+            () => void validate().then(tick, () => abort(403, 'grant_forbidden')),
+            1000,
+          );
+      };
+      tick();
       let bytes = 0;
       // A frame ends at a blank line. Each byte is searched once, as the last frames of a long
       // answer each repeat its whole text: only a frame's own bytes are held, and at most 3 of
@@ -384,17 +399,15 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
               });
             }
           }
+          completed ||= terminal === 'completed';
           if (
-            /^event:\s*response\.completed\s*$/im.test(content) ||
-            /^\{\s*"type"\s*:\s*"response\.completed"/.test(data)
-          )
-            completed = true;
-          if (
-            /^event:\s*(?:error|response\.failed)\s*$/im.test(content) ||
+            terminal === 'failed' ||
+            /^event:\s*error\s*$/im.test(content) ||
             /"type"\s*:\s*"(?:error|response\.failed)"/.test(data)
           )
             reject(502, 'upstream_failed');
-          await validate(true);
+          if (expired(grant)) reject(403, 'grant_forbidden');
+          if (Date.now() - validatedAt > authorityStaleMs) reject(504, 'relay_timeout');
           startStream();
           await writeChunk(res, frame, signal);
           resetIdle();
@@ -406,6 +419,8 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         if (heldBytes > Math.min(this.options.maxResponseBytes, 16 * 1024 * 1024))
           reject(502, 'response_too_large');
       }
+      // A stream that ends without its terminal frame did not finish.
+      if (!terminalReported) reject(502, 'upstream_failed');
       if (!signal.aborted) {
         startStream();
         res.end();
@@ -428,10 +443,11 @@ export class ModelRelay<G extends ModelRelayGrant, N extends string = string> {
         else this.error(res, failure.status, failure.code);
       }
     } finally {
+      done = true;
       if (reader) void reader.cancel().catch(() => {});
       clearTimeout(total);
       if (idle) clearTimeout(idle);
-      if (fence) clearInterval(fence);
+      if (fence) clearTimeout(fence);
       req.off('aborted', disconnected);
       res.off('close', disconnected);
       this.active.delete(controller);

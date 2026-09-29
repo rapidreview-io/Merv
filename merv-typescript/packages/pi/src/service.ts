@@ -65,6 +65,7 @@ import type {
   PiMachineChoice,
   PiMachineOption,
   PiMessage,
+  PiModelCharge,
   PiMove,
   PiMoveBy,
   PiMoveFailure,
@@ -2319,8 +2320,6 @@ export class PiService implements Pi, FleetOwner {
     });
   }
 
-  /** The day each conversation's one call in flight was charged to. */
-  private charged = new Map<string, string>();
   /**
    * A person's Agent tokens today: a call is charged at its most (its request and its output)
    * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
@@ -2329,7 +2328,7 @@ export class PiService implements Pi, FleetOwner {
   async reserveModel(
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
     body: Record<string, unknown>,
-  ): Promise<number> {
+  ): Promise<PiModelCharge> {
     const most =
       Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
     const day = this.time().slice(0, 10);
@@ -2346,20 +2345,20 @@ export class PiService implements Pi, FleetOwner {
         ),
       ));
     check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
-    this.charged.set(grant.conversationId, day);
-    return most;
+    return { day, tokens: most };
   }
   async settleModel(
     usage: { inputTokens: number; outputTokens: number },
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
-    reserved: number,
+    reserved: PiModelCharge,
   ): Promise<void> {
+    // Settles the day the call was charged to, even past midnight.
     await this.state.transaction((tx) =>
       tx.run(
         'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-        usage.inputTokens + usage.outputTokens - reserved,
+        usage.inputTokens + usage.outputTokens - reserved.tokens,
         grant.userId,
-        this.charged.get(grant.conversationId) ?? this.time().slice(0, 10),
+        reserved.day,
       ),
     );
   }

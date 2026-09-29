@@ -1,5 +1,5 @@
 import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/api/types';
-import type { PiRelayGrant } from './types.js';
+import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
 import {
   piRelayGrantSchema,
@@ -11,11 +11,12 @@ import {
 export type { PiRelayGrant } from './types.js';
 export type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
 export type PiRelayUsageRecord = ModelRelayUsage<'pi_relay_usage'>;
+type PiRelay = ModelRelayConfig<PiRelayGrant, 'pi', PiModelCharge>;
 export type PiRelayConfig = Omit<
-  ModelRelayConfig<PiRelayGrant, 'pi'>,
+  PiRelay,
   'name' | 'route' | 'token' | 'grant' | 'payload' | 'lane' | 'maxRequestBytes' | 'totalTimeoutMs'
 > &
-  Partial<Pick<ModelRelayConfig<PiRelayGrant, 'pi'>, 'maxRequestBytes' | 'totalTimeoutMs'>> & {
+  Partial<Pick<PiRelay, 'maxRequestBytes' | 'totalTimeoutMs'>> & {
     /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
     models: readonly { id: string; effort: 'none' | 'low' }[];
   };
@@ -24,11 +25,7 @@ const responsesUrl = 'https://api.openai.com/v1/responses';
 
 /** Pi's relay: one model call at a time per conversation, as a person's conversations share one
  *  machine, in the Pi-shaped request its worker sends. */
-export function piModelRelay({
-  models,
-  authority,
-  ...config
-}: PiRelayConfig): ModelRelayConfig<PiRelayGrant, 'pi'> {
+export function piModelRelay({ models, authority, ...config }: PiRelayConfig): PiRelay {
   const efforts = new Map(models?.map(({ id, effort }) => [id, effort]));
   if (!efforts.size) throw new Error('Pi relay requires a model');
   return {

@@ -502,9 +502,9 @@ export class ApiServer {
       if (this.mounts.get(prefix) === handler) this.mounts.delete(prefix);
     };
   }
-  mountModelRelay<G extends ModelRelayGrant, N extends string>(
+  mountModelRelay<G extends ModelRelayGrant, N extends string, R>(
     prefix: string,
-    config: ModelRelayConfig<G, N>,
+    config: ModelRelayConfig<G, N, R>,
   ): () => void {
     const relay = new ModelRelay(config);
     const unmount = this.mount(prefix, relay.handle);

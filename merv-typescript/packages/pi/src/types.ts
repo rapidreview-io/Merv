@@ -354,6 +354,8 @@ export interface PiRelayGrant {
   model: string;
   toolNames: string[];
 }
+/** A model call's charge: the day it was charged to and its tokens at their most. */
+export type PiModelCharge = { day: string; tokens: number };
 export interface PiCompletion {
   commandId: string;
   workerId: string;
@@ -412,11 +414,11 @@ export interface PiRuntime extends Pi {
   authorizeModel(token: string): Promise<PiRelayGrant>;
   validateModel(grant: PiRelayGrant): Promise<void>;
   /** Charges a call to its person's Agent tokens today and returns the charge; refuses at the ceiling. */
-  reserveModel(grant: PiRelayGrant, body: Record<string, unknown>): Promise<number>;
+  reserveModel(grant: PiRelayGrant, body: Record<string, unknown>): Promise<PiModelCharge>;
   settleModel(
     usage: { inputTokens: number; outputTokens: number },
     grant: PiRelayGrant,
-    reserved: number,
+    reserved: PiModelCharge,
   ): Promise<void>;
 }
 declare module 'cordis' {

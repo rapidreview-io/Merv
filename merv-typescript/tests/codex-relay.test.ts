@@ -325,6 +325,41 @@ test('a call is charged at its most before it goes out and settled when it finis
   assert.equal(f.upstream.length, 1);
 });
 
+test('a call settles to the day it was charged to, even past midnight', async (t) => {
+  const f = await fixture(t);
+  const relay = await codexModelRelay({} as Sessions, f.state, {
+    providerKey: () => key,
+    dailyTokensPerPerson: 1_000_000,
+  });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-28T23:59:59.500Z') });
+  const charge = await relay.reserve!(grant, codexPayload(codex, grant)!);
+  assert.equal(charge.day, '2026-09-28');
+  t.mock.timers.tick(1_000);
+  await relay.onUsage!(
+    {
+      event: 'codex_relay_usage',
+      model: grant.model,
+      inputTokens: 80,
+      cachedTokens: 0,
+      outputTokens: 30,
+      reasoningTokens: 0,
+    },
+    grant,
+    charge,
+  );
+  t.mock.timers.reset();
+  const days = await f.state.read((sql) =>
+    sql.all<{ day: string; tokens: number | string }>(
+      'SELECT day, tokens FROM fleet_model_usage WHERE person=?',
+      grant.person,
+    ),
+  );
+  assert.deepEqual(
+    days.map(({ day, tokens }) => ({ day, tokens: Number(tokens) })),
+    [{ day: '2026-09-28', tokens: 110 }],
+  );
+});
+
 test('a call cut off before it finishes keeps its charge, and calls in flight count against the day', async (t) => {
   const most = Math.ceil(JSON.stringify(codexPayload(codex, grant)).length / 4) + 65_536;
   const f = await fixture(t, 2 * most - 1);

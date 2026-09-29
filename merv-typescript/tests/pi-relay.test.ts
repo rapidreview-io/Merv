@@ -84,7 +84,7 @@ async function fixture(overrides: Partial<PiRelayConfig> = {}) {
 }
 
 function send(
-  f: { relay: ModelRelay<PiRelayGrant, 'pi'> },
+  f: { relay: ReturnType<typeof piRelay> },
   body: unknown = request,
   options: RequestInit & { path?: string; backpressure?: boolean } = {},
 ): Promise<Response> {
@@ -642,6 +642,203 @@ test('enforces request bytes, response bytes, deadline, and per-grant request co
   assert.match(await response.text(), /relay_interrupted/);
 });
 
+test('a call is charged only once nothing else refuses it, and its charge reaches its usage', async (t) => {
+  const charges: object[] = [];
+  const settled: unknown[] = [];
+  const reserve = async () => {
+    const charge = { day: '2026-09-28', tokens: 7 };
+    charges.push(charge);
+    return charge;
+  };
+  const blank = await fixture({ providerKey: () => ' ', reserve });
+  t.after(() => blank.close());
+  for (let call = 0; call < 3; call++) assert.equal((await send(blank)).status, 503);
+  assert.equal(charges.length, 0);
+  const f = await fixture({
+    maxRequestsPerGrant: 1,
+    reserve,
+    onUsage: (_record, _grant, reserved) => void settled.push(reserved),
+    fetchImpl: async () =>
+      eventStream(
+        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`,
+      ),
+  });
+  t.after(() => f.close());
+  assert.deepEqual(
+    [await send(f), await send(f), await send(f)].map((response) => response.status),
+    [200, 429, 429],
+  );
+  assert.equal(charges.length, 1);
+  assert.equal(settled[0], charges[0]);
+});
+
+test('a request’s media type is read without its parameters', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  for (const type of ['application/json; charset=utf-8', 'Application/JSON ; charset=UTF-8'])
+    assert.equal(
+      (
+        await send(f, request, {
+          headers: { authorization: `Bearer ${token}`, 'content-type': type },
+        })
+      ).status,
+      200,
+      type,
+    );
+  assert.equal(
+    (
+      await send(f, request, {
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/jsonx' },
+      })
+    ).status,
+    415,
+  );
+});
+
+test('a stream that ends without its terminal frame is a failure', async (t) => {
+  const failures: PiRelayFailureRecord[] = [];
+  const f = await fixture({
+    onFailure: (record) => void failures.push(record),
+    fetchImpl: async () =>
+      eventStream('data: {"type":"response.output_text.delta","delta":"a"}\n\n'.repeat(2)),
+  });
+  t.after(() => f.close());
+  const response = await send(f);
+  assert.equal(response.status, 200);
+  const text = await response.text();
+  assert.equal(text.match(/output_text\.delta/g)?.length, 2);
+  assert.match(text, /relay_interrupted"\}\n\n$/);
+  assert.deepEqual(
+    failures.map(({ code, phase }) => [code, phase]),
+    [['upstream_failed', 'stream']],
+  );
+});
+
+test('a failed response is refused wherever its type sits in the frame', async (t) => {
+  const f = await fixture({
+    fetchImpl: async () => eventStream('data: {"sequence_number":1,"type":"response.failed"}\n\n'),
+  });
+  t.after(() => f.close());
+  const response = await send(f);
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: 'upstream_failed' });
+});
+
+test('a callback that fails is logged by name only', async (t) => {
+  const lines: string[] = [];
+  const write = process.stderr.write;
+  process.stderr.write = ((chunk: string) => lines.push(String(chunk)) > 0) as never;
+  t.after(() => void (process.stderr.write = write));
+  const f = await fixture({
+    onUsage: async () => {
+      throw new TypeError('private callback failure');
+    },
+    fetchImpl: async () =>
+      eventStream(
+        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1 } } })}\n\n`,
+      ),
+  });
+  t.after(() => f.close());
+  assert.equal((await send(f)).status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  process.stderr.write = write;
+  assert.deepEqual(
+    lines.map((line) => JSON.parse(line)),
+    [{ event: 'model_relay_callback_failed', name: 'TypeError' }],
+  );
+});
+
+/** An upstream that sends a frame every `everyMs` until it is cancelled or has sent `count`. */
+function ticking(everyMs: number, count = Infinity) {
+  let timer: NodeJS.Timeout | undefined;
+  return async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          let sent = 0;
+          timer = setInterval(() => {
+            try {
+              if (sent++ < count)
+                controller.enqueue(
+                  new TextEncoder().encode(`data: {"type":"delta","n":${sent}}\n\n`),
+                );
+              else {
+                clearInterval(timer);
+                controller.enqueue(
+                  new TextEncoder().encode('data: {"type":"response.completed"}\n\n'),
+                );
+                controller.close();
+              }
+            } catch {
+              clearInterval(timer);
+            }
+          }, everyMs);
+        },
+        cancel: () => clearInterval(timer),
+      }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    );
+}
+
+test('a slow authority read never holds a frame, and only one is in flight', async (t) => {
+  let validations = 0;
+  let inFlight = 0;
+  let most = 0;
+  const f = await fixture({
+    authority: {
+      authorize: async () => grant(),
+      // Admission reads three times at once; every later read takes 1.1 s.
+      validate: async () => {
+        most = Math.max(most, ++inFlight);
+        if (++validations > 3) await new Promise((resolve) => setTimeout(resolve, 1_100));
+        inFlight--;
+      },
+    },
+    fetchImpl: ticking(150, 11),
+  });
+  t.after(() => f.close());
+  const started = Date.now();
+  const response = await send(f);
+  const text = await response.text();
+  assert.ok(Date.now() - started < 2_500, `took ${Date.now() - started} ms`);
+  assert.equal(text.match(/"type":"delta"/g)?.length, 11);
+  assert.match(text, /response\.completed/);
+  assert.equal(most, 1);
+});
+
+test('an authority that stops answering ends the stream within its staleness bound', async (t) => {
+  let validations = 0;
+  const failures: PiRelayFailureRecord[] = [];
+  const f = await fixture({
+    authority: {
+      authorize: async () => grant(),
+      validate: () => (++validations > 3 ? new Promise<void>(() => {}) : Promise.resolve()),
+    },
+    onFailure: (record) => void failures.push(record),
+    fetchImpl: ticking(100),
+  });
+  t.after(() => f.close());
+  const started = Date.now();
+  const response = await send(f);
+  const reader = response.body!.getReader();
+  let last = 0;
+  let text = '';
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    const chunk = new TextDecoder().decode(next.value);
+    if (chunk.includes('"type":"delta"')) last = Date.now() - started;
+    text += chunk;
+  }
+  assert.ok(Date.now() - started < 6_000, `took ${Date.now() - started} ms`);
+  assert.ok(last <= 5_100, `a frame was written at ${last} ms`);
+  assert.match(text, /relay_interrupted/);
+  assert.deepEqual(
+    failures.map(({ code }) => code),
+    ['relay_timeout'],
+  );
+});
+
 test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upstream', async (t) => {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const signals: AbortSignal[] = [];
@@ -711,7 +908,7 @@ test('revocation fences subsequent SSE chunks and disconnect/shutdown abort upst
   assert.equal((await send(g)).status, 503);
 });
 
-test('streamed frames reuse a recent authority read, and a turn fits dozens of model calls', async (t) => {
+test('streamed frames read no authority of their own, and a turn fits dozens of model calls', async (t) => {
   let validations = 0;
   const bound = grant();
   const f = await fixture({
@@ -721,13 +918,16 @@ test('streamed frames reuse a recent authority read, and a turn fits dozens of m
         validations++;
       },
     },
-    fetchImpl: async () => eventStream('data: {"type":"delta"}\n\n'.repeat(200)),
+    fetchImpl: async () =>
+      eventStream(
+        'data: {"type":"delta"}\n\n'.repeat(200) + 'data: {"type":"response.completed"}\n\n',
+      ),
   });
   t.after(() => f.close());
   for (let turn = 0; turn < 20; turn++) {
     const response = await send(f);
     assert.equal(response.status, 200);
-    assert.equal((await response.text()).split('\n\n').length, 201);
+    assert.equal((await response.text()).split('\n\n').length, 202);
   }
   assert.equal(validations, 60, 'three admission checks per call, none per frame');
 });
