@@ -769,9 +769,9 @@ export class FleetService implements Fleet {
     }
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
-    /** One stop per machine, which sets releaseBy; a machine the provider reports deleting is
-     * then only watched, until it is gone or releaseBy. A provider that still reports it up is
-     * asked again, at most once a pass. */
+    // One stop per machine, which sets releaseBy; a machine the provider reports deleting is
+    // then only watched, until it is gone or releaseBy. A provider that still reports it up is
+    // asked again, at most once a pass.
     const stop = async (a: FleetAllocation, handle: SandboxRuntimeHandle) => {
       if (handle.state !== 'deleting')
         a = await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');

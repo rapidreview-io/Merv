@@ -303,6 +303,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * The machines since a revision's latest grant that no session claimed, newest first, up to
    * the limit, and when the cooldown after the newest ends. A claimed session starts a new
    * streak; a refused create made no machine and is not one, but a machine never launched is.
+   * A create that fails otherwise and leaves no machine is not one either: it is retried each
+   * releaseBy and never exhausts the revision, but it costs nothing.
    */
   private async streak(attempts: FleetAllocation[], prior = 0) {
     let unclaimed = 0;
@@ -664,12 +666,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
     );
-    const grants = await this.retryGrants([...new Set(queue.map((item) => item.projectId))]);
+    // Read only once some target reaches the streak check, so a full or covered pass reads none.
+    let grants: Map<string, RetryGrant> | undefined;
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
       const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === id);
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work.
+      grants ??= await this.retryGrants([...new Set(queue.map((item) => item.projectId))]);
       const { unclaimed, cooldownUntil } = await this.streak(
         attempts,
         grants.get(grantKey(projectId, id))?.prior_allocations,
