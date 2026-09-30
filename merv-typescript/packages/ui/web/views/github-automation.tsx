@@ -58,7 +58,7 @@ export function GitHubAutomation({
               ? 'Off'
               : status.automation === 'read'
                 ? 'Read only'
-                : 'Read and publish reviewable changes'}
+                : 'Read & publish'}
           </span>
         </div>
       )}
@@ -77,7 +77,7 @@ export function GitHubAutomation({
                 Read only
               </option>
               <option value="write" disabled={!status.automationConfigured || !status.canBrowse}>
-                Read and publish reviewable changes
+                Read & publish
               </option>
             </select>
           </label>
@@ -104,6 +104,7 @@ export function GitHubAutomation({
                   <span>{base || 'No branch chosen'}</span>
                   <button
                     className="btn"
+                    aria-label="Choose branch"
                     disabled={busy}
                     onClick={() =>
                       void act(async () => {
@@ -112,7 +113,7 @@ export function GitHubAutomation({
                       })
                     }
                   >
-                    Choose branch
+                    Change
                   </button>
                 </div>
               )}
@@ -137,7 +138,7 @@ export function GitHubAutomation({
                   })
                 }
               >
-                {busy ? 'Saving…' : 'Save automation'}
+                {busy ? 'Saving…' : 'Save changes'}
               </button>
             </div>
           )}

@@ -5322,16 +5322,14 @@ details.running-section > summary {
   font-weight: 600;
   letter-spacing: -0.3px;
 }
-.github-heading p {
-  margin-top: 2px;
-  font-size: var(--text-sm);
-}
 .github-state {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   color: var(--muted);
   font-size: var(--text-sm);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
 }
 .github-state::before {
   content: '';
@@ -5340,8 +5338,12 @@ details.running-section > summary {
   border-radius: 50%;
   background: var(--faint);
 }
+.github-state[data-connected='true'] {
+  color: var(--active);
+  background: var(--hover);
+}
 .github-state[data-connected='true']::before {
-  background: var(--supports);
+  background: currentColor;
 }
 .github-body {
   padding: 0 28px 24px;
@@ -5360,7 +5362,7 @@ details.running-section > summary {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--text);
+  color: var(--active);
   font-weight: 550;
   overflow-wrap: anywhere;
 }
@@ -5380,9 +5382,9 @@ details.running-section > summary {
   font-size: var(--text-sm);
 }
 .github-connection .github-primary {
-  color: var(--bg-elev);
-  background: var(--text);
-  border-color: var(--text);
+  color: #fff;
+  background: var(--active-fill);
+  border-color: var(--active-fill);
 }
 .github-connection .github-primary:hover:not(:disabled) {
   opacity: 0.85;
@@ -5402,6 +5404,7 @@ details.running-section > summary {
 .github-automation {
   border-top: 1px solid var(--line-soft);
   padding-top: 20px;
+  gap: 16px;
 }
 .github-setting {
   display: flex;
@@ -5429,8 +5432,15 @@ details.running-section > summary {
   font-size: var(--text-base);
   font-weight: 550;
 }
-.github-preparation .btn {
-  align-self: flex-start;
+.github-preparation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.github-preparation-row h3 + p {
+  margin-top: 4px;
 }
 .github-footer {
   border-top: 1px solid var(--line);
@@ -5487,7 +5497,7 @@ details.running-section > summary {
   background: var(--bg-soft);
 }
 .github-connection :is(button, a, summary, select):focus-visible {
-  outline: 2px solid var(--text);
+  outline: 2px solid var(--active);
   outline-offset: 3px;
 }
 @media (max-width: 600px) {

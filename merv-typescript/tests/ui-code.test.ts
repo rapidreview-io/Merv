@@ -2224,7 +2224,7 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     t.after(unmount);
     serve('/code/github', { body: status });
     await mount(createElement(GitHubConnection));
-    assert.match(text(), /Research base: research-base/);
+    assert.match(text(), /Base branch.*research-base/);
     assert.doesNotMatch(text(), /GitHub default: main/);
   });
 
@@ -2235,10 +2235,10 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     await mount(createElement(GitHubConnection));
     assert.equal(document.querySelector('details')!.open, false);
     assert.equal(
-      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save automation'),
+      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save changes'),
       false,
     );
-    await click('Change repository');
+    await click('Change');
     const picker = document.querySelector('.github-picker')!;
     assert.ok(picker);
     const select = picker.querySelector('select')!;
@@ -2275,11 +2275,11 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     assert.equal(sent, undefined);
     await choose('off');
     assert.equal(
-      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save automation'),
+      [...document.querySelectorAll('button')].some((b) => b.textContent === 'Save changes'),
       false,
     );
     await choose('read');
-    await click('Save automation');
+    await click('Save changes');
     assert.deepEqual(sent, { expectedRevision: 1, mode: 'read', baseBranch: 'research-base' });
   });
 
@@ -2299,7 +2299,7 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     const options = [...document.querySelectorAll('option')].filter((item) => item.disabled);
     assert.deepEqual(
       options.map((item) => item.textContent),
-      ['Read only', 'Read and publish reviewable changes'],
+      ['Read only', 'Read & publish'],
     );
   });
 
@@ -2315,13 +2315,13 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     });
     let changed = 0;
     await mount(createElement(GitHubAutomation, { status, onChanged: () => changed++ }));
-    await click('Choose branch');
+    await click('Change');
     const select = document.querySelectorAll('select')[1];
     await act(async () => {
       select.value = 'release/science';
       select.dispatchEvent(new window.Event('change', { bubbles: true }));
     });
-    await click('Save automation');
+    await click('Save changes');
     assert.deepEqual(sent, { expectedRevision: 1, mode: 'write', baseBranch: 'release/science' });
     assert.equal(changed, 1);
   });
@@ -2380,7 +2380,7 @@ test('the same move drawn inside the canvas offers no control back to the canvas
       return createElement(GitHubAutomation, { status: value, onChanged: () => {} });
     };
     await mount(createElement(Settings));
-    await click('Choose branch');
+    await click('Change');
     await act(async () => change({ ...status, revision: 2, baseBranch: 'new-research-base' }));
     await act(async () => {
       release(

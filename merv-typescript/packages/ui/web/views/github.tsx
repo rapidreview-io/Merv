@@ -128,7 +128,6 @@ export function GitHubConnection() {
         </span>
         <div className="github-heading">
           <h2>GitHub</h2>
-          <p className="muted">Your project's code, connected.</p>
         </div>
         {status && (
           <span className="github-state" data-connected={status.status === 'connected'}>
@@ -170,15 +169,17 @@ export function GitHubConnection() {
                     <Icon name="external" size={14} />
                   </a>
                   <p className="faint">
-                    {status.repository.private ? 'Private' : 'Public'} ·{' '}
-                    {status.baseBranch
-                      ? `Research base: ${status.baseBranch}`
-                      : `GitHub default: ${status.repository.defaultBranch ?? 'No default branch'}`}
+                    {status.repository.private ? 'Private repository' : 'Public repository'}
                   </p>
                 </div>
                 {status.configured && status.canManage && status.canBrowse && !repositories && (
-                  <button className="btn" disabled={busy} onClick={browse}>
-                    Change repository
+                  <button
+                    className="btn"
+                    aria-label="Change repository"
+                    disabled={busy}
+                    onClick={browse}
+                  >
+                    Change
                   </button>
                 )}
               </div>
@@ -191,8 +192,8 @@ export function GitHubConnection() {
                   <div className="github-connect stack">
                     <p className="muted">
                       {status.status === 'needs_reconnect'
-                        ? 'Reconnect your account to restore repository access.'
-                        : 'Connect a repository to bring code into your research.'}
+                        ? 'Reconnect to restore access.'
+                        : 'Bring your code into Merv.'}
                     </p>
                     {status.canManage && (
                       <button className="btn github-primary" disabled={busy} onClick={connect}>
@@ -325,7 +326,7 @@ export function GitHubConnection() {
           <footer className="github-footer">
             {status.user && (
               <p className="faint">
-                Connected by <span>{status.user.login}</span>
+                <span>@{status.user.login}</span>
               </p>
             )}
             {status.canManage && status.status !== 'disconnected' && (

@@ -75,19 +75,20 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
   };
   return (
     <section className="stack" aria-label="Repository preparation">
-      <h3>Research repository</h3>
-      <p className="muted">
-        Prepare <strong>{status.baseBranch}</strong> as the starting point for new work. Existing
-        work keeps its original base.
-      </p>
-      {result?.state === 'ready' ? (
-        <p>
-          Ready at <Short value={result.headOid} />. <Link to="/code">View changes</Link>
-        </p>
-      ) : (
-        <>
+      <div className="github-preparation-row">
+        <div>
+          <h3>Research setup</h3>
+          <p className="muted">
+            Start new work from <strong>{status.baseBranch}</strong>.
+          </p>
+        </div>
+        {result?.state === 'ready' ? (
+          <p>
+            Ready at <Short value={result.headOid} />. <Link to="/code">View changes</Link>
+          </p>
+        ) : (
           <button
-            className="btn"
+            className="btn github-primary"
             disabled={selecting || command.busy || read.loading || !read.data}
             onClick={() => void prepare()}
           >
@@ -101,21 +102,20 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
                     ? 'Start preparation again'
                     : 'Prepare repository'}
           </button>
-          {result?.state === 'importing' && (
-            <p role="status">
-              Importing {result.baseBranch}. This updates automatically.{' '}
-              {result.operation.waiting?.message}
-            </p>
-          )}
-          {result?.state === 'failed' && (
-            <p role="alert">
-              Preparation stopped:{' '}
-              {result.operation.error ?? 'the selected commit was not retained'}. Check the import
-              findings on the <Link to="/code">Code page</Link>, correct the cause, then start
-              again.
-            </p>
-          )}
-        </>
+        )}
+      </div>
+      {result?.state === 'importing' && (
+        <p role="status">
+          Importing {result.baseBranch}. This updates automatically.{' '}
+          {result.operation.waiting?.message}
+        </p>
+      )}
+      {result?.state === 'failed' && (
+        <p role="alert">
+          Preparation stopped: {result.operation.error ?? 'the selected commit was not retained'}.
+          Check the import findings on the <Link to="/code">Code page</Link>, correct the cause,
+          then start again.
+        </p>
       )}
       {(error || command.error || read.error) && (
         <p role="alert">{error ?? command.error ?? read.error?.message}</p>
