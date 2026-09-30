@@ -115,8 +115,10 @@ main {
   align-items: flex-end;
 }
 .eyebrow {
-  font: 9px var(--mono);
-  letter-spacing: 1.7px;
+  margin: 0;
+  font: 10px var(--mono);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
   color: var(--slate-11);
 }
 h1 {
@@ -230,6 +232,12 @@ h1 span {
 .input-icon {
   color: var(--slate-10);
 }
+.input-user .input-icon {
+  color: var(--blue-10);
+}
+.provided-field {
+  fill: var(--slate-2);
+}
 .input-title {
   font:
     500 15px "DM Sans",
@@ -271,13 +279,8 @@ h1 span {
   animation: flow 2.4s ease-in-out both;
 }
 .idea-core {
-  fill: var(--slate-2);
+  fill: var(--slate-3);
   stroke: var(--slate-8);
-}
-.idea-halo {
-  fill: none;
-  stroke: var(--slate-7);
-  stroke-dasharray: 2 5;
 }
 .layer-bridge {
   height: 112px;
@@ -436,7 +439,7 @@ h1 span {
 .dispatch {
   display: block;
   width: 100%;
-  height: 105px;
+  height: 64px;
 }
 .fleet-toolbar {
   display: flex;
@@ -1015,7 +1018,7 @@ footer > small {
     margin-top: 23px;
   }
   .eyebrow {
-    font-size: 7px;
+    font-size: 9px;
     letter-spacing: 1.2px;
   }
   .follow-loop {
@@ -1144,7 +1147,7 @@ footer > small {
     grid-area: 1/2;
   }
   .dispatch {
-    height: 75px;
+    height: 48px;
   }
   .fleet-toolbar {
     font-size: 8px;
