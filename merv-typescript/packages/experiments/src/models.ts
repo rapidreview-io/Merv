@@ -111,7 +111,7 @@ export interface Experiment {
   submissions: ExperimentSubmission[];
   reviewId: string | null;
   conclusion: string | null;
-  machines?: import('@merv/contracts').Json[];
+  machines?: import('@merv/contracts/types').Json[];
   captureArtifactIds?: string[];
   compute?: {
     key: string;
