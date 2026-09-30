@@ -101,8 +101,9 @@ const nodes = [
     y: 58,
     w: 250,
     h: 120,
+    start: 2,
     detail:
-      "Two agents curate the corpus, freeze dataset/v4, and stage shards for every experiment. Runs in parallel with T02.",
+      "Two agents curate the corpus, freeze dataset/v4, and stage shards for E01 and E02. Runs in parallel with T02.",
     hardware: "16 vCPU · dataset/v4",
   },
   {
@@ -113,8 +114,9 @@ const nodes = [
     y: 58,
     w: 250,
     h: 120,
+    start: 2,
     detail:
-      "Two agents prepare retention and quality evaluations against the same pinned baseline. Runs in parallel with T01.",
+      "Two agents prepare retention and quality evaluations for E02 against a pinned baseline. Runs in parallel with T01.",
     hardware: "8 vCPU · eval-suite/v2",
   },
   {
@@ -125,8 +127,9 @@ const nodes = [
     y: 330,
     w: 260,
     h: 140,
+    start: 7,
     detail:
-      "Compare replay ratios and adapter ranks. Starts when T01 and T02 finish; it does not wait for another experiment.",
+      "Compare replay ratios and adapter ranks. Starts when T01 finishes, using the existing evaluation suite. It does not wait for another experiment.",
     hardware: "H100 · 4 independent seeds",
   },
   {
@@ -137,8 +140,9 @@ const nodes = [
     y: 330,
     w: 260,
     h: 140,
+    start: 7,
     detail:
-      "Run routing ablations against the shared data and evaluation harness. Executes alongside E01 and E03.",
+      "Run routing ablations using the data from T01 and the evaluation harness from T02. Starts when both tasks finish, alongside the other experiments.",
     hardware: "A100 · 4 ablation runs",
   },
   {
@@ -149,8 +153,9 @@ const nodes = [
     y: 330,
     w: 260,
     h: 140,
+    start: 2,
     detail:
-      "Test a successor hypothesis from the previous loop. In this loop it depends only on T01 and T02, not E01 or E02.",
+      "Test a successor hypothesis using data and evaluations retained from the previous loop. Starts independently of this loop’s tasks and experiments.",
     hardware: "H100 · 4 distillation runs",
   },
 ];
@@ -180,58 +185,84 @@ function Wire({ d, active = false }: { d: string; active?: boolean }) {
     </g>
   );
 }
+function useDiagramWidth() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(1080);
+  useEffect(() => {
+    if (!ref.current) return;
+    // Spread the columns on wide screens without stretching marks or adding height.
+    const observer = new ResizeObserver(([entry]) => {
+      setWidth(Math.max(1080, entry.contentRect.width / 1.2));
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, width };
+}
 function Ideas({ phase }: { phase: number }) {
+  const { ref, width } = useDiagramWidth();
+  const center = width / 2;
+  const inputLeft = width * 0.23;
+  const inputRight = width * 0.77;
+  const sideLeft = width * 0.17;
+  const sideRight = width * 0.83;
+  const columns = [width * (220 / 1080), center, width * (860 / 1080)];
+  const chipWidth = Math.min((width * 260) / 1080, 320);
   return (
-    <div className="idea-field">
+    <div className="idea-field" ref={ref}>
       <svg
         className="ideas-desktop"
-        viewBox="0 0 1080 550"
+        viewBox={`0 0 ${width} 550`}
         role="img"
         aria-label="Existing research, new ideas, prior findings and your objective combine into three testable hypotheses."
       >
-        <text x="330" y="63" textAnchor="middle" className="svg-micro">
+        <text x={inputLeft} y="63" textAnchor="middle" className="svg-micro">
           RESEARCH
         </text>
-        <text x="750" y="63" textAnchor="middle" className="svg-micro">
+        <text x={inputRight} y="63" textAnchor="middle" className="svg-micro">
           NEW IDEAS
         </text>
-        <Wire d="M330 84V112Q330 138 540 138M750 84V112Q750 138 540 138M540 138V174" />
-        <circle cx="540" cy="230" r="84" className="idea-halo" />
-        <circle cx="540" cy="230" r="56" className="idea-core" />
+        <Wire
+          d={`M${inputLeft} 84V112Q${inputLeft} 138 ${center} 138M${inputRight} 84V112Q${inputRight} 138 ${center} 138M${center} 138V174`}
+        />
+        <circle cx={center} cy="230" r="84" className="idea-halo" />
+        <circle cx={center} cy="230" r="56" className="idea-core" />
         <path
-          d="M521 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
+          d={`M${center - 19} 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z`}
           fill="var(--slate-12)"
         />
-        <circle cx="540" cy="174" r="3" className="accent-dot" />
-        <text x="300" y="211" className="svg-micro">
+        <circle cx={center} cy="174" r="3" className="accent-dot" />
+        <text x={sideLeft} y="211" className="svg-micro">
           PRIOR LOOP
         </text>
-        <Wire d="M300 230H482" />
-        <text x="780" y="211" textAnchor="end" className="svg-micro">
+        <Wire d={`M${sideLeft} 230H${center - 58}`} />
+        <text x={sideRight} y="211" textAnchor="end" className="svg-micro">
           YOUR GOAL
         </text>
-        <Wire d="M598 230H780" />
-        <Wire d="M540 288V424" active={phase < 3} />
-        <Wire d="M230 424H850M230 424V457M540 424V457M850 424V457" />
+        <Wire d={`M${center + 58} 230H${sideRight}`} />
+        <Wire d={`M${center} 288V424`} active={phase < 3} />
+        <Wire
+          d={`M${columns[0]} 424H${columns[2]}M${columns[0]} 424V457M${center} 424V457M${columns[2]} 424V457`}
+        />
         {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
           <g key={t}>
             <rect
-              x={100 + i * 310}
+              x={columns[i] - chipWidth / 2}
               y="457"
-              width="260"
+              width={chipWidth}
               height="48"
               rx="2"
               className="hypothesis"
             />
             <text
-              x={230 + i * 310}
+              x={columns[i]}
               y="487"
               textAnchor="middle"
               className="svg-small"
             >
               {t}
             </text>
-            <Wire d={`M${230 + i * 310} 505V550`} />
+            <Wire d={`M${columns[i]} 505V550`} />
           </g>
         ))}
       </svg>
@@ -302,47 +333,79 @@ function Dag({
   selected: string | null;
   onSelect: (id: string | null) => void;
 }) {
-  const taskStatus = phase < 2 ? "queued" : phase < 7 ? "running" : "complete";
-  const expStatus = phase < 7 ? "waiting" : phase < 21 ? "running" : "review";
+  const { ref, width } = useDiagramWidth();
+  const center = width / 2;
+  const layout = nodes.map((n) => {
+    const w = Math.min((n.w * width) / 1080, n.kind === "TASK" ? 300 : 320);
+    const cx = ((n.x + n.w / 2) * width) / 1080;
+    return { ...n, x: cx - w / 2, w, cx };
+  });
+  const [taskLeft, taskRight, experimentLeft, , experimentRight] = layout;
   const selectedNode = nodes.find((n) => n.id === selected);
   return (
     <div className="dag-wrap">
       <div
         className="dag-canvas"
+        ref={ref}
+        style={{ "--diagram-ratio": `${width} / 630` } as CSSProperties}
         role="group"
-        aria-label="Two parallel tasks feed three independent experiments. Every experiment waits for both tasks, never for another experiment."
+        aria-label="T01 feeds E01 and E02. T02 feeds E02. E03 uses prior-loop artifacts and starts independently. No experiment waits for another experiment. All three results feed reflection."
       >
-        <svg className="dag-wires" viewBox="0 0 1080 630" aria-hidden="true">
-          <Wire d="M330 178V254M750 178V254M220 254H860M220 254V330M860 254V330" />
-          <Wire d="M540 254V330" active={phase >= 7 && phase < 10} />
-          {[220, 540, 860].map((x) => (
+        <svg
+          className="dag-wires"
+          viewBox={`0 0 ${width} 630`}
+          aria-hidden="true"
+        >
+          <Wire
+            d={`M${taskLeft.cx - 42} 178C${taskLeft.cx - 42} 242 ${experimentLeft.cx} 260 ${experimentLeft.cx} 328`}
+          />
+          <Wire
+            d={`M${taskLeft.cx + 42} 178C${taskLeft.cx + 42} 242 ${center - 50} 260 ${center - 50} 328`}
+            active={phase >= 7 && phase < 10}
+          />
+          <Wire
+            d={`M${taskRight.cx} 178C${taskRight.cx} 242 ${center + 50} 260 ${center + 50} 328`}
+          />
+          {[experimentLeft.cx, center - 50, center + 50].map((x) => (
             <path key={x} d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
           ))}
-          <Wire d="M220 470V525H860V470M540 470V559" />
+          <Wire
+            d={`M${experimentLeft.cx} 470C${experimentLeft.cx} 525 ${center - 68} 505 ${center - 68} 559`}
+          />
+          <Wire d={`M${center} 470V559`} />
+          <Wire
+            d={`M${experimentRight.cx} 470C${experimentRight.cx} 525 ${center + 68} 505 ${center + 68} 559`}
+          />
           <rect
-            x="448"
+            x={center - 92}
             y="559"
             width="184"
             height="48"
             rx="24"
             className="review-gate"
           />
-          <text x="540" y="588" textAnchor="middle" className="svg-small">
+          <text x={center} y="588" textAnchor="middle" className="svg-small">
             Reflect ↻
           </text>
-          <Wire d="M540 607V630" />
+          <Wire d={`M${center} 607V630`} />
         </svg>
         <svg
           className="dag-wires-mobile"
           viewBox="0 0 360 550"
           aria-hidden="true"
         >
-          <Wire d="M85 155V218M275 155V218M60 218H300M60 218V280M300 218V280" />
-          <Wire d="M180 218V280" active={phase >= 7 && phase < 10} />
-          {[60, 180, 300].map((x) => (
+          <Wire d="M67 155C67 210 60 225 60 278" />
+          <Wire
+            d="M103 155C103 214 164 220 164 278"
+            active={phase >= 7 && phase < 10}
+          />
+          <Wire d="M275 155C275 214 196 220 196 278" />
+          {[60, 164, 196].map((x) => (
             <path key={x} d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
           ))}
-          <Wire d="M60 410V445H300V410M180 410V480" />
+          <Wire d="M60 410C60 446 140 444 140 480" />
+          <Wire d="M180 410V480" />
+          <Wire d="M300 410C300 446 220 444 220 480" />
           <rect
             x="120"
             y="480"
@@ -356,18 +419,28 @@ function Dag({
           </text>
           <Wire d="M180 520V550" />
         </svg>
-        {nodes.map((n, index) => {
+        {layout.map((n, index) => {
           const task = n.kind === "TASK";
-          const status = task ? taskStatus : expStatus;
+          const end = task ? 7 : 21;
+          const status =
+            phase < n.start
+              ? n.start === 2
+                ? "queued"
+                : "waiting"
+              : phase < end
+                ? "running"
+                : task
+                  ? "complete"
+                  : "review";
           return (
             <button
               key={n.id}
               className={`dag-node ${task ? "task" : "experiment"} ${selected === n.id ? "selected" : ""} state-${status}`}
               style={
                 {
-                  "--x": `${n.x / 10.8}%`,
+                  "--x": `${(n.x / width) * 100}%`,
                   "--y": `${n.y / 6.3}%`,
-                  "--w": `${n.w / 10.8}%`,
+                  "--w": `${(n.w / width) * 100}%`,
                   "--h": `${n.h / 6.3}%`,
                   "--mx": `${(task ? 10 + index * 190 : 5 + (index - 2) * 120) / 3.6}%`,
                   "--my": `${(task ? 50 : 280) / 5.5}%`,
@@ -394,7 +467,7 @@ function Dag({
                 className="node-meter"
                 style={
                   {
-                    "--work": `${status === "running" ? (task ? (phase - 2) / 5 : (phase - 7) / 14) * 100 : status === "complete" || status === "review" ? 100 : 0}%`,
+                    "--work": `${status === "running" ? ((phase - n.start) / (end - n.start)) * 100 : status === "complete" || status === "review" ? 100 : 0}%`,
                   } as CSSProperties
                 }
               />
@@ -457,7 +530,12 @@ function Fleet({
               : "Releasing";
   return (
     <div className="infra-system">
-      <svg className="dispatch" viewBox="0 0 1080 100" aria-hidden="true">
+      <svg
+        className="dispatch"
+        viewBox="0 0 1080 100"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
         <Wire d="M220 0V25H860V0M540 0V25M540 50H180V100M540 50V100M540 50H900V100" />
         <Wire d="M540 25V50" active={phase >= 5 && phase < 8} />
         {[180, 540, 900].map((x) => (
@@ -635,23 +713,39 @@ function Fleet({
         className="fabric-bottom"
         aria-label="Datasets, checkpoints and evidence are retained after compute is released."
       >
-        <svg viewBox="0 0 1080 66" aria-hidden="true">
+        <svg
+          viewBox="0 0 1080 66"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
           <Wire d="M180 0V25H900V0M540 0V25" />
           <Wire d="M540 25V66" active={phase >= 21 && phase < 24} />
         </svg>
         <div className="artifacts">
-          <span>
-            <Database size={22} strokeWidth={1} />
-            Data
-          </span>
-          <span>
-            <Layers3 size={22} strokeWidth={1} />
-            Checkpoints
-          </span>
-          <span>
-            <FileBox size={22} strokeWidth={1} />
-            Evidence
-          </span>
+          <div className="artifact-source">
+            <FileBox size={26} strokeWidth={1} aria-hidden="true" />
+            <span>Datasets</span>
+          </div>
+          <span className="artifact-connector" aria-hidden="true" />
+          <div
+            className="evidence-store"
+            role="img"
+            aria-label="Evidence store: a persistent database of run history and metrics, linked to datasets and checkpoints."
+          >
+            <Database
+              className="evidence-database"
+              size={100}
+              strokeWidth={0.5}
+              aria-hidden="true"
+            />
+            <strong>Evidence store</strong>
+            <span>Run history · metrics</span>
+          </div>
+          <span className="artifact-connector" aria-hidden="true" />
+          <div className="artifact-source">
+            <Layers3 size={26} strokeWidth={1} aria-hidden="true" />
+            <span>Checkpoints</span>
+          </div>
         </div>
       </div>
     </div>
