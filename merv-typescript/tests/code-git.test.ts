@@ -140,7 +140,8 @@ test('timeout, abort, and close promptly end Git command descendants', async (t)
       try {
         return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.[0] !== 'Z';
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        // procfs can report either error when a process exits during the read.
+        if (['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
         throw error;
       }
     }
