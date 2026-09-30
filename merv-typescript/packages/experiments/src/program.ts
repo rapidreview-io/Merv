@@ -1098,6 +1098,9 @@ export class ExperimentProgram {
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
       : handoff(state);
+    const speedGuidance = producing(state)
+      ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
+      : '';
     const preview = await recipe.preview(
       context.caller,
       {
@@ -1113,7 +1116,7 @@ export class ExperimentProgram {
     return {
       role: reviewing(state) ? 'reviewer' : 'producer',
       label: `${recipeNames[state]}: ${experiment.name}`,
-      brief: `${instructions[state]}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}`,
+      brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}`,
       references: [
         { kind: 'experiment', id: experiment.id, label: experiment.name },
         ...preview.sources.map((artifact) => ({

@@ -204,7 +204,7 @@ test('projects before switch-on and attempts outside running cannot rent compute
   );
 });
 
-test('run keys replay across calls, bind cancellation to the experiment, and cap live runs at two', async (t) => {
+test('independent runs exceed two while run keys replay and cancellation stays scoped', async (t) => {
   const f = await fixture(t);
   const id = await f.createRunning();
   const first = await f.experiments.computeRun(f.caller, input(id));
@@ -213,11 +213,15 @@ test('run keys replay across calls, bind cancellation to the experiment, and cap
     f.experiments.computeRun(f.caller, { ...input(id), command: 'changed' }),
     code('compute_key_conflict'),
   );
-  await f.experiments.computeRun(f.caller, input(id, 'second'));
-  await assert.rejects(
+  const [second, third, replay] = await Promise.all([
+    f.experiments.computeRun(f.caller, input(id, 'second')),
     f.experiments.computeRun(f.caller, input(id, 'third')),
-    code('compute_busy'),
-  );
+    f.experiments.computeRun(f.caller, input(id, 'third')),
+  ]);
+  assert.equal(second.state, 'submitting');
+  assert.equal(third.state, 'submitting');
+  assert.deepEqual(replay, third);
+  assert.equal((await f.experiments.get(f.caller, id)).compute!.length, 3);
   await assert.rejects(
     f.experiments.computeRun(f.caller, { ...input(id), attemptIndex: 2 }),
     code('compute_not_running'),

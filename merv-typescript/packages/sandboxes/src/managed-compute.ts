@@ -398,16 +398,6 @@ export class ManagedCompute {
         );
         return publicComputeRow(old);
       }
-      // A transaction-level project lock makes the two-job cap atomic across both owner kinds.
-      await tx.get(
-        'SELECT pg_advisory_xact_lock(hashtext(?))',
-        `managed-compute:${caller.projectId}`,
-      );
-      const count = await tx.get<{ n: number }>(
-        `SELECT count(*)::int n FROM managed_compute_runs WHERE project_id=? AND state IN (${live})`,
-        caller.projectId,
-      );
-      check((count?.n ?? 0) < 2, 'compute_busy', 'This project already has two live runs', 429);
       const at = now();
       await tx.run(
         `INSERT INTO managed_compute_runs(project_id,owner_kind,owner_id,generation,key,input_hash,input_json,run_id,state,cost,result,created_by,created_at,updated_at)

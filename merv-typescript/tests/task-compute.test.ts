@@ -174,7 +174,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
   assert.deepEqual(submitted[0]!.spec.outputs, input.outputs);
   const experiment = await experiments.create(caller, {
     name: randomUUID(),
-    intent: 'GPU cross-owner cap.',
+    intent: 'Independent GPU work alongside task runs.',
     requestId: randomUUID(),
   });
   await state.transaction((tx) =>
@@ -191,7 +191,10 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     maxUsd: 1,
   };
   await experiments.computeRun(caller, expInput);
-  await assert.rejects(tasks.computeRun(worker, { ...input, key: 'third' }), code('compute_busy'));
+  const third = (await tasks.computeRun(worker, { ...input, key: 'third' })) as {
+    state: string;
+  };
+  assert.equal(third.state, 'submitting');
   status = {
     id: 'wf_one',
     state: 'completed',
@@ -211,10 +214,13 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
   };
   await tasks.computeTick();
   assert.equal(
-    ((await tasks.computeStatus(caller, task.id)) as { state: string }[])[0]!.state,
+    ((await tasks.computeStatus(caller, task.id, 'wf_1')) as { state: string }).state,
     'completed',
   );
-  assert.equal((await tasks.get(caller, task.id)).compute?.[0]?.state, 'completed');
+  assert.equal(
+    (await tasks.get(caller, task.id)).compute?.find((run) => run.runId === 'wf_1')?.state,
+    'completed',
+  );
   assert.equal(
     JSON.stringify((await tasks.get(caller, task.id)).compute).includes('"head"'),
     false,
@@ -230,7 +236,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     tx.run("UPDATE wf_instances SET state='in_review',revision=revision+1 WHERE id=?", task.id),
   );
   await tasks.computeTick();
-  assert.ok(cancelled.includes('wf_2'));
+  assert.ok(cancelled.includes('wf_3'));
   assert.equal(
     ((await tasks.computeOutput(caller, task.id, 'wf_1', 'result.json')) as { url: string }).url,
     'https://bucket.example/task-result',
@@ -243,7 +249,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     experiments.computeOutput(caller, task.id, 'wf_1', 'result.json'),
     code('compute_not_found'),
   );
-  assert.equal(((await tasks.computeStatus(caller, task.id)) as { state: string }[]).length, 2);
+  assert.equal(((await tasks.computeStatus(caller, task.id)) as { state: string }[]).length, 3);
   await assert.rejects(
     tasks.computeRun(worker, { ...input, key: 'late' }),
     code('compute_not_running'),
