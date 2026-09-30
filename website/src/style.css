@@ -88,6 +88,16 @@ header {
   width: 24px;
   height: 26px;
 }
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-credit {
+  color: var(--slate-11);
+  font-size: 12px;
+  white-space: nowrap;
+}
 nav {
   margin-left: auto;
   display: flex;
@@ -189,6 +199,30 @@ h1 span {
   margin-left: auto;
   font: 8px var(--mono);
   color: var(--slate-11);
+}
+.research-system {
+  position: relative;
+  isolation: isolate;
+}
+.research-system::before {
+  content: "";
+  position: absolute;
+  inset: -54px 0 -100px;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--slate-6) 0.75px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 260px,
+    #000 calc(100% - 360px),
+    transparent
+  );
+}
+.integrations-layer {
+  position: relative;
+  padding-inline: var(--page-gutter);
 }
 .layer {
   padding: 74px var(--page-gutter) 0;
@@ -309,8 +343,6 @@ h1 span {
 .dag-canvas {
   position: relative;
   aspect-ratio: var(--diagram-ratio, 1080 / 630);
-  background-image: radial-gradient(var(--slate-5) 0.65px, transparent 0.65px);
-  background-size: 25px 25px;
 }
 .dag-wires,
 .dag-wires-mobile {
@@ -998,6 +1030,12 @@ footer > small {
   header .brand {
     font-size: 25px;
   }
+  .brand-lockup {
+    gap: 8px;
+  }
+  .brand-credit {
+    font-size: 10px;
+  }
   nav {
     font-size: 11px;
     gap: 20px;
@@ -1047,6 +1085,20 @@ footer > small {
     padding: 0;
     width: 20px;
   }
+  .research-system::before {
+    inset-block: -47px -63px;
+    background-size: 22px 22px;
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 200px,
+      #000 calc(100% - 280px),
+      transparent
+    );
+  }
+  .integrations-layer {
+    padding-inline: 5%;
+  }
   .layer {
     padding: 47px 5% 0;
   }
@@ -1088,7 +1140,6 @@ footer > small {
   }
   .dag-canvas {
     aspect-ratio: 360/550;
-    background-size: 20px 20px;
   }
   .dag-wires {
     display: none;
@@ -1225,8 +1276,8 @@ footer > small {
     gap: 10px;
   }
   .artifact-source svg {
-    width: 22px;
-    height: 22px;
+    width: 34px;
+    height: 34px;
   }
   .artifact-connector {
     margin: 40px 8px 0;
