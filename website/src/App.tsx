@@ -118,7 +118,7 @@ const nodes = [
     h: 120,
     start: 2,
     detail:
-      "Two agents prepare retention and quality evaluations for E02 against a pinned baseline. Runs in parallel with T01.",
+      "Two agents prepare retention and quality evaluations for E03 against a pinned baseline. Runs in parallel with T01.",
     hardware: "8 vCPU · eval-suite/v2",
   },
   {
@@ -144,7 +144,7 @@ const nodes = [
     h: 140,
     start: 7,
     detail:
-      "Run routing ablations using the data from T01 and the evaluation harness from T02. Starts when both tasks finish, alongside the other experiments.",
+      "Run routing ablations using the data from T01 and the existing evaluation suite. Starts when T01 finishes, alongside the other experiments.",
     hardware: "A100 · 4 ablation runs",
   },
   {
@@ -155,9 +155,9 @@ const nodes = [
     y: 330,
     w: 260,
     h: 140,
-    start: 2,
+    start: 7,
     detail:
-      "Test a successor hypothesis using data and evaluations retained from the previous loop. Starts independently of this loop’s tasks and experiments.",
+      "Test a successor hypothesis using data retained from the previous loop and the evaluation harness from T02. Starts when T02 finishes, without waiting for another experiment.",
     hardware: "H100 · 4 distillation runs",
   },
 ];
@@ -179,12 +179,38 @@ function Logo({ id }: { id: string }) {
     </span>
   );
 }
-function Wire({ d, active = false }: { d: string; active?: boolean }) {
+function Wire({
+  d,
+  active = false,
+  markerEnd,
+}: {
+  d: string;
+  active?: boolean;
+  markerEnd?: string;
+}) {
   return (
     <g>
-      <path className="wire" d={d} />
+      <path className="wire" d={d} markerEnd={markerEnd} />
       {active && <path className="wire-pulse" d={d} pathLength="100" />}
     </g>
+  );
+}
+function DagArrow({ id }: { id: string }) {
+  return (
+    <defs>
+      <marker
+        id={id}
+        viewBox="0 0 8 8"
+        refX="7"
+        refY="4"
+        markerWidth="8"
+        markerHeight="8"
+        markerUnits="userSpaceOnUse"
+        orient="auto"
+      >
+        <path d="M1 1L7 4L1 7" className="wire-arrow" />
+      </marker>
+    </defs>
   );
 }
 function useDiagramWidth() {
@@ -382,33 +408,30 @@ function Dag({
         ref={ref}
         style={{ "--diagram-ratio": `${width} / 630` } as CSSProperties}
         role="group"
-        aria-label="T01 feeds E01 and E02. T02 feeds E02. E03 uses prior-loop artifacts and starts independently. No experiment waits for another experiment. All three results feed reflection."
+        aria-label="T01 feeds E01 and E02. T02 feeds E03. Each experiment waits for its preparation task, never for another experiment. All three results feed reflection."
       >
         <svg
           className="dag-wires"
           viewBox={`0 0 ${width} 630`}
           aria-hidden="true"
         >
+          <DagArrow id="dag-arrow" />
           <Wire
-            d={`M${taskLeft.cx - 42} 178C${taskLeft.cx - 42} 242 ${experimentLeft.cx} 260 ${experimentLeft.cx} 328`}
+            d={`M${taskLeft.cx - 42} 178L${experimentLeft.cx} 328`}
+            markerEnd="url(#dag-arrow)"
           />
           <Wire
-            d={`M${taskLeft.cx + 42} 178C${taskLeft.cx + 42} 242 ${center - 50} 260 ${center - 50} 328`}
+            d={`M${taskLeft.cx + 42} 178L${center} 328`}
             active={phase >= 7 && phase < 10}
+            markerEnd="url(#dag-arrow)"
           />
           <Wire
-            d={`M${taskRight.cx} 178C${taskRight.cx} 242 ${center + 50} 260 ${center + 50} 328`}
+            d={`M${taskRight.cx} 178L${experimentRight.cx} 328`}
+            markerEnd="url(#dag-arrow)"
           />
-          {[experimentLeft.cx, center - 50, center + 50].map((x) => (
-            <path key={x} d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
-          ))}
-          <Wire
-            d={`M${experimentLeft.cx} 470C${experimentLeft.cx} 525 ${center - 68} 505 ${center - 68} 559`}
-          />
+          <Wire d={`M${experimentLeft.cx} 470L${center - 68} 559`} />
           <Wire d={`M${center} 470V559`} />
-          <Wire
-            d={`M${experimentRight.cx} 470C${experimentRight.cx} 525 ${center + 68} 505 ${center + 68} 559`}
-          />
+          <Wire d={`M${experimentRight.cx} 470L${center + 68} 559`} />
           <rect
             x={center - 92}
             y="559"
@@ -427,18 +450,17 @@ function Dag({
           viewBox="0 0 360 550"
           aria-hidden="true"
         >
-          <Wire d="M67 155C67 210 60 225 60 278" />
+          <DagArrow id="dag-arrow-mobile" />
+          <Wire d="M67 155L60 278" markerEnd="url(#dag-arrow-mobile)" />
           <Wire
-            d="M103 155C103 214 164 220 164 278"
+            d="M103 155L180 278"
             active={phase >= 7 && phase < 10}
+            markerEnd="url(#dag-arrow-mobile)"
           />
-          <Wire d="M275 155C275 214 196 220 196 278" />
-          {[60, 164, 196].map((x) => (
-            <path key={x} d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
-          ))}
-          <Wire d="M60 410C60 446 140 444 140 480" />
+          <Wire d="M275 155L300 278" markerEnd="url(#dag-arrow-mobile)" />
+          <Wire d="M60 410L140 480" />
           <Wire d="M180 410V480" />
-          <Wire d="M300 410C300 446 220 444 220 480" />
+          <Wire d="M300 410L220 480" />
           <rect
             x="120"
             y="480"
@@ -863,7 +885,6 @@ export default function App() {
                 key={s}
                 aria-current={active === i ? "step" : undefined}
               >
-                <span className="tab-index">0{i + 1}</span>
                 <span>{s}</span>
               </a>
             ))}
@@ -892,7 +913,6 @@ export default function App() {
         </div>
         <section id="ideas" data-layer="0" className="layer idea-layer">
           <div className="layer-title">
-            <span className="layer-index">01</span>
             <h2>Research inputs.</h2>
           </div>
           <Ideas phase={phase} reduced={reduced} />
@@ -902,7 +922,6 @@ export default function App() {
         </div>
         <section id="workloads" data-layer="1" className="layer workload-layer">
           <div className="layer-title">
-            <span className="layer-index">02</span>
             <h2>Parallel experiments.</h2>
           </div>
           <Dag phase={phase} selected={selected} onSelect={setSelected} />
@@ -916,7 +935,6 @@ export default function App() {
           className="layer infra-layer"
         >
           <div className="layer-title">
-            <span className="layer-index">03</span>
             <h2>Compute built for agents.</h2>
           </div>
           <Fleet phase={phase} focus={focus} setFocus={setFocus} />
