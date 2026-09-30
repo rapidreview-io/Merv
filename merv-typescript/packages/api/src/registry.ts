@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { filterAsync, MervError, plain, type Caller, type Data, type Scope } from '@merv/contracts';
 import type { SessionToolPolicy, ToolPolicy } from '@merv/contracts';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -91,6 +92,8 @@ export class ToolRegistry implements Tools {
   private readonly running = new Set<Promise<ToolInvocation>>();
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
+  /** Mounts may await a connection inside a handler, then revalidate before sending. */
+  private readonly dispatchSession = new AsyncLocalStorage<SessionRegistration>();
   private readonly callerRules = new Map<CallerKind, CallerRules>();
   private stopping = false;
 
@@ -357,7 +360,9 @@ export class ToolRegistry implements Tools {
   }
 
   async validateSession(caller: Caller, name: string, input: Data): Promise<void> {
-    const session = this.sessionPolicy();
+    // Reinstallation of the same provider cannot adopt an old handler's invocation.
+    const session = this.dispatchSession.getStore() ?? this.sessionPolicy();
+    this.fence(session);
     await this.fenced(session, session.provider.validate(caller, name, input));
   }
 
@@ -484,7 +489,14 @@ export class ToolRegistry implements Tools {
             // One read decision, inside a read's snapshot when it has one. The provider's run
             // validates a session again right before this handler.
             if (!prepared && !entry.remote) await this.scope.require(activeCaller, 'read');
-            return await entry.definition.handler(activeCaller, parsed);
+            // The remote grant decision above can yield after the provider's run fence.
+            // A removed/reinstalled policy must not dispatch its old reservation.
+            if (session) this.fence(session);
+            return await (session
+              ? this.dispatchSession.run(session, () =>
+                  entry.definition.handler(activeCaller, parsed),
+                )
+              : entry.definition.handler(activeCaller, parsed));
           };
           const result =
             this.readScope && this.snapshotted(entry) ? await this.readScope(run) : await run();

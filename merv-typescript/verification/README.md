@@ -160,3 +160,10 @@ connection. New no-code cycles finish after approved reflection; Git cycles wait
 for Consolidation and then resume the same handoff without duplicate children.
 Persisted version-2 cycles retain their original behavior across restart and
 replay. These checks use local integration fixtures, not a production migration.
+
+## Infrastructure proofs and interruption checks
+
+The [infrastructure hardening record](infra-hardening-2026-09-30.md) records the
+backend proof integration, real process-crash regressions and isolated production
+checks. [Run the Lean suite](lean/README.md); [product contracts and limits](lean/PRODUCT.md)
+distinguish local proofs from external provider assumptions.

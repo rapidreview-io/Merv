@@ -238,6 +238,14 @@ END $merv$;`);
       throw databaseError(error);
     }
     let discard = false;
+    // pg-pool removes its idle error listener while a client is checked out. A
+    // disconnect between queries (for example while an async handler awaits) is
+    // a Client error event, not a rejected query. Contain it for the whole scope;
+    // subsequent queries/COMMIT reject normally and the dead client is discarded.
+    const disconnected = () => {
+      discard = true;
+    };
+    client.on('error', disconnected);
     // Sibling reads of one snapshot arrive together; one connection runs them in turn.
     let tail: Promise<unknown> = Promise.resolve();
     // `exec` passes no parameters: its SQL goes over the simple protocol, where a `?` is SQL
@@ -277,7 +285,12 @@ END $merv$;`);
       });
     } finally {
       await tail;
-      client.release(discard);
+      try {
+        // release reinstalls the pool's idle listener before this scope retires its own.
+        client.release(discard);
+      } finally {
+        client.removeListener('error', disconnected);
+      }
     }
   }
 

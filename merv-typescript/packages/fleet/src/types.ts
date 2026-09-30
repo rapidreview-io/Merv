@@ -27,13 +27,22 @@ export interface FleetAllocation {
   runtime: SandboxRuntimeHandle | null;
   /** Durable intent written before create; false proves no provider call has begun. */
   createAttempted: boolean;
+  /** Number of durable create dispatches. A refusal of dispatch one is definitive only if
+   * no other controller has begun dispatch two. Missing on legacy rows. */
+  createAttempts?: number;
+  /** Original lease duration, retained for diagnostics across configuration replacements.
+   * Neither it nor the observed expiry authorizes releasing a reservation. */
+  leaseSeconds?: number;
+  /** Greatest provider lease expiry ever observed, normalized to UTC. A later observation
+   * cannot erase longer-lived evidence from an earlier response. */
+  leaseExpiresAt?: string;
   createdAt: string;
   /** While queued, when the request gives up; once reserved, when the machine must stop. */
   deadlineAt: string;
   /** When phase or intent last changed; retries and provider observations leave it alone. */
   updatedAt: string;
-  /** Set once stopping stalls: Fleet renews nothing after stop, so the provider lease has
-   * ended any machine this allocation could hold by then, and the slot is freed. */
+  /** Legacy timeout, ignored and cleared during cleanup. Release requires a terminal
+   * provider observation or proof that no create invocation could have had an effect. */
   releaseBy?: string;
   retryAt: string | null;
   failures: number;
@@ -76,6 +85,9 @@ export interface FleetOwner {
   bootstrap(allocation: FleetAllocation): Promise<string>;
   /** finished means all required capture/checkpoint work has been retained. */
   observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'>;
+  /** Recheck completion under the SAME writer transaction that records stop. Owners whose
+   * work can be claimed after observe() must implement this local retirement fence. */
+  canRetire?(allocation: FleetAllocation, tx: Transaction): Promise<boolean>;
 }
 /** What a worker's model calls may do, read again about once a second while one streams. */
 export interface ModelRelayGrant {

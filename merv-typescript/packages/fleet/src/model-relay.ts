@@ -5,6 +5,7 @@ import type {
   ModelRelayFailure,
   ModelRelayGrant,
   ModelRelayHandle,
+  ModelRelayUsage,
 } from './types.js';
 
 const responsesUrl = 'https://api.openai.com/v1/responses';
@@ -26,14 +27,15 @@ const refusal = (error: unknown, status: number, code: string) =>
   Number((error as { status?: unknown } | null)?.status) >= 500
     ? new RelayFailure(503, 'relay_unavailable')
     : new RelayFailure(status, code);
-/** Hands a record to its callback, which never changes the call; a failure is logged by name. */
+const callbackFailed = (error: unknown) => {
+  const name = String((error as Error | null)?.name);
+  process.stderr.write(`${JSON.stringify({ event: 'model_relay_callback_failed', name })}\n`);
+};
+/** Diagnostics never change the call. Accounting for a reservation is awaited separately. */
 const report = <T>(callback: ((record: T) => void | Promise<void>) | undefined, record: T) =>
   void Promise.resolve()
     .then(() => callback?.(record))
-    .catch((error: unknown) => {
-      const name = String((error as Error | null)?.name);
-      process.stderr.write(`${JSON.stringify({ event: 'model_relay_callback_failed', name })}\n`);
-    });
+    .catch(callbackFailed);
 /** A content type's media type, without its parameters. */
 const mediaType = (value: string | null | undefined) => value?.split(';')[0]?.trim().toLowerCase();
 /** A grant whose expiry is past, or unreadable, is expired. */
@@ -50,6 +52,15 @@ type Usage = {
 };
 const tokens = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+/** Settlement changes a durable charge. Missing or malformed totals provide no
+ * evidence of a refund; keep the reservation unless both totals are usable. */
+const usableUsage = (usage: Usage | null | undefined): usage is Usage =>
+  !!usage &&
+  Number.isSafeInteger(usage.input_tokens) &&
+  Number(usage.input_tokens) >= 0 &&
+  Number.isSafeInteger(usage.output_tokens) &&
+  Number(usage.output_tokens) >= 0 &&
+  Number.isSafeInteger(Number(usage.input_tokens) + Number(usage.output_tokens));
 /** Whether a frame is itself an error: its own top-level type, not one its content quotes. */
 const failedFrame = (data: string) => {
   if (!/"type"\s*:\s*"(?:error|response\.failed)"/.test(data)) return false;
@@ -232,6 +243,22 @@ export class ModelRelay<
     let charged = false;
     /** Whether the provider answered with a success status, once it answered. */
     let taken: boolean | undefined;
+    const settle = async (record: ModelRelayUsage<`${N}_relay_usage`>) => {
+      const callback = () => this.config.onUsage?.(record, admitted!, reserved);
+      // Preserve diagnostics-only use without a reservation. An accounting owner returns only
+      // after its durable write commits; neither disconnect nor close cancels that write.
+      if (!charged) return report(callback, record);
+      const settlement = Promise.resolve().then(callback);
+      // Stop waiting when the request ends, while the owner's durable write may
+      // still finish. Attach its error handler even if cancellation already won.
+      void settlement.catch(callbackFailed);
+      try {
+        await interruptible(settlement, signal);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason;
+        reject(503, 'relay_unavailable');
+      }
+    };
     try {
       const authority = this.config.authority;
       let grant: G;
@@ -370,15 +397,15 @@ export class ModelRelay<
       let usage: Usage | null | undefined;
       let terminalReported = false;
       // Usage is kept the moment its frame arrives: a client may hang up right after it.
-      const keep = (data: string) => {
+      const keep = async (data: string) => {
         if (usage !== undefined) return;
         try {
           usage = JSON.parse(data).response?.usage ?? null;
         } catch {
           usage = null;
         }
-        if (usage && typeof usage === 'object')
-          report((record) => this.config.onUsage?.(record, grant, reserved), {
+        if (usableUsage(usage))
+          await settle({
             event: `${this.config.name}_relay_usage` as const,
             model: grant.model,
             inputTokens: tokens(usage.input_tokens),
@@ -412,7 +439,7 @@ export class ModelRelay<
             )?.[1] ??
             /^\{\s*"type"\s*:\s*"response\.(completed|incomplete|failed)"/.exec(data)?.[1];
           if (terminal) {
-            keep(data);
+            await keep(data);
             if (!terminalReported) {
               terminalReported = true;
               let reason: unknown;
@@ -458,8 +485,28 @@ export class ModelRelay<
         res.end();
       }
     } catch (error) {
-      const failure =
+      let failure =
         error instanceof RelayFailure ? error : new RelayFailure(502, 'upstream_failed');
+      // Refused before it was sent, or answered with an error status, the call cost nothing. One
+      // the provider may have run (no answer, or a stream cut off) keeps its charge.
+      if (charged && (phase === 'request' || taken === false)) {
+        try {
+          await settle({
+            event: `${this.config.name}_relay_usage` as const,
+            model: admitted!.model,
+            inputTokens: 0,
+            cachedTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+            refund: true as const,
+          });
+        } catch {
+          failure =
+            signal.aborted && signal.reason instanceof RelayFailure
+              ? signal.reason
+              : new RelayFailure(503, 'relay_unavailable');
+        }
+      }
       // A Codex client can close after the terminal frame. Usage was already settled in keep().
       if (admitted && !(failure.code === 'disconnected' && completed))
         report(this.config.onFailure, {
@@ -469,18 +516,6 @@ export class ModelRelay<
           model: admitted.model,
           elapsedMs: Math.max(0, Date.now() - admittedAt),
           ...(upstreamHttpStatus === undefined ? {} : { upstreamHttpStatus }),
-        });
-      // Refused before it was sent, or answered with an error status, the call cost nothing. One
-      // the provider may have run (no answer, or a stream cut off) keeps its charge.
-      if (charged && (phase === 'request' || taken === false))
-        report((record) => this.config.onUsage?.(record, admitted!, reserved), {
-          event: `${this.config.name}_relay_usage` as const,
-          model: admitted!.model,
-          inputTokens: 0,
-          cachedTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          refund: true as const,
         });
       if (failure.status !== 499 && !res.destroyed) {
         if (res.headersSent) res.end('event: error\ndata: {"error":"relay_interrupted"}\n\n');

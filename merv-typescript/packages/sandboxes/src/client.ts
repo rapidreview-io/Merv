@@ -326,16 +326,21 @@ export class SandboxClient {
    */
   async #refusal(status: number, response: Response, disclose: boolean): Promise<MervError> {
     const envelope = disclose ? await this.#envelope(response) : undefined;
+    const ambiguous = [408, 409, 429].includes(status);
     return new MervError(
       envelope
         ? `sandbox_${envelope.reason && walletReasons.has(envelope.reason) ? envelope.reason : envelope.code}`
-        : status === 404
-          ? 'sandbox_not_found'
-          : status < 500
-            ? 'sandbox_forbidden'
-            : 'sandbox_unavailable',
+        : ambiguous
+          ? 'sandbox_unavailable'
+          : status === 404
+            ? 'sandbox_not_found'
+            : status < 500
+              ? 'sandbox_forbidden'
+              : 'sandbox_unavailable',
       envelope?.message ?? `merv-sandboxes refused the request (HTTP ${status})`,
-      envelope ? status : status === 404 ? 404 : status < 500 ? 403 : 503,
+      // Timeout, conflict and rate limit do not prove that a write had no effect. Preserve
+      // that distinction even when a proxy strips or corrupts the service's error envelope.
+      envelope || ambiguous ? status : status === 404 ? 404 : status < 500 ? 403 : 503,
     );
   }
 

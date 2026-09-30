@@ -294,6 +294,15 @@ function moduleReferences(source: ts.SourceFile): ModuleReference[] {
         1,
         `${source.fileName}: dynamic imports must have one static path`,
       );
+      // The mutation fixture loads only in-memory test code. Production modules
+      // and every ordinary workspace import still require static paths.
+      if (
+        resolve(source.fileName) === join(root, 'tests/fixtures/lean-mutation.ts') &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        ts.isTemplateExpression(node.arguments[0]) &&
+        node.arguments[0].head.text === 'data:text/javascript;base64,'
+      )
+        return;
       assert.ok(
         ts.isStringLiteral(node.arguments[0]),
         `${source.fileName}: computed imports defeat component boundaries`,

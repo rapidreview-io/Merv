@@ -592,8 +592,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
     const demand = await this.sessions.dispatchDemand(sourceCaller(a.source), demandInput);
-    // Counted from the launch, or the runner's enrollment. Work claimed after the first read
-    // keeps its machine; a claim after the second is refused once the stop commits.
+    // This observation is advisory. canRetire rechecks under Fleet's stop writer, closing
+    // the gap in which a claim could commit after the final read below.
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
     if (
       !demand.candidates.length &&
@@ -602,6 +602,21 @@ export class FleetWorkflowAdapter implements FleetOwner {
     )
       return 'finished';
     return observed?.runnerId ? 'running' : 'starting';
+  }
+  /** Claims and retirement use the same State writer. An idle observation outside that
+   * writer cannot retire a session which committed while observe() was awaiting a read. */
+  async canRetire(a: FleetAllocation, tx: Transaction): Promise<boolean> {
+    const observed = await this.sessions.inspectManaged(a.id, a.epoch, tx);
+    const session = observed?.session;
+    if (!session) return true;
+    const acknowledged =
+      session.releaseAcknowledged ||
+      (!!session.closedAt && this.clock() - Date.parse(session.closedAt) >= releaseAckGraceMs);
+    return (
+      (session.status === 'released' || session.status === 'expired') &&
+      acknowledged &&
+      !session.capturePending
+    );
   }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {

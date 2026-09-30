@@ -54,6 +54,10 @@ export class DurableEvents implements DomainEvents {
       },
     ]);
     if (this.closed) return;
+    // Migration requires an independent State scope. Capture that context once:
+    // a drain called from a plain read must not bind every later safety poll to
+    // the read's retired connection, especially for commits from another State.
+    this.scheduleWake = AsyncLocalStorage.bind(this.scheduleWake);
     this.unlisten = this.state.onEventsCommitted(() => this.wake());
     this.wake();
   }
@@ -129,6 +133,10 @@ export class DurableEvents implements DomainEvents {
       return;
     }
     if (this.timer) clearTimeout(this.timer);
+    this.scheduleWake(delay);
+  }
+
+  private scheduleWake = (delay: number): void => {
     this.timer = setTimeout(() => {
       this.timer = undefined;
       // Explicit drain callers receive storage failures. Timer wakeups retry without
@@ -136,7 +144,7 @@ export class DurableEvents implements DomainEvents {
       void this.drain().catch(() => {});
     }, delay);
     this.timer.unref();
-  }
+  };
 
   drain(): Promise<void> {
     this.requireOutsideHandler();
