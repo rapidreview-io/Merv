@@ -1,907 +1,561 @@
-import React, { useEffect, useRef, useState } from "react";
-import {
-  ArrowUpRight,
-  ArrowRight,
-  Play,
-  Pause,
-  Cpu,
-  GitBranch,
-  Check,
-  Plus,
-  Minus,
-  X,
-  Menu,
-  ExternalLink,
-  Copy,
-  CheckCheck,
-} from "lucide-react";
-import * as Dialog from "@radix-ui/react-dialog";
-import "@fontsource/dm-sans/400.css";
-import "@fontsource/dm-sans/500.css";
-import "@fontsource/dm-sans/600.css";
-import "@fontsource/ibm-plex-mono/400.css";
-import "./style.css";
+import { useEffect, useState } from "react";
+import { ArrowDown, ArrowUpRight, Pause, Play } from "lucide-react";
 
-const CONTACT =
-  "mailto:gural@rapidreview.io?subject=Run%20Merv%20%E2%80%94%20research%20pilot";
-const runs = [
-  {
-    id: "EXP.042",
-    name: "Learn without forgetting.",
-    short: "Continual adaptation",
-    idea: "Can selective replay preserve earlier capabilities while adapting to new data?",
-    method:
-      "Compare selective replay with a fine-tuning baseline. Hold the evaluation set fixed and measure both adaptation and retention.",
-    hardware: "1 × NVIDIA H100 · 80 GB",
-    runtime: "PyTorch · isolated GPU sandbox",
-    review: "Check data separation and retention metrics before execution.",
-    output: "Retention report + reproducible checkpoint",
-    lines: [
-      "load baseline + held-out evaluation",
-      "sample replay buffer by uncertainty",
-      "train adapter · evaluate old + new tasks",
-      "submit checkpoint and retention curves",
-    ],
-    points:
-      "0,66 18,59 35,64 53,42 70,46 89,28 107,34 125,21 143,25 162,12 180,15 200,7",
-  },
-  {
-    id: "EXP.043",
-    name: "Make every token count.",
-    short: "Inference efficiency",
-    idea: "Can speculative decoding reduce latency without changing output quality?",
-    method:
-      "Benchmark a draft model against the existing serving path. Compare acceptance rate, throughput, and tail latency on the same requests.",
-    hardware: "2 × NVIDIA A100 · 80 GB",
-    runtime: "vLLM · isolated GPU sandbox",
-    review: "Check workload equivalence and include warm-up costs.",
-    output: "Latency profile + benchmark artifacts",
-    lines: [
-      "pin request set and model revisions",
-      "warm up baseline + draft model",
-      "measure p50 / p95 · verify outputs",
-      "submit traces and benchmark report",
-    ],
-    points:
-      "0,62 18,60 35,50 53,53 70,36 89,40 107,28 125,31 143,21 162,24 180,10 200,8",
-  },
-  {
-    id: "EXP.044",
-    name: "Teach the reasoning, too.",
-    short: "Model distillation",
-    idea: "Can a smaller model learn from verified reasoning traces instead of answers alone?",
-    method:
-      "Filter teacher traces with a verifier, train a student, and compare against answer-only supervision on a held-out task set.",
-    hardware: "1 × NVIDIA H100 · 80 GB",
-    runtime: "PyTorch · isolated GPU sandbox",
-    review: "Audit trace quality, evaluation contamination, and the baseline.",
-    output: "Student checkpoint + ablation study",
-    lines: [
-      "filter teacher traces · record provenance",
-      "train student with verified rationales",
-      "run answer-only ablation · 3 seeds",
-      "submit weights and evaluation artifacts",
-    ],
-    points:
-      "0,70 18,65 35,60 53,62 70,42 89,46 107,32 125,28 143,32 162,19 180,21 200,12",
-  },
-];
-const stages = ["Discover", "Design", "Execute", "Review", "Improve"];
+const CONTACT = "mailto:gural@rapidreview.io?subject=Merv%20research%20pilot";
+const layers = ["Ideation", "Execution", "GPU infrastructure"];
 function Mark() {
   return (
-    <svg viewBox="0 0 30 30" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 40 32" aria-hidden="true">
       <path
-        d="M3 23V7h5l7 9 7-9h5v16h-5V15l-7 9-7-9v8H3Z"
+        d="M2 29V3h8l10 13L30 3h8v26h-8V16L20 29 10 16v13z"
         fill="currentColor"
       />
     </svg>
   );
 }
-function Field({ paused }: { paused: boolean }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current!;
-    const ctx = canvas.getContext("2d")!;
-    let frame = 0;
-    let w = 0,
-      h = 0;
-    let t = 0;
-    let visible = true;
-    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-    const size = () => {
-      const r = canvas.getBoundingClientRect();
-      w = r.width;
-      h = r.height;
-      const d = Math.min(devicePixelRatio, 2);
-      canvas.width = w * d;
-      canvas.height = h * d;
-      ctx.setTransform(d, 0, 0, d, 0, 0);
-    };
-    const draw = () => {
-      ctx.clearRect(0, 0, w, h);
-      const cols = 48,
-        rows = 22;
-      const project = (i: number, j: number) => {
-        const z = j / rows;
-        return {
-          x: w / 2 + (i - cols / 2) * (w / cols) * (0.25 + z * 1.4),
-          y:
-            h * 0.15 +
-            Math.pow(z, 1.65) * h * 0.9 +
-            Math.sin(i * 0.31 + t * 0.0002 + j * 0.24) * 10,
-        };
-      };
-      for (let j = 0; j < rows; j++)
-        for (let i = 0; i < cols; i++) {
-          const a = project(i, j),
-            b = project(i + 1, j),
-            c = project(i, j + 1);
-          ctx.strokeStyle = `rgba(128,192,150,${0.025 + (j / rows) * 0.09})`;
-          ctx.lineWidth = 0.6;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(c.x, c.y);
-          ctx.stroke();
-          if ((i * 17 + j * 13) % 19 === 0) {
-            const pulse = (Math.sin(t * 0.0015 + i + j) + 1) / 2;
-            ctx.fillStyle = `rgba(186,255,146,${0.12 + pulse * 0.6})`;
-            ctx.fillRect(a.x - 1, a.y - 1, 2, 2);
-          }
-        }
-      for (let i = 0; i < 11; i++) {
-        const x = (i * 0.087 + 0.04) * w;
-        const y = ((t * 0.012 + i * 93) % (h + 180)) - 90;
-        ctx.fillStyle = "rgba(143,206,164,.12)";
-        ctx.font = "10px monospace";
-        for (let j = 0; j < 6; j++)
-          ctx.fillText(
-            ((i * 31 + j * 7) % 256).toString(16).padStart(2, "0"),
-            x,
-            y + j * 16,
-          );
-      }
-    };
-    const tick = () => {
-      if (visible && !paused && !reduced.matches && !document.hidden) {
-        t += 16;
-        draw();
-      }
-      frame = requestAnimationFrame(tick);
-    };
-    size();
-    draw();
-    frame = requestAnimationFrame(tick);
-    const resize = new ResizeObserver(() => {
-      size();
-      draw();
-    });
-    resize.observe(canvas);
-    const observer = new IntersectionObserver(([e]) => {
-      visible = e.isIntersecting;
-    });
-    observer.observe(canvas);
-    return () => {
-      cancelAnimationFrame(frame);
-      resize.disconnect();
-      observer.disconnect();
-    };
-  }, [paused]);
-  return <canvas ref={ref} className="field" aria-hidden="true" />;
-}
-function App() {
-  const [selected, setSelected] = useState(0),
-    [stage, setStage] = useState(2),
-    [paused, setPaused] = useState(
-      () => typeof window !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches,
-    ),
-    [mobile, setMobile] = useState(false),
-    [copied, setCopied] = useState(false);
-  const run = runs[selected];
-  useEffect(() => {
-    if (paused) return;
-    const interval = setInterval(() => setStage((s) => (s + 1) % 5), 3400);
-    return () => clearInterval(interval);
-  }, [paused]);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(
-        "codex plugin marketplace add rapidreview-io/Merv\ncodex plugin add merv@rapidreview\ncodex mcp login merv",
-      );
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      setCopied(false);
-    }
-  };
+function Flow({ path, delay = 0 }: { path: string; delay?: number }) {
   return (
     <>
+      <path d={path} className="wire" />
+      <path d={path} className="flow" style={{ animationDelay: `${delay}s` }} />
+    </>
+  );
+}
+function Ideas() {
+  return (
+    <svg
+      className="diagram ideas desktop-diagram"
+      viewBox="0 0 900 440"
+      role="img"
+      aria-label="Research literature, proven techniques, and your goals converge into a testable idea"
+    >
+      <defs>
+        <radialGradient id="ideaGlow">
+          <stop stopColor="var(--blue-9)" stopOpacity=".22" />
+          <stop offset="1" stopColor="var(--blue-9)" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="450" cy="300" r="175" fill="url(#ideaGlow)" />
+      {[190, 450, 710].map((x, i) => (
+        <g key={x}>
+          <Flow
+            path={`M${x} 154V195Q${x} 224 ${x < 450 ? x + 30 : x > 450 ? x - 30 : x} 224H420Q450 224 450 254V288`}
+            delay={i * -0.8}
+          />
+        </g>
+      ))}
+      {[
+        {
+          x: 85,
+          label: "RESEARCH",
+          title: "The next idea",
+          sub: "Literature & prior findings",
+        },
+        {
+          x: 345,
+          label: "OUR ADVANTAGE",
+          title: "Proven techniques",
+          sub: "Proprietary research access",
+        },
+        {
+          x: 605,
+          label: "YOUR DIRECTION",
+          title: "A better model",
+          sub: "Goals, data & constraints",
+        },
+      ].map(({ x, label, title, sub }, i) => (
+        <g className={`idea-card card-${i}`} key={label}>
+          <rect
+            x={x + 9}
+            y="43"
+            width="210"
+            height="121"
+            rx="10"
+            className="paper-back"
+          />
+          <rect
+            x={x}
+            y="32"
+            width="210"
+            height="122"
+            rx="10"
+            className="paper"
+          />
+          <text x={x + 19} y="59" className="svg-label">
+            {label}
+          </text>
+          <text x={x + 19} y="91" className="svg-title">
+            {title}
+          </text>
+          <text x={x + 19} y="117" className="svg-sub">
+            {sub}
+          </text>
+          <path
+            d={`M${x + 19} 134h55m8 0h25`}
+            stroke="var(--blue-7)"
+            strokeWidth="3"
+            strokeLinecap="round"
+          />
+        </g>
+      ))}
+      <circle cx="450" cy="300" r="50" className="orb-ring" />
+      <circle cx="450" cy="300" r="38" fill="var(--blue-9)" />
+      <path
+        d="M434 311v-23h6l10 12 10-12h6v23h-7v-12l-9 11-9-11v12z"
+        fill="white"
+      />
+      <text x="450" y="378" textAnchor="middle" className="output-label">
+        A TESTABLE HYPOTHESIS
+      </text>
+      <Flow path="M450 395V440" />
+    </svg>
+  );
+}
+function Agents() {
+  return (
+    <svg
+      className="diagram agents desktop-diagram"
+      viewBox="0 0 900 480"
+      role="img"
+      aria-label="A hypothesis is planned, built, and independently reviewed by agents, then sent to compute"
+    >
+      <Flow path="M450 0V64" />
+      <rect
+        x="327"
+        y="62"
+        width="246"
+        height="48"
+        rx="24"
+        className="agent-input"
+      />
+      <text x="450" y="91" textAnchor="middle" className="svg-sub on-dark">
+        TESTABLE HYPOTHESIS
+      </text>
+      {[190, 450, 710].map((x, i) => (
+        <Flow key={x} path={`M450 110V137Q450 155 ${x} 155V208`} delay={-i} />
+      ))}
+      {[
+        { x: 90, title: "Plan", sub: "Design the experiment", symbol: "01" },
+        { x: 350, title: "Build", sub: "Agents do the work", symbol: "02" },
+        {
+          x: 610,
+          title: "Review",
+          sub: "Challenge the evidence",
+          symbol: "03",
+        },
+      ].map(({ x, title, sub, symbol }, i) => (
+        <g key={title} className="agent-node">
+          <rect
+            x={x}
+            y="207"
+            width="200"
+            height="159"
+            rx="14"
+            className="agent-box"
+          />
+          <circle
+            cx={x + 100}
+            cy="243"
+            r="18"
+            fill="var(--blue-9)"
+            fillOpacity=".2"
+          />
+          <text
+            x={x + 100}
+            y="248"
+            textAnchor="middle"
+            className="svg-label blue"
+          >
+            {symbol}
+          </text>
+          <text
+            x={x + 100}
+            y="291"
+            textAnchor="middle"
+            className="svg-title on-dark"
+          >
+            {title}
+          </text>
+          <text
+            x={x + 100}
+            y="318"
+            textAnchor="middle"
+            className="svg-sub light-muted"
+          >
+            {sub}
+          </text>
+          <g className="activity" style={{ animationDelay: `${i * -0.5}s` }}>
+            {[0, 1, 2, 3, 4, 5, 6].map((n) => (
+              <rect
+                key={n}
+                x={x + 70 + n * 9}
+                y={344 - (n % 3) * 3}
+                width="4"
+                height={4 + (n % 3) * 3}
+                rx="2"
+                fill="var(--blue-10)"
+              />
+            ))}
+          </g>
+          <Flow
+            path={`M${x + 100} 366V399Q${x + 100} 420 450 420V480`}
+            delay={-i * 1.2}
+          />
+        </g>
+      ))}
+      <path
+        d="M310 284h28m-5-5 5 5-5 5M570 284h28m-5-5 5 5-5 5"
+        fill="none"
+        stroke="var(--blue-8)"
+      />
+    </svg>
+  );
+}
+function Compute() {
+  return (
+    <svg
+      className="diagram compute"
+      viewBox="0 0 900 470"
+      role="img"
+      aria-label="Agent experiments run on GPU infrastructure, with model checkpoints and evaluation evidence returned to the research loop"
+    >
+      <defs>
+        <linearGradient id="rackTop" x2="0" y2="1">
+          <stop stopColor="var(--blue-8)" />
+          <stop offset="1" stopColor="var(--blue-11)" />
+        </linearGradient>
+      </defs>
+      <Flow path="M450 0V42" />
+      {[0, 1, 2].map((i) => (
+        <g
+          key={i}
+          className="rack"
+          style={{ animationDelay: `${i * -0.8}s` }}
+          transform={`translate(0 ${i * 86})`}
+        >
+          <path
+            d="M220 97 450 35 680 97 450 159Z"
+            fill="url(#rackTop)"
+            stroke="var(--blue-7)"
+          />
+          <path
+            d="M220 97v45l230 64v-47Z"
+            fill="var(--blue-11)"
+            stroke="var(--blue-9)"
+          />
+          <path
+            d="M450 159v47l230-64V97Z"
+            fill="var(--blue-12)"
+            stroke="var(--blue-9)"
+          />
+          {[0, 1, 2, 3].map((n) => (
+            <g key={n} transform={`translate(${305 + n * 59} ${92 + n * 16})`}>
+              <path
+                d="m0 0 37-10 28 8-37 10Z"
+                fill="var(--blue-5)"
+                stroke="var(--blue-4)"
+              />
+              <path d="m2 0 26 7 34-9" fill="none" stroke="var(--blue-11)" />
+            </g>
+          ))}
+          <path
+            d="m242 117 115 32m-115-23 115 32"
+            stroke="var(--blue-7)"
+            strokeWidth="3"
+            strokeDasharray="3 5"
+          />
+          {[0, 1, 2].map((n) => (
+            <circle
+              key={n}
+              className="rack-led"
+              cx={623 + n * 14}
+              cy={131 - n * 4}
+              r="2.5"
+              fill="var(--blue-5)"
+            />
+          ))}
+        </g>
+      ))}
+      <text x="126" y="175" className="svg-label" textAnchor="middle">
+        GPU COMPUTE
+      </text>
+      <path d="M170 183h34" className="wire" />
+      <text x="764" y="263" className="svg-label" textAnchor="middle">
+        ISOLATED RUNS
+      </text>
+      <path d="M696 270h35" className="wire" />
+      <Flow path="M450 379V425" />
+      <rect x="308" y="423" width="284" height="38" rx="19" className="paper" />
+      <text x="450" y="447" textAnchor="middle" className="svg-label">
+        CHECKPOINTS + EVIDENCE
+      </text>
+    </svg>
+  );
+}
+function MobileIdeas() {
+  return (
+    <svg
+      className="diagram mobile-diagram"
+      viewBox="0 0 350 460"
+      role="img"
+      aria-label="Research, proven techniques, and your goals become a testable hypothesis"
+    >
+      {[
+        "Research & prior findings",
+        "Proven AI/ML techniques",
+        "Your model & goals",
+      ].map((t, i) => (
+        <g key={t}>
+          <rect
+            x="38"
+            y={15 + i * 93}
+            width="238"
+            height="70"
+            rx="10"
+            className="paper"
+          />
+          <text x="57" y={42 + i * 93} className="svg-label">
+            {["RESEARCH", "PROPRIETARY ACCESS", "YOUR DIRECTION"][i]}
+          </text>
+          <text x="57" y={65 + i * 93} className="svg-title">
+            {t}
+          </text>
+          <Flow
+            path={`M276 ${50 + i * 93}H303V318Q303 338 280 338H175V361`}
+            delay={-i}
+          />
+        </g>
+      ))}
+      <circle cx="175" cy="372" r="30" fill="var(--blue-9)" />
+      <path
+        d="M161 381v-19h5l9 11 9-11h5v19h-5v-11l-9 10-9-10v11z"
+        fill="white"
+      />
+      <text x="175" y="429" textAnchor="middle" className="output-label">
+        A TESTABLE HYPOTHESIS
+      </text>
+      <Flow path="M175 443V460" />
+    </svg>
+  );
+}
+function MobileAgents() {
+  return (
+    <svg
+      className="diagram mobile-diagram agents-mobile"
+      viewBox="0 0 350 450"
+      role="img"
+      aria-label="Agents plan, build, and review the experiment before execution on GPUs"
+    >
+      <Flow path="M175 0V29" />
+      {["Plan", "Build", "Review"].map((t, i) => (
+        <g key={t}>
+          <rect
+            x="46"
+            y={29 + i * 134}
+            width="258"
+            height="100"
+            rx="12"
+            className="agent-box"
+          />
+          <circle cx="82" cy={67 + i * 134} r="18" fill="var(--blue-4)" />
+          <text
+            x="82"
+            y={72 + i * 134}
+            textAnchor="middle"
+            className="svg-label blue"
+          >
+            0{i + 1}
+          </text>
+          <text x="114" y={69 + i * 134} className="svg-title on-dark">
+            {t}
+          </text>
+          <text x="114" y={96 + i * 134} className="svg-sub light-muted">
+            {
+              [
+                "Design the experiment",
+                "Agents do the work",
+                "Challenge the evidence",
+              ][i]
+            }
+          </text>
+          <Flow path={`M175 ${129 + i * 134}V${163 + i * 134}`} delay={-i} />
+        </g>
+      ))}
+    </svg>
+  );
+}
+export default function App() {
+  const [active, setActive] = useState(-1),
+    [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>(".layer"));
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting)
+            setActive(Number((e.target as HTMLElement).dataset.layer));
+        });
+      },
+      { rootMargin: "-25% 0px -35% 0px", threshold: 0 },
+    );
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div className={paused ? "site paused" : "site"}>
       <a className="skip" href="#main">
         Skip to content
       </a>
       <header>
-        <a href="#" className="brand" aria-label="Merv home">
+        <a className="brand" href="#" aria-label="Merv home">
           <Mark />
           merv
         </a>
-        <nav aria-label="Main navigation" className={mobile ? "open" : ""}>
-          <a href="#how-it-works" onClick={() => setMobile(false)}>
-            The loop
-          </a>
-          <a href="#research" onClick={() => setMobile(false)}>
-            Research advantage
-          </a>
+        <nav aria-label="Main navigation">
+          <a href="#ideation">How it works</a>
           <a href="https://rapidreview.io/docs/merv">
             Docs <ArrowUpRight size={12} />
           </a>
         </nav>
         <a className="nav-cta" href={CONTACT}>
-          Talk to us <ArrowUpRight size={14} />
+          Let’s talk <ArrowUpRight size={15} />
         </a>
-        <button
-          className="menu"
-          aria-label={mobile ? "Close navigation" : "Open navigation"}
-          aria-expanded={mobile}
-          onClick={() => setMobile(!mobile)}
-        >
-          {mobile ? <X /> : <Menu />}
-        </button>
       </header>
       <main id="main">
-        <section className={"hero " + (paused ? "paused" : "")}>
-          <Field paused={paused} />
-          <div className="hero-glow" />
-          <div className="hero-copy">
-            <div className="eyebrow">
-              <span className="status-dot" /> RECURSIVE SELF-IMPROVEMENT,
-              APPLIED.
-            </div>
-            <h1>
-              Research that
-              <br />
-              improves <span>itself.</span>
-            </h1>
-            <p>
-              More promising ideas than time to test them?
-              <br className="desktop" /> Merv helps AI teams turn research into
-              reviewed experiments,
-              <br className="desktop" /> better model decisions, and learning that
-              compounds.
-            </p>
-            <div className="hero-actions">
-              <a className="button primary" href={CONTACT}>
-                Discuss a research pilot <ArrowUpRight size={17} />
-              </a>
-              <a className="text-link" href="#how-it-works">
-                <Play size={13} fill="currentColor" /> See the research loop
-              </a>
-            </div>
-            <div className="hero-caption">
-              BUILT FOR ML & AI TEAMS WITH SOMETHING TO PROVE.
-            </div>
-          </div>
-          <div className="observatory">
-            <div className="obs-top">
-              <span>
-                <span className="status-dot" /> MERV / RESEARCH ENGINE
-              </span>
-              <span className="example">THE RESEARCH LOOP / ILLUSTRATED</span>
-              <button
-                className="icon-button"
-                onClick={() => setPaused(!paused)}
-                aria-label={
-                  paused
-                    ? "Play research animation"
-                    : "Pause research animation"
-                }
-              >
-                {paused ? <Play size={14} /> : <Pause size={14} />}
-              </button>
-            </div>
-            <div className="obs-body">
-              <aside className="run-list">
-                <div className="mini-label">
-                  RESEARCH DIRECTIONS <span>03</span>
-                </div>
-                {runs.map((r, i) => (
-                  <button
-                    key={r.id}
-                    className={
-                      "run-button " + (selected === i ? "selected" : "")
-                    }
-                    aria-pressed={selected === i}
-                    onClick={() => setSelected(i)}
-                  >
-                    <span className="run-id">
-                      {r.id}
-                      <span className={"tiny-dot dot-" + i} />
-                    </span>
-                    <strong>{r.short}</strong>
-                    <span className="run-sub">
-                      {i === selected
-                        ? "Inspecting experiment"
-                        : "Inspect experiment"}{" "}
-                      <ArrowUpRight size={12} />
-                    </span>
-                  </button>
-                ))}
-                <div className="list-bottom">
-                  <GitBranch size={14} /> One result. New directions.
-                </div>
-              </aside>
-              <div className="engine">
-                <div className="engine-head">
-                  <div>
-                    <span className="mini-label">
-                      {run.id} / {stages[stage].toUpperCase()}
-                    </span>
-                    <h2>{run.name}</h2>
-                  </div>
-                  <span className="live-tag">SIMULATION</span>
-                </div>
-                <div className="pipeline" aria-label="Research stages">
-                  {stages.map((s, i) => (
-                    <React.Fragment key={s}>
-                      <button
-                        aria-pressed={i === stage}
-                        className={
-                          i === stage ? "active" : i < stage ? "done" : ""
-                        }
-                        onClick={() => {
-                          setStage(i);
-                          setPaused(true);
-                        }}
-                      >
-                        <span>
-                          {i < stage ? (
-                            <Check size={12} />
-                          ) : (
-                            String(i + 1).padStart(2, "0")
-                          )}
-                        </span>
-                        {s}
-                      </button>
-                      {i < 4 && <span className="connector" />}
-                    </React.Fragment>
-                  ))}
-                </div>
-                <div className="execution">
-                  <div className="code-stream">
-                    <span className="mini-label">
-                      {stage === 0
-                        ? "LITERATURE → HYPOTHESIS"
-                        : stage === 1
-                          ? "PLAN → DESIGN REVIEW"
-                          : stage === 2
-                            ? "SANDBOX → EXECUTION"
-                            : stage === 3
-                              ? "EVIDENCE → INDEPENDENT REVIEW"
-                              : "FINDINGS → NEXT EXPERIMENT"}
-                    </span>
-                    {run.lines.map((line, i) => (
-                      <div
-                        key={line}
-                        className={
-                          "code-line " + (i === stage % 4 ? "current" : "")
-                        }
-                      >
-                        <span>{String(i + 1).padStart(2, "0")}</span>
-                        <i>{i === stage % 4 ? "›" : "·"}</i>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="metric">
-                    <span className="mini-label">EVIDENCE ACCUMULATES</span>
-                    <svg
-                      viewBox="0 0 200 90"
-                      role="img"
-                      aria-label="Illustrative trend, not measured results"
-                    >
-                      <path
-                        d="M0 20H200M0 50H200M0 80H200"
-                        stroke="#233329"
-                        strokeDasharray="2 5"
-                      />
-                      <polyline
-                        points={run.points}
-                        fill="none"
-                        stroke="#bbff91"
-                        strokeWidth="1.7"
-                      />
-                      <polyline
-                        points="0,71 30,69 60,65 90,67 120,60 150,63 180,57 200,58"
-                        fill="none"
-                        stroke="#657a6d"
-                        strokeWidth="1.2"
-                      />
-                    </svg>
-                    <span className="chart-key">
-                      <i /> candidate <i /> baseline
-                    </span>
-                  </div>
-                </div>
-                <div className="hardware">
-                  <Cpu size={15} />
-                  <span>{run.hardware}</span>
-                  <span className="hardware-runtime">{run.runtime}</span>
-                  <span className="pulse-bars">▁▅▃▇▅▂▆</span>
-                </div>
-              </div>
-            </div>
-            <div className="obs-foot">
-              <span>
-                <span className="small-cross">+</span> Click a direction. Follow
-                the work.
-              </span>
-              <span>IDEA → EXPERIMENT → EVIDENCE ↺</span>
-            </div>
-          </div>
-          <div className="hero-bottom">
-            <span>YOUR NEXT BREAKTHROUGH DESERVES MORE THAN A BACKLOG.</span>
-            <span>SCROLL TO EXPLORE ↓</span>
-          </div>
-        </section>
-        <section className="compat">
-          <span>
-            Works with the agents
+        <section className="hero">
+          <div className="eyebrow">RECURSIVE SELF-IMPROVEMENT FOR AI TEAMS</div>
+          <h1>
+            Better ideas.
             <br />
-            you already use.
-          </span>
-          <div>Claude Code</div>
-          <div>Codex</div>
-          <div>Cursor</div>
-          <div>GitHub Copilot</div>
-          <a href="https://rapidreview.io/docs/merv">
-            + MCP clients <ArrowUpRight size={13} />
+            <span>Built into progress.</span>
+          </h1>
+          <p>
+            Your research advantage. An agent workforce.
+            <br />
+            The compute to make it real.
+          </p>
+          <a className="primary" href={CONTACT}>
+            Explore a pilot <ArrowUpRight size={17} />
           </a>
+          <a className="scroll-cue" href="#ideation">
+            THREE LAYERS. ONE RESEARCH LOOP.
+            <ArrowDown size={18} />
+          </a>
+          <div className="hero-line" />
         </section>
-        <section id="how-it-works" className="section loop-section">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">01 / THE COMPOUNDING LOOP</span>
-              <h2>
-                Don't just run more experiments.
-                <br />
-                <span>Learn how to run better ones.</span>
-              </h2>
-            </div>
-            <p>
-              Recursive self-improvement, made practical. Merv carries what your
-              team learns into what it tries next—with review at every critical
-              step.
-            </p>
-          </div>
-          <div className="loop-layout">
-            <div
-              className={"loop-diagram " + (paused ? "paused" : "")}
-              aria-label="Research ideas fan out into experiments, pass through review, and feed back into the next cycle"
-            >
-              <div className="source-nodes">
-                <span>Research literature</span>
-                <span>Your model & data</span>
-                <span>Prior findings</span>
-              </div>
-              <svg
-                viewBox="0 0 660 320"
-                role="img"
-                aria-label="Ideas enter Merv, fan out to GPU experiments, and return as reviewed evidence"
+        <div className="stack">
+          <aside className="layer-nav" aria-label="Research layers">
+            {layers.map((name, i) => (
+              <a
+                key={name}
+                href={"#" + ["ideation", "execution", "infrastructure"][i]}
+                aria-current={active === i ? "step" : undefined}
               >
-                <defs>
-                  <linearGradient id="line">
-                    <stop stopColor="#58775d" />
-                    <stop offset="1" stopColor="#bbff91" />
-                  </linearGradient>
-                </defs>
-                <g fill="none" stroke="#314638">
-                  <path d="M0 55C110 55 70 160 165 160M0 160H165M0 265C110 265 70 160 165 160" />
-                  <path d="M270 160C330 160 320 55 380 55H445M270 160H445M270 160C330 160 320 265 380 265H445" />
-                  <path d="M495 55C565 55 560 160 620 160M495 160H620M495 265C565 265 560 160 620 160" />
-                  <path
-                    className="return-line"
-                    d="M620 165V310H220V211"
-                    strokeDasharray="3 6"
-                  />
-                </g>
-                {[55, 160, 265].map((y, i) => (
-                  <g key={y}>
-                    <rect
-                      x="435"
-                      y={y - 22}
-                      width="65"
-                      height="44"
-                      rx="4"
-                      fill="#101d15"
-                      stroke="#49614c"
-                    />
-                    <text
-                      x="467"
-                      y={y + 4}
-                      textAnchor="middle"
-                      fill="#a7b7aa"
-                      fontSize="11"
-                      fontFamily="monospace"
-                    >
-                      GPU {i + 1}
-                    </text>
-                    <circle className="moving-dot" r="3" fill="#bbff91">
-                      <animateMotion
-                        dur={`${4 + i}s`}
-                        repeatCount="indefinite"
-                        path={`M0 ${y}C110 ${y} 70 160 165 160L270 160C330 160 320 ${y} 380 ${y}H495C565 ${y} 560 160 620 160`}
-                      />
-                    </circle>
-                  </g>
-                ))}
-                <rect
-                  x="165"
-                  y="112"
-                  width="110"
-                  height="96"
-                  rx="9"
-                  fill="#baff91"
-                />
-                <text
-                  x="220"
-                  y="167"
-                  textAnchor="middle"
-                  fill="#132015"
-                  fontSize="27"
-                  fontWeight="600"
-                >
-                  merv
-                </text>
-                <circle
-                  cx="620"
-                  cy="160"
-                  r="23"
-                  fill="#18271c"
-                  stroke="#95bc81"
-                />
-                <path
-                  d="m610 160 7 7 13-15"
-                  fill="none"
-                  stroke="#bbff91"
-                  strokeWidth="2"
-                />
-                <text
-                  x="355"
-                  y="296"
-                  textAnchor="middle"
-                  fill="#8da68f"
-                  fontSize="10"
-                  fontFamily="monospace"
-                >
-                  REVIEWED FINDINGS INFORM THE NEXT CYCLE
-                </text>
-              </svg>
-            </div>
-            <div className="loop-steps">
-              {[
-                [
-                  "01",
-                  "Find the right question.",
-                  "Connect research literature, your objectives, and prior results to design the next experiment.",
-                ],
-                [
-                  "02",
-                  "Put the idea to work.",
-                  "Agents plan, implement, and execute on suitable compute. Independent review challenges the plan and the evidence.",
-                ],
-                [
-                  "03",
-                  "Make the next loop smarter.",
-                  "Retain what worked and what failed. Reflect, refine the direction, and carry the learning forward.",
-                ],
-              ].map(([n, title, body]) => (
-                <article key={n}>
-                  <span>{n}</span>
-                  <div>
-                    <h3>{title}</h3>
-                    <p>{body}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-        <section className="section inspect-section">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">02 / AUTONOMOUS. NOT OPAQUE.</span>
-              <h2>
-                A lot is happening.
-                <br />
-                <span>None of it has to be a mystery.</span>
-              </h2>
-            </div>
-            <p>
-              Zoom in from the research direction to the exact experiment. See
-              what is being tested, how it runs, and what the evidence actually
-              supports.
-            </p>
-          </div>
-          <div className="inspection">
-            <div
-              className="inspection-tabs"
-              role="tablist"
-              aria-label="Experiment examples"
-            >
-              {runs.map((r, i) => (
-                <button
-                  role="tab"
-                  id={"tab-" + i}
-                  aria-controls="experiment-panel"
-                  aria-selected={i === selected}
-                  tabIndex={i === selected ? 0 : -1}
-                  onKeyDown={(e) => {
-                    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                      e.preventDefault();
-                      const next =
-                        (selected + (e.key === "ArrowRight" ? 1 : 2)) % 3;
-                      setSelected(next);
-                      document.getElementById("tab-" + next)?.focus();
-                    }
-                  }}
-                  onClick={() => setSelected(i)}
-                  key={r.id}
-                >
-                  {r.short}
-                  <ArrowUpRight size={14} />
-                </button>
-              ))}
-            </div>
-            <div
-              id="experiment-panel"
-              role="tabpanel"
-              aria-labelledby={"tab-" + selected}
-              className="inspection-panel"
-            >
-              <div className="inspection-title">
-                <span className="mini-label">
-                  {run.id} / ILLUSTRATIVE EXPERIMENT
-                </span>
-                <h3>{run.idea}</h3>
-              </div>
-              <div className="detail-grid">
-                <article>
-                  <GitBranch />
-                  <span className="mini-label">THE METHOD</span>
-                  <p>{run.method}</p>
-                </article>
-                <article>
-                  <Cpu />
-                  <span className="mini-label">THE HARDWARE</span>
-                  <h4>{run.hardware}</h4>
-                  <p>{run.runtime}</p>
-                </article>
-                <article>
-                  <CheckCheck />
-                  <span className="mini-label">THE REVIEW</span>
-                  <p>{run.review}</p>
-                </article>
-              </div>
-              <div className="artifact-row">
-                <span>RETAINED OUTPUT</span>
-                <strong>{run.output}</strong>
-                <span>Traceable. Inspectable. Reusable.</span>
-              </div>
-            </div>
-          </div>
-        </section>
-        <section id="research" className="section research-section">
-          <div className="research-copy">
-            <span className="eyebrow">03 / YOUR RESEARCH ADVANTAGE</span>
-            <h2>
-              Start further
-              <br />
-              <span>ahead.</span>
-            </h2>
-            <p className="large-copy">
-              Proprietary access to proven AI/ML ideas and techniques. A
-              research engine to put them to the test.
-            </p>
-            <p>
-              Bring your team closer to the ideas that matter. Merv pairs a
-              curated research advantage with the machinery to evaluate
-              techniques against your own models, data, and constraints.
-            </p>
-            <a href={CONTACT} className="text-link">
-              Explore a research partnership <ArrowUpRight size={16} />
-            </a>
-          </div>
-          <div className="knowledge-visual">
-            <div className="knowledge-top">
-              <span className="mini-label">RESEARCH → PRACTICE</span>
-              <span>↗</span>
-            </div>
-            <div className="knowledge-paper back-paper">
-              <span>CONTINUAL LEARNING</span>
-              <div />
-              <div />
-              <div />
-            </div>
-            <div className="knowledge-paper front-paper">
-              <span className="mini-label">TECHNIQUE BRIEF / 007</span>
-              <h3>
-                Better ideas.
-                <br />
-                Grounded in evidence.
-              </h3>
-              <div className="paper-lines" />
-              <div className="paper-tags">
-                <span>Method</span>
-                <span>Evidence</span>
-                <span>Trade-offs</span>
-              </div>
-              <p>
-                A result in the literature is a starting point.
-                <br />
-                Your evaluation decides what works for you.
-              </p>
-            </div>
-            <div className="knowledge-bottom">
-              <span className="status-dot" /> Built to become an experiment.
-            </div>
-          </div>
-        </section>
-        <section className="section control-section">
-          <span className="eyebrow">04 / BUILT FOR THE WAY RESEARCH WORKS</span>
-          <div className="control-grid">
-            <article>
-              <span className="feature-symbol">↳</span>
-              <h3>Move ideas off the backlog.</h3>
-              <p>
-                A small team can only investigate so much. Give promising
-                directions a path from research question to reviewed experiment,
-                guided by your objectives and compute budget.
-              </p>
-            </article>
-            <article>
-              <span className="feature-symbol">⌘</span>
-              <h3>Make evidence-led decisions.</h3>
-              <p>
-                Find out which techniques deserve your engineering time. Test
-                against your own models, data, and evaluations, with independent
-                review of the plan and the result.
-              </p>
-            </article>
-            <article>
-              <span className="feature-symbol">↺</span>
-              <h3>Stop losing what you learn.</h3>
-              <p>
-                Failed experiments are useful context. Keep plans, reviews,
-                artifacts, and findings connected so the next research cycle
-                builds on the last.
-              </p>
-            </article>
-          </div>
-        </section>
-        <section className="section faq-section">
-          <div>
-            <span className="eyebrow">A FEW GOOD QUESTIONS</span>
-            <h2>
-              A clearer path
-              <br />
-              <span>from idea to evidence.</span>
-            </h2>
-          </div>
-          <div className="faqs">
-            {[
-              [
-                "What does recursive self-improvement mean here?",
-                "A repeatable research cycle: propose an improvement, test it, independently review the evidence, and use the findings to choose the next experiment. It is a practical process for improving models and research decisions—not a promise of automatic breakthroughs.",
-              ],
-              [
-                "Who is Merv for?",
-                "ML and AI startups that have a model, a measurable objective, and more research ideas than time to investigate them. We work with teams exploring continual learning, model adaptation, inference efficiency, and other experimental directions.",
-              ],
-              [
-                "Can I see what the agents are doing?",
-                "Yes. Merv exposes research plans, experiments, reviews, retained artifacts, and compute activity. The examples on this page illustrate that workflow; they are not live customer runs or performance claims.",
-              ],
-              [
-                "How do we start?",
-                "Start a conversation about your model, evaluation criteria, available compute, and research goals. We will scope a pilot together. You can also explore the open-source Merv plugin and documentation.",
-              ],
-            ].map(([q, a]) => (
-              <details key={q}>
-                <summary>
-                  {q}
-                  <Plus size={17} className="plus" />
-                  <Minus size={17} className="minus" />
-                </summary>
-                <p>{a}</p>
-              </details>
+                <span>0{i + 1}</span>
+                <b>{name}</b>
+              </a>
             ))}
+          </aside>
+          <section
+            className={`layer ideation ${active === 0 ? "in-view" : ""}`}
+            data-layer="0"
+            id="ideation"
+          >
+            <div className="layer-heading">
+              <span className="eyebrow">01 / IDEATION</span>
+              <h2>Start with an edge.</h2>
+              <p>Proven AI/ML techniques meet your next big question.</p>
+            </div>
+            <Ideas />
+            <MobileIdeas />
+            <div className="handoff">
+              <span>IDEA BECOMES INTENT</span>
+              <i />
+            </div>
+          </section>
+          <section
+            className={`layer execution ${active === 1 ? "in-view" : ""}`}
+            data-layer="1"
+            id="execution"
+          >
+            <div className="layer-heading">
+              <span className="eyebrow">02 / EXECUTION</span>
+              <h2>Put intelligence to work.</h2>
+              <p>Agents turn the question into a reviewed experiment.</p>
+            </div>
+            <div className="agent-stage dark">
+              <span className="stage-label">THE AGENT LAYER</span>
+              <Agents />
+              <MobileAgents />
+              <span className="stage-foot">
+                YOUR OBJECTIVE. COORDINATED EXECUTION.
+              </span>
+            </div>
+            <div className="handoff">
+              <span>INTENT BECOMES COMPUTE</span>
+              <i />
+            </div>
+          </section>
+          <section
+            className={`layer infrastructure ${active === 2 ? "in-view" : ""}`}
+            data-layer="2"
+            id="infrastructure"
+          >
+            <div className="layer-heading">
+              <span className="eyebrow">03 / GPU INFRASTRUCTURE</span>
+              <h2>Real work. Under the hood.</h2>
+              <p>
+                GPU-backed experiments. Traceable results. Learning that stays.
+              </p>
+            </div>
+            <Compute />
+            <div className="return-loop">
+              <svg viewBox="0 0 600 110" aria-hidden="true">
+                <Flow path="M300 0V36Q300 60 276 60H80Q56 60 56 36V18" />
+                <path d="m49 25 7-7 7 7" fill="none" stroke="var(--blue-9)" />
+              </svg>
+              <span>Every result informs the next idea.</span>
+            </div>
+          </section>
+          <div className="visual-note">
+            <span>ILLUSTRATED WORKFLOW</span>
+            <button
+              onClick={() => setPaused(!paused)}
+              aria-label={paused ? "Play animations" : "Pause animations"}
+            >
+              {paused ? <Play size={12} /> : <Pause size={12} />}
+              <span>{paused ? "Play" : "Pause"}</span>
+            </button>
           </div>
-        </section>
+        </div>
         <section className="closing">
-          <span className="eyebrow">
-            <span className="status-dot" /> THE NEXT ITERATION STARTS HERE.
-          </span>
+          <span className="eyebrow">LESS BACKLOG. MORE DISCOVERY.</span>
           <h2>
-            Give your research
-            <br />a <span>run button.</span>
+            Your next leap
+            <br />
+            starts with a question.
           </h2>
-          <p>Bring the ambition. Let's build the loop.</p>
-          <a className="button primary" href={CONTACT}>
-            Discuss a research pilot <ArrowUpRight size={17} />
+          <a className="primary" href={CONTACT}>
+            Let’s find it together <ArrowUpRight size={17} />
           </a>
-          <Dialog.Root>
-            <Dialog.Trigger className="install-trigger">
-              Or start with the open-source plugin <ArrowRight size={14} />
-            </Dialog.Trigger>
-            <Dialog.Portal>
-              <Dialog.Overlay className="modal-overlay" />
-              <Dialog.Content className="modal">
-                <Dialog.Title>Run Merv in Codex</Dialog.Title>
-                <Dialog.Description>
-                  Connect your agent to the Merv research workflow.
-                </Dialog.Description>
-                <pre>
-                  codex plugin marketplace add rapidreview-io/Merv
-                  <br />
-                  codex plugin add merv@rapidreview
-                  <br />
-                  codex mcp login merv
-                </pre>
-                <button className="button secondary" onClick={copy}>
-                  {copied ? <Check size={16} /> : <Copy size={16} />}{" "}
-                  {copied ? "Copied" : "Copy commands"}
-                </button>
-                <a
-                  className="text-link"
-                  href="https://rapidreview.io/docs/merv"
-                >
-                  Other agents & documentation <ExternalLink size={14} />
-                </a>
-                <Dialog.Close
-                  className="modal-close"
-                  aria-label="Close installation instructions"
-                >
-                  <X />
-                </Dialog.Close>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
+          <p>Research pilots for ML & AI startups.</p>
         </section>
       </main>
       <footer>
-        <div className="footer-top">
-          <a href="#" className="brand">
-            <Mark />
-            merv
-          </a>
-          <span>Research. Learn. Improve.</span>
-          <div>
-            <a href="https://github.com/rapidreview-io/Merv">
-              GitHub <ArrowUpRight size={12} />
-            </a>
-            <a href="https://rapidreview.io/docs/merv">
-              Documentation <ArrowUpRight size={12} />
-            </a>
-            <a href={CONTACT}>
-              Contact <ArrowUpRight size={12} />
-            </a>
-          </div>
+        <a className="brand" href="#" aria-label="Merv home">
+          <Mark />
+          merv
+        </a>
+        <span>Research that improves itself.</span>
+        <div>
+          <a href="https://github.com/rapidreview-io/Merv">GitHub</a>
+          <a href="https://rapidreview.io/docs/merv">Docs</a>
+          <a href="https://rapidreview.io/privacy">Privacy</a>
+          <a href="https://rapidreview.io/terms">Terms</a>
         </div>
-        <div className="footer-bottom">
-          <span>
-            © {new Date().getFullYear()} Merv · Built by{" "}
-            <a href="https://rapidreview.io">RapidReview</a>
-          </span>
-          <div>
-            <a href="https://rapidreview.io/privacy">Privacy</a>
-            <a href="https://rapidreview.io/terms">Terms</a>
-            <span className="footer-status">
-              <span className="status-dot" /> Always another question.
-            </span>
-          </div>
-        </div>
+        <small>© {new Date().getFullYear()} RapidReview</small>
       </footer>
-    </>
+    </div>
   );
 }
-export default App;
