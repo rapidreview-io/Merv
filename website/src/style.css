@@ -174,10 +174,6 @@ h1 span {
   border-color: var(--slate-12);
   color: var(--slate-12);
 }
-.tab-index {
-  font: 8px var(--mono);
-  color: var(--slate-9);
-}
 .system-controls button {
   background: none;
   border: 0;
@@ -196,15 +192,6 @@ h1 span {
   padding: 74px var(--page-gutter) 0;
   position: relative;
   scroll-margin-top: 0;
-}
-.layer-title {
-  display: flex;
-  gap: 21px;
-  align-items: baseline;
-}
-.layer-index {
-  font: 10px var(--mono);
-  color: var(--slate-9);
 }
 .layer-title h2 {
   font-size: clamp(26px, 3vw, 42px);
@@ -1052,9 +1039,6 @@ footer > small {
     gap: 5px;
     height: 46px;
   }
-  .tab-index {
-    font-size: 7px;
-  }
   .simulation {
     font-size: 6px;
     max-width: 48px;
@@ -1066,12 +1050,6 @@ footer > small {
   }
   .layer {
     padding: 47px 5% 0;
-  }
-  .layer-title {
-    gap: 12px;
-  }
-  .layer-index {
-    font-size: 9px;
   }
   .layer-title h2 {
     font-size: 26px;
@@ -1330,9 +1308,6 @@ footer > small {
   }
 }
 @media (max-width: 360px) {
-  .tab-index {
-    display: none;
-  }
   .dag-node {
     padding: 10px 8px;
   }
