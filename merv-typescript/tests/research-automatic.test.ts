@@ -170,7 +170,7 @@ async function fixture(t: TestContext, plugin = false) {
   const pump = async () => {
     await app.ctx.domainEvents.drain();
     const status = (await app.ctx.domainEvents.status()).find(
-      (item) => item.id === 'research.automatic.v1',
+      (item) => item.id === 'research.automatic.v2',
     );
     assert.equal(status?.error ?? null, null, JSON.stringify(status));
   };
@@ -523,6 +523,34 @@ test('worker sessions cannot authorize automatic research or advance the outer c
   );
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'defining');
   await assert.rejects(f.create([]), { code: 'research_work_required' });
+});
+
+test('publication-aware automation upgrades the durable subscription and wakes existing cycles', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  const releaseOld = await f.app.ctx.domainEvents.subscribe({
+    id: 'research.automatic.v1',
+    from: 'beginning',
+    types: [
+      'workflow.transition',
+      'workflow.limit_extended',
+      'research.created',
+      'research.resume',
+      'paper.patched',
+      'actor.permissions_changed',
+    ],
+    handle: async () => {},
+  });
+  await releaseOld();
+  const work = await f.task();
+  const cycle = await f.create([work.id]);
+  await f.failTask(work.id);
+  await f.enable();
+  await f.pump();
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+  assert.ok(
+    (await f.app.ctx.domainEvents.status()).some((item) => item.id === 'research.automatic.v1'),
+  );
 });
 
 test('the normal plugin composition automatically starts reflection and restores after restart', async (t) => {
