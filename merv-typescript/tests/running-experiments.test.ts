@@ -589,13 +589,13 @@ test('a live GPU run is a hardware card that runs for its experiment, never red 
   });
   const [long, twelve, two, half] = [at(90), at(12), at(2), at(30)];
   const baseline = await seedRun(f, experiment.id, 'baseline', 'completed', long, {
-    cost: { amount: '1.20', currency: 'USD' },
+    cost: { amount: '1.20', currency: 'USD', basis: 'job_runtime_estimate' },
     result: { result: { exit: 0, bytes: 12, head: '', tail: 'RUN_SECRET_4471' }, reason: null },
     minutes: 30,
     maxUsd: 2,
   });
   const running = await seedRun(f, experiment.id, 'sweep-k16', 'running', twelve, {
-    cost: { amount: '2.10', currency: 'USD' },
+    cost: { amount: '2.10', currency: 'USD', basis: 'full_lease_quote' },
     minutes: 60,
     maxUsd: 8,
   });
@@ -625,7 +625,7 @@ test('a live GPU run is a hardware card that runs for its experiment, never red 
       lines: [
         ['Running ', { since: twelve }],
         [
-          'Reserved ',
+          'Lease quote ',
           { money: { amount: '2.10', currency: 'USD' }, of: { amount: '8', currency: 'USD' } },
         ],
       ],
@@ -650,6 +650,7 @@ test('a live GPU run is a hardware card that runs for its experiment, never red 
       [release.lines[0], release.look, release.dot],
       [['Releasing'], 'quiet', undefined],
     );
+    assert.equal(release.lines[1][0], 'Cost estimate ', 'legacy amounts have no known basis');
     assert.equal(node(board, baseline), undefined, 'a finished run leaves the board');
     assert.equal(board.lanes.hardware.needsYou, 0);
     assert.ok(board.lanes.hardware.nodes.every((item) => !item.attention));
@@ -715,7 +716,7 @@ test('a live GPU run is a hardware card that runs for its experiment, never red 
         { label: 'Requested', value: [{ ago: twelve }] },
         { label: 'Time cap', value: ['1h'] },
         {
-          label: 'Reserved',
+          label: 'Lease quote',
           value: [
             { money: { amount: '2.10', currency: 'USD' }, of: { amount: '8', currency: 'USD' } },
           ],
@@ -732,6 +733,10 @@ test('a live GPU run is a hardware card that runs for its experiment, never red 
   // A finished run's sidebar still answers, so an open one outlives its card.
   const finished = await f.panel(baseline);
   assert.deepEqual(finished.header.says, [{ state: 'completed' }, ' · exit 0']);
+  assert.equal(
+    finished.sections[0]?.kind === 'facts' && finished.sections[0].rows.at(-1)?.label,
+    'Job estimate',
+  );
   assert.equal(finished.live, false);
   assert.ok(!JSON.stringify([sidebar, own, finished]).includes('RUN_SECRET_4471'));
   assert.ok(!JSON.stringify([sidebar, own, finished]).includes('python train.py'));

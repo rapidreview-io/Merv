@@ -162,4 +162,5 @@ test('legacy compute backfills missing jobs, preserves current states and resume
   assert.ok(reads.includes('provider_rollback'));
   assert.ok(history.every((row) => row.state === 'completed'));
   assert.ok(history.every((row) => row.cost.amount === '0.20'));
+  assert.ok(history.every((row) => row.cost.basis === 'unclassified_estimate'));
 });

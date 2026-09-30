@@ -199,7 +199,12 @@ export interface SandboxComputeRun {
   id: string;
   state: string;
   reason: string | null;
-  cost: { amount: string; currency: string } | null;
+  /** Provider estimates, never billed spend. Older stored rows may lack provenance. */
+  cost: {
+    amount: string;
+    currency: string;
+    basis?: 'full_lease_quote' | 'job_runtime_estimate' | 'unclassified_estimate';
+  } | null;
   result: { exit: number; bytes?: number; head?: string; tail?: string } | null;
   outputs?: SandboxComputeOutput[];
   outputState?: string;

@@ -245,13 +245,22 @@ const runLine = (run: ComputeRunning): RunningPhrase =>
         ? ['Releasing']
         : runState(run);
 /**
- * What the run holds against its cap, one phrase for its card, its row and its sidebar: what
- * the service reserved once it says, else the cap alone. The service enforces the cap itself.
+ * Provider estimates stay distinct from spend, even after a run has finished.
+ * The service enforces the cap itself; older rows do not identify their estimate's basis.
  */
 function spend(run: ComputeRunning): { label: string; value: RunningPhrase } | null {
   const cost = money(run.cost),
     cap = dollars(run.maxUsd);
-  if (cost) return { label: 'Reserved', value: [{ money: cost, of: cap }] };
+  if (cost)
+    return {
+      label:
+        run.cost?.basis === 'full_lease_quote'
+          ? 'Lease quote'
+          : run.cost?.basis === 'job_runtime_estimate'
+            ? 'Job estimate'
+            : 'Cost estimate',
+      value: [{ money: cost, of: cap }],
+    };
   return cap ? { label: 'Cost cap', value: [{ money: cap }] } : null;
 }
 const spent = (run: ComputeRunning): RunningPhrase => {

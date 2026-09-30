@@ -221,6 +221,10 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     (await tasks.get(caller, task.id)).compute?.find((run) => run.runId === 'wf_1')?.state,
     'completed',
   );
+  assert.deepEqual(
+    ((await tasks.computeStatus(caller, task.id, 'wf_1')) as { cost: unknown }).cost,
+    { amount: '0.1', currency: 'USD', basis: 'unclassified_estimate' },
+  );
   assert.equal(
     JSON.stringify((await tasks.get(caller, task.id)).compute).includes('"head"'),
     false,

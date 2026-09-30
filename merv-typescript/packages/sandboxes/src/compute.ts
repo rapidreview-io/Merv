@@ -26,10 +26,13 @@ const decode = (value: unknown): string =>
 // Provider-owned metadata selects the protocol, never the command's custom result JSON.
 const nativeJobName = 'merv-compute-v2';
 const quoted = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
-const money = (value: unknown): SandboxComputeRun['cost'] => {
+const money = (
+  value: unknown,
+  basis: NonNullable<SandboxComputeRun['cost']>['basis'],
+): SandboxComputeRun['cost'] => {
   const row = object(value);
   return typeof row.amount === 'string' && typeof row.currency === 'string'
-    ? { amount: row.amount, currency: row.currency }
+    ? { amount: row.amount, currency: row.currency, basis }
     : null;
 };
 
@@ -189,7 +192,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
       object(error.details).reason ?? error.reason ?? error.message ?? error.code ?? null;
     const jobId = object(run.result).job_id;
     let result: SandboxComputeRun['result'] = null;
-    let cost = money(workflow.reserved_cost);
+    let cost = money(workflow.reserved_cost, 'full_lease_quote');
     if (
       typeof jobId === 'string' &&
       ['completed', 'failed', 'cancelled'].includes(String(workflow.state))
@@ -207,7 +210,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
           head: decode(output.head64),
           tail: decode(output.tail64),
         };
-      cost ??= money(job.cost);
+      cost ??= money(job.cost, 'job_runtime_estimate');
     }
     const capture = object(nodes.capture);
     const captured = object(capture.result);

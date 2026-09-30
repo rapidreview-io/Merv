@@ -72,8 +72,15 @@ test('ML workflow uses the project subject, stages only approved source, and rea
           },
         },
       });
+    if (url.endsWith('/v1/workflows/wf_estimated') && method === 'GET')
+      return json({
+        id: 'wf_estimated',
+        state: 'cancelled',
+        nodes: { run: { result: { job_id: 'job_one' } } },
+      });
     if (url.endsWith('/v1/jobs/job_one'))
       return json({
+        cost: { currency: 'USD', amount: '0.02' },
         result: {
           exit: 0,
           bytes: 4,
@@ -143,10 +150,19 @@ test('ML workflow uses the project subject, stages only approved source, and rea
     id: 'wf_one',
     state: 'completed',
     reason: null,
-    cost: { currency: 'USD', amount: '1.25' },
+    cost: { currency: 'USD', amount: '1.25', basis: 'full_lease_quote' },
     result: { exit: 0, bytes: 4, head: 'head', tail: 'tail' },
   });
-  assert.equal((await compute.get('project_a', 'wf_refused')).reason, 'budget_exceeded');
+  // Terminal state does not turn a full-lease quote into spent money. Legacy jobs may
+  // instead expose an elapsed-runtime estimate; it is not the full-machine bill either.
+  assert.deepEqual((await compute.get('project_a', 'wf_estimated')).cost, {
+    currency: 'USD',
+    amount: '0.02',
+    basis: 'job_runtime_estimate',
+  });
+  const refused = await compute.get('project_a', 'wf_refused');
+  assert.equal(refused.reason, 'budget_exceeded');
+  assert.equal(refused.cost, null);
   await compute.cancel('project_a', 'wf_one');
   assert.ok(
     seen

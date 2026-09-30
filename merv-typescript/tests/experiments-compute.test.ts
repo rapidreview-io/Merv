@@ -245,12 +245,17 @@ test('driver resumes a pending run, records output, and cancels it after the att
     id: 'wf_one',
     state: 'completed',
     reason: null,
-    cost: { amount: '1.25', currency: 'USD' },
+    cost: { amount: '1.25', currency: 'USD', basis: 'full_lease_quote' },
     result: { exit: 0, bytes: 7, head: '', tail: 'metrics' },
   });
   await f.experiments.computeTick();
   const runs = (await f.experiments.get(f.caller, id)).compute!;
   assert.equal(runs[0]?.state, 'completed');
+  assert.deepEqual(runs[0]?.cost, {
+    amount: '1.25',
+    currency: 'USD',
+    basis: 'full_lease_quote',
+  });
   assert.equal((runs[0]?.result as { tail: string }).tail, 'metrics');
   const second = await f.experiments.computeRun(f.caller, input(id, 'second'));
   await f.experiments.computeTick();

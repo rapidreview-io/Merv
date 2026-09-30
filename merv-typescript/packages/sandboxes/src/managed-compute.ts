@@ -57,7 +57,7 @@ export interface ManagedComputeRunning {
   updatedAt: string;
   minutes: number | null;
   maxUsd: number | null;
-  cost: { amount: string; currency: string } | null;
+  cost: SandboxComputeRun['cost'];
   exit: number | null;
   reason: string | null;
   overdue: boolean;
@@ -92,18 +92,29 @@ const stored = (text: string | null) => {
     return {};
   }
 };
+const readCost = (text: string | null): SandboxComputeRun['cost'] => {
+  const cost = stored(text);
+  if (typeof cost.amount !== 'string' || typeof cost.currency !== 'string') return null;
+  return {
+    amount: cost.amount,
+    currency: cost.currency,
+    basis:
+      cost.basis === 'full_lease_quote' || cost.basis === 'job_runtime_estimate'
+        ? cost.basis
+        : 'unclassified_estimate',
+  };
+};
 export const publicComputeRow = (row: ManagedComputeRow) => ({
   key: row.key,
   runId: row.run_id ?? row.key,
   generation: row.generation,
   state: row.state,
-  cost: row.cost ? JSON.parse(row.cost) : null,
+  cost: readCost(row.cost),
   ...(row.result ? JSON.parse(row.result) : {}),
   ...(stored(row.input_json).commandId ? { commit: stored(row.input_json).commandId } : {}),
 });
 const runningRow = (row: ManagedComputeRow): ManagedComputeRunning => {
   const input = stored(row.input_json),
-    cost = stored(row.cost),
     outcome = stored(row.result),
     result = object(outcome.result);
   return {
@@ -116,10 +127,7 @@ const runningRow = (row: ManagedComputeRow): ManagedComputeRunning => {
     updatedAt: row.updated_at,
     minutes: typeof input.minutes === 'number' ? input.minutes : null,
     maxUsd: typeof input.maxUsd === 'number' ? input.maxUsd : null,
-    cost:
-      typeof cost.amount === 'string' && typeof cost.currency === 'string'
-        ? { amount: cost.amount, currency: cost.currency }
-        : null,
+    cost: readCost(row.cost),
     exit: Number.isInteger(result.exit) ? (result.exit as number) : null,
     reason: typeof outcome.reason === 'string' ? outcome.reason : null,
     overdue:
