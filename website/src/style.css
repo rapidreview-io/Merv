@@ -35,7 +35,8 @@ button:disabled {
 }
 a:focus-visible,
 button:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+[role="tabpanel"]:focus-visible {
   outline: 2px solid var(--blue-10);
   outline-offset: 5px;
 }
@@ -264,8 +265,9 @@ h1 span {
   stroke: var(--slate-11);
   stroke-width: 1.5;
   stroke-linecap: round;
-  stroke-dasharray: 13 250;
-  animation: flow 5s linear infinite;
+  stroke-dasharray: 12 112;
+  stroke-dashoffset: 12;
+  animation: flow 2.4s ease-in-out both;
 }
 .orbital ellipse {
   fill: none;
@@ -509,6 +511,9 @@ h1 span {
   border: 1px solid var(--line);
   border-top: 0;
   align-items: start;
+}
+.provider-tabs {
+  display: none;
 }
 .pool {
   background: var(--slate-1);
@@ -902,8 +907,17 @@ footer > small {
   animation-play-state: paused !important;
 }
 @keyframes flow {
+  from {
+    stroke-dashoffset: 12;
+    opacity: 0;
+  }
+  10%,
+  90% {
+    opacity: 1;
+  }
   to {
-    stroke-dashoffset: -526;
+    stroke-dashoffset: -100;
+    opacity: 0;
   }
 }
 @keyframes rotate {
@@ -1165,6 +1179,49 @@ footer > small {
   }
   .fleet-grid {
     grid-template-columns: 1fr;
+  }
+  .provider-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-top: 0;
+  }
+  .provider-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 50px;
+    padding: 10px 6px;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    background: transparent;
+    color: var(--slate-11);
+    font-size: 10px;
+    line-height: 1.2;
+  }
+  .provider-tab .provider-logo {
+    width: 18px;
+    height: 18px;
+    padding: 2px;
+    opacity: 0.6;
+  }
+  .provider-tab .logo-lambda {
+    padding: 0;
+  }
+  .provider-tab[aria-selected="true"] {
+    color: var(--slate-12);
+    background: var(--slate-3);
+    border-bottom-color: var(--slate-12);
+  }
+  .provider-tab[aria-selected="true"] .provider-logo {
+    opacity: 1;
+  }
+  .pool:not(.mobile-selected) {
+    display: none;
+  }
+  .pool.mobile-selected {
+    opacity: 1;
   }
   .pool {
     padding: 24px 16px;
