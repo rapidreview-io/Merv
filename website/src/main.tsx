@@ -2,8 +2,6 @@ import "@fontsource/dm-sans/latin-400.css";
 import "@fontsource/dm-sans/latin-500.css";
 import "@fontsource/dm-sans/latin-600.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
-import "@radix-ui/colors/blue.css";
-import "@radix-ui/colors/slate.css";
 import "@radix-ui/colors/blue-dark.css";
 import "@radix-ui/colors/slate-dark.css";
 import "./style.css";
