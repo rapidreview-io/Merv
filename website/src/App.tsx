@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDown,
   ArrowUpRight,
@@ -172,29 +172,15 @@ function Logo({ id }: { id: string }) {
     </span>
   );
 }
-function Wire({
-  d,
-  delay = 0,
-  active = true,
-}: {
-  d: string;
-  delay?: number;
-  active?: boolean;
-}) {
+function Wire({ d, active = false }: { d: string; active?: boolean }) {
   return (
     <g>
       <path className="wire" d={d} />
-      {active && (
-        <path
-          className="wire-pulse"
-          d={d}
-          style={{ animationDelay: `${delay}s` }}
-        />
-      )}
+      {active && <path className="wire-pulse" d={d} pathLength="100" />}
     </g>
   );
 }
-function Ideas() {
+function Ideas({ phase }: { phase: number }) {
   const topics = [
     { x: 88, y: 63, name: "RESEARCH" },
     { x: 760, y: 66, name: "NEW IDEAS" },
@@ -222,9 +208,9 @@ function Ideas() {
           ))}
         </g>
         <Wire d="M275 100H330Q355 100 380 130L482 205" />
-        <Wire d="M805 108H750Q720 108 700 140L598 205" delay={-1} />
-        <Wire d="M240 290H322Q350 290 375 275L480 241" delay={-2} />
-        <Wire d="M840 290H762Q730 290 706 275L600 241" delay={-3} />
+        <Wire d="M805 108H750Q720 108 700 140L598 205" />
+        <Wire d="M240 290H322Q350 290 375 275L480 241" />
+        <Wire d="M840 290H762Q730 290 706 275L600 241" />
         {topics.map((t, index) => (
           <g
             key={t.name}
@@ -276,7 +262,8 @@ function Ideas() {
           fill="var(--slate-12)"
         />
         <circle cx="540" cy="173" r="3" className="accent-dot" />
-        <Wire d="M540 288V424M540 424H230V457M540 424V457M540 424H850V457" />
+        <Wire d="M540 288V424" active={phase < 3} />
+        <Wire d="M540 424H230V457M540 424V457M540 424H850V457" />
         {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
           <g key={t}>
             <rect
@@ -295,7 +282,7 @@ function Ideas() {
             >
               {t}
             </text>
-            <Wire d={`M${230 + i * 310} 505V550`} delay={-i} />
+            <Wire d={`M${230 + i * 310} 505V550`} />
           </g>
         ))}
       </svg>
@@ -331,9 +318,10 @@ function Ideas() {
         <text x="268" y="167" className="svg-micro">
           YOUR GOAL
         </text>
+        <Wire d="M180 228V313" active={phase < 3} />
         {["Replay × LoRA", "Routing", "Distillation"].map((t, i) => (
           <g key={t}>
-            <Wire d={`M180 228V313H${60 + i * 120}V330`} delay={-i} />
+            <Wire d={`M180 313H${60 + i * 120}V330`} />
             <rect
               x={7 + i * 120}
               y="330"
@@ -376,25 +364,15 @@ function Dag({
         aria-label="Two parallel tasks feed three independent experiments. Every experiment waits for both tasks, never for another experiment."
       >
         <svg className="dag-wires" viewBox="0 0 1080 630" aria-hidden="true">
-          <Wire d="M540 0V23H330V58M540 23H750V58" active={phase < 7} />
-          <Wire
-            d="M330 178V221Q330 245 354 245H726Q750 245 750 221V178"
-            active={phase >= 7}
-          />
+          <Wire d="M540 0V23H330V58M540 23H750V58" />
+          <Wire d="M330 178V221Q330 245 354 245H726Q750 245 750 221V178" />
           <circle cx="540" cy="245" r="4" className="junction" />
-          {[220, 540, 860].map((x, i) => (
+          <Wire d="M540 245V270" active={phase >= 7 && phase < 10} />
+          {[220, 540, 860].map((x) => (
             <g key={x}>
-              <Wire
-                d={`M540 245V270H${x}V330`}
-                delay={-i}
-                active={phase >= 7}
-              />
+              <Wire d={`M540 270H${x}V330`} />
               <path d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
-              <Wire
-                d={`M${x} 470V505Q${x} 531 540 531V560`}
-                delay={-i}
-                active={phase >= 20}
-              />
+              <Wire d={`M${x} 470V505Q${x} 531 540 531V560`} />
             </g>
           ))}
           <rect
@@ -408,32 +386,22 @@ function Dag({
           <text x="540" y="588" textAnchor="middle" className="svg-small">
             Reflect ↻
           </text>
-          <Wire d="M540 607V630" active={phase >= 20} />
+          <Wire d="M540 607V630" />
         </svg>
         <svg
           className="dag-wires-mobile"
           viewBox="0 0 360 550"
           aria-hidden="true"
         >
-          <Wire d="M180 0V25H85V50M180 25H275V50" active={phase < 7} />
-          <Wire
-            d="M85 155V195Q85 210 100 210H260Q275 210 275 195V155"
-            active={phase >= 7}
-          />
+          <Wire d="M180 0V25H85V50M180 25H275V50" />
+          <Wire d="M85 155V195Q85 210 100 210H260Q275 210 275 195V155" />
           <circle cx="180" cy="210" r="3" className="junction" />
-          {[60, 180, 300].map((x, i) => (
+          <Wire d="M180 210V235" active={phase >= 7 && phase < 10} />
+          {[60, 180, 300].map((x) => (
             <g key={x}>
-              <Wire
-                d={`M180 210V235H${x}V280`}
-                delay={-i}
-                active={phase >= 7}
-              />
+              <Wire d={`M180 235H${x}V280`} />
               <path d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
-              <Wire
-                d={`M${x} 410V440Q${x} 460 180 460V480`}
-                delay={-i}
-                active={phase >= 20}
-              />
+              <Wire d={`M${x} 410V440Q${x} 460 180 460V480`} />
             </g>
           ))}
           <rect
@@ -447,7 +415,7 @@ function Dag({
           <text x="180" y="505" textAnchor="middle" className="svg-small">
             Reflect ↻
           </text>
-          <Wire d="M180 520V550" active={phase >= 20} />
+          <Wire d="M180 520V550" />
         </svg>
         {nodes.map((n, index) => {
           const task = n.kind === "TASK";
@@ -522,6 +490,20 @@ function Fleet({
   focus: string | null;
   setFocus: (id: string | null) => void;
 }) {
+  const [mobile, setMobile] = useState(false);
+  const [mobileProvider, setMobileProvider] = useState(pools[0].id);
+  const providerTabs = useRef<(HTMLButtonElement | null)[]>([]);
+  useEffect(() => {
+    const media = matchMedia("(max-width: 650px)");
+    const update = () => setMobile(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const selectProvider = (index: number) => {
+    setMobileProvider(pools[index].id);
+    setFocus(null);
+  };
   const stage =
     phase < 5
       ? "Queued"
@@ -537,13 +519,14 @@ function Fleet({
   return (
     <div className="infra-system">
       <svg className="dispatch" viewBox="0 0 1080 100" aria-hidden="true">
-        <Wire d="M220 0V25H860V0M540 0V25M540 25V50H180V100M540 50V100M540 50H900V100" />
+        <Wire d="M220 0V25H860V0M540 0V25M540 50H180V100M540 50V100M540 50H900V100" />
+        <Wire d="M540 25V50" active={phase >= 5 && phase < 8} />
         {[180, 540, 900].map((x) => (
           <path key={x} d={`m${x - 4} 88 4 6 4-6`} className="wire-arrow" />
         ))}
       </svg>
       <div className="fleet-toolbar">
-        <span>24 workers</span>
+        <span>{mobile ? "4 workers" : "24 workers"}</span>
         <span className="fleet-state">
           <i className="signal" />
           {stage}
@@ -551,19 +534,72 @@ function Fleet({
         <button
           onClick={() => setFocus(null)}
           disabled={!focus}
-          aria-label="Show all providers"
-          title="Show all providers"
+          aria-label="Clear provider focus"
+          title="Clear provider focus"
         >
           <RotateCcw size={13} />
         </button>
+      </div>
+      <div
+        className="provider-tabs"
+        role="tablist"
+        aria-label="Compute providers"
+      >
+        {pools.map((pool, index) => {
+          const provider = providers.find((item) => item[0] === pool.id)!;
+          return (
+            <button
+              key={pool.id}
+              ref={(element) => {
+                providerTabs.current[index] = element;
+              }}
+              className="provider-tab"
+              id={`provider-tab-${pool.id}`}
+              role="tab"
+              aria-selected={mobileProvider === pool.id}
+              aria-controls={`provider-panel-${pool.id}`}
+              tabIndex={mobileProvider === pool.id ? 0 : -1}
+              onClick={() => selectProvider(index)}
+              onKeyDown={(event) => {
+                let next: number;
+                switch (event.key) {
+                  case "ArrowRight":
+                    next = (index + 1) % pools.length;
+                    break;
+                  case "ArrowLeft":
+                    next = (index + pools.length - 1) % pools.length;
+                    break;
+                  case "Home":
+                    next = 0;
+                    break;
+                  case "End":
+                    next = pools.length - 1;
+                    break;
+                  default:
+                    return;
+                }
+                event.preventDefault();
+                selectProvider(next);
+                providerTabs.current[next]?.focus();
+              }}
+            >
+              <Logo id={pool.id} />
+              <span>{provider[1]}</span>
+            </button>
+          );
+        })}
       </div>
       <div className="fleet-grid">
         {pools.map((p, pi) => {
           const provider = providers.find((x) => x[0] === p.id)!;
           return (
             <article
-              className={`pool ${focus && focus !== p.id ? "dimmed" : ""} ${focus === p.id ? "focused" : ""}`}
+              className={`pool ${mobileProvider === p.id ? "mobile-selected" : ""} ${focus && focus !== p.id ? "dimmed" : ""} ${focus === p.id ? "focused" : ""}`}
               key={p.id}
+              id={`provider-panel-${p.id}`}
+              role={mobile ? "tabpanel" : undefined}
+              aria-labelledby={mobile ? `provider-tab-${p.id}` : undefined}
+              tabIndex={mobile ? 0 : undefined}
             >
               <button
                 className="pool-header"
@@ -661,7 +697,8 @@ function Fleet({
         aria-label="Datasets, checkpoints and evidence are retained after compute is released."
       >
         <svg viewBox="0 0 1080 66" aria-hidden="true">
-          <Wire d="M180 0V25H900V0M540 0V66" active={phase >= 21} />
+          <Wire d="M180 0V25H900V0M540 0V25" />
+          <Wire d="M540 25V66" active={phase >= 21 && phase < 24} />
         </svg>
         <div className="artifacts">
           <span>
@@ -741,8 +778,8 @@ export default function App() {
           <div>
             <span className="eyebrow">SELF-IMPROVING RESEARCH</span>
             <h1>
-              Research,
-              <br className="hero-break" /> <span>in motion.</span>
+              Continuous
+              <br className="hero-break" /> <span>research.</span>
             </h1>
           </div>
           <a
@@ -793,7 +830,7 @@ export default function App() {
             <span className="layer-index">01</span>
             <h2>Ideas, combined.</h2>
           </div>
-          <Ideas />
+          <Ideas phase={phase} />
         </section>
         <div className="layer-bridge" aria-hidden="true">
           <i />
@@ -803,7 +840,7 @@ export default function App() {
         <section id="workloads" data-layer="1" className="layer workload-layer">
           <div className="layer-title">
             <span className="layer-index">02</span>
-            <h2>Experiments, parallel.</h2>
+            <h2>Parallel experiments.</h2>
           </div>
           <Dag phase={phase} selected={selected} onSelect={setSelected} />
         </section>
@@ -817,7 +854,7 @@ export default function App() {
         >
           <div className="layer-title">
             <span className="layer-index">03</span>
-            <h2>Compute, on demand.</h2>
+            <h2>Compute built for agents.</h2>
           </div>
           <Fleet phase={phase} focus={focus} setFocus={setFocus} />
           <div className="integrations">
