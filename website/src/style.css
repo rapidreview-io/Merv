@@ -236,14 +236,33 @@ h1 span {
 .idea-field > .ideas-mobile {
   display: none;
 }
-.svg-micro {
-  font: 10px var(--mono);
-  letter-spacing: 1.2px;
-  fill: var(--slate-11);
-}
 .svg-small {
   font: 12px var(--mono);
   fill: var(--slate-12);
+}
+.input-icon {
+  color: var(--slate-10);
+}
+.input-title {
+  font:
+    500 15px "DM Sans",
+    sans-serif;
+  fill: var(--slate-12);
+}
+.input-caption {
+  font: 9px var(--mono);
+  fill: var(--slate-11);
+}
+.input-rotating {
+  animation: input-reveal 0.35s ease-out both;
+}
+@keyframes input-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .wire {
   fill: none;
@@ -273,10 +292,6 @@ h1 span {
   stroke: var(--slate-7);
   stroke-dasharray: 2 5;
 }
-.hypothesis {
-  fill: var(--slate-2);
-  stroke: var(--slate-6);
-}
 .layer-bridge {
   height: 112px;
   position: relative;
@@ -291,13 +306,8 @@ h1 span {
   top: 0;
   left: 50%;
 }
-.layer-bridge i:nth-of-type(2) {
-  left: 20.37%;
-  opacity: 0.65;
-}
-.layer-bridge i:nth-of-type(3) {
-  left: 79.63%;
-  opacity: 0.65;
+.ideas-bridge {
+  height: 56px;
 }
 .workload-layer,
 .infra-layer {
@@ -896,6 +906,9 @@ footer > small {
 .paused * {
   animation-play-state: paused !important;
 }
+.paused .input-rotating {
+  animation: none;
+}
 @keyframes flow {
   from {
     stroke-dashoffset: 12;
@@ -1073,22 +1086,21 @@ footer > small {
   .idea-field > .ideas-mobile {
     display: block;
   }
-  .ideas-mobile .svg-micro {
-    font-size: 8px;
-    letter-spacing: 0.7px;
-  }
   .ideas-mobile .svg-small {
     font-size: 10px;
+  }
+  .ideas-mobile .input-title {
+    font-size: 12px;
+  }
+  .ideas-mobile .input-caption {
+    font-size: 8px;
   }
   .layer-bridge {
     height: 72px;
     margin-inline: 5%;
   }
-  .layer-bridge i:nth-of-type(2) {
-    left: 16.67%;
-  }
-  .layer-bridge i:nth-of-type(3) {
-    left: 83.33%;
+  .ideas-bridge {
+    height: 44px;
   }
   .workload-layer,
   .infra-layer {

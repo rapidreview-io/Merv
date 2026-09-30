@@ -11,6 +11,8 @@ import {
   Database,
   FileBox,
   Layers3,
+  LibraryBig,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const CONTACT = "mailto:gural@rapidreview.io?subject=Merv%20research%20pilot";
@@ -199,31 +201,98 @@ function useDiagramWidth() {
   }, []);
   return { ref, width };
 }
-function Ideas({ phase }: { phase: number }) {
+function ResearchInput({
+  x,
+  y,
+  kind,
+  label,
+  caption,
+}: {
+  x: number;
+  y: number;
+  kind: "user" | "research" | "evidence";
+  label: string;
+  caption: string;
+}) {
+  const Icon =
+    kind === "user"
+      ? SlidersHorizontal
+      : kind === "research"
+        ? LibraryBig
+        : Database;
+  return (
+    <g className="research-input">
+      <Icon
+        x={x - 11}
+        y={y - 45}
+        width={22}
+        height={22}
+        strokeWidth={1}
+        className="input-icon"
+        aria-hidden="true"
+      />
+      <text
+        key={label}
+        x={x}
+        y={y}
+        textAnchor="middle"
+        className={`input-title ${kind === "user" ? "input-rotating" : ""}`}
+      >
+        {label}
+      </text>
+      <text x={x} y={y + 19} textAnchor="middle" className="input-caption">
+        {caption}
+      </text>
+    </g>
+  );
+}
+function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
   const { ref, width } = useDiagramWidth();
   const center = width / 2;
-  const inputLeft = width * 0.23;
-  const inputRight = width * 0.77;
-  const sideLeft = width * 0.17;
-  const sideRight = width * 0.83;
-  const columns = [width * (220 / 1080), center, width * (860 / 1080)];
-  const chipWidth = Math.min((width * 260) / 1080, 320);
+  const left = width * 0.2;
+  const right = width * 0.8;
+  const userInput = reduced
+    ? "Problem / Model"
+    : Math.floor(phase / 6) % 2 === 0
+      ? "Problem"
+      : "Model";
+  const description =
+    "Your problem or model, Merv’s in-house research index, and evidence learned from prior runs feed Merv. The output is the parallel experiment graph in the next layer.";
   return (
     <div className="idea-field" ref={ref}>
       <svg
         className="ideas-desktop"
-        viewBox={`0 0 ${width} 550`}
+        viewBox={`0 0 ${width} 420`}
         role="img"
-        aria-label="Existing research, new ideas, prior findings and your objective combine into three testable hypotheses."
+        aria-label={description}
       >
-        <text x={inputLeft} y="63" textAnchor="middle" className="svg-micro">
-          RESEARCH
-        </text>
-        <text x={inputRight} y="63" textAnchor="middle" className="svg-micro">
-          NEW IDEAS
-        </text>
-        <Wire
-          d={`M${inputLeft} 84V112Q${inputLeft} 138 ${center} 138M${inputRight} 84V112Q${inputRight} 138 ${center} 138M${center} 138V174`}
+        <ResearchInput
+          x={center}
+          y={62}
+          kind="user"
+          label={userInput}
+          caption="Set by you"
+        />
+        <ResearchInput
+          x={left}
+          y={207}
+          kind="research"
+          label="Prior research"
+          caption="In-house index"
+        />
+        <ResearchInput
+          x={right}
+          y={207}
+          kind="evidence"
+          label="Evidence"
+          caption="From prior runs"
+        />
+        <Wire d={`M${center} 105V168`} />
+        <Wire d={`M${left + 76} 230H${center - 62}`} />
+        <Wire d={`M${right - 76} 230H${center + 62}`} />
+        <path
+          d={`m${center - 4} 162 4 6 4-6M${center - 68} 226l6 4-6 4M${center + 68} 226l-6 4 6 4`}
+          className="wire-arrow"
         />
         <circle cx={center} cy="230" r="84" className="idea-halo" />
         <circle cx={center} cy="230" r="56" className="idea-core" />
@@ -232,94 +301,58 @@ function Ideas({ phase }: { phase: number }) {
           fill="var(--slate-12)"
         />
         <circle cx={center} cy="174" r="3" className="accent-dot" />
-        <text x={sideLeft} y="211" className="svg-micro">
-          PRIOR LOOP
+        <Wire d={`M${center} 288V420`} active={phase < 3} />
+        <text x={center + 16} y="373" className="svg-small">
+          Experiments
         </text>
-        <Wire d={`M${sideLeft} 230H${center - 58}`} />
-        <text x={sideRight} y="211" textAnchor="end" className="svg-micro">
-          YOUR GOAL
-        </text>
-        <Wire d={`M${center + 58} 230H${sideRight}`} />
-        <Wire d={`M${center} 288V424`} active={phase < 3} />
-        <Wire
-          d={`M${columns[0]} 424H${columns[2]}M${columns[0]} 424V457M${center} 424V457M${columns[2]} 424V457`}
-        />
-        {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
-          <g key={t}>
-            <rect
-              x={columns[i] - chipWidth / 2}
-              y="457"
-              width={chipWidth}
-              height="48"
-              rx="2"
-              className="hypothesis"
-            />
-            <text
-              x={columns[i]}
-              y="487"
-              textAnchor="middle"
-              className="svg-small"
-            >
-              {t}
-            </text>
-            <Wire d={`M${columns[i]} 505V550`} />
-          </g>
-        ))}
+        <path d={`m${center - 4} 402 4 6 4-6`} className="wire-arrow" />
       </svg>
       <svg
         className="ideas-mobile"
-        viewBox="0 0 360 400"
+        viewBox="0 0 360 380"
         role="img"
-        aria-label="Research and new ideas combine with prior findings and your goal into three experiment directions."
+        aria-label={description}
       >
-        {[
-          { x: 70, t: "RESEARCH" },
-          { x: 290, t: "NEW IDEAS" },
-        ].map((t) => (
-          <g key={t.t}>
-            <text x={t.x} y="24" textAnchor="middle" className="svg-micro">
-              {t.t}
-            </text>
-            <Wire d={`M${t.x} 44V76Q${t.x} 98 180 98V132`} />
-          </g>
-        ))}
-        <circle cx="180" cy="180" r="76" className="idea-halo" />
-        <circle cx="180" cy="180" r="46" className="idea-core" />
+        <ResearchInput
+          x={180}
+          y={62}
+          kind="user"
+          label={userInput}
+          caption="Set by you"
+        />
+        <ResearchInput
+          x={55}
+          y={207}
+          kind="research"
+          label="Prior research"
+          caption="In-house index"
+        />
+        <ResearchInput
+          x={305}
+          y={207}
+          kind="evidence"
+          label="Evidence"
+          caption="From prior runs"
+        />
+        <Wire d="M180 105V178" />
+        <Wire d="M109 230H128" />
+        <Wire d="M251 230H232" />
         <path
-          d="M161 192v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
+          d="m176 172 4 6 4-6M122 226l6 4-6 4M238 226l-6 4 6 4"
+          className="wire-arrow"
+        />
+        <circle cx="180" cy="230" r="70" className="idea-halo" />
+        <circle cx="180" cy="230" r="46" className="idea-core" />
+        <path
+          d="M161 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
           fill="var(--slate-12)"
         />
-        <circle cx="180" cy="134" r="3" className="accent-dot" />
-        <Wire d="M26 185H132" />
-        <text x="15" y="167" className="svg-micro">
-          PRIOR LOOP
+        <circle cx="180" cy="184" r="3" className="accent-dot" />
+        <Wire d="M180 278V380" active={phase < 3} />
+        <text x="196" y="337" className="svg-small">
+          Experiments
         </text>
-        <Wire d="M228 185H334" />
-        <text x="268" y="167" className="svg-micro">
-          YOUR GOAL
-        </text>
-        <Wire d="M180 228V313" active={phase < 3} />
-        {["Replay × LoRA", "Routing", "Distillation"].map((t, i) => (
-          <g key={t}>
-            <Wire d={`M180 313H${60 + i * 120}V330`} />
-            <rect
-              x={7 + i * 120}
-              y="330"
-              width="106"
-              height="42"
-              className="hypothesis"
-            />
-            <text
-              x={60 + i * 120}
-              y="355"
-              textAnchor="middle"
-              className="svg-small"
-            >
-              {t}
-            </text>
-            <Wire d={`M${60 + i * 120} 372V400`} />
-          </g>
-        ))}
+        <path d="m176 362 4 6 4-6" className="wire-arrow" />
       </svg>
     </div>
   );
@@ -824,7 +857,7 @@ export default function App() {
         </div>
         <div className="system-controls">
           <div className="layer-tabs" aria-label="Jump to a layer">
-            {["Ideas", "Experiments", "Compute"].map((s, i) => (
+            {["Inputs", "Experiments", "Compute"].map((s, i) => (
               <a
                 href={"#" + ["ideas", "workloads", "infrastructure"][i]}
                 key={s}
@@ -860,13 +893,11 @@ export default function App() {
         <section id="ideas" data-layer="0" className="layer idea-layer">
           <div className="layer-title">
             <span className="layer-index">01</span>
-            <h2>Ideas, combined.</h2>
+            <h2>Research inputs.</h2>
           </div>
-          <Ideas phase={phase} />
+          <Ideas phase={phase} reduced={reduced} />
         </section>
-        <div className="layer-bridge" aria-hidden="true">
-          <i />
-          <i />
+        <div className="layer-bridge ideas-bridge" aria-hidden="true">
           <i />
         </div>
         <section id="workloads" data-layer="1" className="layer workload-layer">
