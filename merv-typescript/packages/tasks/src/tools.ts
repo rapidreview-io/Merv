@@ -44,7 +44,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.compute_status',
         description:
-          'List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s bounded output and full result; include generation when the same key was reused in another revision.',
+          'List the most recent 100 GPU run summaries for this task across work revisions. Pass runId to read one run’s result; use task.compute_logs for live output; include generation when the same key was reused in another revision.',
         inputSchema: z
           .object({
             taskId: id,
@@ -61,11 +61,29 @@ export const taskToolsPlugin = {
       {
         name: 'task.compute_run',
         description:
-          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_status, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
+          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
         inputSchema: computeRun,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: z.infer<typeof computeRun>) =>
           await ctx.tasks.computeRun(caller, input),
+      },
+      {
+        name: 'task.compute_logs',
+        description:
+          'Read the latest 8,000 bytes each of stdout and stderr for this task GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a task review verdict.',
+        openWorld: true,
+        readOnly: true,
+        inputSchema: z
+          .object({
+            taskId: id,
+            runId: id,
+            generation: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+        handler: async (
+          caller: Caller,
+          input: { taskId: string; runId: string; generation?: number },
+        ) => ctx.tasks.computeLogs(caller, input.taskId, input.runId, input.generation),
       },
       {
         name: 'task.compute_output',

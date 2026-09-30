@@ -154,7 +154,22 @@ project allowance check, one two-job admission limit, and one idempotent
 submit/poll/cancel loop. Each owner checks its own active workflow and worker
 lease before admitting a run. Jobs already admitted remain live through worker
 replacement; leaving the work state cancels them. Task reads show compact job
-summaries, while `task.compute_status` with a run ID returns its bounded output.
+summaries, while `task.compute_status` with a run ID returns its result.
+
+New research jobs use the provider's native exit status and stdout/stderr. They
+do not buffer all output in a custom result file. `compute.logs` and
+`task.compute_logs` read the latest 8,000 bytes of each stream on demand, scoped
+to the stored project, work item and attempt/revision. Workers should emit
+unbuffered progress (for example `python -u`); redirecting logs to a file still
+hides them from the live stream. These reads neither inject logs into routine
+context nor change a scientific verdict. Retained logs may expire; permanent
+evidence still belongs in Artifacts.
+
+The fixed provider job name selects the native result protocol. Older jobs keep
+their inner wrapper result, and a lost pre-upgrade submission reply is recovered
+with the exact former request under the same idempotency key. Code checks keep
+their existing wrapper and setup-failure semantics. Optional named file capture
+still runs before release, including after a failed command.
 
 Startup imports legacy experiment jobs and preserves their run IDs
 and provider idempotency keys. During rollout, avoid reverting to an older server

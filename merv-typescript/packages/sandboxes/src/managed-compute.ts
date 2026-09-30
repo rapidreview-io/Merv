@@ -240,6 +240,15 @@ export class ManagedCompute {
     tx: Transaction,
     generation?: number,
   ) {
+    return publicComputeRow(await this.lookup(projectId, ownerId, runId, tx, generation));
+  }
+  private async lookup(
+    projectId: string,
+    ownerId: string,
+    runId: string,
+    tx: Transaction,
+    generation?: number,
+  ): Promise<ManagedComputeRow> {
     const row = await tx.get<ManagedComputeRow>(
       'SELECT * FROM managed_compute_runs WHERE project_id=? AND owner_kind=? AND owner_id=? AND (?::bigint IS NULL OR generation=?) AND (run_id=? OR key=?) ORDER BY generation DESC LIMIT 1',
       projectId,
@@ -251,7 +260,7 @@ export class ManagedCompute {
       runId,
     );
     check(row, 'compute_not_found', 'Compute run not found in this work item', 404);
-    return publicComputeRow(row);
+    return row;
   }
   async output(caller: Caller, ownerId: string, runId: string, name: string, generation?: number) {
     const output = await this.state.transaction(async (tx) => {
@@ -275,6 +284,16 @@ export class ManagedCompute {
       503,
     );
     return { ...output, ...(await this.adapter.download(caller.projectId, output.objectId)) };
+  }
+  async logs(caller: Caller, ownerId: string, runId: string, generation?: number) {
+    const row = await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return this.lookup(caller.projectId, ownerId, runId, tx, generation);
+    });
+    check(this.adapter.logs, 'compute_unavailable', 'Compute logs are unavailable', 503);
+    // An unsubmitted key is not a provider workflow id. Never dispatch it as one.
+    if (!row.run_id) return { state: row.state, mode: 'pending' };
+    return this.adapter.logs(caller.projectId, row.run_id);
   }
   async inFlight(projectId: string, tx: Transaction): Promise<ManagedComputeRunning[]> {
     return (

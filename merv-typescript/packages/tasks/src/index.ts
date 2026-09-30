@@ -300,7 +300,7 @@ const GIT_REVIEW =
 const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
 const GPU_WORK =
-  'If this task needs a GPU, read task.compute_offers, then call task.compute_run with this taskId and expectedRevision, a stable key, a bounded command, minutes, and maxUsd. To retain files after machine release, declare outputs with absolute file paths and a total byte ceiling; archive directories first. Read task.compute_status, use task.compute_output for fresh download URLs and verify hashes, then upload permanent evidence through Artifacts. Stdout remains bounded. Use task.compute_cancel when work should stop. GPU work counts against the project allowance and its two concurrent jobs.';
+  'If this task needs a GPU, read task.compute_offers, then call task.compute_run with this taskId and expectedRevision, a stable key, a bounded command, minutes, and maxUsd. To retain files after machine release, declare outputs with absolute file paths and a total byte ceiling; archive directories first. Read task.compute_status, use task.compute_output for fresh download URLs and verify hashes, then upload permanent evidence through Artifacts. Use task.compute_logs for bounded live stdout/stderr; emit unbuffered progress. Use task.compute_cancel when work should stop. GPU work counts against the project allowance and its two concurrent jobs.';
 
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
@@ -1338,6 +1338,10 @@ export class TaskService implements Tasks {
   ) {
     check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
     return this.compute.output(caller, taskId, runId, name, generation);
+  }
+  async computeLogs(caller: Caller, taskId: string, runId: string, generation?: number) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return this.compute.logs(caller, taskId, runId, generation);
   }
   async computeTick() {
     await this.compute?.tick();

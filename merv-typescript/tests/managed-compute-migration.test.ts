@@ -59,6 +59,7 @@ test('legacy compute backfills missing jobs, preserves current states and resume
   await initializeManagedCompute(state, true);
   const submissions: SandboxComputeSpec[] = [];
   const reads: string[] = [];
+  const logReads: string[] = [];
   const adapter: SandboxCompute = {
     since: '2000-01-01T00:00:00Z',
     async offers() {
@@ -84,6 +85,11 @@ test('legacy compute backfills missing jobs, preserves current states and resume
     async cancel() {
       throw new Error('No migrated job should be cancelled');
     },
+    async logs(projectId, runId) {
+      assert.equal(projectId, project.id);
+      logReads.push(runId);
+      return { state: 'running', mode: 'legacy' };
+    },
   };
   const policy = {
     async authorize() {},
@@ -104,6 +110,32 @@ test('legacy compute backfills missing jobs, preserves current states and resume
   });
   assert.equal(replay.state, 'submitting');
   assert.equal(replay.runId, 'pending');
+  assert.deepEqual(await managed.logs(caller, experimentId, 'pending'), {
+    state: 'submitting',
+    mode: 'pending',
+  });
+  assert.equal(logReads.length, 0, 'unsubmitted keys must not reach the provider');
+  await managed.logs(caller, experimentId, 'known', 1);
+  assert.deepEqual(logReads, ['provider_known']);
+  await assert.rejects(managed.logs(caller, 'another_owner', 'known'), {
+    code: 'compute_not_found',
+  });
+  await assert.rejects(managed.logs(caller, experimentId, 'known', 2), {
+    code: 'compute_not_found',
+  });
+  const otherProject = await scope.createProject(identity, { name: 'Other', requestId: 'other' });
+  const otherCaller = await scope.caller(identity, otherProject.id);
+  await assert.rejects(managed.logs(otherCaller, experimentId, 'known'), {
+    code: 'compute_not_found',
+  });
+  const tasks = new ManagedCompute(state, scope, adapter, 'task', policy);
+  t.after(() => tasks.close());
+  await assert.rejects(tasks.logs(caller, experimentId, 'known'), { code: 'compute_not_found' });
+  assert.equal(
+    logReads.length,
+    1,
+    'foreign owners, projects, kinds and generations never reach provider logs',
+  );
   await managed.tick();
   assert.equal(submissions.length, 1);
   assert.equal(submissions[0]!.idempotencyKey, digest([project.id, experimentId, 1, 'pending']));

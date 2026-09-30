@@ -200,7 +200,7 @@ export interface SandboxComputeRun {
   state: string;
   reason: string | null;
   cost: { amount: string; currency: string } | null;
-  result: { exit: number; bytes: number; head: string; tail: string } | null;
+  result: { exit: number; bytes?: number; head?: string; tail?: string } | null;
   outputs?: SandboxComputeOutput[];
   outputState?: string;
   failureStage?: string;
@@ -211,6 +211,7 @@ export interface SandboxCompute {
   allowance(projectId: string): Promise<Json>;
   submit(projectId: string, spec: SandboxComputeSpec): Promise<string>;
   get(projectId: string, runId: string): Promise<SandboxComputeRun>;
+  logs?(projectId: string, runId: string): Promise<Json>;
   cancel(projectId: string, runId: string): Promise<void>;
   download?(projectId: string, objectId: string): Promise<{ url: string }>;
 }

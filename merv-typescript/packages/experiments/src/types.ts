@@ -38,6 +38,12 @@ export interface Experiments {
   computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
   computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;
   computeCancel(caller: Caller, experimentId: string, runId: string): Promise<unknown>;
+  computeLogs(
+    caller: Caller,
+    experimentId: string,
+    runId: string,
+    attemptIndex?: number,
+  ): Promise<unknown>;
   computeOutput(
     caller: Caller,
     experimentId: string,

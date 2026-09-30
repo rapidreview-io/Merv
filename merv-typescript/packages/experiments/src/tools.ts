@@ -49,11 +49,29 @@ export const experimentsToolsPlugin = {
       {
         name: 'compute.run',
         description:
-          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read their metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
+          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
         inputSchema: run,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: ComputeInput) =>
           await experiments.computeRun(caller, input),
+      },
+      {
+        name: 'compute.logs',
+        description:
+          'Read the latest 8,000 bytes each of stdout and stderr for this experiment GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a scientific verdict.',
+        openWorld: true,
+        readOnly: true,
+        inputSchema: z
+          .object({
+            experimentId: z.string().min(1),
+            runId: z.string().min(1),
+            attemptIndex: z.number().int().positive().optional(),
+          })
+          .strict(),
+        handler: async (
+          caller: Caller,
+          input: { experimentId: string; runId: string; attemptIndex?: number },
+        ) => experiments.computeLogs(caller, input.experimentId, input.runId, input.attemptIndex),
       },
       {
         name: 'compute.output',

@@ -2320,6 +2320,7 @@ export interface Tasks {
     },
   ): Promise<unknown>;
   computeCancel(caller: Caller, taskId: string, runId: string): Promise<unknown>;
+  computeLogs(caller: Caller, taskId: string, runId: string, generation?: number): Promise<unknown>;
   computeOutput(
     caller: Caller,
     taskId: string,

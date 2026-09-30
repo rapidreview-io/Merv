@@ -18,7 +18,7 @@ const walletReasons = new Set([
 const bodyLimit = 4_000_000;
 
 /** Count decoded response bytes as they arrive, even with absent/compressed Content-Length. */
-async function boundedText(response: Response, limit: number): Promise<string> {
+async function boundedText(response: Response, limit: number, fatal = true): Promise<string> {
   const length = Number(response.headers.get('content-length') ?? 0);
   check(
     Number.isSafeInteger(length) && length >= 0 && length <= limit,
@@ -38,9 +38,7 @@ async function boundedText(response: Response, limit: number): Promise<string> {
       check(size <= limit, 'sandbox_unavailable', 'The answer is too large', 502);
       chunks.push(part.value);
     }
-    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-      Buffer.concat(chunks, size),
-    );
+    return new TextDecoder('utf-8', { fatal, ignoreBOM: true }).decode(Buffer.concat(chunks, size));
   } finally {
     // The transport's finally cancels unfinished bodies after this lock is released.
     reader.releaseLock();
@@ -88,6 +86,8 @@ export function sandboxRoute(path: string, id?: string): string {
   );
   return resolved;
 }
+
+type OutputRange = { stream: 'stdout' | 'stderr'; start: number; end: number };
 
 /** The slowest link a part upload is still given time to finish on: one megabit a second. */
 const MIN_UPLOAD_BYTES_PER_SECOND = 131_072;
@@ -180,7 +180,43 @@ export class SandboxClient {
   ): Promise<Json> {
     connection = { ...connection };
     const secret = await this.#prove(connection);
-    return await this.#send(connection, secret, 'GET', path, undefined, query);
+    return await this.#send(
+      connection,
+      secret,
+      'GET',
+      path,
+      undefined,
+      query ? { start_part: query.start_part } : undefined,
+    );
+  }
+
+  /** Read one bounded raw job-output window, under the same proved consumer grant. */
+  async output(
+    connection: SandboxConnection,
+    jobId: string,
+    stream: 'stdout' | 'stderr',
+    start: number,
+    end: number,
+  ): Promise<string> {
+    const path = sandboxRoute('/v1/jobs/{id}/output', jobId);
+    check(
+      (stream === 'stdout' || stream === 'stderr') &&
+        Number.isSafeInteger(start) &&
+        Number.isSafeInteger(end) &&
+        start >= 0 &&
+        end >= start &&
+        end - start <= 8000,
+      'invalid_sandbox_output_range',
+      'Job output requires a stdout/stderr byte range of at most 8,000 bytes',
+    );
+    if (end === start) return '';
+    connection = { ...connection };
+    const secret = await this.#prove(connection);
+    return (await this.#send(connection, secret, 'GET', path, undefined, {
+      stream,
+      start,
+      end,
+    })) as string;
   }
 
   /** Change one sandbox, under the same proved grant. The body is the service's own request. */
@@ -250,7 +286,7 @@ export class SandboxClient {
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: Json,
-    query?: { start_part: number },
+    query?: { start_part: number } | OutputRange,
     timeoutMs = this.#timeoutMs,
   ): Promise<Json> {
     check(
@@ -260,7 +296,13 @@ export class SandboxClient {
       503,
     );
     const url = new URL(sandboxRoute(path), this.#origin);
-    if (query) {
+    const output = query && 'stream' in query ? query : undefined;
+    if (output) {
+      url.searchParams.set('stream', output.stream);
+      url.searchParams.set('start', String(output.start));
+      url.searchParams.set('end', String(output.end));
+      url.searchParams.set('max_bytes', String(output.end - output.start));
+    } else if (query && 'start_part' in query) {
       check(
         Number.isInteger(query.start_part) && query.start_part >= 1 && query.start_part <= 10000,
         'invalid_upload_part',
@@ -284,7 +326,7 @@ export class SandboxClient {
           authorization: `Bearer ${secret}`,
           'x-sandbox-namespace': connection.namespace,
           ...(connection.subject ? { 'x-sandbox-subject': connection.subject } : {}),
-          accept: 'application/json',
+          accept: output ? 'application/octet-stream' : 'application/json',
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -300,16 +342,23 @@ export class SandboxClient {
       if (status >= 400) throw await this.#refusal(status, response, body !== undefined);
       const type = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
       check(
-        type === 'application/json',
+        type === (output ? 'application/octet-stream' : 'application/json'),
         'sandbox_unavailable',
         'merv-sandboxes answered with an unusable body',
         502,
       );
       try {
+        if (output) return await boundedText(response, output.end - output.start, false);
         return JSON.parse(await boundedText(response, bodyLimit)) as Json;
       } catch (error) {
         if (error instanceof MervError) throw error;
-        throw new MervError('sandbox_unavailable', 'merv-sandboxes answered invalid JSON', 502);
+        throw new MervError(
+          'sandbox_unavailable',
+          output
+            ? 'merv-sandboxes answered with unusable output'
+            : 'merv-sandboxes answered invalid JSON',
+          502,
+        );
       }
     } finally {
       // Rejected headers, redirects and undisclosed errors never leave an unread stream

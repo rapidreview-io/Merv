@@ -214,13 +214,37 @@ test('captured file reads reach the tools for both leased producers and independ
     'computeOutput',
     async () => receipt,
   );
+  const logs = { state: 'running', mode: 'native', streams: { stdout: { text: 'step 1' } } };
+  const taskLogs = t.mock.method(app.ctx.tasks, 'computeLogs', async () => logs);
+  const experimentLogs = t.mock.method(app.ctx.experiments, 'computeLogs', async () => logs);
   for (const { worker } of [producing, reviewing]) {
     const tools = await app.ctx.tools.describe(worker);
-    for (const name of ['task.compute_output', 'compute.output']) {
+    for (const name of [
+      'task.compute_output',
+      'compute.output',
+      'task.compute_logs',
+      'compute.logs',
+    ]) {
       const description = tools.find((tool) => tool.name === name);
       assert.equal(description?.annotations?.readOnlyHint, true);
       assert.equal(description?.annotations?.openWorldHint, true);
     }
+    assert.deepEqual(
+      await app.ctx.tools.call('task.compute_logs', worker, {
+        taskId: reviewTask.id,
+        runId: 'run_1',
+        generation: 1,
+      }),
+      logs,
+    );
+    assert.deepEqual(
+      await app.ctx.tools.call('compute.logs', worker, {
+        experimentId: 'exp_one',
+        runId: 'run_1',
+        attemptIndex: 1,
+      }),
+      logs,
+    );
     assert.deepEqual(
       await app.ctx.tools.call('task.compute_output', worker, {
         taskId: reviewTask.id,
@@ -240,6 +264,8 @@ test('captured file reads reach the tools for both leased producers and independ
   }
   assert.equal(taskDownload.mock.callCount(), 2);
   assert.equal(experimentDownload.mock.callCount(), 2);
+  assert.equal(taskLogs.mock.callCount(), 2);
+  assert.equal(experimentLogs.mock.callCount(), 2);
 });
 
 test('metadata admission avoids rendering, binds each session to its own record and leaves reads open', async (t) => {

@@ -311,6 +311,10 @@ export class ExperimentService implements Experiments {
     check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
     return this.compute.output(caller, experimentId, runId, name, attemptIndex);
   }
+  async computeLogs(caller: Caller, experimentId: string, runId: string, attemptIndex?: number) {
+    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
+    return this.compute.logs(caller, experimentId, runId, attemptIndex);
+  }
   async computeTick(): Promise<void> {
     await this.compute?.tick();
   }

@@ -122,6 +122,9 @@ export class ExperimentCompute {
   output(caller: Caller, experimentId: string, runId: string, name: string, attemptIndex?: number) {
     return this.managed.output(caller, experimentId, runId, name, attemptIndex);
   }
+  logs(caller: Caller, experimentId: string, runId: string, attemptIndex?: number) {
+    return this.managed.logs(caller, experimentId, runId, attemptIndex);
+  }
   tick() {
     return this.managed.tick();
   }
