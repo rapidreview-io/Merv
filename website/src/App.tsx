@@ -274,18 +274,32 @@ function ResearchInput({
     </g>
   );
 }
-function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
+function Ideas({
+  phase,
+  reduced,
+  stopped,
+}: {
+  phase: number;
+  reduced: boolean;
+  stopped: boolean;
+}) {
   const { ref, width } = useDiagramWidth();
+  const [inputIndex, setInputIndex] = useState(0);
+  useEffect(() => {
+    if (stopped) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) setInputIndex((index) => (index + 1) % 3);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [stopped]);
   const center = width / 2;
   const left = width * 0.2;
   const right = width * 0.8;
   const userInput = reduced
-    ? "Problem / Model"
-    : Math.floor(phase / 6) % 2 === 0
-      ? "Problem"
-      : "Model";
+    ? "Problem / Model / Data"
+    : ["Problem", "Model", "Data"][inputIndex];
   const description =
-    "Set your problem or model. Merv provides the prior research and evidence, grouped inside the system. Together they produce parallel experiments for applied AI research.";
+    "Set your problem, model, or data. Merv provides the prior research and evidence, grouped inside the system. Together they produce parallel experiments for applied AI research.";
   return (
     <div className="idea-field" ref={ref}>
       <svg
@@ -874,7 +888,6 @@ export default function App() {
               </a>
             ))}
           </div>
-          <span className="simulation">Illustrative loop</span>
           <button
             onClick={() => setPaused(!paused)}
             disabled={reduced}
@@ -901,7 +914,7 @@ export default function App() {
             <div className="layer-title">
               <h2>Research inputs.</h2>
             </div>
-            <Ideas phase={phase} reduced={reduced} />
+            <Ideas phase={phase} reduced={reduced} stopped={stopped} />
           </section>
           <div className="layer-bridge ideas-bridge" aria-hidden="true">
             <i />
@@ -943,18 +956,6 @@ export default function App() {
                   <span>{p[1]}</span>
                 </div>
               ))}
-            </div>
-          </div>
-          <div className="training-api">
-            <span className="tinker-mark">tinker</span>
-            <span>
-              Training API <span className="planned">Planned</span>
-            </span>
-            <div className="api-wire" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-              <i />
             </div>
           </div>
           <details className="coverage">

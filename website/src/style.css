@@ -120,15 +120,9 @@ main {
 }
 .opening {
   position: relative;
-  padding: 64px var(--page-gutter) 40px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 32px;
+  padding: 48px var(--page-gutter) 32px;
 }
 h1 {
-  flex: 1;
-  min-width: 0;
   font-size: clamp(55px, 6.2vw, 90px);
   line-height: 1.15;
   letter-spacing: -4px;
@@ -136,12 +130,13 @@ h1 {
   margin: 0;
 }
 .headline-visual {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
   column-gap: 0.23em;
 }
 .headline-swap {
+  justify-self: end;
   height: 1.15em;
   overflow: hidden;
 }
@@ -158,6 +153,7 @@ h1 {
   text-align: right;
 }
 .headline-subject {
+  justify-self: start;
   color: var(--slate-11);
 }
 @keyframes headline-swap {
@@ -174,6 +170,9 @@ h1 {
   }
 }
 .follow-loop {
+  position: absolute;
+  right: var(--page-gutter);
+  bottom: 32px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -216,17 +215,13 @@ h1 {
   color: var(--slate-12);
 }
 .system-controls button {
+  margin-left: auto;
   background: none;
   border: 0;
   display: grid;
   place-items: center;
   width: 30px;
   height: 32px;
-  color: var(--slate-11);
-}
-.simulation {
-  margin-left: auto;
-  font: 8px var(--mono);
   color: var(--slate-11);
 }
 .research-system {
@@ -800,46 +795,6 @@ h1 {
 .provider-wall .logo-lambda {
   padding: 0;
 }
-.training-api {
-  display: flex;
-  align-items: center;
-  gap: 35px;
-  border-block: 1px solid var(--line);
-  padding: 30px 0;
-}
-.tinker-mark {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -1px;
-  color: var(--slate-12);
-}
-.training-api > span:nth-child(2) {
-  font-size: 11px;
-  color: var(--slate-11);
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-.planned {
-  font: 8px var(--mono);
-  border: 1px solid var(--slate-6);
-  padding: 4px 6px;
-}
-.api-wire {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  width: 210px;
-  height: 1px;
-  background: var(--slate-6);
-  justify-content: space-between;
-}
-.api-wire i {
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--slate-8);
-  background: var(--slate-1);
-}
 .coverage {
   border-bottom: 1px solid var(--line);
 }
@@ -1041,6 +996,10 @@ footer > small {
   }
 }
 @media (min-width: 651px) and (max-width: 900px) {
+  .follow-loop {
+    position: static;
+    margin: 16px auto 0;
+  }
   .dag-node {
     padding: 6px 10px;
   }
@@ -1070,26 +1029,27 @@ footer > small {
     display: none;
   }
   .opening {
-    padding: 52px 6% 46px;
+    padding: 32px 6% 20px;
   }
   h1 {
     font-size: clamp(46px, 14.1vw, 80px);
     letter-spacing: -3px;
   }
   .headline-visual {
-    flex-direction: column;
-    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .headline-swap,
+  .headline-subject {
+    justify-self: center;
   }
   .headline-track > span {
-    text-align: left;
+    text-align: center;
   }
   .follow-loop {
-    position: absolute;
-    right: 6%;
-    bottom: 46px;
+    position: static;
     width: 36px;
     height: 36px;
-    margin-bottom: 4px;
+    margin: 14px auto 0;
   }
   .follow-loop svg {
     width: 20px;
@@ -1106,11 +1066,6 @@ footer > small {
     font-size: 10px;
     gap: 5px;
     height: 46px;
-  }
-  .simulation {
-    font-size: 6px;
-    max-width: 48px;
-    line-height: 1.5;
   }
   .system-controls button {
     padding: 0;
@@ -1341,20 +1296,6 @@ footer > small {
   .provider-wall .provider-logo {
     width: 20px;
     height: 20px;
-  }
-  .training-api {
-    gap: 25px;
-    padding: 24px 0;
-  }
-  .training-api > span:nth-child(2) {
-    font-size: 10px;
-    gap: 10px;
-  }
-  .tinker-mark {
-    font-size: 23px;
-  }
-  .api-wire {
-    display: none;
   }
   .coverage p {
     font-size: 11px;
