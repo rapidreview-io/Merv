@@ -118,6 +118,16 @@ test('opening is idempotent without allocating Fleet capacity or creating a task
   );
 });
 
+test('new default conversations use Sol 6.1 and Luna remains an explicit choice', async (t) => {
+  const f = await fixture(t, { pi: { models: undefined } });
+  const first = await f.create();
+  assert.equal(first.model, 'gpt-6.1-sol');
+  assert.equal(f.pi.config.models[0].effort, 'low');
+  const picked = await f.pi.setModel(f.operator, { id: first.id, model: 'gpt-6-luna' });
+  assert.equal(picked.conversation.model, 'gpt-6-luna');
+  assert.equal((await f.create()).model, 'gpt-6-luna');
+});
+
 test('a model catalog Pi cannot use is refused at start, naming the field, and by the render first', async (t) => {
   const f = await fixture(t);
   // The render's dry run makes the same checks, so it catches a catalog that would stop Main.

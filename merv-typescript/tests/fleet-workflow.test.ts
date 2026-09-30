@@ -676,7 +676,14 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     epoch: 1,
     source: f.source,
     runtimeProfileId: 'image-profile',
-    platform: hostedCodexPlatform,
+    platform: {
+      name: 'hosted-codex',
+      harness: 'codex',
+      model: 'gpt-6.1-sol',
+      effort: 'low',
+      enabled: true,
+      parallelism: 1,
+    },
     capabilities: ['code.v2'],
     expiresAt: allocation.deadlineAt,
   });
@@ -1479,6 +1486,7 @@ const claim = (runnerId: string) => ({
     name: hostedCodexPlatform.name,
     harness: 'codex' as const,
     model: hostedCodexPlatform.model,
+    effort: hostedCodexPlatform.effort,
   },
 });
 
@@ -1708,6 +1716,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
       isolatedLauncher: '/usr/local/bin/merv-assignment',
       hosted: true,
       model: hostedCodexPlatform.model,
+      effort: hostedCodexPlatform.effort,
       enabled: true,
       parallelism: 1,
     }),

@@ -2,7 +2,7 @@
 
 This explicit acceptance harness runs the isolated Runner and pinned Codex CLI
 inside a local Docker container. It creates a synthetic project in a disposable
-PostgreSQL schema, asks `gpt-6-luna` to submit evidence for one task, verifies one
+PostgreSQL schema, asks `gpt-6.1-sol` to submit evidence for one task, verifies one
 session and a review handoff, and removes its container in `finally`. Codex in the
 container calls the model through the `/codex-model` relay this process serves, so
 the key never enters the container.

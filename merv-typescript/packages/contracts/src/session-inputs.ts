@@ -29,7 +29,8 @@ export const codexHandoffGraceMs = 60_000;
 export const hostedCodexPlatform = Object.freeze({
   name: 'hosted-codex',
   harness: 'codex' as const,
-  model: 'gpt-6-luna',
+  model: 'gpt-6.1-sol',
+  effort: 'low',
   enabled: true,
   parallelism: 1,
 });

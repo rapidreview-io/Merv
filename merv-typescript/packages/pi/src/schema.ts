@@ -86,6 +86,13 @@ export const piConfig = z
       .refine((all) => new Set(all.map((m) => m.id)).size === all.length, 'Model ids repeat')
       .default([
         {
+          id: 'gpt-6.1-sol',
+          label: 'GPT-6.1 Sol',
+          inputUsdPerM: 2,
+          outputUsdPerM: 10,
+          effort: 'low',
+        },
+        {
           id: 'gpt-6-luna',
           label: 'GPT-6 Luna',
           inputUsdPerM: 0.1,

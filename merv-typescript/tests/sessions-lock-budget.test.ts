@@ -436,6 +436,7 @@ async function rented(t: TestContext) {
           name: hostedCodexPlatform.name,
           harness: 'codex' as const,
           model: hostedCodexPlatform.model,
+          effort: hostedCodexPlatform.effort,
         },
       }),
   };

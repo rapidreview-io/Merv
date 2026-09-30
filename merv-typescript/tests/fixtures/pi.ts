@@ -62,7 +62,7 @@ export function checkpointTree(text = 'Earlier', branch = 'active'): string {
   });
 }
 
-/** The production catalog (MERV_PI_MODELS): Luna the default, Astra the one that reasons. */
+/** Explicit legacy catalog: keeps model-selection and upgrade regressions independent of defaults. */
 export const models = [
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5, effort: 'none' },
   { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10, effort: 'none' },

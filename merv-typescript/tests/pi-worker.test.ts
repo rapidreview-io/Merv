@@ -525,6 +525,7 @@ test('oversized tool output is cut to the turn budget before it reaches the rela
   // 3 × (32,000 − 16,000) − 272 for a model the worker does not know.
   for (const [model, budget] of [
     ['gpt-6-luna', 128_000],
+    ['gpt-6.1-sol', 128_000],
     ['unknown-model', 15_909],
   ] as const) {
     const toolResult = { content: 'x'.repeat(150_000) };

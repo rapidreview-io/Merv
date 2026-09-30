@@ -358,7 +358,11 @@ async function executeTurn(
   const checkpoint = work.checkpoint ? decodeCheckpoint(work.checkpoint) : null;
   const known = Object.hasOwn(OPENAI_MODELS, work.model)
     ? OPENAI_MODELS[work.model as keyof typeof OPENAI_MODELS]
-    : null;
+    : work.model === 'gpt-6.1-sol'
+      ? OPENAI_MODELS['gpt-6-sol']
+      : null;
+  // The bundled catalog predates 6.1 Sol. Keep Sol's 272K working budget until it knows the
+  // new model, instead of treating it as an unknown 32K model or increasing context spend.
   const contextWindow = known?.contextWindow ?? 32_000;
   const maxTokens = known?.maxTokens ?? 32_000;
   // History fills the window but for the model's longest answer (at most half of it), at 3 bytes a

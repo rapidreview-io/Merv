@@ -120,7 +120,7 @@ finally:
 work = Path('/workspace/assignments') / secrets.token_hex(32)
 work.mkdir(mode=0o700)
 # The hosted profile's own settings (runner/src/profiles.ts), but for Merv's MCP server.
-settings = ['approval_policy="never"', 'web_search="disabled"', 'features.shell_tool=true',
+settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_search="disabled"', 'features.shell_tool=true',
             'features.multi_agent=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
             'shell_environment_policy.inherit="none"', 'shell_environment_policy.ignore_default_excludes=false',
             'shell_environment_policy.experimental_use_profile=false',
@@ -136,7 +136,7 @@ def codex(sandbox):
          'from merv_sandboxes.runtimes import assignment; sys.exit(assignment.main())',
          '--', '/opt/merv/bin/codex', 'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral',
          '--skip-git-repo-check', '--sandbox', sandbox, '--json', '-C', str(work),
-         *[part for setting in settings for part in ('-c', setting)], '--model', 'gpt-6-luna', '-'],
+         *[part for setting in settings for part in ('-c', setting)], '--model', 'gpt-6.1-sol', '-'],
         cwd=work, input=b'Run the probe, then stop.', capture_output=True, timeout=120,
         env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'MERV_AGENT_SESSION_TOKEN': session,
              'MERV_MCP_URL': f'{base}/mcp'},

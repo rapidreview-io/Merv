@@ -311,8 +311,7 @@ from step 1 have to be done again.
   `effort`. `id` is the provider's model id; `label` (at most 24 characters)
   is all the picker shows; the prices (USD per million tokens) are for
   accounting only; `effort` (`none` or `low`) is the reasoning effort the relay
-  sets on every call, whatever the worker asks. Unset, the catalog is GPT-6 Luna
-  alone and no picker shows. `MERV_PI_MODEL` is ignored. The render makes the
+  sets on every call, whatever the worker asks. Unset, the catalog is GPT-6.1 Sol at low effort, followed by GPT-6 Luna. `MERV_PI_MODEL` is ignored. The render makes the
   checks Main makes as it starts, so dry-run it on the edited env before you
   recreate Main; it refuses a bad catalog with `Invalid MERV_PI_MODELS entry`
   (or `must hold 1-8 models`, `repeats a model id`):
@@ -322,8 +321,9 @@ from step 1 have to be done again.
   ```
   Production:
   ```
-  MERV_PI_MODELS=[{"id":"gpt-6-luna","label":"GPT-6 Luna","inputUsdPerM":0.1,"outputUsdPerM":0.5,"effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","inputUsdPerM":10,"outputUsdPerM":50,"effort":"low"}]
+  MERV_PI_MODELS=[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"low"},{"id":"gpt-6-luna","label":"GPT-6 Luna","inputUsdPerM":0.1,"outputUsdPerM":0.5,"effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","inputUsdPerM":10,"outputUsdPerM":50,"effort":"low"}]
   ```
+- GPT-6.1 Sol requires `low` or higher reasoning; `none` is unsupported. Its API pricing is $2 input / $10 output per million tokens below the long-context threshold. The bundled worker keeps the existing Sol 272K working-context budget.
 - **Reasoning models only** (every GPT-5 and GPT-6 model): the worker asks for
   reasoning on any model, so a model without it fails every call. Astra runs at
   `low`: pi-ai lists no `none` effort for it. No reasoning summary is ever requested;
@@ -377,6 +377,13 @@ from step 1 have to be done again.
 
 ## Restarts and limits
 
+- Changing `hostedCodexPlatform` (including its model or effort) requires Main and
+  the hosted image to agree. Wait for workflow sessions and allocations to finish,
+  back up the private env, and set `MERV_FLEET_WORKFLOW_ENABLED=false` for the
+  release. Re-enable it only after the matching hosted image passes its canary;
+  then verify a real workflow worker. Do not resume dispatch with mismatched
+  Main/image profiles after a failed release. Explicit Pi model selections persist;
+  adding a new default does not rewrite existing conversations or preferences.
 - Connections and grants are read when a service starts. Any onboarding, renewal
   or retirement therefore recreates Sandboxes control, pipelines-worker and Main.
   Main's shutdown stops every Pi allocation and interrupts, with

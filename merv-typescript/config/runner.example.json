@@ -13,7 +13,8 @@
       "executable": "codex",
       "enabled": true,
       "parallelism": 1,
-      "model": "gpt-6-luna"
+      "model": "gpt-6.1-sol",
+      "effort": "low"
     }
   ]
 }
