@@ -1541,6 +1541,44 @@ test('a canary whose answer never came is retried as it was sent, and no other r
   assert.equal(form(), null, 'the confirmed report closes the form');
 });
 
+test('a GitHub preview merge hash does not connect an open publication to main', () => {
+  const pull = { ...openPull('c0', ''), mergeCommitSha: 'github-preview' };
+  const proposal = published({ pull, merge: null });
+  const linked = (value: CodePublication) =>
+    gitModel(status(units(), bases()), commands(), [value], names).edges.some(
+      (edge) => edge.from === value.proposalId && edge.verb === 'merged into',
+    );
+  assert.equal(linked(proposal), false, 'GitHub computes this hash before a PR merges');
+  assert.equal(linked({ ...proposal, pull: { ...pull, merged: true } }), true);
+  assert.equal(linked(published()), true, 'a saved actual merge receipt still reaches main');
+});
+
+test('a clean consolidated proposal is not warned about its internal integration base', async (t) => {
+  t.after(unmount);
+  const pull = openPull('c0', '2026-09-05T00:00:00Z');
+  const proposal = published({ pull, merge: null, baseOid: 'merged-dependencies-and-main' });
+  serve('/code/publications/p1', {
+    body: { publication: proposal, details: publicationDetails(pull) },
+  });
+  await mount(publicationWidget([proposal]));
+  await settle(10);
+  assert.ok(text().includes('Merge reviewed proposal'), text());
+  assert.ok(!text().includes('Base differs from proposal'), text());
+});
+
+test('a publication still shows GitHub reporting that its branch is behind', async (t) => {
+  t.after(unmount);
+  const pull = { ...openPull('new-main', '2026-09-05T00:00:00Z'), mergeState: 'behind' };
+  const proposal = published({ pull, merge: null });
+  serve('/code/publications/p1', {
+    body: { publication: proposal, details: publicationDetails(pull) },
+  });
+  await mount(publicationWidget([proposal]));
+  await settle(10);
+  assert.ok(text().includes('Merge state'), text());
+  assert.ok(text().includes('behind'), text());
+});
+
 test('an uncertain reviewed merge retries its original request and pins', async (t) => {
   t.after(unmount);
   const pull = openPull('c0', '2026-09-05T00:00:00Z');

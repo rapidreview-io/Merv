@@ -363,20 +363,10 @@ export function GitHubPublications({
             )}
           </div>
         )}
-        {d && !merged && (d.pull.base.sha !== p.baseOid || d.pull.mergeState !== 'clean') && (
+        {d && !merged && d.pull.mergeState !== 'clean' && (
           <div className="pr-line">
-            {d.pull.mergeState !== 'clean' && (
-              <>
-                <span>Merge state</span>
-                <StatusPill value={d.pull.mergeState} />
-              </>
-            )}
-            {d.pull.base.sha !== p.baseOid && (
-              <span className="status status--warn">
-                <span className="status-dot" aria-hidden="true" />
-                Base differs from proposal
-              </span>
-            )}
+            <span>Merge state</span>
+            <StatusPill value={d.pull.mergeState} />
           </div>
         )}
         {p.lastError && <p role="alert">{words(p.lastError)}</p>}

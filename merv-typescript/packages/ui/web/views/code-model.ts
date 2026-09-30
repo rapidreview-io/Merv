@@ -357,7 +357,8 @@ export function gitModel(
     word.set(published.proposalId, publicationWord(published));
     inputs.set(published.proposalId, [from]);
     edges.push({ from, to: published.proposalId, verb: 'published from' });
-    if (published.merge?.commitSha ?? published.pull?.mergeCommitSha)
+    // An open GitHub PR can already have a preview mergeCommitSha.
+    if (published.merge?.commitSha || published.pull?.merged)
       edges.push({ from: published.proposalId, to: MAIN, verb: 'merged into' });
   }
 
