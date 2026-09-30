@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   boundedPaperContext,
@@ -30,6 +30,7 @@ import {
   machineInput,
   migration,
   modelInput,
+  modelRequestsMigration,
   nextInput,
   piConfig,
   runInput,
@@ -235,7 +236,12 @@ export class PiService implements Pi, FleetOwner {
 
   async initialize(): Promise<void> {
     await this.credentials.initialize();
-    await this.state.migrate('pi', [migration, hostMigration, usageMigration]);
+    await this.state.migrate('pi', [
+      migration,
+      hostMigration,
+      usageMigration,
+      modelRequestsMigration,
+    ]);
     if (!this.config.enabled) return;
     // A release may find live slots and turns created before Identity owned their credentials.
     // Adopt only records that Pi still considers active; never recreate ended authority.
@@ -2283,8 +2289,8 @@ export class PiService implements Pi, FleetOwner {
         onFailure: log,
         reserve: (grant, body) => this.reserveModel(grant, body),
         onUsage: async (record, grant, reserved) => {
-          log(record);
           await this.settleModel(record, grant, reserved);
+          log(record);
         },
       }),
     );
@@ -2341,9 +2347,10 @@ export class PiService implements Pi, FleetOwner {
   }
 
   /**
-   * A person's Agent tokens today: a call is charged at its most (its request and its output)
-   * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
-   * The day's total refuses any call that would pass the ceiling.
+   * A person's Agent tokens today: a call reserves an input estimate plus its output allowance
+   * before it goes out, then settles to valid reported usage; a cut-off call keeps its charge.
+   * The day's total refuses reservations above the ceiling. Actual usage may exceed an estimate;
+   * this is not a hard bound on provider billing.
    */
   async reserveModel(
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
@@ -2352,35 +2359,78 @@ export class PiService implements Pi, FleetOwner {
     const most =
       Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
     const day = this.time().slice(0, 10);
+    const requestId = randomUUID();
     const ceiling = this.config.dailyTokensPerPerson;
     const charged =
       most <= ceiling &&
-      (await this.state.transaction((tx) =>
-        tx.get(
+      (await this.state.transaction(async (tx) => {
+        const admitted = await tx.get(
           'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=pi_model_usage.tokens+excluded.tokens WHERE pi_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
           grant.userId,
           day,
           most,
           ceiling,
-        ),
-      ));
+        );
+        if (admitted)
+          await tx.run(
+            'INSERT INTO pi_model_requests(id,person,day,reserved_tokens) VALUES(?,?,?,?)',
+            requestId,
+            grant.userId,
+            day,
+            most,
+          );
+        return admitted;
+      }));
     check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
-    return { day, tokens: most };
+    return { requestId, day, tokens: most };
   }
   async settleModel(
     usage: { inputTokens: number; outputTokens: number },
     grant: Awaited<ReturnType<PiService['authorizeModel']>>,
     reserved: PiModelCharge,
   ): Promise<void> {
-    // Settles the day the call was charged to, even past midnight.
-    await this.state.transaction((tx) =>
-      tx.run(
-        'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-        usage.inputTokens + usage.outputTokens - reserved.tokens,
-        grant.userId,
-        reserved.day,
-      ),
+    const total = usage.inputTokens + usage.outputTokens;
+    check(
+      Number.isSafeInteger(usage.inputTokens) &&
+        usage.inputTokens >= 0 &&
+        Number.isSafeInteger(usage.outputTokens) &&
+        usage.outputTokens >= 0 &&
+        Number.isSafeInteger(total),
+      'pi_model_usage_invalid',
+      'Invalid model usage',
     );
+    // The durable reservation supplies the day and estimate; retries cannot apply its delta twice.
+    await this.state.transaction(async (tx) => {
+      const request = await tx.get<{
+        day: string;
+        reserved_tokens: string;
+        settled_tokens: string | null;
+      }>(
+        'SELECT day,reserved_tokens,settled_tokens FROM pi_model_requests WHERE id=? AND person=? FOR UPDATE',
+        reserved.requestId,
+        grant.userId,
+      );
+      check(request, 'pi_model_request_missing', 'Unknown model reservation');
+      if (request.settled_tokens !== null) {
+        check(
+          Number(request.settled_tokens) === total,
+          'pi_model_usage_conflict',
+          'Model usage already settled',
+        );
+        return;
+      }
+      await tx.run(
+        'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
+        total - Number(request.reserved_tokens),
+        grant.userId,
+        request.day,
+      );
+      await tx.run(
+        'UPDATE pi_model_requests SET settled_tokens=? WHERE id=?',
+        total,
+        reserved.requestId,
+      );
+    });
   }
   async validateModel(grant: Awaited<ReturnType<PiService['authorizeModel']>>): Promise<void> {
     this.ready();

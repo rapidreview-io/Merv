@@ -2198,20 +2198,13 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   await assert.rejects(f.pi.reserveModel(grant, body), code('pi_model_ceiling'));
   // Settled to what it used, the day has room again.
   await f.pi.settleModel({ inputTokens: 40, outputTokens: 10 }, grant, charged);
-  assert.deepEqual(await f.pi.reserveModel(grant, body), charged);
+  const next = await f.pi.reserveModel(grant, body);
+  assert.equal(next.tokens, charged.tokens);
+  assert.equal(next.day, charged.day);
+  assert.notEqual(next.requestId, charged.requestId);
   // A call settles to the day it was charged to, whatever the day is when it finishes.
-  await f.state.transaction((tx) =>
-    tx.run(
-      'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?)',
-      grant.userId,
-      '2000-01-01',
-      10,
-    ),
-  );
-  await f.pi.settleModel({ inputTokens: 1, outputTokens: 2 }, grant, {
-    day: '2000-01-01',
-    tokens: 10,
-  });
+  f.advance(86_400_000);
+  await f.pi.settleModel({ inputTokens: 1, outputTokens: 2 }, grant, next);
   const days = await f.state.read((sql) =>
     sql.all<{ day: string; tokens: number | string }>(
       'SELECT day, tokens FROM pi_model_usage WHERE person=? ORDER BY day',
@@ -2220,9 +2213,6 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   );
   assert.deepEqual(
     days.map(({ day, tokens }) => ({ day, tokens: Number(tokens) })),
-    [
-      { day: '2000-01-01', tokens: 3 },
-      { day: charged.day, tokens: 50 + charged.tokens },
-    ],
+    [{ day: charged.day, tokens: 53 }],
   );
 });

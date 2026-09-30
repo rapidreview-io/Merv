@@ -101,7 +101,7 @@ test('sandbox write errors have a small streaming budget and cancel oversized bo
       lease_seconds: 600,
       expected_revision: 1,
     }),
-    { code: 'sandbox_forbidden' },
+    { code: 'sandbox_unavailable', status: 409 },
   );
   assert.equal(observed.chunks, 5, 'the 4096-byte error budget must apply during streaming');
   assert.equal(observed.cancelled, true);

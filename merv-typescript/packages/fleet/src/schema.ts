@@ -38,3 +38,11 @@ export const migrationV2 = {
   CREATE INDEX fleet_allocations_owner ON fleet_allocations((data_json::jsonb #>> '{owner,id}'));
   CREATE INDEX fleet_allocations_person ON fleet_allocations((data_json::jsonb ->> 'person'), created_at);`,
 };
+
+/** Unbounded cleanup must remain in daily spend even after the old creation-time window.
+ * Retained history uses the release/phase-change timestamp, while live rows use the open index. */
+export const migrationV3 = {
+  version: 3,
+  sql: `CREATE INDEX fleet_allocations_released_person ON fleet_allocations
+    ((data_json::jsonb ->> 'person'), (data_json::jsonb ->> 'updatedAt')) WHERE phase = 'released';`,
+};

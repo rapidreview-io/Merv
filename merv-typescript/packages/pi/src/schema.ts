@@ -214,3 +214,16 @@ export const usageMigration = {
     PRIMARY KEY(person, day)
   );`,
 };
+
+/** Reservation identity and settlement are owned by Pi, alongside its daily total. */
+export const modelRequestsMigration = {
+  version: 4,
+  sql: `CREATE TABLE pi_model_requests (
+    id TEXT PRIMARY KEY,
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    reserved_tokens BIGINT NOT NULL CHECK (reserved_tokens >= 0),
+    settled_tokens BIGINT CHECK (settled_tokens >= 0),
+    FOREIGN KEY (person, day) REFERENCES pi_model_usage(person, day)
+  );`,
+};

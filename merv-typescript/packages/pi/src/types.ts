@@ -355,8 +355,8 @@ export interface PiRelayGrant {
   model: string;
   toolNames: string[];
 }
-/** A model call's charge: the day it was charged to and its tokens at their most. */
-export type PiModelCharge = { day: string; tokens: number };
+/** A model call's durable reservation identity, original day and estimated allowance. */
+export type PiModelCharge = { requestId: string; day: string; tokens: number };
 export interface PiCompletion {
   commandId: string;
   workerId: string;

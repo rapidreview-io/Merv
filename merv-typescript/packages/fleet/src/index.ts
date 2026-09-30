@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes/types';
-import { migration, migrationV2 } from './schema.js';
+import { migration, migrationV2, migrationV3 } from './schema.js';
 import { ModelRelay } from './model-relay.js';
 import type {
   Fleet,
@@ -74,7 +74,7 @@ const occupied = (a: FleetAllocation) => a.phase !== 'queued' && a.phase !== 're
 const steady = (a: FleetAllocation) =>
   (a.phase === 'running' && a.intent !== 'stop') ||
   a.runtime?.state === 'deleting' ||
-  (!a.runtime && !!a.releaseBy);
+  (!a.runtime && a.intent === 'stop');
 /** A 4xx other than timeout, conflict or rate limit, or a local precondition: nothing was made. */
 const refused = (error: unknown) =>
   error instanceof MervError &&
@@ -138,7 +138,7 @@ export class FleetService implements Fleet {
     );
   }
   async initialize() {
-    await this.state.migrate('fleet', [migration, migrationV2]);
+    await this.state.migrate('fleet', [migration, migrationV2, migrationV3]);
   }
   start(): void {
     check(!this.closed, 'fleet_closed', 'Fleet is closed', 503);
@@ -182,11 +182,16 @@ export class FleetService implements Fleet {
   private async spentToday(person: string, sql: Sql): Promise<number> {
     const now = this.clock();
     const day = now - (now % 86_400_000);
-    // A machine of today can be older: a day in the queue, a day of work and a lease to stop.
+    // Cleanup can remain uncertain indefinitely. Count every open rental and every rental
+    // released today, regardless of when it was created. The two indexed sets are disjoint.
     const rows = await sql.all<Row>(
-      "SELECT data_json FROM fleet_allocations WHERE data_json::jsonb->>'person'=? AND created_at>=?",
+      `SELECT data_json FROM fleet_allocations WHERE phase<>'released' AND data_json::jsonb->>'person'=?
+       UNION ALL
+       SELECT data_json FROM fleet_allocations WHERE phase='released' AND data_json::jsonb->>'person'=?
+         AND data_json::jsonb->>'updatedAt'>=?`,
       person,
-      new Date(day - 3 * 86_400_000).toISOString(),
+      person,
+      new Date(day).toISOString(),
     );
     let usd = 0;
     for (const a of rows.map(decode)) {
@@ -398,6 +403,7 @@ export class FleetService implements Fleet {
         ...(input.seconds && { seconds: input.seconds }),
         ...(person && { person }),
         profileId: profile.id,
+        leaseSeconds: profile.leaseSeconds,
         epoch: 1,
         phase: 'queued',
         intent: 'run',
@@ -663,7 +669,26 @@ export class FleetService implements Fleet {
         'Allocation cannot adopt a second machine',
         409,
       );
+      const receipt = runtime.launch;
+      const prior = current.runtime?.launch;
+      check(
+        (!receipt || receipt.operationKey === `${current.id}:launch`) &&
+          (!prior ||
+            !receipt ||
+            (prior.launchId === receipt.launchId &&
+              prior.jobId === receipt.jobId &&
+              prior.releaseId === receipt.releaseId &&
+              prior.operationKey === receipt.operationKey)),
+        'fleet_runtime_conflict',
+        'Allocation cannot adopt a different launch identity',
+        409,
+      );
       if (current.phase === 'released') return;
+      const expires = Date.parse(runtime.leaseExpiresAt ?? '');
+      if (Number.isFinite(expires))
+        current.leaseExpiresAt = new Date(
+          Math.max(Date.parse(current.leaseExpiresAt ?? '') || 0, expires),
+        ).toISOString();
       // Concurrent replies cannot replace a later runtime receipt/revision with an older one.
       if (
         current.runtime &&
@@ -679,6 +704,7 @@ export class FleetService implements Fleet {
         : current.intent === 'stop'
           ? 'releasing'
           : phase;
+      if (current.intent === 'stop' && current.phase !== 'released') this.retainCleanup(current);
       current.retryAt = null;
       current.failures = 0;
       current.error = null;
@@ -712,7 +738,7 @@ export class FleetService implements Fleet {
                 launching &&
                 error instanceof MervError &&
                 error.code === 'sandbox_provider_unavailable';
-              if (current.intent === 'stop') this.waitOutLease(current);
+              if (current.intent === 'stop') this.retainCleanup(current);
               // A launched machine keeps its phase, and its worker admission, within its lease.
               else if (
                 !booting &&
@@ -740,24 +766,16 @@ export class FleetService implements Fleet {
     // Closing stops only machines Fleet has seen: a kept one is left as it is, and a create
     // whose reply was lost is left to the successor, which recovers it by its key.
     if (this.closed && (a.intent !== 'stop' || !a.runtime)) return;
-    // Past releaseBy the lease has ended any machine it held: its slot is free.
-    if (a.intent === 'stop' && a.releaseBy && a.releaseBy <= this.time()) {
-      await this.update(a.id, (current) => {
-        current.phase = 'released';
-      });
-      return;
-    }
     const runtime = this.runtimes!;
     const place = a.rentedIn ?? a.projectId;
-    // One stop per machine, which sets releaseBy; a machine the provider reports deleting is
-    // then only watched, until it is gone or releaseBy. A provider that still reports it up is
-    // asked again, at most once a pass.
+    // A deleting machine is watched until the provider confirms it is gone. Elapsed time
+    // cannot prove absence: an earlier create or renewal may still take effect.
     const stop = async (a: FleetAllocation, handle: SandboxRuntimeHandle) => {
       if (handle.state !== 'deleting')
         a = await this.observed(a, await runtime.stop(place, a.runtime!), 'releasing');
-      if (!a.releaseBy)
+      if (a.phase !== 'released')
         await this.update(a.id, (current) => {
-          if (current.phase !== 'released') this.waitOutLease(current);
+          if (current.phase !== 'released') this.retainCleanup(current);
         });
     };
     const owner = this.owners.get(a.owner.kind);
@@ -782,6 +800,7 @@ export class FleetService implements Fleet {
     if (!a.runtime) {
       // A false marker proves no create could have happened; older records count as attempted.
       let first = false;
+      let attempt = 0;
       let create = false;
       let refusal: FleetError = 'runtime_refused';
       a = await this.update(a.id, (current) => {
@@ -791,32 +810,38 @@ export class FleetService implements Fleet {
         if (current.intent === 'run' && connected && configured && owner) {
           first = current.createAttempted === false;
           create = current.createAttempted = true;
+          attempt = current.createAttempts = (current.createAttempts ?? 0) + 1;
           return;
         }
-        // One last same-key create recovers a machine made before a lost reply, to delete it
-        // (never under a changed profile). Then Fleet waits out the lease of any such machine.
-        create = current.createAttempted !== false && !current.releaseBy && connected && configured;
+        // Recover the original machine after a lost reply, then delete it. Every recovery
+        // uses the same key and profile. Until it succeeds, this reservation stays occupied;
+        // a timeout, disconnect or replaced profile is not evidence that no machine exists.
+        create = current.createAttempted !== false && connected && configured;
+        if (create) attempt = current.createAttempts = (current.createAttempts ?? 0) + 1;
         if (!connected && current.createAttempted === false) current.error = 'runtime_refused';
         current.intent = 'stop';
-        this.waitOutLease(current);
+        this.retainCleanup(current);
       });
       if (!create) return;
       const handle = await runtime
         .provision(place, `${a.id}:create`, a.profileId)
-        .catch((error) => {
-          // Refusing the first attempt proves no machine exists: free the slot, do not retry.
+        .catch(async (error) => {
+          // A refusal proves only this invocation had no effect. Another controller can
+          // already be awaiting a successful same-key create, so recheck the durable count.
           if (!first || !refused(error)) throw error;
           if (walletRefused(error)) refusal = 'wallet_refused';
+          let definitive = false;
+          await this.update(a.id, (current) => {
+            if (current.runtime || current.createAttempts !== attempt || attempt !== 1) return;
+            definitive = true;
+            current.intent = 'stop';
+            current.phase = 'released';
+            current.error = refusal;
+          });
+          if (!definitive) throw error;
           report('fleet.refused', a, error);
         });
       if (handle) await this.observed(a, handle, 'provisioning');
-      else
-        await this.update(a.id, (current) => {
-          if (current.runtime) return;
-          current.intent = 'stop';
-          current.phase = 'released';
-          current.error = refusal;
-        });
       return;
     }
     const handle = await runtime.inspect(place, a.runtime);
@@ -870,39 +895,49 @@ export class FleetService implements Fleet {
       a = await this.observed(a, exchanged, status);
     }
     if (status === 'finished') {
-      a = await this.update(a.id, (current) => {
-        current.intent = 'stop';
+      a = await this.state.transaction(async (tx) => {
+        const current = await this.get(tx, a.id),
+          before = structuredClone(current);
+        if (
+          current.phase !== 'released' &&
+          (!owner.canRetire || (await owner.canRetire(structuredClone(current), tx)))
+        )
+          current.intent = 'stop';
+        await this.save(tx, current, before);
+        return current;
       });
-      await stop(a, handle);
-    } else {
-      if (status === 'starting') await this.observed(a, handle, status);
-      if (
-        handle.leaseExpiresAt &&
-        Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
-        (await this.fence(
-          null,
-          a.id,
-          (c) =>
-            ['run', 'drain'].includes(c.intent) &&
-            ['starting', 'running'].includes(c.phase) &&
-            c.runtime?.sandboxId === handle.sandboxId &&
-            c.runtime.launch?.deliveryState === 'launched',
-          owner,
-        ))
-      )
-        await this.observed(a, await runtime.renew(place, exchanged, a.profileId), status);
+      if (a.phase === 'released') return;
+      if (a.intent === 'stop') return await stop(a, handle);
     }
+    if (status === 'starting') a = await this.observed(a, handle, status);
+    // A new claim can veto a stale finished observation. It still needs this
+    // pass's keep-alive: the provider lease may expire before the next poll.
+    if (
+      handle.leaseExpiresAt &&
+      Date.parse(handle.leaseExpiresAt) - this.clock() < 60_000 &&
+      (await this.fence(
+        null,
+        a.id,
+        (c) =>
+          ['run', 'drain'].includes(c.intent) &&
+          ['starting', 'running'].includes(c.phase) &&
+          c.runtime?.sandboxId === handle.sandboxId &&
+          c.runtime.launch?.deliveryState === 'launched',
+        owner,
+      ))
+    )
+      await this.observed(
+        a,
+        await runtime.renew(place, exchanged, a.profileId),
+        status === 'finished' ? a.phase : status,
+      );
   }
-  /** Fleet renews nothing once stopped, so past `releaseBy` the provider lease has ended any
-   * machine this allocation could hold (a minute covers a reply still in flight; the longest
-   * configured lease covers every profile). Without a create attempt there is none to wait for. */
-  private waitOutLease(a: FleetAllocation): void {
-    const lease = Math.max(...this.runtimes!.profiles.map((profile) => profile.leaseSeconds));
-    a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
-    a.phase =
-      (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
-        ? 'released'
-        : 'releasing';
+  /** Retain attempted allocations until a terminal provider observation. A persisted timeout
+   * from an older controller is not evidence: a paused create/renew can take effect arbitrarily
+   * late. Never-attempted allocations are the only ones this local cleanup step can release. */
+  private retainCleanup(a: FleetAllocation): void {
+    delete a.releaseBy;
+    a.phase = !a.runtime && a.createAttempted === false ? 'released' : 'releasing';
   }
   /** Disposal fences admission durably, then makes one bounded provider cleanup pass.
    * Pending deletes remain counted and are reconciled when the plugin is re-enabled. A kind

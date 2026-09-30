@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import type { ModelRelayConfig } from './types.js';
@@ -62,16 +63,28 @@ export const workflowRetryMigration = {
   CREATE TRIGGER fleet_workflow_retry_no_delete BEFORE DELETE ON fleet_workflow_retry_grants
     FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
 };
+/** Each reservation keeps its identity and first settlement across process restarts. */
+export const modelRequestsMigration = {
+  version: 5,
+  sql: `CREATE TABLE fleet_model_requests (
+    id TEXT PRIMARY KEY,
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    reserved_tokens BIGINT NOT NULL CHECK (reserved_tokens >= 0),
+    settled_tokens BIGINT CHECK (settled_tokens >= 0),
+    FOREIGN KEY (person, day) REFERENCES fleet_model_usage(person, day)
+  );`,
+};
 export const modelMigrations = [
   usageMigration,
   limitsMigration,
   blockerMigration,
   workflowRetryMigration,
+  modelRequestsMigration,
 ];
 
 const maxRequestBytes = 16 * 1024 * 1024;
-/** One call's output, reasoning included: well above a step's longest answer, and a bound on a
- *  single call's spend. */
+/** The requested output allowance, reasoning included. Input reservations remain estimates. */
 const maxOutputTokens = 65_536;
 /** A tool Codex runs on the machine. Hosted tools, which run and bill at the provider where
  *  Merv cannot see them, never pass; neither does a web search. */
@@ -213,10 +226,11 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
 /**
  * Hosted Codex calls the model through Main with its session bearer, so the machine holds no
  * provider key. Each session has one call in flight. A call is charged to its person's day before
- * it goes out, at its most (its request's tokens and the output cap), and settled to what it used
+ * it goes out, using an input estimate plus the output cap, and settled to valid reported usage
  * when it finishes; one refused before it is sent, or answered with an error status, is refunded,
- * and one cut off keeps its charge. The day's total, kept in the database across restarts,
- * refuses any call that would pass the ceiling. Its tables are made by `modelMigrations`, which
+ * and one cut off or lacking usable usage keeps its charge. The durable daily total refuses a
+ * reservation that would pass the ceiling; actual input use can exceed its estimate, so this
+ * is not a hard bound on provider billing. Its tables are made by `modelMigrations`, which
  * the workflow adapter runs when it starts.
  */
 export function codexModelRelay(
@@ -228,7 +242,11 @@ export function codexModelRelay(
     /** Reads a bearer's grant; Sessions' by default, the workflow adapter's in Main. */
     authorize?: (token: string) => Promise<ManagedModelGrant>;
   },
-): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
+): ModelRelayConfig<
+  ManagedModelGrant,
+  'codex',
+  { requestId: string; day: string; tokens: number }
+> {
   return {
     name: 'codex',
     route: '/codex-model/responses',
@@ -242,6 +260,7 @@ export function codexModelRelay(
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;
       const today = day();
+      const requestId = randomUUID();
       const charged = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
         const admitted =
@@ -253,13 +272,20 @@ export function codexModelRelay(
             most,
             limit,
           ));
-        if (admitted)
+        if (admitted) {
+          await tx.run(
+            'INSERT INTO fleet_model_requests(id,person,day,reserved_tokens) VALUES(?,?,?,?)',
+            requestId,
+            grant.person,
+            today,
+            most,
+          );
           await tx.run(
             'DELETE FROM fleet_model_blockers WHERE person=? AND day=?',
             grant.person,
             today,
           );
-        else
+        } else
           await tx.run(
             'INSERT INTO fleet_model_blockers(person,day,required_tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET required_tokens=excluded.required_tokens',
             grant.person,
@@ -270,7 +296,7 @@ export function codexModelRelay(
       });
       if (!charged) log({ event: 'codex_relay_ceiling', model: grant.model, charge: most });
       check(charged, 'fleet_model_ceiling', 'The daily model token ceiling is reached', 403);
-      return { day: today, tokens: most };
+      return { requestId, day: today, tokens: most };
     },
     grant: (raw) => raw as ManagedModelGrant,
     payload: codexPayload,
@@ -281,17 +307,50 @@ export function codexModelRelay(
     maxRequestsPerGrant: 1000,
     onFailure: log,
     onTerminal: log,
-    // Settles the day the call was charged to, even past midnight.
+    // The receipt and delta commit together. A retry after a lost commit reply is a no-op.
     onUsage: async (record, grant, reserved) => {
-      log(record);
-      await state.transaction((tx) =>
-        tx.run(
-          'UPDATE fleet_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-          record.inputTokens + record.outputTokens - reserved.tokens,
-          grant.person,
-          reserved.day,
-        ),
+      const total = record.inputTokens + record.outputTokens;
+      check(
+        Number.isSafeInteger(record.inputTokens) &&
+          record.inputTokens >= 0 &&
+          Number.isSafeInteger(record.outputTokens) &&
+          record.outputTokens >= 0 &&
+          Number.isSafeInteger(total),
+        'fleet_model_usage_invalid',
+        'Invalid model usage',
       );
+      await state.transaction(async (tx) => {
+        const request = await tx.get<{
+          day: string;
+          reserved_tokens: string;
+          settled_tokens: string | null;
+        }>(
+          'SELECT day,reserved_tokens,settled_tokens FROM fleet_model_requests WHERE id=? AND person=? FOR UPDATE',
+          reserved.requestId,
+          grant.person,
+        );
+        check(request, 'fleet_model_request_missing', 'Unknown model reservation');
+        if (request.settled_tokens !== null) {
+          check(
+            Number(request.settled_tokens) === total,
+            'fleet_model_usage_conflict',
+            'Model usage already settled',
+          );
+          return;
+        }
+        await tx.run(
+          'UPDATE fleet_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
+          total - Number(request.reserved_tokens),
+          grant.person,
+          request.day,
+        );
+        await tx.run(
+          'UPDATE fleet_model_requests SET settled_tokens=? WHERE id=?',
+          total,
+          reserved.requestId,
+        );
+      });
+      log(record);
     },
   };
 }

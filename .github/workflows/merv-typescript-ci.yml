@@ -74,8 +74,51 @@ jobs:
       - name: Build
         run: npm run build
 
-  # The full server suite, split into 4 shards by scripts/test-shard.mjs; each file runs in exactly
-  # one shard, and each shard has its own PostgreSQL.
+  # Proofs and their implementation comparisons run together: a different job's build
+  # directory is not available here. Missing models fail this job, never silently skip.
+  lean:
+    name: Lean proofs and conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: merv
+          POSTGRES_PASSWORD: merv
+          POSTGRES_DB: merv
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U merv -d merv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MERV_TEST_POSTGRES_URL: postgres://merv:merv@127.0.0.1:5432/merv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: merv-typescript/.nvmrc
+          cache: npm
+          cache-dependency-path: merv-typescript/package-lock.json
+      - name: Install the committed lockfile
+        run: npm ci
+      - name: Install the pinned Lean toolchain
+        run: |
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/leanprover/elan/v4.1.2/elan-init.sh -o /tmp/elan-init.sh
+          sh /tmp/elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Prove, audit, and compare against the implementation
+        env:
+          MERV_REQUIRE_LEAN: "1"
+          MERV_LEAN_MUTATIONS: "1"
+        run: |
+          npm run verify:lean
+          node --import tsx --test --test-concurrency=2 tests/*-lean-*.test.ts
+
+  # Other server tests run once across four shards; Lean tests run in the lean job.
   test:
     name: test (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
@@ -142,7 +185,7 @@ jobs:
       - name: Run test shard ${{ matrix.shard }} of 4
         run: |
           set -euo pipefail
-          mapfile -t files < <(node scripts/test-shard.mjs ${{ matrix.shard }} 4)
+          mapfile -t files < <(node scripts/test-shard.mjs ${{ matrix.shard }} 4 --exclude-lean)
           # With no files, node --test would run its default patterns instead.
           (( ${#files[@]} > 0 )) || { echo 'Shard ${{ matrix.shard }} has no test files' >&2; exit 1; }
           echo "${#files[@]} test files"

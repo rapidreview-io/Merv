@@ -646,7 +646,7 @@ test('a call is charged only once nothing else refuses it, and its charge reache
   const charges: object[] = [];
   const settled: unknown[] = [];
   const reserve = async () => {
-    const charge = { day: '2026-09-28', tokens: 7 };
+    const charge = { requestId: 'test-request', day: '2026-09-28', tokens: 7 };
     charges.push(charge);
     return charge;
   };
@@ -835,7 +835,7 @@ function ledger() {
     reserve: async () => {
       book.charges++;
       book.used += 100;
-      return { day: '2026-09-29', tokens: 100 };
+      return { requestId: `test-request-${book.charges}`, day: '2026-09-29', tokens: 100 };
     },
     onUsage: (record: PiRelayUsageRecord, _grant: PiRelayGrant, reserved: { tokens: number }) => {
       book.records.push(record);
@@ -971,7 +971,7 @@ test('a callback that fails is logged by name only', async (t) => {
     },
     fetchImpl: async () =>
       eventStream(
-        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1 } } })}\n\n`,
+        `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`,
       ),
   });
   t.after(() => f.close());

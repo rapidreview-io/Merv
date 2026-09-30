@@ -1,0 +1,224 @@
+{
+  "dateUtc": "2026-09-30",
+  "scope": "Infrastructure/support/backend protocols; no Code or Code Research runtime changes.",
+  "sources": {
+    "merv": {
+      "base": "7ccfc3a9aca671a5cf7dc0f30683faa13c84ac7a",
+      "candidate": "a7cc14243ca2dda2c62124d24d78773f643ad325",
+      "branch": "codex/infra-hardening-release",
+      "archiveSha256": "d48143670d4f29efe1caab445fc75f60330e4a5b4630da708209ba1640b0cebe",
+      "contentSha256": "8a82b311a04ac6e19e7df909cc35fdbbb0dba93488d8ac5486d77534b66bff65",
+      "runtimeArchiveFileCount": 894
+    },
+    "sandboxes": {
+      "base": "028704032414f939936f23581776993718f71c19",
+      "candidate": "4f7aea53126b8ccd21d1c36a222b5985e54f01c5",
+      "branch": "codex/infra-provider-release",
+      "migration": "0029_create_admission after 0028_member_storage_limit",
+      "candidateFileHashes": {
+        "control/src/merv_sandboxes/db/schema.py": "e21d0fbee0d9ec8bce55bd1a0ef22524f7e9fa9bd7517f7b9dd07a4bf8f52782",
+        "control/src/merv_sandboxes/lifecycle/queue.py": "ea750610a0e907259f1441ae131d63a1e7b03e5f922c94e55ac8ee78d899beaa",
+        "control/src/merv_sandboxes/lifecycle/worker.py": "b58bb047d10198cc45e59f3cdea8bf1c757fa36ad39770c90ca869f7a393154e",
+        "control/src/merv_sandboxes/models.py": "66acb99adda19e535b306357bb2e93bbea9898cd5b5e4921ed6a7749e62a56a5",
+        "control/src/merv_sandboxes/providers/contract.py": "5b8c655e6525bac79045d70b25d2174ad75f4086fde7ccbfe0ddd76dfaebeaee",
+        "control/src/merv_sandboxes/providers/fake.py": "cf5fff755336f72aed97fbf2c58fe31a9ef2f21dc200396bee3f170b400e895b",
+        "control/src/merv_sandboxes/registry/service.py": "d5c68f708dbb743da3666146a328bc5a6f0549525cbfbe8ae713becdef49ea0d",
+        "control/migrations/versions/0029_create_admission.py": "793f467980beeae3c533e1b05cd8d83f59085780b481f0f75abe65ae9ad129c9",
+        "control/tests/test_lifecycle_fencing.py": "92907ff94875526fbf372fe51de70d675f62ba932cde97e5de629146b779cf0e"
+      }
+    }
+  },
+  "verification": {
+    "lean": {
+      "toolchain": "leanprover/lean4:v4.34.0",
+      "modules": 19,
+      "modelExecutables": 17,
+      "auditedDeclarations": 4923,
+      "requiredTheorems": 216,
+      "allowedAxioms": ["propext", "Classical.choice", "Quot.sound"],
+      "negativeControls": ["custom axiom rejected", "unfinished proof rejected"],
+      "conformance": {
+        "tests": 181,
+        "passed": 181,
+        "failed": 0,
+        "skipped": 0
+      },
+      "limitations": "Arbitrary traces of stated models; implementation correspondence is tested, not a verified translation of the production programs."
+    },
+    "mervOrdinary": {
+      "tests": 2752,
+      "passed": 2751,
+      "failed": 0,
+      "skipped": 1,
+      "skipReason": "Optional Nisa cross-repository integration requires MERV_NISA_CHECKOUT."
+    },
+    "releaseScripts": {
+      "tests": 59,
+      "passed": 59,
+      "failed": 0
+    },
+    "checks": [
+      "server typecheck",
+      "browser typecheck",
+      "server build",
+      "browser build in immutable image",
+      "compiled CLI in immutable image",
+      "Prettier packages/src/tests and changed scripts",
+      "architecture map current",
+      "git diff --check"
+    ],
+    "sandboxesFinalTargeted": {
+      "passed": 114,
+      "failed": 0
+    },
+    "sandboxesBroadBeforeFinalRaceRefinements": {
+      "passed": 761,
+      "failed": 14,
+      "skipped": 27,
+      "baselineComparison": {
+        "baseline": "028704032414f939936f23581776993718f71c19",
+        "passed": 69,
+        "failed": 14,
+        "result": "All 14 failure identities reproduce on unchanged deployed source under the same environment."
+      },
+      "failureGroups": [
+        "8 runtime-bootstrap/vault fixtures",
+        "4 timezone-sensitive billing/usage cases",
+        "2 historical workflow-replay cases"
+      ],
+      "limitation": "The full provider suite is not green; final refinements were validated with the targeted suite and production canary."
+    }
+  },
+  "production": {
+    "host": "ResearchSuite_Control",
+    "isolation": "Fresh Merv schemas and exact object prefixes; fresh per-test provider databases. Resource-limited disposable containers. Provider drivers fake; no paid model calls or rented cloud machines.",
+    "mervBaseline": {
+      "image": "sha256:40aa74dcc05622f7710782b3236ea339b8b645cf1eeda110e5f0ea3c4aa2e316",
+      "schema": "merv_ts_infra_20260930_baseline01",
+      "result": "Event polling regression reproduced after State.read retired its context: one publisher row, zero consumer effects. Storage checks passed."
+    },
+    "mervCoreOverlay": {
+      "schema": "merv_ts_infra_20260930_core01",
+      "checksPassed": 10,
+      "result": "Compiled API/State/Domain Events fixes mounted into isolated baseline-image canary."
+    },
+    "mervFinalCandidate": {
+      "tag": "merv-typescript-infra:20260930T003754Z-a7cc1424-8a82b311a04a",
+      "imageInspectId": "sha256:70590dee05d2d2de9eb76d93ee9627121aba1137b9e95ee4a30fdc4bdd0c1fc4",
+      "configDigest": "sha256:1074ee5d3637afa02f20cc4272cddfc052d6610a40d7b72b37e35a6ff65b3ac9",
+      "schema": "merv_ts_infra_20260930_candidate01",
+      "checksPassed": 12,
+      "checks": [
+        "remote-write-replay",
+        "remote-read-checksum",
+        "signed-download",
+        "upload-idempotency",
+        "wrong-project-denial",
+        "publisher-rollback",
+        "cross-connection-event-delivery",
+        "consumer-reopen-no-duplicate",
+        "artifact-reopen",
+        "current-revocation",
+        "fleet-settlement-replay-after-reopen",
+        "pi-settlement-replay-after-reopen"
+      ],
+      "fleetAndPiSettledTokensEach": 34
+    },
+    "sandboxesBaseline": {
+      "image": "sha256:e19f2a05a66c77918d049bdc012ce3fd85eac99602deb9a673f2e6139bf5322d",
+      "result": "Late-create regression reproduced: STOPPED followed by PRESENT."
+    },
+    "sandboxesCandidate": {
+      "tag": "sandboxes-infra-test:candidate-20260930",
+      "manifestListDigest": "sha256:5fd9e25b9e813883a0e4157fda069a802d697caed3a7b557404a21972946993d",
+      "configDigest": "sha256:690f60940da512d177733ccf8f15da8b1f9121bded032e14d74bad3c39695af4",
+      "passed": 42,
+      "failed": 0
+    },
+    "cleanup": [
+      {
+        "cleanup": "objects-deleted",
+        "schema": "merv_ts_infra_20260930_baseline01",
+        "prefix": "merv-ts/merv_ts_infra_20260930_baseline01/",
+        "objectCount": 1,
+        "prefixEmpty": true
+      },
+      {
+        "cleanup": "schema-removed",
+        "schema": "merv_ts_infra_20260930_baseline01"
+      },
+      {
+        "cleanup": "objects-deleted",
+        "schema": "merv_ts_infra_20260930_core01",
+        "prefix": "merv-ts/merv_ts_infra_20260930_core01/",
+        "objectCount": 1,
+        "prefixEmpty": true
+      },
+      {
+        "cleanup": "schema-removed",
+        "schema": "merv_ts_infra_20260930_core01"
+      },
+      {
+        "cleanup": "objects-deleted",
+        "schema": "merv_ts_infra_20260930_candidate01",
+        "prefix": "merv-ts/merv_ts_infra_20260930_candidate01/",
+        "objectCount": 1,
+        "prefixEmpty": true
+      },
+      {
+        "cleanup": "schema-removed",
+        "schema": "merv_ts_infra_20260930_candidate01"
+      },
+      {
+        "remainingProviderTestDatabases": 0
+      },
+      {
+        "container": "merv-typescript-control-1",
+        "image": "merv-typescript:20260930T002402Z-dce3670b-7a4622e5de3f",
+        "status": "running",
+        "health": "healthy"
+      },
+      {
+        "container": "sandboxes-control-1",
+        "image": "sha256:e19f2a05a66c77918d049bdc012ce3fd85eac99602deb9a673f2e6139bf5322d",
+        "status": "running",
+        "health": "healthy"
+      },
+      {
+        "container": "sandboxes-pipelines-worker-1",
+        "image": "sha256:e19f2a05a66c77918d049bdc012ce3fd85eac99602deb9a673f2e6139bf5322d",
+        "status": "running",
+        "health": null
+      },
+      {
+        "cleanup": "complete"
+      }
+    ],
+    "rollout": "Canaries only. This work did not switch shared Merv or Sandboxes services or apply migrations to their live schemas. Another release advanced shared Merv during verification; its running image is recorded in cleanup."
+  },
+  "openBoundaries": [
+    "Before shared Sandboxes cutover, fence old writers and establish evidence-backed dispositions for legacy active rows and historical terminal uncertainty. At initial inspection there were two ready rows and 526 stopped rows. Migration defaults alone do not establish this evidence.",
+    "An admitted create whose definitive result is lost can remain pending indefinitely; there is no automatic force-clear or blind replay.",
+    "Relay crashes before settlement retain the reservation. No autonomous reconstruction or bound on provider billing is claimed.",
+    "HTTP cancellation stops waiting while already-started accounting may commit later; it cannot forward a successful terminal ahead of that commit.",
+    "PostgreSQL power-loss durability, real cloud-provider behavior, and all possible production schedules are not verified by these tests."
+  ],
+  "evidence": {
+    "localLogDirectory": "/tmp/merv-infra-hardening",
+    "productionLogDirectory": "/opt/merv-infra-hardening-20260930",
+    "logsSha256": {
+      "release-lean-closed.log": "3d4897cbc20302791409833ac9ce67194db53f3a407a5dee80daf091568769ea",
+      "release-all-tests-final.log": "728e890834be00600479d262d2a129405f4cbaaee60bf528ecee03c4d8d9f058",
+      "release-deploy-tests.log": "2e20118410a1df0b2220052c432aaa21206987f79acd48fa9ea35400a35cfb0c",
+      "provider-final-targeted-tests.log": "65ae5c8bdb3f8ab1a720bbfa6b84a6aa4ad0b55181ea6b605f10e8fe22b6baaa",
+      "provider-all-tests.log": "6c07ac0b26467697f7aaa8966f5a4a6c5c19335e77351b0a802681cb591dbdf7",
+      "provider-baseline-existing-tests.log": "5f25f0d33c52f7a93604a4cf79b083a3a4a32e18862d018750b7d858e2a2c4fe",
+      "prod-baseline.log": "9affb59db5326fd6bb2407aa880739b96e98d86f7fbd9a132c29b7c2e072e012",
+      "prod-core.log": "16be6ed1a464be8bc14f88779e716b14966280cb205acf8157df27501cbf1ea2",
+      "prod-merv-candidate.log": "08be76d8eee2e1c429a4c81f91b0a79b6c088f12db721b95dd14a222e92603ae",
+      "prod-provider-baseline-summary.log": "72bd18838185ca04ae33c9258ac364a278971d8c71c72486395704603c3b4c5d",
+      "prod-provider-candidate.log": "66c3fff17733f8843bd695bd3007ad1ff3c9e3f673b05019537ce5ffff0fbee6",
+      "prod-cleanup.log": "ef1545c3cc30339207c110407a6cc41706e5026df6882a0f30daaf1b42e966c0"
+    }
+  }
+}

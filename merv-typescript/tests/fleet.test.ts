@@ -81,7 +81,9 @@ class FakeRuntimes implements SandboxRuntimes {
         state: this.initialState,
         ready: this.initialState === 'ready',
         deleted: false,
-        leaseExpiresAt: '2099-01-01T00:00:00Z',
+        leaseExpiresAt: new Date(
+          Date.parse('2026-09-22T00:00:00Z') + this.leaseSeconds * 1000,
+        ).toISOString(),
         revision: 1,
         launch: null,
       };
@@ -403,9 +405,9 @@ test('a refused first create frees the only slot; an ambiguous one is retried', 
   assert.equal((await f.fleet.inspect(f.caller, retried.id)).phase, 'uncertain');
 });
 
-test('a stopped create without a machine recovers once, then waits out the lease', async (t) => {
+test('a stopped create retries recovery and remains counted until terminal evidence', async (t) => {
   const f = await fixture(t, { globalLimit: 1, projectLimit: 1 });
-  // A lost reply hid a machine: the last attempt after Stop finds it, and it is deleted.
+  // A lost reply hid a machine: same-key recovery after Stop finds it, and it is deleted.
   f.runtimes.failCreateOnce = true;
   const lost = await f.fleet.request(f.caller, input('lost'));
   await f.fleet.tick();
@@ -434,11 +436,20 @@ test('a stopped create without a machine recovers once, then waits out the lease
   assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'releasing');
   f.advance(61_000);
   await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'releasing');
+  assert.ok(f.runtimes.createKeys.length > attempts, 'same-key recovery keeps retrying');
+  assert.equal(await f.fleet.free(f.caller.projectId), 0);
+  f.runtimes.createError = undefined;
+  f.advance(61_000);
+  await f.fleet.tick();
+  const recovered = (await f.fleet.inspect(f.caller, stuck.id)).runtime!;
+  await f.fleet.tick();
+  f.runtimes.confirmStopped(recovered.sandboxId);
+  await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, stuck.id)).phase, 'released');
-  assert.equal(f.runtimes.createKeys.length, attempts, 'nothing is created while waiting');
 });
 
-test('a stopping machine is stopped once and frees its slot at releaseBy, even while still deleting', async (t) => {
+test('a deleting machine keeps its slot past all deadlines until confirmed stopped', async (t) => {
   const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
   const cancelled = await f.fleet.request(f.caller, input('cancelled'));
   const deleting = await f.fleet.request(f.caller, input('deleting'));
@@ -456,15 +467,13 @@ test('a stopping machine is stopped once and frees its slot at releaseBy, even w
       [cancelled.id, deleting.id].map(async (id) => (await f.fleet.inspect(f.caller, id)).phase),
     );
   assert.deepEqual(await phases(), ['releasing', 'releasing']);
-  // The lease is ten minutes; a minute more covers a reply in flight.
-  assert.equal(
-    (await f.fleet.inspect(f.caller, cancelled.id)).releaseBy,
-    '2026-09-22T00:11:00.000Z',
-  );
-  f.advance(659_999);
+  assert.equal((await f.fleet.inspect(f.caller, cancelled.id)).releaseBy, undefined);
+  f.advance(7 * 86_400_000);
   await f.fleet.tick();
   assert.deepEqual(await phases(), ['releasing', 'releasing']);
-  f.advance(1);
+  assert.equal(await f.fleet.free(f.caller.projectId), 0);
+  f.runtimes.confirmStopped(stopped);
+  f.runtimes.confirmStopped(gone);
   await f.fleet.tick();
   assert.deepEqual(await phases(), ['released', 'released']);
   assert.deepEqual(f.runtimes.stopped, [stopped]);
@@ -486,7 +495,7 @@ test('a lease written with an offset is judged by its time', async (t) => {
   assert.deepEqual([current.phase, current.error], ['running', 'runtime_unavailable']);
 });
 
-test('a machine the service stops answering for keeps running, then frees its slot', async (t) => {
+test('an unreachable stopped machine retains its slot until its terminal state can be read', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('unanswered'));
   for (const _ of [1, 2, 3]) await f.fleet.tick();
@@ -498,6 +507,11 @@ test('a machine the service stops answering for keeps running, then frees its sl
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
   f.advance(661_000);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
+  f.runtimes.inspectError = undefined;
+  f.runtimes.confirmStopped('sbx_1');
+  f.advance(61_000);
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
 });
@@ -798,7 +812,7 @@ test('active unchanged observations perform no writes; admission requires launch
   assert.equal(writes(), before);
 });
 
-test('profile change never reprovisions a new image and frees an uncertain create after its lease', async (t) => {
+test('profile change retains uncertain capacity until the original profile recovers its machine', async (t) => {
   const f = await fixture(t);
   f.runtimes.failCreateOnce = true;
   const allocation = await f.fleet.request(f.caller, input('profile-change'));
@@ -811,8 +825,14 @@ test('profile change never reprovisions a new image and frees an uncertain creat
   assert.notEqual(current.phase, 'released');
   f.advance(661_000);
   await f.fleet.tick();
-  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
   assert.equal(f.runtimes.createKeys.length, 1);
+  f.runtimes.profileId = allocation.profileId;
+  await f.fleet.tick();
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
 });
 
 test('each machine is rented, launched and renewed under its own profile', async (t) => {
@@ -934,6 +954,28 @@ test('a person’s machines stop renting once today’s compute is spent; anothe
   assert.equal((await f.ask('b_1')).person, 'person_b');
   // An owner that names nobody is not counted, nor held back.
   assert.equal((await f.ask('c_1')).person, undefined);
+});
+
+test('cleanup held for days remains in daily spend before and after terminal release', async (t) => {
+  const f = await capped(t);
+  f.price(1);
+  const first = await f.ask('a_old');
+  await f.fleet.tick();
+  await f.fleet.cancel(f.caller, first.id);
+  f.runtimes.inspectError = new MervError('sandbox_unavailable', 'Unreachable', 503);
+  f.advance(4 * 86_400_000 + 2 * 3_600_000);
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).phase, 'releasing');
+  await assert.rejects(f.ask('a_during_cleanup'), { code: 'fleet_compute_cap' });
+  f.runtimes.inspectError = undefined;
+  f.runtimes.confirmStopped('sbx_1');
+  f.advance(61_000);
+  await f.fleet.tick();
+  assert.equal((await f.get(first.id)).phase, 'released');
+  await assert.rejects(f.ask('a_after_cleanup'), { code: 'fleet_compute_cap' });
+  // The recent-release branch charges today's hours, not the entire retained history.
+  f.advance(86_400_000);
+  assert.equal((await f.ask('a_next_day')).phase, 'queued');
 });
 
 test('today’s compute counts open machines to now at the price they were reserved at, and never a request without a machine', async (t) => {
@@ -1167,7 +1209,7 @@ test('the reads every pass makes walk their indexes, not the whole history', asy
     return {
       open: await plan(() => f.fleet.free(f.caller.projectId, tx)),
       owned: await plan(() => f.fleet.listOwned(f.owner, ['work_7', 'work_4200'])),
-      // The spend cap's read of one person's recent rentals.
+      // The spend cap's open rentals plus releases today, irrespective of creation age.
       person: await plan(() =>
         f.fleet.request(f.caller, { requestId: 'paid', owner: { kind: 'paid', id: 'x' } }, tx),
       ),
@@ -1178,8 +1220,8 @@ test('the reads every pass makes walk their indexes, not the whole history', asy
   assert.match(plans.open, /fleet_allocations_open\b/, plans.open);
   assert.match(plans.owned, /fleet_allocations_open\b/, plans.owned);
   assert.match(plans.owned, /fleet_allocations_owner\b/, plans.owned);
-  assert.match(plans.person, /Index Cond: .*'person'.*created_at >=/, plans.person);
-  assert.match(plans.person, /fleet_allocations_person\b/, plans.person);
+  assert.match(plans.person, /Index Cond: .*'person'.*'updatedAt'.*>=/, plans.person);
+  assert.match(plans.person, /fleet_allocations_released_person\b/, plans.person);
 });
 
 test('missing owner releases an untouched allocation without renting a machine', async (t) => {
