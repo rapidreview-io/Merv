@@ -7,12 +7,17 @@ import {
   check,
   MervError,
   sha256Hex,
+  newId,
+  now,
+  recorded,
   inTransaction,
   MAX_ARTIFACT_BYTES,
   MAX_ARTIFACT_IDS,
   type Artifacts,
   type Artifact,
   type ArtifactInput,
+  type ArtifactCollectionInput,
+  type ArtifactFileProvider,
   type ArtifactUploadInput,
   type ArtifactUploadStatus,
   type Caller,
@@ -33,7 +38,18 @@ async function missing<T>(fn: () => Promise<T>): Promise<T> {
 }
 /** An id argument: a nonempty string. */
 const named = (id: unknown): id is string => typeof id === 'string' && id.length > 0;
+const parsed = (value: unknown): any => (typeof value === 'string' ? JSON.parse(value) : value);
+const canonical = (value: any): string =>
+  Array.isArray(value)
+    ? `[${value.map(canonical).join(',')}]`
+    : value && typeof value === 'object'
+      ? `{${Object.keys(value)
+          .sort()
+          .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+          .join(',')}}`
+      : JSON.stringify(value);
 export class ArtifactStore implements Artifacts {
+  private fileProviders = new Map<string, ArtifactFileProvider>();
   get largeUploadAvailable(): boolean {
     return typeof this.blobs.upload === 'function';
   }
@@ -86,6 +102,155 @@ export class ArtifactStore implements Artifacts {
   uploadComplete(caller: Caller, uploadId: string): Promise<Artifact> {
     return this.uploads.complete(caller, uploadId);
   }
+  registerFileProvider(name: string, provider: ArtifactFileProvider): () => void {
+    check(
+      /^[a-z][a-z0-9_-]{0,63}$/.test(name) && typeof provider?.download === 'function',
+      'invalid_artifact',
+      'Invalid file provider',
+    );
+    check(
+      !this.fileProviders.has(name),
+      'file_provider_exists',
+      'File provider already registered',
+      409,
+    );
+    this.fileProviders.set(name, provider);
+    return () => {
+      if (this.fileProviders.get(name) === provider) this.fileProviders.delete(name);
+    };
+  }
+  async createCollection(
+    caller: Caller,
+    input: ArtifactCollectionInput,
+    tx?: Transaction,
+  ): Promise<Artifact> {
+    caller = structuredClone(caller);
+    input = plain<ArtifactCollectionInput>(input, 'invalid_artifact', {
+      bytes: 2_000_000,
+      nodes: 10000,
+    });
+    const title = meta(input.title, 'application/vnd.merv.collection+json').title;
+    check(
+      typeof input.sourceKey === 'string' &&
+        input.sourceKey.length >= 1 &&
+        input.sourceKey.length <= 128,
+      'invalid_artifact',
+      'Collection requires a source key of at most 128 characters',
+    );
+    check(
+      Array.isArray(input.files) && input.files.length >= 1 && input.files.length <= 1000,
+      'invalid_artifact',
+      'Collection requires 1–1,000 files',
+    );
+    const names = new Set<string>();
+    const files = input.files.map((file) => {
+      check(
+        file &&
+          typeof file === 'object' &&
+          typeof file.name === 'string' &&
+          file.name.length <= 255 &&
+          file.name.length > 0 &&
+          !/[\\/\x00-\x1f\x7f]/.test(file.name) &&
+          file.name !== '.' &&
+          file.name !== '..' &&
+          !names.has(file.name),
+        'invalid_artifact',
+        'Collection file names must be distinct simple names',
+      );
+      names.add(file.name);
+      check(
+        Number.isSafeInteger(file.size) &&
+          file.size >= 0 &&
+          /^[0-9a-f]{64}$/.test(file.hash) &&
+          typeof file.provider === 'string' &&
+          /^[a-z][a-z0-9_-]{0,63}$/.test(file.provider) &&
+          typeof file.reference === 'string' &&
+          file.reference.length > 0 &&
+          file.reference.length <= 4096,
+        'invalid_artifact',
+        'Invalid collection file metadata',
+      );
+      return { name: file.name, size: file.size, hash: file.hash, provider: file.provider };
+    });
+    check(
+      input.metadata === undefined ||
+        (input.metadata !== null &&
+          !Array.isArray(input.metadata) &&
+          typeof input.metadata === 'object'),
+      'invalid_artifact',
+      'Collection metadata must be an object',
+    );
+    const refs = input.files.map(({ name, provider, reference }) => ({
+      name,
+      provider,
+      reference,
+    }));
+    const fingerprint = sha256Hex(
+      Buffer.from(canonical({ title, files, refs, metadata: input.metadata ?? null })),
+    );
+    const manifest = Buffer.from(
+      canonical({
+        kind: 'file_collection',
+        files,
+        ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      }),
+    );
+    check(manifest.length <= 2_000_000, 'artifact_size', 'Collection manifest exceeds 2 MB');
+    return await inTransaction(this.state, tx ?? this.state.ambient, async (tx) => {
+      await this.scope.require(caller, 'write', tx);
+      const artifact: Artifact = {
+        id: newId('art'),
+        projectId: caller.projectId,
+        createdBy: caller.actorId,
+        title,
+        mediaType: 'application/vnd.merv.collection+json',
+        hash: sha256Hex(manifest),
+        size: manifest.length,
+        createdAt: now(),
+        files,
+        ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      };
+      const inserted = await tx.get<{ id: string }>(
+        `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id,source_key,collection_input_hash,files_json,file_refs_json,metadata_json)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb)
+         ON CONFLICT (project_id,source_key) WHERE source_key IS NOT NULL DO NOTHING RETURNING id`,
+        artifact.id,
+        artifact.projectId,
+        artifact.createdBy,
+        artifact.title,
+        artifact.mediaType,
+        artifact.hash,
+        artifact.size,
+        artifact.createdAt,
+        manifest,
+        caller.session?.id ?? null,
+        input.sourceKey,
+        fingerprint,
+        JSON.stringify(files),
+        JSON.stringify(refs),
+        input.metadata === undefined ? null : JSON.stringify(input.metadata),
+      );
+      if (inserted) {
+        await recorded(this.state, tx, caller, 'artifact.created', artifact.id, {
+          hash: artifact.hash,
+          size: artifact.size,
+        });
+        return artifact;
+      }
+      const existing = await tx.get<Record<string, unknown>>(
+        `SELECT ${META},collection_input_hash FROM artifacts WHERE project_id=? AND source_key=?`,
+        caller.projectId,
+        input.sourceKey,
+      );
+      check(
+        existing?.collection_input_hash === fingerprint,
+        'artifact_source_conflict',
+        'Collection source key already identifies different content',
+        409,
+      );
+      return fromRow(existing);
+    });
+  }
   async create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact> {
     caller = structuredClone(caller);
     input = plain<ArtifactInput>(input, 'invalid_artifact');
@@ -111,8 +276,33 @@ export class ArtifactStore implements Artifacts {
     check(row, 'not_found', 'Artifact not found in this project', 404);
     return fromRow(row);
   }
-  async download(caller: Caller, artifactId: string) {
+  async download(caller: Caller, artifactId: string, fileName?: string) {
     caller = structuredClone(caller);
+    if (fileName !== undefined) {
+      check(named(fileName), 'invalid_artifact', 'Invalid collection file name');
+      const row = await this.one(caller, undefined, (tx) =>
+        tx.get<Record<string, unknown>>(
+          `SELECT ${META},file_refs_json FROM artifacts WHERE id=? AND project_id=?`,
+          artifactId,
+          caller.projectId,
+        ),
+      );
+      check(row, 'not_found', 'Artifact not found in this project', 404);
+      const artifact = fromRow(row);
+      const file = artifact.files?.find((member) => member.name === fileName);
+      const ref = (
+        parsed(row.file_refs_json) as { name: string; provider: string; reference: string }[] | null
+      )?.find((member) => member.name === fileName);
+      check(
+        file && ref && file.provider === ref.provider,
+        'not_found',
+        'Collection file not found',
+        404,
+      );
+      const provider = this.fileProviders.get(file.provider);
+      check(provider, 'download_unsupported', 'Collection file provider is unavailable', 503);
+      return { artifact, download: await provider.download(caller.projectId, ref.reference) };
+    }
     const artifact = await this.get(caller, artifactId);
     check(
       this.blobs.download,

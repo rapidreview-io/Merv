@@ -274,6 +274,24 @@ export class SandboxService implements Sandboxes {
           this.#run({ projectId, runId }, ({ projectId, runId }) =>
             adapter.cancel(projectId, runId),
           ),
+        retain: (projectId, objectId) =>
+          this.#run({ projectId, objectId }, (i) => adapter.retain(i.projectId, i.objectId)),
+        rent: (projectId, input) =>
+          this.#run({ projectId, input }, (i) => adapter.rent(i.projectId, i.input)),
+        findRental: (projectId, key) =>
+          this.#run({ projectId, key }, (i) => adapter.findRental(i.projectId, i.key)),
+        inspectRental: (projectId, sandboxId) =>
+          this.#run({ projectId, sandboxId }, (i) =>
+            adapter.inspectRental(i.projectId, i.sandboxId),
+          ),
+        releaseRental: (projectId, sandboxId) =>
+          this.#run({ projectId, sandboxId }, (i) =>
+            adapter.releaseRental(i.projectId, i.sandboxId),
+          ),
+        ssh: (projectId, sandboxId, publicKey) =>
+          this.#run({ projectId, sandboxId, publicKey }, (i) =>
+            adapter.ssh(i.projectId, i.sandboxId, i.publicKey),
+          ),
       };
     }
     if (parsed.data.storageOrigins.length) {
@@ -713,6 +731,17 @@ export const sandboxesPlugin = {
     const service = new SandboxService(config);
     ctx.effect(() => service.start());
     ctx.provide('sandboxes', service);
+    ctx.inject(['artifacts'], (ctx) => {
+      if (service.compute?.download && ctx.artifacts.registerFileProvider)
+        ctx.effect(() =>
+          ctx.artifacts.registerFileProvider!('sandboxes', {
+            download: async (projectId, reference) => ({
+              ...(await service.compute!.download!(projectId, reference)),
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          }),
+        );
+    });
   },
 };
 export default sandboxesPlugin;

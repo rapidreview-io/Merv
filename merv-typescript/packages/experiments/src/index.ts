@@ -280,7 +280,13 @@ export class ExperimentService implements Experiments {
   bindCompute(adapter: SandboxCompute): () => void {
     this.open();
     this.compute?.close();
-    const service = new ExperimentCompute(this.state, this.scope, adapter, () => this.code);
+    const service = new ExperimentCompute(
+      this.state,
+      this.scope,
+      adapter,
+      () => this.code,
+      this.artifacts,
+    );
     this.compute = service;
     return () => {
       if (this.compute === service) {
@@ -317,6 +323,25 @@ export class ExperimentService implements Experiments {
   }
   async computeTick(): Promise<void> {
     await this.compute?.tick();
+  }
+  async computeMachines(caller: Caller, experimentId: string) {
+    return this.compute?.machines.list(caller, experimentId) ?? [];
+  }
+  async computeRent(
+    caller: Caller,
+    experimentId: string,
+    input: import('@merv/sandboxes/types').SandboxRentalInput,
+  ) {
+    check(this.compute, 'compute_unavailable', 'GPU rental is unavailable', 503);
+    return this.compute.machines.rent(caller, experimentId, input);
+  }
+  async computeSsh(caller: Caller, experimentId: string, sandboxId: string, publicKey: string) {
+    check(this.compute, 'compute_unavailable', 'SSH access is unavailable', 503);
+    return this.compute.machines.access(caller, experimentId, sandboxId, publicKey);
+  }
+  async computeRelease(caller: Caller, experimentId: string, sandboxId: string) {
+    check(this.compute, 'compute_unavailable', 'GPU rental is unavailable', 503);
+    return this.compute.machines.release(caller, experimentId, sandboxId);
   }
   private open(): void {
     check(!this.closed, 'experiments_unavailable', 'Experiments is unavailable', 503);
@@ -582,7 +607,11 @@ export class ExperimentService implements Experiments {
         reviewId: row.review_id,
         conclusion: row.conclusion,
         ...(this.compute
-          ? { compute: await this.compute.rows(caller.projectId, id, attempt.index, tx) }
+          ? {
+              compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
+              machines: await this.compute.machines.rows(caller.projectId, id, tx),
+              captureArtifactIds: await this.compute.artifactIds(caller.projectId, id, tx),
+            }
           : {}),
       };
     });
@@ -783,6 +812,7 @@ export class ExperimentService implements Experiments {
         const inherited = await this.program.pinnedRecovery(caller, experiment, tx);
         check(
           (await this.authoredInExecution(caller, artifact, tx)) ||
+            experiment.captureArtifactIds?.includes(artifact.id) ||
             inherited.some(
               (e) =>
                 e.artifactId === artifact.id &&

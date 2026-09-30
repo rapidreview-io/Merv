@@ -19,7 +19,9 @@ const MEDIA = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
-export const META = 'id,project_id,created_by,title,media_type,hash,size,created_at';
+export const META =
+  'id,project_id,created_by,title,media_type,hash,size,created_at,files_json,metadata_json';
+const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
 export const fromRow = (row: any): Artifact => ({
   id: row.id,
   projectId: row.project_id,
@@ -29,6 +31,8 @@ export const fromRow = (row: any): Artifact => ({
   hash: row.hash,
   size: row.size,
   createdAt: row.created_at,
+  ...(row.files_json != null ? { files: json(row.files_json) } : {}),
+  ...(row.metadata_json != null ? { metadata: json(row.metadata_json) } : {}),
 });
 
 /** Inserts a new artifact row with its bytes (null: they are only in blobs) and session. */
@@ -47,7 +51,8 @@ export async function insert(
     createdAt: now(),
   };
   await tx.run(
-    `INSERT INTO artifacts(${META},content,session_id) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO artifacts(id,project_id,created_by,title,media_type,hash,size,created_at,content,session_id)
+     VALUES(?,?,?,?,?,?,?,?,?,?)`,
     artifact.id,
     artifact.projectId,
     artifact.createdBy,

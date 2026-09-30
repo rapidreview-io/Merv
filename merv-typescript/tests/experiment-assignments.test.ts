@@ -295,10 +295,10 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, false);
-  assert.match(planned.brief, /Planning has no compute\.run/);
+  assert.match(planned.brief, /small feasibility checks during planning/);
   assert.match(
-    planned.handoff.instruction,
-    /first execution step after independent design approval/,
+    planned.brief,
+    /full experiment execution still requires independent design approval/,
   );
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.ok(
@@ -1179,12 +1179,12 @@ test('Git experiments retain the central-base protocol and wait for their exact 
   };
   const old = await f.experiments.create(f.source, oldInput);
   const oldPolicy = (await f.workflows.assignment(f.source, old.id)).execution;
-  assert.equal(old.workflow.version, 9);
+  assert.equal(old.workflow.version, 17);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
   assert.deepEqual(oldPolicy.policy!.workspace, { mode: 'none' });
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
   const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 10);
+  assert.equal(experiment.workflow.version, 18);
   assert.equal(experiment.workspace, 'git');
   assert.equal(await f.experiments.codeUnit(f.source, experiment.id), null);
   const pendingDesign = (await f.design(experiment)).experiment;
@@ -1567,7 +1567,7 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
   );
   const based = { ...input, baseTaskId: task.id, dependsOn: [task.id] };
   const experiment = await f.experiments.create(f.source, based);
-  assert.equal(experiment.workflow.version, 11);
+  assert.equal(experiment.workflow.version, 19);
   assert.equal(experiment.baseTaskId, task.id);
   assert.deepEqual(await f.experiments.create(f.source, based), experiment);
   // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
@@ -1770,7 +1770,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 12);
+  assert.equal(created.workflow.version, 20);
   assert.equal(created.baseTaskId, undefined);
 });
 
@@ -1786,7 +1786,7 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'runner-kept',
     requestId: f.request(),
   });
-  assert.equal(before.workflow.version, 10);
+  assert.equal(before.workflow.version, 18);
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
@@ -1800,7 +1800,7 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     name: 'code-kept',
     requestId: f.request(),
   });
-  assert.equal(experiment.workflow.version, 12);
+  assert.equal(experiment.workflow.version, 20);
   const policies = await f.state.read(
     async (sql) =>
       await sql.all<{ state: string; manifest_json: string }>(

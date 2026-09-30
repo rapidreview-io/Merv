@@ -253,7 +253,7 @@ test('Disk reports I/O failures as unavailable storage without leaking paths', a
   }
 });
 
-test('S3 large downloads sign one immutable key for sixty seconds with attachment and no-store', async (t) => {
+test('S3 large downloads sign one immutable key for sixty minutes with attachment and no-store', async (t) => {
   const { blobs, server } = await fixture(t);
   const bytes = Buffer.alloc(2_000_001, 97);
   const keyHash = createHash('sha256').update(bytes).digest('hex');
@@ -263,10 +263,10 @@ test('S3 large downloads sign one immutable key for sixty seconds with attachmen
   const link = await blobs.download('project_1', keyHash, bytes.length);
   const url = new URL(link.url);
   assert.equal(url.pathname, `/merv-artifacts/evidence/v1/project_1/${keyHash}`);
-  assert.equal(url.searchParams.get('X-Amz-Expires'), '60');
+  assert.equal(url.searchParams.get('X-Amz-Expires'), '3600');
   assert.ok(
-    Date.parse(link.expiresAt) >= before + 59_000 &&
-      Date.parse(link.expiresAt) <= Date.now() + 60_000,
+    Date.parse(link.expiresAt) >= before + 3_599_000 &&
+      Date.parse(link.expiresAt) <= Date.now() + 3_600_000,
   );
   assert.equal(server.requests.at(-1)!.method, 'HEAD');
   const response = await fetch(url);

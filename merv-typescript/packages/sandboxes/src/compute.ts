@@ -8,6 +8,8 @@ import type {
   SandboxComputeSpec,
   SandboxComputeOutput,
   SandboxConnection,
+  SandboxRental,
+  SandboxRentalInput,
 } from './types.js';
 
 const object = (value: unknown): Record<string, any> =>
@@ -331,7 +333,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
     const response = object(
       await this.client.read(
         this.entry(projectId),
-        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/download`,
+        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/download-short`,
       ),
     );
     const record = object(response.object);
@@ -370,5 +372,109 @@ export class SandboxComputeAdapter implements SandboxCompute {
     } catch (error) {
       if (!(error instanceof MervError && error.status === 404)) throw error;
     }
+  }
+
+  async retain(projectId: string, objectId: string): Promise<void> {
+    const record = object(
+      await this.client.write(
+        this.entry(projectId),
+        'PATCH',
+        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/retention`,
+        { expires_at: null },
+      ),
+    );
+    check(
+      record.id === objectId && record.state === 'available' && record.expires_at === null,
+      'sandbox_unavailable',
+      'Captured file retention was not confirmed',
+      502,
+    );
+  }
+  private rental(value: unknown): SandboxRental {
+    const record = object(value);
+    check(
+      record.request?.protected_runtime !== true,
+      'forbidden',
+      'Hosted workers are not research compute',
+      403,
+    );
+    return {
+      sandboxId: identifier(record.id),
+      state: String(record.state),
+      leaseExpiresAt: typeof record.lease_expires_at === 'string' ? record.lease_expires_at : null,
+      hourlyPrice: record.hourly_price ?? null,
+      reason:
+        typeof record.last_error?.message === 'string'
+          ? record.last_error.message.slice(0, 2000)
+          : null,
+    };
+  }
+  async findRental(projectId: string, key: string): Promise<SandboxRental | null> {
+    // Replay lookup precedes offer resolution: the offer can disappear after a successful
+    // create whose response was lost. The provider's ordinary create resolves that offer first.
+    const existing = object(
+      await this.client.read(this.entry(projectId), '/v1/sandboxes', { include_stopped: true }),
+    );
+    check(
+      Array.isArray(existing.sandboxes),
+      'sandbox_unavailable',
+      'Cannot reconcile existing GPU rentals',
+      502,
+    );
+    const found = existing.sandboxes.find(
+      (item: unknown) => object(object(item).request).idempotency_key === key,
+    );
+    return found ? this.rental(found) : null;
+  }
+  async rent(projectId: string, input: SandboxRentalInput): Promise<SandboxRental> {
+    return this.rental(
+      await this.client.write(this.entry(projectId), 'POST', '/v1/sandboxes', {
+        provider: input.provider,
+        offer_id: input.offerId,
+        lease_seconds: input.minutes * 60,
+        idempotency_key: input.key,
+        name: `merv-${input.key.slice(0, 40)}`,
+      }),
+    );
+  }
+  async inspectRental(projectId: string, sandboxId: string): Promise<SandboxRental> {
+    return this.rental(
+      await this.client.read(this.entry(projectId), sandboxRoute('/v1/sandboxes/{id}', sandboxId)),
+    );
+  }
+  async releaseRental(projectId: string, sandboxId: string): Promise<SandboxRental> {
+    return this.rental(
+      await this.client.write(
+        this.entry(projectId),
+        'DELETE',
+        sandboxRoute('/v1/sandboxes/{id}', sandboxId),
+        {},
+      ),
+    );
+  }
+  async ssh(projectId: string, sandboxId: string, publicKey: string): Promise<Json> {
+    const result = object(
+      await this.client.write(this.entry(projectId), 'POST', '/v1/access/certificates', {
+        sandbox_id: sandboxId,
+        public_key: publicKey,
+        ttl_seconds: 300,
+      }),
+    );
+    check(
+      typeof result.certificate === 'string' &&
+        typeof result.expires_at === 'string' &&
+        typeof result.gateway?.host === 'string' &&
+        Number.isInteger(result.gateway?.port),
+      'sandbox_unavailable',
+      'SSH access information is unavailable',
+      502,
+    );
+    return {
+      sandboxId,
+      certificate: result.certificate,
+      expiresAt: result.expires_at,
+      gateway: result.gateway,
+      username: sandboxId,
+    };
   }
 }

@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version’s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3.",
   "migrations": [
     {
       "component": "identity-credentials",
@@ -735,6 +735,24 @@
       "version": 1,
       "hash": "e1b845176e970d4025ffa011e79b96ceaa448bf7372fb05bb847baa4053d98d5",
       "published": true
+    },
+    {
+      "component": "artifacts",
+      "version": 7,
+      "hash": "38462fd7e5639d77cf0d8a5259d599808d8e6c0319d4c8b0419349e1c897a35f",
+      "published": false
+    },
+    {
+      "component": "sandboxes-compute",
+      "version": 2,
+      "hash": "fe700319248e4291e88600e90242e79145b17a216a43aea6aa93cb708edb65b2",
+      "published": false
+    },
+    {
+      "component": "sandboxes-work-machines",
+      "version": 1,
+      "hash": "33c056578f156cc92521bc69e594be069b27c5891df9bf444cbeeda12a550730",
+      "published": false
     }
   ]
 }

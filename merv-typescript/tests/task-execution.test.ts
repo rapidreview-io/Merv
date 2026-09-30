@@ -137,7 +137,7 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
 test('a leased task worker receives GPU tool grants bound to its task and revision', async (t) => {
   const { offer, run, create } = await fixture(t);
   const task = await create('gpu-grants');
-  assert.equal(task.workflow.version, 12);
+  assert.equal(task.workflow.version, 20);
   const { worker } = await offer(task);
   const command = {
     key: 'smoke',

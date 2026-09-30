@@ -51,7 +51,7 @@ test('capture precedes release, retains partial evidence, and refreshes scoped d
     }
     if (url.endsWith('/v1/workflows/pipe_capture')) return json(workflow);
     if (url.endsWith('/v1/storage/objects/obj_model')) return json(record);
-    if (url.endsWith('/v1/storage/objects/obj_model/download')) {
+    if (url.endsWith('/v1/storage/objects/obj_model/download-short')) {
       downloadRequests++;
       return json({ object: record, url: downloadUrl });
     }

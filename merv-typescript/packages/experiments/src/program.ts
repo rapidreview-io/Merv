@@ -42,6 +42,7 @@ import type { Code, CodeCapture } from '@merv/code-research/types';
 import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
 
+import { rentalGuidance } from '@merv/sandboxes/managed-compute';
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
 export const reviewing = (state: string) =>
@@ -69,11 +70,18 @@ const workspaces: Record<number, 'none' | 'git'> = {
   14: 'git',
   15: 'git',
   16: 'git',
+  17: 'none',
+  18: 'git',
+  19: 'git',
+  20: 'git',
+  21: 'none',
+  22: 'git',
+  23: 'git',
+  24: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-const base = (version: number) =>
-  version > 12 ? version - 8 : version > 8 ? version - 4 : version;
+const base = (version: number) => 5 + ((version - 5) % 4);
 const referencedBase = (version: number) => base(version) === 7 || derivedBase(version);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
 export const derivedBase = (version: number) => base(version) === 8;
@@ -84,7 +92,7 @@ export const programVersion = (
   hosted = false,
   largeUploads = false,
 ): number =>
-  (workspace !== 'git' ? 9 : baseTaskId !== undefined ? 11 : hosted ? 12 : 10) +
+  (workspace !== 'git' ? 17 : baseTaskId !== undefined ? 19 : hosted ? 20 : 18) +
   (largeUploads ? 4 : 0);
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
@@ -713,13 +721,19 @@ export class ExperimentProgram {
       return [
         ...new Set([
           ...(JSON.parse(lease.artifacts) as Artifact[]).map((artifact) => artifact.id),
+          ...(experiment.captureArtifactIds ?? []),
           ...(await executionOutputs(this.host.artifacts, caller, tx)).map(
             (artifact) => artifact.id,
           ),
         ]),
       ].sort();
     }
-    return this.inputIds(await this.inputs(caller, experiment, tx));
+    return [
+      ...new Set([
+        ...this.inputIds(await this.inputs(caller, experiment, tx)),
+        ...(experiment.captureArtifactIds ?? []),
+      ]),
+    ];
   }
 
   private async inputs(
@@ -1102,7 +1116,9 @@ export class ExperimentProgram {
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : assignmentHandoff(state);
+      : experiment.workflow.version >= 17 && state === 'planned'
+        ? handoff(state)
+        : assignmentHandoff(state);
     const speedGuidance =
       state === 'planned'
         ? ' Prioritize fast experiment completion. Plan batching, multiple GPUs or concurrent independent jobs for execution after approval when they save time, within the authorized budget and scientific requirements. Avoid duplicating the same work.'
@@ -1124,7 +1140,12 @@ export class ExperimentProgram {
     return {
       role: reviewing(state) ? 'reviewer' : 'producer',
       label: `${recipeNames[state]}: ${experiment.name}`,
-      brief: `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}`,
+      brief:
+        `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}` +
+        (experiment.workflow.version >= 17
+          ? rentalGuidance('compute.', reviewing(state)) +
+            `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`
+          : ''),
       references: [
         { kind: 'experiment', id: experiment.id, label: experiment.name },
         ...preview.sources.map((artifact) => ({
@@ -1190,6 +1211,11 @@ export class ExperimentProgram {
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
         ...(version > 8 ? [grant('compute.offers', {})] : []),
+        ...(version >= 17
+          ? ['machines', 'rent', 'ssh', 'release'].map((name) =>
+              grant(`compute.${name}`, experiment),
+            )
+          : []),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
@@ -1204,7 +1230,7 @@ export class ExperimentProgram {
             ]
           : [
               grant('artifact.create', {}),
-              ...(version >= 13
+              ...((version >= 13 && version <= 16) || version >= 21
                 ? [
                     grant('artifact.upload_begin', {}),
                     grant('artifact.upload_resume', {}),
@@ -1232,7 +1258,7 @@ export class ExperimentProgram {
               ...(version > 8 && state === 'running'
                 ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
                 : []),
-              ...((version === 12 || version === 16) && state === 'running'
+              ...([12, 16, 20, 24].includes(version) && state === 'running'
                 ? [grant('code.commit', {}), grant('code.operation', {})]
                 : []),
             ]),

@@ -27,6 +27,7 @@ export function taskExecutionPolicy(
   workspace: TaskWorkspace = 'none',
   largeUploads = false,
   compute = false,
+  rentals = false,
 ): WorkflowExecutionPolicy {
   const driver = ['code', 'resolution'].includes(workspace) ? { driver: CODE_DRIVER } : {};
   const instance = { instanceId: target('instanceId') };
@@ -71,6 +72,14 @@ export function taskExecutionPolicy(
       grant('workflow.assignment', instance),
       grant('task.get', task),
       ...(compute ? [grant('task.compute_status', task)] : []),
+      ...(rentals
+        ? [
+            ...(purpose === 'review' ? [grant('task.compute_offers', {})] : []),
+            ...['machines', 'rent', 'ssh', 'release'].map((name) =>
+              grant(`task.compute_${name}`, task),
+            ),
+          ]
+        : []),
       ...(compute && purpose === 'work'
         ? [
             grant('task.compute_offers', {}),

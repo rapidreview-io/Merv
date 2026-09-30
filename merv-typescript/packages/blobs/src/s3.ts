@@ -38,6 +38,8 @@ export const S3_DEFAULTS = { timeoutMs: 30_000, maxAttempts: 3 } as const;
 
 /** S3 checks expiry when a request starts; resume signs again. */
 const UPLOAD_SECONDS = 3600;
+/** Allow remote machines to provision before starting an artifact download. */
+const DOWNLOAD_SECONDS = 3600;
 /** The HTTP status of an S3 SDK failure, when the service answered. */
 const statusOf = (error: unknown) =>
   (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
@@ -306,9 +308,12 @@ export class S3Blobs implements Blobs {
             // Whatever encoding an uploader stored, the bytes are served as they are.
             ResponseContentEncoding: 'identity',
           }),
-          { expiresIn: 60, signingDate },
+          { expiresIn: DOWNLOAD_SECONDS, signingDate },
         );
-        return { url, expiresAt: new Date(signingDate.getTime() + 60_000).toISOString() };
+        return {
+          url,
+          expiresAt: new Date(signingDate.getTime() + DOWNLOAD_SECONDS * 1000).toISOString(),
+        };
       } catch (error) {
         throw storageError(error, 'Blob download could not be prepared', missingHead);
       }

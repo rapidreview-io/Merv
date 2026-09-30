@@ -139,6 +139,7 @@ test('list queries walk the project and session indexes', async (t) => {
       'artifacts_project_created',
       'artifacts_project_object',
       'artifacts_project_session',
+      'artifacts_project_source_key',
     ],
   );
   // EXPLAIN the statements list itself sends, with and without a session and a cursor.

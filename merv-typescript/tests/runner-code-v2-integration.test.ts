@@ -243,7 +243,7 @@ test(
     });
     assert.equal(
       task.workflow.version,
-      15,
+      23,
       'new Git work lives in Code once the project is hosted',
     );
 

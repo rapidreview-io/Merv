@@ -111,6 +111,8 @@ export interface Experiment {
   submissions: ExperimentSubmission[];
   reviewId: string | null;
   conclusion: string | null;
+  machines?: import('@merv/contracts').Json[];
+  captureArtifactIds?: string[];
   compute?: {
     key: string;
     runId: string;
@@ -123,6 +125,7 @@ export interface Experiment {
     failureStage?: string;
     reason?: string;
     commit?: string;
+    artifactId?: string;
   }[];
 }
 export interface ExperimentExhibit {

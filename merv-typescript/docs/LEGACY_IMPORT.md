@@ -5,7 +5,7 @@ Production imported the Python system's projects, memberships, artifacts, figure
 What production still serves from the import:
 
 - The read-only history archive: `src/legacy-history.ts`, its UI adapter `src/legacy-history-ui.ts` and the figure/feed file links in `src/legacy-media-links.ts`, composed when `MERV_TS_LEGACY_SOURCE_ID` names the imported source.
-- Imported artifacts as ordinary native artifacts. Those over the 2 MB inline limit (up to 512 MiB) are read through the authorized 60-second download in [production blob storage](PRODUCTION_BLOBS.md#large-retained-artifacts).
+- Imported artifacts as ordinary native artifacts. Those over the 2 MB inline limit (up to 512 MiB) are read through the authorized 60-minute download in [production blob storage](PRODUCTION_BLOBS.md#large-retained-artifacts).
 - The `legacy_foundation_imports` receipt table and the `legacy-foundation-import` and `legacy-history` migrations. Their published hashes stay pinned by `tests/published-migrations.test.ts`.
 
 The sections below describe the source as it was observed before the import.

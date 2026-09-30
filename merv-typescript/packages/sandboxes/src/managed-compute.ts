@@ -8,6 +8,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type Artifacts,
 } from '@merv/contracts';
 import type {
   SandboxCompute,
@@ -16,7 +17,9 @@ import type {
   ComputeOutputs,
 } from './types.js';
 import { computeOutputsSchema } from './compute-outputs.js';
+import { initializeWorkMachines } from './work-machines.js';
 export { computeOutputsSchema } from './compute-outputs.js';
+export { WorkMachines, rentalSchema, rentalGuidance } from './work-machines.js';
 
 export type ComputeOwner = 'experiment' | 'task';
 export interface ManagedComputeInput {
@@ -46,6 +49,9 @@ export interface ManagedComputeRow {
   created_by: string;
   created_at: string;
   updated_at: string;
+  capture_pending?: boolean;
+  capture_artifact_id?: string | null;
+  capture_error?: string | null;
 }
 export interface ManagedComputeRunning {
   digest: string;
@@ -111,6 +117,9 @@ export const publicComputeRow = (row: ManagedComputeRow) => ({
   state: row.state,
   cost: readCost(row.cost),
   ...(row.result ? JSON.parse(row.result) : {}),
+  ...(row.capture_artifact_id ? { artifactId: row.capture_artifact_id } : {}),
+  ...(row.capture_pending ? { artifactState: row.capture_error ? 'retrying' : 'pending' } : {}),
+  ...(row.capture_error ? { artifactError: row.capture_error } : {}),
   ...(stored(row.input_json).commandId ? { commit: stored(row.input_json).commandId } : {}),
 });
 const runningRow = (row: ManagedComputeRow): ManagedComputeRunning => {
@@ -155,7 +164,16 @@ CREATE TABLE managed_compute_runs (
 CREATE INDEX managed_compute_project_state ON managed_compute_runs(project_id,state);
 `,
     },
+    {
+      version: 2,
+      sql: `
+ALTER TABLE managed_compute_runs ADD COLUMN capture_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE managed_compute_runs ADD COLUMN capture_artifact_id TEXT;
+ALTER TABLE managed_compute_runs ADD COLUMN capture_error TEXT;
+`,
+    },
   ]);
+  await initializeWorkMachines(state);
   if (importExperiments)
     await state.transaction((tx) =>
       tx.run(`
@@ -176,6 +194,7 @@ export class ManagedCompute {
     private readonly adapter: SandboxCompute,
     private readonly owner: ComputeOwner,
     private readonly policy: ComputeOwnerPolicy,
+    private readonly artifacts?: Artifacts,
   ) {
     // Both owner services initialize the shared schema before publishing themselves.
     this.timer = setInterval(() => void this.tick().catch(() => undefined), 60_000);
@@ -236,10 +255,22 @@ export class ManagedCompute {
         generation: row.generation,
         state: row.state,
         cost: row.cost,
+        ...(row.artifactId ? { artifactId: row.artifactId } : {}),
+        ...(row.artifactState ? { artifactState: row.artifactState } : {}),
         ...(Number.isInteger(result.exit) ? { exit: result.exit } : {}),
         ...(typeof row.reason === 'string' ? { reason: row.reason } : {}),
       };
     });
+  }
+  async artifactIds(projectId: string, ownerId: string, tx: Transaction): Promise<string[]> {
+    return (
+      await tx.all<{ capture_artifact_id: string }>(
+        'SELECT capture_artifact_id FROM managed_compute_runs WHERE project_id=? AND owner_kind=? AND owner_id=? AND capture_artifact_id IS NOT NULL',
+        projectId,
+        this.owner,
+        ownerId,
+      )
+    ).map((row) => row.capture_artifact_id);
   }
   async status(
     projectId: string,
@@ -421,6 +452,14 @@ export class ManagedCompute {
         at,
         at,
       );
+      if (input.outputs && this.artifacts?.createCollection && this.adapter.retain)
+        await tx.run(
+          'UPDATE managed_compute_runs SET capture_pending=TRUE WHERE owner_kind=? AND owner_id=? AND generation=? AND key=?',
+          this.owner,
+          input.ownerId,
+          input.generation,
+          input.key,
+        );
       return {
         key: input.key,
         runId: input.key,
@@ -478,6 +517,73 @@ export class ManagedCompute {
         await this.update(row, 'failed', row.run_id, null, { reason: error.code });
       }
     }
+    if (this.artifacts?.createCollection && this.adapter.retain) {
+      const captures = await this.state.read((sql) =>
+        sql.all<ManagedComputeRow>(
+          `SELECT * FROM managed_compute_runs WHERE owner_kind=? AND capture_pending=TRUE AND state IN ('completed','failed','cancelled') ORDER BY updated_at LIMIT 20`,
+          this.owner,
+        ),
+      );
+      for (const row of captures) {
+        try {
+          await this.publishCapture(row);
+        } catch (error) {
+          await this.state.transaction((tx) =>
+            tx.run(
+              'UPDATE managed_compute_runs SET capture_error=?,updated_at=? WHERE owner_kind=? AND owner_id=? AND generation=? AND key=?',
+              error instanceof MervError ? error.code : 'capture_registration_unavailable',
+              now(),
+              this.owner,
+              row.owner_id,
+              row.generation,
+              row.key,
+            ),
+          );
+        }
+      }
+    }
+  }
+  private async publishCapture(row: ManagedComputeRow) {
+    const result = stored(row.result);
+    const outputs = (result.outputs ?? []) as SandboxComputeOutput[];
+    let artifactId: string | null = null;
+    if (outputs.length) {
+      // Each provider object was validated against this run before entering the ledger.
+      // Pins are idempotent; no file bytes pass through a worker or this server.
+      for (const file of outputs) await this.adapter.retain!(row.project_id, file.objectId);
+      const caller = await this.scope.serviceActor('sandboxes', row.project_id);
+      const artifact = await this.artifacts!.createCollection!(caller, {
+        title: `Compute capture — ${row.key}`,
+        sourceKey: `sandboxes:${digest([row.project_id, this.owner, row.owner_id, row.generation, row.key])}`,
+        files: outputs.map((file) => ({
+          name: file.name,
+          size: file.sizeBytes,
+          hash: file.sha256,
+          provider: 'sandboxes',
+          reference: file.objectId,
+        })),
+        metadata: {
+          ownerKind: this.owner,
+          ownerId: row.owner_id,
+          generation: row.generation,
+          runId: row.run_id,
+          state: row.state,
+          outputState: result.outputState ?? null,
+        },
+      });
+      artifactId = artifact.id;
+    }
+    await this.state.transaction((tx) =>
+      tx.run(
+        'UPDATE managed_compute_runs SET capture_pending=FALSE,capture_artifact_id=?,capture_error=NULL,updated_at=? WHERE owner_kind=? AND owner_id=? AND generation=? AND key=?',
+        artifactId,
+        now(),
+        this.owner,
+        row.owner_id,
+        row.generation,
+        row.key,
+      ),
+    );
   }
   private async update(
     row: ManagedComputeRow,

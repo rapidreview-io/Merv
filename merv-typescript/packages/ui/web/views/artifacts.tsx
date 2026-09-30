@@ -21,6 +21,8 @@ export interface Artifact {
   size: number;
   createdAt: string;
   downloadAvailable?: boolean;
+  files?: { name: string; size: number; hash: string; provider: string }[];
+  metadata?: Record<string, unknown>;
 }
 export interface ArtifactContent {
   artifact: Artifact;
@@ -230,7 +232,7 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
 }
 
 /** URLs are issued on demand and discarded when their account/project or artifact changes. */
-function ArtifactDownload({ artifactId }: { artifactId: string }) {
+function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileName?: string }) {
   const [download, setDownload] = useState<{ url: string; expiresAt: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -257,6 +259,7 @@ function ArtifactDownload({ artifactId }: { artifactId: string }) {
       const result = await call<{ download: { url: string; expiresAt: string } }>('artifact.read', {
         artifactId,
         mode: 'download',
+        ...(fileName === undefined ? {} : { fileName }),
       });
       if (mounted.current && Date.parse(result.download.expiresAt) > Date.now())
         setDownload(result.download);
@@ -270,7 +273,13 @@ function ArtifactDownload({ artifactId }: { artifactId: string }) {
   return (
     <div className="empty">
       <button className="btn btn--sm" disabled={busy} onClick={() => void prepare()}>
-        {busy ? 'Preparing…' : download ? 'Refresh download link' : 'Download file'}
+        {busy
+          ? 'Preparing…'
+          : download
+            ? 'Refresh download link'
+            : fileName
+              ? `Download ${fileName}`
+              : 'Download file'}
       </button>
       {download && (
         <p>
@@ -281,7 +290,7 @@ function ArtifactDownload({ artifactId }: { artifactId: string }) {
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
           >
-            Download file
+            Download {fileName ?? 'file'}
           </a>{' '}
           <span className="faint">Private link expires in one minute.</span>
         </p>
@@ -410,6 +419,27 @@ function InlineArtifact({
 /** The one move a file offers: take a copy of it, where storage can serve one. */
 function Take({ artifact }: { artifact: Artifact }) {
   const scope = useScopeVersion();
+  if (artifact.files)
+    return (
+      <div className="empty">
+        <p>
+          {artifact.files.length} retained {artifact.files.length === 1 ? 'file' : 'files'}
+        </p>
+        <ul>
+          {artifact.files.map((file) => (
+            <li key={file.name}>
+              <strong>{file.name}</strong> <span className="faint tabular">{bytes(file.size)}</span>{' '}
+              <Short value={file.hash} copy="Copy hash" />
+              <ArtifactDownload
+                key={`${scope}:${artifact.id}:${file.name}`}
+                artifactId={artifact.id}
+                fileName={file.name}
+              />
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
   if (!artifact.downloadAvailable) return null;
   return <ArtifactDownload key={`${scope}:${artifact.id}`} artifactId={artifact.id} />;
 }

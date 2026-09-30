@@ -124,17 +124,20 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private single-file URL valid for 60 seconds when storage supports it; download and inspect large files locally, reporting derived results rather than their full contents.',
+      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private URL; for a collection, optional fileName selects one member and signs a fresh provider link. Without fileName, download retrieves the manifest.',
       z
         .object({
           artifactId: z.string().min(1),
           mode: z.literal('download').optional(),
+          fileName: z.string().min(1).max(255).optional(),
           offset: z.number().int().min(0).optional(),
           length: z.number().int().min(1).optional(),
         })
         .strict(),
       async (c, i) => {
-        if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId);
+        if (i.mode === 'download') return await ctx.artifacts.download(c, i.artifactId, i.fileName);
+        if (i.fileName !== undefined)
+          throw new MervError('invalid_artifact', 'fileName requires mode download', 400);
         if (c.session) {
           const artifact = await ctx.artifacts.get(c, i.artifactId);
           if (artifact.size > workerInlineBytes && artifact.size <= MAX_ARTIFACT_BYTES) {

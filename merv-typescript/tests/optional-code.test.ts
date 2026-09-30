@@ -265,8 +265,8 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     requestId: 'git-task',
   });
   // Unhosted projects keep the production versions, without a derived-base blocker.
-  assert.equal(git.workflow.version, 10);
-  assert.equal(gitTask.workflow.version, 13);
+  assert.equal(git.workflow.version, 18);
+  assert.equal(gitTask.workflow.version, 21);
   assert.deepEqual(await f.app.ctx.workflows.blockers(f.owner), []);
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   const session = await f.app.ctx.sessions.offer(f.owner, {

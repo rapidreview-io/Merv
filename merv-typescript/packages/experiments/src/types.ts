@@ -6,6 +6,7 @@ import type {
   RunningNode,
   RunningPanelPart,
   Transaction,
+  WorkComputeAccess,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
@@ -33,7 +34,7 @@ export interface ComputeInput {
   outputs?: ComputeOutputs;
 }
 
-export interface Experiments {
+export interface Experiments extends WorkComputeAccess {
   bindCompute(adapter: SandboxCompute): () => void;
   computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
   computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;

@@ -74,4 +74,10 @@ BEGIN
 END;
 $merv$;
 `,
+  7: `
+ALTER TABLE artifacts ADD COLUMN source_key TEXT, ADD COLUMN collection_input_hash TEXT,
+  ADD COLUMN files_json JSONB, ADD COLUMN file_refs_json JSONB, ADD COLUMN metadata_json JSONB;
+CREATE UNIQUE INDEX artifacts_project_source_key ON artifacts(project_id,source_key)
+  WHERE source_key IS NOT NULL;
+`,
 };

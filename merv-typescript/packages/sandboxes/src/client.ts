@@ -176,18 +176,11 @@ export class SandboxClient {
   async read(
     connection: SandboxConnection,
     path: string,
-    query?: { start_part: number },
+    query?: { start_part: number } | { include_stopped: boolean },
   ): Promise<Json> {
     connection = { ...connection };
     const secret = await this.#prove(connection);
-    return await this.#send(
-      connection,
-      secret,
-      'GET',
-      path,
-      undefined,
-      query ? { start_part: query.start_part } : undefined,
-    );
+    return await this.#send(connection, secret, 'GET', path, undefined, query);
   }
 
   /** Read one bounded raw job-output window, under the same proved consumer grant. */
@@ -222,7 +215,7 @@ export class SandboxClient {
   /** Change one sandbox, under the same proved grant. The body is the service's own request. */
   async write(
     connection: SandboxConnection,
-    method: 'POST' | 'DELETE',
+    method: 'POST' | 'DELETE' | 'PATCH',
     path: string,
     body: Json,
     timeoutMs?: number,
@@ -283,10 +276,10 @@ export class SandboxClient {
   async #send(
     connection: SandboxConnection,
     secret: string,
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'DELETE' | 'PATCH',
     path: string,
     body?: Json,
-    query?: { start_part: number } | OutputRange,
+    query?: { start_part: number } | { include_stopped: boolean } | OutputRange,
     timeoutMs = this.#timeoutMs,
   ): Promise<Json> {
     check(
@@ -309,6 +302,8 @@ export class SandboxClient {
         'Upload part must be between 1 and 10,000',
       );
       url.searchParams.set('start_part', String(query.start_part));
+    } else if (query && 'include_stopped' in query) {
+      url.searchParams.set('include_stopped', String(query.include_stopped));
     }
     check(
       url.origin === this.#origin,

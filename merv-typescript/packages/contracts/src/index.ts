@@ -165,8 +165,8 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
-import type { Artifact } from './artifact-models.js';
-export type { Artifact } from './artifact-models.js';
+import type { Artifact, ArtifactFile } from './artifact-models.js';
+export type { Artifact, ArtifactFile } from './artifact-models.js';
 import { clip, visible } from './text.js';
 import type {
   Role,
@@ -1207,6 +1207,15 @@ export interface ArtifactInput {
   mediaType?: string;
   encoding?: 'utf8' | 'base64';
 }
+export interface ArtifactCollectionInput {
+  title: string;
+  sourceKey: string;
+  files: (ArtifactFile & { reference: string })[];
+  metadata?: Record<string, unknown>;
+}
+export interface ArtifactFileProvider {
+  download(projectId: string, reference: string): Promise<{ url: string; expiresAt: string }>;
+}
 /** Artifact bytes as tool text; `offset` and `total` are set for a range. */
 export interface ArtifactContent {
   artifact: Artifact;
@@ -1247,6 +1256,15 @@ export interface ArtifactUploadStatus {
 export interface Artifacts {
   readonly downloadAvailable: boolean;
   readonly largeUploadAvailable: boolean;
+  /** Backend-only provider registration; the disposer removes only this registration. */
+  registerFileProvider(name: string, provider: ArtifactFileProvider): () => void;
+  /** Database-only immutable manifest. The caller must verify and pin every referenced file first.
+   * One row per project/sourceKey; a retry with different content is refused. */
+  createCollection(
+    caller: Caller,
+    input: ArtifactCollectionInput,
+    tx?: Transaction,
+  ): Promise<Artifact>;
   /** Idempotent per actor and requestId. After completion, begin and resume return the
    * status with `artifactId` and call no storage. */
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus>;
@@ -1255,6 +1273,7 @@ export interface Artifacts {
   download(
     caller: Caller,
     artifactId: string,
+    fileName?: string,
   ): Promise<{
     artifact: Artifact;
     download: { url: string; expiresAt: string };
@@ -2296,7 +2315,18 @@ export interface ServiceTaskCreator {
 }
 
 import type { RunningNode, RunningPanelPart } from './running.js';
-export interface Tasks {
+/** Work owners grant access; Sandboxes owns the rented machine and its lifetime. */
+export interface WorkComputeAccess {
+  computeMachines(caller: Caller, ownerId: string): Promise<Json[]>;
+  computeRent(
+    caller: Caller,
+    ownerId: string,
+    input: { key: string; provider: string; offerId: string; minutes: number },
+  ): Promise<unknown>;
+  computeSsh(caller: Caller, ownerId: string, sandboxId: string, publicKey: string): Promise<Json>;
+  computeRelease(caller: Caller, ownerId: string, sandboxId: string): Promise<unknown>;
+}
+export interface Tasks extends WorkComputeAccess {
   computeOffers(caller: Caller): Promise<unknown>;
   computeStatus(
     caller: Caller,

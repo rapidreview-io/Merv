@@ -219,6 +219,26 @@ export interface SandboxCompute {
   logs?(projectId: string, runId: string): Promise<Json>;
   cancel(projectId: string, runId: string): Promise<void>;
   download?(projectId: string, objectId: string): Promise<{ url: string }>;
+  retain?(projectId: string, objectId: string): Promise<void>;
+  rent?(projectId: string, input: SandboxRentalInput): Promise<SandboxRental>;
+  findRental?(projectId: string, key: string): Promise<SandboxRental | null>;
+  inspectRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
+  releaseRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
+  ssh?(projectId: string, sandboxId: string, publicKey: string): Promise<Json>;
+}
+
+export interface SandboxRentalInput {
+  key: string;
+  provider: string;
+  offerId: string;
+  minutes: number;
+}
+export interface SandboxRental {
+  sandboxId: string;
+  state: string;
+  leaseExpiresAt: string | null;
+  hourlyPrice: Json;
+  reason: string | null;
 }
 
 /**

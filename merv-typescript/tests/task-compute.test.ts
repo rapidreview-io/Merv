@@ -101,7 +101,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     checks: ['Output captured.'],
     requestId: randomUUID(),
   });
-  assert.equal(task.workflow.version, 12);
+  assert.equal(task.workflow.version, 20);
   const source = await scope.delegationSource(producer);
   scope.registerSessionAuthority({ require: async () => source });
   const actor = await state.transaction((tx) =>

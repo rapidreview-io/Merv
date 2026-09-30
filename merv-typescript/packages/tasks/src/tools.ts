@@ -2,7 +2,7 @@ import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
-import { computeOutputsSchema } from '@merv/sandboxes/managed-compute';
+import { rentalSchema, computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {
   Caller,
   TaskCreate,
@@ -19,6 +19,56 @@ export const taskToolsPlugin = {
   name: 'merv-task-tools',
   inject: ['tools', 'tasks'],
   apply(ctx: Context) {
+    const owner = z.object({ taskId: z.string().min(1) });
+    const machine = owner.extend({ sandboxId: z.string().min(1).max(128) });
+    for (const definition of [
+      {
+        name: 'task.compute_machines',
+        description:
+          'List GPU machines associated with this work item across worker handoffs. Check here before renting: a previous worker may have left a ready environment. State is refreshed in the background; leaseExpiresAt bounds reuse.',
+        inputSchema: owner.strict(),
+        readOnly: true,
+        handler: (c: Caller, i: Record<string, string>) => ctx.tasks.computeMachines(c, i.taskId),
+      },
+      {
+        name: 'task.compute_rent',
+        description:
+          'Rent a GPU for this task or experiment, available to its current and subsequent assigned workers. Use an offer from compute offers, a stable key, and a time-limited lease (minutes); current provider spending policy applies. Check machines before renting. No command is started automatically. Reuse key after an uncertain response; a released rental needs a new key. Files survive worker handoff but are lost on GPU release/expiry unless retained separately. Reviewers may optionally use compute for brief checks only, never long-running work.',
+        inputSchema: owner.merge(rentalSchema).strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: Record<string, unknown>) =>
+          ctx.tasks.computeRent(
+            c,
+            i.taskId as string,
+            rentalSchema.parse({
+              key: i.key,
+              provider: i.provider,
+              offerId: i.offerId,
+              minutes: i.minutes,
+            }),
+          ),
+      },
+      {
+        name: 'task.compute_ssh',
+        description:
+          'Get SSH access to this work item’s ready GPU. Generate an Ed25519 key locally (ssh-keygen -t ed25519 -N "" -f KEY); supply only the .pub contents. Save returned certificate as KEY-cert.pub. Add "[HOST]:PORT HOST_PUBLIC_KEY" to a known_hosts file using gateway.host, gateway.port and gateway.host_public_key (plain HOST for port 22), then ssh -i KEY -o CertificateFile=KEY-cert.pub -o UserKnownHostsFile=KNOWN_HOSTS -o StrictHostKeyChecking=yes -p PORT SANDBOX_ID@HOST. Each successor gets its own certificate. Certificates expire after five minutes; request a fresh one for a new connection. Reviewers: brief verification only; no training or full evaluations. Preserve submitted evidence.',
+        inputSchema: machine.extend({ publicKey: z.string().min(20).max(16384) }).strict(),
+        openWorld: true,
+        conversation: 'secret' as const,
+        handler: (c: Caller, i: Record<string, string>) =>
+          ctx.tasks.computeSsh(c, i.taskId, i.sandboxId, i.publicKey),
+      },
+      {
+        name: 'task.compute_release',
+        description:
+          'Release a GPU associated with this work item. Retain needed files first; release deletes the machine’s filesystem. Leave it available only when the next worker can use it within the remaining lease.',
+        inputSchema: machine.strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: Record<string, string>) =>
+          ctx.tasks.computeRelease(c, i.taskId, i.sandboxId),
+      },
+    ])
+      ctx.effect(() => ctx.tools.register(definition));
     const computeRun = z
       .object({
         taskId: id,
@@ -61,7 +111,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.compute_run',
         description:
-          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
+          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
         inputSchema: computeRun,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: z.infer<typeof computeRun>) =>
@@ -89,7 +139,7 @@ export const taskToolsPlugin = {
         name: 'task.compute_output',
         openWorld: true,
         description:
-          'Get a fresh download URL and SHA/size for one captured file of this task run after machine release. Use the output name from task.compute_status. Download and save permanent evidence through existing artifact upload tools. Capture is not a task review verdict.',
+          'Get a fresh download URL and SHA/size for one captured file of this task run after machine release. Use the output name from task.compute_status. New captures automatically produce one collection artifact; use its artifactId and artifact.read mode download with fileName. No reupload is needed. Capture is not a task review verdict.',
         inputSchema: z
           .object({
             taskId: id,

@@ -18,7 +18,7 @@ const encode = (value: string) =>
   );
 /** What each presigned method must sign, and for how long it is valid. */
 const PRESIGNED: Record<string, { headers: string[]; expires: number }> = {
-  GET: { headers: ['host'], expires: 60 },
+  GET: { headers: ['host'], expires: 3600 },
   PUT: {
     headers: ['content-length', 'host', 'if-none-match', 'x-amz-checksum-sha256'],
     expires: 3600,

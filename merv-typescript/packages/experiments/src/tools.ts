@@ -1,7 +1,7 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
-import { computeOutputsSchema } from '@merv/sandboxes/managed-compute';
+import { rentalSchema, computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {} from '@merv/api/types';
 import type {
   ComputeInput,
@@ -23,6 +23,57 @@ export const experimentsToolsPlugin = {
   inject: ['experiments', 'tools'],
   apply(ctx: Context) {
     const experiments = ctx.experiments;
+    const owner = z.object({ experimentId: z.string().min(1) });
+    const machine = owner.extend({ sandboxId: z.string().min(1).max(128) });
+    for (const definition of [
+      {
+        name: 'compute.machines',
+        description:
+          'List GPU machines associated with this work item across worker handoffs. Check here before renting: a previous worker may have left a ready environment. State is refreshed in the background; leaseExpiresAt bounds reuse.',
+        inputSchema: owner.strict(),
+        readOnly: true,
+        handler: (c: Caller, i: Record<string, string>) =>
+          experiments.computeMachines(c, i.experimentId),
+      },
+      {
+        name: 'compute.rent',
+        description:
+          'Rent a GPU for this task or experiment, available to its current and subsequent assigned workers. Use an offer from compute offers, a stable key, and a time-limited lease (minutes); current provider spending policy applies. Check machines before renting. No command is started automatically. Reuse key after an uncertain response; a released rental needs a new key. Files survive worker handoff but are lost on GPU release/expiry unless retained separately. Reviewers may optionally use compute for brief checks only, never long-running work.',
+        inputSchema: owner.merge(rentalSchema).strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: Record<string, unknown>) =>
+          experiments.computeRent(
+            c,
+            i.experimentId as string,
+            rentalSchema.parse({
+              key: i.key,
+              provider: i.provider,
+              offerId: i.offerId,
+              minutes: i.minutes,
+            }),
+          ),
+      },
+      {
+        name: 'compute.ssh',
+        description:
+          'Get SSH access to this work item’s ready GPU. Generate an Ed25519 key locally (ssh-keygen -t ed25519 -N "" -f KEY); supply only the .pub contents. Save returned certificate as KEY-cert.pub. Add "[HOST]:PORT HOST_PUBLIC_KEY" to a known_hosts file using gateway.host, gateway.port and gateway.host_public_key (plain HOST for port 22), then ssh -i KEY -o CertificateFile=KEY-cert.pub -o UserKnownHostsFile=KNOWN_HOSTS -o StrictHostKeyChecking=yes -p PORT SANDBOX_ID@HOST. Each successor gets its own certificate. Certificates expire after five minutes; request a fresh one for a new connection. Reviewers: brief verification only; no training or full evaluations. Preserve submitted evidence.',
+        inputSchema: machine.extend({ publicKey: z.string().min(20).max(16384) }).strict(),
+        openWorld: true,
+        conversation: 'secret' as const,
+        handler: (c: Caller, i: Record<string, string>) =>
+          experiments.computeSsh(c, i.experimentId, i.sandboxId, i.publicKey),
+      },
+      {
+        name: 'compute.release',
+        description:
+          'Release a GPU associated with this work item. Retain needed files first; release deletes the machine’s filesystem. Leave it available only when the next worker can use it within the remaining lease.',
+        inputSchema: machine.strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: Record<string, string>) =>
+          experiments.computeRelease(c, i.experimentId, i.sandboxId),
+      },
+    ])
+      ctx.effect(() => ctx.tools.register(definition));
     const run = z
       .object({
         experimentId: z.string().min(1),
@@ -49,7 +100,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'compute.run',
         description:
-          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
+          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
         inputSchema: run,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: ComputeInput) =>
@@ -77,7 +128,7 @@ export const experimentsToolsPlugin = {
         name: 'compute.output',
         openWorld: true,
         description:
-          'Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. Download and retain permanent research evidence through existing artifact upload tools. A captured file is not a scientific success verdict.',
+          'Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. New captures automatically produce one collection artifact; use its artifactId and artifact.read mode download with fileName. No reupload is needed. A captured file is not a scientific success verdict.',
         inputSchema: z
           .object({
             experimentId: z.string().min(1),
@@ -113,7 +164,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'experiment.create',
         description:
-          'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. If the experiment needs a GPU smoke test, put it first in the approved execution phase; the planning worker has no compute.run, but can inspect code and data, perform local preflight, and check GPU offer availability and estimated cost and time. Do not make a planning-phase GPU run a prerequisite or treat that phase boundary alone as infeasibility. Name actual missing data, compute, budget or prerequisite work separately. Optional workspace "git" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.',
+          'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Planning workers may rent and inspect a GPU over SSH for brief feasibility checks. Full training and evaluations still require independent design approval; compute.run belongs to that execution phase. Check existing work machines before renting more. Name actual missing data, compute, budget or prerequisite work separately. Optional workspace "git" (requires Code) runs the experiment in a private Git checkout. Until an administrator binds and imports the project, the checkout uses the runner’s central base. In a hosted project Code derives its base from accepted dependencies, looking through code-less successes and using imported main when there is no contributing commit. The first planning or running lease pins it so execution inherits the plan’s base. Several commits share an automatic merge; conflicts wait for one reviewed resolution task. Unverified or unimported code shows code_base_pending; code_merge_required means automatic merging is disabled. Blocked work is never launched. In hosted projects, omit baseTaskId and use dependsOn; the incompatible legacy form is rejected at creation. For local repositories only, optional baseTaskId is the older explicit form: it names one Git task, which must also be in dependsOn, whose accepted delivered commit becomes the base. Reuse the same requestId and input to recover a committed response.',
         inputSchema: experimentCreateSchema,
         handler: async (caller: Caller, input: ExperimentCreate) =>
           await experiments.create(caller, input),

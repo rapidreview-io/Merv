@@ -100,6 +100,7 @@ async function fixture(t: TestContext, since = '2000-01-01T00:00:00Z') {
     caller,
     bootstrap,
     experiments,
+    artifacts,
     adapter,
     createRunning,
     calls,
@@ -120,6 +121,90 @@ const input = (experimentId: string, key = 'trial') => ({
   command: 'echo metrics',
   minutes: 10,
   maxUsd: 2,
+});
+
+test('one capture publishes one immutable collection, retries retention, and stays readable after handoff', async (t) => {
+  const f = await fixture(t);
+  f.unbind();
+  let failPin = true;
+  const retained: string[] = [];
+  const adapter: SandboxCompute = {
+    ...f.adapter,
+    async retain(_projectId, objectId) {
+      if (failPin && objectId === 'obj_b')
+        throw new MervError('pin_retry', 'temporary retention failure', 503);
+      retained.push(objectId);
+    },
+  };
+  const unbind = f.experiments.bindCompute(adapter);
+  t.after(unbind);
+  const id = await f.createRunning();
+  await f.experiments.computeRun(f.caller, {
+    ...input(id, 'x'.repeat(128)),
+    outputs: {
+      files: [
+        { name: 'a.json', path: '/tmp/a.json' },
+        { name: 'b.log', path: '/tmp/b.log' },
+      ],
+      maxBytes: 5000,
+    },
+  });
+  await f.experiments.computeTick();
+  const outputs = ['a', 'b'].map((name, i) => ({
+    name: i ? 'b.log' : 'a.json',
+    objectId: `obj_${name}`,
+    sizeBytes: 10 + i,
+    sha256: name.repeat(64),
+    expiresAt: null,
+  }));
+  f.setResponse({
+    id: 'wf_1',
+    state: 'failed',
+    reason: 'script failed',
+    cost: null,
+    result: { exit: 1 },
+    outputs,
+    outputState: 'partial',
+  });
+  await f.experiments.computeTick();
+  let experiment = await f.experiments.get(f.caller, id);
+  assert.equal(
+    experiment.compute?.[0]?.state,
+    'failed',
+    'retention failure does not rewrite command outcome',
+  );
+  assert.equal(experiment.compute?.[0]?.artifactId, undefined);
+  failPin = false;
+  await f.experiments.computeTick();
+  experiment = await f.experiments.get(f.caller, id);
+  const artifactId = experiment.compute![0]!.artifactId!;
+  assert.ok(artifactId);
+  const collection = await f.artifacts.get(f.caller, artifactId);
+  assert.equal(collection.files?.length, 2);
+  assert.deepEqual(experiment.captureArtifactIds, [artifactId]);
+  assert.equal(collection.metadata?.state, 'failed');
+  assert.equal(collection.metadata?.outputState, 'partial');
+  assert.equal(retained.includes('obj_a') && retained.includes('obj_b'), true);
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE wf_instances SET state='experiment_review' WHERE id=?", id),
+  );
+  await f.experiments.computeTick();
+  assert.equal((await f.experiments.get(f.caller, id)).compute![0]!.artifactId, artifactId);
+  assert.equal((await f.artifacts.list(f.caller)).filter((a) => a.files?.length).length, 1);
+  f.artifacts.registerFileProvider!('sandboxes', {
+    async download(projectId, reference) {
+      assert.equal(projectId, f.caller.projectId);
+      assert.equal(reference, 'obj_b');
+      return {
+        url: 'https://bucket.example/member',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      };
+    },
+  });
+  assert.equal(
+    (await f.artifacts.download(f.caller, artifactId, 'b.log')).download.url,
+    'https://bucket.example/member',
+  );
 });
 
 test('offers answer normally without ML while run and cancel remain unavailable', async (t) => {

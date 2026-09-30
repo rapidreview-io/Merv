@@ -176,3 +176,31 @@ Startup imports legacy experiment jobs and preserves their run IDs
 and provider idempotency keys. During rollout, avoid reverting to an older server
 image while managed jobs are active: the older image reads the legacy experiment
 ledger, which no longer receives updates after import.
+
+## Captures and work-owned GPU machines
+
+When Artifacts is present, each new managed run with requested outputs produces
+one collection artifact for its capture. It lists all retained files, their
+sizes and hashes, and the owning work/run metadata. Sandboxes first removes the
+objects' expiry, then Artifacts records references to them; file bytes are not
+uploaded again. Registration has its own retry state, independent of the command
+outcome. `artifact.read` with `mode: download` and `fileName` signs a fresh member
+link; omitting `fileName` retrieves the manifest. A collection is retained evidence,
+not automatic scientific approval or a replacement for an experiment report.
+
+New task and experiment workflow versions expose `compute.machines`, `.rent`,
+`.ssh`, and `.release` (the task equivalents use `task.compute_` prefixes).
+Tasks and Experiments still authorize their own current leases. Sandboxes owns
+rental lifecycle, provider transport and SSH certificates. The machine ledger is
+keyed by work item, so a planning, execution or review handoff preserves the same
+machine and filesystem. Assignments include known machines; successors should
+check before renting and obtain their own certificate using a local public key.
+A producer may leave useful compute ready for its successor within the remaining
+lease. Reviewers may optionally make brief checks, but must not run training,
+full evaluations or other long work, or alter submitted evidence.
+
+An explicit release, lease expiry or terminal work item ends the rental. Save
+needed files first. A stable rental key is idempotent, including uncertain create
+responses; use a new key only for a deliberately new machine. Existing published
+workflow policies remain unchanged. Direct SSH sessions do not acquire the
+managed run's automatic file capture: retain needed evidence separately.
