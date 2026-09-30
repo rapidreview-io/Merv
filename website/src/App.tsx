@@ -842,13 +842,18 @@ export default function App() {
       </header>
       <main id="main">
         <div className="opening">
-          <div>
-            <p className="eyebrow">Applied AI research</p>
-            <h1>
-              Continuous
-              <br className="hero-break" /> <span>research.</span>
-            </h1>
-          </div>
+          <h1 aria-label="Continuous / Applied AI research.">
+            <span className="headline-visual" aria-hidden="true">
+              <span className="headline-swap">
+                <span className="headline-track">
+                  <span>Continuous</span>
+                  <span>Applied</span>
+                  <span>Continuous</span>
+                </span>
+              </span>
+              <span className="headline-subject">AI research.</span>
+            </span>
+          </h1>
           <a
             className="follow-loop"
             href="#ideas"
