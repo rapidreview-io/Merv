@@ -1,5 +1,30 @@
 # Production releases
 
+## GPT-6.1 Sol research defaults, 2026-09-30
+
+Main `20260930T015006Z-3740fde9-c65f2ecf8cd4` and hosted image run
+`20260930T015255Z-85bfe069` passed staging, all CI jobs in run36656811589,
+Linux Pi/workflow/isolation gates and the hosted live canary. Both hosted sizes
+run digest `5bfa783f1057bdb7a3a12d901a006bfea5997b9165734d6e5e8e2e1a2bf4715c`.
+
+The production Pi catalog now starts with `gpt-6.1-sol` at low effort;
+GPT-6 Luna, GPT-6 Sol and GPT-6 Astra remain selectable. Existing conversations
+and explicit selections persist. The shared Fleet profile is `gpt-6.1-sol/low`.
+Fleet workflow dispatch was paused only while idle for the coordinated image
+rollout and is enabled again; Main reports63/66 active plugins including Fleet,
+Fleet workflow and Pi. No grants or spending limits changed. Private env backup
+is root-only at `/var/backups/merv/model-defaults-20260930/before.env`.
+Final env SHA-256: `0f4b3468c163c1719529098c2411ddd4f4bbf4a9799a0376b7dba812d3e1dd7a`
+(previous, after image pins but before catalog/resume: `91bd8455e40767836fbfb39ac3a4d6f3c91acd9be308f8af8f242ea87e9c0857`).
+
+Live task `wf_726e93d0788c44bfbc663567cbcd9769` completed and review
+`review_9d86dd1f72f14e1cbcc38e088c6c9358` passed. Read-only session receipts
+and runner reports confirm separate producer and reviewer sessions on 6.1 Sol
+with low effort; the Pi command also completed on 6.1 Sol. The reviewer
+independently reran the retained command and reproduced338350. No GPU, code
+change or follow-on research cycle was created. Evidence: local
+`output/sol-defaults-20260929/`.
+
 ## Pi enabled for all existing user projects, 2026-09-24 18:17 UTC
 
 Release `20260924T181249Z-38de7628-b78543a9330e` from published main38de76289
