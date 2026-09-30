@@ -119,34 +119,64 @@ main {
   width: 100%;
 }
 .opening {
-  padding: 42px var(--page-gutter) 32px;
+  position: relative;
+  padding: 64px var(--page-gutter) 40px;
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-}
-.eyebrow {
-  margin: 0;
-  font: 10px var(--mono);
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  color: var(--slate-11);
+  gap: 32px;
 }
 h1 {
+  flex: 1;
+  min-width: 0;
   font-size: clamp(55px, 6.2vw, 90px);
-  line-height: 1;
+  line-height: 1.15;
   letter-spacing: -4px;
   font-weight: 450;
-  margin: 22px 0 0;
+  margin: 0;
 }
-.hero-break {
-  display: none;
+.headline-visual {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.23em;
 }
-h1 span {
+.headline-swap {
+  height: 1.15em;
+  overflow: hidden;
+}
+.headline-track {
+  display: grid;
+  grid-auto-rows: 1.15em;
+  animation: headline-swap 6s cubic-bezier(0.76, 0, 0.24, 1) infinite;
+}
+.headline-track > span,
+.headline-subject {
+  white-space: nowrap;
+}
+.headline-track > span {
+  text-align: right;
+}
+.headline-subject {
   color: var(--slate-11);
+}
+@keyframes headline-swap {
+  0%,
+  41.666667% {
+    transform: translateY(0);
+  }
+  50%,
+  91.666667% {
+    transform: translateY(-33.333333%);
+  }
+  100% {
+    transform: translateY(-66.666667%);
+  }
 }
 .follow-loop {
   display: grid;
   place-items: center;
+  flex-shrink: 0;
   width: 49px;
   height: 49px;
   border: 1px solid var(--slate-7);
@@ -162,7 +192,6 @@ h1 span {
   background: color-mix(in srgb, var(--slate-1) 95%, transparent);
   backdrop-filter: blur(16px);
   z-index: 20;
-  border-block: 1px solid var(--line);
   display: flex;
   align-items: center;
   gap: 20px;
@@ -1020,9 +1049,6 @@ footer > small {
   }
 }
 @media (max-width: 650px) {
-  .hero-break {
-    display: block;
-  }
   header {
     height: 72px;
     margin: 0 5%;
@@ -1047,15 +1073,20 @@ footer > small {
     padding: 52px 6% 46px;
   }
   h1 {
-    font-size: clamp(55px, 13vw, 80px);
+    font-size: clamp(46px, 14.1vw, 80px);
     letter-spacing: -3px;
-    margin-top: 23px;
   }
-  .eyebrow {
-    font-size: 9px;
-    letter-spacing: 1.2px;
+  .headline-visual {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .headline-track > span {
+    text-align: left;
   }
   .follow-loop {
+    position: absolute;
+    right: 6%;
+    bottom: 46px;
     width: 36px;
     height: 36px;
     margin-bottom: 4px;
