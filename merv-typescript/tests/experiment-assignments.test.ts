@@ -295,6 +295,12 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, false);
+  assert.match(planned.brief, /Planning has no compute\.run/);
+  assert.match(
+    planned.handoff.instruction,
+    /first execution step after independent design approval/,
+  );
+  assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,
@@ -317,6 +323,10 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(
     (await f.workflows.assignment(f.source, running.id)).context!.type,
     'experiment.execute',
+  );
+  assert.doesNotMatch(
+    (await f.workflows.assignment(f.source, running.id)).brief,
+    /Planning has no compute\.run/,
   );
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);

@@ -206,6 +206,11 @@ const gatedHandoffs: Partial<Record<ActiveState, string>> = {
 };
 const handoff = (state: ActiveState) =>
   gatedHandoffs[state] ? `${handoffs[state]} ${gatedHandoffs[state]}` : handoffs[state];
+// Assignment guidance is assembled at runtime; published context recipes remain immutable.
+const planningPhaseGuidance =
+  ' Planning has no compute.run. If a GPU smoke test or calibration is needed, specify it as the first execution step after independent design approval. During planning, check current offer availability and estimate its cost and time from named records; do not report the design infeasible solely because this planning lease cannot run GPU code. Record actual missing data, unavailable compute or budget, and unfinished prerequisites as distinct dependencies or blockers.';
+const assignmentHandoff = (state: ActiveState) =>
+  handoff(state) + (state === 'planned' ? planningPhaseGuidance : '');
 /** The shape a planner fills in, shown beside the design it is asked for. */
 const feasibilityFormat: FeasibilityStatement = {
   formatVersion: 1,
@@ -1097,10 +1102,13 @@ export class ExperimentProgram {
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : handoff(state);
-    const speedGuidance = producing(state)
-      ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
-      : '';
+      : assignmentHandoff(state);
+    const speedGuidance =
+      state === 'planned'
+        ? ' Prioritize fast experiment completion. Plan batching, multiple GPUs or concurrent independent jobs for execution after approval when they save time, within the authorized budget and scientific requirements. Avoid duplicating the same work.'
+        : state === 'running'
+          ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
+          : '';
     const preview = await recipe.preview(
       context.caller,
       {
@@ -1443,7 +1451,7 @@ export class ExperimentProgram {
                   ? 'review_required'
                   : 'independent_review',
           waiting: producing(context.snapshot.state)
-            ? handoff(context.snapshot.state as ActiveState)
+            ? assignmentHandoff(context.snapshot.state as ActiveState)
             : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
           references: [
             ...(context.dependencies ?? []).map((dependency) => ({

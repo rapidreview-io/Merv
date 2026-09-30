@@ -137,7 +137,7 @@ async def main():
             assert await conn.scalar(select(func.count()).select_from(infra_members).where(infra_members.c.account_id==account))==1, 'ml_account_not_fresh'
         billing=c.registry.billing
         await billing.set_policy(account,'merv-ml-monthly',Policy(scope='account',target=account,window='month',cap=ceiling))
-        await billing.set_policy(account,'merv-ml-project',Policy(scope='member_default',target=account,window='month',cap=Decimal('50')))
+        await billing.set_policy(account,'merv-ml-project',Policy(scope='member_default',target=account,window='month',cap=Decimal('500')))
         await billing.set_policy(account,'native-monthly:merv-ml',Policy(scope='namespace',target='merv-ml',window='month',cap=ceiling))
         await ResourceLimitService(c.db,c.clock).set(account,'merv-ml-machines',ResourceLimit(scope='account',target=account,max_concurrent=20,max_lifetime_seconds=86400))
         issued=await c.tokens.create(namespace='merv-ml',role='consumer',account_id=account,member_id=member,application_id='merv-ml',open_subjects=True,label='Merv ML')

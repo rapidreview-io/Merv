@@ -897,7 +897,7 @@ try: load(['ml'])
 except AssertionError as e: missing='invalid' if 'ml' in str(e) else 'wrong'
 print(json.dumps({'project':m.PROJECT,'root':m.ROOT.name,'ceiling':m.OPTIONS['--ceiling'],
                   'existing':existing,'missing':missing,'rootCreated':m.ROOT.exists(),
-                  'policies':all(x in m.SBX_ML for x in ('merv-ml-monthly','merv-ml-project','native-monthly:merv-ml','open_subjects=True')),
+                  'policies':all(x in m.SBX_ML for x in ('merv-ml-monthly',"'merv-ml-project',Policy(scope='member_default',target=account,window='month',cap=Decimal('500'))",'native-monthly:merv-ml','open_subjects=True')),
                   'literalGrant':'sbxt_' in m.SBX_ML}))`,
   );
   assert.deepEqual(out, {
