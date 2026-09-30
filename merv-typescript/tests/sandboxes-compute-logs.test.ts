@@ -4,13 +4,16 @@ import { mkdtemp, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { SandboxComputeAdapter } from '../packages/sandboxes/src/compute.js';
+import { SandboxService } from '../packages/sandboxes/src/index.js';
 
 async function fixture(t: test.TestContext) {
   const tokenEnv = 'MERV_NATIVE_COMPUTE_TEST_GRANT';
+  const urlEnv = 'MERV_NATIVE_COMPUTE_TEST_URL';
   process.env[tokenEnv] = 'sbxt_native_test_grant';
+  process.env[urlEnv] = 'https://sandbox.example';
   t.after(() => {
     delete process.env[tokenEnv];
+    delete process.env[urlEnv];
   });
   let submitted: any;
   const submissions: any[] = [];
@@ -72,12 +75,22 @@ async function fixture(t: test.TestContext) {
     }
     throw new Error(`Unexpected route ${url.pathname}`);
   });
-  const adapter = new SandboxComputeAdapter('https://sandbox.example', 1000, 60_000, {
-    namespace: 'merv-ml',
-    tokenEnv,
-    since: '2000-01-01',
-    storageOrigins: [],
+  // Exercise the capability exposed to plugins, not just the internal adapter.
+  const service = new SandboxService({
+    urlEnv,
+    timeoutMs: 1000,
+    refreshMs: 60_000,
+    connections: [{ projectId: 'project_a', namespace: 'ordinary', tokenEnv }],
+    ml: {
+      namespace: 'merv-ml',
+      tokenEnv,
+      since: '2000-01-01T00:00:00Z',
+      storageOrigins: [],
+    },
   });
+  t.after(() => service.close());
+  assert.ok(service.compute?.logs, 'Configured Sandboxes service must expose compute logs');
+  const adapter = { ...service.compute, logs: service.compute.logs };
   return {
     adapter,
     reads,
