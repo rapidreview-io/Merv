@@ -12,7 +12,7 @@ import {
   FileBox,
   Layers3,
   LibraryBig,
-  SlidersHorizontal,
+  BrainCircuit,
 } from "lucide-react";
 
 const CONTACT = "mailto:gural@rapidreview.io?subject=Merv%20research%20pilot";
@@ -242,17 +242,17 @@ function ResearchInput({
 }) {
   const Icon =
     kind === "user"
-      ? SlidersHorizontal
+      ? BrainCircuit
       : kind === "research"
         ? LibraryBig
         : Database;
   return (
     <g className={`research-input input-${kind}`}>
       <Icon
-        x={x - 11}
-        y={kind === "user" ? y - 45 : y - 11}
-        width={22}
-        height={22}
+        x={x - 24}
+        y={kind === "user" ? y - 70 : y - 24}
+        width={48}
+        height={48}
         strokeWidth={1}
         className="input-icon"
         aria-hidden="true"
@@ -260,7 +260,7 @@ function ResearchInput({
       <text
         key={label}
         x={x}
-        y={kind === "user" ? y : y + 37}
+        y={kind === "user" ? y : y + 52}
         textAnchor="middle"
         className={`input-title ${kind === "user" ? "input-rotating" : ""}`}
       >
@@ -296,12 +296,12 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
       >
         <ResearchInput
           x={center}
-          y={62}
+          y={78}
           kind="user"
           label={userInput}
           caption="Set by you"
         />
-        <Wire d={`M${center} 105V152`} />
+        <Wire d={`M${center} 116V152`} />
         <g className="provided-context">
           <title>Provided by Merv</title>
           <rect
@@ -319,8 +319,8 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
           />
           <ResearchInput x={right} y={230} kind="evidence" label="Evidence" />
           <Wire d={`M${center} 152V168`} />
-          <Wire d={`M${left + 22} 230H${center - 62}`} />
-          <Wire d={`M${right - 22} 230H${center + 62}`} />
+          <Wire d={`M${left + 36} 230H${center - 62}`} />
+          <Wire d={`M${right - 36} 230H${center + 62}`} />
           <path
             d={`m${center - 4} 162 4 6 4-6M${center - 68} 226l6 4-6 4M${center + 68} 226l-6 4 6 4`}
             className="wire-arrow"
@@ -346,12 +346,12 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
       >
         <ResearchInput
           x={180}
-          y={62}
+          y={78}
           kind="user"
           label={userInput}
           caption="Set by you"
         />
-        <Wire d="M180 105V152" />
+        <Wire d="M180 116V152" />
         <g className="provided-context">
           <title>Provided by Merv</title>
           <rect
@@ -369,8 +369,8 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
           />
           <ResearchInput x={305} y={230} kind="evidence" label="Evidence" />
           <Wire d="M180 152V178" />
-          <Wire d="M77 230H128" />
-          <Wire d="M283 230H232" />
+          <Wire d="M91 230H128" />
+          <Wire d="M269 230H232" />
           <path
             d="m176 172 4 6 4-6M122 226l6 4-6 4M238 226l-6 4 6 4"
             className="wire-arrow"
@@ -752,7 +752,7 @@ function Fleet({
         </svg>
         <div className="artifacts">
           <div className="artifact-source">
-            <FileBox size={26} strokeWidth={1} aria-hidden="true" />
+            <FileBox size={38} strokeWidth={1} aria-hidden="true" />
             <span>Datasets</span>
           </div>
           <span className="artifact-connector" aria-hidden="true" />
@@ -772,7 +772,7 @@ function Fleet({
           </div>
           <span className="artifact-connector" aria-hidden="true" />
           <div className="artifact-source">
-            <Layers3 size={26} strokeWidth={1} aria-hidden="true" />
+            <Layers3 size={38} strokeWidth={1} aria-hidden="true" />
             <span>Checkpoints</span>
           </div>
         </div>
@@ -822,10 +822,15 @@ export default function App() {
         Skip to content
       </a>
       <header>
-        <a className="brand" href="#" aria-label="Merv home">
-          <Mark />
-          merv
-        </a>
+        <div className="brand-lockup">
+          <a className="brand" href="#" aria-label="Merv home">
+            <Mark />
+            merv
+          </a>
+          <span className="brand-credit">
+            by <a href="https://rapidreview.io">rapidreview</a>
+          </span>
+        </div>
         <nav aria-label="Main navigation">
           <a href="https://rapidreview.io/docs/merv">
             Docs <ArrowUpRight size={12} />
@@ -886,35 +891,46 @@ export default function App() {
             {stopped ? <Play size={13} /> : <Pause size={13} />}
           </button>
         </div>
-        <section id="ideas" data-layer="0" className="layer idea-layer">
-          <div className="layer-title">
-            <h2>Research inputs.</h2>
+        <div className="research-system">
+          <section id="ideas" data-layer="0" className="layer idea-layer">
+            <div className="layer-title">
+              <h2>Research inputs.</h2>
+            </div>
+            <Ideas phase={phase} reduced={reduced} />
+          </section>
+          <div className="layer-bridge ideas-bridge" aria-hidden="true">
+            <i />
           </div>
-          <Ideas phase={phase} reduced={reduced} />
-        </section>
-        <div className="layer-bridge ideas-bridge" aria-hidden="true">
-          <i />
-        </div>
-        <section id="workloads" data-layer="1" className="layer workload-layer">
-          <div className="layer-title">
-            <h2>Parallel experiments.</h2>
+          <section
+            id="workloads"
+            data-layer="1"
+            className="layer workload-layer"
+          >
+            <div className="layer-title">
+              <h2>Parallel experiments.</h2>
+            </div>
+            <Dag phase={phase} selected={selected} onSelect={setSelected} />
+          </section>
+          <div className="layer-bridge dispatch-bridge" aria-hidden="true">
+            <i />
           </div>
-          <Dag phase={phase} selected={selected} onSelect={setSelected} />
-        </section>
-        <div className="layer-bridge dispatch-bridge" aria-hidden="true">
-          <i />
+          <section
+            id="infrastructure"
+            data-layer="2"
+            className="layer infra-layer"
+          >
+            <div className="layer-title">
+              <h2>Compute built for agents.</h2>
+            </div>
+            <Fleet phase={phase} focus={focus} setFocus={setFocus} />
+          </section>
         </div>
         <section
-          id="infrastructure"
-          data-layer="2"
-          className="layer infra-layer"
+          className="integrations-layer"
+          aria-labelledby="providers-heading"
         >
-          <div className="layer-title">
-            <h2>Compute built for agents.</h2>
-          </div>
-          <Fleet phase={phase} focus={focus} setFocus={setFocus} />
           <div className="integrations">
-            <h3>20 clouds. One system.</h3>
+            <h3 id="providers-heading">20 cloud providers.</h3>
             <div className="provider-wall">
               {providers.map((p) => (
                 <div key={p[0]}>
