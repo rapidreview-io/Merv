@@ -938,7 +938,7 @@ export default function App() {
             className="layer infra-layer"
           >
             <div className="layer-title">
-              <h2>Compute built for agents.</h2>
+              <h2>Compute optimized for agents.</h2>
             </div>
             <Fleet phase={phase} focus={focus} setFocus={setFocus} />
           </section>
