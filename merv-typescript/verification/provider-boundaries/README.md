@@ -1,8 +1,8 @@
 # Sandboxes terminal-report boundary
 
 The late-create / false-terminal race reproduced against provider HEAD
-`c7b9582faf5a4760230ae26d04b9079b1f8e6907` is repaired in the local provider
-working tree. The original real PostgreSQL regression now passes, including
+`c7b9582faf5a4760230ae26d04b9079b1f8e6907` is repaired in provider candidate `4f7aea5` on branch
+`codex/infra-provider-release`. The original real PostgreSQL regression now passes, including
 cleanup of the late machine. The original baseline and the repaired candidate are also exercised in disposable databases on the production host; no cloud machine is rented. Shared production services remain unchanged by these tests.
 The guarantee applies to newly admitted work under the repaired protocol and the
 provider assumptions below; legacy rows require the cutover treatment below.
@@ -97,7 +97,7 @@ that uncertainty. This implementation supplies no automatic backfill pretending
 to have that evidence. Existing STOPPED history remains STOPPED/settled for
 compatibility, but its old terminal claims are not retroactively certified; audit
 it separately for the previously reproduced race. Downgrade refuses to discard
-admission evidence or generation fences. Parent owns the production plan/tests.
+admission evidence or generation fences. Production testing here is canary-only.
 
 ## Proof and deterministic checks
 

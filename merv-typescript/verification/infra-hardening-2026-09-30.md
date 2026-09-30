@@ -36,16 +36,39 @@ prefixes. They do not kill shared services or run research workloads.
   real registry/queue/workers and PostgreSQL with a fake cloud driver; no cloud
   machine was rented.
 
-Final candidate checks, source hashes, cleanup and release state are recorded in
-`infra-hardening-2026-09-30.json` after completion. Canary success is not itself a
-claim that shared production services have been replaced.
+- The complete immutable TypeScript candidate `a7cc14243` passed all twelve checks,
+  including Fleet and Pi settlement replay after reopening the database connection.
+- Sandboxes candidate `4f7aea5`, based on the deployed `0287040` source, passed 42
+  checks on the production host with disposable databases.
+- All three synthetic schemas and their three objects were removed; their object
+  prefixes were confirmed empty. No provider test databases remained. Shared
+  services were running after cleanup.
+
+Exact source/image hashes, scenarios and log hashes are in
+[the verification record](infra-hardening-2026-09-30.json). These were isolated
+canaries. This work did not switch either shared service or migrate its live schema.
+
+## Local validation
+
+The Lean audit passed over 4,923 declarations and 216 required theorems, rejecting
+both injected custom axioms and unfinished proofs. All 181 Lean/conformance tests
+passed, including implementation mutations and real child-process crashes.
+Ordinary TypeScript tests passed: 2,751 passed, one optional Nisa cross-repository
+check skipped. Release-script tests passed: 59. Server/browser typechecks,
+production-image builds, formatting and the architecture map check passed.
+
+The final provider targeted suite passed 114 tests. A broader run before the last
+race refinements had 761 passes, 27 skips and 14 failures; all 14 failures also
+reproduced on unchanged deployed source in the same environment. They concern
+bootstrap/vault fixtures, timezone-sensitive billing/usage and historical workflow
+replay. The full provider suite is not claimed green.
 
 ## Limits and rollout
 
 Unknown create outcomes remain pending; provider lookup cannot certify settlement
 of a paused or crashed request. The repaired Sandboxes migration must not be
 applied to the live registry merely because its new-record tests pass: existing
-active rows lack the required admission evidence. The current two ready machines
+active rows lack the required admission evidence. The two ready machines observed at initial inspection
 and stopped history need an evidence-backed migration disposition. The provider
 candidate is integrated on the live `0287040` source, preserving its later APIs
 and migrations and appending `0029_create_admission` after `0028`.
