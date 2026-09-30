@@ -416,7 +416,7 @@ function Dag({
         ref={ref}
         style={{ "--diagram-ratio": `${width} / 630` } as CSSProperties}
         role="group"
-        aria-label="T01 feeds E01 and E02. T02 feeds E03. Each experiment waits for its preparation task, never for another experiment. All three results feed reflection."
+        aria-label="T01 feeds E01 and E02. T02 feeds E03. Each experiment waits for its preparation task, never for another experiment."
       >
         <svg
           className="dag-wires"
@@ -441,19 +441,7 @@ function Dag({
             markerEnd="url(#dag-arrow)"
           />
           <Wire d={`M${experimentLeft.cx} 470V525H${experimentRight.cx}V470`} />
-          <Wire d={`M${center} 470V559`} />
-          <rect
-            x={center - 92}
-            y="559"
-            width="184"
-            height="48"
-            rx="24"
-            className="review-gate"
-          />
-          <text x={center} y="588" textAnchor="middle" className="svg-small">
-            Reflect ↻
-          </text>
-          <Wire d={`M${center} 607V630`} />
+          <Wire d={`M${center} 470V630`} />
         </svg>
         <svg
           className="dag-wires-mobile"
@@ -466,19 +454,7 @@ function Dag({
           <Wire d="M85 218H180V278" markerEnd="url(#dag-arrow-mobile)" />
           <Wire d="M275 155V218H300V278" markerEnd="url(#dag-arrow-mobile)" />
           <Wire d="M60 410V445H300V410" />
-          <Wire d="M180 410V480" />
-          <rect
-            x="120"
-            y="480"
-            width="120"
-            height="40"
-            rx="20"
-            className="review-gate"
-          />
-          <text x="180" y="505" textAnchor="middle" className="svg-small">
-            Reflect ↻
-          </text>
-          <Wire d="M180 520V550" />
+          <Wire d="M180 410V550" />
         </svg>
         {layout.map((n, index) => {
           const task = n.kind === "TASK";

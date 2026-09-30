@@ -322,10 +322,6 @@ h1 span {
 .dag-wires-mobile {
   display: none;
 }
-.review-gate {
-  fill: var(--slate-2);
-  stroke: var(--slate-6);
-}
 .dag-node {
   position: absolute;
   left: var(--x);
