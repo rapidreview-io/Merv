@@ -245,11 +245,6 @@ h1 span {
   font: 12px var(--mono);
   fill: var(--slate-12);
 }
-.source-glyph {
-  stroke: var(--slate-8);
-  stroke-width: 0.8;
-  fill: var(--slate-1);
-}
 .wire {
   fill: none;
   stroke: var(--slate-7);
@@ -269,37 +264,14 @@ h1 span {
   stroke-dashoffset: 12;
   animation: flow 2.4s ease-in-out both;
 }
-.orbital ellipse {
-  fill: none;
-  stroke: var(--slate-7);
-  stroke-width: 0.7;
-  stroke-dasharray: 2 4;
-}
-.core-ring {
-  fill: none;
-  stroke: var(--slate-9);
-  stroke-dasharray: 1 7;
-  transform-origin: 540px 230px;
-  animation: rotate 50s linear infinite;
-}
 .idea-core {
   fill: var(--slate-2);
   stroke: var(--slate-8);
 }
-.mobile-orbit {
+.idea-halo {
   fill: none;
   stroke: var(--slate-7);
   stroke-dasharray: 2 5;
-}
-.concept {
-  animation: float 7s ease-in-out infinite;
-}
-.concept circle {
-  fill: var(--slate-11);
-}
-.concept text {
-  font: 10px var(--mono);
-  fill: var(--slate-11);
 }
 .hypothesis {
   fill: var(--slate-2);
@@ -349,11 +321,6 @@ h1 span {
 }
 .dag-wires-mobile {
   display: none;
-}
-.junction {
-  fill: var(--slate-11);
-  stroke: var(--slate-1);
-  stroke-width: 2;
 }
 .review-gate {
   fill: var(--slate-2);
@@ -918,16 +885,6 @@ footer > small {
   to {
     stroke-dashoffset: -100;
     opacity: 0;
-  }
-}
-@keyframes rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes float {
-  50% {
-    transform: translateY(-6px);
   }
 }
 @keyframes pulse {

@@ -181,12 +181,6 @@ function Wire({ d, active = false }: { d: string; active?: boolean }) {
   );
 }
 function Ideas({ phase }: { phase: number }) {
-  const topics = [
-    { x: 88, y: 63, name: "RESEARCH" },
-    { x: 760, y: 66, name: "NEW IDEAS" },
-    { x: 42, y: 260, name: "PRIOR LOOP" },
-    { x: 816, y: 260, name: "YOUR GOAL" },
-  ];
   return (
     <div className="idea-field">
       <svg
@@ -195,75 +189,30 @@ function Ideas({ phase }: { phase: number }) {
         role="img"
         aria-label="Existing research, new ideas, prior findings and your objective combine into three testable hypotheses."
       >
-        <g className="orbital">
-          {[0, 60, 120].map((angle) => (
-            <ellipse
-              key={angle}
-              cx="540"
-              cy="230"
-              rx="184"
-              ry="86"
-              transform={`rotate(${angle} 540 230)`}
-            />
-          ))}
-        </g>
-        <Wire d="M275 100H330Q355 100 380 130L482 205" />
-        <Wire d="M805 108H750Q720 108 700 140L598 205" />
-        <Wire d="M240 290H322Q350 290 375 275L480 241" />
-        <Wire d="M840 290H762Q730 290 706 275L600 241" />
-        {topics.map((t, index) => (
-          <g
-            key={t.name}
-            className="idea-source"
-            transform={`translate(${t.x} ${t.y})`}
-          >
-            <text className="svg-micro">{t.name}</text>
-            {[0, 1, 2].map((i) => (
-              <g key={i} transform={`translate(${i * 38} 20)`}>
-                {index % 2 === 0 ? (
-                  <>
-                    <path
-                      d="M4 0H25V29H4Z M8 5H20 M8 10H20 M8 15H17 M0 5V33H21"
-                      className="source-glyph"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <circle
-                      cx="15"
-                      cy="14"
-                      r={7 + i * 2}
-                      className="source-glyph"
-                    />
-                    <path d="M15 0V28M1 14H29" className="source-glyph" />
-                  </>
-                )}
-              </g>
-            ))}
-          </g>
-        ))}
-        {[
-          { x: 372, y: 145, t: "replay" },
-          { x: 661, y: 158, t: "LoRA" },
-          { x: 382, y: 317, t: "routing" },
-          { x: 634, y: 322, t: "distillation" },
-        ].map((t, i) => (
-          <g key={t.t} className="concept" style={{ animationDelay: `${-i}s` }}>
-            <circle cx={t.x} cy={t.y} r="3" />
-            <text x={t.x + 12} y={t.y + 4}>
-              {t.t}
-            </text>
-          </g>
-        ))}
-        <circle className="core-ring" cx="540" cy="230" r="57" />
-        <circle cx="540" cy="230" r="41" className="idea-core" />
+        <text x="330" y="63" textAnchor="middle" className="svg-micro">
+          RESEARCH
+        </text>
+        <text x="750" y="63" textAnchor="middle" className="svg-micro">
+          NEW IDEAS
+        </text>
+        <Wire d="M330 84V112Q330 138 540 138M750 84V112Q750 138 540 138M540 138V174" />
+        <circle cx="540" cy="230" r="84" className="idea-halo" />
+        <circle cx="540" cy="230" r="56" className="idea-core" />
         <path
           d="M521 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
           fill="var(--slate-12)"
         />
-        <circle cx="540" cy="173" r="3" className="accent-dot" />
+        <circle cx="540" cy="174" r="3" className="accent-dot" />
+        <text x="300" y="211" className="svg-micro">
+          PRIOR LOOP
+        </text>
+        <Wire d="M300 230H482" />
+        <text x="780" y="211" textAnchor="end" className="svg-micro">
+          YOUR GOAL
+        </text>
+        <Wire d="M598 230H780" />
         <Wire d="M540 288V424" active={phase < 3} />
-        <Wire d="M540 424H230V457M540 424V457M540 424H850V457" />
+        <Wire d="M230 424H850M230 424V457M540 424V457M850 424V457" />
         {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
           <g key={t}>
             <rect
@@ -303,7 +252,7 @@ function Ideas({ phase }: { phase: number }) {
             <Wire d={`M${t.x} 44V76Q${t.x} 98 180 98V132`} />
           </g>
         ))}
-        <circle cx="180" cy="180" r="76" className="mobile-orbit" />
+        <circle cx="180" cy="180" r="76" className="idea-halo" />
         <circle cx="180" cy="180" r="46" className="idea-core" />
         <path
           d="M161 192v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
@@ -364,17 +313,12 @@ function Dag({
         aria-label="Two parallel tasks feed three independent experiments. Every experiment waits for both tasks, never for another experiment."
       >
         <svg className="dag-wires" viewBox="0 0 1080 630" aria-hidden="true">
-          <Wire d="M540 0V23H330V58M540 23H750V58" />
-          <Wire d="M330 178V221Q330 245 354 245H726Q750 245 750 221V178" />
-          <circle cx="540" cy="245" r="4" className="junction" />
-          <Wire d="M540 245V270" active={phase >= 7 && phase < 10} />
+          <Wire d="M330 178V254M750 178V254M220 254H860M220 254V330M860 254V330" />
+          <Wire d="M540 254V330" active={phase >= 7 && phase < 10} />
           {[220, 540, 860].map((x) => (
-            <g key={x}>
-              <Wire d={`M540 270H${x}V330`} />
-              <path d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
-              <Wire d={`M${x} 470V505Q${x} 531 540 531V560`} />
-            </g>
+            <path key={x} d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
           ))}
+          <Wire d="M220 470V525H860V470M540 470V559" />
           <rect
             x="448"
             y="559"
@@ -393,17 +337,12 @@ function Dag({
           viewBox="0 0 360 550"
           aria-hidden="true"
         >
-          <Wire d="M180 0V25H85V50M180 25H275V50" />
-          <Wire d="M85 155V195Q85 210 100 210H260Q275 210 275 195V155" />
-          <circle cx="180" cy="210" r="3" className="junction" />
-          <Wire d="M180 210V235" active={phase >= 7 && phase < 10} />
+          <Wire d="M85 155V218M275 155V218M60 218H300M60 218V280M300 218V280" />
+          <Wire d="M180 218V280" active={phase >= 7 && phase < 10} />
           {[60, 180, 300].map((x) => (
-            <g key={x}>
-              <Wire d={`M180 235H${x}V280`} />
-              <path d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
-              <Wire d={`M${x} 410V440Q${x} 460 180 460V480`} />
-            </g>
+            <path key={x} d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
           ))}
+          <Wire d="M60 410V445H300V410M180 410V480" />
           <rect
             x="120"
             y="480"
