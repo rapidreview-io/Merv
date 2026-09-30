@@ -10,6 +10,8 @@ The staging environment runs the merv-typescript stack beside the legacy Python 
 VM: its own database schema, its own data volume, its own compose project and its own
 `/etc/merv/typescript.env`. Deploying here changes nothing on production.
 
+The 2026-09-30 00:38Z candidate passed HTTP checks but was withheld from production: the added publication event requires a new durable Research consumer ID. The follow-up versions the listener and verifies recovery with an existing v1 consumer record.
+
 | When (UTC)        | Release                                  | Image id       | Plugins active/total | Result | Checks                                                                                                             | Rollback                                                                |
 | ----------------- | ---------------------------------------- | -------------- | -------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | 2026-09-22T18:27Z | `20260922T182729Z-f8de3383-de642f070ed6` | `f8175d2b8f0b` | 53/53                | pass   | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-Cu-pJu-i.js 200; /ui/assets/index-DZBFiweU.css 200 | rollback ``                                                             |
@@ -52,5 +54,4 @@ The 2026-09-29 22:05Z CHECK used the SSH hostname as the public origin. Repeatin
 | 2026-09-30T00:21Z | `20260930T001831Z-245da7eb-d54a44a78a3e` | `a3838079aec0` | 52/55 no fleet/pi | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BOrivDWW.js 200; /ui/assets/index-D54s8kmI.css 200 | previous image `merv-typescript:20260930T001247Z-0743e3de-5f530f5fcfe5` |
 | 2026-09-30T00:40Z | `20260930T003811Z-215d3704-19c7e89227ef` | `be618c45e1f6` | 52/55 no fleet/pi | CHECK | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BOrivDWW.js 200; /ui/assets/index-D54s8kmI.css 200 | previous image `merv-typescript:20260930T001831Z-245da7eb-d54a44a78a3e` |
 | 2026-09-30T00:45Z | `20260930T004218Z-b4cd6c00-a0faefccf698` | `9436bebc8ea9` | 52/55 no fleet/pi | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BOrivDWW.js 200; /ui/assets/index-D54s8kmI.css 200 | previous image `merv-typescript:20260930T003811Z-215d3704-19c7e89227ef` |
-
-The 2026-09-30 00:38Z candidate passed HTTP checks but was withheld from production: the added publication event requires a new durable Research consumer ID. The follow-up versions the listener and verifies recovery with an existing v1 consumer record.
+| 2026-09-30T01:06Z | `20260930T010323Z-a4c09410-0aa3115c6ea9` | `3bb50a45a1e0` | 52/55 no fleet/pi | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CUgNsAe7.js 200; /ui/assets/index-CskcpOOB.css 200 | previous image `merv-typescript:20260930T004218Z-b4cd6c00-a0faefccf698` |
