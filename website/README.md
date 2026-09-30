@@ -1,8 +1,6 @@
-# Merv product website
+# Merv landing page
 
-Standalone public marketing site for runmerv.com. React + TypeScript + Vite; deploy `website/` as its own Vercel project using Node 24. The existing product UI and backend are separate.
-
-## Local development
+Public marketing site at runmerv.com. React + TypeScript + Vite, deployed from `website/` as the separate Vercel `runmerv` project. The product UI and backend are separate.
 
 ```sh
 npm ci
@@ -10,12 +8,28 @@ npm run dev
 npm run build
 ```
 
-## Product and design
+## Design and behavior
 
-Audience: ML / AI startups. Positioning: practical recursive self-improvement through reviewed research cycles. Content is grounded in the Merv repository; proprietary technique access is the owner's requested commercial positioning. The three-layer workflow illustration is not a live product interface. No fabricated customer logos or quantitative performance claims.
+Radix **dark Blue + dark Slate** throughout. A continuous research-system schematic has three layers:
 
-The vertical story follows ideation → agent execution → GPU infrastructure, with connecting paths, an active layer indicator, and portrait diagrams on mobile. Reduced-motion and pause controls stop animation. Visuals adapt the original RapidReview site's idea → parallel GPU experiments → reviewed findings → next cycle logic (`RR_Site/src/pages/LandingPage.jsx`). The design is original; no third-party component code copied. Color tokens come directly from @radix-ui/colors Blue and Slate, with a scoped dark palette for the agent layer. Icons use Lucide. Fonts are self-hosted.
+1. New ideas combine research, methods, prior findings and objectives.
+2. Two parallel preparation tasks feed three independent experiments. Both tasks gate every experiment. There are no experiment-to-experiment dependencies within the loop. E03 is a successor of a prior-loop hypothesis, not of a current-loop experiment.
+3. An illustrative fleet of 24 VM/container workers in six provider pools progresses through provisioning, bootstrap, execution, capture and release. It is not live telemetry. GPU shapes and job names are illustrative, not claims of live deployments or measured performance.
 
-Primary conversion is an email to gural@rapidreview.io to scope a research pilot. Documentation and open-source links point to current Merv resources. No form service, analytics, cookies, or private research data are used.
+Workload inspection, provider focus, pause, reduced motion, mobile schematics and keyboard navigation are supported. The DAG scrolls horizontally on small screens to preserve its topology. Background tabs suspend simulation updates. Content is prerendered for crawlers.
 
-Deploy runmerv.com as canonical. Redirect runmerv.ai and www variants to it. Keep domain DNS mail records intact.
+The primary CTA emails gural@rapidreview.io about a research pilot. No backend, analytics or tracking service is connected.
+
+## Provider grounding
+
+The 20 cloud adapters and logo assets were checked against the local `merv-sandboxes` repository:
+
+- `control/src/merv_sandboxes/providers/plugins.py`
+- `docs/providers/README.md` and individual provider guides
+- `ui/public/providers/` (existing vendor logo assets reused unchanged)
+
+Public coverage details distinguish Lambda A10 / Cloudflare live research workflows, DigitalOcean / GiveMeANode CPU transfer checks, and providers/shapes still requiring live validation. Tinker is shown as planned because no implemented integration was found in the inspected repositories. Provider logos identify adapters, not endorsements or partnerships.
+
+## Deployment
+
+Vercel builds with Node 24 and `npm run build`. runmerv.com is canonical; runmerv.ai and both www variants permanently redirect to it. Provider assets, fonts, social image, and favicon are self-hosted. The mail DNS records remain managed by IONOS.
