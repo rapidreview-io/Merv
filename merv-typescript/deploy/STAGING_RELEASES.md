@@ -48,3 +48,4 @@ VM: its own database schema, its own data volume, its own compose project and it
 
 The 2026-09-29 22:05Z CHECK used the SSH hostname as the public origin. Repeating the checks against the configured public origin, `https://rp-control-dev.eastus2.cloudapp.azure.com`, passed at 22:10Z on the same image. No application or proxy configuration changed; both results are retained.
 | 2026-09-29T23:20Z | `20260929T231748Z-5d49286f-e65d5dd4714a` | `4de69163cb80` | 52/55 no fleet/pi | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-CQofJueb.js 200; /ui/assets/index-D54s8kmI.css 200 | previous image `merv-typescript:20260929T230422Z-56801eed-29873e2c75c3` |
+| 2026-09-30T00:15Z | `20260930T001247Z-0743e3de-5f530f5fcfe5` | `674c9d5636d9` | 52/55 no fleet/pi | pass | vm 200/200/401/200/403, public 200/200, assets /ui/assets/index-BOrivDWW.js 200; /ui/assets/index-D54s8kmI.css 200 | previous image `merv-typescript:20260929T234049Z-3f0cce1b-388aca79d6ed` |
