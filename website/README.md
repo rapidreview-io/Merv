@@ -10,13 +10,13 @@ npm run build
 
 ## Design and behavior
 
-Radix **dark Blue + dark Slate** throughout. A continuous research-system schematic has three layers:
+Radix **dark Slate** with white type and rare Blue activity accents. Copy is deliberately sparse: system diagrams and motion carry the story, with workload and provider details available on click. Provider logos are displayed in monochrome. A continuous research-system schematic has three layers:
 
 1. New ideas combine research, methods, prior findings and objectives.
 2. Two parallel preparation tasks feed three independent experiments. Both tasks gate every experiment. There are no experiment-to-experiment dependencies within the loop. E03 is a successor of a prior-loop hypothesis, not of a current-loop experiment.
 3. An illustrative fleet of 24 VM/container workers in six provider pools progresses through provisioning, bootstrap, execution, capture and release. It is not live telemetry. GPU shapes and job names are illustrative, not claims of live deployments or measured performance.
 
-Workload inspection, provider focus, pause, reduced motion, mobile schematics and keyboard navigation are supported. The DAG scrolls horizontally on small screens to preserve its topology. Background tabs suspend simulation updates. Content is prerendered for crawlers.
+Workload inspection, provider focus, pause, reduced motion, mobile schematics and keyboard navigation are supported. The DAG adapts to a compact mobile layout that keeps both tasks and all three experiments visible together. Background tabs suspend simulation updates. Content is prerendered for crawlers.
 
 The primary CTA emails gural@rapidreview.io about a research pilot. No backend, analytics or tracking service is connected.
 

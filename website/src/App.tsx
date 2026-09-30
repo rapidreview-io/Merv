@@ -7,6 +7,10 @@ import {
   RotateCcw,
   Plus,
   Minus,
+  X,
+  Database,
+  FileBox,
+  Layers3,
 } from "lucide-react";
 
 const CONTACT = "mailto:gural@rapidreview.io?subject=Merv%20research%20pilot";
@@ -36,6 +40,7 @@ const pools = [
   {
     id: "lambda",
     shape: "8× H100 SXM · 80 GB",
+    chip: "8 × H100",
     region: "GPU INSTANCES",
     kind: "VM",
     work: "replay-adapter",
@@ -44,6 +49,7 @@ const pools = [
   {
     id: "aws",
     shape: "p4d.24xlarge · 8× A100",
+    chip: "8 × A100",
     region: "EC2 / CLOUD-INIT",
     kind: "VM",
     work: "routing-ablation",
@@ -52,6 +58,7 @@ const pools = [
   {
     id: "gcp",
     shape: "a3-highgpu-1g · 1× H100",
+    chip: "1 × H100",
     region: "COMPUTE ENGINE",
     kind: "VM",
     work: "routing-seed",
@@ -60,6 +67,7 @@ const pools = [
   {
     id: "azure",
     shape: "NC24ads A100 v4 · 1× A100",
+    chip: "1 × A100",
     region: "VIRTUAL MACHINES",
     kind: "VM",
     work: "held-out-eval",
@@ -68,6 +76,7 @@ const pools = [
   {
     id: "runpod",
     shape: "8× H100 SXM · 80 GB",
+    chip: "8 × H100",
     region: "GPU PODS",
     kind: "POD",
     work: "distill-sweep",
@@ -76,6 +85,7 @@ const pools = [
   {
     id: "modal",
     shape: "4× H100 · GPU sandbox",
+    chip: "4 × H100",
     region: "ELASTIC CONTAINERS",
     kind: "BOX",
     work: "successor-trial",
@@ -87,7 +97,6 @@ const nodes = [
     id: "T01",
     kind: "TASK",
     name: "Data engineering",
-    sub: "dedupe → tokenize → shard",
     x: 205,
     y: 58,
     w: 250,
@@ -100,7 +109,6 @@ const nodes = [
     id: "T02",
     kind: "TASK",
     name: "Evaluation harness",
-    sub: "pin baseline → build evals",
     x: 625,
     y: 58,
     w: 250,
@@ -113,7 +121,6 @@ const nodes = [
     id: "E01",
     kind: "EXPERIMENT",
     name: "Replay × LoRA",
-    sub: "retention / adaptation",
     x: 90,
     y: 330,
     w: 260,
@@ -126,7 +133,6 @@ const nodes = [
     id: "E02",
     kind: "EXPERIMENT",
     name: "Sparse routing",
-    sub: "quality / compute trade-off",
     x: 410,
     y: 330,
     w: 260,
@@ -138,8 +144,7 @@ const nodes = [
   {
     id: "E03",
     kind: "EXPERIMENT",
-    name: "Successor: distill",
-    sub: "build on the previous loop",
+    name: "Successor",
     x: 730,
     y: 330,
     w: 260,
@@ -189,79 +194,65 @@ function Wire({
     </g>
   );
 }
-function Ideas({ phase }: { phase: number }) {
+function Ideas() {
   const topics = [
-    {
-      x: 88,
-      y: 63,
-      name: "EXISTING RESEARCH",
-      sub: "papers / methods / evidence",
-    },
-    { x: 760, y: 66, name: "NEW HYPOTHESES", sub: "questions worth testing" },
-    { x: 42, y: 260, name: "PRIOR LOOP", sub: "retained findings" },
-    {
-      x: 816,
-      y: 260,
-      name: "YOUR OBJECTIVE",
-      sub: "model / data / constraints",
-    },
+    { x: 88, y: 63, name: "RESEARCH" },
+    { x: 760, y: 66, name: "NEW IDEAS" },
+    { x: 42, y: 260, name: "PRIOR LOOP" },
+    { x: 816, y: 260, name: "YOUR GOAL" },
   ];
   return (
     <div className="idea-field">
-      <div className="field-corner top-left" />
-      <div className="field-corner bottom-right" />
       <svg
         className="ideas-desktop"
         viewBox="0 0 1080 550"
         role="img"
-        aria-label="New hypotheses combine existing research, proven techniques and findings from prior loops into three testable directions"
+        aria-label="Existing research, new ideas, prior findings and your objective combine into three testable hypotheses."
       >
-        <defs>
-          <radialGradient id="coreGlow">
-            <stop stopColor="var(--blue-9)" stopOpacity=".27" />
-            <stop offset="1" stopColor="var(--blue-9)" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <circle cx="540" cy="230" r="245" fill="url(#coreGlow)" />
         <g className="orbital">
-          <ellipse cx="540" cy="230" rx="184" ry="86" />
-          <ellipse
-            cx="540"
-            cy="230"
-            rx="184"
-            ry="86"
-            transform="rotate(60 540 230)"
-          />
-          <ellipse
-            cx="540"
-            cy="230"
-            rx="184"
-            ry="86"
-            transform="rotate(120 540 230)"
-          />
+          {[0, 60, 120].map((angle) => (
+            <ellipse
+              key={angle}
+              cx="540"
+              cy="230"
+              rx="184"
+              ry="86"
+              transform={`rotate(${angle} 540 230)`}
+            />
+          ))}
         </g>
         <Wire d="M275 100H330Q355 100 380 130L482 205" />
         <Wire d="M805 108H750Q720 108 700 140L598 205" delay={-1} />
         <Wire d="M240 290H322Q350 290 375 275L480 241" delay={-2} />
         <Wire d="M840 290H762Q730 290 706 275L600 241" delay={-3} />
-        {topics.map((t) => (
-          <g key={t.name} className="idea-source">
-            <text x={t.x} y={t.y} className="svg-micro">
-              {t.name}
-            </text>
-            <text x={t.x} y={t.y + 25} className="svg-muted">
-              {t.sub}
-            </text>
-            <path d={`M${t.x} ${t.y + 42}h180`} className="source-rule" />
-            {[0, 1, 2, 3, 4].map((i) => (
-              <rect
-                key={i}
-                x={t.x + i * 29}
-                y={t.y + 53}
-                width={11 + i * 2}
-                height="3"
-                fill="var(--blue-7)"
-              />
+        {topics.map((t, index) => (
+          <g
+            key={t.name}
+            className="idea-source"
+            transform={`translate(${t.x} ${t.y})`}
+          >
+            <text className="svg-micro">{t.name}</text>
+            {[0, 1, 2].map((i) => (
+              <g key={i} transform={`translate(${i * 38} 20)`}>
+                {index % 2 === 0 ? (
+                  <>
+                    <path
+                      d="M4 0H25V29H4Z M8 5H20 M8 10H20 M8 15H17 M0 5V33H21"
+                      className="source-glyph"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <circle
+                      cx="15"
+                      cy="14"
+                      r={7 + i * 2}
+                      className="source-glyph"
+                    />
+                    <path d="M15 0V28M1 14H29" className="source-glyph" />
+                  </>
+                )}
+              </g>
             ))}
           </g>
         ))}
@@ -272,33 +263,21 @@ function Ideas({ phase }: { phase: number }) {
           { x: 634, y: 322, t: "distillation" },
         ].map((t, i) => (
           <g key={t.t} className="concept" style={{ animationDelay: `${-i}s` }}>
-            <circle cx={t.x} cy={t.y} r="4" />
+            <circle cx={t.x} cy={t.y} r="3" />
             <text x={t.x + 12} y={t.y + 4}>
               {t.t}
             </text>
           </g>
         ))}
         <circle className="core-ring" cx="540" cy="230" r="57" />
-        <circle
-          cx="540"
-          cy="230"
-          r="41"
-          fill="var(--blue-4)"
-          stroke="var(--blue-8)"
-        />
+        <circle cx="540" cy="230" r="41" className="idea-core" />
         <path
           d="M521 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
-          fill="var(--blue-11)"
+          fill="var(--slate-12)"
         />
-        <text x="540" y="371" textAnchor="middle" className="svg-micro">
-          COMBINE · CHALLENGE · PROPOSE
-        </text>
-        <Wire d="M540 389V424M540 424H230V457M540 424V457M540 424H850V457" />
-        {[
-          "replay × low-rank adaptation",
-          "sparse expert routing",
-          "successor distillation",
-        ].map((t, i) => (
+        <circle cx="540" cy="173" r="3" className="accent-dot" />
+        <Wire d="M540 288V424M540 424H230V457M540 424V457M540 424H850V457" />
+        {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
           <g key={t}>
             <rect
               x={100 + i * 310}
@@ -322,81 +301,58 @@ function Ideas({ phase }: { phase: number }) {
       </svg>
       <svg
         className="ideas-mobile"
-        viewBox="0 0 360 430"
+        viewBox="0 0 360 400"
         role="img"
-        aria-label="Existing research and new hypotheses combine with prior findings to create three experiment directions"
+        aria-label="Research and new ideas combine with prior findings and your goal into three experiment directions."
       >
         {[
-          { x: 15, t: "EXISTING RESEARCH", sub: "methods + evidence" },
-          { x: 205, t: "NEW HYPOTHESES", sub: "questions + intuition" },
+          { x: 70, t: "RESEARCH" },
+          { x: 290, t: "NEW IDEAS" },
         ].map((t) => (
           <g key={t.t}>
-            <text x={t.x} y="24" className="svg-micro">
+            <text x={t.x} y="24" textAnchor="middle" className="svg-micro">
               {t.t}
             </text>
-            <text x={t.x} y="49" className="svg-muted">
-              {t.sub}
-            </text>
-            <Wire d={`M${t.x + 67} 66V98Q${t.x + 67} 119 180 119V173`} />
+            <Wire d={`M${t.x} 44V76Q${t.x} 98 180 98V132`} />
           </g>
         ))}
-        <circle
-          cx="180"
-          cy="206"
-          r="76"
-          fill="none"
-          stroke="var(--blue-5)"
-          strokeDasharray="2 5"
+        <circle cx="180" cy="180" r="76" className="mobile-orbit" />
+        <circle cx="180" cy="180" r="46" className="idea-core" />
+        <path
+          d="M161 192v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
+          fill="var(--slate-12)"
         />
-        <circle
-          cx="180"
-          cy="206"
-          r="46"
-          fill="var(--blue-3)"
-          stroke="var(--blue-8)"
-        />
-        <text x="180" y="210" textAnchor="middle" className="svg-small">
-          COMBINE
-        </text>
-        <Wire d="M26 215H132" />
-        <text x="15" y="191" className="svg-micro">
+        <circle cx="180" cy="134" r="3" className="accent-dot" />
+        <Wire d="M26 185H132" />
+        <text x="15" y="167" className="svg-micro">
           PRIOR LOOP
         </text>
-        <Wire d="M228 215H334" />
-        <text x="268" y="191" className="svg-micro">
+        <Wire d="M228 185H334" />
+        <text x="268" y="167" className="svg-micro">
           YOUR GOAL
         </text>
-        <text x="180" y="302" textAnchor="middle" className="svg-micro">
-          CHALLENGE → PROPOSE
-        </text>
-        {["Replay × LoRA", "Sparse routing", "Distillation"].map((t, i) => (
+        {["Replay × LoRA", "Routing", "Distillation"].map((t, i) => (
           <g key={t}>
-            <Wire d={`M180 323V343H${60 + i * 120}V360`} />
+            <Wire d={`M180 228V313H${60 + i * 120}V330`} delay={-i} />
             <rect
               x={7 + i * 120}
-              y="360"
+              y="330"
               width="106"
               height="42"
               className="hypothesis"
             />
             <text
               x={60 + i * 120}
-              y="385"
+              y="355"
               textAnchor="middle"
               className="svg-small"
             >
               {t}
             </text>
-            <Wire d={`M${60 + i * 120} 402V430`} />
+            <Wire d={`M${60 + i * 120} 372V400`} />
           </g>
         ))}
       </svg>
-      <div className="idea-caption">
-        <span>PROPRIETARY RESEARCH + OPEN-ENDED EXPLORATION</span>
-        <span className="signal">
-          {phase < 6 ? "FORMING HYPOTHESES" : "DIRECTIONS IN MOTION"}
-        </span>
-      </div>
     </div>
   );
 }
@@ -406,152 +362,153 @@ function Dag({
   onSelect,
 }: {
   phase: number;
-  selected: string;
-  onSelect: (id: string) => void;
+  selected: string | null;
+  onSelect: (id: string | null) => void;
 }) {
   const taskStatus = phase < 2 ? "queued" : phase < 7 ? "running" : "complete";
   const expStatus = phase < 7 ? "waiting" : phase < 21 ? "running" : "review";
-  const selectedNode = nodes.find((n) => n.id === selected)!;
+  const selectedNode = nodes.find((n) => n.id === selected);
   return (
     <div className="dag-wrap">
-      <div className="dag-topline">
-        <span>LOOP / 001</span>
-        <span>2 TASKS → 3 INDEPENDENT EXPERIMENTS</span>
-        <span className="parallel-key">
-          <i /> PARALLEL BRANCHES
-        </span>
-      </div>
       <div
-        className="dag-scroll"
-        tabIndex={0}
-        role="region"
-        aria-label="Research DAG: scroll horizontally on small screens"
+        className="dag-canvas"
+        role="group"
+        aria-label="Two parallel tasks feed three independent experiments. Every experiment waits for both tasks, never for another experiment."
       >
-        <div className="dag-canvas">
-          <svg
-            className="dag-wires"
-            viewBox="0 0 1080 630"
-            role="img"
-            aria-label="Task T01 and task T02 run in parallel. All three experiments depend on both tasks; no experiment depends on another experiment. Results collect at review."
-          >
-            <defs>
-              <marker
-                id="arrow"
-                markerWidth="7"
-                markerHeight="7"
-                refX="6"
-                refY="3.5"
-                orient="auto"
-              >
-                <path d="m0 0 6 3.5L0 7" fill="none" stroke="var(--blue-8)" />
-              </marker>
-            </defs>
-            <Wire d="M540 0V23H330V58M540 23H750V58" active={phase < 7} />
-            <Wire
-              d="M330 178V221Q330 245 354 245H726Q750 245 750 221V178"
-              active={phase >= 7}
-            />
-            <text x="540" y="229" textAnchor="middle" className="svg-micro">
-              DATA + EVALUATIONS READY
-            </text>
-            {[220, 540, 860].map((x, i) => (
-              <g key={x}>
-                <Wire
-                  d={`M540 245V270H${x}V330`}
-                  delay={-i}
-                  active={phase >= 7}
-                />
-                <path
-                  d={`M${x} 313V329`}
-                  markerEnd="url(#arrow)"
-                  className="wire"
-                />
-                <Wire
-                  d={`M${x} 470V505Q${x} 531 540 531V560`}
-                  delay={-i}
-                  active={phase >= 20}
-                />
-              </g>
-            ))}
-            <rect
-              x="402"
-              y="559"
-              width="276"
-              height="48"
-              rx="24"
-              className="review-gate"
-            />
-            <text x="540" y="588" textAnchor="middle" className="svg-small">
-              Review evidence → reflect
-            </text>
-            <Wire d="M540 607V630" active={phase >= 20} />
-          </svg>
-          {nodes.map((n) => {
-            const status = n.kind === "TASK" ? taskStatus : expStatus;
-            return (
-              <button
-                key={n.id}
-                className={`dag-node ${n.kind.toLowerCase()} ${selected === n.id ? "selected" : ""} state-${status}`}
-                style={{
-                  left: `${n.x / 10.8}%`,
-                  top: `${n.y / 6.3}%`,
-                  width: `${n.w / 10.8}%`,
-                  height: `${n.h / 6.3}%`,
-                }}
-                onClick={() => onSelect(n.id)}
-                aria-pressed={selected === n.id}
-                aria-label={`${n.id} ${n.name}. ${status}. Inspect workload`}
-              >
-                <span className="node-id">
-                  <span>
-                    {n.id} / {n.kind}
-                  </span>
-                  <span className="node-status">
-                    <i />
-                    {status}
-                  </span>
-                </span>
-                <strong>{n.name}</strong>
-                <span className="node-sub">{n.sub}</span>
-                <span className="node-agents">
-                  {n.kind === "TASK" ? (
-                    <>
-                      <i />
-                      <i /> 2 agents
-                    </>
-                  ) : (
-                    <>
-                      <i />
-                      <i />
-                      <i />
-                      <i /> 4 parallel trials
-                    </>
-                  )}
-                </span>
-                <span
-                  className="node-meter"
-                  style={
-                    {
-                      "--work": `${status === "running" ? (n.kind === "TASK" ? (phase - 2) / 5 : (phase - 7) / 14) * 100 : status === "complete" || status === "review" ? 100 : 0}%`,
-                    } as CSSProperties
-                  }
-                />
-              </button>
-            );
-          })}
-        </div>
+        <svg className="dag-wires" viewBox="0 0 1080 630" aria-hidden="true">
+          <Wire d="M540 0V23H330V58M540 23H750V58" active={phase < 7} />
+          <Wire
+            d="M330 178V221Q330 245 354 245H726Q750 245 750 221V178"
+            active={phase >= 7}
+          />
+          <circle cx="540" cy="245" r="4" className="junction" />
+          {[220, 540, 860].map((x, i) => (
+            <g key={x}>
+              <Wire
+                d={`M540 245V270H${x}V330`}
+                delay={-i}
+                active={phase >= 7}
+              />
+              <path d={`m${x - 4} 322 4 6 4-6`} className="wire-arrow" />
+              <Wire
+                d={`M${x} 470V505Q${x} 531 540 531V560`}
+                delay={-i}
+                active={phase >= 20}
+              />
+            </g>
+          ))}
+          <rect
+            x="448"
+            y="559"
+            width="184"
+            height="48"
+            rx="24"
+            className="review-gate"
+          />
+          <text x="540" y="588" textAnchor="middle" className="svg-small">
+            Reflect ↻
+          </text>
+          <Wire d="M540 607V630" active={phase >= 20} />
+        </svg>
+        <svg
+          className="dag-wires-mobile"
+          viewBox="0 0 360 550"
+          aria-hidden="true"
+        >
+          <Wire d="M180 0V25H85V50M180 25H275V50" active={phase < 7} />
+          <Wire
+            d="M85 155V195Q85 210 100 210H260Q275 210 275 195V155"
+            active={phase >= 7}
+          />
+          <circle cx="180" cy="210" r="3" className="junction" />
+          {[60, 180, 300].map((x, i) => (
+            <g key={x}>
+              <Wire
+                d={`M180 210V235H${x}V280`}
+                delay={-i}
+                active={phase >= 7}
+              />
+              <path d={`m${x - 4} 272 4 6 4-6`} className="wire-arrow" />
+              <Wire
+                d={`M${x} 410V440Q${x} 460 180 460V480`}
+                delay={-i}
+                active={phase >= 20}
+              />
+            </g>
+          ))}
+          <rect
+            x="120"
+            y="480"
+            width="120"
+            height="40"
+            rx="20"
+            className="review-gate"
+          />
+          <text x="180" y="505" textAnchor="middle" className="svg-small">
+            Reflect ↻
+          </text>
+          <Wire d="M180 520V550" active={phase >= 20} />
+        </svg>
+        {nodes.map((n, index) => {
+          const task = n.kind === "TASK";
+          const status = task ? taskStatus : expStatus;
+          return (
+            <button
+              key={n.id}
+              className={`dag-node ${task ? "task" : "experiment"} ${selected === n.id ? "selected" : ""} state-${status}`}
+              style={
+                {
+                  "--x": `${n.x / 10.8}%`,
+                  "--y": `${n.y / 6.3}%`,
+                  "--w": `${n.w / 10.8}%`,
+                  "--h": `${n.h / 6.3}%`,
+                  "--mx": `${(task ? 10 + index * 190 : 5 + (index - 2) * 120) / 3.6}%`,
+                  "--my": `${(task ? 50 : 280) / 5.5}%`,
+                  "--mw": `${(task ? 150 : 110) / 3.6}%`,
+                  "--mh": `${(task ? 105 : 130) / 5.5}%`,
+                } as CSSProperties
+              }
+              onClick={() => onSelect(selected === n.id ? null : n.id)}
+              aria-expanded={selected === n.id}
+              aria-controls="workload-detail"
+              aria-label={`${n.id} ${n.name}. ${status}. Inspect workload`}
+            >
+              <span className="node-id">
+                <span>{n.id}</span>
+                <i className="node-status" title={status} />
+              </span>
+              <strong>{n.name}</strong>
+              <span className="node-agents" aria-hidden="true">
+                {Array.from({ length: task ? 2 : 4 }, (_, i) => (
+                  <i key={i} style={{ animationDelay: `${-i * 0.4}s` }} />
+                ))}
+              </span>
+              <span
+                className="node-meter"
+                style={
+                  {
+                    "--work": `${status === "running" ? (task ? (phase - 2) / 5 : (phase - 7) / 14) * 100 : status === "complete" || status === "review" ? 100 : 0}%`,
+                  } as CSSProperties
+                }
+              />
+            </button>
+          );
+        })}
       </div>
-      <div className="dag-inspector">
-        <span>{selectedNode.id}</span>
-        <p>{selectedNode.detail}</p>
-        <code>{selectedNode.hardware}</code>
-      </div>
-      <div className="dag-rule">
-        <span>Experiments wait on tasks. Never on each other.</span>
-        <span>
-          Next loop → new hypotheses + successor experiments{" "}
-          <RotateCcw size={12} />
-        </span>
+      <div id="workload-detail" hidden={!selectedNode}>
+        {selectedNode && (
+          <div className="dag-inspector">
+            <span>{selectedNode.id}</span>
+            <p>{selectedNode.detail}</p>
+            <code>{selectedNode.hardware}</code>
+            <button
+              onClick={() => onSelect(null)}
+              aria-label="Close workload details"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -567,35 +524,37 @@ function Fleet({
 }) {
   const stage =
     phase < 5
-      ? "QUEUED"
+      ? "Queued"
       : phase < 8
-        ? "PROVISIONING"
+        ? "Provisioning"
         : phase < 10
-          ? "BOOTSTRAPPING"
+          ? "Booting"
           : phase < 21
-            ? "RUNNING"
+            ? "Training"
             : phase < 24
-              ? "CAPTURING"
-              : "RELEASING";
+              ? "Capturing"
+              : "Releasing";
   return (
     <div className="infra-system">
-      <div className="dispatch">
-        <span>WORKLOAD DISPATCH</span>
-        <div>
-          <code>dataset/v4</code>
-          <code>eval-suite/v2</code>
-          <code>experiment spec</code>
-          <code>checkpoint lineage</code>
-        </div>
-        <ArrowDown size={18} />
-      </div>
+      <svg className="dispatch" viewBox="0 0 1080 100" aria-hidden="true">
+        <Wire d="M220 0V25H860V0M540 0V25M540 25V50H180V100M540 50V100M540 50H900V100" />
+        {[180, 540, 900].map((x) => (
+          <path key={x} d={`m${x - 4} 88 4 6 4-6`} className="wire-arrow" />
+        ))}
+      </svg>
       <div className="fleet-toolbar">
-        <div>
-          <span className="signal" /> COMPUTE FABRIC <b> / {stage}</b>
-        </div>
-        <span>ILLUSTRATIVE TOPOLOGY · 24 WORKERS</span>
-        <button onClick={() => setFocus(null)} disabled={!focus}>
-          ALL PROVIDERS
+        <span>24 workers</span>
+        <span className="fleet-state">
+          <i className="signal" />
+          {stage}
+        </span>
+        <button
+          onClick={() => setFocus(null)}
+          disabled={!focus}
+          aria-label="Show all providers"
+          title="Show all providers"
+        >
+          <RotateCcw size={13} />
         </button>
       </div>
       <div className="fleet-grid">
@@ -609,20 +568,14 @@ function Fleet({
               <button
                 className="pool-header"
                 onClick={() => setFocus(focus === p.id ? null : p.id)}
-                aria-pressed={focus === p.id}
+                aria-expanded={focus === p.id}
+                aria-controls={`pool-detail-${p.id}`}
                 aria-label={`Inspect ${provider[1]} infrastructure`}
               >
                 <Logo id={p.id} />
-                <span>
-                  <strong>{provider[1]}</strong>
-                  <small>{p.region}</small>
-                </span>
-                <ArrowUpRight size={15} />
+                <strong>{provider[1]}</strong>
+                <span>{p.chip}</span>
               </button>
-              <div className="pool-shape">
-                {p.shape}
-                <span>× 04</span>
-              </div>
               <div className="workers">
                 {[0, 1, 2, 3].map((w) => {
                   const tick = Math.max(0, phase - 8 - w * 0.28 - pi * 0.12);
@@ -638,22 +591,20 @@ function Fleet({
                             : phase < 24
                               ? "retain"
                               : "release";
+                  const id = `${p.kind}-${String(pi * 4 + w + 1).padStart(2, "0")}`;
                   return (
                     <div
                       className={`worker worker-${state}`}
                       key={w}
-                      style={
-                        { "--delay": `${(w + pi) * -0.3}s` } as CSSProperties
-                      }
+                      role="img"
+                      aria-label={`${id}: ${p.gpu} ${p.gpu === 1 ? "GPU" : "GPUs"}. ${p.work}.${w + 1}, ${state}. Illustrative workload.`}
+                      title={`${id} · ${p.work}.${w + 1} · ${state}`}
                     >
                       <div className="worker-id">
-                        <span>
-                          <i />
-                          {p.kind}-{String(pi * 4 + w + 1).padStart(2, "0")}
-                        </span>
-                        <span>{state}</span>
+                        <span>{id}</span>
+                        <i />
                       </div>
-                      <div className="gpu-bank">
+                      <div className="gpu-bank" aria-hidden="true">
                         {Array.from({ length: p.gpu }, (_, g) => (
                           <span
                             className="gpu"
@@ -669,21 +620,7 @@ function Fleet({
                           </span>
                         ))}
                       </div>
-                      <div className="job-label">
-                        <span>
-                          {p.work}.{w + 1}
-                        </span>
-                        <span>
-                          {phase >= 10 && phase < 21
-                            ? `${Math.floor(tick * (117 + w * 13))} steps`
-                            : state === "retain"
-                              ? "checkpoint → R2"
-                              : state === "release"
-                                ? "lease closed"
-                                : "env / cuda"}
-                        </span>
-                      </div>
-                      <div className="train-track">
+                      <div className="train-track" aria-hidden="true">
                         <i
                           style={{
                             width: `${phase < 8 ? 0 : phase > 21 ? 100 : Math.min(99, (tick / 13) * 100)}%`,
@@ -692,11 +629,11 @@ function Fleet({
                       </div>
                       <svg
                         className="worker-spark"
-                        viewBox="0 0 200 22"
+                        viewBox="0 0 200 28"
                         aria-hidden="true"
                       >
                         <path
-                          d={`M0 5L15 ${6 + w} 32 4 48 ${9 + pi} 62 8 79 14 95 11 111 16 130 13 146 17 161 16 179 19 200 20`}
+                          d={`M0 5L15 ${6 + w} 32 4 48 ${9 + pi} 62 8 79 14 95 11 111 16 130 13 146 21 161 19 179 24 200 25`}
                           pathLength="100"
                           strokeDasharray="100"
                           strokeDashoffset={
@@ -708,34 +645,36 @@ function Fleet({
                   );
                 })}
               </div>
-              <div className="pool-footer">
-                <span>stage → run → capture → release</span>
-                <span>↳ retained artifacts</span>
+              <div id={`pool-detail-${p.id}`} hidden={focus !== p.id}>
+                <div className="pool-detail">
+                  <span>{p.region}</span>
+                  <span>{p.shape}</span>
+                  <code>{p.work} × 4</code>
+                </div>
               </div>
             </article>
           );
         })}
       </div>
-      <div className="fabric-bottom">
-        <div className="artifact-stream">
-          <span>OUTPUT STREAM</span>
-          {[
-            "model.safetensors",
-            "eval-results.json",
-            "training.log",
-            "dataset.manifest",
-            "checkpoint/step-1200",
-          ].map((s, i) => (
-            <code key={s} style={{ animationDelay: `${-i * 1.2}s` }}>
-              {s}
-            </code>
-          ))}
-        </div>
-        <div className="storage-line">
-          <span>DATASETS / CHECKPOINTS / EVIDENCE</span>
-          <strong>Kept after the machine is gone.</strong>
+      <div
+        className="fabric-bottom"
+        aria-label="Datasets, checkpoints and evidence are retained after compute is released."
+      >
+        <svg viewBox="0 0 1080 66" aria-hidden="true">
+          <Wire d="M180 0V25H900V0M540 0V66" active={phase >= 21} />
+        </svg>
+        <div className="artifacts">
           <span>
-            SSH certificates · durable jobs · snapshots · object storage
+            <Database size={22} strokeWidth={1} />
+            Data
+          </span>
+          <span>
+            <Layers3 size={22} strokeWidth={1} />
+            Checkpoints
+          </span>
+          <span>
+            <FileBox size={22} strokeWidth={1} />
+            Evidence
           </span>
         </div>
       </div>
@@ -746,7 +685,7 @@ export default function App() {
   const [phase, setPhase] = useState(12),
     [paused, setPaused] = useState(false),
     [reduced, setReduced] = useState(false),
-    [selected, setSelected] = useState("E01"),
+    [selected, setSelected] = useState<string | null>(null),
     [focus, setFocus] = useState<string | null>(null),
     [active, setActive] = useState(0);
   useEffect(() => {
@@ -783,16 +722,14 @@ export default function App() {
       <a href="#main" className="skip">
         Skip to content
       </a>
-      <div className="blue-noise" aria-hidden="true" />
       <header>
         <a className="brand" href="#" aria-label="Merv home">
           <Mark />
           merv
         </a>
-        <span className="header-label">RECURSIVE SELF-IMPROVEMENT</span>
         <nav aria-label="Main navigation">
           <a href="https://rapidreview.io/docs/merv">
-            Documentation <ArrowUpRight size={12} />
+            Docs <ArrowUpRight size={12} />
           </a>
           <a href={CONTACT}>
             Run with us <ArrowUpRight size={14} />
@@ -802,76 +739,63 @@ export default function App() {
       <main id="main">
         <div className="opening">
           <div>
-            <span className="eyebrow">
-              <i /> RESEARCH SYSTEM / MERV
-            </span>
+            <span className="eyebrow">SELF-IMPROVING RESEARCH</span>
             <h1>
-              Ideas become
-              <br />
-              <span>more than ideas.</span>
+              Research,
+              <br className="hero-break" /> <span>in motion.</span>
             </h1>
           </div>
-          <div className="opening-aside">
-            <p>
-              New directions. Parallel experiments.
-              <br />
-              The infrastructure to keep going.
-            </p>
-            <a href="#ideas">
-              FOLLOW ONE LOOP <ArrowDown size={14} />
-            </a>
-          </div>
+          <a
+            className="follow-loop"
+            href="#ideas"
+            aria-label="Explore the research loop"
+          >
+            <ArrowDown size={28} strokeWidth={1} />
+          </a>
         </div>
         <div className="system-controls">
           <div className="layer-tabs" aria-label="Jump to a layer">
-            {["Ideas", "Workloads", "Infrastructure"].map((s, i) => (
+            {["Ideas", "Experiments", "Compute"].map((s, i) => (
               <a
                 href={"#" + ["ideas", "workloads", "infrastructure"][i]}
                 key={s}
                 aria-current={active === i ? "step" : undefined}
               >
-                0{i + 1}
+                <span className="tab-index">0{i + 1}</span>
                 <span>{s}</span>
               </a>
             ))}
           </div>
+          <span className="simulation">Illustrative loop</span>
           <button
             onClick={() => setPaused(!paused)}
             disabled={reduced}
-            aria-label={stopped ? "Play simulation" : "Pause simulation"}
-          >
-            {stopped ? <Play size={12} /> : <Pause size={12} />}
-            <span>
-              {reduced
-                ? "REDUCED MOTION"
+            aria-label={
+              reduced
+                ? "Animation disabled: reduced motion"
                 : stopped
-                  ? "PLAY LOOP"
-                  : "PAUSE LOOP"}
-            </span>
+                  ? "Play simulation"
+                  : "Pause simulation"
+            }
+            title={
+              reduced
+                ? "Reduced motion"
+                : stopped
+                  ? "Play simulation"
+                  : "Pause simulation"
+            }
+          >
+            {stopped ? <Play size={13} /> : <Pause size={13} />}
           </button>
-          <span className="simulation">
-            ILLUSTRATIVE LOOP / NOT LIVE TELEMETRY
-          </span>
         </div>
         <section id="ideas" data-layer="0" className="layer idea-layer">
           <div className="layer-title">
             <span className="layer-index">01</span>
-            <div>
-              <span className="eyebrow">IDEATION</span>
-              <h2>
-                Find the next <em>what if.</em>
-              </h2>
-            </div>
-            <p>
-              Invent a direction.
-              <br />
-              Combine what already works.
-            </p>
+            <h2>Ideas, combined.</h2>
           </div>
-          <Ideas phase={phase} />
+          <Ideas />
         </section>
-        <div className="layer-bridge">
-          <span>HYPOTHESES → EXECUTION GRAPH</span>
+        <div className="layer-bridge" aria-hidden="true">
           <i />
           <i />
           <i />
@@ -879,22 +803,11 @@ export default function App() {
         <section id="workloads" data-layer="1" className="layer workload-layer">
           <div className="layer-title">
             <span className="layer-index">02</span>
-            <div>
-              <span className="eyebrow">SCHEMA → ACTION</span>
-              <h2>One loop. Many things moving.</h2>
-            </div>
-            <p>
-              Tasks prepare the ground.
-              <br />
-              Experiments explore in parallel.
-            </p>
+            <h2>Experiments, parallel.</h2>
           </div>
           <Dag phase={phase} selected={selected} onSelect={setSelected} />
         </section>
-        <div className="layer-bridge dispatch-bridge">
-          <span>PARALLEL WORKLOADS → PROVISIONED COMPUTE</span>
-          <i />
-          <i />
+        <div className="layer-bridge dispatch-bridge" aria-hidden="true">
           <i />
         </div>
         <section
@@ -904,31 +817,11 @@ export default function App() {
         >
           <div className="layer-title">
             <span className="layer-index">03</span>
-            <div>
-              <span className="eyebrow">INFRASTRUCTURE</span>
-              <h2>
-                Under every idea,
-                <br />
-                <em>a lot of machines.</em>
-              </h2>
-            </div>
-            <p>
-              VMs spin up. GPUs get to work.
-              <br />
-              Agents stay with the research.
-            </p>
+            <h2>Compute, on demand.</h2>
           </div>
           <Fleet phase={phase} focus={focus} setFocus={setFocus} />
           <div className="integrations">
-            <div className="integration-intro">
-              <span className="eyebrow">THE PROVIDER LAYER</span>
-              <h3>
-                One research workflow.
-                <br />
-                An entire compute ecosystem.
-              </h3>
-              <span>20 cloud provider adapters in Merv Sandboxes.</span>
-            </div>
+            <h3>20 clouds. One system.</h3>
             <div className="provider-wall">
               {providers.map((p) => (
                 <div key={p[0]}>
@@ -939,15 +832,16 @@ export default function App() {
             </div>
           </div>
           <div className="training-api">
-            <div className="tinker-mark" aria-hidden="true">
-              tinker
+            <span className="tinker-mark">tinker</span>
+            <span>
+              Training API <span className="planned">Planned</span>
+            </span>
+            <div className="api-wire" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
             </div>
-            <div>
-              <span className="eyebrow">TRAINING APIs / PLANNED</span>
-              <h3>Another path from agent to training run.</h3>
-              <p>Tinker is part of the integration roadmap.</p>
-            </div>
-            <span className="api-wire">SDK → TRAIN → SAMPLE → EVALUATE</span>
           </div>
           <details className="coverage">
             <summary>
@@ -965,23 +859,15 @@ export default function App() {
           </details>
         </section>
         <div className="loop-return">
-          <RotateCcw size={20} />
-          <span>Evidence returns. New ideas emerge.</span>
           <a href="#ideas">
-            NEXT LOOP <ArrowUpRight size={14} />
+            <RotateCcw size={21} strokeWidth={1} />
+            Learn. Repeat.
           </a>
         </div>
         <section className="closing">
-          <div>
-            <span className="eyebrow">BUILD YOUR RESEARCH LOOP</span>
-            <h2>
-              What are you
-              <br />
-              trying to discover?
-            </h2>
-          </div>
+          <h2>Your next idea?</h2>
           <a href={CONTACT}>
-            Let’s put it in motion <ArrowUpRight size={25} />
+            Let’s run it <ArrowUpRight size={24} strokeWidth={1} />
           </a>
         </section>
       </main>
@@ -990,7 +876,6 @@ export default function App() {
           <Mark />
           merv
         </a>
-        <span>Research that improves itself.</span>
         <div>
           <a href="https://github.com/rapidreview-io/Merv">GitHub ↗</a>
           <a href="https://rapidreview.io/docs/merv">Docs ↗</a>
