@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12\u201319 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4.",
   "definitions": [
     {
       "name": "consolidation",
@@ -334,97 +334,97 @@
       "name": "task",
       "version": 27,
       "fingerprint": "a515a196de5c7e138ae8bc4123e956c3bbe98591ab76a1d06cefede1da888618",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 20,
       "fingerprint": "44969c4198f2d18e5a7af274666fd4dade18b75edff21542873336b22b0febfc",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 21,
       "fingerprint": "9cc6eeb619af1a49cba24796cb904c569b2462898517e6ffd9a2bec25ef595ac",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 22,
       "fingerprint": "c6de42695a23860579e8c3a20c3e79ea6e8f538890c944c75fc9d695964a6de4",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 23,
       "fingerprint": "486121e39e03253d7376335f75a0581f37e7e6186d885222e2fd5e761e91bd97",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 24,
       "fingerprint": "56883b1a32898cc534de1d5420e24340bb394272ac6fb5f39c24cacd2034f67e",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 25,
       "fingerprint": "1983903d412cca42e71e22d706b728f30fcc1f45174d355f2645be8f7be3f097",
-      "published": false
+      "published": true
     },
     {
       "name": "task",
       "version": 26,
       "fingerprint": "4e1e1d31c3bb725bdca6652ca194726f88d976064ed7be19cc5d7c9bdd726139",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 17,
       "fingerprint": "2f696a9c1e004d5b58192148b0a4ef8a2453ab28135f333b89e1cc61898667ff",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 18,
       "fingerprint": "f55eb2ac436674cff863436cece3fb443b650de0816fc3fc4dfbc1253793eb96",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 19,
       "fingerprint": "e79f73e511e1437c0cc3547e2b57c7cdfaf406b79c352c446f6c895162b2e28f",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 20,
       "fingerprint": "6b85f29884337cbf7b92a105c4bf45609456a9a23e3ba3cb99409c81740f03e4",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 21,
       "fingerprint": "d9892ad0835a516527335bfce782d8fa6f6d3184d95d02c5d8b357cd60370045",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 22,
       "fingerprint": "5f687b2e68a2e5bdef8ea795dcb974f67f836bb60f6e011ee393d323d7c41850",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 23,
       "fingerprint": "25e089b8453d20161e464f32d663ff6a9634568db4b610a0e659af3e5d8c3149",
-      "published": false
+      "published": true
     },
     {
       "name": "experiment",
       "version": 24,
       "fingerprint": "85177d4dd113dd6a45138dbc37523d39341920147c404179d8dccf3ef6e05373",
-      "published": false
+      "published": true
     }
   ],
   "policies": [
@@ -1551,336 +1551,336 @@
       "version": 18,
       "state": "planned",
       "fingerprint": "e1b391aaf4264b0cbb25e03ba26ecdb2f3faf49645c266c3eafc86940ca697f9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 24,
       "state": "in_review",
       "fingerprint": "62615aaff9c6801bd3c76498b41f0e51ba01c9013995b680e79245cec0b5a0fb",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 25,
       "state": "in_review",
       "fingerprint": "2bb654be511fdde0693e898d24a0354558e94d3e3a38f9cd29f02699a10993c2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 20,
       "state": "in_progress",
       "fingerprint": "1d73789b8ff3e4db7f18dd2b60bae7865fabe54c4c51b420b528bffeee6466a2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 20,
       "state": "in_review",
       "fingerprint": "62615aaff9c6801bd3c76498b41f0e51ba01c9013995b680e79245cec0b5a0fb",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 21,
       "state": "in_progress",
       "fingerprint": "3ae8567b4ba99844b5557e38a5f693375f1520f1f16adafdab53e0a402287e72",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 21,
       "state": "in_review",
       "fingerprint": "2bb654be511fdde0693e898d24a0354558e94d3e3a38f9cd29f02699a10993c2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 22,
       "state": "in_progress",
       "fingerprint": "4c91885ae07c8f7170f7d768b4d4ea015a07c563bcec597eedad5075eba638d9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 22,
       "state": "in_review",
       "fingerprint": "2bb654be511fdde0693e898d24a0354558e94d3e3a38f9cd29f02699a10993c2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 23,
       "state": "in_progress",
       "fingerprint": "05899bd27694194767c14a9e6e69180503db692df75bc45b199b25af1412c5d0",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 23,
       "state": "in_review",
       "fingerprint": "792d096e068fc67cbb1e9fe2493f8ca6c6bf80538efd5f53a6cce6fb3957448c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 24,
       "state": "in_progress",
       "fingerprint": "1857b85e957a2d71fb2ce6185c850ca9b3cf1051ab2bfed55ca3ad57569d6908",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 17,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 17,
       "state": "experiment_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 17,
       "state": "planned",
       "fingerprint": "e1b391aaf4264b0cbb25e03ba26ecdb2f3faf49645c266c3eafc86940ca697f9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 17,
       "state": "running",
       "fingerprint": "cd6aa3a3589bd163fe5601dbde7da47cb80f04c6d5f68346683473f9caa89390",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 18,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 18,
       "state": "experiment_review",
       "fingerprint": "0ef495d58331edd1d8674974183b14994d035118e1a434cc6e329f7a78f19175",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 18,
       "state": "running",
       "fingerprint": "4d4c8e55ad3278881195485f19e5de51631a0c34b670abfae99412210b2b8699",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 19,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 19,
       "state": "experiment_review",
       "fingerprint": "0ef495d58331edd1d8674974183b14994d035118e1a434cc6e329f7a78f19175",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 19,
       "state": "planned",
       "fingerprint": "e1b391aaf4264b0cbb25e03ba26ecdb2f3faf49645c266c3eafc86940ca697f9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 19,
       "state": "running",
       "fingerprint": "cde2dcbda0687a319713cc6da820c612b09d3eddd594691e4ac6c0dd71ec5473",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 20,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 25,
       "state": "in_progress",
       "fingerprint": "0955d5c07a791c00b1ef59ddcd57b457e68fb3775fe4358d36a17d1f99c60520",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 20,
       "state": "experiment_review",
       "fingerprint": "102c09ffeef49d343f1037f28a6ed3eda84c550d1d3be4a80e907550eed5784c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 20,
       "state": "planned",
       "fingerprint": "e1b391aaf4264b0cbb25e03ba26ecdb2f3faf49645c266c3eafc86940ca697f9",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 20,
       "state": "running",
       "fingerprint": "be1e951d5c4c518134b032c3ec23e2187b96c464afa3a4c5a72d77d811764cbf",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 21,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 21,
       "state": "experiment_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 21,
       "state": "planned",
       "fingerprint": "638b64f393e15abcf019a85245abe6808ea7bcf0a84781759ef8f281640b605f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 21,
       "state": "running",
       "fingerprint": "43fb259616b3152ccca524a8f0e947770d3f8d634be835b3641ecdeeb8ddd588",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 22,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 22,
       "state": "experiment_review",
       "fingerprint": "0ef495d58331edd1d8674974183b14994d035118e1a434cc6e329f7a78f19175",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 22,
       "state": "planned",
       "fingerprint": "638b64f393e15abcf019a85245abe6808ea7bcf0a84781759ef8f281640b605f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 22,
       "state": "running",
       "fingerprint": "b543d7ed9e5aab80e309cb60f0b087775d85f3b8007917f0901c8c4fa20200b2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 23,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 23,
       "state": "experiment_review",
       "fingerprint": "0ef495d58331edd1d8674974183b14994d035118e1a434cc6e329f7a78f19175",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 26,
       "state": "in_progress",
       "fingerprint": "7e3f0d70520c9dbc9b77e98d15039209f58e2c6121b38234684c85606622be60",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 26,
       "state": "in_review",
       "fingerprint": "2bb654be511fdde0693e898d24a0354558e94d3e3a38f9cd29f02699a10993c2",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 27,
       "state": "in_progress",
       "fingerprint": "94c4d5cf36ca8261f7a932db3a29efe3786d54ab07e76cca2a0ee6d48a5531d3",
-      "published": false
+      "published": true
     },
     {
       "workflow": "task",
       "version": 27,
       "state": "in_review",
       "fingerprint": "792d096e068fc67cbb1e9fe2493f8ca6c6bf80538efd5f53a6cce6fb3957448c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 23,
       "state": "planned",
       "fingerprint": "638b64f393e15abcf019a85245abe6808ea7bcf0a84781759ef8f281640b605f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 23,
       "state": "running",
       "fingerprint": "717bf155313293014b4e970733a5336a3cb65c738bd17751df6016f42ce270d8",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 24,
       "state": "design_review",
       "fingerprint": "ac06734d47e75ca678d60134f859b1a50cdccfce21f438fda1b7eb7f2c15f9e1",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 24,
       "state": "experiment_review",
       "fingerprint": "102c09ffeef49d343f1037f28a6ed3eda84c550d1d3be4a80e907550eed5784c",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 24,
       "state": "planned",
       "fingerprint": "638b64f393e15abcf019a85245abe6808ea7bcf0a84781759ef8f281640b605f",
-      "published": false
+      "published": true
     },
     {
       "workflow": "experiment",
       "version": 24,
       "state": "running",
       "fingerprint": "9910afa932eb586dd6c66d38d3030b8d51002f12bd4d3451fe777b415dd508ed",
-      "published": false
+      "published": true
     }
   ],
   "recipes": [
