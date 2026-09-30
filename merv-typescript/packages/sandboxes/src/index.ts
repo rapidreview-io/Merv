@@ -735,10 +735,13 @@ export const sandboxesPlugin = {
       if (service.compute?.download && ctx.artifacts.registerFileProvider)
         ctx.effect(() =>
           ctx.artifacts.registerFileProvider!('sandboxes', {
-            download: async (projectId, reference) => ({
-              ...(await service.compute!.download!(projectId, reference)),
-              expiresAt: new Date(Date.now() + 60_000).toISOString(),
-            }),
+            download: async (projectId, reference) => {
+              const link = await service.compute!.download!(projectId, reference);
+              return {
+                ...link,
+                expiresAt: link.expiresAt ?? new Date(Date.now() + 60_000).toISOString(),
+              };
+            },
           }),
         );
     });

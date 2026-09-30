@@ -218,7 +218,7 @@ export interface SandboxCompute {
   get(projectId: string, runId: string): Promise<SandboxComputeRun>;
   logs?(projectId: string, runId: string): Promise<Json>;
   cancel(projectId: string, runId: string): Promise<void>;
-  download?(projectId: string, objectId: string): Promise<{ url: string }>;
+  download?(projectId: string, objectId: string): Promise<{ url: string; expiresAt?: string }>;
   retain?(projectId: string, objectId: string): Promise<void>;
   rent?(projectId: string, input: SandboxRentalInput): Promise<SandboxRental>;
   findRental?(projectId: string, key: string): Promise<SandboxRental | null>;

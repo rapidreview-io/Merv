@@ -329,11 +329,14 @@ export class SandboxComputeAdapter implements SandboxCompute {
         : {}),
     } as Json;
   }
-  async download(projectId: string, objectId: string): Promise<{ url: string }> {
+  async download(
+    projectId: string,
+    objectId: string,
+  ): Promise<{ url: string; expiresAt?: string }> {
     const response = object(
       await this.client.read(
         this.entry(projectId),
-        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/download-short`,
+        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/download`,
       ),
     );
     const record = object(response.object);
@@ -359,7 +362,21 @@ export class SandboxComputeAdapter implements SandboxCompute {
       'Captured output download is outside configured storage origins',
       502,
     );
-    return { url: url.href };
+    // Preserve the provider's ordinary link lifetime (one hour in production), including
+    // when a capture is an input to a later GPU job. Report the signed expiry when available.
+    const issued = url.searchParams
+      .get('X-Amz-Date')
+      ?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+    const seconds = Number(url.searchParams.get('X-Amz-Expires'));
+    const time = issued
+      ? Date.parse(`${issued[1]}-${issued[2]}-${issued[3]}T${issued[4]}:${issued[5]}:${issued[6]}Z`)
+      : NaN;
+    return {
+      url: url.href,
+      ...(Number.isFinite(time) && seconds > 0 && seconds <= 86400
+        ? { expiresAt: new Date(time + seconds * 1000).toISOString() }
+        : {}),
+    };
   }
   async cancel(projectId: string, runId: string): Promise<void> {
     try {

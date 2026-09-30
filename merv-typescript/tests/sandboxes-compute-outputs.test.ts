@@ -51,7 +51,7 @@ test('capture precedes release, retains partial evidence, and refreshes scoped d
     }
     if (url.endsWith('/v1/workflows/pipe_capture')) return json(workflow);
     if (url.endsWith('/v1/storage/objects/obj_model')) return json(record);
-    if (url.endsWith('/v1/storage/objects/obj_model/download-short')) {
+    if (url.endsWith('/v1/storage/objects/obj_model/download')) {
       downloadRequests++;
       return json({ object: record, url: downloadUrl });
     }
@@ -111,6 +111,12 @@ test('capture precedes release, retains partial evidence, and refreshes scoped d
   downloadUrl = 'https://bucket.example/model?signature=refreshed';
   assert.deepEqual(await adapter.download('project_capture', 'obj_model'), { url: downloadUrl });
   assert.equal(downloadRequests, 2);
+  downloadUrl =
+    'https://bucket.example/model?X-Amz-Date=20260930T180000Z&X-Amz-Expires=3600&X-Amz-Signature=test';
+  assert.deepEqual(await adapter.download('project_capture', 'obj_model'), {
+    url: downloadUrl,
+    expiresAt: '2026-09-30T19:00:00.000Z',
+  });
 
   workflow.state = 'failed';
   workflow.nodes.capture.state = 'failed';
