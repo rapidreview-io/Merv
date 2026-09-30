@@ -238,7 +238,7 @@ function ResearchInput({
   y: number;
   kind: "user" | "research" | "evidence";
   label: string;
-  caption: string;
+  caption?: string;
 }) {
   const Icon =
     kind === "user"
@@ -247,10 +247,10 @@ function ResearchInput({
         ? LibraryBig
         : Database;
   return (
-    <g className="research-input">
+    <g className={`research-input input-${kind}`}>
       <Icon
         x={x - 11}
-        y={y - 45}
+        y={kind === "user" ? y - 45 : y - 11}
         width={22}
         height={22}
         strokeWidth={1}
@@ -260,15 +260,17 @@ function ResearchInput({
       <text
         key={label}
         x={x}
-        y={y}
+        y={kind === "user" ? y : y + 37}
         textAnchor="middle"
         className={`input-title ${kind === "user" ? "input-rotating" : ""}`}
       >
         {label}
       </text>
-      <text x={x} y={y + 19} textAnchor="middle" className="input-caption">
-        {caption}
-      </text>
+      {caption && (
+        <text x={x} y={y + 19} textAnchor="middle" className="input-caption">
+          {caption}
+        </text>
+      )}
     </g>
   );
 }
@@ -283,7 +285,7 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
       ? "Problem"
       : "Model";
   const description =
-    "Your problem or model, Merv’s in-house research index, and evidence learned from prior runs feed Merv. The output is the parallel experiment graph in the next layer.";
+    "Set your problem or model. Merv provides the prior research and evidence, grouped inside the system. Together they produce parallel experiments for applied AI research.";
   return (
     <div className="idea-field" ref={ref}>
       <svg
@@ -299,34 +301,37 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
           label={userInput}
           caption="Set by you"
         />
-        <ResearchInput
-          x={left}
-          y={207}
-          kind="research"
-          label="Prior research"
-          caption="In-house index"
-        />
-        <ResearchInput
-          x={right}
-          y={207}
-          kind="evidence"
-          label="Evidence"
-          caption="From prior runs"
-        />
-        <Wire d={`M${center} 105V168`} />
-        <Wire d={`M${left + 76} 230H${center - 62}`} />
-        <Wire d={`M${right - 76} 230H${center + 62}`} />
-        <path
-          d={`m${center - 4} 162 4 6 4-6M${center - 68} 226l6 4-6 4M${center + 68} 226l-6 4 6 4`}
-          className="wire-arrow"
-        />
-        <circle cx={center} cy="230" r="84" className="idea-halo" />
-        <circle cx={center} cy="230" r="56" className="idea-core" />
-        <path
-          d={`M${center - 19} 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z`}
-          fill="var(--slate-12)"
-        />
-        <circle cx={center} cy="174" r="3" className="accent-dot" />
+        <Wire d={`M${center} 105V152`} />
+        <g className="provided-context">
+          <title>Provided by Merv</title>
+          <rect
+            x={width * 0.07}
+            y="152"
+            width={width * 0.86}
+            height="176"
+            className="provided-field"
+          />
+          <ResearchInput
+            x={left}
+            y={230}
+            kind="research"
+            label="Prior research"
+          />
+          <ResearchInput x={right} y={230} kind="evidence" label="Evidence" />
+          <Wire d={`M${center} 152V168`} />
+          <Wire d={`M${left + 22} 230H${center - 62}`} />
+          <Wire d={`M${right - 22} 230H${center + 62}`} />
+          <path
+            d={`m${center - 4} 162 4 6 4-6M${center - 68} 226l6 4-6 4M${center + 68} 226l-6 4 6 4`}
+            className="wire-arrow"
+          />
+          <circle cx={center} cy="230" r="56" className="idea-core" />
+          <path
+            d={`M${center - 19} 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z`}
+            fill="var(--slate-12)"
+          />
+          <circle cx={center} cy="174" r="3" className="accent-dot" />
+        </g>
         <Wire d={`M${center} 288V420`} active={phase < 3} />
         <text x={center + 16} y="373" className="svg-small">
           Experiments
@@ -346,34 +351,37 @@ function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
           label={userInput}
           caption="Set by you"
         />
-        <ResearchInput
-          x={55}
-          y={207}
-          kind="research"
-          label="Prior research"
-          caption="In-house index"
-        />
-        <ResearchInput
-          x={305}
-          y={207}
-          kind="evidence"
-          label="Evidence"
-          caption="From prior runs"
-        />
-        <Wire d="M180 105V178" />
-        <Wire d="M109 230H128" />
-        <Wire d="M251 230H232" />
-        <path
-          d="m176 172 4 6 4-6M122 226l6 4-6 4M238 226l-6 4 6 4"
-          className="wire-arrow"
-        />
-        <circle cx="180" cy="230" r="70" className="idea-halo" />
-        <circle cx="180" cy="230" r="46" className="idea-core" />
-        <path
-          d="M161 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
-          fill="var(--slate-12)"
-        />
-        <circle cx="180" cy="184" r="3" className="accent-dot" />
+        <Wire d="M180 105V152" />
+        <g className="provided-context">
+          <title>Provided by Merv</title>
+          <rect
+            x="0"
+            y="152"
+            width="360"
+            height="168"
+            className="provided-field"
+          />
+          <ResearchInput
+            x={55}
+            y={230}
+            kind="research"
+            label="Prior research"
+          />
+          <ResearchInput x={305} y={230} kind="evidence" label="Evidence" />
+          <Wire d="M180 152V178" />
+          <Wire d="M77 230H128" />
+          <Wire d="M283 230H232" />
+          <path
+            d="m176 172 4 6 4-6M122 226l6 4-6 4M238 226l-6 4 6 4"
+            className="wire-arrow"
+          />
+          <circle cx="180" cy="230" r="46" className="idea-core" />
+          <path
+            d="M161 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
+            fill="var(--slate-12)"
+          />
+          <circle cx="180" cy="184" r="3" className="accent-dot" />
+        </g>
         <Wire d="M180 278V380" active={phase < 3} />
         <text x="196" y="337" className="svg-small">
           Experiments
@@ -417,21 +425,23 @@ function Dag({
         >
           <DagArrow id="dag-arrow" />
           <Wire
-            d={`M${taskLeft.cx - 42} 178L${experimentLeft.cx} 328`}
-            markerEnd="url(#dag-arrow)"
-          />
-          <Wire
-            d={`M${taskLeft.cx + 42} 178L${center} 328`}
+            d={`M${taskLeft.cx} 178V254`}
             active={phase >= 7 && phase < 10}
+          />
+          <Wire
+            d={`M${taskLeft.cx} 254H${experimentLeft.cx}V328`}
             markerEnd="url(#dag-arrow)"
           />
           <Wire
-            d={`M${taskRight.cx} 178L${experimentRight.cx} 328`}
+            d={`M${taskLeft.cx} 254H${center}V328`}
             markerEnd="url(#dag-arrow)"
           />
-          <Wire d={`M${experimentLeft.cx} 470L${center - 68} 559`} />
+          <Wire
+            d={`M${taskRight.cx} 178V254H${experimentRight.cx}V328`}
+            markerEnd="url(#dag-arrow)"
+          />
+          <Wire d={`M${experimentLeft.cx} 470V525H${experimentRight.cx}V470`} />
           <Wire d={`M${center} 470V559`} />
-          <Wire d={`M${experimentRight.cx} 470L${center + 68} 559`} />
           <rect
             x={center - 92}
             y="559"
@@ -451,16 +461,12 @@ function Dag({
           aria-hidden="true"
         >
           <DagArrow id="dag-arrow-mobile" />
-          <Wire d="M67 155L60 278" markerEnd="url(#dag-arrow-mobile)" />
-          <Wire
-            d="M103 155L180 278"
-            active={phase >= 7 && phase < 10}
-            markerEnd="url(#dag-arrow-mobile)"
-          />
-          <Wire d="M275 155L300 278" markerEnd="url(#dag-arrow-mobile)" />
-          <Wire d="M60 410L140 480" />
+          <Wire d="M85 155V218" active={phase >= 7 && phase < 10} />
+          <Wire d="M85 218H60V278" markerEnd="url(#dag-arrow-mobile)" />
+          <Wire d="M85 218H180V278" markerEnd="url(#dag-arrow-mobile)" />
+          <Wire d="M275 155V218H300V278" markerEnd="url(#dag-arrow-mobile)" />
+          <Wire d="M60 410V445H300V410" />
           <Wire d="M180 410V480" />
-          <Wire d="M300 410L220 480" />
           <rect
             x="120"
             y="480"
@@ -585,17 +591,9 @@ function Fleet({
               : "Releasing";
   return (
     <div className="infra-system">
-      <svg
-        className="dispatch"
-        viewBox="0 0 1080 100"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <Wire d="M220 0V25H860V0M540 0V25M540 50H180V100M540 50V100M540 50H900V100" />
-        <Wire d="M540 25V50" active={phase >= 5 && phase < 8} />
-        {[180, 540, 900].map((x) => (
-          <path key={x} d={`m${x - 4} 88 4 6 4-6`} className="wire-arrow" />
-        ))}
+      <svg className="dispatch" viewBox="0 0 24 64" aria-hidden="true">
+        <Wire d="M12 0V60" active={phase >= 5 && phase < 8} />
+        <path d="m8 54 4 6 4-6" className="wire-arrow" />
       </svg>
       <div className="fleet-toolbar">
         <span>{mobile ? "4 workers" : "24 workers"}</span>
@@ -864,6 +862,7 @@ export default function App() {
       <main id="main">
         <div className="opening">
           <div>
+            <p className="eyebrow">Applied AI research</p>
             <h1>
               Continuous
               <br className="hero-break" /> <span>research.</span>
