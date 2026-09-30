@@ -11,6 +11,7 @@ import {
   MervError,
   newId,
   now,
+  recorded,
   type Caller,
   type CodePublication,
   type CodePublicationApi,
@@ -382,6 +383,11 @@ export class CodePublicationService implements CodePublicationApi {
         );
         await this.host!.apply(caller, record, 'published', tx);
         await this.host!.main(caller, pull.mergeCommitSha!, tx);
+        // Commit the wake-up with the verified receipt and admitted main, never with a preview.
+        await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
+          unitId: record.instanceId,
+          commitSha: pull.mergeCommitSha!,
+        });
       } else if (record.approval?.source === 'unit' && reading(record.pull) !== reading(pull))
         // A unit's blocker is read back from this row, so it follows the pull request the
         // moment one opens, and again when it closes unmerged: until then the wait said no

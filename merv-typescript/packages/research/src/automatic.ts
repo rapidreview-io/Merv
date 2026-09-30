@@ -45,6 +45,7 @@ export async function automaticResearch(
     types: [
       'workflow.transition',
       'workflow.limit_extended',
+      'code.publication_verified',
       'research.created',
       'research.resume',
       'paper.patched',

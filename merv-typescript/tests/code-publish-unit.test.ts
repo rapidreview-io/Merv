@@ -573,6 +573,10 @@ test('an acceptance that cannot be sealed is still recorded, and says so', async
 
 test('an accepted publishing unit waits on one pull request and then carries main', async (t) => {
   const f = await fixture(t, true);
+  const publicationEvents = async () =>
+    (await f.state.events(f.admin.projectId)).filter(
+      (event) => event.type === 'code.publication_verified',
+    );
   await f.canary();
   const work = await f.declare('Publishing');
   await f.publishes(work);
@@ -600,6 +604,7 @@ test('an accepted publishing unit waits on one pull request and then carries mai
   );
 
   const [opened] = await f.sync();
+  assert.deepEqual(await publicationEvents(), [], 'opening a reviewed PR is not publication');
   assert.equal(opened.lastError, null);
   assert.equal(opened.pull?.draft, false);
   assert.ok(f.remote!.statuses.has(f.feature), 'the approval status names the exact head');
@@ -650,6 +655,11 @@ test('an accepted publishing unit waits on one pull request and then carries mai
   // Main now carries it, so it is no longer work main is missing.
   assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, []);
   assert.equal((await f.code.acceptedSince(f.admin)).main, merge);
+  const events = await publicationEvents();
+  assert.equal(events.length, 1, 'verification emits once, including after a receipt replay');
+  assert.equal(events[0].subjectId, opened.proposalId);
+  assert.equal(events[0].data.commitSha, merge);
+  assert.equal(events[0].data.unitId, work.id);
 });
 
 test('main moving under an approved head is a stale wait, not a failure', async (t) => {
@@ -751,6 +761,12 @@ test('a disabled project and a published tree mismatch both show on the unit', a
   );
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'incident');
   assert.equal((await f.blockers(work.id))[0].code, 'code_publication_incident');
+  assert.ok(
+    !(await f.state.events(f.admin.projectId)).some(
+      (event) => event.type === 'code.publication_verified',
+    ),
+    'a rejected merge tree must never wake research as a verified publication',
+  );
 });
 
 test('with Code unloaded nothing about publication can be asked or declared', async (t) => {

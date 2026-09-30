@@ -1,4 +1,10 @@
-import { createService, MervError, type Caller, type ReviewApplication } from '@merv/contracts';
+import {
+  createService,
+  MervError,
+  recorded,
+  type Caller,
+  type ReviewApplication,
+} from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
 import type { ResearchCreate } from '@merv/research/types';
 import assert from 'node:assert/strict';
@@ -622,8 +628,15 @@ test('an automatic cycle waits on its consolidation task and its publication as 
   assert.deepEqual(record.automation!.blocker!.code, 'publication_pending');
   assert.match(record.automation!.blocker!.message, /https:\/\/example\.test\/pull\/3/);
   assert.equal(record.automation!.cycle, 1);
-  main.publication = { state: 'published', mergeCommit: 'd'.repeat(40) };
-  await f.research.wakeAutomatic();
+  const commitSha = 'd'.repeat(40);
+  main.publication = { state: 'published', mergeCommit: commitSha };
+  // Publication must wake the cycle itself, without a restart or a manual advance.
+  await f.app.ctx.state.transaction((tx) =>
+    recorded(f.app.ctx.state, tx, f.owner, 'code.publication_verified', 'codeprop_test', {
+      unitId: taskId,
+      commitSha,
+    }),
+  );
   await f.pump();
   record = await f.research.get(f.owner, cycle.id);
   assert.equal(record.workflow.state, 'complete');
