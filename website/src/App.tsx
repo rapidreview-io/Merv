@@ -715,7 +715,6 @@ export default function App() {
       <main id="main">
         <div className="opening">
           <div>
-            <span className="eyebrow">SELF-IMPROVING RESEARCH</span>
             <h1>
               Continuous
               <br className="hero-break" /> <span>research.</span>
