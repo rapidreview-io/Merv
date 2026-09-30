@@ -264,6 +264,10 @@ export class SandboxService implements Sandboxes {
           this.#run({ projectId, spec }, ({ projectId, spec }) => adapter.submit(projectId, spec)),
         get: (projectId, runId) =>
           this.#run({ projectId, runId }, ({ projectId, runId }) => adapter.get(projectId, runId)),
+        download: (projectId, objectId) =>
+          this.#run({ projectId, objectId }, ({ projectId, objectId }) =>
+            adapter.download(projectId, objectId),
+          ),
         cancel: (projectId, runId) =>
           this.#run({ projectId, runId }, ({ projectId, runId }) =>
             adapter.cancel(projectId, runId),

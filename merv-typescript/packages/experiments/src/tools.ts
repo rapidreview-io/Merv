@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import { z } from 'zod';
+import { computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {} from '@merv/api/types';
 import type {
   ComputeInput,
@@ -33,6 +34,7 @@ export const experimentsToolsPlugin = {
         minutes: z.number().int().min(5).max(1380),
         maxUsd: z.number().finite().nonnegative(),
         commandId: z.string().min(1).optional(),
+        outputs: computeOutputsSchema.optional(),
       })
       .strict();
     const cancel = z.object({ experimentId: z.string().min(1), runId: z.string().min(1) }).strict();
@@ -47,11 +49,37 @@ export const experimentsToolsPlugin = {
       {
         name: 'compute.run',
         description:
-          'Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.',
+          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read their metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
         inputSchema: run,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: ComputeInput) =>
           await experiments.computeRun(caller, input),
+      },
+      {
+        name: 'compute.output',
+        openWorld: true,
+        description:
+          'Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. Download and retain permanent research evidence through existing artifact upload tools. A captured file is not a scientific success verdict.',
+        inputSchema: z
+          .object({
+            experimentId: z.string().min(1),
+            runId: z.string().min(1),
+            name: z.string().min(1).max(128),
+            attemptIndex: z.number().int().positive().optional(),
+          })
+          .strict(),
+        readOnly: true,
+        handler: async (
+          caller: Caller,
+          input: { experimentId: string; runId: string; name: string; attemptIndex?: number },
+        ) =>
+          experiments.computeOutput(
+            caller,
+            input.experimentId,
+            input.runId,
+            input.name,
+            input.attemptIndex,
+          ),
       },
       {
         name: 'compute.cancel',

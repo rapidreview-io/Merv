@@ -9,7 +9,14 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { SandboxCompute, SandboxComputeRun } from './types.js';
+import type {
+  SandboxCompute,
+  SandboxComputeRun,
+  SandboxComputeOutput,
+  ComputeOutputs,
+} from './types.js';
+import { computeOutputsSchema } from './compute-outputs.js';
+export { computeOutputsSchema } from './compute-outputs.js';
 
 export type ComputeOwner = 'experiment' | 'task';
 export interface ManagedComputeInput {
@@ -22,6 +29,7 @@ export interface ManagedComputeInput {
   minutes: number;
   maxUsd: number;
   commandId?: string;
+  outputs?: ComputeOutputs;
 }
 export interface ManagedComputeRow {
   project_id: string;
@@ -245,6 +253,29 @@ export class ManagedCompute {
     check(row, 'compute_not_found', 'Compute run not found in this work item', 404);
     return publicComputeRow(row);
   }
+  async output(caller: Caller, ownerId: string, runId: string, name: string, generation?: number) {
+    const output = await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const row = await this.status(caller.projectId, ownerId, runId, tx, generation);
+      const found = (row.outputs as SandboxComputeOutput[] | undefined)?.find(
+        (item) => item.name === name,
+      );
+      check(
+        found,
+        'compute_output_not_found',
+        'No captured file with this name exists in this run',
+        404,
+      );
+      return found;
+    });
+    check(
+      this.adapter.download,
+      'compute_unavailable',
+      'Compute output downloads are unavailable',
+      503,
+    );
+    return { ...output, ...(await this.adapter.download(caller.projectId, output.objectId)) };
+  }
   async inFlight(projectId: string, tx: Transaction): Promise<ManagedComputeRunning[]> {
     return (
       await tx.all<ManagedComputeRow>(
@@ -300,6 +331,12 @@ export class ManagedCompute {
       'Compute input is outside the supported bounds',
       400,
     );
+    check(
+      input.outputs === undefined || computeOutputsSchema.safeParse(input.outputs).success,
+      'invalid_compute_input',
+      'Compute outputs must name bounded absolute file paths',
+      400,
+    );
     return this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
       await this.policy.authorize(caller, input.ownerId, input.generation, tx, input.commandId);
@@ -321,6 +358,7 @@ export class ManagedCompute {
               minutes: input.minutes,
               maxUsd: input.maxUsd,
               ...(input.commandId ? { commandId: input.commandId } : {}),
+              ...(input.outputs ? { outputs: input.outputs } : {}),
             }
           : input,
       );
@@ -453,10 +491,14 @@ export class ManagedCompute {
     const active = await this.state.transaction((tx) => this.policy.active(row, tx));
     if (!active || row.state === 'cancelling') {
       if (row.run_id) await this.adapter.cancel(row.project_id, row.run_id);
-      await this.update(row, 'cancelled', row.run_id, null, null);
-      return;
-    }
-    if (row.state === 'submitting') {
+      if (!row.run_id || !(JSON.parse(row.input_json) as ManagedComputeInput).outputs) {
+        await this.update(row, 'cancelled', row.run_id, null, null);
+        return;
+      }
+      // Capture and release finish asynchronously, even after owner handoff or cancellation.
+      // Keep polling these runs so the saved files remain reachable after the lease closes.
+      await this.update(row, 'cancelling', row.run_id, null, null);
+    } else if (row.state === 'submitting') {
       const input = JSON.parse(row.input_json) as ManagedComputeInput;
       const source = input.commandId ? await this.policy.source?.(row, input.commandId) : undefined;
       if (input.commandId && !source)
@@ -475,6 +517,8 @@ export class ManagedCompute {
       await this.update(row, status.state, row.run_id, status.cost, {
         result: status.result,
         reason: status.reason,
+        ...(status.outputs ? { outputs: status.outputs, outputState: status.outputState } : {}),
+        ...(status.failureStage ? { failureStage: status.failureStage } : {}),
       });
     else if (status.cost) await this.update(row, 'running', row.run_id, status.cost, null);
   }

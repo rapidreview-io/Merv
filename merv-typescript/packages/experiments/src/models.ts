@@ -1,5 +1,6 @@
 import type { PaperProposal } from '@merv/paper/models';
 import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
+import type { SandboxComputeOutput } from '@merv/sandboxes/models';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =
@@ -117,6 +118,9 @@ export interface Experiment {
     state: string;
     cost: unknown;
     result?: unknown;
+    outputs?: SandboxComputeOutput[];
+    outputState?: string;
+    failureStage?: string;
     reason?: string;
     commit?: string;
   }[];

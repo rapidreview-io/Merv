@@ -8,7 +8,7 @@ import type {
   Transaction,
 } from '@merv/contracts';
 import type {} from 'cordis';
-import type { SandboxCompute } from '@merv/sandboxes/types';
+import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
 import type {
   Experiment,
   ExperimentAttach,
@@ -30,6 +30,7 @@ export interface ComputeInput {
   minutes: number;
   maxUsd: number;
   commandId?: string;
+  outputs?: ComputeOutputs;
 }
 
 export interface Experiments {
@@ -37,6 +38,13 @@ export interface Experiments {
   computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
   computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;
   computeCancel(caller: Caller, experimentId: string, runId: string): Promise<unknown>;
+  computeOutput(
+    caller: Caller,
+    experimentId: string,
+    runId: string,
+    name: string,
+    attemptIndex?: number,
+  ): Promise<unknown>;
   computeTick(): Promise<void>;
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;

@@ -2,6 +2,7 @@ import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
+import { computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {
   Caller,
   TaskCreate,
@@ -29,6 +30,7 @@ export const taskToolsPlugin = {
         minutes: z.number().int().min(5).max(1380),
         maxUsd: z.number().finite().nonnegative(),
         commandId: id.optional(),
+        outputs: computeOutputsSchema.optional(),
       })
       .strict();
     for (const definition of [
@@ -59,11 +61,31 @@ export const taskToolsPlugin = {
       {
         name: 'task.compute_run',
         description:
-          'Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.',
+          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_status, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
         inputSchema: computeRun,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: z.infer<typeof computeRun>) =>
           await ctx.tasks.computeRun(caller, input),
+      },
+      {
+        name: 'task.compute_output',
+        openWorld: true,
+        description:
+          'Get a fresh download URL and SHA/size for one captured file of this task run after machine release. Use the output name from task.compute_status. Download and save permanent evidence through existing artifact upload tools. Capture is not a task review verdict.',
+        inputSchema: z
+          .object({
+            taskId: id,
+            runId: id,
+            name: z.string().min(1).max(128),
+            generation: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+        readOnly: true,
+        handler: async (
+          caller: Caller,
+          input: { taskId: string; runId: string; name: string; generation?: number },
+        ) =>
+          ctx.tasks.computeOutput(caller, input.taskId, input.runId, input.name, input.generation),
       },
       {
         name: 'task.compute_cancel',

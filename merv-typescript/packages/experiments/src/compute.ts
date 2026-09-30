@@ -109,6 +109,7 @@ export class ExperimentCompute {
       minutes: input.minutes,
       maxUsd: input.maxUsd,
       ...(input.commandId ? { commandId: input.commandId } : {}),
+      ...(input.outputs ? { outputs: input.outputs } : {}),
     });
     const { generation, ...rest } = row;
     return { ...rest, attemptIndex: generation };
@@ -117,6 +118,9 @@ export class ExperimentCompute {
     const row = await this.managed.cancel(caller, experimentId, runId);
     const { generation, ...rest } = row;
     return { ...rest, attemptIndex: generation };
+  }
+  output(caller: Caller, experimentId: string, runId: string, name: string, attemptIndex?: number) {
+    return this.managed.output(caller, experimentId, runId, name, attemptIndex);
   }
   tick() {
     return this.managed.tick();

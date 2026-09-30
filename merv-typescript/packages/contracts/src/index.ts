@@ -2316,9 +2316,17 @@ export interface Tasks {
       minutes: number;
       maxUsd: number;
       commandId?: string;
+      outputs?: { files: { name: string; path: string }[]; maxBytes: number };
     },
   ): Promise<unknown>;
   computeCancel(caller: Caller, taskId: string, runId: string): Promise<unknown>;
+  computeOutput(
+    caller: Caller,
+    taskId: string,
+    runId: string,
+    name: string,
+    generation?: number,
+  ): Promise<unknown>;
   computeTick(): Promise<void>;
   registerType(definition: TaskTypeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;

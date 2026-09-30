@@ -1,10 +1,12 @@
 import { check, MervError, type Json } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import { ship, wrapped } from './checks.js';
+import { computeOutputsSchema } from './compute-outputs.js';
 import type {
   SandboxCompute,
   SandboxComputeRun,
   SandboxComputeSpec,
+  SandboxComputeOutput,
   SandboxConnection,
 } from './types.js';
 
@@ -79,6 +81,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
     } as Json;
   }
   async submit(projectId: string, spec: SandboxComputeSpec): Promise<string> {
+    const outputs = spec.outputs ? computeOutputsSchema.parse(spec.outputs) : undefined;
     const entry = this.entry(projectId);
     const objectId = spec.source
       ? await ship(this.client, entry, spec.idempotencyKey, spec.source, spec.minutes * 60 + 660)
@@ -119,11 +122,22 @@ export class SandboxComputeAdapter implements SandboxCompute {
       main: true,
       job: { command: script, timeout_seconds: spec.minutes * 60 + 300 },
     });
+    if (outputs)
+      nodes.push({
+        id: 'capture',
+        kind: 'capture',
+        vm: 'provision',
+        job: 'run',
+        depends_on: ['run'],
+        when: 'always',
+        outputs: outputs.files.map((file) => ({ ...file, kind: 'file', required: true })),
+        output_bytes: outputs.maxBytes,
+      });
     nodes.push({
       id: 'release',
       kind: 'release',
       vm: 'provision',
-      depends_on: ['run'],
+      depends_on: [outputs ? 'capture' : 'run'],
       when: 'always',
     });
     const result = object(
@@ -131,7 +145,7 @@ export class SandboxComputeAdapter implements SandboxCompute {
         name: spec.experimentId,
         idempotency_key: spec.idempotencyKey,
         timeout_seconds: spec.minutes * 60 + 600,
-        capture_grace_seconds: 60,
+        capture_grace_seconds: outputs ? 600 : 60,
         max_cost: spec.maxUsd,
         nodes,
       }),
@@ -143,10 +157,11 @@ export class SandboxComputeAdapter implements SandboxCompute {
       await this.client.read(this.entry(projectId), sandboxRoute('/v1/workflows/{id}', runId)),
     );
     const nodes = object(workflow.nodes);
-    const provision = object(nodes.provision);
     const run = object(nodes.run);
-    const error = object(provision.error ?? workflow.error);
-    const reason = object(error.details).reason ?? error.reason ?? null;
+    const failed = Object.entries(nodes).find(([, value]) => object(value).error);
+    const error = object((failed && object(failed[1]).error) ?? workflow.error);
+    const reason =
+      object(error.details).reason ?? error.reason ?? error.message ?? error.code ?? null;
     const jobId = object(run.result).job_id;
     let result: SandboxComputeRun['result'] = null;
     let cost = money(workflow.reserved_cost);
@@ -167,13 +182,92 @@ export class SandboxComputeAdapter implements SandboxCompute {
         };
       cost ??= money(job.cost);
     }
+    const capture = object(nodes.capture);
+    const captured = object(capture.result);
+    const entries = Object.entries(object(captured.outputs));
+    check(
+      entries.length <= 8,
+      'sandbox_unavailable',
+      'Capture returned too many output files',
+      502,
+    );
+    const outputs = await Promise.all(
+      entries.map(async ([name, value]): Promise<SandboxComputeOutput> => {
+        const objectId = identifier(value);
+        const record = object(
+          await this.client.read(
+            this.entry(projectId),
+            sandboxRoute('/v1/storage/objects/{id}', objectId),
+          ),
+        );
+        check(
+          record.id === objectId &&
+            record.producer_pipeline_id === runId &&
+            record.kind === 'file' &&
+            record.state === 'available' &&
+            Number.isSafeInteger(record.size_bytes) &&
+            record.size_bytes >= 0 &&
+            typeof record.sha256 === 'string' &&
+            /^[a-f0-9]{64}$/.test(record.sha256),
+          'sandbox_unavailable',
+          'Captured output metadata is unavailable or invalid',
+          502,
+        );
+        return {
+          name,
+          objectId,
+          sizeBytes: record.size_bytes,
+          sha256: record.sha256,
+          expiresAt: typeof record.expires_at === 'string' ? record.expires_at : null,
+        };
+      }),
+    );
     return {
       id: runId,
       state: String(workflow.state),
-      reason: typeof reason === 'string' ? reason : null,
+      reason: typeof reason === 'string' ? reason.slice(0, 2000) : null,
       cost,
       result,
+      ...(nodes.capture
+        ? {
+            outputs,
+            outputState: String(captured.output_state ?? capture.state ?? 'pending'),
+          }
+        : {}),
+      ...(failed ? { failureStage: failed[0] } : {}),
     };
+  }
+  async download(projectId: string, objectId: string): Promise<{ url: string }> {
+    const response = object(
+      await this.client.read(
+        this.entry(projectId),
+        `${sandboxRoute('/v1/storage/objects/{id}', objectId)}/download`,
+      ),
+    );
+    const record = object(response.object);
+    check(
+      record.id === objectId && record.kind === 'file' && record.state === 'available',
+      'sandbox_unavailable',
+      'Captured file is no longer available',
+      502,
+    );
+    let url: URL | undefined;
+    try {
+      url = new URL(response.url);
+    } catch {
+      /* Refuse malformed provider output. */
+    }
+    check(
+      url &&
+        url.protocol === 'https:' &&
+        !url.username &&
+        !url.password &&
+        this.config.storageOrigins.some((origin) => new URL(origin).origin === url.origin),
+      'sandbox_unavailable',
+      'Captured output download is outside configured storage origins',
+      502,
+    );
+    return { url: url.href };
   }
   async cancel(projectId: string, runId: string): Promise<void> {
     try {

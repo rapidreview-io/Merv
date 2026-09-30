@@ -636,8 +636,13 @@
           "readOnly": true
         },
         {
+          "name": "compute.output",
+          "description": "Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. Download and retain permanent research evidence through existing artifact upload tools. A captured file is not a scientific success verdict.",
+          "readOnly": true
+        },
+        {
           "name": "compute.run",
-          "description": "Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.",
+          "description": "Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read their metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
           "readOnly": false
         },
         {
@@ -701,8 +706,13 @@
           "readOnly": true
         },
         {
+          "name": "compute.output",
+          "description": "Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. Download and retain permanent research evidence through existing artifact upload tools. A captured file is not a scientific success verdict.",
+          "readOnly": true
+        },
+        {
           "name": "compute.run",
-          "description": "Propose one workflow for the current running experiment attempt. maxUsd covers the whole lease. On Code-hosted Git experiments, first call code.commit and pass its succeeded commandId to ship that committed tree.",
+          "description": "Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read their metadata in experiment.get_state, then compute.output for fresh download URLs and save permanent evidence through artifact upload. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
           "readOnly": false
         },
         {
@@ -2368,8 +2378,13 @@
           "readOnly": true
         },
         {
+          "name": "task.compute_output",
+          "description": "Get a fresh download URL and SHA/size for one captured file of this task run after machine release. Use the output name from task.compute_status. Download and save permanent evidence through existing artifact upload tools. Capture is not a task review verdict.",
+          "readOnly": true
+        },
+        {
           "name": "task.compute_run",
-          "description": "Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.",
+          "description": "Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_status, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
           "readOnly": false
         },
         {
@@ -2478,8 +2493,13 @@
           "readOnly": true
         },
         {
+          "name": "task.compute_output",
+          "description": "Get a fresh download URL and SHA/size for one captured file of this task run after machine release. Use the output name from task.compute_status. Download and save permanent evidence through existing artifact upload tools. Capture is not a task review verdict.",
+          "readOnly": true
+        },
+        {
           "name": "task.compute_run",
-          "description": "Run a bounded GPU command for the current leased task work revision. maxUsd covers the whole lease. Reuse key to recover the same run. On a Git task, commandId may name a succeeded code.commit for this task to ship that tree.",
+          "description": "Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_status, then task.compute_output for fresh URLs, and retain permanent evidence through artifact upload. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
           "readOnly": false
         },
         {

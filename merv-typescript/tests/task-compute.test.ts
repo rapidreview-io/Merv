@@ -77,6 +77,11 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     async cancel(_projectId, runId) {
       cancelled.push(runId);
     },
+    async download(projectId, objectId) {
+      assert.equal(projectId, caller.projectId);
+      assert.equal(objectId, 'obj_task_result');
+      return { url: 'https://bucket.example/task-result' };
+    },
   };
   const unbindTask = tasks.bindCompute(adapter);
   const unbindExperiment = experiments.bindCompute(adapter);
@@ -136,6 +141,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     command: 'echo ok',
     minutes: 5,
     maxUsd: 1,
+    outputs: { files: [{ name: 'result.json', path: '/tmp/result.json' }], maxBytes: 1000 },
   };
   const first = (await tasks.computeRun(worker, input)) as { state: string; runId: string };
   assert.equal(first.state, 'submitting');
@@ -165,6 +171,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
   await tasks.computeTick();
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0]!.spec.idempotencyKey.length > 10, true);
+  assert.deepEqual(submitted[0]!.spec.outputs, input.outputs);
   const experiment = await experiments.create(caller, {
     name: randomUUID(),
     intent: 'GPU cross-owner cap.',
@@ -191,6 +198,16 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     reason: null,
     cost: { amount: '0.1', currency: 'USD' },
     result: { exit: 0, bytes: 2, head: 'ok', tail: 'ok' },
+    outputs: [
+      {
+        name: 'result.json',
+        objectId: 'obj_task_result',
+        sizeBytes: 2,
+        sha256: 'a'.repeat(64),
+        expiresAt: null,
+      },
+    ],
+    outputState: 'committed',
   };
   await tasks.computeTick();
   assert.equal(
@@ -214,6 +231,18 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
   );
   await tasks.computeTick();
   assert.ok(cancelled.includes('wf_2'));
+  assert.equal(
+    ((await tasks.computeOutput(caller, task.id, 'wf_1', 'result.json')) as { url: string }).url,
+    'https://bucket.example/task-result',
+  );
+  await assert.rejects(
+    tasks.computeOutput(caller, experiment.id, 'wf_1', 'result.json'),
+    code('compute_not_found'),
+  );
+  await assert.rejects(
+    experiments.computeOutput(caller, task.id, 'wf_1', 'result.json'),
+    code('compute_not_found'),
+  );
   assert.equal(((await tasks.computeStatus(caller, task.id)) as { state: string }[]).length, 2);
   await assert.rejects(
     tasks.computeRun(worker, { ...input, key: 'late' }),

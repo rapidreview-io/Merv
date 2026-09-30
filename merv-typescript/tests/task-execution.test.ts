@@ -10,9 +10,9 @@ import { countWrites } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-execution-'));
-  const app = await createApp({ directory });
+  const app = await createApp({ directory, api, port: 0 });
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
@@ -193,6 +193,53 @@ test('a review session binds the claim its lease took, and a successor binds onl
     (await app.ctx.sessions.prepare(next.worker, 'review.submit', {})).input.claimId,
     current,
   );
+});
+
+test('captured file reads reach the tools for both leased producers and independent reviewers', async (t) => {
+  const { app, offer, create, pending } = await fixture(t, true);
+  const producing = await offer(await create('output-reader'));
+  const reviewTask = await pending();
+  const reviewing = await offer(reviewTask);
+  const receipt = {
+    name: 'model.tar.gz',
+    objectId: 'obj_model',
+    sha256: 'a'.repeat(64),
+    sizeBytes: 100,
+    expiresAt: null,
+    url: 'https://bucket.example/model',
+  };
+  const taskDownload = t.mock.method(app.ctx.tasks, 'computeOutput', async () => receipt);
+  const experimentDownload = t.mock.method(
+    app.ctx.experiments,
+    'computeOutput',
+    async () => receipt,
+  );
+  for (const { worker } of [producing, reviewing]) {
+    const tools = await app.ctx.tools.describe(worker);
+    for (const name of ['task.compute_output', 'compute.output']) {
+      const description = tools.find((tool) => tool.name === name);
+      assert.equal(description?.annotations?.readOnlyHint, true);
+      assert.equal(description?.annotations?.openWorldHint, true);
+    }
+    assert.deepEqual(
+      await app.ctx.tools.call('task.compute_output', worker, {
+        taskId: reviewTask.id,
+        runId: 'run_1',
+        name: receipt.name,
+      }),
+      receipt,
+    );
+    assert.deepEqual(
+      await app.ctx.tools.call('compute.output', worker, {
+        experimentId: 'exp_one',
+        runId: 'run_1',
+        name: receipt.name,
+      }),
+      receipt,
+    );
+  }
+  assert.equal(taskDownload.mock.callCount(), 2);
+  assert.equal(experimentDownload.mock.callCount(), 2);
 });
 
 test('metadata admission avoids rendering, binds each session to its own record and leaves reads open', async (t) => {

@@ -1,5 +1,7 @@
 import type { Caller, Json } from '@merv/contracts';
 import type {} from 'cordis';
+import type { ComputeOutputs, SandboxComputeOutput } from './models.js';
+export type { ComputeOutputs, SandboxComputeOutput } from './models.js';
 
 /** One project's authorized connection. Secrets are named, never carried. */
 export interface SandboxConnection {
@@ -191,6 +193,7 @@ export interface SandboxComputeSpec {
   minutes: number;
   maxUsd: number;
   source?: { bytes: Uint8Array; sha256: string };
+  outputs?: ComputeOutputs;
 }
 export interface SandboxComputeRun {
   id: string;
@@ -198,6 +201,9 @@ export interface SandboxComputeRun {
   reason: string | null;
   cost: { amount: string; currency: string } | null;
   result: { exit: number; bytes: number; head: string; tail: string } | null;
+  outputs?: SandboxComputeOutput[];
+  outputState?: string;
+  failureStage?: string;
 }
 export interface SandboxCompute {
   readonly since: string;
@@ -206,6 +212,7 @@ export interface SandboxCompute {
   submit(projectId: string, spec: SandboxComputeSpec): Promise<string>;
   get(projectId: string, runId: string): Promise<SandboxComputeRun>;
   cancel(projectId: string, runId: string): Promise<void>;
+  download?(projectId: string, objectId: string): Promise<{ url: string }>;
 }
 
 /**
