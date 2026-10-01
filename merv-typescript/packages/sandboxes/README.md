@@ -30,7 +30,9 @@ The deployment renderer enables this only with `MERV_SANDBOXES_NATIVE_ENABLED=tr
 `MERV_SANDBOXES_APPLICATION_ID`, `MERV_SANDBOXES_APPLICATION_SECRET` and a 32-byte
 base64url `MERV_SANDBOXES_ENCRYPTION_KEY`. Rendered configuration stores environment
 variable names only. `MERV_TS_PUBLIC_ORIGIN` determines the consent callback. Native
-OIDC and application redirect registration must be configured before activation.
+Supabase email/Google login and the application redirect registration must be
+configured before activation. Both products use the same verified Supabase identity;
+their browser sessions remain separate. No shared signing-key change is required.
 Legacy `connections` may be empty only when native integration is configured.
 
 The backend stores connection/work/assignment bindings, revocation and cleanup
