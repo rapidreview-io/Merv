@@ -96,8 +96,9 @@ export interface LaunchSpec {
 export interface LaunchRequest {
   session: Session;
   secret: string;
-  /** Account credential delivered privately for this hosted launch, never persisted. */
+  /** Session capability delivered privately for this hosted launch, never persisted. */
   hfToken?: string | null;
+  hfEndpoint?: string;
   mcpUrl: string;
   /** An owned workspace prepared by the runner, not a path supplied by an agent. */
   cwd: string;
@@ -336,7 +337,8 @@ function codexArgs(
   config('web_search', quote('disabled'));
   config('project_doc_max_bytes', '0');
   config('allow_login_shell', 'false');
-  const hfShell = profile.hosted && !sealed(request.session) && !!request.hfToken;
+  const hfShell =
+    profile.hosted && !sealed(request.session) && !!request.hfToken && !!request.hfEndpoint;
   config('shell_environment_policy.inherit', quote(hfShell ? 'all' : 'none'));
   config('shell_environment_policy.ignore_default_excludes', hfShell ? 'true' : 'false');
   config('shell_environment_policy.experimental_use_profile', 'false');
@@ -350,7 +352,7 @@ function codexArgs(
   if (hfShell)
     config(
       'shell_environment_policy.include_only',
-      JSON.stringify([...Object.keys(shellEnvironment), 'HF_TOKEN']),
+      JSON.stringify([...Object.keys(shellEnvironment), 'HF_TOKEN', 'HF_ENDPOINT']),
     );
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
@@ -619,6 +621,15 @@ export function buildLaunch(
     'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
     'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.',
     ...(profile.harness === 'command' ? [] : [searching(internet(profile, session))]),
+    ...(profile.harness === 'codex' &&
+    profile.hosted &&
+    !sealed(session) &&
+    request.hfToken &&
+    request.hfEndpoint
+      ? [
+          'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment. Use huggingface_hub, datasets, transformers or hf download normally; do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
+        ]
+      : []),
     'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging receipt does not change a reviewed or approved plan; if the message requires a plan change, follow the workflow gate and do not quietly change immutable evidence.',
     sealed(session)
       ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
@@ -661,8 +672,12 @@ export function buildLaunch(
     env: {
       ...safeEnvironment,
       ...bearers,
-      ...(profile.harness === 'codex' && profile.hosted && !sealed(session) && request.hfToken
-        ? { HF_TOKEN: request.hfToken }
+      ...(profile.harness === 'codex' &&
+      profile.hosted &&
+      !sealed(session) &&
+      request.hfToken &&
+      request.hfEndpoint
+        ? { HF_TOKEN: request.hfToken, HF_ENDPOINT: request.hfEndpoint }
         : {}),
       // The handshake waits behind the server's writer queue under load, as it did for
       // Codex; a server that lists no tools in time looks connected and useless.

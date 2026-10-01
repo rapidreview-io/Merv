@@ -99,7 +99,10 @@ set('blobs', {
   regionEnv: 'MERV_BLOB_REGION',
   prefixEnv: 'MERV_BLOB_PREFIX',
 });
-set('secrets', { encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY' });
+set('secrets', {
+  encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY',
+  huggingFaceEndpoint: `${httpsOrigin('MERV_TS_PUBLIC_ORIGIN')}/hf`,
+});
 set('identity', {
   supabaseUrl: httpsOrigin('SUPABASE_URL'),
   mode,

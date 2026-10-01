@@ -13,6 +13,7 @@ enrollment = 'me_' + secrets.token_hex(32)
 model_key = 'sk-test-' + secrets.token_hex(32)
 session = 'ms_' + secrets.token_urlsafe(32)
 hf_token = 'hf_' + secrets.token_hex(20)
+hf_endpoint = 'https://experiments.rapidreview.io/hf'
 hf_digest = hashlib.sha256(hf_token.encode()).hexdigest()
 enrolled = threading.Event()
 # The top-level keys and tool types fleet/src/codex-relay.ts admits: a Codex that sends others fails here.
@@ -27,7 +28,7 @@ PROBE = ("for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' <\"$f\" 2>/dev/null |
          "echo \"uid $(id -u) probe-done\"")
 PROBE += ("; python3 -c \"import os,hashlib; "
           "assert hashlib.sha256(os.environ.get('HF_TOKEN','').encode()).hexdigest() == '" + hf_digest + "'; "
-          "assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"")
+          "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"")
 calls, outputs, holders = [], [], set()
 
 
@@ -128,7 +129,7 @@ work.mkdir(mode=0o700)
 # The hosted profile's own settings (runner/src/profiles.ts), but for Merv's MCP server.
 settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_search="disabled"', 'features.shell_tool=true',
             'features.multi_agent=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
-            'shell_environment_policy.inherit="all"', 'shell_environment_policy.include_only=["PATH","HOME","USER","TMPDIR","LANG","HF_TOKEN"]', 'shell_environment_policy.ignore_default_excludes=true',
+            'shell_environment_policy.inherit="all"', 'shell_environment_policy.include_only=["PATH","HOME","USER","TMPDIR","LANG","HF_TOKEN","HF_ENDPOINT"]', 'shell_environment_policy.ignore_default_excludes=true',
             'shell_environment_policy.experimental_use_profile=false',
             'shell_environment_policy.set={"PATH"="/usr/bin:/bin","HOME"="/home/assignment",'
             '"USER"="assignment","TMPDIR"="/tmp","LANG"="C.UTF-8"}',
@@ -145,7 +146,7 @@ def codex(sandbox):
          *[part for setting in settings for part in ('-c', setting)], '--model', 'gpt-6.1-sol', '-'],
         cwd=work, input=b'Run the probe, then stop.', capture_output=True, timeout=120,
         env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'MERV_AGENT_SESSION_TOKEN': session,
-             'MERV_MCP_URL': f'{base}/mcp', 'HF_TOKEN': hf_token},
+             'MERV_MCP_URL': f'{base}/mcp', 'HF_TOKEN': hf_token, 'HF_ENDPOINT': hf_endpoint},
     )
 
 

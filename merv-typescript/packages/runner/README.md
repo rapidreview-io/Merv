@@ -16,11 +16,23 @@ The private SQLite ledger uses WAL, `synchronous=FULL` and `fullfsync=ON`; its d
 
 Source and session bearers are not stored in the ledger. A launch keeps a projection of its session (never its assignment) and its profile as configured; a profile names secret environment variables but holds none of their values. The source bearer is refused in configuration, in the controller's metadata patches and, by `ProcessHost`, anywhere in a launch command (executable, arguments, cwd, environment, stdin). Command environment and stdin travel only over authenticated local IPC, and the supervisor receives the session bearer, never the source one. Child output redacts the session bearer and recognised secret environment values, including values split across chunks. The machine key and IPC authentication coordinate the runner; they do not isolate hostile processes running as the same OS user.
 
-## Hosted Hugging Face credential
+## Hosted Hugging Face access
 
-After attaching a managed hosted Codex lease, Runner calls its private Sessions credential route and passes the returned value only in memory through ProcessHost IPC as `HF_TOKEN`. Codex shell policy inherits that variable by name, alongside explicit safe environment names. Its value is absent from arguments, the frozen assignment, configuration, bootstrap payloads and the ledger. The Python assignment launcher explicitly admits it; supervisor log redaction covers split output, and transcript fallback recognizes Hugging Face tokens.
+After attaching a managed hosted Codex lease, Runner calls the private Sessions
+`/huggingface-access` route. It passes the returned temporary capability and
+server-configured endpoint only in memory through ProcessHost IPC as `HF_TOKEN`
+and `HF_ENDPOINT`. Both inherit into Codex shell commands by name. The capability
+is absent from arguments, frozen assignment, configuration, bootstrap and ledger;
+supervisor output redaction also covers values split across chunks. Failed access
+fetches launch without HF, never falling back to the legacy raw-token route.
 
-Sealed offline reviews, Pi, local runners, raw SSH machines and managed GPU job environments receive no automatic credential. Updating or deleting the account record affects later deliveries; a running process retains its snapshot, and revoking an issued token requires Hugging Face revocation. Agent code can read its environment, so redaction cannot prevent intentional exfiltration.
+The account token stays in Secrets; each proxied request checks current session
+and source authority. Agent code can read and misuse its temporary capability,
+so redaction is not an exfiltration boundary. Sealed offline reviews, Pi and local
+runners receive none. A worker may privately forward its capability to an SSH
+process, but it expires with that session. Managed GPU job commands are persisted:
+never embed either credential in them. See [Secrets](../secrets/README.md) for
+supported operations, revocation limits and the legacy rollout deadline.
 
 ## Leasing and cadence
 

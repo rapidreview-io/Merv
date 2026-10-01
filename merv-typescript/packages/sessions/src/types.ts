@@ -1,3 +1,4 @@
+import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type {
   AgentObservation,
   BudgetStatus,
@@ -399,6 +400,10 @@ export interface Sessions {
     input: SessionControl & { hostRef: string; workspace?: SessionWorkspace },
   ): Promise<Session>;
   /** Private hosted supervisor control; never available to agents or account APIs. */
+  huggingfaceAccess(
+    caller: Caller,
+    input: SessionControl & { hostRef: string },
+  ): Promise<{ access: HuggingFaceAccess | null }>;
   huggingface(
     caller: Caller,
     input: SessionControl & { hostRef: string },

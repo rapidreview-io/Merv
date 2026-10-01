@@ -1035,4 +1035,77 @@ test('sealed review gets no HF account credential', async (t) => {
   };
   await f.sessions.attach(f.caller, { ...input, workspace });
   assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
+  assert.deepEqual(await f.sessions.huggingfaceAccess(f.caller, input), { access: null });
 });
+
+for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as const) {
+  test(`HF broker rechecks frozen ${sourceKind} authority without the writer lock`, async (t) => {
+    const f = await fixture(t, { sourceKind });
+    let grant: import('@merv/secrets/types').HuggingFaceGrant | undefined;
+    f.sessions.secrets = {
+      resolveHuggingFaceToken: async () => {
+        throw Error('raw token delivery used');
+      },
+      createHuggingFaceAccess: async (value) => {
+        grant = value;
+        return { token: 'opaque-test', endpoint: 'https://merv.example/hf' };
+      },
+    };
+    await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+    const session = (await f.sessions.lease(f.caller, f.lease())).session!;
+    const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'hf-proxy-host' };
+    await assert.rejects(f.sessions.huggingfaceAccess(f.caller, input), { code: 'host_conflict' });
+    await f.sessions.attach(f.caller, input);
+    assert.ok((await f.sessions.huggingfaceAccess(f.caller, input)).access);
+    assert.ok(grant);
+    const expected = { issuer: 'https://identity.example', subject: 'original-person' };
+    let release!: () => void, entered!: () => void;
+    const held = new Promise<void>((r) => (release = r)),
+      started = new Promise<void>((r) => (entered = r));
+    const writer = f.state.transaction(async (tx) => {
+      await tx.run('UPDATE worker_sessions SET id=id WHERE id=?', session.id);
+      entered();
+      await held;
+    });
+    await started;
+    try {
+      const deadline = new Promise((_, reject) => {
+        const timer = setTimeout(() => reject(Error('HF read waited on writer')), 1000);
+        timer.unref();
+      });
+      assert.deepEqual(
+        await Promise.race([f.sessions.authorizeHuggingFaceGrant(grant), deadline]),
+        expected,
+      );
+    } finally {
+      release();
+      await writer;
+    }
+    if (sourceKind === 'human') {
+      const start = performance.now();
+      for (let i = 0; i < 25; i++)
+        await Promise.all(
+          Array.from({ length: 8 }, () => f.sessions.authorizeHuggingFaceGrant(grant!)),
+        );
+      t.diagnostic(
+        `200 HF authorization reads, batches of 8: ${Math.round(performance.now() - start)} ms`,
+      );
+    }
+    for (const changed of [
+      { epoch: grant.epoch + 1 },
+      { runnerId: 'wrong' },
+      { allocationId: 'wrong' },
+      { sessionId: 'session_other' },
+      { hostRef: 'wrong' },
+    ])
+      await assert.rejects(f.sessions.authorizeHuggingFaceGrant({ ...grant, ...changed }));
+    f.current(false);
+    await assert.rejects(f.sessions.authorizeHuggingFaceGrant(grant));
+    f.current(true);
+    if (sourceKind.endsWith('key')) await f.revokePerson!();
+    else await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
+    await assert.rejects(f.sessions.authorizeHuggingFaceGrant(grant));
+  });
+}

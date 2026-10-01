@@ -61,8 +61,8 @@ export function HuggingFaceSettings() {
     <section className="stack" aria-label="Hugging Face">
       <h2 className="section-title">Hugging Face</h2>
       <p className="muted">
-        Your account token gives hosted Fleet workers access to your Hugging Face models and
-        datasets.
+        Use a fine-grained read-only token. New hosted workers get temporary download access to your
+        models and datasets; your account token stays on the server.
       </p>
       {status && (
         <p role="status">

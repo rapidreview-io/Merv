@@ -886,7 +886,7 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
   const hosted = { ...codex, hosted: true as const, isolatedLauncher: '/opt/merv/assignment' };
   const launch = buildLaunch(
     hosted,
-    { ...request(), hfToken: marker },
+    { ...request(), hfToken: marker, hfEndpoint: 'https://merv.example/hf' },
     { ...safeEnv, HF_TOKEN: 'ambient-token' },
   );
   assert.equal(launch.env.HF_TOKEN, marker);
@@ -899,6 +899,7 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     'TMPDIR',
     'LANG',
     'HF_TOKEN',
+    'HF_ENDPOINT',
   ]);
   assert.equal(settings['shell_environment_policy.ignore_default_excludes'], 'true');
   for (const text of [
@@ -911,8 +912,11 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     assert.ok(!text.includes(marker));
   for (const profile of [codex, claude, command])
     assert.equal(
-      buildLaunch(profile, { ...request(), hfToken: marker }, { ...safeEnv, HF_TOKEN: marker }).env
-        .HF_TOKEN,
+      buildLaunch(
+        profile,
+        { ...request(), hfToken: marker, hfEndpoint: 'https://merv.example/hf' },
+        { ...safeEnv, HF_TOKEN: marker },
+      ).env.HF_TOKEN,
       undefined,
     );
   const sealed = request(true, {
@@ -924,7 +928,11 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     advancesCentral: false,
   });
   assert.equal(
-    buildLaunch(hosted, { ...sealed, hfToken: marker }, safeEnv).env.HF_TOKEN,
+    buildLaunch(
+      hosted,
+      { ...sealed, hfToken: marker, hfEndpoint: 'https://merv.example/hf' },
+      safeEnv,
+    ).env.HF_TOKEN,
     undefined,
   );
   assert.equal(

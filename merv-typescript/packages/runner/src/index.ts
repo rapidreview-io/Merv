@@ -692,14 +692,17 @@ export class MachineRunner implements Runner {
         this.save(record.id, { session: view(session), attached: true });
         if (!liveSession(session) || this.stopping) return false;
         const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
-        const hfToken =
+        const hfAccess =
           /^mr_[0-9a-f]{64}$/.test(this.sourceBearer) &&
           profile.harness === 'codex' &&
           profile.hosted
-            ? await this.client.huggingface(session.id, this.ledger.runnerId, record.id)
+            ? await this.client
+                .huggingfaceAccess(session.id, this.ledger.runnerId, record.id)
+                .catch(() => null)
             : null;
         const command = buildLaunch(profile, {
-          hfToken,
+          hfToken: hfAccess?.token,
+          hfEndpoint: hfAccess?.endpoint,
           session,
           secret,
           mcpUrl: `${this.client.baseUrl}/mcp`,

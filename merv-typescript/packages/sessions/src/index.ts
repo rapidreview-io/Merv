@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
-import type { Secrets } from '@merv/secrets/types';
+import type { Secrets, HuggingFaceGrant, AccountIdentity } from '@merv/secrets/types';
+import type { ManagedBindingRow } from './managed-types.js';
 import {
   admitDispatch,
   canonical,
@@ -406,7 +407,8 @@ export class LeasedSessions implements Sessions {
   /** Public so the plugin can bind Blobs to it late. */
   transcripts!: SessionTranscripts;
   /** Optional private account credential reader; never exposed through the tool registry. */
-  secrets?: Pick<Secrets, 'resolveHuggingFaceToken'>;
+  secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
+    Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
   private readonly sections = new Map<string, StatusSection>();
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
@@ -1910,6 +1912,74 @@ export class LeasedSessions implements Sessions {
     });
   }
   /** Private managed-control delivery after attachment. Source identity is immutable. */
+  private async huggingFaceIdentity(
+    session: Session,
+    row: ManagedBindingRow,
+    hostRef: string,
+    tx: Transaction,
+  ): Promise<AccountIdentity | null> {
+    check(
+      row.source_json === canonical(session.source) && session.runnerId === row.runner_id,
+      'session_forbidden',
+      'Session source differs from its managed binding',
+      403,
+    );
+    check(
+      session.hostRef !== null && session.hostRef === hostRef,
+      'host_conflict',
+      'Credential delivery must name the attached host',
+      409,
+    );
+    await this.valid(session, tx);
+    const workspace = effectiveWorkspace(session.execution.policy);
+    if (
+      (session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain) ||
+      JSON.parse(row.platform_json).harness !== 'codex'
+    )
+      return null;
+    const source = session.source.kind === 'service' ? session.source.vouchedBy : session.source;
+    if (source.kind !== 'human' && source.kind !== 'key') return null;
+    const { user } = await this.scope.requireDelegation(source, 'read', tx);
+    return user ? { issuer: user.issuer, subject: user.subject } : null;
+  }
+  async authorizeHuggingFaceGrant(grant: HuggingFaceGrant): Promise<AccountIdentity | null> {
+    return this.reading(async (tx) => {
+      const row = await this.managed.huggingFaceBinding(grant, tx);
+      const session = await this.decode(await this.row(tx, grant.sessionId), tx);
+      check(
+        grant.exp * 1000 <= Date.parse(session.hardDeadline),
+        'unauthorized',
+        'Hugging Face access unavailable',
+        401,
+      );
+      return this.huggingFaceIdentity(session, row, grant.hostRef, tx);
+    });
+  }
+  async huggingfaceAccess(caller: Caller, input: SessionControl & { hostRef: string }) {
+    caller = structuredClone(caller);
+    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
+    check(caller.managed, 'managed_runner_forbidden', 'Managed runner authority required', 403);
+    const grant = await this.reading(async (tx) => {
+      const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
+      const { row } = await this.managed.require(caller, tx);
+      if (!(await this.huggingFaceIdentity(session, row, input.hostRef, tx))) return null;
+      return {
+        v: 1 as const,
+        sessionId: session.id,
+        runnerId: input.runnerId,
+        allocationId: row.allocation_id,
+        epoch: Number(row.epoch),
+        hostRef: input.hostRef,
+        exp: Math.floor(Date.parse(session.hardDeadline) / 1000),
+      };
+    });
+    return {
+      access:
+        grant && this.secrets?.createHuggingFaceAccess
+          ? await this.secrets.createHuggingFaceAccess(grant)
+          : null,
+    };
+  }
   async huggingface(
     caller: Caller,
     input: SessionControl & { hostRef: string },
@@ -1920,37 +1990,13 @@ export class LeasedSessions implements Sessions {
     return await this.reading(async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
       const { row } = await this.managed.require(caller, tx);
-      check(
-        row.source_json === canonical(session.source) && session.runnerId === input.runnerId,
-        'session_forbidden',
-        'Session source differs from its managed binding',
-        403,
-      );
-      check(
-        session.hostRef !== null && session.hostRef === input.hostRef,
-        'host_conflict',
-        'Credential delivery must name the attached host',
-        409,
-      );
-      await this.valid(session, tx);
-      const workspace = effectiveWorkspace(session.execution.policy);
-      if (
-        (session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain) ||
-        JSON.parse(row.platform_json).harness !== 'codex'
-      )
-        return { hfToken: null };
-      // Scope checks the service and its voucher above. Follow only that frozen voucher,
-      // never a current project director, billing identity, or arbitrary member.
-      const source = session.source.kind === 'service' ? session.source.vouchedBy : session.source;
-      if (source.kind !== 'human' && source.kind !== 'key') return { hfToken: null };
-      const { user } = await this.scope.requireDelegation(source, 'read', tx);
+      const identity = await this.huggingFaceIdentity(session, row, input.hostRef, tx);
       return {
         hfToken:
-          user && this.secrets
-            ? await this.secrets.resolveHuggingFaceToken({
-                issuer: user.issuer,
-                subject: user.subject,
-              })
+          // Compatibility window ends after the hosted image rollout; old runners then
+          // receive null. New runners exclusively use huggingface-access.
+          identity && this.secrets && this.clock() < Date.parse('2026-10-08T00:00:00Z')
+            ? await this.secrets.resolveHuggingFaceToken(identity)
             : null,
       };
     });
@@ -2648,7 +2694,11 @@ export const sessionsPlugin = {
       ctx.inject(['secrets'], (ctx) => {
         ctx.effect(() => {
           sessions.secrets = ctx.secrets;
+          const unregister = ctx.secrets.registerHuggingFaceAuthority((grant) =>
+            sessions.authorizeHuggingFaceGrant(grant),
+          );
           return () => {
+            unregister();
             sessions.secrets = undefined;
           };
         });

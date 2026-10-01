@@ -1,3 +1,4 @@
+import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type { IncomingMessage } from 'node:http';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -37,6 +38,7 @@ export interface SessionRoutes {
   list(caller: Caller): Promise<unknown[]>;
   get(caller: Caller, sessionId: string): Promise<unknown>;
   attach(caller: Caller, input: unknown): Promise<unknown>;
+  huggingfaceAccess(caller: Caller, input: unknown): Promise<{ access: HuggingFaceAccess | null }>;
   huggingface(caller: Caller, input: unknown): Promise<{ hfToken: string | null }>;
   workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
   transcript(caller: Caller, input: unknown): Promise<unknown>;
@@ -65,7 +67,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|huggingface)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|huggingface|huggingface-access)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -150,7 +152,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|huggingface))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|huggingface|huggingface-access))?$/.exec(
       path,
     );
   if (route) {
@@ -159,10 +161,13 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       return { session: await sessions.get(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
       return await sessions.halt(caller, { ...(await r.json(haltInput)), sessionId });
-    if (req.method === 'POST' && route[2] === 'huggingface') {
+    if (
+      req.method === 'POST' &&
+      (route[2] === 'huggingface' || route[2] === 'huggingface-access')
+    ) {
       if (!caller.managed)
         throw new MervError('managed_runner_forbidden', 'Managed runner authority required', 403);
-      return await sessions.huggingface(
+      return await sessions[route[2] === 'huggingface' ? 'huggingface' : 'huggingfaceAccess'](
         caller,
         bound(await r.json(undefined, 4096), 'sessionId', sessionId),
       );
@@ -192,7 +197,8 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
 function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
-    if (path.endsWith('/huggingface')) res.setHeader('Cache-Control', 'no-store');
+    if (path.endsWith('/huggingface') || path.endsWith('/huggingface-access'))
+      res.setHeader('Cache-Control', 'no-store');
     if (!r.principal) {
       if (path === '/sessions/self' || path.startsWith('/sessions/self/'))
         return await agentSelf(req, r, sessions);

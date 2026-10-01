@@ -20,6 +20,7 @@ import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
 import type { CallerRules } from '@merv/api/types';
+import type { HuggingFaceGrant } from '@merv/secrets/types';
 import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
@@ -424,6 +425,24 @@ export class ManagedRunnerBindings {
     await this.credentials.authenticateHash(row.control_hash, 'managed-control', tx);
     await this.current(row, tx);
     return { row, sourceCaller: sourceCaller(JSON.parse(row.source_json)) };
+  }
+  /** A decrypted HF grant authorizes only this exact binding, never runner control calls. */
+  async huggingFaceBinding(grant: HuggingFaceGrant, tx: Transaction): Promise<ManagedBindingRow> {
+    const row = await tx.get<ManagedBindingRow>(
+      'SELECT * FROM session_managed_runners WHERE allocation_id=?',
+      grant.allocationId,
+    );
+    check(
+      row &&
+        Number(row.epoch) === grant.epoch &&
+        row.bound_session_id === grant.sessionId &&
+        row.runner_id === grant.runnerId,
+      'unauthorized',
+      'Hugging Face access unavailable',
+      401,
+    );
+    await this.require(this.caller(row), tx);
+    return row;
   }
   async heartbeat(caller: Caller, input: RunnerHeartbeat, tx: Transaction): Promise<Caller> {
     const { row, sourceCaller: source } = await this.require(caller, tx);

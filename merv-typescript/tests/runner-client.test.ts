@@ -438,22 +438,22 @@ test('HF runtime fetch binds its host and validates a private nullable response 
     'mr_' + 'a'.repeat(64),
     async (url, init) => {
       seen.push({ url: String(url), body: JSON.parse(String(init?.body)), method: init?.method });
-      return Response.json({ hfToken: marker });
+      return Response.json({ access: { token: marker, endpoint: 'https://merv.example/hf' } });
     },
   );
-  assert.equal(
-    await managed.huggingface('session_fixture', 'runner_fixture', 'host_fixture'),
-    marker,
+  assert.deepEqual(
+    await managed.huggingfaceAccess('session_fixture', 'runner_fixture', 'host_fixture'),
+    { token: marker, endpoint: 'https://merv.example/hf' },
   );
   assert.deepEqual(seen, [
     {
-      url: 'https://merv.example/sessions/session_fixture/huggingface',
+      url: 'https://merv.example/sessions/session_fixture/huggingface-access',
       method: 'POST',
       body: { runnerId: 'runner_fixture', hostRef: 'host_fixture' },
     },
   ]);
   assert.equal(
-    await client({ hfToken: null }).huggingface(
+    await client({ access: null }).huggingfaceAccess(
       'session_fixture',
       'runner_fixture',
       'host_fixture',
@@ -465,9 +465,11 @@ test('HF runtime fetch binds its host and validates a private nullable response 
     {},
     { hfToken: marker + '\n' },
     { hfToken: 7 },
+    { access: { token: marker, endpoint: 'https://merv.example:8443/hf' } },
+    { access: { token: marker, endpoint: 'https://MERV.example/hf' } },
   ]) {
     await assert.rejects(
-      client(value).huggingface('session_fixture', 'runner_fixture', 'host_fixture'),
+      client(value).huggingfaceAccess('session_fixture', 'runner_fixture', 'host_fixture'),
       (error: Error) => {
         assert.ok(!String(error).includes(marker));
         return error instanceof RunnerControlError && error.code === 'invalid_control_response';

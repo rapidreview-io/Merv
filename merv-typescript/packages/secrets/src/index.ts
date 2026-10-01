@@ -1,4 +1,5 @@
 import type { Context } from 'cordis';
+import { hkdfSync } from 'node:crypto';
 import { CompactEncrypt, compactDecrypt } from 'jose';
 import { z } from 'zod';
 import {
@@ -10,7 +11,19 @@ import {
   type HumanPrincipal,
   type State,
 } from '@merv/contracts';
-import type { AccountIdentity, HuggingFaceStatus, Secrets } from './types.js';
+import type { AccountIdentity, HuggingFaceStatus, HuggingFaceGrant, Secrets } from './types.js';
+
+const grantSchema = z
+  .object({
+    v: z.literal(1),
+    sessionId: z.string().min(1).max(200),
+    runnerId: z.string().min(1).max(200),
+    allocationId: z.string().min(1).max(200),
+    epoch: z.number().int().safe().nonnegative(),
+    hostRef: z.string().min(1).max(512),
+    exp: z.number().int().safe().positive(),
+  })
+  .strict();
 
 const migrations = [
   {
@@ -43,12 +56,60 @@ export const huggingFaceToken = z
 /** One account credential. State receives only authenticated ciphertext, never the token. */
 export class AccountSecrets implements Secrets {
   readonly #key: Uint8Array | undefined;
+  readonly #grantKey: Uint8Array | undefined;
+  #authorize?: (grant: HuggingFaceGrant) => Promise<AccountIdentity | null>;
   constructor(
     private readonly state: State,
     key: string | undefined,
     private readonly clock = Date.now,
+    readonly huggingFaceEndpoint: string | null = null,
   ) {
     this.#key = encryptionKey(key);
+    if (this.#key)
+      this.#grantKey = new Uint8Array(
+        hkdfSync('sha256', this.#key, Buffer.alloc(0), 'merv/hf-grant/v1', 32),
+      );
+  }
+  registerHuggingFaceAuthority(
+    authorize: (grant: HuggingFaceGrant) => Promise<AccountIdentity | null>,
+  ) {
+    check(!this.#authorize, 'duplicate_authority', 'Hugging Face authority already registered');
+    this.#authorize = authorize;
+    return () => {
+      if (this.#authorize === authorize) this.#authorize = undefined;
+    };
+  }
+  async createHuggingFaceAccess(input: HuggingFaceGrant) {
+    const grant = grantSchema.parse(input);
+    if (
+      !this.#grantKey ||
+      !this.huggingFaceEndpoint ||
+      !this.#authorize ||
+      grant.exp * 1000 <= this.clock()
+    )
+      return null;
+    const identity = await this.#authorize(grant);
+    if (!identity || !(await this.resolveHuggingFaceToken(identity))) return null;
+    const token = await new CompactEncrypt(new TextEncoder().encode(JSON.stringify(grant)))
+      .setProtectedHeader({ alg: 'dir', enc: 'A256GCM', typ: 'merv-hf-grant' })
+      .encrypt(this.#grantKey);
+    return { token, endpoint: this.huggingFaceEndpoint };
+  }
+  async resolveHuggingFaceGrant(token: string): Promise<string | null> {
+    if (!this.#grantKey || !this.#authorize || token.length > 4096) return null;
+    try {
+      const { plaintext, protectedHeader } = await compactDecrypt(token, this.#grantKey, {
+        keyManagementAlgorithms: ['dir'],
+        contentEncryptionAlgorithms: ['A256GCM'],
+      });
+      if (protectedHeader.typ !== 'merv-hf-grant') return null;
+      const grant = grantSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
+      if (grant.exp * 1000 <= this.clock()) return null;
+      const identity = await this.#authorize(grant);
+      return identity ? await this.resolveHuggingFaceToken(identity) : null;
+    } catch {
+      return null;
+    }
   }
   async initialize() {
     await this.state.migrate('secrets', migrations);
@@ -141,7 +202,27 @@ export class AccountSecrets implements Secrets {
   }
 }
 const Config = z
-  .object({ encryptionKeyEnv: envName.default('MERV_SECRETS_ENCRYPTION_KEY') })
+  .object({
+    encryptionKeyEnv: envName.default('MERV_SECRETS_ENCRYPTION_KEY'),
+    huggingFaceEndpoint: z
+      .string()
+      .url()
+      .refine((value) => {
+        const url = new URL(value);
+        return (
+          url.protocol === 'https:' &&
+          !url.port &&
+          /^[a-z0-9.-]+$/.test(url.hostname) &&
+          value === `https://${url.hostname}/hf` &&
+          url.pathname === '/hf' &&
+          !url.search &&
+          !url.hash &&
+          !url.username &&
+          !url.password
+        );
+      })
+      .optional(),
+  })
   .strict()
   .default({});
 export const secretsPlugin = {
@@ -151,7 +232,14 @@ export const secretsPlugin = {
   async apply(ctx: Context, config: z.infer<typeof Config>) {
     ctx.provide(
       'secrets',
-      await createService(new AccountSecrets(ctx.state, process.env[config.encryptionKeyEnv])),
+      await createService(
+        new AccountSecrets(
+          ctx.state,
+          process.env[config.encryptionKeyEnv],
+          Date.now,
+          config.huggingFaceEndpoint,
+        ),
+      ),
     );
   },
 };
