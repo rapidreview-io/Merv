@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const source = readFileSync(new URL('./release.mjs', import.meta.url), 'utf8');
@@ -78,3 +78,98 @@ ${failure}
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+const sandboxDefinition = source.slice(
+  source.indexOf('const sandboxes ='),
+  source.indexOf('const host = opt('),
+);
+const parseSandboxes = new Function(
+  'args',
+  'existsSync',
+  'statSync',
+  'join',
+  'resolve',
+  `${sandboxDefinition}\nreturn sandboxes;`,
+);
+const hostedDefinition = source.slice(
+  source.indexOf('const hosted ='),
+  source.indexOf('// A hosted run left open'),
+);
+const hostedChild = new Function(
+  'spawnSync',
+  'process',
+  'join',
+  'root',
+  'host',
+  'sandboxes',
+  `${hostedDefinition}\nreturn hosted;`,
+);
+
+test('selected Sandboxes checkout reaches resume, pin checks and final hosted rollout unchanged', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-python-checkout-'));
+  try {
+    const checkout = join(directory, 'Python checkout with spaces');
+    mkdirSync(join(checkout, '.git'), { recursive: true });
+    const selected = parseSandboxes(['--sandboxes', checkout], existsSync, statSync, join, resolve);
+    const calls = [];
+    const hosted = hostedChild(
+      (...args) => {
+        calls.push(args);
+        return { status: 0 };
+      },
+      process,
+      join,
+      '/merv',
+      'ResearchSuite_Control',
+      selected,
+    );
+    assert.equal(hosted('--resume'), 0);
+    assert.equal(hosted('--check'), 0);
+    assert.equal(hosted(), 0);
+    for (const [index, extra] of [['--resume'], ['--check'], []].entries()) {
+      assert.deepEqual(calls[index], [
+        process.execPath,
+        [
+          '/merv/deploy/hosted-release.mjs',
+          '--host',
+          'ResearchSuite_Control',
+          '--sandboxes',
+          checkout,
+          ...extra,
+        ],
+        { stdio: 'inherit' },
+      ]);
+    }
+    const defaultCalls = [];
+    hostedChild(
+      (...args) => {
+        defaultCalls.push(args);
+        return { status: 0 };
+      },
+      process,
+      join,
+      '/merv',
+      'ResearchSuite_Control',
+      undefined,
+    )('--check');
+    assert.deepEqual(defaultCalls[0][1], [
+      '/merv/deploy/hosted-release.mjs',
+      '--host',
+      'ResearchSuite_Control',
+      '--check',
+    ]);
+    assert.equal(parseSandboxes([], existsSync, statSync, join, resolve), undefined);
+    for (const args of [
+      ['--sandboxes'],
+      ['--sandboxes', '--resume'],
+      ['--sandboxes', ''],
+      ['--sandboxes', checkout, '--sandboxes', checkout],
+      ['--sandboxes', checkout + '\n'],
+      ['--sandboxes', join(directory, 'missing')],
+      ['--sandboxes', directory],
+    ])
+      assert.throws(() => parseSandboxes(args, existsSync, statSync, join, resolve), /--sandboxes/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

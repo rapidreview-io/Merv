@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
 //   node deploy/release.mjs [--host ResearchSuite_Control] [--public https://origin]
-//                           [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
+//                           [--sandboxes <committed Python checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
 // pinned Node digest, compiled-CLI check, rollback record, `docker compose up -d`, health wait,
@@ -15,12 +15,28 @@
 // --skip-hosted leaves the hosted image for an emergency Main-only release. A production row is
 // committed by path and pushed when this checkout is at origin/main's tip.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { NODE_IMAGE, packageSource, publishLedgers, root } from './source-archive.mjs';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
+const sandboxes = (() => {
+  const index = args.indexOf('--sandboxes');
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (
+    !value ||
+    value.startsWith('--') ||
+    /[\x00-\x1f\x7f]/.test(value) ||
+    args.lastIndexOf('--sandboxes') !== index
+  )
+    throw new Error('--sandboxes requires one checkout path');
+  const path = resolve(value);
+  if (!existsSync(path) || !statSync(path).isDirectory() || !existsSync(join(path, '.git')))
+    throw new Error('--sandboxes must name a Git checkout directory');
+  return path;
+})();
 const host = opt('--host', 'ResearchSuite_Control');
 const dryRun = args.includes('--dry-run');
 const noRollback = args.includes('--no-rollback');
@@ -184,9 +200,19 @@ if (local)
   );
 if (dryRun) process.exit(0);
 const hosted = (...extra) =>
-  spawnSync(process.execPath, [join(root, 'deploy/hosted-release.mjs'), '--host', host, ...extra], {
-    stdio: 'inherit',
-  }).status;
+  spawnSync(
+    process.execPath,
+    [
+      join(root, 'deploy/hosted-release.mjs'),
+      '--host',
+      host,
+      ...(sandboxes ? ['--sandboxes', sandboxes] : []),
+      ...extra,
+    ],
+    {
+      stdio: 'inherit',
+    },
+  ).status;
 // A hosted run left open would make the VM job refuse; finish it (forward or back) first.
 if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
   console.error(
