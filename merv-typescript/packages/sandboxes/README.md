@@ -1,5 +1,44 @@
 # Sandboxes
 
+## Native research integration
+
+When `native` is configured, newly connected Tasks and Experiments use the native
+Sandboxes MCP interface. Their existing workflow owners pin the project connection
+and stable work namespace; Sessions privately requests bounded assignment access,
+and Runner supplies it to Codex or Claude. Fleet protected hosts and Code checks
+keep their separate connections. Existing pinned work keeps the legacy adapter.
+
+Settings → Integrations enables compute through the same Supabase sign-in used by
+the native Sandboxes console. First sign-in creates one personal backing account;
+there is no second signup or account-linking form. Project consent selects an
+authorized payer. A fresh account still needs an authorized compute provider.
+Changing payer affects new work; existing work retains its original payer. Disconnect
+revokes further access, while admitted jobs and rentals keep their native lifecycle.
+
+Native resources feed the existing Compute and Running views through scoped reads
+and the existing memory cache. Native machine controls link to Sandboxes. There is
+no second resource ledger. A short `check` assignment permits bounded verification;
+existing SSH sessions are not forcibly terminated by certificate revocation.
+
+Terminal native Captures become one artifact collection each, containing immutable
+file references without another upload. Empty or partial captures retain explicit
+outcome metadata. Native holds survive work closure and machine release. The native
+`outputs` shortcut preserves its temporary Snapshot and adds a separate Capture;
+that convenience path uploads twice. Explicit Capture avoids the extra snapshot.
+
+The deployment renderer enables this only with `MERV_SANDBOXES_NATIVE_ENABLED=true`,
+`MERV_SANDBOXES_APPLICATION_ID`, `MERV_SANDBOXES_APPLICATION_SECRET` and a 32-byte
+base64url `MERV_SANDBOXES_ENCRYPTION_KEY`. Rendered configuration stores environment
+variable names only. `MERV_TS_PUBLIC_ORIGIN` determines the consent callback. Native
+OIDC and application redirect registration must be configured before activation.
+Legacy `connections` may be empty only when native integration is configured.
+
+The backend stores connection/work/assignment bindings, revocation and cleanup
+intents, and capture-to-artifact IDs. Native Sandboxes owns execution, billing and
+storage. Reconciliation pages native resources, fences old assignment access,
+cancels obsolete attempts, lets finalizers finish, then releases remaining rentals.
+Handoffs retain accepted jobs and warm machines in the same work namespace.
+
 Sandboxes publishes rows that a service outside this process owns. merv-sandboxes serves a
 manifest of rows — what each row holds, never how it looks — and this plugin validates that
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
@@ -236,3 +275,10 @@ experiment versions 25–32. Previously created work keeps its pinned policy eve
 when a new worker session takes over: it does not gain extension or planner/reviewer
 job grants. Its existing execution `compute.run` still accepts a work rental key.
 No stored workflows or active research assignments are migrated.
+
+Execution rework stays within the existing scientific attempt. Assignment handoff and
+`retry_running` recover the same native requests; revised commands use new idempotency
+keys. Submitting results moves compute authority to brief review and queues old-phase
+cleanup. A reviewer may reuse retained evidence and warm machines, but must not depend
+on a previous phase's unfinished long-running jobs. No additional research-round
+counter or compute scheduler is introduced.

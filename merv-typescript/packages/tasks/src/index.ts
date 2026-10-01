@@ -1,3 +1,4 @@
+import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import {
   check,
   checkReceipt,
@@ -192,19 +193,30 @@ const workspaces: Record<number, TaskWorkspace> = {
   33: 'central',
   34: 'reference',
   35: 'code',
+  36: 'none',
+  37: 'central',
+  38: 'reference',
+  39: 'code',
+  40: 'none',
+  41: 'central',
+  42: 'reference',
+  43: 'code',
 };
+export const nativeTask = (version: number) => version >= 36 && version <= 43;
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
   workspace: TaskCreate['workspace'],
   baseTaskId: string | undefined,
   hosted: boolean,
   largeUploads = false,
+  native = false,
 ): number =>
+  (native ? 8 : 0) +
   (workspace !== 'git' ? 28 : baseTaskId !== undefined ? 30 : hosted ? 31 : 29) +
   (largeUploads ? 4 : 0);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
 const derivedBase = (version: number) =>
-  [5, 10, 15, 19, 23, 27, 31, 35].includes(version) || serviceOwned(version);
+  [5, 10, 15, 19, 23, 27, 31, 35, 39, 43].includes(version) || serviceOwned(version);
 /** Only the internal service binding may create these tasks; their producer has no credential. */
 const serviceOwned = (version: number) =>
   version === TASK_WORKFLOW_SERVICE.version || version === 11;
@@ -254,6 +266,10 @@ export const TASK_WORKFLOW_COMPUTE = [
     version,
   })),
 ];
+export const TASK_WORKFLOW_NATIVE = Array.from({ length: 8 }, (_, index) => ({
+  ...TASK_WORKFLOW,
+  version: 36 + index,
+}));
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
@@ -369,6 +385,7 @@ export class TaskService implements Tasks {
   private closed = false;
   private code?: TaskCode;
   private compute?: ManagedCompute;
+  private nativeWork?: NativeSandboxWork;
   private machines?: WorkMachines;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
@@ -404,6 +421,7 @@ export class TaskService implements Tasks {
           TASK_WORKFLOW_SERVICE,
           ...TASK_WORKFLOW_LARGE,
           ...TASK_WORKFLOW_COMPUTE,
+          ...TASK_WORKFLOW_NATIVE,
         ]) {
           this.registrations.set(
             definition.version,
@@ -509,15 +527,25 @@ export class TaskService implements Tasks {
       outputs: async ({ caller, snapshot, tx }) => {
         await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
         return {
-          artifacts: (await executionOutputs(this.artifacts, caller, tx)).map(
-            (artifact) => artifact.id,
-          ),
+          artifacts: [
+            ...new Set([
+              ...(await executionOutputs(this.artifacts, caller, tx)).map(
+                (artifact) => artifact.id,
+              ),
+              ...(nativeTask(snapshot.version)
+                ? await this.captureArtifactIds(caller.projectId, snapshot.id, tx)
+                : []),
+            ]),
+          ],
         };
       },
-      release: async ({ lease, reason, tx }) =>
+      release: async ({ lease, reason, tx }) => {
+        if (nativeTask(lease.version))
+          await this.requireNativeWork().revokeAssignment(lease.leaseId, tx);
         await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
           task_id: lease.instanceId,
-        }),
+        });
+      },
     };
   }
 
@@ -685,7 +713,7 @@ export class TaskService implements Tasks {
     return [
       ...new Set([
         ...pinned.map((artifact) => artifact.id),
-        ...((await this.compute?.artifactIds(caller.projectId, lease.task_id, tx)) ?? []),
+        ...((await this.captureArtifactIds(caller.projectId, lease.task_id, tx)) ?? []),
         ...(await executionOutputs(this.artifacts, caller, tx)).map((artifact) => artifact.id),
       ]),
     ].sort();
@@ -793,10 +821,11 @@ export class TaskService implements Tasks {
             (version >= 7 && version <= 11) ||
               (version >= 16 && version <= 19) ||
               (version >= 24 && version <= 27) ||
-              version >= 32,
-            version >= 12,
-            version >= 20,
-            version >= 28,
+              (version >= 32 && version <= 35) ||
+              version >= 40,
+            version >= 12 && !nativeTask(version),
+            version >= 20 && !nativeTask(version),
+            version >= 28 && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -813,10 +842,11 @@ export class TaskService implements Tasks {
             (version >= 7 && version <= 11) ||
               (version >= 16 && version <= 19) ||
               (version >= 24 && version <= 27) ||
-              version >= 32,
-            version >= 12,
-            version >= 20,
-            version >= 28,
+              (version >= 32 && version <= 35) ||
+              version >= 40,
+            version >= 12 && !nativeTask(version),
+            version >= 20 && !nativeTask(version),
+            version >= 28 && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -1261,6 +1291,50 @@ export class TaskService implements Tasks {
     };
   }
 
+  bindNativeWork(service: NativeSandboxWork): () => void {
+    this.nativeWork = service;
+    return () => {
+      if (this.nativeWork === service) this.nativeWork = undefined;
+    };
+  }
+  private requireNativeWork(): NativeSandboxWork {
+    check(
+      this.nativeWork,
+      'native_compute_unavailable',
+      'Native Sandboxes integration is unavailable',
+      503,
+    );
+    return this.nativeWork;
+  }
+  private async captureArtifactIds(
+    projectId: string,
+    workId: string,
+    tx: Transaction,
+  ): Promise<string[]> {
+    const row = await tx.get<{ version: number }>(
+      'SELECT version FROM wf_instances WHERE id=? AND project_id=?',
+      workId,
+      projectId,
+    );
+    return row && nativeTask(row.version)
+      ? ((await this.nativeWork?.artifactIds(projectId, 'task', workId, tx)) ?? [])
+      : ((await this.compute?.artifactIds(projectId, workId, tx)) ?? []);
+  }
+  private async nativeTransition(
+    caller: Caller,
+    workflow: { id: string; version: number; revision: number; state: string },
+    tx: Transaction,
+  ) {
+    if (nativeTask(workflow.version))
+      await this.requireNativeWork().transition(
+        caller.projectId,
+        'task',
+        workflow.id,
+        { attempt: String(workflow.revision), closed: ['done', 'failed'].includes(workflow.state) },
+        tx,
+      );
+  }
+
   bindCompute(adapter: SandboxCompute): () => void {
     this.compute?.close();
     this.machines?.close();
@@ -1345,7 +1419,7 @@ export class TaskService implements Tasks {
         check(
           await tx.get(
             `SELECT l.id FROM task_leases l JOIN tasks t ON t.id=l.task_id JOIN wf_instances w ON w.id=t.id
-          WHERE t.id=? AND t.project_id=? AND w.version>=20 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
+          WHERE t.id=? AND t.project_id=? AND w.version>=20 AND w.version<=35 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
           AND l.released_at IS NULL AND ((w.state='in_progress' AND l.purpose='work') OR (w.state='in_review' AND l.purpose='review'))`,
             taskId,
             caller.projectId,
@@ -1667,6 +1741,7 @@ export class TaskService implements Tasks {
               input.baseTaskId,
               hosted,
               this.artifacts.largeUploadAvailable,
+              !!(await this.nativeWork?.connected(caller.projectId, tx)),
             );
         const workflow = await (
           await this.registration(version)
@@ -1714,6 +1789,10 @@ export class TaskService implements Tasks {
           typeVersion,
           JSON.stringify(contextInputs),
         );
+        if (nativeTask(workflow.version)) {
+          await this.requireNativeWork().pin(caller.projectId, 'task', workflow.id, tx);
+          await this.nativeTransition(caller, workflow, tx);
+        }
         if (derivedBase(workflow.version))
           await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
@@ -2169,16 +2248,20 @@ export class TaskService implements Tasks {
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
           (git ? ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` : '') +
-          (purpose === 'work' && task.workflow.version >= 12 ? ` ${GPU_WORK}` : '');
+          (purpose === 'work' && task.workflow.version >= 12 && !nativeTask(task.workflow.version)
+            ? ` ${GPU_WORK}`
+            : '');
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
       brief:
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}` +
-        (task.workflow.version >= 20
-          ? rentalGuidance('task.compute_', purpose === 'review', task.workflow.version >= 28) +
-            `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
-          : ''),
+        (nativeTask(task.workflow.version)
+          ? this.nativeWork!.guidance(purpose === 'review' ? 'check' : 'execute')
+          : task.workflow.version >= 20
+            ? rentalGuidance('task.compute_', purpose === 'review', task.workflow.version >= 28) +
+              `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
+            : ''),
       references: [
         { kind: 'task', id: task.id, label: task.title },
         ...task.guidance.references,
@@ -2202,7 +2285,7 @@ export class TaskService implements Tasks {
               ? []
               : [
                   'task.submit_delivery',
-                  ...(task.workflow.version >= 12
+                  ...(task.workflow.version >= 12 && !nativeTask(task.workflow.version)
                     ? [
                         'task.compute_offers',
                         'task.compute_run',
@@ -2234,12 +2317,22 @@ export class TaskService implements Tasks {
       ? await this.currentLease(caller, snapshot.id, snapshot.revision, tx)
       : null;
     return {
+      ...(nativeTask(snapshot.version)
+        ? await this.requireNativeWork().references(
+            caller.projectId,
+            'task',
+            snapshot.id,
+            String(snapshot.revision),
+            snapshot.state === 'in_review' ? 'check' : 'execute',
+            tx,
+          )
+        : {}),
       artifacts: lease
         ? await this.leaseArtifactIds(caller, lease, tx)
         : [
             ...new Set([
               row.brief_id,
-              ...((await this.compute?.artifactIds(caller.projectId, row.id, tx)) ?? []),
+              ...((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []),
               ...(JSON.parse(row.delivery_ids) as string[]),
               ...Object.values(contextInputs).flat(),
               ...(review?.artifactIds ?? []),
@@ -2707,7 +2800,7 @@ export class TaskService implements Tasks {
       );
     }
     const artifacts = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
-    const captures = new Set((await this.compute?.artifactIds(caller.projectId, row.id, tx)) ?? []);
+    const captures = new Set((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []);
     check(
       artifacts.every(
         (item) => (item.createdBy === caller.actorId || captures.has(item.id)) && item.size > 0,
@@ -2893,7 +2986,7 @@ export class TaskService implements Tasks {
           createdAt: now(),
           reviewId,
         };
-        await (
+        const moved = await (
           await this.registration(current.version)
         ).transition(
           caller,
@@ -2911,6 +3004,7 @@ export class TaskService implements Tasks {
           },
           tx,
         );
+        await this.nativeTransition(caller, moved, tx);
         if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
         await recorded(
           this.state,
@@ -3009,6 +3103,7 @@ export class TaskService implements Tasks {
           },
           tx,
         );
+        await this.nativeTransition(caller, moved, tx);
         const review = await this.reviews.request(
           caller,
           {
@@ -3027,7 +3122,7 @@ export class TaskService implements Tasks {
             // Pin them through Reviews' ordinary input contract rather than changing authorship.
             pinnedInputIds: [
               ...(caller.session ? [row.brief_id] : []),
-              ...((await this.compute?.artifactIds(caller.projectId, row.id, tx)) ?? []).filter(
+              ...((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []).filter(
                 (id) => input.artifactIds.includes(id),
               ),
             ],
@@ -3092,6 +3187,7 @@ export class TaskService implements Tasks {
           },
           tx,
         );
+        await this.nativeTransition(caller, moved, tx);
         await this.reviews.supersede(caller, previous.id, tx);
         const review = await this.reviews.reissue(
           caller,
@@ -3209,6 +3305,7 @@ export class TaskService implements Tasks {
           },
           tx,
         );
+        await this.nativeTransition(caller, moved, tx);
         const submitted = await this.reviews.submit(
           caller,
           {
@@ -3285,6 +3382,8 @@ export const tasksPlugin = {
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => tasks.bindCompute(ctx.sandboxes.compute!));
+      if (ctx.sandboxes.nativeWork)
+        ctx.effect(() => tasks.bindNativeWork(ctx.sandboxes.nativeWork!));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.
     ctx.effect(function* () {

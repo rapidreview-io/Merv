@@ -38,6 +38,18 @@ async function missing<T>(fn: () => Promise<T>): Promise<T> {
 }
 /** An id argument: a nonempty string. */
 const named = (id: unknown): id is string => typeof id === 'string' && id.length > 0;
+// Collection names are logical POSIX paths, never local filesystem paths. Reject aliases
+// instead of normalizing them so the signed member identity is exact and immutable.
+const collectionPath = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= 4096 &&
+  !/[\\\x00-\x1f\x7f]/.test(value) &&
+  !/^[a-zA-Z]:/.test(value) &&
+  value
+    .split('/')
+    .every((part) => part.length > 0 && part.length <= 255 && part !== '.' && part !== '..');
+const COLLECTION_MANIFEST_BYTES = 16 * 1024 * 1024;
 const parsed = (value: unknown): any => (typeof value === 'string' ? JSON.parse(value) : value);
 const canonical = (value: any): string =>
   Array.isArray(value)
@@ -126,8 +138,8 @@ export class ArtifactStore implements Artifacts {
   ): Promise<Artifact> {
     caller = structuredClone(caller);
     input = plain<ArtifactCollectionInput>(input, 'invalid_artifact', {
-      bytes: 2_000_000,
-      nodes: 10000,
+      bytes: 64 * 1024 * 1024,
+      nodes: 1_000_000,
     });
     const title = meta(input.title, 'application/vnd.merv.collection+json').title;
     check(
@@ -138,24 +150,16 @@ export class ArtifactStore implements Artifacts {
       'Collection requires a source key of at most 128 characters',
     );
     check(
-      Array.isArray(input.files) && input.files.length >= 1 && input.files.length <= 1000,
+      Array.isArray(input.files) && input.files.length <= 10_000,
       'invalid_artifact',
-      'Collection requires 1–1,000 files',
+      'Collection supports at most 10,000 files',
     );
     const names = new Set<string>();
     const files = input.files.map((file) => {
       check(
-        file &&
-          typeof file === 'object' &&
-          typeof file.name === 'string' &&
-          file.name.length <= 255 &&
-          file.name.length > 0 &&
-          !/[\\/\x00-\x1f\x7f]/.test(file.name) &&
-          file.name !== '.' &&
-          file.name !== '..' &&
-          !names.has(file.name),
+        file && typeof file === 'object' && collectionPath(file.name) && !names.has(file.name),
         'invalid_artifact',
-        'Collection file names must be distinct simple names',
+        'Collection file names must be distinct safe relative paths',
       );
       names.add(file.name);
       check(
@@ -195,7 +199,11 @@ export class ArtifactStore implements Artifacts {
         ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
       }),
     );
-    check(manifest.length <= 2_000_000, 'artifact_size', 'Collection manifest exceeds 2 MB');
+    check(
+      manifest.length <= COLLECTION_MANIFEST_BYTES,
+      'artifact_size',
+      'Collection manifest exceeds 16 MiB',
+    );
     return await inTransaction(this.state, tx ?? this.state.ambient, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const artifact: Artifact = {
@@ -279,7 +287,7 @@ export class ArtifactStore implements Artifacts {
   async download(caller: Caller, artifactId: string, fileName?: string) {
     caller = structuredClone(caller);
     if (fileName !== undefined) {
-      check(named(fileName), 'invalid_artifact', 'Invalid collection file name');
+      check(collectionPath(fileName), 'invalid_artifact', 'Invalid collection file name');
       const row = await this.one(caller, undefined, (tx) =>
         tx.get<Record<string, unknown>>(
           `SELECT ${META},file_refs_json FROM artifacts WHERE id=? AND project_id=?`,

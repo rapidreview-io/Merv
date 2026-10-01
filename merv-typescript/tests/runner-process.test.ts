@@ -563,3 +563,26 @@ test('HF process environment is delivered through IPC and split output is redact
     assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
   assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
 });
+
+test('native MCP bearers cross only IPC and process env and are redacted before persistence', async (t) => {
+  const { ledger, host, reserve, token, command, directory } = setup(t);
+  const record = reserve('native-mcp');
+  const marker = 'sbxt_' + 'PrivateNativeMarker'.repeat(3);
+  const child = command(
+    `const s=process.env.MERV_NATIVE_MCP_TOKEN_0; if(!s) process.exit(7); process.stdout.write(s.slice(0,12)); setTimeout(()=>{process.stdout.write(s.slice(12)+'\\n');process.stderr.write(s);},20);`,
+  );
+  Object.assign(child.env, { MERV_NATIVE_MCP_TOKEN_0: marker });
+  await host.launch({
+    launchId: record.id,
+    sessionToken: token,
+    deadline: record.deadline,
+    command: child,
+  });
+  await until(() => terminalLaunch(ledger.get(record.id)!));
+  assert.equal(ledger.get(record.id)?.exitCode, 0);
+  assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]\n');
+  assert.equal(readFileSync(join(record.runDirectory, 'stderr.log'), 'utf8'), '[REDACTED]');
+  for (const file of readdirSync(directory).filter((name) => name.startsWith('ledger.sqlite')))
+    assert.ok(!readFileSync(join(directory, file)).includes(Buffer.from(marker)));
+  assert.ok(!JSON.stringify(ledger.get(record.id)).includes(marker));
+});

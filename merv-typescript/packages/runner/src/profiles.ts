@@ -1,3 +1,5 @@
+import { nativeMcpConnectionsSchema } from '@merv/contracts';
+import type { NativeMcpConnection } from '@merv/sessions/types';
 import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
@@ -99,6 +101,8 @@ export interface LaunchRequest {
   /** Session capability delivered privately for this hosted launch, never persisted. */
   hfToken?: string | null;
   hfEndpoint?: string;
+  /** Issued for this assignment only; never sourced from reusable runner configuration. */
+  connections?: NativeMcpConnection[];
   mcpUrl: string;
   /** An owned workspace prepared by the runner, not a path supplied by an agent. */
   cwd: string;
@@ -376,7 +380,14 @@ function codexArgs(
     // The handshake waits behind the server's writer queue under load; Codex's default 30 s failed every review launch.
     // A call waits 60 s by default, and a web search can take 150 s (its turn, Tavily, then the
     // fallback): a worker that gave up would leave Merv finishing, and paying for, the call.
-    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"${offline}}}`,
+    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"${offline}}${nativeServers(
+      request,
+    )
+      .map(
+        (server) =>
+          `,${server.name}={url=${quote(server.url)},bearer_token_env_var=${quote(server.bearerEnv)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"}`,
+      )
+      .join('')}}`,
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
@@ -413,7 +424,7 @@ function claudeArgs(
   const builtIn = offline
     ? ['Read', 'Glob', 'Grep']
     : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
-  const servers = readOnly ? [] : (profile.servers ?? []);
+  const servers = [...(readOnly ? [] : (profile.servers ?? [])), ...nativeServers(request)];
   return [
     '--print',
     '--output-format',
@@ -482,10 +493,18 @@ function protectLogging(spec: LaunchSpec): LaunchSpec {
  * and a checkout that is discarded afterwards are both free to compute in; the workspace a
  * later launch inherits is not, because what is left behind would reach the next worker.
  */
-const sealed = (session: LaunchRequest['session']): boolean => {
+export const sealed = (session: LaunchRequest['session']): boolean => {
   const workspace = effectiveWorkspace(session.execution.policy);
   return session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain;
 };
+
+/** Deterministic environment names are local to one spawn, never persisted or global. */
+const nativeServers = (request: LaunchRequest) =>
+  (sealed(request.session) ? [] : (request.connections ?? [])).map((connection, index) => ({
+    name: connection.name,
+    url: connection.url,
+    bearerEnv: `MERV_NATIVE_MCP_TOKEN_${index}`,
+  }));
 
 /** Whether a launch is given Merv's internet reads: only where its shell has the network already,
  * a hosted Codex launch or a Claude one, and never a sealed review. */
@@ -592,6 +611,29 @@ export function buildLaunch(
     'unsupported_read_only',
     'Command profiles have no filesystem sandbox and cannot execute read-only leases',
   );
+  const parsedConnections = nativeMcpConnectionsSchema.safeParse(
+    sealed(session) ? [] : (request.connections ?? []),
+  );
+  check(parsedConnections.success, 'invalid_runner_launch', 'Invalid private MCP connections');
+  request = { ...request, connections: parsedConnections.data! };
+  check(
+    profile.harness !== 'command' || request.connections!.length === 0,
+    'invalid_runner_launch',
+    'Command profiles cannot receive MCP connections',
+  );
+  if (profile.harness === 'claude' && !session.execution.policy.readOnly) {
+    const native = nativeServers(request);
+    check(
+      !(profile.servers ?? []).some((server) =>
+        native.some(
+          (connection) =>
+            server.name === connection.name || server.bearerEnv === connection.bearerEnv,
+        ),
+      ),
+      'invalid_runner_launch',
+      'Private MCP connection conflicts with configured server',
+    );
+  }
   const url = endpoint(request.mcpUrl);
   const safeEnvironment =
     profile.harness === 'codex' && profile.isolatedLauncher
@@ -658,6 +700,8 @@ export function buildLaunch(
       );
       bearers[server.bearerEnv] = value;
     }
+  for (const [index, connection] of (request.connections ?? []).entries())
+    bearers[`MERV_NATIVE_MCP_TOKEN_${index}`] = connection.bearer;
   return protectLogging({
     executable:
       profile.harness === 'codex' && profile.isolatedLauncher

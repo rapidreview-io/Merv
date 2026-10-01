@@ -1,3 +1,5 @@
+import type { NativeMcpConnection } from '@merv/contracts';
+export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type {
   AgentObservation,
@@ -274,7 +276,18 @@ export type StatusSection = (
   project: SessionsProjectStatus | null,
 ) => Promise<unknown>;
 
+export type LaunchConnectionsProvider = (
+  session: Readonly<Session>,
+) => Promise<NativeMcpConnection[]>;
+
 export interface Sessions {
+  /** One private launch provider; issuance runs outside state transactions. */
+  registerLaunchConnections(provider: LaunchConnectionsProvider): () => void;
+  launchConnections(
+    caller: Caller,
+    input: SessionControl & { hostRef: string },
+  ): Promise<{ connections: NativeMcpConnection[] }>;
+
   /** Server-only admission. */
   readonly serviceWork: ServiceWork;
   /** Adds a section to `system.status` under `key`, one plugin per key, until disposed. */

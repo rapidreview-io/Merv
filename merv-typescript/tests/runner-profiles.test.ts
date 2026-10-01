@@ -940,3 +940,102 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
     undefined,
   );
 });
+
+test('private native MCP connections reach both harnesses and allowed check reviews without entering args or prompts', () => {
+  const native = {
+    name: 'sandboxes',
+    url: 'https://sandbox.example/mcp',
+    bearer: 'sbxt_' + 'PrivateNative'.repeat(4),
+  };
+  for (const profile of [
+    codex,
+    claude,
+    { ...codex, hosted: true as const, isolatedLauncher: '/opt/merv/assignment' },
+  ]) {
+    for (const review of [false, true]) {
+      const launch = buildLaunch(
+        profile,
+        {
+          ...request(review),
+          connections: [native],
+          hfToken: 'hf_' + 'PrivateHf'.repeat(5),
+          hfEndpoint: 'https://merv.example/hf',
+        },
+        safeEnv,
+      );
+      assert.equal(launch.env.MERV_NATIVE_MCP_TOKEN_0, native.bearer);
+      assert.ok(JSON.stringify(launch.args).includes(native.url));
+      for (const value of [
+        JSON.stringify(launch.args),
+        launch.stdin,
+        JSON.stringify(launch),
+        inspect(launch),
+      ])
+        assert.ok(!value.includes(native.bearer));
+      if (profile.harness === 'codex') {
+        const settings = config(launch.args);
+        assert.ok(settings.mcp_servers.includes('sandboxes={'));
+        assert.ok(settings.mcp_servers.includes('bearer_token_env_var="MERV_NATIVE_MCP_TOKEN_0"'));
+        assert.ok(
+          !String(settings['shell_environment_policy.include_only']).includes('MERV_NATIVE'),
+        );
+        assert.ok(!settings['shell_environment_policy.set'].includes(native.bearer));
+      } else {
+        const args = launch.args;
+        const servers = JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers;
+        assert.equal(servers.sandboxes.headers.Authorization, 'Bearer ${MERV_NATIVE_MCP_TOKEN_0}');
+        assert.ok(args[args.indexOf('--allowedTools') + 1].includes('mcp__sandboxes'));
+      }
+      assert.equal(
+        buildLaunch(profile, request(review), {
+          ...safeEnv,
+          MERV_NATIVE_MCP_TOKEN_0: native.bearer,
+        }).env.MERV_NATIVE_MCP_TOKEN_0,
+        undefined,
+      );
+    }
+    const sealedRequest = request(true, {
+      mode: 'persistent',
+      namespace: 'review',
+      base: 'central',
+      perBase: false,
+      retain: true,
+      advancesCentral: false,
+    });
+    const sealedLaunch = buildLaunch(profile, { ...sealedRequest, connections: [native] }, safeEnv);
+    assert.equal(sealedLaunch.env.MERV_NATIVE_MCP_TOKEN_0, undefined);
+    assert.ok(!JSON.stringify(sealedLaunch.args).includes(native.url));
+  }
+});
+
+test('private native MCP descriptions reject collisions and configuration injection without exposing their bearer', () => {
+  const native = {
+    name: 'sandboxes',
+    url: 'https://sandbox.example/mcp',
+    bearer: 'sbxt_' + 'PrivateNative'.repeat(4),
+  };
+  for (const connections of [
+    [native, native],
+    [{ ...native, name: 'merv' }],
+    [{ ...native, name: 'x]\nconfig' }],
+    [{ ...native, url: 'http://outside.example/mcp' }],
+    [{ ...native, url: 'https://user:pass@host/mcp' }],
+    [{ ...native, url: 'https://host/mcp?credential=bad' }],
+    [{ ...native, bearer: secret }],
+    [{ ...native, bearer: native.bearer + '\n' }],
+  ])
+    assert.throws(
+      () => buildLaunch(codex, { ...request(), connections }, safeEnv),
+      (error: any) =>
+        error.code === 'invalid_runner_launch' && !String(error).includes(native.bearer),
+    );
+  assert.throws(
+    () =>
+      buildLaunch(
+        { ...claude, servers: [{ name: 'sandboxes', url: native.url, bearerEnv: 'OLD_TOKEN' }] },
+        { ...request(), connections: [native] },
+        { ...safeEnv, OLD_TOKEN: 'old' },
+      ),
+    { code: 'invalid_runner_launch' },
+  );
+});

@@ -1,8 +1,9 @@
 import type { Context } from 'cordis';
-import { keyId, type Caller } from '@merv/contracts';
+import { check, keyId, type Caller } from '@merv/contracts';
 import type { RunningRead } from '@merv/ui/types';
 import { machineNodes, machinePanel, machinesSummary, recordRoute } from './running.js';
 import type {} from './types.js';
+import { nativeMachinesRow } from './native-machines.js';
 
 /**
  * Mirrors the remote rows into the sidebar. The service owns the manifest; this owns nothing
@@ -39,6 +40,24 @@ export const sandboxesUiPlugin = {
         withdraw();
       };
     });
+    if (sandboxes.nativeMachines) {
+      const native = sandboxes.nativeMachines;
+      ctx.effect(() =>
+        ctx.ui.register({
+          ...nativeMachinesRow,
+          status: () => ({ state: 'ready' }),
+          read: async (caller, params) => {
+            const id = params?.id;
+            if (id === undefined || id === null || id === '')
+              return { sandboxes: await native.list(caller.projectId) };
+            check(typeof id === 'string', 'invalid_sandbox_id', 'Invalid sandbox identifier');
+            const record = await native.record(caller.projectId, id);
+            check(record, 'not_found', 'Machine not found', 404);
+            return record;
+          },
+        }),
+      );
+    }
     // Every member reads the service's memory and only marks demand, so a board read never
     // waits on merv-sandboxes. The lane and its line read one copy of the machines.
     const machines = async (read: RunningRead) =>

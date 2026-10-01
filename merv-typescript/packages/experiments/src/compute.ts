@@ -57,6 +57,7 @@ export class ExperimentCompute {
                   experiment.version >= 25 &&
                   ['planned', 'design_review', 'experiment_review'].includes(experiment.state))) &&
               experiment.version > 8 &&
+              experiment.version <= 32 &&
               experiment.attempt_index === attemptIndex,
             'compute_not_running',
             'Compute requires this experiment’s current running attempt',
@@ -127,7 +128,7 @@ export class ExperimentCompute {
         check(
           await tx.get(
             `SELECT l.id FROM experiment_leases l JOIN experiments e ON e.id=l.experiment_id JOIN wf_instances w ON w.id=e.id
-          WHERE e.id=? AND e.project_id=? AND w.version>=17 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
+          WHERE e.id=? AND e.project_id=? AND w.version>=17 AND w.version<=32 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
           AND l.state=w.state AND l.attempt_index=e.attempt_index AND l.released_at IS NULL
           AND w.state IN ('planned','design_review','running','experiment_review')`,
             experimentId,

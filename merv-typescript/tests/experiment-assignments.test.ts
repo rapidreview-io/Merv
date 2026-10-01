@@ -1,3 +1,4 @@
+import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -1825,4 +1826,59 @@ test('A Git experiment created once Code keeps the project’s history names Cod
   assert.equal(unit.base?.reference, 'a'.repeat(40));
   assert.deepEqual([unit.generation, unit.writerState], [0, 'idle']);
   await f.release(planning.session.id);
+});
+
+test('native experiment leases dynamically admit verified captures and revoke each assignment on handoff', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  f.experiments.bindNativeWork(native.service);
+  const experiment = await f.create();
+  const first = await f.offer(experiment);
+  assert.equal(first.session.execution.references.sandboxProfile, 'check');
+  assert.equal(first.session.execution.references.sandboxAttempt, '1:planned');
+  assert.ok(!first.session.execution.policy.tools.some((tool) => tool.name.startsWith('compute.')));
+  const worker = await f.sessions.authenticate(first.secret);
+  const service = await f.scope.serviceActor('sandboxes', f.source.projectId);
+  const capture = await f.artifacts.createCollection(service, {
+    title: 'Capture',
+    sourceKey: 'native-lease',
+    files: [
+      {
+        name: 'checks/result.txt',
+        size: 1,
+        hash: 'a'.repeat(64),
+        provider: 'sandboxes',
+        reference: 'private',
+      },
+    ],
+  });
+  await assert.rejects(
+    f.run(worker, 'artifact.get', { artifactId: capture.id }, (caller) =>
+      f.artifacts.get(caller, capture.id),
+    ),
+    { code: 'execution_arguments_forbidden' },
+  );
+  native.verified.set(experiment.id, [capture.id]);
+  assert.equal(
+    (
+      await f.run(worker, 'artifact.get', { artifactId: capture.id }, (caller) =>
+        f.artifacts.get(caller, capture.id),
+      )
+    ).id,
+    capture.id,
+  );
+  await f.release(first.session.id);
+  assert.ok(native.revoked.includes(first.session.id));
+  const next = await f.offer(experiment);
+  assert.equal(
+    next.session.execution.references.sandboxWorkId,
+    first.session.execution.references.sandboxWorkId,
+  );
+  assert.equal(native.pins.size, 1);
+  await f.release(next.session.id);
+  assert.ok(native.revoked.includes(next.session.id));
+  assert.equal(
+    native.changes.some((change) => change.closed),
+    false,
+  );
 });

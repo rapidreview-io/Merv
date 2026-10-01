@@ -104,6 +104,7 @@ interface Machine {
   region?: string;
   /** Code's check machine: Code keeps it and gives it back, so no one else is asked to. */
   check: boolean;
+  console?: string;
 }
 
 /**
@@ -164,6 +165,7 @@ function machineOf(value: unknown): Machine | null {
     provider: text(row.plugin, 60),
     region: text(object(row.offer).region, 60),
     check: !!name?.startsWith(CHECK_MACHINE),
+    console: text(row.native_console_url, 512),
   };
 }
 
@@ -173,7 +175,7 @@ function accelerator(machine: Machine): string {
     return machine.gpus === 1 && machine.gpu
       ? machine.gpu
       : `${machine.gpus}× ${machine.gpu ?? 'GPU'}`;
-  return machine.cpu ? `CPU · ${machine.cpu} vCPU` : 'CPU';
+  return machine.cpu ? `CPU · ${machine.cpu} vCPU` : machine.console ? 'Machine' : 'CPU';
 }
 
 /** The job in hand on a ready machine, in words; undefined while the machine is idle. */
@@ -247,13 +249,21 @@ function leaseEnding(machine: Machine, now: number): boolean {
  */
 function attentionOf(machine: Machine, now: number): RunningAttention | undefined {
   if (machine.check) return undefined;
+  const who = machine.console ? 'Manage this machine in Sandboxes.' : WHO;
+  const destination = machine.console
+    ? { to: { href: machine.console, text: 'Manage in Sandboxes' } }
+    : {};
   if (machine.state === 'failed')
-    return { says: machine.at ? ['Failed ', { ago: machine.at }] : ['Failed'], who: WHO };
-  if (machine.state === 'unknown') return { says: ['Connection lost'], who: WHO };
+    return {
+      says: machine.at ? ['Failed ', { ago: machine.at }] : ['Failed'],
+      who,
+      ...destination,
+    };
+  if (machine.state === 'unknown') return { says: ['Connection lost'], who, ...destination };
   if (!leaseEnding(machine, now)) return undefined;
   return Date.parse(machine.lease!) <= now
-    ? { says: ['Lease ended ', { ago: machine.lease! }], who: WHO }
-    : { says: ['Lease ', { until: machine.lease! }], who: WHO };
+    ? { says: ['Lease ended ', { ago: machine.lease! }], who, ...destination }
+    : { says: ['Lease ', { until: machine.lease! }], who, ...destination };
 }
 
 /** Machines in flight: stopped ones never, failed ones for an hour after they failed. */
@@ -446,9 +456,21 @@ export function machinePanel(input: MachinePanelInput): RunningPanelPart | null 
         ? []
         : [...facts('Running', 'activity', running), ...facts('Used by', 'relations', used)]),
       ...facts('Machine', 'machine', hardware),
+      ...(machine.console
+        ? facts('Manage', 'activity', [
+            {
+              label: 'Sandboxes',
+              value: [{ link: { href: machine.console }, text: 'Manage in Sandboxes' }],
+            },
+          ])
+        : []),
     ],
     actions: absorbed ? [] : actionsOf(machine, command, input.allowed),
-    ...(input.route ? { route: input.route } : {}),
+    ...(machine.console
+      ? { route: `/compute/${encodeURIComponent(machine.id)}` }
+      : input.route
+        ? { route: input.route }
+        : {}),
     live: ['provisioning', 'deleting', 'unknown'].includes(machine.state) || !!working(machine),
   };
 }
@@ -464,7 +486,7 @@ function actionsOf(
   command: string | undefined,
   allowed: boolean,
 ): RunningAction[] {
-  if (machine.check) return [];
+  if (machine.check || machine.console) return [];
   const actions: RunningAction[] = [];
   const input = { id: machine.id };
   if (machine.state === 'ready')

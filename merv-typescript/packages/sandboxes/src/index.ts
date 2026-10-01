@@ -32,6 +32,13 @@ import type {
   SandboxCompute,
 } from './types.js';
 import { SandboxComputeAdapter } from './compute.js';
+import type { NativeSandboxWork } from './native-types.js';
+import { NativeConnections } from './native-connections.js';
+import { NativeEvidence } from './native-evidence.js';
+import { NativeWorkService } from './native-work.js';
+import { nativeMigrations } from './native-schema.js';
+import { nativeRoutes } from './native-api.js';
+import { NativeMachineReader, type NativeMachineReads } from './native-machines.js';
 
 export type {
   Sandboxes,
@@ -132,12 +139,20 @@ const configuration = z
     urlEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
     connections: z
       .array(connection)
-      .min(1)
       .max(256)
       .refine(
         (entries) => new Set(entries.map((entry) => entry.projectId)).size === entries.length,
         'Each project has at most one sandbox connection',
       ),
+    native: z
+      .object({
+        applicationId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+        applicationSecretEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+        encryptionKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+        publicOrigin: z.string().url(),
+      })
+      .strict()
+      .optional(),
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
     storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
@@ -168,7 +183,11 @@ const configuration = z
       .refine((all) => new Set(all.map((p) => p.key)).size === all.length, 'Profile keys repeat')
       .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.connections.length > 0 || !!value.native,
+    'Configure a native connection application or a legacy project connection',
+  );
 
 const secretNames = new Set(['token', 'secret', 'authorization', 'credential']);
 /** A hosted agent's machine belongs to Fleet: no project row lists it and no tool acts on it. */
@@ -212,6 +231,8 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
  * records its open panels ask for, read on this service's own timer, never inside a request.
  */
 export class SandboxService implements Sandboxes {
+  nativeWork?: NativeSandboxWork;
+  nativeMachines?: NativeMachineReads;
   readonly #client: SandboxClient;
   readonly #connections: SandboxConnection[];
   readonly #refreshMs: number;
@@ -438,6 +459,34 @@ export class SandboxService implements Sandboxes {
     }
   }
 
+  /** Native owner calls contain live transactions, so preserve those handles while
+   * using the same admission/drain boundary as the legacy adapter. */
+  nativeOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.#run(undefined, operation);
+  }
+
+  bindNativeWork(work: NativeSandboxWork): void {
+    this.nativeWork = {
+      guidance: (profile) => {
+        check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
+        return work.guidance(profile);
+      },
+      connected: (...args) => this.nativeOperation(() => work.connected(...args)),
+      pin: (...args) => this.nativeOperation(() => work.pin(...args)),
+      references: (...args) => this.nativeOperation(() => work.references(...args)),
+      transition: (...args) => this.nativeOperation(() => work.transition(...args)),
+      revokeAssignment: (...args) => this.nativeOperation(() => work.revokeAssignment(...args)),
+      artifactIds: (...args) => this.nativeOperation(() => work.artifactIds(...args)),
+    };
+  }
+
+  bindNativeMachines(reader: NativeMachineReads): void {
+    this.nativeMachines = {
+      list: (projectId) => this.nativeOperation(() => reader.list(projectId)),
+      record: (projectId, id) => this.nativeOperation(() => reader.record(projectId, id)),
+    };
+  }
+
   rows(): SandboxRow[] {
     return this.#rows;
   }
@@ -606,7 +655,7 @@ export class SandboxService implements Sandboxes {
   }
 
   machines(projectId: string): SandboxMachines | null {
-    this.#connectionFor(projectId);
+    if (!this.nativeMachines) this.#connectionFor(projectId);
     const cache = this.#machines.get(projectId);
     if (!cache || (cache.observedAt === null && !cache.failed)) return null;
     return {
@@ -618,12 +667,16 @@ export class SandboxService implements Sandboxes {
   }
 
   machine(projectId: string, id: string): Json | null {
-    this.#connectionFor(projectId);
+    if (!this.nativeMachines) this.#connectionFor(projectId);
     return this.#machines.get(projectId)?.records.get(id)?.value ?? null;
   }
 
   watch(projectId: string, id?: string): void {
-    if (this.#closed || !this.#connections.some((entry) => entry.projectId === projectId)) return;
+    if (
+      this.#closed ||
+      (!this.nativeMachines && !this.#connections.some((entry) => entry.projectId === projectId))
+    )
+      return;
     const now = Date.now();
     if (!this.#machines.has(projectId))
       this.#machines.set(projectId, {
@@ -690,9 +743,14 @@ export class SandboxService implements Sandboxes {
 
   async #readMachines(projectId: string, cache: MachineCache): Promise<void> {
     const attempt = cache.attemptedAt;
-    const rows = await this.#run(projectId, async (projectId) =>
-      machineRows(visible(await this.#client.read(this.#connectionFor(projectId), machinesRoute))),
-    ).catch(() => undefined);
+    const rows = await this.#run(projectId, async (projectId) => {
+      const legacy = this.#connections.find((entry) => entry.projectId === projectId);
+      const rows = legacy
+        ? machineRows(visible(await this.#client.read(legacy, machinesRoute)))
+        : [];
+      if (this.nativeMachines) rows.push(...(await this.nativeMachines.list(projectId)));
+      return rows;
+    }).catch(() => undefined);
     // An act landed while this read was out, so what it read may be older than the act.
     if (cache.attemptedAt !== attempt) return;
     if (!rows) {
@@ -711,11 +769,14 @@ export class SandboxService implements Sandboxes {
     const attempt = record.attemptedAt;
     try {
       const value = visible(
-        await this.#run(
-          { projectId, id },
-          async ({ projectId, id }) =>
-            await this.#record(this.#connectionFor(projectId), sandboxRoute(sandboxRecord, id)),
-        ),
+        await this.#run({ projectId, id }, async ({ projectId, id }) => {
+          const row = this.#machines
+            .get(projectId)
+            ?.rows.find((entry) => field(entry, 'id') === id);
+          if (this.nativeMachines && field(row ?? null, 'native_console_url'))
+            return this.nativeMachines.record(projectId, id);
+          return this.#record(this.#connectionFor(projectId), sandboxRoute(sandboxRecord, id));
+        }),
       );
       if (record.attemptedAt === attempt) record.value = value;
     } catch {
@@ -728,22 +789,108 @@ export const sandboxesPlugin = {
   name: 'merv-sandboxes',
   Config: configuration,
   apply(ctx: Context, config: SandboxesConfig) {
-    const service = new SandboxService(config);
-    ctx.effect(() => service.start());
-    ctx.provide('sandboxes', service);
-    ctx.inject(['artifacts'], (ctx) => {
-      if (service.compute?.download && ctx.artifacts.registerFileProvider)
+    const publish = (ctx: Context, service: SandboxService, connections?: NativeConnections) => {
+      ctx.effect(() => service.start());
+      ctx.provide('sandboxes', service);
+      ctx.inject(['api'], (ctx) => {
+        const handler = nativeRoutes(connections);
         ctx.effect(() =>
-          ctx.artifacts.registerFileProvider!('sandboxes', {
-            download: async (projectId, reference) => {
-              const link = await service.compute!.download!(projectId, reference);
-              return {
-                ...link,
-                expiresAt: link.expiresAt ?? new Date(Date.now() + 60_000).toISOString(),
-              };
+          ctx.api.mount(
+            '/sandboxes',
+            (...args) => service.nativeOperation(async () => handler(...args)),
+            {
+              public: ['/sandboxes/connection/callback'],
             },
-          }),
+          ),
         );
+      });
+      ctx.inject(['artifacts'], (ctx) => {
+        if (service.compute?.download && ctx.artifacts.registerFileProvider)
+          ctx.effect(() =>
+            ctx.artifacts.registerFileProvider!('sandboxes', {
+              download: async (projectId, reference) => {
+                const link = await service.compute!.download!(projectId, reference);
+                return {
+                  ...link,
+                  expiresAt: link.expiresAt ?? new Date(Date.now() + 60_000).toISOString(),
+                };
+              },
+            }),
+          );
+      });
+    };
+    if (!config.native) {
+      publish(ctx, new SandboxService(config));
+      return;
+    }
+    // Native compute is available only with its real authority/evidence owners.
+    // Fleet and Code continue using their existing dedicated connections.
+    ctx.inject(['state', 'scope', 'artifacts', 'sessions'], async (ctx) => {
+      const settings = config.native!;
+      const secret = process.env[settings.applicationSecretEnv];
+      check(
+        secret && /^[!-~]{16,4096}$/.test(secret),
+        'sandbox_setup_required',
+        'Configure Sandboxes application authentication',
+        503,
+      );
+      const service = new SandboxService(config);
+      const connections = new NativeConnections(
+        ctx.state,
+        ctx.scope,
+        settings,
+        process.env[config.urlEnv]!,
+      );
+      await ctx.state.migrate('sandboxes-native', nativeMigrations);
+      const work = new NativeWorkService(ctx.state, connections);
+      service.bindNativeMachines(new NativeMachineReader(ctx.state, connections));
+      const evidence = new NativeEvidence(ctx.state, ctx.scope, ctx.artifacts, connections);
+      work.setEvidencePublisher((...args) => evidence.publish(...args));
+      service.bindNativeWork(work);
+      check(
+        ctx.artifacts.registerFileProvider,
+        'sandbox_setup_required',
+        'Native compute requires retained-file support',
+        503,
+      );
+      ctx.effect(() =>
+        ctx.artifacts.registerFileProvider!('sandboxes-native', {
+          download: (projectId, reference) =>
+            service.nativeOperation(() => evidence.download(projectId, reference)),
+        }),
+      );
+      ctx.effect(() =>
+        ctx.sessions.registerLaunchConnections((session) =>
+          service.nativeOperation(() => work.launchConnections(session)),
+        ),
+      );
+      let stopping = false;
+      let pending: Promise<void> | undefined;
+      const tick = () => {
+        if (stopping || pending) return;
+        pending = service
+          .nativeOperation(async () => {
+            await connections.reconcileRevocations();
+            if (!stopping) await work.reconcile();
+          })
+          .catch(() => {
+            // Durable intents remain pending and are retried on the next tick.
+          })
+          .finally(() => {
+            pending = undefined;
+          });
+      };
+      ctx.effect(() => {
+        const timer = setInterval(tick, 5000);
+        timer.unref();
+        tick();
+        return async () => {
+          stopping = true;
+          clearInterval(timer);
+          await pending;
+        };
+      });
+      publish(ctx, service, connections);
     });
   },
 };

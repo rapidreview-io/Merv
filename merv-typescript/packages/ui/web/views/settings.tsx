@@ -7,6 +7,7 @@ import { ThreeStates } from '../states';
 import type { PluginState, Row } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
+import { SandboxesConnection } from './sandboxes';
 import { KeysPanel } from './keys';
 import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView, personName } from './people';
@@ -275,6 +276,7 @@ function Keys() {
  * that connection produced; everything that configures it is here.
  */
 export function Integrations({ shell }: ViewProps) {
+  const [nativeAvailable, setNativeAvailable] = useState<boolean | null>(null);
   const code = shell.rows.some((row) => row.view.kind === 'code');
   const compute = useTool<{
     entitled: boolean;
@@ -285,18 +287,16 @@ export function Integrations({ shell }: ViewProps) {
   }>('compute.offers', {}, { every: 60_000 });
   const allowance =
     compute.data?.entitled && compute.data.allowance?.cap?.amount ? compute.data.allowance : null;
-  if (!code && !allowance && compute.loading)
-    return (
-      <div className="page-stage">
-        <LoadState {...compute} />
-      </div>
-    );
-  if (!code && !allowance) return <Nothing icon="link" said="No integrations" />;
   const used = allowance?.month_to_date.find((money) => money.currency === 'USD')?.amount ?? '0';
   const month = new Date().toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   return (
     <div className="page-stage stack stack--lg">
+      <SandboxesConnection onAvailable={setNativeAvailable} />
       {code && <GitHubConnection />}
+      {!code && !allowance && compute.loading && <LoadState {...compute} />}
+      {!code && !allowance && !compute.loading && nativeAvailable === false && (
+        <EmptyState kind="settings" icon="link" title="No integrations" />
+      )}
       {allowance && (
         <KV
           rows={[

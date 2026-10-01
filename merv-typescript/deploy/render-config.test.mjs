@@ -88,6 +88,42 @@ test('ML config renders only a valid consumer grant, switch-on time, and optiona
     assert.notEqual(run({ ...ml, ...invalid }).status, 0);
 });
 
+test('native compute is opt-in and carries only credential names, preserving legacy connections', (t) => {
+  const { run, plugin, output } = renderer(t);
+  const native = {
+    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
+    MERV_SANDBOXES_URL: 'https://sandboxes.example',
+    MERV_SANDBOXES_APPLICATION_ID: 'merv',
+    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
+    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
+  };
+  assert.equal(run(native).status, 0);
+  assert.deepEqual(plugin('sandboxes').config.connections, []);
+  assert.deepEqual(plugin('sandboxes').config.native, {
+    applicationId: 'merv',
+    applicationSecretEnv: 'MERV_SANDBOXES_APPLICATION_SECRET',
+    encryptionKeyEnv: 'MERV_SANDBOXES_ENCRYPTION_KEY',
+    publicOrigin: 'https://merv.example',
+  });
+  for (const value of [
+    native.MERV_SANDBOXES_APPLICATION_SECRET,
+    native.MERV_SANDBOXES_ENCRYPTION_KEY,
+  ])
+    assert.ok(!readFileSync(output, 'utf8').includes(value));
+  assert.equal(run({ ...connected, ...native }).status, 0);
+  assert.equal(plugin('sandboxes').config.connections[0].projectId, 'project_1');
+  for (const invalid of [
+    { MERV_SANDBOXES_URL: undefined },
+    { MERV_SANDBOXES_APPLICATION_SECRET: '' },
+    { MERV_SANDBOXES_ENCRYPTION_KEY: 'wrong' },
+    { MERV_SANDBOXES_APPLICATION_ID: '../bad' },
+  ])
+    assert.notEqual(run({ ...native, ...invalid }).status, 0);
+  assert.notEqual(run({ ...native, MERV_SANDBOXES_NATIVE_ENABLED: 'false' }).status, 0);
+  assert.equal(run(connected).status, 0);
+  assert.equal(plugin('sandboxes').config.native, undefined);
+});
+
 /** render-config.mjs beside a fixture default.json, run with `env` plus the given variables. */
 function renderer(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'merv-render-config-')));

@@ -48,6 +48,9 @@ const json = (name) => {
 const fleetEnabled = optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = optIn('MERV_FLEET_WORKFLOW_ENABLED');
 const piEnabled = optIn('MERV_PI_ENABLED');
+const nativeComputeEnabled = optIn('MERV_SANDBOXES_NATIVE_ENABLED');
+if (nativeComputeEnabled && process.env.MERV_SANDBOXES_URL === undefined)
+  throw new Error('Native compute requires MERV_SANDBOXES_URL');
 if (workflowEnabled && !fleetEnabled) throw new Error('Fleet workflow requires MERV_FLEET_ENABLED');
 if (piEnabled && !fleetEnabled) throw new Error('Pi requires MERV_FLEET_ENABLED');
 const mode = required('MERV_TS_AUTH_MODE');
@@ -128,9 +131,29 @@ let connections = [];
 // MERV_FLEET_RUNTIME_* variables, which then only let an image older than the catalog render.
 let runtimes = [];
 let ml;
+let native;
 if (process.env.MERV_SANDBOXES_URL !== undefined) {
   httpsOrigin('MERV_SANDBOXES_URL');
-  connections = sandboxConnections();
+  connections = sandboxConnections(undefined, nativeComputeEnabled);
+  if (nativeComputeEnabled) {
+    const applicationId = required('MERV_SANDBOXES_APPLICATION_ID');
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(applicationId))
+      throw new Error('Invalid MERV_SANDBOXES_APPLICATION_ID');
+    if (!/^[!-~]{16,4096}$/.test(required('MERV_SANDBOXES_APPLICATION_SECRET')))
+      throw new Error('Invalid MERV_SANDBOXES_APPLICATION_SECRET');
+    const key = required('MERV_SANDBOXES_ENCRYPTION_KEY');
+    if (
+      !/^[A-Za-z0-9_-]{43}$/.test(key) ||
+      Buffer.from(key, 'base64url').toString('base64url') !== key
+    )
+      throw new Error('Invalid MERV_SANDBOXES_ENCRYPTION_KEY');
+    native = {
+      applicationId,
+      applicationSecretEnv: 'MERV_SANDBOXES_APPLICATION_SECRET',
+      encryptionKeyEnv: 'MERV_SANDBOXES_ENCRYPTION_KEY',
+      publicOrigin: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
+    };
+  }
   if (process.env.MERV_SANDBOXES_ML_NAMESPACE !== undefined) {
     const namespace = process.env.MERV_SANDBOXES_ML_NAMESPACE;
     if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(namespace))
@@ -189,6 +212,7 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
       config: {
         urlEnv: 'MERV_SANDBOXES_URL',
         connections,
+        ...(native ? { native } : {}),
         ...(ml ? { ml } : {}),
         ...(runtimes.length
           ? { runtimes: runtimes.map(({ label, slots, agent, ...profile }) => profile) }

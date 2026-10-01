@@ -4,7 +4,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { MervError, pathSegment, type Caller } from '@merv/contracts';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
-import type {} from './types.js';
+import type { NativeMcpConnection } from './types.js';
 
 /**
  * What Sessions' HTTP routes and credentials use of Sessions. Each body, and the enrollment's
@@ -38,6 +38,10 @@ export interface SessionRoutes {
   list(caller: Caller): Promise<unknown[]>;
   get(caller: Caller, sessionId: string): Promise<unknown>;
   attach(caller: Caller, input: unknown): Promise<unknown>;
+  launchConnections(
+    caller: Caller,
+    input: unknown,
+  ): Promise<{ connections: NativeMcpConnection[] }>;
   huggingfaceAccess(caller: Caller, input: unknown): Promise<{ access: HuggingFaceAccess | null }>;
   huggingface(caller: Caller, input: unknown): Promise<{ hfToken: string | null }>;
   workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
@@ -67,7 +71,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|huggingface|huggingface-access)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|huggingface|huggingface-access|launch-connections)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -152,7 +156,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|huggingface|huggingface-access))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|huggingface|huggingface-access|launch-connections))?$/.exec(
       path,
     );
   if (route) {
@@ -172,6 +176,11 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
         bound(await r.json(undefined, 4096), 'sessionId', sessionId),
       );
     }
+    if (req.method === 'POST' && route[2] === 'launch-connections')
+      return await sessions.launchConnections(
+        caller,
+        bound(await r.json(undefined, 4096), 'sessionId', sessionId),
+      );
     if (req.method === 'POST' && route[2] === 'transcript') {
       const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
       return { transcript: await sessions.transcript(caller, input) };
@@ -186,7 +195,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
             : route[2] === 'heartbeat'
               ? await sessions.heartbeat(caller, input)
               : await sessions.release(caller, input);
-      return { session };
+      return { session, ...(route[2] === 'attach' ? { launchConnections: true } : {}) };
     }
   }
   throw unknownEndpoint();
@@ -197,7 +206,11 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
 function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
-    if (path.endsWith('/huggingface') || path.endsWith('/huggingface-access'))
+    if (
+      path.endsWith('/huggingface') ||
+      path.endsWith('/huggingface-access') ||
+      path.endsWith('/launch-connections')
+    )
       res.setHeader('Cache-Control', 'no-store');
     if (!r.principal) {
       if (path === '/sessions/self' || path.startsWith('/sessions/self/'))

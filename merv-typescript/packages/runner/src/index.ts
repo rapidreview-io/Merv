@@ -34,6 +34,7 @@ import { readTranscript, type TranscriptFacts } from './transcript.js';
 import { GitWorkspaceManager } from './workspaces.js';
 import {
   buildLaunch,
+  sealed,
   collectRepositorySkillPaths,
   handoffGraceMs,
   harnessUsage,
@@ -700,7 +701,15 @@ export class MachineRunner implements Runner {
                 .huggingfaceAccess(session.id, this.ledger.runnerId, record.id)
                 .catch(() => null)
             : null;
+        const connections =
+          profile.harness !== 'command' &&
+          !sealed(session) &&
+          this.client.supportsLaunchConnections(session.id, record.id)
+            ? await this.client.launchConnections(session.id, this.ledger.runnerId, record.id)
+            : [];
+        if (this.stopping) return false;
         const command = buildLaunch(profile, {
+          connections,
           hfToken: hfAccess?.token,
           hfEndpoint: hfAccess?.endpoint,
           session,

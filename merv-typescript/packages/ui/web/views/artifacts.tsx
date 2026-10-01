@@ -416,12 +416,54 @@ function InlineArtifact({
   );
 }
 
+/** Native capture receipts keep useful files even when their finalizer did not finish. */
+function CaptureStatus({ metadata }: { metadata?: Record<string, unknown> }) {
+  const state = metadata?.captureState;
+  const label =
+    state === 'failed'
+      ? 'Capture failed'
+      : state === 'cancelled'
+        ? 'Capture cancelled'
+        : state === 'skipped'
+          ? 'Capture skipped'
+          : state === 'succeeded'
+            ? 'Capture complete'
+            : null;
+  if (!label) return null;
+  const limitations = Array.isArray(metadata?.evidenceLimitations)
+    ? metadata.evidenceLimitations
+        .flatMap((value: unknown) => {
+          if (!value || typeof value !== 'object') return [];
+          const row = value as Record<string, unknown>;
+          const message = row.message ?? row.reason;
+          return typeof message === 'string' && message.trim()
+            ? [message.trim().slice(0, 1000)]
+            : [];
+        })
+        .slice(0, 10)
+    : [];
+  return (
+    <div role="status">
+      <p>
+        {label}
+        {metadata?.outputState === 'partial' ? ' · partial outputs' : ''}.
+      </p>
+      {limitations.map((message, index) => (
+        <p className="muted" key={index}>
+          {message}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** The one move a file offers: take a copy of it, where storage can serve one. */
 function Take({ artifact }: { artifact: Artifact }) {
   const scope = useScopeVersion();
   if (artifact.files)
     return (
       <div className="empty">
+        <CaptureStatus metadata={artifact.metadata} />
         <p>
           {artifact.files.length} retained {artifact.files.length === 1 ? 'file' : 'files'}
         </p>

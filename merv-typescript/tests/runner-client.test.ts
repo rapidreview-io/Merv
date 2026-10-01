@@ -477,3 +477,74 @@ test('HF runtime fetch binds its host and validates a private nullable response 
     );
   }
 });
+
+test('private native MCP response is host-bound, validated and separate from public session data', async () => {
+  const connection = {
+    name: 'sandboxes',
+    url: 'https://sandbox.example/mcp',
+    bearer: 'sbxt_' + 'PrivateMarker'.repeat(4),
+  };
+  const seen: unknown[] = [];
+  const runner = new RunnerClient(
+    'https://merv.example',
+    'project_fixture',
+    bearer,
+    async (url, init) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return Response.json(
+        String(url).endsWith('/attach')
+          ? { session: session(), launchConnections: true }
+          : { connections: [connection] },
+      );
+    },
+  );
+  assert.equal(runner.supportsLaunchConnections('session_fixture', 'launch_fixture'), false);
+  const attached = await runner.attach('session_fixture', heartbeat.runnerId, 'launch_fixture');
+  assert.equal(runner.supportsLaunchConnections('session_fixture', 'launch_fixture'), true);
+  assert.equal(runner.supportsLaunchConnections('session_fixture', 'different-host'), false);
+  assert.ok(!JSON.stringify(attached).includes(connection.bearer));
+  assert.deepEqual(
+    await runner.launchConnections('session_fixture', heartbeat.runnerId, 'launch_fixture'),
+    [connection],
+  );
+  assert.deepEqual(seen[1], {
+    url: 'https://merv.example/sessions/session_fixture/launch-connections',
+    body: { runnerId: heartbeat.runnerId, hostRef: 'launch_fixture' },
+  });
+  const old = client({ session: session() });
+  await old.attach('session_fixture', heartbeat.runnerId, 'launch_fixture');
+  assert.equal(old.supportsLaunchConnections('session_fixture', 'launch_fixture'), false);
+  for (const value of [
+    { connections: [connection, connection] },
+    { connections: [{ ...connection, name: 'merv' }] },
+    { connections: [{ ...connection, bearer: connection.bearer + '\n' }] },
+    { connections: [], unexpected: connection.bearer },
+  ])
+    await assert.rejects(
+      client(value).launchConnections('session_fixture', heartbeat.runnerId, 'launch_fixture'),
+      (error: any) =>
+        error.code === 'invalid_control_response' && !String(error).includes(connection.bearer),
+    );
+});
+
+test('only an exact old-server unknown launch endpoint may fall back to no connections', async () => {
+  for (const [status, code, message] of [
+    [404, 'not_found', 'Unknown endpoint'],
+    [404, 'session_not_found', 'Session not found'],
+    [404, 'not_found', 'Other missing resource'],
+    [401, 'unauthorized', 'Unknown endpoint'],
+    [403, 'managed_runner_forbidden', 'Unknown endpoint'],
+  ] as const) {
+    const runner = new RunnerClient('https://merv.example', 'project_fixture', bearer, async () =>
+      Response.json({ error: { code, message } }, { status }),
+    );
+    const pending = runner.launchConnections(
+      'session_fixture',
+      heartbeat.runnerId,
+      'launch_fixture',
+    );
+    if (status === 404 && code === 'not_found' && message === 'Unknown endpoint')
+      assert.deepEqual(await pending, []);
+    else await assert.rejects(pending, { code, status });
+  }
+});

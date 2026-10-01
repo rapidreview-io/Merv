@@ -1,3 +1,4 @@
+import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import {
   requireDirecting,
   excludedFromReview,
@@ -86,8 +87,17 @@ const workspaces: Record<number, 'none' | 'git'> = {
   30: 'git',
   31: 'git',
   32: 'git',
+  33: 'none',
+  34: 'git',
+  35: 'git',
+  36: 'git',
+  37: 'none',
+  38: 'git',
+  39: 'git',
+  40: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
+export const nativeExperiment = (version: number) => version >= 33 && version <= 40;
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
 const base = (version: number) => 5 + ((version - 5) % 4);
 const referencedBase = (version: number) => base(version) === 7 || derivedBase(version);
@@ -99,7 +109,9 @@ export const programVersion = (
   baseTaskId?: string,
   hosted = false,
   largeUploads = false,
+  native = false,
 ): number =>
+  (native ? 8 : 0) +
   (workspace !== 'git' ? 25 : baseTaskId !== undefined ? 27 : hosted ? 28 : 26) +
   (largeUploads ? 4 : 0);
 /**
@@ -351,6 +363,7 @@ export const EXPERIMENT_LIMITS = { designRounds: 4, resultRounds: 3 };
 
 export interface ExperimentProgramHost {
   limits: typeof EXPERIMENT_LIMITS;
+  nativeWork?: NativeSandboxWork;
   state: State;
   scope: Scope;
   paper: Paper;
@@ -929,7 +942,24 @@ export class ExperimentProgram {
     const review = experiment.reviewId
       ? await this.host.reviews.get(context.caller, experiment.reviewId, context.tx)
       : null;
+    if (nativeExperiment(context.snapshot.version))
+      check(
+        this.host.nativeWork,
+        'native_compute_unavailable',
+        'Native Sandboxes integration is unavailable',
+        503,
+      );
     return {
+      ...(nativeExperiment(context.snapshot.version)
+        ? await this.host.nativeWork!.references(
+            context.caller.projectId,
+            'experiment',
+            experiment.id,
+            `${experiment.attempt.index}:${context.snapshot.state}`,
+            context.snapshot.state === 'running' ? 'execute' : 'check',
+            context.tx,
+          )
+        : {}),
       ...(referencedBase(context.snapshot.version) && context.snapshot.state === 'running'
         ? derivedBase(context.snapshot.version)
           ? await this.pinnedBase(context)
@@ -1150,10 +1180,12 @@ export class ExperimentProgram {
       label: `${recipeNames[state]}: ${experiment.name}`,
       brief:
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}` +
-        (experiment.workflow.version >= 17
-          ? rentalGuidance('compute.', reviewing(state), experiment.workflow.version >= 25) +
-            `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`
-          : ''),
+        (nativeExperiment(experiment.workflow.version)
+          ? this.host.nativeWork!.guidance(state === 'running' ? 'execute' : 'check')
+          : experiment.workflow.version >= 17
+            ? rentalGuidance('compute.', reviewing(state), experiment.workflow.version >= 25) +
+              `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`
+            : ''),
       references: [
         { kind: 'experiment', id: experiment.id, label: experiment.name },
         ...preview.sources.map((artifact) => ({
@@ -1218,13 +1250,13 @@ export class ExperimentProgram {
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
-        ...(version > 8 ? [grant('compute.offers', {})] : []),
-        ...(version >= 17
+        ...(version > 8 && !nativeExperiment(version) ? [grant('compute.offers', {})] : []),
+        ...(version >= 17 && !nativeExperiment(version)
           ? ['machines', 'rent', 'ssh', ...(version >= 25 ? ['extend'] : []), 'release'].map(
               (name) => grant(`compute.${name}`, experiment),
             )
           : []),
-        ...(version >= 25 && state !== 'running'
+        ...(version >= 25 && !nativeExperiment(version) && state !== 'running'
           ? [
               grant('compute.run', { ...experiment, purpose: { kind: 'literal', value: 'check' } }),
               grant('compute.cancel', experiment),
@@ -1246,7 +1278,8 @@ export class ExperimentProgram {
               grant('artifact.create', {}),
               ...((version >= 13 && version <= 16) ||
               (version >= 21 && version <= 24) ||
-              version >= 29
+              (version >= 29 && version <= 32) ||
+              version >= 37
                 ? [
                     grant('artifact.upload_begin', {}),
                     grant('artifact.upload_resume', {}),
@@ -1271,10 +1304,10 @@ export class ExperimentProgram {
                 })),
               ),
               ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
-              ...(version > 8 && state === 'running'
+              ...(version > 8 && !nativeExperiment(version) && state === 'running'
                 ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
                 : []),
-              ...([12, 16, 20, 24, 28, 32].includes(version) && state === 'running'
+              ...([12, 16, 20, 24, 28, 32, 36, 40].includes(version) && state === 'running'
                 ? [grant('code.commit', {}), grant('code.operation', {})]
                 : []),
             ]),
@@ -1399,9 +1432,21 @@ export class ExperimentProgram {
       outputs: async (context) => {
         await this.lease(context.caller, await this.admit(context), context.tx);
         return {
-          artifacts: (await executionOutputs(this.host.artifacts, context.caller, context.tx)).map(
-            (artifact) => artifact.id,
-          ),
+          artifacts: [
+            ...new Set([
+              ...(await executionOutputs(this.host.artifacts, context.caller, context.tx)).map(
+                (artifact) => artifact.id,
+              ),
+              ...(nativeExperiment(context.snapshot.version)
+                ? await this.host.nativeWork!.artifactIds(
+                    context.caller.projectId,
+                    'experiment',
+                    context.snapshot.id,
+                    context.tx,
+                  )
+                : []),
+            ]),
+          ],
         };
       },
       release: async ({ lease, reason, tx }) => await this.release(lease, reason, tx),
@@ -1410,6 +1455,15 @@ export class ExperimentProgram {
 
   private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
     this.host.state.assertTransaction(tx);
+    if (nativeExperiment(lease.version)) {
+      check(
+        this.host.nativeWork,
+        'native_sandboxes_unavailable',
+        'Native Sandboxes connection is unavailable',
+        503,
+      );
+      await this.host.nativeWork.revokeAssignment(lease.leaseId, tx);
+    }
     await releasedLease(tx, this.host.reviews, 'experiment_leases', lease, reason, {
       experiment_id: lease.instanceId,
       state: lease.state,

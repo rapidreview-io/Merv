@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   createService,
+  MervError,
   digest,
   type Caller,
   type WorkflowPolicy,
@@ -1107,5 +1108,149 @@ for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as con
     if (sourceKind.endsWith('key')) await f.revokePerson!();
     else await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
     await assert.rejects(f.sessions.authorizeHuggingFaceGrant(grant));
+  });
+}
+
+const nativeConnection = {
+  name: 'sandboxes',
+  url: 'https://sandbox.example/mcp',
+  bearer: 'sbxt_' + 'PrivateNative'.repeat(4),
+};
+async function attachedNative(t: TestContext, options: Parameters<typeof fixture>[1] = {}) {
+  const f = await fixture(t, options);
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const session = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'native-host' };
+  const workspace = options.reviewWorkspace
+    ? {
+        mode:
+          options.reviewWorkspace === 'retained' ? ('persistent' as const) : ('ephemeral' as const),
+        baseOid: 'a'.repeat(40),
+        headOid: 'a'.repeat(40),
+        repositoryId: 'native-repository',
+        workspaceId: 'native-workspace',
+        branch: 'merv/native-review',
+        stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+      }
+    : undefined;
+  await f.sessions.attach(f.caller, { ...input, ...(workspace ? { workspace } : {}) });
+  return { ...f, session, input };
+}
+
+test('private native issuance has immutable input, no database lock and no public secret state', async (t) => {
+  const f = await attachedNative(t);
+  assert.deepEqual(await f.sessions.launchConnections(f.caller, f.input), { connections: [] });
+  let called = 0;
+  const dispose = f.sessions.registerLaunchConnections(async (session) => {
+    called++;
+    assert.ok(Object.isFrozen(session));
+    assert.ok(Object.isFrozen(session.execution));
+    assert.ok(Object.isFrozen(session.assignment));
+    assert.equal(f.state.ambient, undefined);
+    await f.state.transaction((tx) =>
+      tx.run('UPDATE worker_sessions SET id=id WHERE id=?', session.id),
+    );
+    return [nativeConnection];
+  });
+  assert.throws(() => f.sessions.registerLaunchConnections(async () => []), {
+    code: 'launch_connections_registered',
+  });
+  for (const patch of [{ hostRef: 'other' }, { runnerId: 'other' }, { sessionId: 'session_other' }])
+    await assert.rejects(f.sessions.launchConnections(f.caller, { ...f.input, ...patch }));
+  await assert.rejects(f.sessions.launchConnections({ ...f.caller, projectId: 'other' }, f.input));
+  assert.equal(called, 0);
+  assert.deepEqual(await f.sessions.launchConnections(f.caller, f.input), {
+    connections: [nativeConnection],
+  });
+  assert.equal(called, 1);
+  assert.ok(
+    !JSON.stringify(await f.sessions.get(f.caller, f.session.id)).includes(nativeConnection.bearer),
+  );
+  const stored = await f.state.read((tx) =>
+    tx.get<{ session_json: string }>(
+      'SELECT session_json FROM worker_sessions WHERE id=?',
+      f.session.id,
+    ),
+  );
+  assert.ok(!stored!.session_json.includes(nativeConnection.bearer));
+  dispose();
+  assert.deepEqual(await f.sessions.launchConnections(f.caller, f.input), { connections: [] });
+});
+
+for (const race of ['release', 'managed-revoke', 'provider-unload', 'expiry'] as const) {
+  test(`private native issuance withholds credentials after ${race}`, async (t) => {
+    let now = Date.now();
+    const f = await attachedNative(t, { clock: () => now });
+    const dispose = f.sessions.registerLaunchConnections(async () => {
+      if (race === 'release')
+        await f.sessions.release(f.caller, {
+          sessionId: f.input.sessionId,
+          runnerId: f.input.runnerId,
+        });
+      else if (race === 'managed-revoke') f.current(false);
+      else if (race === 'provider-unload') dispose();
+      else now = Date.parse(f.session.hardDeadline) + 1;
+      return [nativeConnection];
+    });
+    await assert.rejects(f.sessions.launchConnections(f.caller, f.input), (error: any) => {
+      assert.ok(!String(error).includes(nativeConnection.bearer));
+      return [
+        'session_closed',
+        'managed_revoked',
+        'execution_replaced',
+        'session_expired',
+        'unauthorized',
+      ].includes(error.code);
+    });
+  });
+}
+
+test('native provider errors and malformed responses cannot expose credentials', async (t) => {
+  const f = await attachedNative(t);
+  const dispose = f.sessions.registerLaunchConnections(async () => {
+    throw Error(nativeConnection.bearer);
+  });
+  await assert.rejects(
+    f.sessions.launchConnections(f.caller, f.input),
+    (error: any) =>
+      error.code === 'launch_connections_unavailable' &&
+      !String(error).includes(nativeConnection.bearer),
+  );
+  dispose();
+  f.sessions.registerLaunchConnections(async () => [{ ...nativeConnection, name: 'merv' }]);
+  await assert.rejects(f.sessions.launchConnections(f.caller, f.input), {
+    code: 'invalid_launch_connections',
+  });
+});
+
+for (const status of [401, 403])
+  test(`revoked launch access (${status}) fails without retrying or exposing credentials`, async (t) => {
+    const f = await attachedNative(t);
+    f.sessions.registerLaunchConnections(async () => {
+      throw new MervError('provider_denied', nativeConnection.bearer, status);
+    });
+    await assert.rejects(f.sessions.launchConnections(f.caller, f.input), (error: unknown) => {
+      assert.ok(error instanceof MervError);
+      assert.equal(error.status, 409);
+      assert.equal(error.code, 'launch_connections_denied');
+      assert.ok(!error.message.includes(nativeConnection.bearer));
+      return true;
+    });
+  });
+
+for (const workspace of ['retained', 'ephemeral'] as const) {
+  test(`native connection ${workspace === 'retained' ? 'is withheld from sealed' : 'can reach explicitly allowed'} review`, async (t) => {
+    const f = await attachedNative(t, { reviewWorkspace: workspace });
+    let calls = 0;
+    f.sessions.registerLaunchConnections(async () => {
+      calls++;
+      return [nativeConnection];
+    });
+    assert.deepEqual(await f.sessions.launchConnections(f.caller, f.input), {
+      connections: workspace === 'retained' ? [] : [nativeConnection],
+    });
+    assert.equal(calls, workspace === 'retained' ? 0 : 1);
   });
 }

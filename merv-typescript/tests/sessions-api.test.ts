@@ -1073,3 +1073,45 @@ test('the runner can read a server-admitted session whose combined frozen packet
   assert.equal(renewed.status, 'active');
   assert.equal(renewed.assignment.brief, packetText);
 });
+
+test('private native launch endpoint is owner-controlled, no-store and does not enrich public sessions', async (t) => {
+  const f = await fixture(t);
+  const native = {
+    name: 'sandboxes',
+    url: 'https://sandbox.example/mcp',
+    bearer: 'sbxt_' + 'PrivateNative'.repeat(4),
+  };
+  f.cleanup.push(f.app.ctx.sessions.registerLaunchConnections(async () => [native]));
+  const issued = await f.offer();
+  const id = issued.session.id;
+  const attached = await f.http(`/sessions/${id}/attach`, f.boot.token, {
+    runnerId: 'runner',
+    hostRef: 'host',
+  });
+  assert.equal(attached.status, 200);
+  assert.equal(attached.body.launchConnections, true);
+  assert.ok(!JSON.stringify(attached.body).includes(native.bearer));
+  const endpoint = `/sessions/${id}/launch-connections`;
+  const response = await fetch(`${f.app.ctx.api.url}${endpoint}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${f.boot.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ runnerId: 'runner', hostRef: 'host' }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { connections: [native] });
+  assert.equal(
+    (await f.http(endpoint, issued.secret, { runnerId: 'runner', hostRef: 'host' })).status,
+    403,
+  );
+  assert.equal(
+    (await f.http(endpoint, f.boot.token, { sessionId: id, runnerId: 'runner', hostRef: 'host' }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (await f.http(endpoint, f.boot.token, { runnerId: 'runner', hostRef: 'wrong' })).status,
+    409,
+  );
+  assert.ok(!JSON.stringify((await f.http(`/sessions/${id}`)).body).includes(native.bearer));
+});

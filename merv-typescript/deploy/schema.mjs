@@ -13,15 +13,18 @@ export function deploymentSchema(value = process.env.MERV_TS_DB_SCHEMA ?? 'merv_
  * is written to a file and checksummed — can never carry one. The named variable must hold a
  * grant of the plugin's shape now, not fail the first send after a healthy start.
  */
-export function sandboxConnections(value = process.env.MERV_SANDBOXES_CONNECTIONS) {
+export function sandboxConnections(
+  value = process.env.MERV_SANDBOXES_CONNECTIONS,
+  allowEmpty = false,
+) {
   let entries;
   try {
-    entries = JSON.parse(value ?? '');
+    entries = JSON.parse(value ?? (allowEmpty ? '[]' : ''));
   } catch {
     throw new Error('MERV_SANDBOXES_CONNECTIONS must be a JSON array');
   }
-  if (!Array.isArray(entries) || !entries.length || entries.length > 256) {
-    throw new Error('MERV_SANDBOXES_CONNECTIONS must hold 1-256 connections');
+  if (!Array.isArray(entries) || (!allowEmpty && !entries.length) || entries.length > 256) {
+    throw new Error(`MERV_SANDBOXES_CONNECTIONS must hold ${allowEmpty ? 0 : 1}-256 connections`);
   }
   const connections = entries.map((entry) => {
     const { projectId, namespace, tokenEnv, ...rest } = entry ?? {};

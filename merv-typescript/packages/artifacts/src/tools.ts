@@ -124,12 +124,12 @@ export const artifactToolsPlugin = {
     );
     register(
       'artifact.read',
-      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private URL; for a collection, optional fileName selects one member and signs a fresh provider link. Without fileName, download retrieves the manifest.',
+      'Read immutable artifact content up to 2 MB: valid UTF-8 as text, anything else as base64. offset and length read part of it, in UTF-16 units of the text or base64 characters; boundaries move forward to whole characters, and the answer gives the offset it started at and the total. Continue from offset + length, or from the returned offset + content.length. Leased workers must use an explicit length of at most 8192 characters for files over 64000 bytes; use artifact.get for size and download availability. With mode download, prepare a private URL; for a collection, optional fileName selects one member by its exact relative path and signs a fresh provider link. Without fileName, download retrieves the manifest.',
       z
         .object({
           artifactId: z.string().min(1),
           mode: z.literal('download').optional(),
-          fileName: z.string().min(1).max(255).optional(),
+          fileName: z.string().min(1).max(4096).optional(),
           offset: z.number().int().min(0).optional(),
           length: z.number().int().min(1).optional(),
         })

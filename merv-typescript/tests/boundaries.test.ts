@@ -125,7 +125,7 @@ const capabilities: Record<string, readonly string[]> = {
   codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
-  // A proxy for rows a service outside this process publishes: no Merv capability at all.
+  // Legacy transport stands alone; native connection owners are conditional below.
   sandboxes: [],
   // Internet search through outside providers; its budgets live in memory.
   web: [],
@@ -140,7 +140,7 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  sandboxes: ['artifacts'],
+  sandboxes: ['api', 'artifacts', 'scope', 'sessions', 'state'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeResearch: ['reviews', 'sandboxes'],

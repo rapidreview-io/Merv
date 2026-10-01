@@ -1,3 +1,4 @@
+import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
@@ -877,4 +878,91 @@ test('plan and results reviewers write the paper with every verdict, atomically 
         assert.equal((await paper.read(f.reader)).proposals.length, 0);
       });
     }
+});
+
+test('native experiments pin only new work, retain service captures and change phase authority without rebinding work', async (t) => {
+  const f = await fixture(t);
+  const legacy = await f.create('Legacy');
+  const native = nativeWorkFixture();
+  t.after(f.experiments.bindNativeWork(native.service));
+  let experiment = await f.create('Native');
+  assert.equal(legacy.workflow.version, 25);
+  assert.equal(experiment.workflow.version, 33);
+  assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 25);
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '1:planned',
+    closed: false,
+  });
+  const planning = await f.workflows.assignment(f.producer, experiment.id);
+  assert.match(planning.brief, /native Sandboxes MCP/);
+  assert.ok(!planning.execution.tools.some((tool) => tool.name.startsWith('compute.')));
+  await f.attach(experiment, 'plan', plan);
+  experiment = await f.transition(experiment, 'submit_design');
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '1:design_review',
+    closed: false,
+  });
+  experiment = await f.submitReview(experiment, 'needs_changes', 'planned');
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '2:planned',
+    closed: false,
+  });
+  await f.attach(experiment, 'plan', plan);
+  experiment = await f.transition(experiment, 'submit_design');
+  experiment = await f.submitReview(experiment);
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '2:running',
+    closed: false,
+  });
+  const service = await f.scope.serviceActor('sandboxes', f.producer.projectId);
+  const capture = await f.artifacts.createCollection(service, {
+    title: 'Retained output',
+    sourceKey: 'native-experiment-capture',
+    files: [
+      {
+        name: 'results.txt',
+        hash: 'c'.repeat(64),
+        size: 10,
+        provider: 'sandboxes',
+        reference: 'verified-object',
+      },
+    ],
+  });
+  const attach = {
+    experimentId: experiment.id,
+    attemptIndex: experiment.attempt.index,
+    expectedRevision: experiment.workflow.revision,
+    artifactId: capture.id,
+    role: 'result' as const,
+    resultFormat: 'qualitative' as const,
+    path: 'result.json',
+    requestId: f.id(),
+  };
+  await assert.rejects(f.experiments.attach(f.producer, attach), code('invalid_evidence_author'));
+  native.verified.set(experiment.id, [capture.id]);
+  assert.equal(
+    (await f.experiments.attach(f.producer, { ...attach, requestId: f.id() })).artifactId,
+    capture.id,
+  );
+  experiment = await f.transition(experiment, 'retry_running', {
+    evidence: { reason: 'Fixture recovery' },
+  });
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '2:running',
+    closed: false,
+  });
+  assert.equal(native.pins.size, 1);
+  experiment = await f.transition(experiment, 'abandon', {
+    evidence: { reason: 'End fixture work' },
+  });
+  assert.deepEqual(native.changes.at(-1), {
+    workId: experiment.id,
+    attempt: '2:abandoned',
+    closed: true,
+  });
 });

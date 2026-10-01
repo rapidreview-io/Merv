@@ -1,3 +1,5 @@
+import { nativeWorkFixture } from './fixtures/native-work.js';
+import type { TaskService } from '@merv/tasks';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -317,4 +319,118 @@ test('metadata admission avoids rendering, binds each session to its own record 
       { code: 'execution_arguments_forbidden' },
     );
   }
+});
+
+test('new native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
+  const { app, operator, offer, release, run, create } = await fixture(t);
+  const old = await create('legacy-before-connection');
+  const native = nativeWorkFixture();
+  t.after((app.ctx.tasks as TaskService).bindNativeWork(native.service));
+  const task = await create('native-connected');
+  assert.equal(old.workflow.version, 28);
+  assert.equal(task.workflow.version, 36);
+  assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 28);
+  const first = await offer(task);
+  assert.equal(first.session.execution.references.sandboxWorkId, task.id);
+  assert.equal(first.session.execution.references.sandboxProfile, 'execute');
+  assert.equal(first.session.execution.references.sandboxAttempt, String(task.workflow.revision));
+  assert.ok(
+    !first.session.execution.policy.tools.some((tool) => tool.name.startsWith('task.compute_')),
+  );
+  assert.match(first.session.assignment.brief, /native Sandboxes MCP/);
+  assert.doesNotMatch(first.session.assignment.brief, /task\.compute_/);
+  await release(first.session.id);
+  assert.ok(native.revoked.includes(first.session.id));
+  const second = await offer(task);
+  assert.deepEqual(second.session.execution.references, first.session.execution.references);
+  assert.equal(native.pins.size, 1);
+  const service = await app.ctx.scope.serviceActor('sandboxes', operator.projectId);
+  const capture = await app.ctx.artifacts.createCollection!(service, {
+    title: 'Captured evidence',
+    sourceKey: 'native-test',
+    files: [
+      {
+        name: 'result.txt',
+        hash: 'a'.repeat(64),
+        size: 10,
+        provider: 'sandboxes',
+        reference: 'verified-object',
+      },
+    ],
+  });
+  const unverified = await app.ctx.artifacts.createCollection!(service, {
+    title: 'Other capture',
+    sourceKey: 'native-other',
+    files: [
+      {
+        name: 'other.txt',
+        hash: 'b'.repeat(64),
+        size: 12,
+        provider: 'sandboxes',
+        reference: 'other-object',
+      },
+    ],
+    metadata: { ownerId: task.id },
+  });
+  native.verified.set(task.id, [capture.id]);
+  await assert.rejects(
+    app.ctx.tasks.submitDelivery(
+      second.worker,
+      confirmedDelivery({
+        taskId: task.id,
+        expectedRevision: task.workflow.revision,
+        artifactIds: [unverified.id],
+        requestId: 'unverified',
+      }),
+    ),
+    { code: 'invalid_delivery' },
+  );
+  await run(
+    second.worker,
+    'task.checkpoint',
+    { notes: 'Verified capture', artifactIds: [capture.id], requestId: 'capture-checkpoint' },
+    (caller, input) => app.ctx.tasks.checkpoint(caller, input as unknown as TaskCheckpointInput),
+  );
+  const delivered = await run(
+    second.worker,
+    'task.submit_delivery',
+    confirmedDelivery({ artifactIds: [capture.id], requestId: 'native-delivery' }),
+    (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+  );
+  assert.equal(delivered.workflow.state, 'in_review');
+  assert.deepEqual(native.changes.at(-1), {
+    workId: task.id,
+    attempt: String(delivered.workflow.revision),
+    closed: false,
+  });
+  await release(second.session.id);
+  const independent = await app.ctx.scope.issueActor(operator, {
+    name: 'Independent',
+    role: 'reviewer',
+  });
+  const reviewer = {
+    actorId: independent.actor.id,
+    projectId: operator.projectId,
+    credentialId: independent.credential.id,
+  };
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const reviewSession = await app.ctx.sessions.offer(reviewer, {
+    instanceId: task.id,
+    expectedRevision: delivered.workflow.revision,
+    runnerId: 'review',
+    requestId: 'native-review',
+    secret,
+  });
+  assert.equal(reviewSession.execution.references.sandboxProfile, 'check');
+  assert.equal(reviewSession.execution.references.sandboxWorkId, task.id);
+  assert.ok((reviewSession.execution.references.artifacts as string[]).includes(capture.id));
+  await app.ctx.sessions.release(reviewer, { sessionId: reviewSession.id, runnerId: 'review' });
+  await app.ctx.domainEvents.drain();
+  await app.ctx.tasks.markFailed(operator, {
+    taskId: task.id,
+    expectedRevision: delivered.workflow.revision,
+    reason: 'End fixture work',
+    requestId: 'native-close',
+  });
+  assert.equal(native.changes.at(-1)?.closed, true);
 });

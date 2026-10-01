@@ -1,3 +1,4 @@
+export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
 export {
   patchSchema as paperPatchSchema,
   changesSchema as paperChangesSchema,

@@ -1,3 +1,4 @@
+import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
@@ -84,6 +85,7 @@ import {
   ExperimentProgram,
   derivedBase,
   programVersion,
+  nativeExperiment,
   programWorkspace,
   reviewedSubmission,
   reviewing,
@@ -197,6 +199,7 @@ export class ExperimentService implements Experiments {
   private closed = false;
   private codeBinding?: symbol;
   private compute?: ExperimentCompute;
+  private nativeWork?: NativeSandboxWork;
   private releaseReviewOwner?: () => void;
   private program!: ExperimentProgram;
   /** Complete storage migrations before publishing this service. */
@@ -225,6 +228,9 @@ export class ExperimentService implements Experiments {
           workflows,
           reviews,
           contextBuilder,
+          get nativeWork() {
+            return service.nativeWork;
+          },
           get code() {
             return service.code;
           },
@@ -276,6 +282,37 @@ export class ExperimentService implements Experiments {
       this.codeBinding = undefined;
       this.code = undefined;
     };
+  }
+  bindNativeWork(service: NativeSandboxWork): () => void {
+    this.open();
+    this.nativeWork = service;
+    return () => {
+      if (this.nativeWork === service) this.nativeWork = undefined;
+    };
+  }
+  private requireNativeWork(): NativeSandboxWork {
+    check(
+      this.nativeWork,
+      'native_compute_unavailable',
+      'Native Sandboxes integration is unavailable',
+      503,
+    );
+    return this.nativeWork;
+  }
+  private async nativeTransition(
+    caller: Caller,
+    workflow: { id: string; version: number; state: string },
+    attemptIndex: number,
+    tx: Transaction,
+  ) {
+    if (nativeExperiment(workflow.version))
+      await this.requireNativeWork().transition(
+        caller.projectId,
+        'experiment',
+        workflow.id,
+        { attempt: `${attemptIndex}:${workflow.state}`, closed: terminal.has(workflow.state) },
+        tx,
+      );
   }
   bindCompute(adapter: SandboxCompute): () => void {
     this.open();
@@ -611,13 +648,18 @@ export class ExperimentService implements Experiments {
         submissions,
         reviewId: row.review_id,
         conclusion: row.conclusion,
-        ...(this.compute
+        ...(nativeExperiment(workflow.version)
           ? {
-              compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
-              machines: await this.compute.machines.rows(caller.projectId, id, tx),
-              captureArtifactIds: await this.compute.artifactIds(caller.projectId, id, tx),
+              captureArtifactIds:
+                (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ?? [],
             }
-          : {}),
+          : this.compute
+            ? {
+                compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
+                machines: await this.compute.machines.rows(caller.projectId, id, tx),
+                captureArtifactIds: await this.compute.artifactIds(caller.projectId, id, tx),
+              }
+            : {}),
       };
     });
   }
@@ -739,6 +781,7 @@ export class ExperimentService implements Experiments {
               // Once Code keeps the project's history, new Git work lives there and nowhere else.
               hosted,
               this.artifacts.largeUploadAvailable,
+              !!(await this.nativeWork?.connected(caller.projectId, tx)),
             ),
           )
         ).start(
@@ -773,6 +816,10 @@ export class ExperimentService implements Experiments {
           input.workspace ?? 'none',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
+        if (nativeExperiment(workflow.version)) {
+          await this.requireNativeWork().pin(caller.projectId, 'experiment', workflow.id, tx);
+          await this.nativeTransition(caller, workflow, 1, tx);
+        }
         if (derivedBase(workflow.version)) await this.code!.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
@@ -1019,6 +1066,7 @@ export class ExperimentService implements Experiments {
           },
           tx,
         );
+        await this.nativeTransition(caller, moved, experiment.attempt.index, tx);
         if (input.transition === 'retry_running')
           await this.feedback(
             experiment,
@@ -1219,6 +1267,7 @@ export class ExperimentService implements Experiments {
       },
       tx,
     );
+    await this.nativeTransition(caller, moved, experiment.attempt.index, tx);
     const review = await this.reviews.request(
       caller,
       {
@@ -1456,6 +1505,12 @@ export class ExperimentService implements Experiments {
               tx,
             );
         }
+        await this.nativeTransition(
+          caller,
+          moved,
+          experiment.attempt.index + (['revise_design', 'revise_plan'].includes(action) ? 1 : 0),
+          tx,
+        );
         await tx.run(
           'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',
           conclusion,
@@ -1818,6 +1873,8 @@ export const experimentsPlugin = {
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => experiments.bindCompute(ctx.sandboxes.compute!));
+      if (ctx.sandboxes.nativeWork)
+        ctx.effect(() => experiments.bindNativeWork(ctx.sandboxes.nativeWork!));
     });
     ctx.effect(function* () {
       yield () => experiments.close();

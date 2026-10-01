@@ -243,3 +243,41 @@ test('JSON that does not parse stays the text it was, with no source to turn to'
   assert.equal(document.querySelector('pre.doc')?.textContent, content);
   assert.equal(document.querySelector('button[aria-label="View source"]'), null);
 });
+
+test('failed partial captures disclose their status while retained files stay downloadable', async (t) => {
+  t.after(unmount);
+  const meta = {
+    ...artifact('Compute capture', 4096),
+    files: [{ name: 'metrics.json', size: 128, hash: DIGEST, provider: 'sandboxes-native' }],
+    metadata: {
+      captureState: 'failed',
+      outputState: 'partial',
+      evidenceLimitations: [
+        {
+          code: 'capture_limit',
+          message: 'Output limit reached; remaining files were not retained.',
+        },
+      ],
+    },
+  };
+  await file(meta, '{"files":["metrics.json"]}');
+  assert.match(text(), /Capture failed · partial outputs/);
+  assert.match(text(), /Output limit reached/);
+  assert.match(text(), /1 retained file/);
+  serve('/tools/artifact.read', {
+    body: {
+      result: {
+        download: {
+          url: 'https://storage.example/retained-metrics',
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      },
+    },
+  });
+  await click('Download metrics.json');
+  assert.ok(document.querySelector('a[href="https://storage.example/retained-metrics"]'));
+  await unmount();
+  await file({ ...meta, files: [] }, '{"files":[]}');
+  assert.match(text(), /Capture failed · partial outputs/);
+  assert.match(text(), /0 retained files/);
+});

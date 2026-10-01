@@ -29,14 +29,14 @@ test('collection is one immutable, scoped artifact; retries and member links use
     sourceKey: 'capture-1',
     files: [
       {
-        name: 'control.pt',
+        name: 'outputs/control.pt',
         size: 123,
         hash: sha256Hex(Buffer.from('control')),
         provider: 'compute',
         reference: 'private-1',
       },
       {
-        name: 'augmented.pt',
+        name: 'outputs/models/augmented.pt',
         size: 456,
         hash: sha256Hex(Buffer.from('augmented')),
         provider: 'compute',
@@ -72,17 +72,19 @@ test('collection is one immutable, scoped artifact; retries and member links use
       };
     },
   });
-  const one = await artifacts.download(caller, first.id, 'control.pt');
-  const two = await artifacts.download(caller, first.id, 'control.pt');
+  const one = await artifacts.download(caller, first.id, 'outputs/control.pt');
+  const two = await artifacts.download(caller, first.id, 'outputs/control.pt');
   assert.notEqual(one.download.url, two.download.url);
   assert.deepEqual(downloaded, [`${caller.projectId}:private-1`, `${caller.projectId}:private-1`]);
   await assert.rejects(artifacts.download(caller, first.id, 'missing.pt'), { code: 'not_found' });
-  await assert.rejects(artifacts.download(outsider, first.id, 'control.pt'), { code: 'not_found' });
+  await assert.rejects(artifacts.download(outsider, first.id, 'outputs/control.pt'), {
+    code: 'not_found',
+  });
   await assert.rejects(artifacts.get(outsider, first.id), { code: 'not_found' });
   assert.equal(downloaded.length, 2);
   dispose();
   assert.equal((await artifacts.read(caller, first.id)).content, manifest.content);
-  await assert.rejects(artifacts.download(caller, first.id, 'control.pt'), {
+  await assert.rejects(artifacts.download(caller, first.id, 'outputs/control.pt'), {
     code: 'download_unsupported',
   });
   await assert.rejects(
@@ -127,7 +129,62 @@ test('collection rejects duplicate names and malformed file claims before writin
     }),
     { code: 'invalid_artifact' },
   );
+  for (const name of [
+    '/model.pt',
+    './model.pt',
+    'a/../model.pt',
+    'a//model.pt',
+    'a/',
+    'a\\model.pt',
+    'C:/model.pt',
+    'a/./model.pt',
+    'a/\u0000model.pt',
+  ]) {
+    await assert.rejects(
+      artifacts.createCollection(caller, {
+        title: 'X',
+        sourceKey: 'bad',
+        files: [{ ...file, name }],
+      }),
+      { code: 'invalid_artifact' },
+    );
+    await assert.rejects(artifacts.download(caller, 'missing', name), { code: 'invalid_artifact' });
+  }
+  await assert.rejects(
+    artifacts.createCollection(caller, {
+      title: 'Too many',
+      sourceKey: 'many',
+      files: Array.from({ length: 10_001 }, (_, i) => ({ ...file, name: `files/${i}.txt` })),
+    }),
+    { code: 'invalid_artifact' },
+  );
   assert.deepEqual(await artifacts.list(caller), []);
+  const many = await artifacts.createCollection(caller, {
+    title: 'Full capture',
+    sourceKey: 'full',
+    files: Array.from({ length: 10_000 }, (_, i) => ({
+      ...file,
+      name: `outputs/${'a'.repeat(180)}/${i}.txt`,
+    })),
+  });
+  assert.equal(many.files?.length, 10_000);
+  assert.ok(many.size > 2_000_000);
+  // Collection registration may retain a large manifest, but ordinary inline reads/creates
+  // keep their existing ceiling; member downloads do not need to read the manifest.
+  await assert.rejects(artifacts.read(caller, many.id), { code: 'artifact_size' });
+  await assert.rejects(
+    artifacts.create(caller, { title: 'Ordinary', content: 'x'.repeat(2_000_001) }),
+    { code: 'artifact_size' },
+  );
+  artifacts.registerFileProvider('compute', {
+    async download() {
+      return { url: 'https://example.invalid/nested', expiresAt: '2026-09-30T13:00:00Z' };
+    },
+  });
+  assert.equal(
+    (await artifacts.download(caller, many.id, many.files![9999]!.name)).download.url,
+    'https://example.invalid/nested',
+  );
 });
 
 test('artifact.read selects a collection member only in download mode', async (t) => {
@@ -161,7 +218,7 @@ test('artifact.read selects a collection member only in download mode', async (t
     sourceKey: 'run',
     files: [
       {
-        name: 'model.pt',
+        name: `output/${'d'.repeat(200)}/${'n'.repeat(100)}.pt`,
         size: 5,
         hash: 'a'.repeat(64),
         provider: 'compute',
@@ -179,12 +236,15 @@ test('artifact.read selects a collection member only in download mode', async (t
   const result = (await app.ctx.tools.call('artifact.read', caller, {
     artifactId: artifact.id,
     mode: 'download',
-    fileName: 'model.pt',
+    fileName: artifact.files![0]!.name,
   })) as { download: { url: string } };
   assert.equal(result.download.url, 'https://example.invalid/file');
   assert.deepEqual(seen, [`${caller.projectId}:stored-ref`]);
   await assert.rejects(
-    app.ctx.tools.call('artifact.read', caller, { artifactId: artifact.id, fileName: 'model.pt' }),
+    app.ctx.tools.call('artifact.read', caller, {
+      artifactId: artifact.id,
+      fileName: artifact.files![0]!.name,
+    }),
     { code: 'invalid_artifact' },
   );
   await assert.rejects(

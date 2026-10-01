@@ -1,3 +1,5 @@
+import { nativeMcpConnectionsSchema } from '@merv/contracts';
+import type { NativeMcpConnection } from '@merv/sessions/types';
 import { z } from 'zod';
 import {
   canonical,
@@ -148,6 +150,10 @@ export class RunnerClient {
    * `bytes` sends one part instead of JSON; `octets` expects bytes back. Both belong to the
    * bundle routes, whose bodies are larger and slower than any control call.
    */
+  private readonly launchConnectionHosts = new Map<string, string>();
+  supportsLaunchConnections(id: string, hostRef: string): boolean {
+    return this.launchConnectionHosts.get(id) === hostRef;
+  }
   private async request(
     path: string,
     body?: unknown,
@@ -235,6 +241,13 @@ export class RunnerClient {
         !/^m[sk]_/.test(value.error.code)
           ? value.error.code
           : 'control_request_failed';
+      if (
+        response.status === 404 &&
+        code === 'not_found' &&
+        value?.error?.message === 'Unknown endpoint' &&
+        path.endsWith('/launch-connections')
+      )
+        throw new RunnerControlError('unknown_launch_connections_route', 404);
       throw new RunnerControlError(code, response.status);
     }
     return value;
@@ -306,16 +319,17 @@ export class RunnerClient {
     workspace?: SessionWorkspace,
   ): Promise<Session> {
     const expected = workspaceSchema.safeParse(workspace);
-    const session = this.session(
-      (
-        await this.request(`/sessions/${encodeURIComponent(id)}/attach`, {
-          runnerId,
-          hostRef,
-          ...(workspace ? { workspace } : {}),
-        })
-      )?.session,
-      { id, runnerId, hostRef, statuses: ['offered', 'active'] },
-    );
+    const reply = await this.request(`/sessions/${encodeURIComponent(id)}/attach`, {
+      runnerId,
+      hostRef,
+      ...(workspace ? { workspace } : {}),
+    });
+    const session = this.session(reply?.session, {
+      id,
+      runnerId,
+      hostRef,
+      statuses: ['offered', 'active'],
+    });
     if (workspace) {
       const actual = workspaceSchema.safeParse(session.workspace?.attachment);
       if (
@@ -325,7 +339,34 @@ export class RunnerClient {
       )
         throw new RunnerControlError('invalid_control_response', 0);
     }
+    if (reply?.launchConnections === true) this.launchConnectionHosts.set(id, hostRef);
+    else this.launchConnectionHosts.delete(id);
     return session;
+  }
+  /** New runners do not probe this route on older servers: attach advertises support. */
+  async launchConnections(
+    id: string,
+    runnerId: string,
+    hostRef: string,
+  ): Promise<NativeMcpConnection[]> {
+    let value: unknown;
+    try {
+      value = await this.request(`/sessions/${encodeURIComponent(id)}/launch-connections`, {
+        runnerId,
+        hostRef,
+      });
+    } catch (error) {
+      if (
+        error instanceof RunnerControlError &&
+        error.status === 404 &&
+        error.code === 'unknown_launch_connections_route'
+      )
+        return [];
+      throw error;
+    }
+    const parsed = z.object({ connections: nativeMcpConnectionsSchema }).strict().safeParse(value);
+    if (!parsed.success) throw new RunnerControlError('invalid_control_response', 0);
+    return parsed.data.connections;
   }
   /** Private response remains in memory and never enters the durable launch record. */
   async huggingfaceAccess(

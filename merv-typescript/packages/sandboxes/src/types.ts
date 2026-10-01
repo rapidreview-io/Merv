@@ -1,6 +1,8 @@
 import type { Caller, Json } from '@merv/contracts';
 import type {} from 'cordis';
 import type { ComputeOutputs, SandboxComputeOutput } from './models.js';
+import type { NativeSandboxWork, NativeSandboxesConfig } from './native-types.js';
+export type { NativeSandboxWork } from './native-types.js';
 export type { ComputeOutputs, SandboxComputeOutput } from './models.js';
 
 /** One project's authorized connection. Secrets are named, never carried. */
@@ -31,6 +33,8 @@ export interface SandboxesConfig {
   /** Operator-selected protected runtime profiles by key, the default first (MERV_FLEET_RUNTIMES).
    * Absence disables the server-only capability. */
   runtimes?: (SandboxRuntimeProfile & { key: string })[];
+  /** Enables native work bindings and shared-account consent for newly created work. */
+  native?: NativeSandboxesConfig;
 }
 
 /** Fixed by the operator; Fleet work cannot select a provider, offer, image or release. */
@@ -287,6 +291,9 @@ export interface SandboxMachines {
 }
 
 export interface Sandboxes {
+  /** Stable native authority for new research work; absent on legacy deployments. */
+  nativeWork?: NativeSandboxWork;
+  nativeMachines?: import('./native-types.js').NativeMachineReads;
   /** Rows from the last accepted manifest, already named and routed for the UI registry. */
   rows(): SandboxRow[];
   status(): SandboxReadiness;

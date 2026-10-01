@@ -1,3 +1,5 @@
+import { freezeLaunchSnapshot } from './launch-connections.js';
+import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -55,6 +57,8 @@ import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
   Session,
+  LaunchConnectionsProvider,
+  NativeMcpConnection,
   SessionControl,
   SessionInvocation,
   SessionTranscript,
@@ -410,6 +414,7 @@ export class LeasedSessions implements Sessions {
   secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
     Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
   private readonly sections = new Map<string, StatusSection>();
+  private launchConnectionsProvider?: LaunchConnectionsProvider;
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
   private managed!: ManagedRunnerBindings;
@@ -1910,6 +1915,100 @@ export class LeasedSessions implements Sessions {
         await this.save(tx, session);
       }
     });
+  }
+  registerLaunchConnections(provider: LaunchConnectionsProvider): () => void {
+    this.ensureOpen();
+    check(
+      !this.launchConnectionsProvider,
+      'launch_connections_registered',
+      'A launch connection provider is already registered',
+      409,
+    );
+    this.launchConnectionsProvider = provider;
+    return () => {
+      if (this.launchConnectionsProvider === provider) this.launchConnectionsProvider = undefined;
+    };
+  }
+  /** Private supervisor response; provider I/O must never hold a database snapshot or lock. */
+  async launchConnections(
+    caller: Caller,
+    input: SessionControl & { hostRef: string },
+  ): Promise<{ connections: NativeMcpConnection[] }> {
+    caller = structuredClone(caller);
+    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
+    check(
+      !this.state.ambient,
+      'nested_launch_connections',
+      'Launch credentials require an independent control request',
+      409,
+    );
+    const authorize = () =>
+      this.reading(async (tx) => {
+        const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
+        check(
+          session.hostRef !== null && session.hostRef === input.hostRef,
+          'host_conflict',
+          'Credential delivery must name the attached host',
+          409,
+        );
+        if (caller.managed) {
+          const { row } = await this.managed.require(caller, tx);
+          check(
+            row.source_json === canonical(session.source) && row.runner_id === session.runnerId,
+            'session_forbidden',
+            'Session source differs from its managed binding',
+            403,
+          );
+        }
+        const row = await this.row(tx, session.id);
+        await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
+        const authority = await this.valid(session, tx, session.execution);
+        return { session, registrationId: authority.registrationId };
+      });
+    const before = await authorize();
+    const workspace = effectiveWorkspace(before.session.execution.policy);
+    const provider = this.launchConnectionsProvider;
+    if (
+      !provider ||
+      (before.session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain)
+    )
+      return { connections: [] };
+    let issued: unknown;
+    try {
+      issued = await provider(freezeLaunchSnapshot(structuredClone(before.session)));
+    } catch (error) {
+      // Provider exceptions can carry upstream response bodies or credentials.
+      if (error instanceof MervError && [401, 403].includes(error.status))
+        throw new MervError(
+          'launch_connections_denied',
+          'Access to a required launch connection was revoked',
+          409,
+        );
+      throw new MervError(
+        'launch_connections_unavailable',
+        'Launch connections are unavailable',
+        503,
+      );
+    }
+    const after = await authorize();
+    check(
+      this.launchConnectionsProvider === provider &&
+        before.registrationId === after.registrationId &&
+        canonical(before.session.execution) === canonical(after.session.execution) &&
+        canonical(before.session.lease) === canonical(after.session.lease) &&
+        before.session.hardDeadline === after.session.hardDeadline,
+      'execution_replaced',
+      'Assignment changed during credential issuance',
+      409,
+    );
+    const parsed = nativeMcpConnectionsSchema.safeParse(issued);
+    check(
+      parsed.success,
+      'invalid_launch_connections',
+      'Invalid private launch connection response',
+      502,
+    );
+    return { connections: parsed.data! };
   }
   /** Private managed-control delivery after attachment. Source identity is immutable. */
   private async huggingFaceIdentity(

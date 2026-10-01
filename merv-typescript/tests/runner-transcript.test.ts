@@ -58,6 +58,7 @@ const tokens = [
   'AKIA' + 'ABCDEFGHIJKLMNOP',
   'hf_' + 'FakeHuggingFaceToken'.repeat(2),
   'hf_' + 'H'.repeat(4093),
+  'sbxt_' + 'N'.repeat(43),
 ];
 
 test('bearers standing alone are blanked, whatever the chunk, and identifiers are kept', (t) => {
