@@ -577,11 +577,14 @@ test('Nisa is composed only from its rr_sk_ key, and renders the variable name o
   }
 });
 
-test('Hugging Face storage config contains only the key environment reference', (t) => {
+test('Hugging Face config contains a key environment reference and the public broker endpoint', (t) => {
   const { run, plugin, output } = renderer(t);
   const marker = Buffer.alloc(32, 42).toString('base64url');
   assert.equal(run({ MERV_SECRETS_ENCRYPTION_KEY: marker }).status, 0);
-  assert.deepEqual(plugin('secrets').config, { encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY' });
+  assert.deepEqual(plugin('secrets').config, {
+    encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY',
+    huggingFaceEndpoint: 'https://merv.example/hf',
+  });
   assert.ok(!readFileSync(output, 'utf8').includes(marker));
   assert.equal(run().status, 0, 'missing optional key leaves the control service bootable');
 });
