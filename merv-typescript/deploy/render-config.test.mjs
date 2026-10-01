@@ -99,9 +99,10 @@ function renderer(t) {
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins: 'state scope blobs identity api ui code code-research code-research-api sessions'
-        .split(' ')
-        .map((id) => ({ id, name: id })),
+      plugins:
+        'state scope blobs secrets identity api ui code code-research code-research-api sessions'
+          .split(' ')
+          .map((id) => ({ id, name: id })),
     }),
   );
   const output = join(directory, 'rendered.json');
@@ -118,7 +119,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   const { directory, output, run } = renderer(t);
   assert.equal(run().status, 0);
   let config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 10);
+  assert.equal(config.plugins.length, 11);
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
@@ -131,7 +132,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 11);
+  assert.equal(config.plugins.length, 12);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
@@ -141,7 +142,7 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
 
   assert.equal(run(connected).status, 0);
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 13);
+  assert.equal(config.plugins.length, 14);
   assert.equal(config.plugins.find((p) => p.id === 'sandboxes').config.runtimes, undefined);
   assert.equal(
     config.plugins.find((p) => p.id === 'fleet'),
@@ -576,3 +577,11 @@ test('Nisa is composed only from its rr_sk_ key, and renders the variable name o
   }
 });
 
+test('Hugging Face storage config contains only the key environment reference', (t) => {
+  const { run, plugin, output } = renderer(t);
+  const marker = Buffer.alloc(32, 42).toString('base64url');
+  assert.equal(run({ MERV_SECRETS_ENCRYPTION_KEY: marker }).status, 0);
+  assert.deepEqual(plugin('secrets').config, { encryptionKeyEnv: 'MERV_SECRETS_ENCRYPTION_KEY' });
+  assert.ok(!readFileSync(output, 'utf8').includes(marker));
+  assert.equal(run().status, 0, 'missing optional key leaves the control service bootable');
+});

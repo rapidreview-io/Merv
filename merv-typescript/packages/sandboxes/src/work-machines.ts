@@ -179,6 +179,25 @@ export class WorkMachines {
     check(!current.stop_requested, 'compute_not_ready', 'Machine is being released', 409);
     return access;
   }
+  async extend(caller: Caller, ownerId: string, sandboxId: string, minutes: number) {
+    check(
+      Number.isInteger(minutes) && minutes >= 1 && minutes <= 1380,
+      'invalid_compute_input',
+      'Extension minutes must be between 1 and 1380',
+      400,
+    );
+    const row = await this.authorized(caller, ownerId, sandboxId);
+    check(
+      !row.stop_requested && row.state === 'ready',
+      'compute_not_ready',
+      'Machine is not ready',
+      409,
+    );
+    check(this.adapter.extendRental, 'compute_unavailable', 'Rental extension is unavailable', 503);
+    const receipt = await this.adapter.extendRental(caller.projectId, sandboxId, minutes);
+    await this.save(row, receipt);
+    return present(await this.authorized(caller, ownerId, sandboxId));
+  }
   async release(caller: Caller, ownerId: string, sandboxId: string) {
     await this.authorized(caller, ownerId, sandboxId);
     return this.state.transaction(async (tx) => {
@@ -310,8 +329,15 @@ export class WorkMachines {
   }
 }
 
-export const rentalGuidance = (prefix: 'compute.' | 'task.compute_', reviewing: boolean) =>
+export const rentalGuidance = (
+  prefix: 'compute.' | 'task.compute_',
+  reviewing: boolean,
+  rentalJobs = false,
+) =>
   ` GPU rentals belong to this work item and survive worker handoffs. Check ${prefix}machines before renting; existing machines may hold useful files and installed packages. ${prefix}rent requests a time-limited rental under the project compute allowance; ${prefix}ssh accepts your locally generated Ed25519 public key and returns a five-minute SSH certificate, gateway host key, and connection details. Keep the private key local; verify the gateway host key. ` +
+  (rentalJobs
+    ? ` ${prefix}extend adds minutes to its remaining lease with provider budget enforcement. Use ${prefix}run with rentalKey to run a durable job and capture files on an existing machine; completion, failure and job cancellation preserve that rental. Planners and reviewers must set purpose="check" for verification jobs of at most five minutes. `
+    : '') +
   (reviewing
     ? 'Compute is optional for review. If you use it, limit it to brief verification; do not launch training, full evaluations, or other long-running work. Do not modify the submitted evidence.'
     : 'You may leave a machine ready for the next worker or reviewer when useful: save paths and progress in your handoff, and choose a lease long enough to cover that handoff. Inspect code and run small feasibility checks during planning; full experiment execution still requires independent design approval. Release unused machines promptly. Retain important files as artifacts; files left only on a GPU disappear on release or lease expiry.') +

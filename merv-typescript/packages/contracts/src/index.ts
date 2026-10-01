@@ -2325,6 +2325,12 @@ export interface WorkComputeAccess {
   ): Promise<unknown>;
   computeSsh(caller: Caller, ownerId: string, sandboxId: string, publicKey: string): Promise<Json>;
   computeRelease(caller: Caller, ownerId: string, sandboxId: string): Promise<unknown>;
+  computeExtend(
+    caller: Caller,
+    ownerId: string,
+    sandboxId: string,
+    minutes: number,
+  ): Promise<unknown>;
 }
 export interface Tasks extends WorkComputeAccess {
   computeOffers(caller: Caller): Promise<unknown>;
@@ -2340,8 +2346,10 @@ export interface Tasks extends WorkComputeAccess {
       taskId: string;
       expectedRevision: number;
       key: string;
-      provider: string;
-      offerId: string;
+      provider?: string;
+      offerId?: string;
+      rentalKey?: string;
+      purpose?: 'check';
       command: string;
       minutes: number;
       maxUsd: number;

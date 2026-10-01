@@ -26,8 +26,10 @@ export interface ManagedComputeInput {
   ownerId: string;
   generation: number;
   key: string;
-  provider: string;
-  offerId: string;
+  provider?: string;
+  offerId?: string;
+  rentalKey?: string;
+  purpose?: 'check';
   command: string;
   minutes: number;
   maxUsd: number;
@@ -76,6 +78,7 @@ export interface ComputeOwnerPolicy {
     generation: number,
     tx: Transaction,
     commandId?: string,
+    input?: ManagedComputeInput,
   ): Promise<void>;
   /** Work state, independent of the worker lease; replacement workers preserve live jobs. */
   active(row: ManagedComputeRow, tx: Transaction): Promise<boolean>;
@@ -120,6 +123,7 @@ export const publicComputeRow = (row: ManagedComputeRow) => ({
   ...(row.capture_artifact_id ? { artifactId: row.capture_artifact_id } : {}),
   ...(row.capture_pending ? { artifactState: row.capture_error ? 'retrying' : 'pending' } : {}),
   ...(row.capture_error ? { artifactError: row.capture_error } : {}),
+  ...(stored(row.input_json).rentalKey ? { rentalKey: stored(row.input_json).rentalKey } : {}),
   ...(stored(row.input_json).commandId ? { commit: stored(row.input_json).commandId } : {}),
 });
 const runningRow = (row: ManagedComputeRow): ManagedComputeRunning => {
@@ -395,9 +399,33 @@ export class ManagedCompute {
       'Compute outputs must name bounded absolute file paths',
       400,
     );
+    check(
+      input.rentalKey
+        ? typeof input.rentalKey === 'string' &&
+            input.rentalKey.length <= 128 &&
+            !input.provider &&
+            !input.offerId
+        : !!input.provider && !!input.offerId && !input.purpose,
+      'invalid_compute_input',
+      'Choose rentalKey or provider and offerId; checks require an existing rental',
+      400,
+    );
+    check(
+      input.purpose !== 'check' || input.minutes <= 5,
+      'invalid_compute_input',
+      'Verification jobs are limited to five minutes',
+      400,
+    );
     return this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      await this.policy.authorize(caller, input.ownerId, input.generation, tx, input.commandId);
+      await this.scope.require(caller, input.purpose === 'check' ? 'read' : 'write', tx);
+      await this.policy.authorize(
+        caller,
+        input.ownerId,
+        input.generation,
+        tx,
+        input.commandId,
+        input,
+      );
       check(
         await this.entitled(caller.projectId, tx),
         'compute_not_entitled',
@@ -415,6 +443,8 @@ export class ManagedCompute {
               command: input.command,
               minutes: input.minutes,
               maxUsd: input.maxUsd,
+              ...(input.rentalKey ? { rentalKey: input.rentalKey } : {}),
+              ...(input.purpose ? { purpose: input.purpose } : {}),
               ...(input.commandId ? { commandId: input.commandId } : {}),
               ...(input.outputs ? { outputs: input.outputs } : {}),
             }
@@ -437,6 +467,7 @@ export class ManagedCompute {
         );
         return publicComputeRow(old);
       }
+      if (input.rentalKey) await this.borrowedRental(caller.projectId, input, tx);
       const at = now();
       await tx.run(
         `INSERT INTO managed_compute_runs(project_id,owner_kind,owner_id,generation,key,input_hash,input_json,run_id,state,cost,result,created_by,created_at,updated_at)
@@ -469,9 +500,30 @@ export class ManagedCompute {
       };
     });
   }
+  private async borrowedRental(projectId: string, input: ManagedComputeInput, tx: Transaction) {
+    const rental = await tx.get<{
+      sandbox_id: string | null;
+      state: string;
+      stop_requested: boolean;
+    }>(
+      'SELECT sandbox_id,state,stop_requested FROM work_compute_machines WHERE project_id=? AND owner_kind=? AND owner_id=? AND key=?',
+      projectId,
+      this.owner,
+      input.ownerId,
+      input.rentalKey!,
+    );
+    check(rental, 'compute_not_found', 'Rental key not found in this work item', 404);
+    check(
+      rental.sandbox_id && rental.state === 'ready' && !rental.stop_requested,
+      'compute_not_ready',
+      'Rental is not ready or is being released',
+      409,
+    );
+    return rental.sandbox_id;
+  }
   async cancel(caller: Caller, ownerId: string, runId: string) {
     return this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
+      await this.scope.require(caller, 'read', tx);
       const row = await tx.get<ManagedComputeRow>(
         `SELECT * FROM managed_compute_runs WHERE project_id=? AND owner_kind=? AND owner_id=? AND (run_id=? OR key=?) ORDER BY generation DESC LIMIT 1`,
         caller.projectId,
@@ -481,7 +533,8 @@ export class ManagedCompute {
         runId,
       );
       check(row, 'compute_not_found', 'Compute run not found in this work item', 404);
-      await this.policy.authorize(caller, ownerId, row.generation, tx);
+      const input = JSON.parse(row.input_json) as ManagedComputeInput;
+      await this.policy.authorize(caller, ownerId, row.generation, tx, undefined, input);
       if (!terminal.has(row.state)) {
         await tx.run(
           `UPDATE managed_compute_runs SET state='cancelling',updated_at=? WHERE owner_kind=? AND owner_id=? AND generation=? AND key=?`,
@@ -513,7 +566,11 @@ export class ManagedCompute {
       try {
         await this.advance(row);
       } catch (error) {
-        if (!(error instanceof MervError && error.status < 500)) continue;
+        if (
+          row.run_id ||
+          !(error instanceof MervError && error.status < 500 && error.status !== 429)
+        )
+          continue;
         await this.update(row, 'failed', row.run_id, null, { reason: error.code });
       }
     }
@@ -626,11 +683,15 @@ export class ManagedCompute {
       const source = input.commandId ? await this.policy.source?.(row, input.commandId) : undefined;
       if (input.commandId && !source)
         throw new MervError('code_source_unavailable', 'Code source is unavailable', 409);
+      const rentalSandboxId = input.rentalKey
+        ? await this.state.transaction((tx) => this.borrowedRental(row.project_id, input, tx))
+        : undefined;
       const runId = await this.adapter.submit(row.project_id, {
         experimentId: row.owner_id,
         ...input,
         idempotencyKey: digest([row.project_id, row.owner_id, row.generation, row.key]),
         source,
+        ...(rentalSandboxId ? { rentalSandboxId } : {}),
       });
       await this.update(row, 'running', runId, null, null);
       return;

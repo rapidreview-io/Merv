@@ -28,6 +28,7 @@ export function taskExecutionPolicy(
   largeUploads = false,
   compute = false,
   rentals = false,
+  rentalJobs = false,
 ): WorkflowExecutionPolicy {
   const driver = ['code', 'resolution'].includes(workspace) ? { driver: CODE_DRIVER } : {};
   const instance = { instanceId: target('instanceId') };
@@ -75,8 +76,18 @@ export function taskExecutionPolicy(
       ...(rentals
         ? [
             ...(purpose === 'review' ? [grant('task.compute_offers', {})] : []),
-            ...['machines', 'rent', 'ssh', 'release'].map((name) =>
-              grant(`task.compute_${name}`, task),
+            ...(rentalJobs && purpose === 'review'
+              ? [
+                  grant('task.compute_run', {
+                    ...task,
+                    ...revision,
+                    purpose: { kind: 'literal', value: 'check' },
+                  }),
+                  grant('task.compute_cancel', task),
+                ]
+              : []),
+            ...['machines', 'rent', 'ssh', ...(rentalJobs ? ['extend'] : []), 'release'].map(
+              (name) => grant(`task.compute_${name}`, task),
             ),
           ]
         : []),

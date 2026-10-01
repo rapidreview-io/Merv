@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-09-30",
+  "snapshot": "2026-10-01",
   "groups": [
     {
       "id": "front",
@@ -107,7 +107,8 @@
         "codeResearch",
         "fleet",
         "fleetWorkflow",
-        "pi"
+        "pi",
+        "secrets"
       ],
       "description": "These providers were discovered automatically and await a visual grouping in notes.json."
     }
@@ -631,6 +632,11 @@
           "readOnly": false
         },
         {
+          "name": "compute.extend",
+          "description": "Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.",
+          "readOnly": false
+        },
+        {
           "name": "compute.logs",
           "description": "Read the latest 8,000 bytes each of stdout and stderr for this experiment GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a scientific verdict.",
           "readOnly": true
@@ -662,7 +668,7 @@
         },
         {
           "name": "compute.run",
-          "description": "Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
+          "description": "Run the current experiment attempt. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose=\"check\", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
           "readOnly": false
         },
         {
@@ -726,6 +732,11 @@
           "readOnly": false
         },
         {
+          "name": "compute.extend",
+          "description": "Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.",
+          "readOnly": false
+        },
+        {
           "name": "compute.logs",
           "description": "Read the latest 8,000 bytes each of stdout and stderr for this experiment GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a scientific verdict.",
           "readOnly": true
@@ -757,7 +768,7 @@
         },
         {
           "name": "compute.run",
-          "description": "Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
+          "description": "Run the current experiment attempt. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose=\"check\", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.",
           "readOnly": false
         },
         {
@@ -2174,6 +2185,45 @@
       "exposedTools": []
     },
     {
+      "plugin": "merv-secrets",
+      "source": "packages/secrets/src/index.ts",
+      "provides": [
+        "secrets"
+      ],
+      "requires": [
+        "state"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "secrets",
+      "group": "other",
+      "owner": "secrets",
+      "label": "secrets",
+      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-secrets-api",
+      "source": "packages/secrets/src/api.ts",
+      "provides": [],
+      "requires": [
+        "secrets",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-secrets-api",
+      "group": "front",
+      "owner": "secrets",
+      "label": "secrets · api adapter",
+      "purpose": "Connects secrets to the API registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
       "plugin": "merv-sessions",
       "source": "packages/sessions/src/index.ts",
       "provides": [
@@ -2187,7 +2237,8 @@
       ],
       "optional": [
         "tools",
-        "blobs"
+        "blobs",
+        "secrets"
       ],
       "kind": "service",
       "runtime": "server",
@@ -2425,6 +2476,11 @@
           "readOnly": false
         },
         {
+          "name": "task.compute_extend",
+          "description": "Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.",
+          "readOnly": false
+        },
+        {
           "name": "task.compute_logs",
           "description": "Read the latest 8,000 bytes each of stdout and stderr for this task GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a task review verdict.",
           "readOnly": true
@@ -2456,7 +2512,7 @@
         },
         {
           "name": "task.compute_run",
-          "description": "Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
+          "description": "Run a bounded GPU command for this task revision. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose=\"check\", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
           "readOnly": false
         },
         {
@@ -2565,6 +2621,11 @@
           "readOnly": false
         },
         {
+          "name": "task.compute_extend",
+          "description": "Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.",
+          "readOnly": false
+        },
+        {
           "name": "task.compute_logs",
           "description": "Read the latest 8,000 bytes each of stdout and stderr for this task GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a task review verdict.",
           "readOnly": true
@@ -2596,7 +2657,7 @@
         },
         {
           "name": "task.compute_run",
-          "description": "Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
+          "description": "Run a bounded GPU command for this task revision. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose=\"check\", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.",
           "readOnly": false
         },
         {
@@ -3627,6 +3688,21 @@
       "optional": false
     },
     {
+      "from": "secrets",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "merv-secrets-api",
+      "to": "secrets",
+      "optional": false
+    },
+    {
+      "from": "merv-secrets-api",
+      "to": "api",
+      "optional": false
+    },
+    {
       "from": "sessions",
       "to": "state",
       "optional": false
@@ -3654,6 +3730,11 @@
     {
       "from": "sessions",
       "to": "blobs",
+      "optional": true
+    },
+    {
+      "from": "sessions",
+      "to": "secrets",
       "optional": true
     },
     {
@@ -3803,10 +3884,10 @@
     }
   ],
   "counts": {
-    "plugins": 68,
-    "providers": 30,
-    "adapters": 38,
-    "dependencies": 185
+    "plugins": 70,
+    "providers": 31,
+    "adapters": 39,
+    "dependencies": 189
   },
   "network": [
     {

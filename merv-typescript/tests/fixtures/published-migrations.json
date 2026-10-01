@@ -753,6 +753,12 @@
       "version": 1,
       "hash": "33c056578f156cc92521bc69e594be069b27c5891df9bf444cbeeda12a550730",
       "published": true
+    },
+    {
+      "component": "secrets",
+      "version": 1,
+      "hash": "63ecc868f6dd6497ebcbdac30ce1f89919862979e473ebf66891fccfe20161df",
+      "published": false
     }
   ]
 }

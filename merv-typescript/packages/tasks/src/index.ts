@@ -184,6 +184,14 @@ const workspaces: Record<number, TaskWorkspace> = {
   25: 'central',
   26: 'reference',
   27: 'code',
+  28: 'none',
+  29: 'central',
+  30: 'reference',
+  31: 'code',
+  32: 'none',
+  33: 'central',
+  34: 'reference',
+  35: 'code',
 };
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
 const taskVersion = (
@@ -192,11 +200,11 @@ const taskVersion = (
   hosted: boolean,
   largeUploads = false,
 ): number =>
-  (workspace !== 'git' ? 20 : baseTaskId !== undefined ? 22 : hosted ? 23 : 21) +
+  (workspace !== 'git' ? 28 : baseTaskId !== undefined ? 30 : hosted ? 31 : 29) +
   (largeUploads ? 4 : 0);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
 const derivedBase = (version: number) =>
-  [5, 10, 15, 19, 23, 27].includes(version) || serviceOwned(version);
+  [5, 10, 15, 19, 23, 27, 31, 35].includes(version) || serviceOwned(version);
 /** Only the internal service binding may create these tasks; their producer has no credential. */
 const serviceOwned = (version: number) =>
   version === TASK_WORKFLOW_SERVICE.version || version === 11;
@@ -241,7 +249,10 @@ export const TASK_WORKFLOW_COMPUTE = [
   { ...TASK_WORKFLOW_GIT, version: 17 },
   { ...TASK_WORKFLOW_GIT_BASED, version: 18 },
   { ...TASK_WORKFLOW_GIT_HOSTED, version: 19 },
-  ...[20, 21, 22, 23, 24, 25, 26, 27].map((version) => ({ ...TASK_WORKFLOW, version })),
+  ...[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35].map((version) => ({
+    ...TASK_WORKFLOW,
+    version,
+  })),
 ];
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
@@ -779,9 +790,13 @@ export class TaskService implements Tasks {
           execution: taskExecutionPolicy(
             'work',
             taskWorkspace(version),
-            (version >= 7 && version <= 11) || (version >= 16 && version <= 19) || version >= 24,
+            (version >= 7 && version <= 11) ||
+              (version >= 16 && version <= 19) ||
+              (version >= 24 && version <= 27) ||
+              version >= 32,
             version >= 12,
             version >= 20,
+            version >= 28,
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -795,9 +810,13 @@ export class TaskService implements Tasks {
           execution: taskExecutionPolicy(
             'review',
             taskWorkspace(version),
-            (version >= 7 && version <= 11) || (version >= 16 && version <= 19) || version >= 24,
+            (version >= 7 && version <= 11) ||
+              (version >= 16 && version <= 19) ||
+              (version >= 24 && version <= 27) ||
+              version >= 32,
             version >= 12,
             version >= 20,
+            version >= 28,
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -1251,7 +1270,7 @@ export class TaskService implements Tasks {
       adapter,
       'task',
       {
-        authorize: async (caller, taskId, revision, tx, commandId) => {
+        authorize: async (caller, taskId, revision, tx, commandId, input) => {
           const task = await tx.get<{ state: string; revision: number; version: number }>(
             `SELECT w.state,w.revision,w.version FROM tasks t JOIN wf_instances w ON w.id=t.id
            WHERE t.id=? AND t.project_id=?`,
@@ -1261,8 +1280,9 @@ export class TaskService implements Tasks {
           check(
             task &&
               task.version >= 12 &&
-              task.version <= 27 &&
-              task.state === 'in_progress' &&
+              task.version <= 35 &&
+              (task.state === 'in_progress' ||
+                (input?.purpose === 'check' && task.version >= 28 && task.state === 'in_review')) &&
               task.revision === revision,
             'compute_not_running',
             'Compute requires the current task work revision',
@@ -1278,12 +1298,13 @@ export class TaskService implements Tasks {
           check(caller.session, 'stale_lease', 'Compute requires the task work lease', 403);
           const lease = await tx.get(
             `SELECT id FROM task_leases WHERE id=? AND project_id=? AND task_id=? AND revision=?
-           AND actor_id=? AND purpose='work' AND released_at IS NULL`,
+           AND actor_id=? AND purpose=? AND released_at IS NULL`,
             caller.session.id,
             caller.projectId,
             taskId,
             revision,
             caller.actorId,
+            task.state === 'in_review' ? 'review' : 'work',
           );
           check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
         },
@@ -1294,7 +1315,12 @@ export class TaskService implements Tasks {
             row.owner_id,
             row.project_id,
           );
-          return task?.state === 'in_progress' && task.revision === row.generation;
+          const input = JSON.parse(row.input_json);
+          return (
+            (task?.state === 'in_progress' ||
+              (input.purpose === 'check' && task?.state === 'in_review')) &&
+            task.revision === row.generation
+          );
         },
         source: async (row, commandId) =>
           this.code?.source(row.project_id, row.owner_id, commandId),
@@ -1364,8 +1390,10 @@ export class TaskService implements Tasks {
       taskId: string;
       expectedRevision: number;
       key: string;
-      provider: string;
-      offerId: string;
+      provider?: string;
+      offerId?: string;
+      rentalKey?: string;
+      purpose?: 'check';
       command: string;
       minutes: number;
       maxUsd: number;
@@ -1380,6 +1408,8 @@ export class TaskService implements Tasks {
       key: input.key,
       provider: input.provider,
       offerId: input.offerId,
+      ...(input.rentalKey ? { rentalKey: input.rentalKey } : {}),
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       command: input.command,
       minutes: input.minutes,
       maxUsd: input.maxUsd,
@@ -1419,6 +1449,11 @@ export class TaskService implements Tasks {
   async computeSsh(caller: Caller, taskId: string, sandboxId: string, publicKey: string) {
     check(this.machines, 'compute_unavailable', 'SSH access is unavailable', 503);
     return this.machines.access(caller, taskId, sandboxId, publicKey);
+  }
+  async computeExtend(caller: Caller, taskId: string, sandboxId: string, minutes: number) {
+    const machines = this.machines;
+    check(machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
+    return machines.extend(caller, taskId, sandboxId, minutes);
   }
   async computeRelease(caller: Caller, taskId: string, sandboxId: string) {
     check(this.machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
@@ -2141,7 +2176,7 @@ export class TaskService implements Tasks {
       brief:
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}` +
         (task.workflow.version >= 20
-          ? rentalGuidance('task.compute_', purpose === 'review') +
+          ? rentalGuidance('task.compute_', purpose === 'review', task.workflow.version >= 28) +
             `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
           : ''),
       references: [

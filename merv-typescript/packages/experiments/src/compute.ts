@@ -39,7 +39,7 @@ export class ExperimentCompute {
       adapter,
       'experiment',
       {
-        authorize: async (caller, experimentId, attemptIndex, tx, commandId) => {
+        authorize: async (caller, experimentId, attemptIndex, tx, commandId, input) => {
           const experiment = await tx.get<{
             attempt_index: number;
             state: string;
@@ -52,7 +52,10 @@ export class ExperimentCompute {
           );
           check(
             experiment &&
-              experiment.state === 'running' &&
+              (experiment.state === 'running' ||
+                (input?.purpose === 'check' &&
+                  experiment.version >= 25 &&
+                  ['planned', 'design_review', 'experiment_review'].includes(experiment.state))) &&
               experiment.version > 8 &&
               experiment.attempt_index === attemptIndex,
             'compute_not_running',
@@ -61,15 +64,22 @@ export class ExperimentCompute {
           );
           if (commandId)
             check(
-              [12, 16, 20, 24].includes(experiment.version),
+              [12, 16, 20, 24, 28, 32].includes(experiment.version),
               'code_source_unavailable',
               'This experiment version cannot ship code',
               409,
             );
+          if (input?.rentalKey)
+            check(
+              caller.session,
+              'stale_lease',
+              'Rental jobs require a current experiment assignment',
+              403,
+            );
           if (caller.session) {
             const lease = await tx.get(
-              `SELECT id FROM experiment_leases WHERE experiment_id=? AND project_id=? AND attempt_index=?
-             AND state='running' AND actor_id=? AND id=? AND released_at IS NULL`,
+              `SELECT l.id FROM experiment_leases l JOIN wf_instances w ON w.id=l.experiment_id WHERE l.experiment_id=? AND l.project_id=? AND l.attempt_index=?
+             AND l.state=w.state AND l.revision=w.revision AND l.actor_id=? AND l.id=? AND l.released_at IS NULL`,
               experimentId,
               caller.projectId,
               attemptIndex,
@@ -86,7 +96,14 @@ export class ExperimentCompute {
             row.owner_id,
             row.project_id,
           );
-          return experiment?.state === 'running' && experiment.attempt_index === row.generation;
+          const input = JSON.parse(row.input_json);
+          return (
+            !!experiment &&
+            (experiment.state === 'running' ||
+              (input.purpose === 'check' &&
+                ['planned', 'design_review', 'experiment_review'].includes(experiment.state))) &&
+            experiment.attempt_index === row.generation
+          );
         },
         source: async (row, commandId) => code()?.source(row.project_id, row.owner_id, commandId),
       },
@@ -159,6 +176,8 @@ export class ExperimentCompute {
       key: input.key,
       provider: input.provider,
       offerId: input.offerId,
+      ...(input.rentalKey ? { rentalKey: input.rentalKey } : {}),
+      ...(input.purpose ? { purpose: input.purpose } : {}),
       command: input.command,
       minutes: input.minutes,
       maxUsd: input.maxUsd,

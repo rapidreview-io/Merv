@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
+import type { Secrets } from '@merv/secrets/types';
 import {
   admitDispatch,
   canonical,
@@ -404,6 +405,8 @@ export class LeasedSessions implements Sessions {
   serviceWork!: SessionServiceWork;
   /** Public so the plugin can bind Blobs to it late. */
   transcripts!: SessionTranscripts;
+  /** Optional private account credential reader; never exposed through the tool registry. */
+  secrets?: Pick<Secrets, 'resolveHuggingFaceToken'>;
   private readonly sections = new Map<string, StatusSection>();
   private directory!: AgentDirectory;
   private observations!: AgentObservations;
@@ -1906,6 +1909,52 @@ export class LeasedSessions implements Sessions {
       }
     });
   }
+  /** Private managed-control delivery after attachment. Source identity is immutable. */
+  async huggingface(
+    caller: Caller,
+    input: SessionControl & { hostRef: string },
+  ): Promise<{ hfToken: string | null }> {
+    caller = structuredClone(caller);
+    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
+    check(caller.managed, 'managed_runner_forbidden', 'Managed runner authority required', 403);
+    return await this.reading(async (tx) => {
+      const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
+      const { row } = await this.managed.require(caller, tx);
+      check(
+        row.source_json === canonical(session.source) && session.runnerId === input.runnerId,
+        'session_forbidden',
+        'Session source differs from its managed binding',
+        403,
+      );
+      check(
+        session.hostRef !== null && session.hostRef === input.hostRef,
+        'host_conflict',
+        'Credential delivery must name the attached host',
+        409,
+      );
+      await this.valid(session, tx);
+      const workspace = effectiveWorkspace(session.execution.policy);
+      if (
+        (session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain) ||
+        JSON.parse(row.platform_json).harness !== 'codex'
+      )
+        return { hfToken: null };
+      // Scope checks the service and its voucher above. Follow only that frozen voucher,
+      // never a current project director, billing identity, or arbitrary member.
+      const source = session.source.kind === 'service' ? session.source.vouchedBy : session.source;
+      if (source.kind !== 'human' && source.kind !== 'key') return { hfToken: null };
+      const { user } = await this.scope.requireDelegation(source, 'read', tx);
+      return {
+        hfToken:
+          user && this.secrets
+            ? await this.secrets.resolveHuggingFaceToken({
+                issuer: user.issuer,
+                subject: user.subject,
+              })
+            : null,
+      };
+    });
+  }
   async workspaceResult(
     caller: Caller,
     input: SessionControl & { hostRef: string; workspace: SessionWorkspace },
@@ -2593,6 +2642,14 @@ export const sessionsPlugin = {
           sessions.transcripts.blobs = ctx.blobs;
           return () => {
             sessions.transcripts.blobs = undefined;
+          };
+        });
+      });
+      ctx.inject(['secrets'], (ctx) => {
+        ctx.effect(() => {
+          sessions.secrets = ctx.secrets;
+          return () => {
+            sessions.secrets = undefined;
           };
         });
       });

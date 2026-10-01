@@ -29,6 +29,10 @@ separate real-agent acceptance harness, not a production runner.
 
 [Automatic assignment and project controls](../../docs/RUNNER_CONTROL_PLANE.md) include default-off dispatch, pause/halt, source-bound runner presence, desired platform settings and transactional capacity checks. Workflows supplies metadata-only candidates; Sessions owns durable lease selection and retry receipts. `npm run test:live:dispatch -- /private/tmp/UNIQUE_DIRECTORY` exercises automatic HTTP assignment with two fresh agents.
 
+## Private account credential delivery
+
+`POST /sessions/:id/huggingface` accepts only `{runnerId, hostRef}` from the managed supervisor bearer. It checks the current allocation, bound project, runner, source, attached host and live workflow lease before resolving an account through Scope. A personal key follows its owner; a service follows its immutable validated voucher. Actor-only sources and sealed offline reviews receive `{hfToken: null}`. An optional Secrets service supplies the private value; the response uses `Cache-Control: no-store`. There is no corresponding MCP tool or credential field in ordinary session responses.
+
 ## Transcripts
 
 The runner that held a session keeps one copy of what the agent process printed, for operators. Nothing in Merv reads it back: there is no GET, tool, page or event. `POST /sessions/:id/transcript` takes `runnerId`, `hostRef`, `sha256`, `size` (1 byte to `MAX_TRANSCRIPT_BYTES`, 64 MiB), `logBytes` and `truncated` in a body of at most 4 KiB, and answers `{transcript: {sessionId, sha256, size, uploadedAt}}`.

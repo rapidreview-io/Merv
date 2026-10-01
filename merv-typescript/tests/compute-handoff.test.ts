@@ -84,6 +84,10 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
       rental = { ...rental, state: 'stopped' };
       return rental;
     },
+    async extendRental(_project, sandboxId, minutes) {
+      assert.equal(minutes, 5);
+      return (rental = { ...rental, leaseExpiresAt: new Date(Date.now() + 3600000).toISOString() });
+    },
     async ssh(_project, sandboxId) {
       assert.equal(sandboxId, 'sbx_shared');
       return { certificate: `cert-${++certs}`, sandboxId };
@@ -181,6 +185,27 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
   });
   assert.equal(second.certificate, 'cert-2');
   assert.equal(rents, 1);
+  await invoke(reviewer.worker, 'task.compute_extend', { sandboxId: 'sbx_shared', minutes: 5 });
+  await invoke(reviewer.worker, 'task.compute_run', {
+    key: 'review-check',
+    rentalKey: 'shared',
+    command: 'verify',
+    minutes: 5,
+    maxUsd: 0,
+  });
+  await tasks.computeTick();
+  await tasks.computeTick();
+  assert.equal(stops, 0, 'failed borrowed verification preserves rental');
+  await assert.rejects(
+    invoke(reviewer.worker, 'task.compute_run', {
+      key: 'too-long',
+      rentalKey: 'shared',
+      command: 'verify',
+      minutes: 6,
+      maxUsd: 0,
+    }),
+    { code: 'invalid_compute_input' },
+  );
   await assert.rejects(
     invoke(reviewer.worker, 'task.compute_run', {
       key: 'training',
@@ -190,7 +215,7 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
       minutes: 10,
       maxUsd: 1,
     }),
-    { code: 'execution_tool_forbidden' },
+    { code: 'invalid_compute_input' },
   );
   const review = await app.ctx.reviews.get(operator, delivered.reviewId!);
   await invoke(reviewer.worker, 'review.submit', {
@@ -241,11 +266,18 @@ test('experiment planning, both reviewers and execution share the work-owned ren
     async allowance() {
       return {};
     },
-    async submit() {
-      return 'unused';
+    async submit(_project, spec) {
+      assert.equal(spec.rentalSandboxId, 'sbx_experiment');
+      return 'borrowed_check';
     },
     async get() {
-      throw Error('unused');
+      return {
+        id: 'borrowed_check',
+        state: 'completed',
+        reason: null,
+        cost: null,
+        result: { exit: 0 },
+      };
     },
     async cancel() {},
     async rent() {
@@ -306,6 +338,16 @@ test('experiment planning, both reviewers and execution share the work-owned ren
     ).certificate,
     'cert-1',
   );
+  await invoke(planner.worker, 'compute.run', {
+    attemptIndex: experiment.attempt.index,
+    key: 'planning-check',
+    rentalKey: 'shared',
+    command: 'verify',
+    minutes: 5,
+    maxUsd: 0,
+  });
+  await experiments.computeTick();
+  await experiments.computeTick();
   const attach = async (worker: Caller, role: string, content: string) => {
     const artifact = await invoke(worker, 'artifact.create', {
       title: role,
@@ -346,6 +388,7 @@ test('experiment planning, both reviewers and execution share the work-owned ren
     });
     await assert.rejects(
       invoke(reviewer.worker, 'compute.run', {
+        attemptIndex: current.attempt.index,
         key: 'long',
         provider: 'test',
         offerId: 'gpu',
@@ -353,8 +396,19 @@ test('experiment planning, both reviewers and execution share the work-owned ren
         minutes: 60,
         maxUsd: 1,
       }),
-      { code: 'execution_tool_forbidden' },
+      { code: 'invalid_compute_input' },
     );
+    await invoke(reviewer.worker, 'compute.run', {
+      attemptIndex: current.attempt.index,
+      key: `check-${current.workflow.state}`,
+      rentalKey: 'shared',
+      command: 'verify',
+      minutes: 5,
+      maxUsd: 0,
+    });
+    await experiments.computeTick();
+    await experiments.computeTick();
+    assert.equal(stops, 0);
     const request = await app.ctx.reviews.get(operator, current.reviewId!);
     const findings = reviewedFindings(request) as {
       findings: Array<{ criterionNumber: number; evidenceIds: string[] }>;

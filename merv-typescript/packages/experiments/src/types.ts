@@ -25,8 +25,10 @@ export interface ComputeInput {
   experimentId: string;
   attemptIndex: number;
   key: string;
-  provider: string;
-  offerId: string;
+  provider?: string;
+  offerId?: string;
+  rentalKey?: string;
+  purpose?: 'check';
   command: string;
   minutes: number;
   maxUsd: number;

@@ -379,7 +379,7 @@ export class SandboxClient {
             ? 'sandbox_forbidden'
             : 'sandbox_unavailable',
       envelope?.message ?? `merv-sandboxes refused the request (HTTP ${status})`,
-      envelope ? status : status === 404 ? 404 : status < 500 ? 403 : 503,
+      envelope ? status : status === 429 ? 429 : status === 404 ? 404 : status < 500 ? 403 : 503,
     );
   }
 

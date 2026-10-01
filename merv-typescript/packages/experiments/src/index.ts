@@ -339,6 +339,11 @@ export class ExperimentService implements Experiments {
     check(this.compute, 'compute_unavailable', 'SSH access is unavailable', 503);
     return this.compute.machines.access(caller, experimentId, sandboxId, publicKey);
   }
+  async computeExtend(caller: Caller, experimentId: string, sandboxId: string, minutes: number) {
+    const machines = this.compute?.machines;
+    check(machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
+    return machines.extend(caller, experimentId, sandboxId, minutes);
+  }
   async computeRelease(caller: Caller, experimentId: string, sandboxId: string) {
     check(this.compute, 'compute_unavailable', 'GPU rental is unavailable', 503);
     return this.compute.machines.release(caller, experimentId, sandboxId);

@@ -29,6 +29,7 @@ const machine = { hostname: 'managed-test', system: 'Linux', architecture: 'x64'
 async function fixture(
   t: TestContext,
   options: {
+    sourceKind?: 'human' | 'key' | 'service-human' | 'service-key';
     codeWorkspace?: boolean;
     reviewWorkspace?: 'ephemeral' | 'retained';
     clock?: () => number;
@@ -59,6 +60,7 @@ async function fixture(
           driver: 'code.v2',
         }
     : undefined;
+  const service = !!options.sourceKind?.startsWith('service');
   const policy: WorkflowPolicy = {
     successStates: ['done'],
     actions: [
@@ -69,7 +71,7 @@ async function fixture(
         tool: 'finish',
         instruction: 'Finish.',
         check: async ({ caller, tx }) => {
-          await scope.require(caller, 'write', tx);
+          await scope.require(caller, service ? 'review' : 'write', tx);
         },
       },
     ],
@@ -77,10 +79,10 @@ async function fixture(
       {
         state: 'working',
         check: async ({ caller, tx }) => {
-          await scope.require(caller, 'write', tx);
+          await scope.require(caller, service ? 'review' : 'write', tx);
         },
         build: () => ({
-          role: 'producer',
+          role: service ? 'reviewer' : 'producer',
           label: 'Managed work',
           brief: 'Do the work',
           references: [],
@@ -119,7 +121,7 @@ async function fixture(
         },
         ...(options.codeWorkspace ? { references: () => ({ code: 'a'.repeat(40) }) } : {}),
         lease: {
-          role: () => 'producer',
+          role: () => (service ? 'reviewer' : 'producer'),
           acquire: ({ leaseId }) => ({ leaseId }),
           check: () => {},
           release: () => {},
@@ -139,17 +141,47 @@ async function fixture(
     policy,
   );
   const boot = await scope.bootstrap({ projectName: 'Managed', actorName: 'Owner' });
-  const owner: Caller = {
+  let owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
   const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
-  const source: Caller = {
+  let source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,
     credentialId: issued.credential.id,
   };
+  let revokePerson: (() => Promise<unknown>) | undefined;
+  if (options.sourceKind) {
+    const person = await scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example',
+      subject: 'original-person',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const project = await scope.createProject(person, {
+      name: 'Personal source',
+      requestId: 'personal',
+    });
+    owner = source = await scope.caller(person, project.id);
+    if (options.sourceKind.endsWith('key')) {
+      const key = await scope.createKey(person, {
+        projectId: project.id,
+        label: 'Personal worker',
+      });
+      source = await scope.caller({ kind: 'key', key: await scope.authenticateKey(key.token) });
+      revokePerson = () => scope.revokeKey(person, key.key.id);
+    } else {
+      revokePerson = undefined;
+    }
+    if (options.sourceKind.startsWith('service')) {
+      const vouchedBy = await scope.delegationSource(source);
+      source = {
+        ...(await scope.serviceActor('fleet-review', project.id)),
+        service: { vouchedBy },
+      };
+    }
+  }
   const sourceIdentity = await scope.delegationSource(source);
   let sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, {
@@ -205,6 +237,7 @@ async function fixture(
   return {
     state,
     scope,
+    revokePerson,
     handle,
     owner,
     source,
@@ -914,4 +947,92 @@ test('a model grant ends when the managed source loses read', async (t) => {
     f.sessions.managedModelGrant(request.secret),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
+});
+
+for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-key'] as const) {
+  test(`HF delivery uses only the attached managed lease's immutable ${sourceKind ?? 'actor'} source`, async (t) => {
+    const f = await fixture(t, { sourceKind });
+    const marker = 'hf_' + 'AccountMarker'.repeat(3);
+    let token: string | null = marker;
+    const identities: unknown[] = [];
+    f.sessions.secrets = {
+      resolveHuggingFaceToken: async (person) => {
+        identities.push(person);
+        return token;
+      },
+    };
+    await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+    const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+    assert.ok(bound);
+    const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'hf-host' };
+    await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'host_conflict' });
+    await f.sessions.attach(f.caller, input);
+    await assert.rejects(f.sessions.huggingface(f.source, input), {
+      code: 'managed_runner_forbidden',
+    });
+    await assert.rejects(
+      f.sessions.huggingface({ ...f.caller, projectId: 'other-project' }, input),
+    );
+    await assert.rejects(f.sessions.huggingface(f.caller, { ...input, runnerId: 'other-runner' }), {
+      code: 'session_forbidden',
+    });
+    await assert.rejects(
+      f.sessions.huggingface(f.caller, { ...input, sessionId: 'session_other' }),
+      { code: 'session_forbidden' },
+    );
+    await assert.rejects(f.sessions.huggingface(f.caller, { ...input, hostRef: 'other-host' }), {
+      code: 'host_conflict',
+    });
+    assert.equal(identities.length, 0);
+    assert.deepEqual(await f.sessions.huggingface(f.caller, input), {
+      hfToken: sourceKind ? marker : null,
+    });
+    assert.deepEqual(
+      identities,
+      sourceKind ? [{ issuer: 'https://identity.example', subject: 'original-person' }] : [],
+    );
+    token = null;
+    assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
+    assert.ok(!JSON.stringify(await f.sessions.get(f.caller, bound.id)).includes(marker));
+    f.current(false);
+    const reads = identities.length;
+    await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'managed_revoked' });
+    f.current(true);
+    if (sourceKind?.endsWith('key')) {
+      await f.revokePerson!();
+      await assert.rejects(f.sessions.huggingface(f.caller, input));
+    } else {
+      await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
+      await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'session_closed' });
+    }
+    assert.equal(identities.length, reads);
+  });
+}
+
+test('sealed review gets no HF account credential', async (t) => {
+  const f = await fixture(t, { sourceKind: 'human', reviewWorkspace: 'retained' });
+  f.sessions.secrets = {
+    resolveHuggingFaceToken: async () => {
+      assert.fail('sealed review read a secret');
+    },
+  };
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
+  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  assert.ok(bound);
+  const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'sealed-host' };
+  const workspace = {
+    mode: 'persistent' as const,
+    baseOid: 'a'.repeat(40),
+    headOid: 'a'.repeat(40),
+    repositoryId: 'hf-repository',
+    workspaceId: 'hf-workspace',
+    branch: 'merv/hf-review',
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  await f.sessions.attach(f.caller, { ...input, workspace });
+  assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
 });

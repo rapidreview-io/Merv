@@ -56,6 +56,8 @@ const tokens = [
   `sk-ant-api03-${'w'.repeat(40)}`,
   `ghp_${'G'.repeat(36)}`,
   'AKIA' + 'ABCDEFGHIJKLMNOP',
+  'hf_' + 'FakeHuggingFaceToken'.repeat(2),
+  'hf_' + 'H'.repeat(4093),
 ];
 
 test('bearers standing alone are blanked, whatever the chunk, and identifiers are kept', (t) => {

@@ -880,3 +880,55 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritance', () => {
+  const marker = 'hf_' + 'NoncredentialMarker'.repeat(2);
+  const hosted = { ...codex, hosted: true as const, isolatedLauncher: '/opt/merv/assignment' };
+  const launch = buildLaunch(
+    hosted,
+    { ...request(), hfToken: marker },
+    { ...safeEnv, HF_TOKEN: 'ambient-token' },
+  );
+  assert.equal(launch.env.HF_TOKEN, marker);
+  const settings = config(launch.args);
+  assert.equal(settings['shell_environment_policy.inherit'], '"all"');
+  assert.deepEqual(JSON.parse(settings['shell_environment_policy.include_only']), [
+    'PATH',
+    'HOME',
+    'USER',
+    'TMPDIR',
+    'LANG',
+    'HF_TOKEN',
+  ]);
+  assert.equal(settings['shell_environment_policy.ignore_default_excludes'], 'true');
+  for (const text of [
+    JSON.stringify(launch.args),
+    launch.stdin,
+    JSON.stringify(launch),
+    inspect(launch),
+    settings['shell_environment_policy.set'],
+  ])
+    assert.ok(!text.includes(marker));
+  for (const profile of [codex, claude, command])
+    assert.equal(
+      buildLaunch(profile, { ...request(), hfToken: marker }, { ...safeEnv, HF_TOKEN: marker }).env
+        .HF_TOKEN,
+      undefined,
+    );
+  const sealed = request(true, {
+    mode: 'persistent',
+    namespace: 'review',
+    base: 'central',
+    perBase: false,
+    retain: true,
+    advancesCentral: false,
+  });
+  assert.equal(
+    buildLaunch(hosted, { ...sealed, hfToken: marker }, safeEnv).env.HF_TOKEN,
+    undefined,
+  );
+  assert.equal(
+    buildLaunch(hosted, request(), { ...safeEnv, HF_TOKEN: marker }).env.HF_TOKEN,
+    undefined,
+  );
+});

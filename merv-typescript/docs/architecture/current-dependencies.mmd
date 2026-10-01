@@ -53,6 +53,8 @@ flowchart BT
     merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
     merv_scope_ui["merv-scope-ui"]
+    secrets["secrets"]
+    merv_secrets_api["merv-secrets-api"]
     sessions["sessions"]
     merv_sessions_api["merv-sessions-api"]
     merv_sessions_tools["merv-sessions-tools"]
@@ -221,12 +223,16 @@ flowchart BT
   merv_scope_tools --> tools
   merv_scope_ui --> scope
   merv_scope_ui --> ui
+  secrets --> state
+  merv_secrets_api --> secrets
+  merv_secrets_api --> api
   sessions --> state
   sessions --> scope
   sessions --> workflows
   sessions --> domainEvents
   sessions -. optional .-> tools
   sessions -. optional .-> blobs
+  sessions -. optional .-> secrets
   merv_sessions_api --> sessions
   merv_sessions_api --> api
   merv_sessions_tools --> sessions

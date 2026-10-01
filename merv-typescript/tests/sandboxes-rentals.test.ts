@@ -98,3 +98,60 @@ test('public compute capability forwards scoped rentals, recovery, SSH and durab
   protectedRuntime = true;
   await assert.rejects(compute.inspectRental!('project_test', 'sbx_shared'), { code: 'forbidden' });
 });
+
+test('rental extension adds remaining time with CAS under the same consumer subject', async (t) => {
+  const { SandboxComputeAdapter } = await import('../packages/sandboxes/src/compute.js');
+  const tokenEnv = 'MERV_RENEW_TEST_GRANT';
+  process.env[tokenEnv] = 'sbxt_renew_test';
+  t.after(() => {
+    delete process.env[tokenEnv];
+  });
+  const fixed = Date.now();
+  t.mock.method(Date, 'now', () => fixed);
+  let revision = 3,
+    expires = fixed + 600_000,
+    renews = 0;
+  let deny = false;
+  t.mock.method(globalThis, 'fetch', async (input: unknown, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    assert.equal(new Headers(init?.headers).get('x-sandbox-subject'), 'project_renew');
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    if (path === '/v1/auth/me') return json({ role: 'consumer', namespace: 'merv-ml' });
+    if (path.endsWith('/renew')) {
+      const body = JSON.parse(String(init?.body));
+      if (deny) return json({ error: { code: 'budget_exceeded', message: 'Budget denied' } }, 403);
+      if (body.expected_revision !== revision)
+        return json({ error: { code: 'revision_conflict', message: 'Stale revision' } }, 409);
+      assert.equal(body.lease_seconds, (expires - fixed) / 1000 + 300);
+      revision++;
+      renews++;
+      expires = fixed + body.lease_seconds * 1000;
+    }
+    return json({
+      id: 'sbx_shared',
+      state: 'ready',
+      revision,
+      lease_expires_at: new Date(expires).toISOString(),
+    });
+  });
+  const adapter = new SandboxComputeAdapter('https://sandbox.example', 1000, 60_000, {
+    namespace: 'merv-ml',
+    tokenEnv,
+    since: '2000-01-01',
+    storageOrigins: [],
+  });
+  const results = await Promise.allSettled([
+    adapter.extendRental('project_renew', 'sbx_shared', 5),
+    adapter.extendRental('project_renew', 'sbx_shared', 5),
+  ]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(renews, 1);
+  assert.equal(expires, fixed + 900_000);
+  deny = true;
+  await assert.rejects(adapter.extendRental('project_renew', 'sbx_shared', 5));
+  assert.equal(expires, fixed + 900_000, 'budget refusal preserves the existing lease');
+});

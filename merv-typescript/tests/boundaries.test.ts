@@ -13,6 +13,7 @@ import { runnerPlugin } from '@merv/runner';
 import { scopePlugin } from '@merv/scope';
 import { sessionsPlugin } from '@merv/sessions';
 import { statePlugin } from '@merv/state';
+import { secretsPlugin } from '@merv/secrets';
 import { nisaPlugin } from '@merv/nisa';
 import { sandboxesPlugin } from '@merv/sandboxes';
 import { tasksPlugin } from '@merv/tasks';
@@ -117,6 +118,8 @@ const capabilities: Record<string, readonly string[]> = {
   ],
   feed: ['state', 'scope', 'artifacts'],
   identity: [],
+  // Account ciphertext storage is separate from identity authentication and scope authority.
+  secrets: ['state'],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope'],
   codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
@@ -157,7 +160,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
-  sessions: ['tools', 'blobs'],
+  sessions: ['tools', 'blobs', 'secrets'],
   tasks: ['codeResearch', 'sandboxes'],
 };
 
@@ -812,7 +815,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['code-research', 'pi', 'scope', 'sessions'],
+    api: ['code-research', 'pi', 'scope', 'secrets', 'sessions'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];
@@ -964,6 +967,7 @@ test('each service boots with only its declared dependency closure and without A
     tasks: { plugin: tasksPlugin },
     feed: { plugin: feedPlugin },
     identity: { plugin: identityPlugin },
+    secrets: { plugin: secretsPlugin },
     sandboxes: {
       plugin: sandboxesPlugin,
       config: {

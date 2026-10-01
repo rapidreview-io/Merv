@@ -333,6 +333,7 @@ async function credentialGate(t: TestContext) {
         'heartbeat',
         'release',
         'workspaceResult',
+        'huggingface',
         'transcript',
         'projectStatus',
         'assignAgent',
@@ -398,7 +399,12 @@ async function credentialGate(t: TestContext) {
     try {
       code = JSON.parse(text).error?.code;
     } catch {}
-    return { status: response.status, code, reached: [...reached] };
+    return {
+      status: response.status,
+      code,
+      reached: [...reached],
+      cacheControl: response.headers.get('cache-control'),
+    };
   };
   return { request, withdraw, snapshots: () => snapshots };
 }
@@ -439,6 +445,7 @@ const ownersPresent: GateRow[] = [
       ['POST', '/sessions/session_1/release', 'sessions.release'],
       ['POST', '/sessions/session_1/workspace-result', 'sessions.workspaceResult'],
       ['POST', '/sessions/session_1/transcript', 'sessions.transcript'],
+      ['POST', '/sessions/session_1/huggingface', 'sessions.huggingface'],
       ['POST', '/code/v2/uploads/begin', 'code.v2.call'],
     ] as const
   ).map(([method, path, reaches]): GateRow => ({
@@ -714,4 +721,19 @@ test('agent routes match before authenticating, and authenticate before any body
   assert.deepEqual([selfish.status, selfish.reached], [401, []]);
   assert.equal((await gate.request('GET', '/sessions/selfish', 'actor-token')).status, 404);
   assert.equal(gate.snapshots(), 1);
+});
+
+test('private HF delivery is managed-only and never cacheable', async (t) => {
+  const f = await credentialGate(t);
+  const reply = await f.request('POST', '/sessions/session_1/huggingface', bearers.mr_, {
+    runnerId: 'runner',
+    hostRef: 'host',
+  });
+  assert.equal(reply.status, 200);
+  assert.equal(reply.cacheControl, 'no-store');
+  for (const token of [bearers.ms_, bearers.me_]) {
+    const refused = await f.request('POST', '/sessions/session_1/huggingface', token, {});
+    assert.equal(refused.status, 403);
+    assert.ok(!refused.reached.includes('sessions.huggingface'));
+  }
 });

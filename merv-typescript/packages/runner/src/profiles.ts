@@ -96,6 +96,8 @@ export interface LaunchSpec {
 export interface LaunchRequest {
   session: Session;
   secret: string;
+  /** Account credential delivered privately for this hosted launch, never persisted. */
+  hfToken?: string | null;
   mcpUrl: string;
   /** An owned workspace prepared by the runner, not a path supplied by an agent. */
   cwd: string;
@@ -334,14 +336,22 @@ function codexArgs(
   config('web_search', quote('disabled'));
   config('project_doc_max_bytes', '0');
   config('allow_login_shell', 'false');
-  config('shell_environment_policy.inherit', quote('none'));
-  config('shell_environment_policy.ignore_default_excludes', 'false');
+  const hfShell = profile.hosted && !sealed(request.session) && !!request.hfToken;
+  config('shell_environment_policy.inherit', quote(hfShell ? 'all' : 'none'));
+  config('shell_environment_policy.ignore_default_excludes', hfShell ? 'true' : 'false');
   config('shell_environment_policy.experimental_use_profile', 'false');
   // MCP authentication reads the host process environment. Its bearer is deliberately
   // absent from the environment made available to model-generated shell commands.
   const shellEnvironment = { ...safeEnvironment };
   delete shellEnvironment.CODEX_HOME;
   delete shellEnvironment.CLAUDE_CONFIG_DIR;
+  // Codex applies include_only after set; retain the safe override names as well.
+  // Default exclusions remove *TOKEN*, so bypass them only behind this exact name list.
+  if (hfShell)
+    config(
+      'shell_environment_policy.include_only',
+      JSON.stringify([...Object.keys(shellEnvironment), 'HF_TOKEN']),
+    );
   config('shell_environment_policy.set', table(shellEnvironment));
   config('sandbox_workspace_write.writable_roots', '[]');
   // A hosted machine holds no provider key and the server caps its step, so its shell commands
@@ -651,6 +661,9 @@ export function buildLaunch(
     env: {
       ...safeEnvironment,
       ...bearers,
+      ...(profile.harness === 'codex' && profile.hosted && !sealed(session) && request.hfToken
+        ? { HF_TOKEN: request.hfToken }
+        : {}),
       // The handshake waits behind the server's writer queue under load, as it did for
       // Codex; a server that lists no tools in time looks connected and useless.
       ...(profile.harness === 'claude'

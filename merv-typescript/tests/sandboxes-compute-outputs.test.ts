@@ -193,3 +193,71 @@ test('output requests require bounded named regular-file paths', () => {
     false,
   );
 });
+
+test('borrowed durable jobs use_vm, preserve rental on cancel/failure, and isolate run workspaces', async (t) => {
+  const tokenEnv = 'MERV_BORROW_TEST_GRANT';
+  process.env[tokenEnv] = 'sbxt_borrow_test';
+  t.after(() => {
+    delete process.env[tokenEnv];
+  });
+  const requests: any[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: unknown, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path !== '/part')
+      assert.equal(new Headers(init?.headers).get('x-sandbox-subject'), 'project_borrow');
+    let result: unknown;
+    if (path === '/v1/storage/objects')
+      result = {
+        object: { id: 'obj_source', state: 'uploading' },
+        part_size: 3,
+        part_count: 1,
+        completed_parts: [],
+        parts: [{ part_number: 1, size_bytes: 3, url: 'https://bucket.example/part', headers: {} }],
+      };
+    else if (path === '/part') return new Response(null, { status: 200 });
+    else if (path === '/v1/storage/objects/obj_source/complete') result = { id: 'obj_source' };
+    else if (path === '/v1/auth/me') result = { role: 'consumer', namespace: 'merv-ml' };
+    else if (path === '/v1/workflows') {
+      requests.push(JSON.parse(String(init?.body)));
+      result = { id: 'pipe_borrow' };
+    } else if (path === '/v1/workflows/pipe_borrow/cancel') result = {};
+    else throw Error(`Unexpected borrowed run request ${path}`);
+    return new Response(JSON.stringify(result), {
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  const adapter = new SandboxComputeAdapter('https://sandbox.example', 1000, 60_000, {
+    namespace: 'merv-ml',
+    tokenEnv,
+    since: '2000-01-01',
+    storageOrigins: ['https://bucket.example'],
+  });
+  for (const key of ['job-a', 'job-b'])
+    await adapter.submit('project_borrow', {
+      experimentId: 'experiment',
+      idempotencyKey: key,
+      rentalSandboxId: 'sbx_shared',
+      command: 'exit 7',
+      minutes: 5,
+      maxUsd: 0,
+      source: { bytes: new Uint8Array([1, 2, 3]), sha256: 'a'.repeat(64) },
+      outputs: { files: [{ name: 'diagnostics', path: '/tmp/diagnostics' }], maxBytes: 1024 },
+    });
+  for (const request of requests) {
+    assert.deepEqual(request.nodes[0], {
+      id: 'provision',
+      kind: 'use_vm',
+      sandbox_id: 'sbx_shared',
+    });
+    assert.equal(
+      request.nodes.some((node: any) => node.kind === 'release'),
+      false,
+    );
+    assert.equal(request.nodes.find((node: any) => node.kind === 'capture').when, 'always');
+  }
+  assert.notEqual(requests[0].nodes[2].job.command, requests[1].nodes[2].job.command);
+  assert.notEqual(requests[0].nodes[1].inputs[0].path, requests[1].nodes[1].inputs[0].path);
+  for (const request of requests)
+    assert.ok(request.nodes[2].job.command.includes(request.nodes[1].inputs[0].path));
+  await adapter.cancel('project_borrow', 'pipe_borrow'); // No machine delete call.
+});

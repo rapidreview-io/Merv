@@ -1,19 +1,19 @@
 {
-  "snapshot": "2026-09-30",
+  "snapshot": "2026-10-01",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 68,
-  "serviceProviders": 30,
+  "pluginCount": 70,
+  "serviceProviders": 31,
   "toolAdapters": 18,
   "uiAdapters": 16,
-  "apiAdapters": 4,
-  "defaultEntries": 50,
-  "apiEntries": 37,
-  "serverPlugins": 67,
+  "apiAdapters": 5,
+  "defaultEntries": 52,
+  "apiEntries": 39,
+  "serverPlugins": 69,
   "machinePlugins": 1,
-  "directDependencyCount": 185,
-  "optionalDependencyCount": 18,
+  "directDependencyCount": 189,
+  "optionalDependencyCount": 19,
   "directConsumers": {
-    "api": 6,
+    "api": 7,
     "artifacts": 13,
     "blobs": 3,
     "code": 1,
@@ -36,8 +36,9 @@
     "runner": 0,
     "sandboxes": 6,
     "scope": 25,
+    "secrets": 2,
     "sessions": 5,
-    "state": 19,
+    "state": 20,
     "tasks": 4,
     "tools": 24,
     "ui": 16,
@@ -836,6 +837,33 @@
       "defaultConfiguration": true
     },
     {
+      "plugin": "merv-secrets",
+      "source": "packages/secrets/src/index.ts",
+      "provides": [
+        "secrets"
+      ],
+      "requires": [
+        "state"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-secrets-api",
+      "source": "packages/secrets/src/api.ts",
+      "provides": [],
+      "requires": [
+        "secrets",
+        "api"
+      ],
+      "optional": [],
+      "kind": "api",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
       "plugin": "merv-sessions",
       "source": "packages/sessions/src/index.ts",
       "provides": [
@@ -849,7 +877,8 @@
       ],
       "optional": [
         "tools",
-        "blobs"
+        "blobs",
+        "secrets"
       ],
       "kind": "service",
       "runtime": "server",

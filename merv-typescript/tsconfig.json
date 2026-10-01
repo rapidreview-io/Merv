@@ -33,6 +33,7 @@
     "tests/ui-reviews.test.ts",
     "tests/ui-running.test.ts",
     "tests/ui-shell.test.ts",
-    "tests/ui-tasks.test.ts"
+    "tests/ui-tasks.test.ts",
+    "tests/ui-huggingface.test.ts"
   ]
 }

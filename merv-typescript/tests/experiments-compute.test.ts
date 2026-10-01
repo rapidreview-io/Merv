@@ -471,3 +471,39 @@ test('cancelled capture runs keep polling after the owner leaves running', async
   assert.equal(final?.outputState, 'partial');
   assert.deepEqual(f.cancelled, ['wf_1', 'wf_1']);
 });
+
+test('admitted jobs recover from an observation refusal without resubmission or losing capture', async (t) => {
+  const f = await fixture(t);
+  const id = await f.createRunning();
+  await f.experiments.computeRun(f.caller, input(id));
+  await f.experiments.computeTick();
+  const get = f.adapter.get;
+  f.adapter.get = async () => {
+    throw new MervError('sandbox_forbidden', 'HTTP 429', 403);
+  };
+  await f.experiments.computeTick();
+  const rows = await f.state.read((sql) =>
+    sql.all<{ state: string; run_id: string }>(
+      'SELECT state,run_id FROM managed_compute_runs WHERE owner_id=?',
+      id,
+    ),
+  );
+  assert.equal(rows[0].state, 'running');
+  assert.equal(rows[0].run_id, 'wf_1');
+  f.adapter.get = get;
+  f.setResponse({
+    id: 'wf_1',
+    state: 'completed',
+    reason: null,
+    cost: null,
+    result: { exit: 0 },
+    outputs: [],
+    outputState: 'committed',
+  });
+  await f.experiments.computeTick();
+  assert.equal(f.calls.length, 1);
+  const final = await f.state.read((sql) =>
+    sql.get<{ state: string }>('SELECT state FROM managed_compute_runs WHERE owner_id=?', id),
+  );
+  assert.equal(final?.state, 'completed');
+});

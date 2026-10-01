@@ -59,6 +59,15 @@ export const taskToolsPlugin = {
           ctx.tasks.computeSsh(c, i.taskId, i.sandboxId, i.publicKey),
       },
       {
+        name: 'task.compute_extend',
+        description:
+          'Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.',
+        inputSchema: machine.extend({ minutes: z.number().int().min(1).max(1380) }).strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: { taskId: string; sandboxId: string; minutes: number }) =>
+          ctx.tasks.computeExtend(c, i.taskId, i.sandboxId, i.minutes),
+      },
+      {
         name: 'task.compute_release',
         description:
           'Release a GPU associated with this work item. Retain needed files first; release deletes the machine’s filesystem. Leave it available only when the next worker can use it within the remaining lease.',
@@ -74,8 +83,10 @@ export const taskToolsPlugin = {
         taskId: id,
         expectedRevision: z.number().int().nonnegative(),
         key: z.string().min(1).max(128),
-        provider: z.string().min(1).max(64),
-        offerId: z.string().min(1).max(256),
+        provider: z.string().min(1).max(64).optional(),
+        offerId: z.string().min(1).max(256).optional(),
+        rentalKey: z.string().min(1).max(128).optional(),
+        purpose: z.literal('check').optional(),
         command: z.string().min(1).max(65536),
         minutes: z.number().int().min(5).max(1380),
         maxUsd: z.number().finite().nonnegative(),
@@ -111,7 +122,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.compute_run',
         description:
-          'Run a bounded GPU command for this task revision. maxUsd covers the whole lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
+          'Run a bounded GPU command for this task revision. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose="check", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease including 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Capture happens before release. Read task.compute_logs for live progress (emit unbuffered stdout/stderr), task.compute_status for results, then task.compute_output for fresh URLs, and its artifactId for the automatically retained capture collection; do not reupload captured files. Reuse key to recover the same run. On Git tasks, commandId may name this task’s succeeded code.commit to ship that tree.',
         inputSchema: computeRun,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: z.infer<typeof computeRun>) =>

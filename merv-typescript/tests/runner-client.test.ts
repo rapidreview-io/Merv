@@ -428,3 +428,50 @@ test('a refusal is final only when asking again cannot change the answer', () =>
   for (const code of ['transaction_conflict', 'invalid_control_response', 'github_push_required'])
     assert.equal(final(409, code), false, code);
 });
+
+test('HF runtime fetch binds its host and validates a private nullable response without exposing malformed bytes', async () => {
+  const marker = 'hf_' + 'ClientMarker'.repeat(3);
+  const seen: { url: string; body: unknown; method: unknown }[] = [];
+  const managed = new RunnerClient(
+    'https://merv.example',
+    'project_fixture',
+    'mr_' + 'a'.repeat(64),
+    async (url, init) => {
+      seen.push({ url: String(url), body: JSON.parse(String(init?.body)), method: init?.method });
+      return Response.json({ hfToken: marker });
+    },
+  );
+  assert.equal(
+    await managed.huggingface('session_fixture', 'runner_fixture', 'host_fixture'),
+    marker,
+  );
+  assert.deepEqual(seen, [
+    {
+      url: 'https://merv.example/sessions/session_fixture/huggingface',
+      method: 'POST',
+      body: { runnerId: 'runner_fixture', hostRef: 'host_fixture' },
+    },
+  ]);
+  assert.equal(
+    await client({ hfToken: null }).huggingface(
+      'session_fixture',
+      'runner_fixture',
+      'host_fixture',
+    ),
+    null,
+  );
+  for (const value of [
+    { hfToken: marker, extra: true },
+    {},
+    { hfToken: marker + '\n' },
+    { hfToken: 7 },
+  ]) {
+    await assert.rejects(
+      client(value).huggingface('session_fixture', 'runner_fixture', 'host_fixture'),
+      (error: Error) => {
+        assert.ok(!String(error).includes(marker));
+        return error instanceof RunnerControlError && error.code === 'invalid_control_response';
+      },
+    );
+  }
+});

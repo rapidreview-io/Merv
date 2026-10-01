@@ -1717,10 +1717,10 @@ test('a mixed workspace plan is atomic, replayable and uses legacy Git until hos
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
   assert.equal(plain.workspace, undefined);
   assert.equal(coded.workspace, 'git');
-  assert.equal(coded.workflow.version, 21);
+  assert.equal(coded.workflow.version, 29);
   assert.equal(coded.baseTaskId, undefined);
   assert.equal(experiment.workspace, 'git');
-  assert.equal(experiment.workflow.version, 18);
+  assert.equal(experiment.workflow.version, 26);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.deepEqual(
     (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
@@ -1775,8 +1775,8 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
   const task = await tasks.get(f.owner, ids.harness);
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
-  assert.equal(task.workflow.version, 23);
-  assert.equal(experiment.workflow.version, 20);
+  assert.equal(task.workflow.version, 31);
+  assert.equal(experiment.workflow.version, 28);
   assert.equal(task.baseTaskId, undefined);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.equal((await code.unit(f.owner, experiment.id)).base, null);

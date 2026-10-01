@@ -187,8 +187,10 @@ export interface SandboxChecks {
 export interface SandboxComputeSpec {
   experimentId: string;
   idempotencyKey: string;
-  provider: string;
-  offerId: string;
+  provider?: string;
+  offerId?: string;
+  /** Resolved by the work owner from a rental key; never accepted from agent input. */
+  rentalSandboxId?: string;
   command: string;
   minutes: number;
   maxUsd: number;
@@ -224,6 +226,7 @@ export interface SandboxCompute {
   findRental?(projectId: string, key: string): Promise<SandboxRental | null>;
   inspectRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
   releaseRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
+  extendRental?(projectId: string, sandboxId: string, minutes: number): Promise<SandboxRental>;
   ssh?(projectId: string, sandboxId: string, publicKey: string): Promise<Json>;
 }
 

@@ -137,7 +137,7 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
 test('a leased task worker receives GPU tool grants bound to its task and revision', async (t) => {
   const { offer, run, create } = await fixture(t);
   const task = await create('gpu-grants');
-  assert.equal(task.workflow.version, 20);
+  assert.equal(task.workflow.version, 28);
   const { worker } = await offer(task);
   const command = {
     key: 'smoke',
@@ -171,10 +171,14 @@ test('a review session binds the claim its lease took, and a successor binds onl
     (await app.ctx.sessions.prepare(first.worker, 'task.compute_status', {})).input.taskId,
     task.id,
   );
-  for (const name of ['task.compute_run', 'task.compute_cancel'])
-    await assert.rejects(app.ctx.sessions.prepare(first.worker, name, {}), {
-      code: 'execution_tool_forbidden',
-    });
+  assert.equal(
+    (await app.ctx.sessions.prepare(first.worker, 'task.compute_run', {})).input.purpose,
+    'check',
+  );
+  await assert.rejects(
+    app.ctx.sessions.prepare(first.worker, 'task.compute_run', { purpose: 'training' }),
+    { code: 'execution_arguments_forbidden' },
+  );
   const claim = (await app.ctx.reviews.get(operator, task.reviewId!)).claimId!;
   assert.ok(claim);
   assert.equal(

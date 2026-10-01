@@ -5,9 +5,17 @@ import react from '@vitejs/plugin-react';
 // The Host header is kept (no changeOrigin) so the API's same-origin check sees Origin === http://<host>.
 const api = process.env.MERV_API || 'http://127.0.0.1:3081';
 const proxy = Object.fromEntries(
-  ['/tools', '/health', '/auth', '/account', '/projects', '/sessions', '/code', '/pi'].map(
-    (path) => [path, { target: api }],
-  ),
+  [
+    '/tools',
+    '/health',
+    '/auth',
+    '/account',
+    '/secrets',
+    '/projects',
+    '/sessions',
+    '/code',
+    '/pi',
+  ].map((path) => [path, { target: api }]),
 );
 
 export default defineConfig({

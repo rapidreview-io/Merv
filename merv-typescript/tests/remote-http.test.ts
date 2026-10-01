@@ -74,7 +74,9 @@ async function fixture(t: test.TestContext) {
 test('independent MCP results and catalog metadata survive both Merv transports', async (t) => {
   const { downstream, http, upstream } = await fixture(t);
   const listed = await downstream.listTools();
-  assert.equal(listed.tools.length, 107);
+  assert.equal(listed.tools.length, 109);
+  for (const name of ['task.compute_extend', 'compute.extend'])
+    assert.ok(listed.tools.some((tool) => tool.name === name));
   for (const description of representativeTools) {
     assert.deepEqual(
       listed.tools.find((tool) => tool.name === `_fixture.${description.name}`),
@@ -169,7 +171,7 @@ test('catalog withdrawal stops all new remote HTTP/MCP calls while an admitted c
     done = true;
   });
   try {
-    assert.equal((await downstream.listTools()).tools.length, 104);
+    assert.equal((await downstream.listTools()).tools.length, 106);
     assert.equal(done, false);
     for (const { name } of representativeTools) {
       // A withdrawn remote tool's projectId still belongs to the upstream tool.

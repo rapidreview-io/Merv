@@ -102,7 +102,7 @@ test('task withdrawal shares guidance guards, checks identity and reason, and re
   try {
     const task = await f.create(),
       input = failureInput(task);
-    assert.equal(task.workflow.version, 20);
+    assert.equal(task.workflow.version, 28);
     assert.equal(task.failure, null);
     assert.equal(task.guidance.nextAction?.action, 'begin');
     assert.ok(task.guidance.actions.some((action) => action.action === 'mark_failed'));
@@ -431,7 +431,7 @@ test('review closure and final event faults roll back withdrawal and dedup toget
     }
     assert.deepEqual(await durableState(f.app, f.operator, pending.id), before);
     const failed = await f.app.ctx.tasks.markFailed(f.producer.caller, input);
-    assert.equal(failed.workflow.version, 20);
+    assert.equal(failed.workflow.version, 28);
     assert.equal(failed.workflow.state, 'failed');
     assert.equal(failed.workflow.revision, pending.workflow.revision + 1);
     assert.equal((await f.app.ctx.reviews.get(f.operator, pending.reviewId!)).status, 'superseded');

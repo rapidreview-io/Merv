@@ -327,6 +327,26 @@ export class RunnerClient {
     }
     return session;
   }
+  /** Private response remains in memory and never enters the durable launch record. */
+  async huggingface(id: string, runnerId: string, hostRef: string): Promise<string | null> {
+    const value = await this.request(`/sessions/${encodeURIComponent(id)}/huggingface`, {
+      runnerId,
+      hostRef,
+    });
+    const parsed = z
+      .object({
+        hfToken: z
+          .string()
+          .min(1)
+          .max(4096)
+          .refine((token) => !/[\0\r\n]/.test(token))
+          .nullable(),
+      })
+      .strict()
+      .safeParse(value);
+    if (!parsed.success) throw new RunnerControlError('invalid_control_response', 0);
+    return parsed.data.hfToken;
+  }
   async workspaceResult(
     id: string,
     runnerId: string,

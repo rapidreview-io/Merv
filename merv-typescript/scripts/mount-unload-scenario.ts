@@ -141,8 +141,10 @@ export async function runMountUnloadScenario(
       return mount.state === 'ready' && !mount.errorCode;
     }, 'The mount did not become ready');
     const before = (await producer.listTools()).tools.map(({ name }) => name);
-    assert.equal(before.length, 110);
+    assert.equal(before.length, 112);
     assert.ok(before.includes('system.status'));
+    assert.ok(before.includes('task.compute_extend'));
+    assert.ok(before.includes('compute.extend'));
     assert.ok(before.includes(mountedName));
     const denied = await reviewer.callTool({ name: mountedName, arguments: {} });
     assert.equal(denied.isError, true);

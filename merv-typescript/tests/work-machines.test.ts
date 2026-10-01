@@ -25,7 +25,7 @@ async function fixture(t: TestContext) {
   let currentLease = 'lease-a';
   let active = true;
   let entitled = true;
-  const calls = { rent: 0, find: 0, inspect: 0, release: 0, ssh: 0, offers: 0 };
+  const calls = { rent: 0, find: 0, inspect: 0, release: 0, ssh: 0, offers: 0, extend: 0 };
   const rentals = new Map<string, SandboxRental>();
   const machine = (id = 'sbx_1', state = 'ready'): SandboxRental => ({
     sandboxId: id,
@@ -100,6 +100,10 @@ async function fixture(t: TestContext) {
       calls.release++;
       return onRelease(sandboxId);
     },
+    async extendRental(_, sandboxId, minutes) {
+      calls.extend++;
+      return { ...machine(sandboxId), leaseExpiresAt: '2026-10-01T01:00:00Z' };
+    },
     async ssh(_, sandboxId, publicKey) {
       calls.ssh++;
       assert.equal(sandboxId, 'sbx_1');
@@ -119,6 +123,7 @@ async function fixture(t: TestContext) {
     rentals,
     machine,
     policy,
+    adapter,
     setLease(value: string) {
       currentLease = value;
     },
@@ -255,4 +260,31 @@ test('stop during uncertain creation never sends a new provider create', async (
   assert.equal(f.calls.rent, 1);
   assert.equal(f.calls.release, 1);
   assert.equal((await row(f))?.state, 'stopped');
+});
+
+test('only the current owner assignment may extend its discovered rental', async (t) => {
+  const f = await fixture(t);
+  await ready(f);
+  f.setLease('lease-b');
+  await assert.rejects(f.work.extend(caller('lease-a'), ownerId, 'sbx_1', 5), {
+    code: 'stale_lease',
+  });
+  await assert.rejects(f.work.extend(caller('lease-b'), ownerId, 'sbx_other', 5), {
+    code: 'compute_not_found',
+  });
+  assert.equal(f.calls.extend, 0);
+  const extended = await f.work.extend(caller('lease-b'), ownerId, 'sbx_1', 5);
+  assert.equal(extended.leaseExpiresAt, '2026-10-01T01:00:00Z');
+  assert.equal(f.calls.extend, 1);
+  assert.equal(f.calls.release, 0);
+});
+
+test('an extension reply reflects a concurrent release instead of reporting ready', async (t) => {
+  const f = await fixture(t);
+  await ready(f);
+  f.adapter.extendRental = async () => {
+    await f.work.release(caller('lease-a'), ownerId, 'sbx_1');
+    return f.machine();
+  };
+  assert.equal((await f.work.extend(caller('lease-a'), ownerId, 'sbx_1', 5)).state, 'releasing');
 });

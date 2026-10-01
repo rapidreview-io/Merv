@@ -80,7 +80,7 @@ function groupOwner() {
             ([key, value]) =>
               /TOKEN|KEY|SECRET|PASSWORD|AUTH/i.test(key) &&
               typeof value === 'string' &&
-              value.length >= 8,
+              (key === 'HF_TOKEN' ? value.length > 0 : value.length >= 8),
           )
           .map(([, value]) => value),
       ]),

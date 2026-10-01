@@ -78,6 +78,14 @@ const workspaces: Record<number, 'none' | 'git'> = {
   22: 'git',
   23: 'git',
   24: 'git',
+  25: 'none',
+  26: 'git',
+  27: 'git',
+  28: 'git',
+  29: 'none',
+  30: 'git',
+  31: 'git',
+  32: 'git',
 };
 const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
 export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
@@ -92,7 +100,7 @@ export const programVersion = (
   hosted = false,
   largeUploads = false,
 ): number =>
-  (workspace !== 'git' ? 17 : baseTaskId !== undefined ? 19 : hosted ? 20 : 18) +
+  (workspace !== 'git' ? 25 : baseTaskId !== undefined ? 27 : hosted ? 28 : 26) +
   (largeUploads ? 4 : 0);
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
@@ -1143,7 +1151,7 @@ export class ExperimentProgram {
       brief:
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}` +
         (experiment.workflow.version >= 17
-          ? rentalGuidance('compute.', reviewing(state)) +
+          ? rentalGuidance('compute.', reviewing(state), experiment.workflow.version >= 25) +
             `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`
           : ''),
       references: [
@@ -1212,9 +1220,15 @@ export class ExperimentProgram {
         grant('experiment.get_state', experiment),
         ...(version > 8 ? [grant('compute.offers', {})] : []),
         ...(version >= 17
-          ? ['machines', 'rent', 'ssh', 'release'].map((name) =>
-              grant(`compute.${name}`, experiment),
+          ? ['machines', 'rent', 'ssh', ...(version >= 25 ? ['extend'] : []), 'release'].map(
+              (name) => grant(`compute.${name}`, experiment),
             )
+          : []),
+        ...(version >= 25 && state !== 'running'
+          ? [
+              grant('compute.run', { ...experiment, purpose: { kind: 'literal', value: 'check' } }),
+              grant('compute.cancel', experiment),
+            ]
           : []),
         grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
         grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
@@ -1230,7 +1244,9 @@ export class ExperimentProgram {
             ]
           : [
               grant('artifact.create', {}),
-              ...((version >= 13 && version <= 16) || version >= 21
+              ...((version >= 13 && version <= 16) ||
+              (version >= 21 && version <= 24) ||
+              version >= 29
                 ? [
                     grant('artifact.upload_begin', {}),
                     grant('artifact.upload_resume', {}),
@@ -1258,7 +1274,7 @@ export class ExperimentProgram {
               ...(version > 8 && state === 'running'
                 ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
                 : []),
-              ...([12, 16, 20, 24].includes(version) && state === 'running'
+              ...([12, 16, 20, 24, 28, 32].includes(version) && state === 'running'
                 ? [grant('code.commit', {}), grant('code.operation', {})]
                 : []),
             ]),

@@ -3,8 +3,9 @@
 Sandboxes publishes rows that a service outside this process owns. merv-sandboxes serves a
 manifest of rows — what each row holds, never how it looks — and this plugin validates that
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
-calling project's own credentials. It owns no domain state and no Merv capability: its only
-Cordis dependency is none at all, and the thin `@merv/sandboxes/ui` adapter injects
+calling project's own credentials. It also owns the shared managed-job and work-rental ledgers;
+Tasks and Experiments supply work authorization. Protected Fleet runtimes remain separate
+from research compute. Its transport has no Cordis dependencies, and the thin `@merv/sandboxes/ui` adapter injects
 `sandboxes`, `ui` and `scope`. It mirrors the rows into the sidebar registry and draws the
 project's machines on the Running page; `scope` answers only whether the reader holds `write`, so
 Extend lease and Release machine are offered only to a caller the tools would let act.
@@ -189,7 +190,7 @@ link; omitting `fileName` retrieves the manifest. A collection is retained evide
 not automatic scientific approval or a replacement for an experiment report.
 
 New task and experiment workflow versions expose `compute.machines`, `.rent`,
-`.ssh`, and `.release` (the task equivalents use `task.compute_` prefixes).
+`.ssh`, `.extend`, and `.release` (the task equivalents use `task.compute_` prefixes).
 Tasks and Experiments still authorize their own current leases. Sandboxes owns
 rental lifecycle, provider transport and SSH certificates. The machine ledger is
 keyed by work item, so a planning, execution or review handoff preserves the same
@@ -201,6 +202,37 @@ full evaluations or other long work, or alter submitted evidence.
 
 An explicit release, lease expiry or terminal work item ends the rental. Save
 needed files first. A stable rental key is idempotent, including uncertain create
-responses; use a new key only for a deliberately new machine. Existing published
-workflow policies remain unchanged. Direct SSH sessions do not acquire the
-managed run's automatic file capture: retain needed evidence separately.
+responses; use a new key only for a deliberately new machine. `compute.extend` (or
+`task.compute_extend`) adds `minutes` to the remaining lease with the provider's
+`expected_revision` check, using the same ML consumer subject and original payer.
+Concurrent renewals refuse stale calculations; budget refusal preserves the existing lease.
+After an uncertain reply, inspect the current lease before requesting another increment.
+
+For a durable job on a warm rental, pass `rentalKey` from `compute.machines` to
+`compute.run`, omitting `provider` and `offerId`. Only the current work assignment
+can select its own ready rental; raw provider IDs are not accepted as run input.
+The fixed workflow uses `use_vm`, optional approved source staging, native run and
+optional capture, with no release node. Completion, failure and cancellation
+preserve the borrowed machine. Its hard rental expiry still applies: extend it
+before starting work if the remaining time cannot cover the command and capture.
+`maxUsd` bounds newly provisioned leases; borrowed compute continues against the
+rental's original payer and provider budgets and is not repriced by the job.
+
+Each borrowed job starts in `$HOME/merv-run/<run-key-digest>` and stages approved
+source separately, so concurrent jobs cannot overwrite one another's source trees.
+Commands may explicitly refer to warm files and packages elsewhere on the machine.
+Optional `commandId` retains existing Code provenance validation. File captures
+use the same provenance/hash checks, retention and collection flow as disposable jobs.
+Use `purpose: "check"`, `rentalKey`, and five minutes for planning or review verification.
+These bounded jobs do not bypass design approval or change a scientific verdict;
+reviewers must preserve submitted evidence and avoid training and full evaluations.
+Direct SSH sessions still require explicitly retaining evidence or a managed capture job.
+
+Choose a disposable managed run for one bounded job, a rental for a reusable handoff
+environment, and a managed run on that rental for durable logs and captured files.
+
+Renewal and verification-job grants ship only in new task versions 28–35 and
+experiment versions 25–32. Previously created work keeps its pinned policy even
+when a new worker session takes over: it does not gain extension or planner/reviewer
+job grants. Its existing execution `compute.run` still accepts a work rental key.
+No stored workflows or active research assignments are migrated.

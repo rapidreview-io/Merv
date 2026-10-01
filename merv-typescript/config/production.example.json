@@ -178,6 +178,17 @@
       "name": "@merv/scope/api"
     },
     {
+      "id": "secrets-api",
+      "name": "@merv/secrets/api"
+    },
+    {
+      "id": "secrets",
+      "name": "@merv/secrets",
+      "config": {
+        "encryptionKeyEnv": "MERV_SECRETS_ENCRYPTION_KEY"
+      }
+    },
+    {
       "id": "tools",
       "name": "@merv/api/tools-plugin"
     },

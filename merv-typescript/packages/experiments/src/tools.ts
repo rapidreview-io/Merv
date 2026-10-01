@@ -64,6 +64,15 @@ export const experimentsToolsPlugin = {
           experiments.computeSsh(c, i.experimentId, i.sandboxId, i.publicKey),
       },
       {
+        name: 'compute.extend',
+        description:
+          'Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.',
+        inputSchema: machine.extend({ minutes: z.number().int().min(1).max(1380) }).strict(),
+        conversation: 'propose' as const,
+        handler: (c: Caller, i: { experimentId: string; sandboxId: string; minutes: number }) =>
+          experiments.computeExtend(c, i.experimentId, i.sandboxId, i.minutes),
+      },
+      {
         name: 'compute.release',
         description:
           'Release a GPU associated with this work item. Retain needed files first; release deletes the machine’s filesystem. Leave it available only when the next worker can use it within the remaining lease.',
@@ -79,8 +88,10 @@ export const experimentsToolsPlugin = {
         experimentId: z.string().min(1),
         attemptIndex: z.number().int().positive(),
         key: z.string().min(1).max(128),
-        provider: z.string().min(1).max(64),
-        offerId: z.string().min(1).max(256),
+        provider: z.string().min(1).max(64).optional(),
+        offerId: z.string().min(1).max(256).optional(),
+        rentalKey: z.string().min(1).max(128).optional(),
+        purpose: z.literal('check').optional(),
         command: z.string().min(1).max(65536),
         minutes: z.number().int().min(5).max(1380),
         maxUsd: z.number().finite().nonnegative(),
@@ -100,7 +111,7 @@ export const experimentsToolsPlugin = {
       {
         name: 'compute.run',
         description:
-          'Run the current experiment attempt. maxUsd covers the whole lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
+          'Run the current experiment attempt. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose="check", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
         inputSchema: run,
         conversation: 'propose' as const,
         handler: async (caller: Caller, input: ComputeInput) =>

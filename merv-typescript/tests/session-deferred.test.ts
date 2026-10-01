@@ -44,7 +44,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
     workspace: 'git',
     requestId: 'hosted',
   });
-  assert.equal(task.workflow.version, 23);
+  assert.equal(task.workflow.version, 31);
 
   const credentialEnv = 'MERV_DEFERRED_RUNNER';
   const previous = process.env[credentialEnv];

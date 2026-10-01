@@ -8,6 +8,7 @@ import type { PluginState, Row } from '../shell-types';
 import { useSession } from '../session';
 import { GitHubConnection } from './github';
 import { KeysPanel } from './keys';
+import { HuggingFaceSettings } from './huggingface';
 import { NeedsAccount, PeopleView, personName } from './people';
 import { ProjectIntroduction } from './project-context';
 import type { ViewProps } from './index';
@@ -240,6 +241,7 @@ function SessionSection() {
           account.kind === 'user' && ['Fleet tokens a day', <DailyTokens />],
         ]}
       />
+      {account.kind === 'user' && <HuggingFaceSettings />}
       <div>
         <button type="button" className="btn" onClick={signOut}>
           Sign out

@@ -1,4 +1,4 @@
-import { check, MervError, type Json } from '@merv/contracts';
+import { check, digest, MervError, type Json } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import { ship, wrapped } from './checks.js';
 import { computeOutputsSchema } from './compute-outputs.js';
@@ -97,14 +97,14 @@ export class SandboxComputeAdapter implements SandboxCompute {
     const nodes: Json[] = [
       {
         id: 'provision',
-        kind: 'provision',
-        request: {
-          provider: spec.provider,
-          offer_id: spec.offerId,
-        },
+        ...(spec.rentalSandboxId
+          ? { kind: 'use_vm', sandbox_id: spec.rentalSandboxId }
+          : { kind: 'provision', request: { provider: spec.provider!, offer_id: spec.offerId! } }),
       },
     ];
-    const inputs = objectId ? [{ object_id: objectId, path: '/tmp/merv/src.tgz' }] : [];
+    const directory = spec.rentalSandboxId ? `merv-run/${digest(spec.idempotencyKey)}` : 'merv-run';
+    const sourcePath = spec.rentalSandboxId ? `/tmp/${directory}/src.tgz` : '/tmp/merv/src.tgz';
+    const inputs = objectId ? [{ object_id: objectId, path: sourcePath }] : [];
     if (inputs.length)
       nodes.push({
         id: 'stage',
@@ -114,10 +114,10 @@ export class SandboxComputeAdapter implements SandboxCompute {
         inputs,
       });
     const setup = [
-      'd="$HOME/merv-run"',
+      `d="$HOME/${directory}"`,
       'mkdir -p "$d" || exit 121',
       'cd "$d" || exit 121',
-      ...(objectId ? ['tar -xzf /tmp/merv/src.tgz || exit 124'] : []),
+      ...(objectId ? [`tar -xzf ${sourcePath} || exit 124`] : []),
     ];
     const script = [
       'set -u',
@@ -143,13 +143,14 @@ export class SandboxComputeAdapter implements SandboxCompute {
         outputs: outputs.files.map((file) => ({ ...file, kind: 'file', required: true })),
         output_bytes: outputs.maxBytes,
       });
-    nodes.push({
-      id: 'release',
-      kind: 'release',
-      vm: 'provision',
-      depends_on: [outputs ? 'capture' : 'run'],
-      when: 'always',
-    });
+    if (!spec.rentalSandboxId)
+      nodes.push({
+        id: 'release',
+        kind: 'release',
+        vm: 'provision',
+        depends_on: [outputs ? 'capture' : 'run'],
+        when: 'always',
+      });
     const request = {
       name: spec.experimentId,
       idempotency_key: spec.idempotencyKey,
@@ -163,7 +164,10 @@ export class SandboxComputeAdapter implements SandboxCompute {
         object(await this.client.write(entry, 'POST', '/v1/workflows', request)).id,
       );
     } catch (error) {
-      if (!(error instanceof MervError && error.code === 'sandbox_idempotency_conflict'))
+      if (
+        spec.rentalSandboxId ||
+        !(error instanceof MervError && error.code === 'sandbox_idempotency_conflict')
+      )
         throw error;
       // A pre-upgrade admission may have succeeded just before its reply was lost. Recover
       // that same key with its exact former payload; never rent a second job under a new key.
@@ -457,6 +461,36 @@ export class SandboxComputeAdapter implements SandboxCompute {
   async inspectRental(projectId: string, sandboxId: string): Promise<SandboxRental> {
     return this.rental(
       await this.client.read(this.entry(projectId), sandboxRoute('/v1/sandboxes/{id}', sandboxId)),
+    );
+  }
+  async extendRental(
+    projectId: string,
+    sandboxId: string,
+    minutes: number,
+  ): Promise<SandboxRental> {
+    check(
+      Number.isInteger(minutes) && minutes >= 1 && minutes <= 1380,
+      'invalid_compute_input',
+      'Extension minutes must be between 1 and 1380',
+      400,
+    );
+    const entry = this.entry(projectId);
+    const route = sandboxRoute('/v1/sandboxes/{id}', sandboxId);
+    const record = object(await this.client.read(entry, route));
+    this.rental(record); // Refuse protected worker runtimes before mutation.
+    check(
+      Number.isSafeInteger(record.revision) && record.revision >= 0,
+      'sandbox_revision_unavailable',
+      'Safe extension requires a provider revision',
+      502,
+    );
+    const expires = Date.parse(String(record.lease_expires_at ?? ''));
+    const left = Number.isNaN(expires) ? 0 : Math.max(0, Math.ceil((expires - Date.now()) / 1000));
+    return this.rental(
+      await this.client.write(entry, 'POST', `${route}/renew`, {
+        lease_seconds: left + minutes * 60,
+        expected_revision: record.revision,
+      }),
     );
   }
   async releaseRental(projectId: string, sandboxId: string): Promise<SandboxRental> {
