@@ -47,6 +47,8 @@ const capabilities = z
 const enrollment = z
   .object({
     allocationId: z.string().min(1).max(200),
+    workInstanceId: z.string().min(1).max(200).optional(),
+    stepSeconds: z.number().int().min(60).max(86400).optional(),
     epoch: z.number().int().safe().nonnegative(),
     source: z
       .object({
@@ -123,6 +125,9 @@ export class ManagedRunnerBindings {
   }
   private identity(row: ManagedBindingRow): ManagedRunnerBindingIdentity {
     return {
+      ...(row.work_instance_id
+        ? { workInstanceId: row.work_instance_id, stepSeconds: Number(row.step_seconds) }
+        : {}),
       allocationId: row.allocation_id,
       epoch: Number(row.epoch),
       source: JSON.parse(row.source_json),
@@ -156,6 +161,12 @@ export class ManagedRunnerBindings {
     check(parsed.success, 'invalid_managed_enrollment', 'Managed enrollment identity is invalid');
     const value = parsed.data as ManagedEnrollmentInput;
     check(
+      !!value.workInstanceId === !!value.stepSeconds &&
+        (!value.workInstanceId || value.capabilities?.includes('workflow.workhost.1')),
+      'invalid_managed_enrollment',
+      'Work host requires its capability and phase duration',
+    );
+    check(
       Date.parse(value.expiresAt) > this.clock(),
       'invalid_managed_enrollment',
       'Managed allocation deadline has passed',
@@ -182,7 +193,10 @@ export class ManagedRunnerBindings {
             row.runtime_profile_id === value.runtimeProfileId &&
             row.platform_json === canonical(value.platform) &&
             row.capabilities_json === canonical(identity.capabilities) &&
-            row.control_expires_at === value.expiresAt,
+            row.control_expires_at === value.expiresAt &&
+            row.work_instance_id === (value.workInstanceId ?? null) &&
+            (row.step_seconds === null ? null : Number(row.step_seconds)) ===
+              (value.stepSeconds ?? null),
           'managed_binding_conflict',
           'Managed allocation identity cannot change',
           409,
@@ -193,7 +207,7 @@ export class ManagedRunnerBindings {
           Math.min(this.clock() + 900_000, Date.parse(value.expiresAt)),
         ).toISOString();
         await tx.run(
-          'INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,created_at,work_instance_id,step_seconds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
           value.allocationId,
           value.epoch,
           value.source.projectId,
@@ -207,6 +221,8 @@ export class ManagedRunnerBindings {
           tokenDigest(`unbound:${enrollmentToken}`),
           value.expiresAt,
           now,
+          value.workInstanceId ?? null,
+          value.stepSeconds ?? null,
         );
         await this.credentials.issue(
           {
@@ -336,7 +352,7 @@ export class ManagedRunnerBindings {
           401,
         );
         await this.current(row, tx);
-        return this.caller(row);
+        return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
       }),
     );
   }
@@ -358,7 +374,8 @@ export class ManagedRunnerBindings {
         const row =
           session &&
           (await tx.get<ManagedBindingRow>(
-            'SELECT * FROM session_managed_runners WHERE bound_session_id=?',
+            'SELECT m.* FROM session_managed_runners m WHERE m.bound_session_id=? OR EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.allocation_id=m.allocation_id AND a.session_id=?)',
+            session.id,
             session.id,
           ));
         const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
@@ -384,6 +401,7 @@ export class ManagedRunnerBindings {
         if (!bearer)
           await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
         const { user, projectId, id } = await this.current(row, tx);
+        await this.scope.requireDelegation(session.source, 'read', tx);
         return {
           id: session.id,
           projectId: row.project_id,
@@ -417,7 +435,8 @@ export class ManagedRunnerBindings {
         row.control_hash === managed.credentialHash &&
         row.project_id === caller.projectId &&
         Date.parse(row.control_expires_at) > this.clock() &&
-        (!managed.boundSessionId || managed.boundSessionId === row.bound_session_id),
+        (!managed.boundSessionId ||
+          managed.boundSessionId === (await this.currentSessionId(row, tx))),
       'unauthorized',
       'Managed runner authority is unavailable',
       401,
@@ -435,20 +454,21 @@ export class ManagedRunnerBindings {
     check(
       row &&
         Number(row.epoch) === grant.epoch &&
-        row.bound_session_id === grant.sessionId &&
+        (await this.hasSession(row, grant.sessionId, tx)) &&
         row.runner_id === grant.runnerId,
       'unauthorized',
       'Hugging Face access unavailable',
       401,
     );
     await this.require(this.caller(row), tx);
-    return row;
+    return this.forSession(row, grant.sessionId, tx);
   }
   async heartbeat(caller: Caller, input: RunnerHeartbeat, tx: Transaction): Promise<Caller> {
     const { row, sourceCaller: source } = await this.require(caller, tx);
     // A runner whose lease reply was lost still offers its slot; its retry replays the binding.
     check(
-      input.capacity === 1 || (row.bound_session_id && input.capacity === 0),
+      input.capacity === 1 ||
+        ((row.work_instance_id || row.bound_session_id) && input.capacity === 0),
       'managed_capacity',
       'Managed runner capacity must be one, or zero once bound',
       409,
@@ -506,7 +526,125 @@ export class ManagedRunnerBindings {
     );
     return result;
   }
+  /** Code transfers remain bound to the unfinished phase, including its final capture. */
+  private async currentSessionId(row: ManagedBindingRow, tx: Transaction): Promise<string | null> {
+    if (!row.work_instance_id) return row.bound_session_id;
+    return (
+      (
+        await tx.get<{ session_id: string }>(
+          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND settled_at IS NULL',
+          row.allocation_id,
+        )
+      )?.session_id ?? null
+    );
+  }
+  async forSession(
+    row: ManagedBindingRow,
+    sessionId: string,
+    tx: Transaction,
+  ): Promise<ManagedBindingRow> {
+    if (!row.work_instance_id) return row;
+    const assignment = await tx.get<{
+      source_json: string;
+      runner_id: string;
+      release_ack_at: string | null;
+    }>(
+      'SELECT source_json,runner_id,release_ack_at FROM session_managed_assignments WHERE allocation_id=? AND session_id=?',
+      row.allocation_id,
+      sessionId,
+    );
+    check(assignment, 'session_forbidden', 'Session is not bound to this managed runner', 403);
+    return {
+      ...row,
+      source_json: assignment.source_json,
+      runner_id: assignment.runner_id,
+      bound_session_id: sessionId,
+      runner_released_at: assignment.release_ack_at,
+    };
+  }
+  async hasSession(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<boolean> {
+    return row.work_instance_id
+      ? !!(await tx.get(
+          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND session_id=?',
+          row.allocation_id,
+          sessionId,
+        ))
+      : row.bound_session_id === sessionId;
+  }
+  async sources(row: ManagedBindingRow, tx: Transaction): Promise<Caller[]> {
+    if (!row.work_instance_id) return [sourceCaller(JSON.parse(row.source_json))];
+    check(
+      this.validator?.assignmentSources,
+      'managed_unavailable',
+      'Work host directors unavailable',
+      503,
+    );
+    const sources = await this.validator.assignmentSources(this.identity(row), tx);
+    check(
+      sources.length <= 2 && sources.every((source) => source.projectId === row.project_id),
+      'managed_source',
+      'Invalid work host directors',
+      403,
+    );
+    return sources.map(sourceCaller);
+  }
+  /** A missing process acknowledgement can release a machine, but never reuse one. */
+  async reusable(row: ManagedBindingRow, tx: Transaction): Promise<boolean> {
+    if (!row.work_instance_id) return !row.bound_session_id;
+    const pending = await tx.get<{ session_id: string }>(
+      'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND settled_at IS NULL',
+      row.allocation_id,
+    );
+    if (!pending) return true;
+    const observed = await this.inspect(row.allocation_id, Number(row.epoch), tx);
+    const session = observed?.session;
+    if (
+      !session ||
+      !['released', 'expired'].includes(session.status) ||
+      !session.releaseAcknowledged ||
+      session.capturePending
+    )
+      return false;
+    if (this.state.readScope)
+      throw new MervError('read_only_scope', 'Settling a work host requires a write', 409);
+    const credential = await tx.get<{ token_hash: string }>(
+      'SELECT token_hash FROM worker_sessions WHERE id=?',
+      pending.session_id,
+    );
+    if (credential) await this.credentials.revoke(credential.token_hash, 'sessions', tx);
+    await tx.run(
+      'UPDATE session_managed_assignments SET settled_at=? WHERE session_id=? AND settled_at IS NULL',
+      new Date(this.clock()).toISOString(),
+      pending.session_id,
+    );
+    return true;
+  }
   async bind(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<void> {
+    if (row.work_instance_id) {
+      const found = await tx.get<{ session_json: string }>(
+        'SELECT session_json FROM worker_sessions WHERE id=?',
+        sessionId,
+      );
+      const session: Session = JSON.parse(found!.session_json);
+      check(
+        session.projectId === row.project_id &&
+          session.instanceId === row.work_instance_id &&
+          session.runnerId === row.runner_id,
+        'managed_work_conflict',
+        'Work host cannot lease another workflow',
+        409,
+      );
+      await tx.run(
+        'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at) VALUES(?,?,?,?,?)',
+        sessionId,
+        row.allocation_id,
+        row.runner_id,
+        canonical(session.source),
+        new Date(this.clock()).toISOString(),
+      );
+      return;
+    }
+
     check(
       !row.bound_session_id || row.bound_session_id === sessionId,
       'managed_bound',
@@ -527,14 +665,25 @@ export class ManagedRunnerBindings {
   ): Promise<void> {
     const { row } = await this.require(caller, tx);
     check(
-      row.bound_session_id === sessionId && (!runnerId || row.runner_id === runnerId),
+      (await this.currentSessionId(row, tx)) === sessionId &&
+        (!runnerId || row.runner_id === runnerId),
       'session_forbidden',
       'Session is not bound to this managed runner',
       403,
     );
   }
   /** The release of `caller`'s bound session, which the caller's control already admitted. */
-  async acknowledgeRelease(caller: Caller, tx: Transaction): Promise<void> {
+  async acknowledgeRelease(caller: Caller, sessionId: string, tx: Transaction): Promise<void> {
+    const { row } = await this.require(caller, tx);
+    if (row.work_instance_id) {
+      await tx.run(
+        'UPDATE session_managed_assignments SET release_ack_at=COALESCE(release_ack_at,?) WHERE allocation_id=? AND session_id=?',
+        new Date(this.clock()).toISOString(),
+        row.allocation_id,
+        sessionId,
+      );
+      return;
+    }
     await tx.run(
       'UPDATE session_managed_runners SET runner_released_at=COALESCE(runner_released_at,?) WHERE allocation_id=?',
       new Date(this.clock()).toISOString(),
@@ -545,7 +694,8 @@ export class ManagedRunnerBindings {
    *  undefined while it is (or none is bound), else whether a release retired it. */
   async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
     const row = await tx.get<ManagedBindingRow>(
-      'SELECT * FROM session_managed_runners WHERE bound_session_id=?',
+      'SELECT m.* FROM session_managed_runners m WHERE m.bound_session_id=? OR EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.allocation_id=m.allocation_id AND a.session_id=?)',
+      sessionId,
       sessionId,
     );
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
@@ -570,7 +720,18 @@ export class ManagedRunnerBindings {
         allocationId,
       );
       if (!row || Number(row.epoch) !== epoch) return null;
-      const runner = { runnerId: row.runner_id, enrollmentExpiresAt: row.enrollment_expires_at };
+      const runner = {
+        ...(row.work_instance_id ? { workInstanceId: row.work_instance_id } : {}),
+        runnerId: row.runner_id,
+        enrollmentExpiresAt: row.enrollment_expires_at,
+      };
+      if (row.work_instance_id) {
+        const latest = await tx.get<{ session_id: string }>(
+          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? ORDER BY ordinal DESC LIMIT 1',
+          row.allocation_id,
+        );
+        if (latest) Object.assign(row, await this.forSession(row, latest.session_id, tx));
+      }
       if (!row.bound_session_id) return { ...runner, session: null };
       const bound = await tx.get<{ session_json: string }>(
         'SELECT session_json FROM worker_sessions WHERE id=?',
@@ -602,7 +763,9 @@ export class ManagedRunnerBindings {
           releaseAcknowledged: row.runner_released_at !== null,
           capturePending:
             (!!workspace && workspace.result_json === null && !disposableReview) ||
-            (!!owed && this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs),
+            (!!owed &&
+              (!!row.work_instance_id ||
+                this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs)),
         },
       };
     };

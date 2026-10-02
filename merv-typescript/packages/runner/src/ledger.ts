@@ -322,6 +322,17 @@ export class LocalLedger {
       launchRecord,
     );
   }
+  /** Immediate predecessor only, and only after every local handoff obligation was settled. */
+  previousSettled(id: string): LaunchRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM launches WHERE rowid = (
+      SELECT MAX(rowid) FROM launches WHERE rowid < (SELECT rowid FROM launches WHERE id=?)
+    ) AND settled=1`,
+      )
+      .get(id) as Row | undefined;
+    return row ? launchRecord(row) : undefined;
+  }
   /** Launches not yet settled: running, or ended but still owing the server something. */
   open(): LaunchRecord[] {
     const sql = 'SELECT * FROM launches WHERE settled=0 ORDER BY created_at,id';

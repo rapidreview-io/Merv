@@ -157,6 +157,8 @@ export class GitWorkspaceManager {
     private readonly ledger: LocalLedger,
     private readonly config?: GitWorkspaceConfig,
     assignmentWorkspaceDirectory?: string,
+    private readonly workInstanceId?: string,
+    private readonly previousWorkspace?: (launchId: string) => WorkspaceHandle | undefined,
   ) {
     privateDirectory(join(ledger.directory, 'workspaces'));
     this.root = realpathSync(join(ledger.directory, 'workspaces'));
@@ -246,6 +248,8 @@ export class GitWorkspaceManager {
     return this.run({ record, session }, async ({ record, session }) => {
       this.requireLaunch(record);
       if (record.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
+      if (this.workInstanceId && session.instanceId !== this.workInstanceId)
+        throw new WorkspaceError('workspace_work_mismatch');
       const policy = effectiveWorkspace(session.execution.policy);
       const existing = this.row(record.id);
       if (existing) {
@@ -273,9 +277,9 @@ export class GitWorkspaceManager {
         slotId: string;
       if (policy.mode === 'none') {
         path = this.assignmentWorkspaceDirectory
-          ? join(this.assignmentWorkspaceDirectory, hash(record.id))
+          ? join(this.assignmentWorkspaceDirectory, hash(this.workInstanceId ?? record.id))
           : join(realpathSync(record.runDirectory), 'workspace');
-        slotId = `scratch:${record.id}`;
+        slotId = `scratch:${this.workInstanceId ?? record.id}`;
       } else {
         repository = await this.repository(true);
         const namespace = segment(policy.namespace),
@@ -325,7 +329,17 @@ export class GitWorkspaceManager {
           throw this.ledger.get(String(slot.owner_launch_id))?.status === 'uncertain'
             ? new WorkspaceError('workspace_owned_by_another_launch')
             : new WorkspaceDeferred('checkout_busy', 'workspace_owned_by_another_launch');
-        if (!slot && statIfPresent(path)) throw new WorkspaceError('workspace_foreign_checkout');
+        if (!slot && statIfPresent(path)) {
+          const previous = this.workInstanceId && this.previousWorkspace?.(record.id);
+          if (
+            policy.mode !== 'none' ||
+            !previous ||
+            previous.path !== path ||
+            previous.status !== 'closed' ||
+            !previous.retain
+          )
+            throw new WorkspaceError('workspace_foreign_checkout');
+        }
         const epoch = Number(slot?.epoch ?? 0) + 1;
         this.db
           .prepare(
@@ -1334,7 +1348,18 @@ export class GitWorkspaceManager {
         this.assignmentWorkspaceDirectory ??
         realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
       this.within(parent, row.path);
-      privateDirectory(row.path);
+      const info = statIfPresent(row.path);
+      // On a retained hosted machine the preceding phase handed this same leaf to the
+      // unprivileged assignment user. Its parent is still supervisor-owned and fenced.
+      if (this.workInstanceId && info && process.getuid?.() === 0 && info.uid === 12001) {
+        if (
+          !info.isDirectory() ||
+          info.isSymbolicLink() ||
+          info.gid !== 12001 ||
+          (info.mode & 0o777) !== 0o700
+        )
+          throw new WorkspaceError('workspace_foreign_checkout');
+      } else privateDirectory(row.path);
     } else {
       const repository = await this.repository();
       this.within(this.root, row.path);

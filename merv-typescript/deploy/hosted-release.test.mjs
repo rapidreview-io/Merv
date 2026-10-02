@@ -435,9 +435,13 @@ test('the env edit replaces exactly one release id line, and each machine releas
     machine('large', 'cloudflare-fleet-large', l),
   ];
   const quoted = (list) => `MERV_FLEET_RUNTIMES='${JSON.stringify(list)}'`;
-  const env = `${raw}${quoted(runtimes('rt1_old', 'rt1_oldL'))}\nC=2\n`;
+  const reuse = `MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS=true\nMERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS='["srp_${'a'.repeat(64)}"]'\n`;
+  const env = `${raw}${quoted(runtimes('rt1_old', 'rt1_oldL'))}\nC=2\n${reuse}`;
   const releases = { 'cloudflare-fleet': 'rt1_new', 'cloudflare-fleet-large': 'rt1_newL' };
-  assert.equal(edit(env, releases), `${out}${quoted(runtimes('rt1_new', 'rt1_newL'))}\nC=2\n`);
+  assert.equal(
+    edit(env, releases),
+    `${out}${quoted(runtimes('rt1_new', 'rt1_newL'))}\nC=2\n${reuse}`,
+  );
   const machines = py('print(json.dumps(vm.machines(vm.file_env(i.encode()))))', env);
   assert.deepEqual(machines, {
     'cloudflare-fleet': 'rt1_old',

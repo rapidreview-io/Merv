@@ -1,6 +1,13 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { CodeService } from '@merv/code/service';
+import { CodeStore } from '@merv/code/store/operations';
+import { git, gitSource } from './fixtures/code-store.js';
+import { boundProject } from './fixtures/code-binding.js';
 import {
   createService,
   MervError,
@@ -31,6 +38,7 @@ async function fixture(
   t: TestContext,
   options: {
     sourceKind?: 'human' | 'key' | 'service-human' | 'service-key';
+    workHost?: boolean;
     codeWorkspace?: boolean;
     reviewWorkspace?: 'ephemeral' | 'retained';
     clock?: () => number;
@@ -130,14 +138,52 @@ async function fixture(
       },
     ],
   };
+  const phases = ['working', 'review', 'rework', 'review_again'];
+  if (options.workHost) {
+    const template = policy.assignments![0]!;
+    policy.assignments = phases.map((phase, index) => {
+      const review = index % 2 === 1;
+      const permission = review ? 'review' : 'write';
+      return {
+        ...template,
+        state: phase,
+        check: async ({ caller, tx }) => {
+          await scope.require(caller, permission, tx);
+        },
+        build: () => ({
+          role: review ? 'reviewer' : 'producer',
+          label: 'Phase',
+          brief: 'Fresh phase',
+          references: [],
+          handoff: { instruction: 'Finish', tools: ['finish'] },
+          execution: { readOnly: review, tools: [] },
+          context: null,
+        }),
+        execution: { ...template.execution!, readOnly: review },
+        lease: {
+          ...template.lease!,
+          role: async ({ caller, tx }) => {
+            await scope.require(caller, permission, tx);
+            return review ? 'reviewer' : 'producer';
+          },
+        },
+      };
+    });
+    policy.actions![0]!.states = phases;
+    policy.actions![0]!.check = async ({ caller, snapshot, tx }) => {
+      await scope.require(caller, phases.indexOf(snapshot.state) % 2 ? 'review' : 'write', tx);
+    };
+  }
   const handle = await workflows.register(
     {
       name: 'managed-test',
       version: 1,
       initial: 'working',
-      states: ['working', 'done'],
+      states: options.workHost ? [...phases, 'done'] : ['working', 'done'],
       terminal: ['done'],
-      edges: [{ from: 'working', action: 'finish', to: 'done' }],
+      edges: options.workHost
+        ? phases.map((from, index) => ({ from, action: 'finish', to: phases[index + 1] ?? 'done' }))
+        : [{ from: 'working', action: 'finish', to: 'done' }],
     },
     policy,
   );
@@ -184,6 +230,13 @@ async function fixture(
     }
   }
   const sourceIdentity = await scope.delegationSource(source);
+  const workTarget = options.workHost
+    ? await handle.start(source, { workflow: 'managed-test', requestId: 'pinned-work' })
+    : undefined;
+  const reviewer = options.workHost
+    ? await scope.serviceActor('fleet-review', source.projectId, undefined, 'reviewer')
+    : undefined;
+
   let sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, {
       managedSecretEnv: env,
@@ -198,6 +251,19 @@ async function fixture(
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
     retired: async () => retired,
+    assignmentSources: async () => [
+      sourceIdentity,
+      ...(reviewer
+        ? [
+            {
+              kind: 'service' as const,
+              actorId: reviewer.actorId,
+              projectId: source.projectId,
+              vouchedBy: sourceIdentity,
+            },
+          ]
+        : []),
+    ],
   };
   sessions.registerManagedValidator(validator);
   t.after(async () => {
@@ -210,11 +276,15 @@ async function fixture(
   const allocationId = randomUUID();
   const input = {
     allocationId,
+    ...(workTarget ? { workInstanceId: workTarget.id, stepSeconds: 900 } : {}),
     epoch: 1,
     source: sourceIdentity,
     runtimeProfileId: 'codex-profile',
     platform: profile,
-    capabilities: options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : [],
+    capabilities: [
+      ...(options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : []),
+      ...(options.workHost ? ['workflow.workhost.1'] : []),
+    ],
     expiresAt: new Date((options.clock?.() ?? Date.now()) + 3_600_000).toISOString(),
   };
   const workerNonce = randomBytes(32).toString('hex');
@@ -226,7 +296,10 @@ async function fixture(
     runnerId,
     machine,
     platforms: [profile],
-    capabilities: options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : [],
+    capabilities: [
+      ...(options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : []),
+      ...(options.workHost ? ['workflow.workhost.1'] : []),
+    ],
     capacity,
   });
   const lease = (requestId = randomUUID()) => ({
@@ -238,6 +311,7 @@ async function fixture(
   return {
     state,
     scope,
+    workTarget,
     revokePerson,
     handle,
     owner,
@@ -1254,3 +1328,359 @@ for (const workspace of ['retained', 'ephemeral'] as const) {
     assert.equal(calls, workspace === 'retained' ? 0 : 1);
   });
 }
+
+test('one work host runs four fresh producer/reviewer phases with retained binding history', async (t) => {
+  const f = await fixture(t, { workHost: true });
+  const connectionSources: string[] = [];
+  f.sessions.registerLaunchConnections(async (session) => {
+    connectionSources.push(session.source.kind);
+    return [
+      { name: 'sandboxes', url: 'https://sandbox.invalid/mcp', bearer: 'private-phase-connection' },
+    ];
+  });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  // A second ready unit must never be selected, even after the pinned work ends.
+  await f.handle.start(f.source, { workflow: 'managed-test', requestId: 'foreign-unit' });
+  const sessions: string[] = [],
+    actors: string[] = [],
+    tokens: string[] = [];
+  for (let phase = 0; phase < 4; phase++) {
+    const request = f.lease();
+    const result = await f.sessions.lease(f.caller, request);
+    assert.ok(result.session, result.reason);
+    const session = result.session;
+    assert.equal(session.instanceId, f.workTarget!.id);
+    assert.ok(
+      Date.parse(session.hardDeadline) - Date.parse(session.createdAt) <= 900_000,
+      'server caps each phase',
+    );
+    assert.equal(session.role, phase % 2 ? 'reviewer' : 'producer');
+    assert.equal(session.source.kind, phase % 2 ? 'service' : 'actor');
+    assert.equal(
+      (await f.sessions.lease(f.caller, request)).session?.id,
+      session.id,
+      'exact request replays',
+    );
+    assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'capacity_full');
+    sessions.push(session.id);
+    actors.push(session.actorId);
+    tokens.push(request.secret);
+    if (phase) {
+      await assert.rejects(f.sessions.managedModelGrant(tokens[phase - 1]!), {
+        code: 'unauthorized',
+      });
+      await assert.rejects(f.sessions.managedModelGrant(sessions[phase - 1]!), {
+        code: 'unauthorized',
+      });
+    }
+    await f.sessions.attach(f.caller, {
+      sessionId: session.id,
+      runnerId: f.runnerId,
+      hostRef: `launch-${phase}`,
+    });
+    assert.equal(
+      (
+        await f.sessions.launchConnections(f.caller, {
+          sessionId: session.id,
+          runnerId: f.runnerId,
+          hostRef: `launch-${phase}`,
+        })
+      ).connections.length,
+      1,
+    );
+    if (phase)
+      await assert.rejects(f.sessions.get(f.caller, sessions[phase - 1]!), {
+        code: 'session_forbidden',
+      });
+    const worker = await f.sessions.authenticate(request.secret);
+    const prepared = await f.sessions.prepare(worker, 'finish', {});
+    await f.sessions.run(prepared, (caller) =>
+      f.state.transaction((tx) =>
+        f.handle.transition(
+          caller,
+          {
+            instanceId: session.instanceId,
+            expectedRevision: session.expectedRevision,
+            action: 'finish',
+            requestId: `phase-${phase}`,
+          },
+          tx,
+        ),
+      ),
+    );
+    assert.equal(
+      (await f.sessions.lease(f.caller, f.lease())).reason,
+      'capacity_full',
+      'closure alone cannot reuse a process',
+    );
+    await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
+  }
+  assert.deepEqual(connectionSources, ['actor', 'service', 'actor', 'service']);
+  assert.equal(new Set(sessions).size, 4);
+  assert.equal(new Set(actors).size, 4);
+  assert.equal(
+    (await f.sessions.lease(f.caller, f.lease())).session,
+    null,
+    'never lease the unrelated work',
+  );
+  const rows = await f.state.read((tx) =>
+    tx.all<any>(
+      'SELECT * FROM session_managed_assignments WHERE allocation_id=? ORDER BY bound_at,session_id',
+      f.input.allocationId,
+    ),
+  );
+  assert.equal(rows.length, 4);
+  assert.ok(rows.every((row) => row.release_ack_at && row.settled_at));
+  assert.equal(
+    (await f.state.read((tx) =>
+      tx.get<any>(
+        'SELECT bound_session_id FROM session_managed_runners WHERE allocation_id=?',
+        f.input.allocationId,
+      ),
+    ))!.bound_session_id,
+    null,
+  );
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      tx.run('DELETE FROM session_managed_assignments WHERE session_id=?', sessions[0]),
+    ),
+    { code: 'state_constraint' },
+  );
+  await assert.rejects(
+    f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE session_managed_runners SET work_instance_id=? WHERE allocation_id=?',
+        'other',
+        f.input.allocationId,
+      ),
+    ),
+    { code: 'state_constraint' },
+  );
+  const presence = await f.state.read((tx) =>
+    tx.all('SELECT id FROM session_runners WHERE runner_id=?', f.runnerId),
+  );
+  assert.equal(presence.length, 1, 'phase sources do not create separate physical presences');
+});
+
+test('work host keeps capture and transcript barriers, settings, source authority and global capacity', async (t) => {
+  let now = Date.now();
+  const f = await fixture(t, { workHost: true, codeWorkspace: true, clock: () => now });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const presence = await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  const concurrent = await Promise.all([
+    f.sessions.lease(f.caller, f.lease()),
+    f.sessions.lease(f.caller, f.lease()),
+  ]);
+  assert.equal(concurrent.filter((x) => x.session).length, 1);
+  const session = concurrent.find((x) => x.session)!.session!;
+  const control = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'reuse-capture' };
+  const workspace = {
+    repositoryId: 'repo',
+    workspaceId: 'work',
+    mode: 'persistent' as const,
+    branch: 'merv/work/test',
+    baseOid: 'a'.repeat(40),
+    headOid: 'a'.repeat(40),
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  await f.sessions.attach(f.caller, { ...control, workspace });
+  const stored = new Map<string, number>();
+  f.sessions.transcripts.blobs = {
+    put: async () => assert.fail(),
+    get: async () => assert.fail(),
+    upload: async () => ({
+      url: 'https://test.invalid/upload',
+      headers: {},
+      expiresAt: new Date(now + 3600000).toISOString(),
+    }),
+    stored: async (ns, hash) => stored.get(`${ns}/${hash}`) ?? null,
+  };
+  const transcript = {
+    ...control,
+    sha256: 'b'.repeat(64),
+    size: 10,
+    logBytes: 10,
+    truncated: false,
+  };
+  await f.sessions.transcript(f.caller, transcript);
+  await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
+  assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'capacity_full');
+  await f.sessions.workspaceResult(f.caller, { ...control, workspace });
+  assert.equal(
+    (await f.sessions.lease(f.caller, f.lease())).reason,
+    'capacity_full',
+    'transcript still owed',
+  );
+  now += 31 * 60_000;
+  assert.equal(
+    (await f.sessions.inspectManaged(f.input.allocationId, 1))!.session!.capturePending,
+    true,
+    'expiry grace cannot authorize reuse',
+  );
+  stored.set(`transcripts-${session.projectId}/${transcript.sha256}`, 10);
+  await f.sessions.transcript(f.caller, { ...transcript, deliver: true });
+  assert.equal(
+    (await f.sessions.inspectManaged(f.input.allocationId, 1))!.session!.capturePending,
+    false,
+  );
+  // A settings hold is checked under the one host presence, including later phase sources.
+  await f.sessions.setRunnerSettings(f.owner, {
+    runnerId: presence.id,
+    settings: { platforms: [{ name: profile.name, enabled: false, parallelism: 1 }] },
+  });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'platform_disabled');
+  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await assert.rejects(f.sessions.lease(f.caller, f.lease()), (error: any) =>
+    [401, 403].includes(error.status),
+  );
+});
+
+test('revoking the host sponsor ends its review phase and never restores old producer credentials', async (t) => {
+  const f = await fixture(t, { workHost: true });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  const firstRequest = f.lease();
+  const first = (await f.sessions.lease(f.caller, firstRequest)).session!;
+  const worker = await f.sessions.authenticate(firstRequest.secret);
+  const prepared = await f.sessions.prepare(worker, 'finish', {});
+  await f.sessions.run(prepared, (caller) =>
+    f.state.transaction((tx) =>
+      f.handle.transition(
+        caller,
+        {
+          instanceId: first.instanceId,
+          expectedRevision: first.expectedRevision,
+          action: 'finish',
+          requestId: 'review-next',
+        },
+        tx,
+      ),
+    ),
+  );
+  await f.sessions.release(f.caller, { sessionId: first.id, runnerId: f.runnerId });
+  const nextRequest = f.lease();
+  const next = (await f.sessions.lease(f.caller, nextRequest)).session!;
+  assert.equal(next.role, 'reviewer');
+  assert.equal((await f.sessions.managedModelGrant(nextRequest.secret)).id, next.id);
+  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await assert.rejects(f.sessions.managedModelGrant(nextRequest.secret), (error: any) =>
+    [401, 403].includes(error.status),
+  );
+  await assert.rejects(f.sessions.authenticateManaged(f.enrolled.controlToken), (error: any) =>
+    [401, 403].includes(error.status),
+  );
+  // Its old producer credential is still revoked; changing source never transfers it.
+  await assert.rejects(f.sessions.managedModelGrant(firstRequest.secret), { code: 'unauthorized' });
+});
+
+test('work-host Code transfers use only the unfinished assignment, including closed final capture', async (t) => {
+  const f = await fixture(t, { workHost: true });
+  const root = mkdtempSync(join(tmpdir(), 'merv-managed-code-'));
+  const source = gitSource(t);
+  const head = source.commit({ 'tracked.txt': 'evidence' });
+  const core = await createService(new CodeService(f.state, f.scope, {}));
+  await boundProject(f.state, f.owner.projectId, head);
+  let finalized = 0;
+  const store = new CodeStore(
+    f.state,
+    f.scope,
+    { root, reservedFreeBytes: 1 },
+    {
+      imported: async () => {},
+      workspaces: async () => [],
+      frozen: async () => [],
+      fenced: async () => {},
+      advanced: async () => {
+        finalized++;
+      },
+      quarantined: async () => {},
+    },
+  );
+  await store.initialize();
+  const repository = store.repositories.paths(f.owner.projectId).repository;
+  mkdirSync(dirname(repository), { recursive: true });
+  git(root, ['clone', '--quiet', '--bare', source.repository, repository]);
+  t.after(async () => {
+    await store.close();
+    await core.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  const request = f.lease();
+  const first = (await f.sessions.lease(f.caller, request)).session!;
+  const caller = await f.sessions.authenticateManaged(f.enrolled.controlToken);
+  assert.equal(caller.managed!.boundSessionId, first.id);
+  const read = (who: Caller, sessionId = first.id) =>
+    store.export(who, { sessionId, head, haves: [head] });
+  assert.deepEqual(await read(caller), { upToDate: true, head });
+  const final = {
+    kind: 'final' as const,
+    sessionId: first.id,
+    runnerId: f.runnerId,
+    hostRef: 'code-launch',
+    leaseId: first.lease.leaseId,
+    unitId: first.instanceId,
+    generation: 1,
+    expectedHead: head,
+    proposedHead: head,
+    treeOid: source.git('rev-parse', 'HEAD^{tree}'),
+    bundle: null,
+  };
+  await f.sessions.attach(caller, {
+    sessionId: first.id,
+    runnerId: f.runnerId,
+    hostRef: 'code-launch',
+  });
+  const worker = await f.sessions.authenticate(request.secret);
+  const prepared = await f.sessions.prepare(worker, 'finish', {});
+  await f.sessions.run(prepared, (who) =>
+    f.state.transaction((tx) =>
+      f.handle.transition(
+        who,
+        {
+          instanceId: first.instanceId,
+          expectedRevision: first.expectedRevision,
+          action: 'finish',
+          requestId: 'next',
+        },
+        tx,
+      ),
+    ),
+  );
+  await f.sessions.release(caller, { sessionId: first.id, runnerId: f.runnerId });
+  // Closure does not revoke the supervisor's owed final transfer before settlement.
+  assert.equal((await store.beginUpload(caller, final)).status, 'completed');
+  assert.equal(finalized, 1);
+  const second = (await f.sessions.lease(f.caller, f.lease())).session!;
+  assert.ok(second);
+  const successor = await f.sessions.authenticateManaged(f.enrolled.controlToken);
+  assert.equal(successor.managed!.boundSessionId, second.id);
+  await assert.rejects(read(caller), { code: 'unauthorized' });
+  await assert.rejects(store.beginUpload(caller, final), { code: 'unauthorized' });
+  await assert.rejects(read(successor), { code: 'managed_runner_forbidden' });
+  await assert.rejects(store.beginUpload(successor, final), { code: 'managed_runner_forbidden' });
+  assert.deepEqual(await read(successor, second.id), { upToDate: true, head });
+  const prior = { sessionId: first.id, runnerId: f.runnerId, hostRef: 'code-launch' };
+  for (const action of [
+    () => f.sessions.attach(successor, prior),
+    () => f.sessions.release(successor, { sessionId: first.id, runnerId: f.runnerId }),
+    () =>
+      f.sessions.workspaceResult(successor, {
+        ...prior,
+        workspace: {
+          repositoryId: 'repo',
+          workspaceId: 'work',
+          mode: 'persistent',
+          branch: 'merv/work/test',
+          baseOid: head,
+          headOid: head,
+          stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+        },
+      }),
+    () => f.sessions.launchConnections(successor, prior),
+  ])
+    await assert.rejects(action(), { code: 'session_forbidden' });
+});

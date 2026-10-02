@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  chownSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
@@ -19,6 +23,7 @@ import {
   sessionWorkspaceSchema,
   WorkspaceDeferred,
   type CodeCommitCommand,
+  type WorkspaceHandle,
   type WorkspaceSession,
   type WorkspaceTransport,
 } from '@merv/contracts';
@@ -40,6 +45,8 @@ function machine(
   f: Fixture,
   wrap?: (inner: WorkspaceTransport) => WorkspaceTransport,
   hosted = false,
+  workInstanceId?: string,
+  previousWorkspace?: (launchId: string) => WorkspaceHandle | undefined,
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-drv-'));
   const assignmentWorkspaceDirectory = hosted
@@ -67,6 +74,8 @@ function machine(
           directory,
           path: join(directory, 'ledger.sqlite'),
           assignmentWorkspaceDirectory,
+          workInstanceId,
+          previousWorkspace,
           terminal: (id) => terminal.has(id),
         },
         transport,
@@ -84,6 +93,477 @@ function machine(
   };
   return self;
 }
+
+test('one hosted work unit reuses its cwd across writer and review while Code freezes source', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_shared_1');
+  let predecessor: WorkspaceHandle | undefined;
+  const m = machine(t, f, undefined, true, f.unitId, () => predecessor);
+  const driver = m.start();
+  const first = m.launch('ses_shared_1');
+  const writer = await driver.prepare(first, m.session('ses_shared_1'));
+  assert.equal(
+    writer.path,
+    join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(f.unitId).digest('hex')),
+  );
+  await f.event('session.workspace_attached', 'ses_shared_1');
+  writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
+  writeFileSync(join(writer.path, 'source.txt'), 'writer source\n');
+  git(writer.path, ['config', '--local', 'merv.evil', 'reviewer-config']);
+  mkdirSync(join(writer.path, '.cache'));
+  writeFileSync(join(writer.path, '.cache/data.bin'), 'writer data');
+  symlinkSync('/usr/bin/env', join(writer.path, '.cache/interpreter'));
+  await f.event('session.closed', 'ses_shared_1');
+  f.end('ses_shared_1');
+  m.terminal.add(first.id);
+  const submitted = await driver.capture(first);
+  assert.ok(submitted);
+  await driver.close(first);
+  assert.ok(existsSync(writer.path));
+  const linuxRoot = process.platform === 'linux' && process.getuid?.() === 0;
+  if (linuxRoot) chownSync(writer.path, 12001, 12001);
+
+  f.reviewer('ses_shared_review_1', submitted!.headOid);
+  const reviewLaunch = m.launch('ses_shared_review_1');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_shared_review_1'));
+  assert.equal(review.path, writer.path);
+  assert.equal(review.snapshot!.headOid, submitted!.headOid);
+  assert.equal(readFileSync(join(review.path, '.cache/data.bin'), 'utf8'), 'writer data');
+  assert.equal(readlinkSync(join(review.path, '.cache/interpreter')), '/usr/bin/env');
+  writeFileSync(join(review.path, 'source.txt'), 'reviewer edit\n');
+  writeFileSync(join(review.path, '.cache/data.bin'), 'reviewer cache edit');
+  writeFileSync(join(review.path, 'reviewer.tmp'), 'discard me');
+  m.terminal.add(reviewLaunch.id);
+  assert.equal((await driver.capture(reviewLaunch))!.headOid, submitted!.headOid);
+  const reviewSql = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  reviewSql.exec(`CREATE TRIGGER interrupt_review_close BEFORE UPDATE OF status ON code_v2_workspaces
+    WHEN NEW.status='closed' AND NEW.launch_id='launch-ses_shared_review_1'
+    BEGIN SELECT RAISE(ABORT, 'interrupted before closed'); END`);
+  await assert.rejects(driver.close(reviewLaunch), /interrupted before closed/);
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer source\n');
+  reviewSql.exec('DROP TRIGGER interrupt_review_close');
+  reviewSql.close();
+  await driver.close(reviewLaunch);
+  assert.ok(existsSync(review.path), 'review retain=false must not remove the shared path');
+  if (linuxRoot)
+    assert.deepEqual(
+      [lstatSync(review.path).uid, lstatSync(review.path).gid],
+      [12001, 12001],
+      'review close restores the agent-owned writer checkout',
+    );
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer source\n');
+  assert.equal(existsSync(join(review.path, 'reviewer.tmp')), false);
+  assert.equal((await f.unit()).canonicalHead, submitted!.headOid);
+
+  // An execution review may send the same experiment through a new planning attempt.
+  // Both scratch phases use this cwd before the next Code writer resumes.
+  const ledger = new LocalLedger({
+    directory: m.directory,
+    binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
+  });
+  const scratch = new GitWorkspaceManager(
+    ledger,
+    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
+    m.assignmentWorkspaceDirectory,
+    f.unitId,
+    () => driver.get(reviewLaunch.id),
+  );
+  t.after(() => {
+    scratch.dispose();
+    ledger.close();
+  });
+  for (const [index, phase] of ['replan', 'redesign-review'].entries()) {
+    const record = ledger.reserve({
+      id: `scratch-${phase}`,
+      sessionId: `session-${phase}`,
+      deadline: Date.now() + 60_000,
+    });
+    const session = {
+      id: record.sessionId,
+      projectId: f.admin.projectId,
+      instanceId: f.unitId,
+      execution: {
+        policy: { readOnly: index === 1, tools: [], workspace: { mode: 'none' } },
+        references: {},
+      },
+    } as unknown as WorkspaceSession;
+    const phaseWorkspace = await scratch.prepare(record, session as never);
+    assert.equal(phaseWorkspace.path, writer.path);
+    if (!index) {
+      mkdirSync(join(writer.path, 'research'));
+      writeFileSync(join(writer.path, 'research/replan.json'), '{"attempt":2}\n');
+    } else
+      assert.equal(
+        readFileSync(join(writer.path, 'research/replan.json'), 'utf8'),
+        '{"attempt":2}\n',
+      );
+    ledger.end(record.id, 'cancelled_before_spawn', 'reserved');
+    assert.equal(await scratch.capture(record), undefined);
+    await scratch.close(record);
+    predecessor = scratch.get(record.id);
+  }
+
+  assert.equal((await f.lease('ses_shared_2')).generation, 2);
+  const second = m.launch('ses_shared_2');
+  // Simulate a crash after replacing the review view and clearing its private
+  // writer sidecar, but before the new writer attachment becomes durable.
+  const sqlLedger = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  sqlLedger.exec(`CREATE TRIGGER interrupt_shared_ready BEFORE UPDATE OF status ON code_v2_workspaces
+    WHEN NEW.status='ready' AND NEW.launch_id='launch-ses_shared_2'
+    BEGIN SELECT RAISE(ABORT, 'interrupted before ready'); END`);
+  await assert.rejects(
+    driver.prepare(second, m.session('ses_shared_2')),
+    /interrupted before ready/,
+  );
+  sqlLedger.exec('DROP TRIGGER interrupt_shared_ready');
+  sqlLedger.close();
+  const next = await driver.prepare(second, m.session('ses_shared_2'));
+  assert.equal(next.path, writer.path);
+  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'writer source\n');
+  assert.equal(readFileSync(join(next.path, '.cache/data.bin'), 'utf8'), 'writer data');
+  assert.equal(readFileSync(join(next.path, 'research/replan.json'), 'utf8'), '{"attempt":2}\n');
+  assert.equal(readlinkSync(join(next.path, '.cache/interpreter')), '/usr/bin/env');
+  assert.equal(existsSync(join(next.path, 'reviewer.tmp')), false);
+  assert.equal(git(next.path, ['rev-parse', 'HEAD']), submitted!.headOid);
+  assert.equal(
+    readFileSync(join(next.path, '.git/config'), 'utf8').includes('reviewer-config'),
+    false,
+  );
+  await f.event('session.workspace_attached', 'ses_shared_2');
+  writeFileSync(join(next.path, 'second.txt'), 'writer two\n');
+  await f.event('session.closed', 'ses_shared_2');
+  f.end('ses_shared_2');
+  m.terminal.add(second.id);
+  const secondResult = await driver.capture(second);
+  await driver.close(second);
+  assert.ok(secondResult);
+
+  f.reviewer('ses_shared_review_2', secondResult!.headOid);
+  const reviewTwoLaunch = m.launch('ses_shared_review_2');
+  const reviewTwo = await driver.prepare(reviewTwoLaunch, m.session('ses_shared_review_2'));
+  assert.equal(reviewTwo.path, writer.path);
+  assert.equal(readFileSync(join(reviewTwo.path, '.cache/data.bin'), 'utf8'), 'writer data');
+  assert.equal(readFileSync(join(reviewTwo.path, 'second.txt'), 'utf8'), 'writer two\n');
+  m.terminal.add(reviewTwoLaunch.id);
+  assert.equal((await driver.capture(reviewTwoLaunch))!.headOid, secondResult!.headOid);
+  await driver.close(reviewTwoLaunch);
+});
+
+test('a fresh hosted ledger derives the same work path and a foreign symlink cannot claim it', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_fresh');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const expected = join(
+    m.assignmentWorkspaceDirectory!,
+    createHash('sha256').update(f.unitId).digest('hex'),
+  );
+  const foreign = mkdtempSync(join(tmpdir(), 'merv-foreign-'));
+  t.after(() => rmSync(foreign, { recursive: true, force: true }));
+  symlinkSync(foreign, expected);
+  await assert.rejects(
+    m.start().prepare(m.launch('ses_fresh'), m.session('ses_fresh')),
+    failed('workspace_foreign_checkout'),
+  );
+  assert.ok(lstatSync(expected).isSymbolicLink());
+  assert.ok(existsSync(foreign));
+  rmSync(expected);
+  const fresh = m.start();
+  const handle = await fresh.prepare(m.launch('ses_fresh'), m.session('ses_fresh'));
+  assert.equal(handle.path, expected);
+  assert.equal(git(handle.path, ['rev-parse', 'HEAD']), f.root);
+});
+
+test('a writer follows a closed Code review after the private writer view is restored', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_restore_writer');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const first = m.launch('ses_restore_writer');
+  const writer = await driver.prepare(first, m.session('ses_restore_writer'));
+  await f.event('session.workspace_attached', 'ses_restore_writer');
+  writeFileSync(join(writer.path, 'source.txt'), 'writer\n');
+  await f.event('session.closed', 'ses_restore_writer');
+  f.end('ses_restore_writer');
+  m.terminal.add(first.id);
+  const result = (await driver.capture(first))!;
+  await driver.close(first);
+  f.reviewer('ses_restore_review', result.headOid);
+  const reviewLaunch = m.launch('ses_restore_review');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_restore_review'));
+  writeFileSync(join(review.path, 'source.txt'), 'reviewer\n');
+  m.terminal.add(reviewLaunch.id);
+  await driver.capture(reviewLaunch);
+  await driver.close(reviewLaunch);
+  assert.equal(readFileSync(join(review.path, 'source.txt'), 'utf8'), 'writer\n');
+  await f.lease('ses_restore_next');
+  const next = await driver.prepare(m.launch('ses_restore_next'), m.session('ses_restore_next'));
+  assert.equal(next.path, writer.path);
+  assert.equal(readFileSync(join(next.path, 'source.txt'), 'utf8'), 'writer\n');
+});
+
+test('a closed scratch plan and scratch review hand their data to the first Code writer', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_after_plan');
+  let predecessor: WorkspaceHandle | undefined;
+  const m = machine(t, f, undefined, true, f.unitId, () => predecessor);
+  const ledger = new LocalLedger({
+    directory: m.directory,
+    binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
+  });
+  const scratch = new GitWorkspaceManager(
+    ledger,
+    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
+    m.assignmentWorkspaceDirectory,
+    f.unitId,
+  );
+  t.after(() => {
+    scratch.dispose();
+    ledger.close();
+  });
+  let path = '';
+  for (const [index, phase] of ['plan', 'design-review'].entries()) {
+    const id = `scratch-${phase}`;
+    const record = ledger.reserve({
+      id,
+      sessionId: `session-${phase}`,
+      deadline: Date.now() + 60_000,
+    });
+    const session = {
+      id: record.sessionId,
+      projectId: f.admin.projectId,
+      instanceId: f.unitId,
+      execution: {
+        policy: { readOnly: index === 1, tools: [], workspace: { mode: 'none' } },
+        references: {},
+      },
+    } as unknown as WorkspaceSession;
+    const handle = await scratch.prepare(record, session as never);
+    path ||= handle.path;
+    assert.equal(handle.path, path);
+    if (!index) {
+      mkdirSync(join(path, 'research'));
+      writeFileSync(join(path, 'research/melodies.jsonl'), '{"melody":"CDE"}\n');
+    } else
+      assert.equal(
+        readFileSync(join(path, 'research/melodies.jsonl'), 'utf8'),
+        '{"melody":"CDE"}\n',
+      );
+    ledger.end(record.id, 'cancelled_before_spawn', 'reserved');
+    assert.equal(await scratch.capture(record), undefined);
+    await scratch.close(record);
+    predecessor = scratch.get(record.id);
+  }
+  const launch = m.launch('ses_after_plan');
+  const codeDriver = m.start();
+  const closedScratch = predecessor!;
+  predecessor = { ...closedScratch, path: m.directory };
+  await assert.rejects(
+    codeDriver.prepare(launch, m.session('ses_after_plan')),
+    failed('workspace_foreign_checkout'),
+  );
+  predecessor = closedScratch;
+  const code = await codeDriver.prepare(launch, m.session('ses_after_plan'));
+  assert.equal(code.path, path);
+  assert.equal(
+    readFileSync(join(code.path, 'research/melodies.jsonl'), 'utf8'),
+    '{"melody":"CDE"}\n',
+  );
+  assert.equal(readFileSync(join(code.path, 'README.md'), 'utf8'), 'root\n');
+  assert.equal(git(code.path, ['rev-parse', '--show-toplevel']), code.path);
+});
+
+test('a replacement host that first reviews discards edits before writer or scratch reuse', async (t) => {
+  const f = await writerFixture(t);
+  f.reviewer('ses_first_review', f.root);
+  let predecessor: WorkspaceHandle | undefined;
+  const m = machine(t, f, undefined, true, f.unitId, () => predecessor);
+  const driver = m.start();
+  const reviewLaunch = m.launch('ses_first_review');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_first_review'));
+  writeFileSync(join(review.path, 'README.md'), 'reviewer changed source\n');
+  writeFileSync(join(review.path, 'reviewer.tmp'), 'discard');
+  m.terminal.add(reviewLaunch.id);
+  assert.equal((await driver.capture(reviewLaunch))!.headOid, f.root);
+  await driver.close(reviewLaunch);
+  assert.equal(readFileSync(join(review.path, 'README.md'), 'utf8'), 'root\n');
+  assert.equal(existsSync(join(review.path, 'reviewer.tmp')), false);
+
+  const ledger = new LocalLedger({
+    directory: m.directory,
+    binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
+  });
+  const scratch = new GitWorkspaceManager(
+    ledger,
+    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
+    m.assignmentWorkspaceDirectory,
+    f.unitId,
+    () => driver.get(reviewLaunch.id),
+  );
+  t.after(() => {
+    scratch.dispose();
+    ledger.close();
+  });
+  const record = ledger.reserve({
+    id: 'scratch-after-first-review',
+    sessionId: 'scratch-session',
+    deadline: Date.now() + 60_000,
+  });
+  const session = {
+    id: record.sessionId,
+    projectId: f.admin.projectId,
+    instanceId: f.unitId,
+    execution: {
+      policy: { readOnly: false, tools: [], workspace: { mode: 'none' } },
+      references: {},
+    },
+  } as unknown as WorkspaceSession;
+  const scratchHandle = await scratch.prepare(record, session as never);
+  assert.equal(scratchHandle.path, review.path);
+  assert.equal(readFileSync(join(scratchHandle.path, 'README.md'), 'utf8'), 'root\n');
+  ledger.end(record.id, 'cancelled_before_spawn', 'reserved');
+  await scratch.capture(record);
+  await scratch.close(record);
+  predecessor = scratch.get(record.id);
+  await f.lease('ses_after_first_review');
+  const writer = await driver.prepare(
+    m.launch('ses_after_first_review'),
+    m.session('ses_after_first_review'),
+  );
+  assert.equal(writer.path, review.path);
+  assert.equal(readFileSync(join(writer.path, 'README.md'), 'utf8'), 'root\n');
+  assert.equal(existsSync(join(writer.path, 'reviewer.tmp')), false);
+});
+
+test('a replacement host can write directly after its first local Code review', async (t) => {
+  const f = await writerFixture(t);
+  f.reviewer('ses_initial_review', f.root);
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const launch = m.launch('ses_initial_review');
+  const review = await driver.prepare(launch, m.session('ses_initial_review'));
+  writeFileSync(join(review.path, 'reviewer.tmp'), 'discard');
+  m.terminal.add(launch.id);
+  await driver.capture(launch);
+  await driver.close(launch);
+  await f.lease('ses_first_writer');
+  const writer = await driver.prepare(m.launch('ses_first_writer'), m.session('ses_first_writer'));
+  assert.equal(writer.path, review.path);
+  assert.equal(writer.snapshot!.headOid, f.root);
+  assert.equal(existsSync(join(writer.path, 'reviewer.tmp')), false);
+});
+
+test('a symlink at the private preservation slot is refused without touching its target', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_sidecar');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const foreign = mkdtempSync(join(tmpdir(), 'merv-foreign-'));
+  t.after(() => rmSync(foreign, { recursive: true, force: true }));
+  const slot = join(
+    m.directory,
+    'code-v2/preserved',
+    createHash('sha256').update(f.unitId).digest('hex'),
+  );
+  const driver = m.start();
+  mkdirSync(join(m.directory, 'code-v2/preserved'), { recursive: true });
+  symlinkSync(foreign, slot);
+  await assert.rejects(
+    driver.prepare(m.launch('ses_sidecar'), m.session('ses_sidecar')),
+    failed('workspace_foreign_checkout'),
+  );
+  assert.ok(lstatSync(slot).isSymbolicLink());
+  assert.ok(existsSync(foreign));
+});
+
+test('special retained nodes cannot be copied into review and a retry keeps the writer sidecar', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_fifo_writer');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const writerLaunch = m.launch('ses_fifo_writer');
+  const writer = await driver.prepare(writerLaunch, m.session('ses_fifo_writer'));
+  await f.event('session.workspace_attached', 'ses_fifo_writer');
+  writeFileSync(join(writer.path, '.gitignore'), '.cache/\n');
+  mkdirSync(join(writer.path, '.cache'));
+  execFileSync('mkfifo', [join(writer.path, '.cache/pipe')]);
+  await f.event('session.closed', 'ses_fifo_writer');
+  f.end('ses_fifo_writer');
+  m.terminal.add(writerLaunch.id);
+  const result = await driver.capture(writerLaunch);
+  await driver.close(writerLaunch);
+  f.reviewer('ses_fifo_review', result!.headOid);
+  const reviewLaunch = m.launch('ses_fifo_review');
+  await assert.rejects(
+    driver.prepare(reviewLaunch, m.session('ses_fifo_review')),
+    failed('workspace_foreign_path'),
+  );
+  const sidecar = join(
+    m.directory,
+    'code-v2/preserved',
+    createHash('sha256').update(f.unitId).digest('hex'),
+  );
+  assert.ok(lstatSync(join(sidecar, '.cache/pipe')).isFIFO());
+  rmSync(join(sidecar, '.cache/pipe'));
+  const review = await driver.prepare(reviewLaunch, m.session('ses_fifo_review'));
+  assert.equal(review.path, writer.path);
+  assert.equal(review.snapshot!.headOid, result!.headOid);
+});
+
+test('shared review cannot overwrite Code head after a refused writer capture', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_refused');
+  const m = machine(t, f, undefined, true, f.unitId);
+  const driver = m.start();
+  const writerLaunch = m.launch('ses_refused');
+  const writer = await driver.prepare(writerLaunch, m.session('ses_refused'));
+  await f.event('session.workspace_attached', 'ses_refused');
+  writeFileSync(join(writer.path, 'token.txt'), `ghp_${'a'.repeat(36)}\n`);
+  await f.event('session.closed', 'ses_refused');
+  f.end('ses_refused');
+  m.terminal.add(writerLaunch.id);
+  assert.equal((await driver.capture(writerLaunch))!.headOid, f.root);
+  await driver.close(writerLaunch);
+  f.reviewer('ses_refused_review', f.root);
+  const reviewLaunch = m.launch('ses_refused_review');
+  const review = await driver.prepare(reviewLaunch, m.session('ses_refused_review'));
+  assert.equal(review.path, writer.path);
+  assert.equal(review.snapshot!.headOid, f.root);
+  assert.equal(
+    existsSync(join(review.path, 'token.txt')),
+    false,
+    'rejected files stay outside review',
+  );
+  assert.equal((await f.unit()).canonicalHead, null);
+  m.terminal.add(reviewLaunch.id);
+  assert.equal((await driver.capture(reviewLaunch))!.headOid, f.root);
+  await driver.close(reviewLaunch);
+  assert.ok(
+    existsSync(
+      join(
+        m.directory,
+        'code-v2/preserved',
+        createHash('sha256').update(f.unitId).digest('hex'),
+        'token.txt',
+      ),
+    ),
+    'the rejected writer checkout is retained privately without entering review',
+  );
+  await f.code.fenceUnit(await f.human(), { unitId: f.unitId, requestId: 'fence-refused-test' });
+  await f.lease('ses_refused_retry');
+  const retry = await driver.prepare(m.launch('ses_refused_retry'), m.session('ses_refused_retry'));
+  assert.equal(retry.snapshot!.headOid, f.root, 'unaccepted source never advances Code');
+  assert.ok(existsSync(join(retry.path, 'token.txt')), 'the writer can recover an unaccepted file');
+  assert.ok(
+    existsSync(
+      join(
+        m.directory,
+        'code-v2/rejected',
+        createHash('sha256').update(writerLaunch.id).digest('hex'),
+        'token.txt',
+      ),
+    ),
+    'the rejected checkout remains available privately after its sidecar is reused',
+  );
+});
 let commands = 0;
 async function command(
   f: Fixture,

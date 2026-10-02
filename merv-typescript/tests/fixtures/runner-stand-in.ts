@@ -148,6 +148,7 @@ export function machine(
     config?: Partial<RunnerConfig>;
     drivers?: WorkspaceDriverFactory[];
     clock?: () => number;
+    resetAssignment?: () => Promise<void>;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'merv-stand-in-'));
@@ -171,6 +172,7 @@ export function machine(
       autoPoll: false,
       fetch: fetcher,
       drivers,
+      resetAssignment: options.resetAssignment,
       ...(options.clock ? { clock: options.clock } : {}),
     });
     runners.push(runner);

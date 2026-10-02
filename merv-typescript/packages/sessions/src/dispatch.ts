@@ -356,6 +356,7 @@ class PoisonedOffer extends Error {
     readonly owner: string,
     /** A server fault or a refusal of who asked: logged and passed over, never held. */
     readonly silent: boolean,
+    readonly caller?: Caller,
   ) {
     super('Offer could not be built');
   }
@@ -1115,7 +1116,7 @@ export class SessionDispatch {
     runnerId?: string,
   ): Promise<Failure[]> {
     return await tx.all<Failure>(
-      'SELECT u.instance_id AS "instanceId",CAST(u.revision AS INTEGER) AS "expectedRevision",u.outcome,u.closed_at AS "closedAt" FROM session_dispatch_receipts d JOIN session_usage u ON u.session_id=d.session_id WHERE d.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR d.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> \'{name}\')=? AND u.closed_at>?',
+      'SELECT u.instance_id AS "instanceId",CAST(u.revision AS INTEGER) AS "expectedRevision",u.outcome,u.closed_at AS "closedAt" FROM session_dispatch_receipts d JOIN session_usage u ON u.session_id=d.session_id JOIN worker_sessions s ON s.id=d.session_id WHERE s.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR d.runner_id=?) AND d.platform_json IS NOT NULL AND (d.platform_json::jsonb #>> \'{name}\')=? AND u.closed_at>?',
       ownerHash,
       runnerId ?? null,
       runnerId ?? null,
@@ -1530,7 +1531,7 @@ export class SessionDispatch {
     // The runners attention() reads, each with the leases it holds and whether Fleet rents it.
     // Only one heard from within the freshness can be present, so only those are authorized.
     const rows = await tx.all<RunnerRow & { busy: number; rented: boolean }>(
-      `SELECT r.*,(SELECT COUNT(*) FROM worker_sessions s WHERE s.owner_hash=r.owner_hash AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) AS busy,
+      `SELECT r.*,(SELECT COUNT(*) FROM worker_sessions s WHERE (s.owner_hash=r.owner_hash OR EXISTS (SELECT 1 FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id WHERE a.session_id=s.id AND m.project_id=r.project_id AND m.runner_id=r.runner_id)) AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) AS busy,
         EXISTS (${rented}) AS rented
         FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
       projectId,
@@ -1764,7 +1765,7 @@ export class SessionDispatch {
         const key = targetKey(error.candidate);
         skipped.add(key);
         if (error.silent) this.passed.set(`${error.owner} ${key}`, this.clock() + backoffMs);
-        else await this.poisoned(preparedCaller, error.candidate, error.cause);
+        else await this.poisoned(error.caller ?? preparedCaller, error.candidate, error.cause);
       }
     }
   }
@@ -1776,7 +1777,7 @@ export class SessionDispatch {
     // An idle poll is decided on a snapshot; an offer or a new decision takes the writer.
     return await readFirst(this.state, async (tx) => {
       const managed = caller.managed ? await this.hooks.managed.lease(caller, input, tx) : null;
-      const effectiveCaller = managed?.sourceCaller ?? caller;
+      let effectiveCaller = managed?.sourceCaller ?? caller;
       const owner = await ownerOf(this.scope, effectiveCaller, tx);
       const fingerprint = digest({
         ...input,
@@ -1797,7 +1798,7 @@ export class SessionDispatch {
       if (old) {
         if (managed)
           check(
-            managed.row.bound_session_id === old.session_id,
+            await this.hooks.managed.hasSession(managed.row, old.session_id, tx),
             'managed_bound',
             'Managed runner receipt is not its bound session',
             403,
@@ -1829,7 +1830,7 @@ export class SessionDispatch {
         'Request id belongs to an explicit session offer',
         409,
       );
-      if (managed?.row.bound_session_id)
+      if (managed && !(await this.hooks.managed.reusable(managed.row, tx)))
         return { session: null, reason: await decided('capacity_full') };
       // A project on its own machines gives a rented one no new work; one it holds runs out.
       const open = async () => {
@@ -1847,31 +1848,42 @@ export class SessionDispatch {
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
-      const failures = await this.recentFailures(
-        tx,
-        owner.hash,
-        platform.name,
-        managed ? undefined : input.runnerId,
-      );
-      // A checkout some driver must prepare goes only to a machine that says it has that
-      // driver; everything else in the queue is still this runner's to take.
       const capabilities = new Set(
         (JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? [],
       );
-      const selected = await this.eligibleCandidates(
-        effectiveCaller,
-        tx,
-        capabilities,
-        failures,
-        new Set([...skipped, ...this.passing(owner.hash)]),
-        !managed,
-      );
-      const candidate = selected.candidates[0];
-      if (!candidate)
-        return {
-          session: null,
-          reason: await decided(selected.reason ?? 'no_candidates'),
-        };
+      let candidate: Target | undefined;
+      let assignmentOwner = owner;
+      let reason: DispatchDecision = 'no_candidates';
+      for (const source of managed
+        ? await this.hooks.managed.sources(managed.row, tx)
+        : [effectiveCaller]) {
+        const phaseOwner = await ownerOf(this.scope, source, tx);
+        const failures = await this.recentFailures(
+          tx,
+          phaseOwner.hash,
+          platform.name,
+          managed ? undefined : input.runnerId,
+        );
+        const selected = await this.eligibleCandidates(
+          source,
+          tx,
+          capabilities,
+          failures,
+          new Set([...skipped, ...this.passing(phaseOwner.hash)]),
+          !managed,
+        );
+        candidate = selected.candidates.find(
+          (item) =>
+            !managed?.row.work_instance_id || item.instanceId === managed.row.work_instance_id,
+        );
+        reason = selected.reason ?? reason;
+        if (candidate) {
+          effectiveCaller = source;
+          assignmentOwner = phaseOwner;
+          break;
+        }
+      }
+      if (!candidate) return { session: null, reason: await decided(reason) };
       // A snapshot found work: the writer decides again, and builds the offer.
       if (this.state.readScope) throw new MervError('read_only_scope', 'An offer is a write', 409);
       const session = await this.hooks
@@ -1883,7 +1895,11 @@ export class SessionDispatch {
             runnerId: input.runnerId,
             requestId: input.requestId,
             secret: input.secret,
-            hardDeadlineSeconds: Math.min(input.hardDeadlineSeconds ?? 86400, left),
+            hardDeadlineSeconds: Math.min(
+              input.hardDeadlineSeconds ?? 86400,
+              left,
+              managed?.row.step_seconds ? Number(managed.row.step_seconds) : Infinity,
+            ),
           },
           tx,
         )
@@ -1905,8 +1921,9 @@ export class SessionDispatch {
           throw new PoisonedOffer(
             { instanceId: candidate.instanceId, expectedRevision: candidate.expectedRevision },
             error,
-            owner.hash,
+            assignmentOwner.hash,
             silent,
+            effectiveCaller,
           );
         });
       check(

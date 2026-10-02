@@ -288,7 +288,7 @@ class IsolationProbeTests(unittest.TestCase):
                             probe._sshd()
                 self.assertEqual(run.call_args.args[0], ["/usr/sbin/sshd", "-T"])
 
-    def test_report_is_exclusive_read_only_and_closes_fd_on_errors(self):
+    def test_report_replaces_prior_session_atomically_and_closes_fd_on_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(probe, "REPORT_DIR", Path(directory) / "reports"):
                 with patch.object(probe, "_private"):
@@ -306,14 +306,18 @@ class IsolationProbeTests(unittest.TestCase):
                     with self.assertRaises(OSError) as failure:
                         os.fstat(descriptors[0])
                     self.assertEqual(failure.exception.errno, errno.EBADF)
-                    with self.assertRaises(FileExistsError):
-                        probe._report(WORKSPACE, {"ok": False})
-                    self.assertEqual(json.loads(path.read_text()), {"ok": True})
+                    probe._report(WORKSPACE, {"ok": True, "launch_id": "next-session"})
+                    expected = {"ok": True, "launch_id": "next-session"}
+                    self.assertEqual(json.loads(path.read_text()), expected)
                     with patch.object(probe.os, "fsync", side_effect=OSError(errno.EIO, "error")):
+                        with self.assertRaises(OSError):
+                            probe._report(WORKSPACE, {"ok": False})
+                        self.assertEqual(json.loads(path.read_text()), expected)
                         second = Path(directory) / "another"
                         with self.assertRaises(OSError):
                             probe._report(second, {"ok": True})
                         self.assertFalse((probe.REPORT_DIR / "another.json").exists())
+                    self.assertEqual(list(probe.REPORT_DIR.iterdir()), [path])
 
     def test_child_scrubs_environment_and_closes_inherited_descriptors(self):
         with patch.dict(os.environ, {"PROBE_PRIVATE_EXAMPLE": "do-not-send"}):

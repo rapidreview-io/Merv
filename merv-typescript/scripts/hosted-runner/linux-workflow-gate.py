@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shlex
 import signal
 import subprocess
 import threading
+import time
 
 
 enrollment = 'me_' + secrets.token_hex(32)
@@ -26,10 +28,14 @@ PROBE = ("for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' <\"$f\" 2>/dev/null |
          "grep -q '^MERV_AGENT_SESSION_TOKEN=' && echo \"readable $f\"; done; python3 -c "
          "\"import socket; socket.create_connection(('127.0.0.1', %d), 5)\" && echo network-on; "
          "echo \"uid $(id -u) probe-done\"")
-PROBE += ("; python3 -c \"import os,hashlib; "
+probe_suffix = ''
+
+
+def probe_command(port):
+    return (PROBE % port) + ("; python3 -c \"import os,hashlib; "
           "assert hashlib.sha256(os.environ.get('HF_TOKEN','').encode()).hexdigest() == '" + hf_digest + "'; "
-          "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"")
-calls, outputs, holders = [], [], set()
+          "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"") + probe_suffix
+calls, outputs, holders, relay_credentials = [], [], set(), []
 
 
 def environ(pid):
@@ -52,6 +58,12 @@ class Main(http.server.BaseHTTPRequestHandler):
             self.send_response(503)
             self.end_headers()
             return
+        current_credential = self.headers.get('authorization') == 'Bearer ' + session
+        relay_credentials.append(current_credential)
+        if not current_credential:
+            self.send_response(401)
+            self.end_headers()
+            return
         tools = body.get('tools', [])
         calls.append((self.command, self.path, sorted(body), {t.get('type') for t in tools} |
                       {t.get('type') for n in tools for t in n.get('tools', [])}))
@@ -66,7 +78,7 @@ class Main(http.server.BaseHTTPRequestHandler):
         item = ({'type': 'message', 'role': 'assistant', 'id': 'msg_gate',
                  'content': [{'type': 'output_text', 'text': 'done'}]} if answered else
                 {'type': 'function_call', 'name': 'exec_command', 'call_id': 'probe',
-                 'arguments': json.dumps({'cmd': PROBE % self.server.server_port})})
+                 'arguments': json.dumps({'cmd': probe_command(self.server.server_port)})})
         events = [{'type': 'response.created', 'response': {'id': 'resp_gate'}},
                   {'type': 'response.output_item.done', 'output_index': 0, 'item': item},
                   {'type': 'response.completed', 'response': {'id': 'resp_gate', 'usage': {
@@ -137,7 +149,7 @@ settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_sear
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
 def codex(sandbox):
-    calls.clear(), outputs.clear(), holders.clear()
+    calls.clear(), outputs.clear(), holders.clear(), relay_credentials.clear()
     return subprocess.run(
         ['/usr/bin/python3', '-c', "import sys; sys.path.insert(0, '/opt/merv/python'); "
          'from merv_sandboxes.runtimes import assignment; sys.exit(assignment.main())',
@@ -150,34 +162,119 @@ def codex(sandbox):
     )
 
 
-launch = codex('workspace-write')
-# Codex's own sandbox needs unprivileged user namespaces, which some release hosts refuse (Ubuntu
-# 24.04's AppArmor restriction). There the gate proves all but that sandbox, says so, and the
-# sandbox is proved where it runs: a Fleet step on Cloudflare.
-sandboxed = 'No permissions to create a new namespace' not in ''.join(outputs)
-if not sandboxed:
-    launch = codex('danger-full-access')
-server.shutdown()
-server.server_close()
-thread.join(timeout=5)
-probe = ''.join(outputs)
-codex_home = [p for p in Path('/home/assignment/.codex').rglob('*') if p.is_file()]
-assert launch.returncode == 0 and len(calls) >= 2, 'hosted Codex did not finish through the relay'
-assert all(c[:2] == ('POST', '/codex-model/responses') and set(c[2]) <= KEYS and c[3] <= TOOLS
-           for c in calls), calls
-assert 'uid 12001 probe-done' in probe, probe
-assert not sandboxed or ('readable ' not in probe and holders), probe
-assert 'network-on' in probe, probe
-assert 'hf-token-inherited' in probe, probe
-assert hf_token not in json.dumps(settings)
-assert not any(hf_token.encode() in p.read_bytes() for p in codex_home)
-assert not any(p.name == 'auth.json' or session.encode() in p.read_bytes() for p in codex_home)
-for secret in [enrollment.encode(), model_key.encode(), session.encode(), hf_token.encode()]:
-    assert secret not in output + error + refused_output + launch.stdout + launch.stderr
+def checked_launch():
+    launch = codex('workspace-write')
+    # Some release hosts refuse Codex's unprivileged namespaces. Report the
+    # fallback accurately; the live hosted canary must prove the actual sandbox.
+    sandboxed = 'No permissions to create a new namespace' not in ''.join(outputs)
+    if not sandboxed:
+        transcripts.append(launch.stdout + launch.stderr)
+        launch = codex('danger-full-access')
+    probe = ''.join(outputs)
+    home_files = [p for p in Path('/home/assignment/.codex').rglob('*') if p.is_file()]
+    assert launch.returncode == 0 and len(calls) >= 2, 'hosted Codex did not finish through the relay'
+    assert relay_credentials and all(relay_credentials), 'Codex used a stale session credential'
+    assert all(c[:2] == ('POST', '/codex-model/responses') and set(c[2]) <= KEYS and c[3] <= TOOLS
+               for c in calls), calls
+    assert 'uid 12001 probe-done' in probe, probe
+    assert not sandboxed or ('readable ' not in probe and holders), probe
+    assert 'network-on' in probe and 'hf-token-inherited' in probe, probe
+    assert hf_token not in json.dumps(settings)
+    assert not any(hf_token.encode() in p.read_bytes() for p in home_files)
+    assert not any(p.name == 'auth.json' or session.encode() in p.read_bytes() for p in home_files)
+    request_keys.update(k for c in calls for k in c[2])
+    transcripts.append(launch.stdout + launch.stderr)
+    return sandboxed, probe
+
+
+def reset():
+    result = subprocess.run(
+        ['/usr/bin/python3', '/opt/merv/python/merv_sandboxes/runtimes/assignment.py', '--reset'],
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, 'retained workflow reset refused'
+
+
+def private_state_canaries():
+    # A detached assignment-UID fixture stands in for an escaped shell child.
+    # It runs outside Codex's sandbox deliberately: reset must stop this too.
+    code = """import os,time
+from pathlib import Path
+os.setsid()
+if os.fork(): os._exit(0)
+Path('/home/assignment/.codex/gate-private').write_text('old-private-config')
+Path('/tmp/merv-workflow-gate-private').write_text('old-private-token')
+Path('gate-descendant').write_text(str(os.getpid()))
+while True: time.sleep(1)
+"""
+    starter = subprocess.Popen(
+        ['/usr/bin/python3', '-c', code], cwd=work,
+        env={'PATH': '/usr/bin:/bin'}, user=12001, group=12001, extra_groups=[],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    assert starter.wait(timeout=5) == 0
+    deadline = time.monotonic() + 5
+    while not (work / 'gate-descendant').exists():
+        assert time.monotonic() < deadline, 'detached fixture did not start'
+        time.sleep(0.01)
+    pid = int((work / 'gate-descendant').read_text())
+    reset()
+    try:
+        state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()[0]
+        assert state in ('Z', 'X'), 'escaped assignment process survived reset'
+    except FileNotFoundError:
+        pass
+    assert not Path('/home/assignment/.codex/gate-private').exists()
+    assert not Path('/tmp/merv-workflow-gate-private').exists()
+    (work / 'gate-descendant').unlink()
+
+
+request_keys, transcripts, sandbox_results = set(), [], []
+secret_values = [enrollment, model_key, session, hf_token]
+try:
+    normal_sandbox, _ = checked_launch()
+    sandbox_results.append(normal_sandbox)
+    reset()
+    for phase in range(2):
+        session = 'ms_' + secrets.token_urlsafe(32)
+        hf_token = 'hf_' + secrets.token_hex(20)
+        hf_digest = hashlib.sha256(hf_token.encode()).hexdigest()
+        secret_values.extend((session, hf_token))
+        # Each real Codex shell observes the identical absolute cwd and the prior
+        # phase's bytes, while home/temp state was discarded by the root helper.
+        code = ("from pathlib import Path; import os; "
+                f"assert os.getcwd()=={str(work)!r}; "
+                "assert not Path('/home/assignment/.codex/gate-private').exists(); "
+                "assert not Path('/tmp/merv-workflow-gate-private').exists(); "
+                "p=Path('gate-retained-research'); "
+                f"assert (p.read_text() if p.exists() else '')=={'phase-0' if phase else ''!r}; "
+                f"p.write_text('phase-{phase}'); print('retained-phase-{phase}')")
+        probe_suffix = '; python3 -c ' + shlex.quote(code)
+        sandboxed, probe = checked_launch()
+        sandbox_results.append(sandboxed)
+        assert f'retained-phase-{phase}' in probe, probe
+        assert (work / 'gate-retained-research').read_text() == f'phase-{phase}'
+        private_state_canaries()
+        assert (work / 'gate-retained-research').read_text() == f'phase-{phase}'
+finally:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+for secret in secret_values:
+    assert secret.encode() not in output + error + refused_output + b''.join(transcripts)
+sandboxed = all(sandbox_results)
 print(json.dumps({
     'gate': 'linux-workflow-dispatch', 'fixedSupervisor': True, 'bootstrapWithModelKeyRefused': True,
     'managedEnrollmentReached': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
-    'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted({k for c in calls for k in c[2]}),
+    'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted(request_keys),
     'noCredentialFileInCodexHome': True, 'shellNetworkOn': True, 'hfTokenInheritedByShell': True, 'hfTokenAbsentFromArgsConfigAndLogs': True, 'codexSandboxOnHost': sandboxed,
     **({'sessionBearerUnreadableFromShell': True} if sandboxed else {}),
+    'normalLaneExercised': True, 'retainedCodexLaunches': 2, 'retainedSameAbsoluteCwd': True,
+    'retainedResearchPreserved': True, 'privateStateCanariesCleared': True,
+    'detachedAssignmentDescendantsCleared': True, 'freshSessionCredentials': True,
+    'codexSandboxPerLaunch': sandbox_results,
+    # Local fake relay is incompatible with the probe's sole-sshd listener rule.
+    # The release's separate exact-image isolation gate covers that boundary.
+    'assignmentAttestation': 'separate exact-image isolation gate; not integrated here',
 }))

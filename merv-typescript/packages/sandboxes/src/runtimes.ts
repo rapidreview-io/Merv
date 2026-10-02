@@ -15,6 +15,17 @@ import type {
 const sandboxPath = '/v1/sandboxes/{id}';
 const runtimePath = '/v1/sandboxes/{id}/runtime';
 const launchPath = '/v1/runtime/launches/{id}';
+const jobStates = new Set([
+  'queued',
+  'launching',
+  'running',
+  'cancel_requested',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'timed_out',
+]);
+const terminalJobs = new Set(['succeeded', 'failed', 'cancelled', 'timed_out']);
 const states = new Set<SandboxRuntimeState>([
   'provisioning',
   'ready',
@@ -244,7 +255,32 @@ export class SandboxRuntimeRunner implements Omit<
           current.launch.releaseId,
         )
       : null;
-    return handle(row, requireCurrentProfile ? this.#profile : null, launch);
+    const observed = handle(row, requireCurrentProfile ? this.#profile : null, launch);
+    // A protected supervisor is the only job that can run on this machine. Its exit proves
+    // no controller remains to finish capture or safely admit another assignment. Keep the
+    // machine unreleased until the existing native DELETE observes provider stop.
+    if (
+      launch?.deliveryState === 'launched' &&
+      ['pending', 'consumed'].includes(launch.state) &&
+      !['failed', 'deleting', 'stopped'].includes(observed.state)
+    ) {
+      const job = object(
+        await this.client.read(connection, sandboxRoute('/v1/jobs/{id}', launch.jobId)),
+      );
+      check(
+        job.id === launch.jobId &&
+          job.sandbox_id === observed.sandboxId &&
+          job.namespace === connection.namespace &&
+          typeof job.state === 'string' &&
+          jobStates.has(job.state),
+        'sandbox_runtime_unavailable',
+        'The sandbox service returned an invalid protected job',
+        502,
+      );
+      if (terminalJobs.has(job.state as string))
+        return { ...observed, state: 'failed', ready: false };
+    }
+    return observed;
   }
 
   async launch(

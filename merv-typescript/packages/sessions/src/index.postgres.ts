@@ -295,4 +295,43 @@ $merv$;
 CREATE TRIGGER session_messages_immutable BEFORE UPDATE OR DELETE ON session_messages
 FOR EACH ROW EXECUTE FUNCTION session_messages_guard();
 `,
+  11: `
+ALTER TABLE session_managed_runners ADD COLUMN work_instance_id TEXT;
+ALTER TABLE session_managed_runners ADD COLUMN step_seconds BIGINT CHECK(step_seconds BETWEEN 60 AND 86400);
+ALTER TABLE session_managed_runners ADD CONSTRAINT managed_work_step CHECK ((work_instance_id IS NULL) = (step_seconds IS NULL));
+CREATE FUNCTION session_managed_work_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.work_instance_id IS DISTINCT FROM OLD.work_instance_id OR NEW.step_seconds IS DISTINCT FROM OLD.step_seconds OR
+     (NEW.work_instance_id IS NOT NULL AND NEW.bound_session_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'Managed work affinity is immutable';
+  END IF;
+  RETURN NEW;
+END $merv$;
+CREATE TRIGGER session_managed_work_immutable BEFORE UPDATE ON session_managed_runners
+FOR EACH ROW EXECUTE FUNCTION session_managed_work_guard();
+CREATE TABLE session_managed_assignments (
+  ordinal BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id),
+  allocation_id TEXT NOT NULL REFERENCES session_managed_runners(allocation_id),
+  runner_id TEXT NOT NULL,
+  source_json TEXT NOT NULL CHECK(source_json IS JSON),
+  bound_at TEXT NOT NULL,
+  release_ack_at TEXT,
+  settled_at TEXT
+);
+CREATE UNIQUE INDEX session_managed_assignment_active ON session_managed_assignments(allocation_id) WHERE settled_at IS NULL;
+CREATE FUNCTION session_managed_assignment_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP='DELETE' OR NEW.ordinal IS DISTINCT FROM OLD.ordinal OR NEW.session_id IS DISTINCT FROM OLD.session_id OR
+     NEW.allocation_id IS DISTINCT FROM OLD.allocation_id OR NEW.runner_id IS DISTINCT FROM OLD.runner_id OR
+     NEW.source_json IS DISTINCT FROM OLD.source_json OR NEW.bound_at IS DISTINCT FROM OLD.bound_at OR
+     (OLD.release_ack_at IS NOT NULL AND NEW.release_ack_at IS DISTINCT FROM OLD.release_ack_at) OR
+     (OLD.settled_at IS NOT NULL AND NEW.settled_at IS DISTINCT FROM OLD.settled_at) THEN
+    RAISE EXCEPTION 'Managed assignment history is retained';
+  END IF;
+  RETURN NEW;
+END $merv$;
+CREATE TRIGGER session_managed_assignment_immutable BEFORE UPDATE OR DELETE ON session_managed_assignments
+FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
+`,
 };

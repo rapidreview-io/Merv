@@ -3,12 +3,14 @@ import {
   constants,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   fsyncSync,
   fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -16,7 +18,7 @@ import {
   rmSync,
   writeSync,
 } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   codeCommitCommandSchema,
@@ -92,6 +94,14 @@ interface TransferRow {
 type TransportFailure = { code?: unknown; status?: unknown };
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+const pathStat = (path: string) => {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+};
 const oid = (value: string): string => {
   const result = value.trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
@@ -256,6 +266,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS code_v2_review_restores (
+        launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
+      ) STRICT;
       CREATE TRIGGER IF NOT EXISTS code_v2_transfers_identity BEFORE UPDATE ON code_v2_transfers
         WHEN NEW.request_id IS NOT OLD.request_id OR NEW.launch_id IS NOT OLD.launch_id OR NEW.kind IS NOT OLD.kind OR NEW.command_json IS NOT OLD.command_json OR NEW.expected_head IS NOT OLD.expected_head
           OR (OLD.merge_tree IS NOT NULL AND NEW.merge_tree IS NOT OLD.merge_tree)
@@ -276,7 +289,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     return {
       path: row.path,
       ...(encoded ? { snapshot: JSON.parse(encoded) as SessionWorkspace } : {}),
-      retain: policy.mode === 'none' || policy.retain,
+      retain: policy.mode === 'none' || policy.retain || !!this.sharedWorkKey(),
       readOnly: !!row.read_only,
       status: row.status,
     };
@@ -290,6 +303,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   prepare(launch: WorkspaceLaunch, session: WorkspaceSession): Promise<WorkspaceHandle> {
     return this.run(async () => {
       if (launch.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
+      if (this.sharedWorkKey() && this.sharedWorkKey() !== session.instanceId)
+        throw new WorkspaceError('workspace_session_mismatch');
       const policy = effectiveWorkspace(session.execution.policy);
       if (policy.mode === 'none' || policy.driver !== CODE_DRIVER)
         throw new WorkspaceError('workspace_driver_mismatch');
@@ -317,7 +332,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       const cache = await this.cache(manifest);
       await this.fetch(cache, manifest, control);
       const path = this.assignmentRoot
-        ? join(this.assignmentRoot, hash(launch.id))
+        ? join(this.assignmentRoot, hash(this.sharedWorkKey() ?? launch.id))
         : manifest.mode === 'write'
           ? join(dirname(cache), 'checkouts', 'work', hash(manifest.unitId).slice(0, 32))
           : join(dirname(cache), 'checkouts', 'read', hash(launch.id).slice(0, 32));
@@ -352,8 +367,25 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       const row = this.row(launch.id)!;
       if (row.head_oid !== manifest.head || row.base_oid !== manifest.base)
         throw new WorkspaceError('workspace_recorded_base_changed');
-      await this.checkout(cache, row);
+      await this.checkout(cache, row, !!existing);
       const snapshot = await this.snapshot(row, manifest.head);
+      if (this.sharedWorkKey() && !row.read_only) {
+        const preserved = this.preservedPath();
+        const info = pathStat(preserved);
+        if (info?.isSymbolicLink() || (info && !info.isDirectory()))
+          throw new WorkspaceError('workspace_foreign_checkout');
+        if (info) {
+          const previous = this.priorWriter(row);
+          if (previous && this.priorCaptureRefused(previous)) {
+            const rejected = this.rejectedPath(previous);
+            const saved = pathStat(rejected);
+            if (saved && (!saved.isDirectory() || saved.isSymbolicLink()))
+              throw new WorkspaceError('workspace_foreign_checkout');
+            if (saved) rmSync(preserved, { recursive: true, force: true });
+            else renameSync(preserved, rejected);
+          } else rmSync(preserved, { recursive: true, force: true });
+        }
+      }
       this.db
         .prepare(
           "UPDATE code_v2_workspaces SET status='ready',attachment_json=? WHERE launch_id=? AND status='preparing'",
@@ -493,8 +525,67 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       this.db
         .prepare("UPDATE code_v2_workspaces SET status='closing' WHERE launch_id=?")
         .run(launch.id);
+      if (this.sharedWorkKey() && row.read_only) {
+        this.assignmentPath(row.path);
+        const preserved = this.preservedPath();
+        const info = pathStat(preserved);
+        const writer = this.priorWriter(row);
+        if (writer && this.priorCaptureRefused(writer)) {
+          // Keep the refused writer private. Replace the disposable review tree with
+          // Code's frozen head so a later scratch phase cannot inherit review edits.
+          if (!info || !info.isDirectory() || info.isSymbolicLink())
+            throw new WorkspaceError('workspace_foreign_checkout');
+          await this.checkoutShared(this.repository(row.project_ref)!, row, true);
+        } else {
+          const recorded = this.db
+            .prepare('SELECT device,inode FROM code_v2_review_restores WHERE launch_id=?')
+            .get(row.launch_id) as { device: number; inode: number } | undefined;
+          if (info) {
+            if (
+              !info.isDirectory() ||
+              info.isSymbolicLink() ||
+              (recorded && (recorded.device !== info.dev || recorded.inode !== info.ino))
+            )
+              throw new WorkspaceError('workspace_foreign_checkout');
+            if (!recorded)
+              this.db
+                .prepare(
+                  'INSERT INTO code_v2_review_restores(launch_id,device,inode) VALUES(?,?,?)',
+                )
+                .run(row.launch_id, info.dev, info.ino);
+            if (pathStat(row.path)) rmSync(row.path, { recursive: true, force: true });
+            renameSync(preserved, row.path);
+          } else if (recorded) {
+            const visible = pathStat(row.path);
+            if (
+              !visible ||
+              !visible.isDirectory() ||
+              visible.isSymbolicLink() ||
+              visible.dev !== recorded.device ||
+              visible.ino !== recorded.inode
+            )
+              throw new WorkspaceError('workspace_foreign_checkout');
+          } else if (writer) throw new WorkspaceError('workspace_foreign_checkout');
+          else {
+            // A replacement VM may start with a review. No writer sidecar exists;
+            // discard that reviewer's files and rebuild from the frozen Code head.
+            if (pathStat(row.path)) rmSync(row.path, { recursive: true, force: true });
+            await this.checkoutShared(this.repository(row.project_ref)!, row, true);
+            const clean = lstatSync(row.path);
+            this.db
+              .prepare('INSERT INTO code_v2_review_restores(launch_id,device,inode) VALUES(?,?,?)')
+              .run(row.launch_id, clean.dev, clean.ino);
+          }
+        }
+      }
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
-      if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path)) {
+      if (
+        !row.canceled &&
+        policy.mode !== 'none' &&
+        !policy.retain &&
+        !this.sharedWorkKey() &&
+        existsSync(row.path)
+      ) {
         if (this.assignmentRoot) {
           this.assignmentPath(row.path);
           rmSync(row.path, { recursive: true, force: true });
@@ -546,12 +637,75 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     )?.path;
   }
 
+  /** Only hosted work units opt in; ordinary Code checkouts retain their old lifecycle. */
+  private sharedWorkKey(): string | undefined {
+    const key = this.host.workInstanceId;
+    if (key !== undefined && (!/^[A-Za-z0-9_-]{1,200}$/.test(key) || !this.assignmentRoot))
+      throw new WorkspaceError('workspace_assignment_root_invalid');
+    return key;
+  }
+
+  private preservedPath(): string {
+    return join(privateDirectory(join(this.root, 'preserved')), hash(this.sharedWorkKey()!));
+  }
+
+  private rejectedPath(row: WorkspaceRow): string {
+    return join(privateDirectory(join(this.root, 'rejected')), hash(row.launch_id));
+  }
+
+  private priorWriter(row: WorkspaceRow): WorkspaceRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM code_v2_workspaces WHERE path=? AND launch_id<>? AND read_only=0 AND status IN ('captured','closed') ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(row.path, row.launch_id) as WorkspaceRow | undefined;
+  }
+
+  private priorVisible(row: WorkspaceRow): WorkspaceRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM code_v2_workspaces WHERE path=? AND launch_id<>? AND status IN ('captured','closed') ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(row.path, row.launch_id) as WorkspaceRow | undefined;
+  }
+
+  private restoredReview(row: WorkspaceRow, path: string): boolean {
+    if (row.status !== 'closed') return false;
+    const recorded = this.db
+      .prepare('SELECT device,inode FROM code_v2_review_restores WHERE launch_id=?')
+      .get(row.launch_id) as { device: number; inode: number } | undefined;
+    const visible = pathStat(path);
+    return (
+      !!recorded &&
+      !!visible &&
+      visible.isDirectory() &&
+      recorded.device === visible.dev &&
+      recorded.inode === visible.ino
+    );
+  }
+
+  private priorCaptureRefused(row: WorkspaceRow): boolean {
+    const transfer = this.db
+      .prepare(
+        "SELECT target_oid,receipt_json,error FROM code_v2_transfers WHERE launch_id=? AND kind='final'",
+      )
+      .get(row.launch_id) as
+      { target_oid: string | null; receipt_json: string | null; error: string | null } | undefined;
+    return (
+      !!transfer &&
+      (!!transfer.error ||
+        (!!transfer.receipt_json &&
+          (JSON.parse(transfer.receipt_json) as { head: string }).head !== transfer.target_oid))
+    );
+  }
+
   private assignmentPath(path: string): void {
+    const existing = pathStat(path);
     if (
       !this.assignmentRoot ||
       dirname(path) !== this.assignmentRoot ||
       !/^[0-9a-f]{64}$/.test(path.slice(this.assignmentRoot.length + 1)) ||
-      (existsSync(path) && (lstatSync(path).isSymbolicLink() || !lstatSync(path).isDirectory()))
+      (existing && (existing.isSymbolicLink() || !existing.isDirectory()))
     )
       throw new WorkspaceError('workspace_foreign_checkout');
   }
@@ -690,8 +844,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     await this.git.ok(['--git-dir', cache, 'update-ref', `refs/merv/known/${commit}`, commit]);
   }
 
-  private async checkout(cache: string, row: WorkspaceRow): Promise<void> {
+  private async checkout(cache: string, row: WorkspaceRow, retryPreparing = false): Promise<void> {
     if (this.assignmentRoot) {
+      if (this.sharedWorkKey()) return this.checkoutShared(cache, row, retryPreparing);
       this.assignmentPath(row.path);
       const dot = join(row.path, '.git');
       if (!existsSync(dot)) {
@@ -748,6 +903,160 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       cwd: row.path,
     });
     await this.git.ok(['clean', '-fdq'], { cwd: row.path });
+  }
+
+  /**
+   * One visible cwd per work unit. The previous writer checkout is an immutable source of
+   * non-Code files while review gets a disposable copy at the same path. A preparing row is
+   * the durable intent: after a crash the sidecar is authoritative and a partial visible
+   * checkout is rebuilt. Git metadata always comes afresh from Code's private object cache.
+   */
+  private async checkoutShared(
+    cache: string,
+    row: WorkspaceRow,
+    retryPreparing: boolean,
+  ): Promise<void> {
+    this.assignmentPath(row.path);
+    const preserved = this.preservedPath();
+    const previous = this.priorWriter(row);
+    const lastVisible = this.priorVisible(row);
+    // A Code phase can follow CPU-only scratch, including a new attempt after an
+    // earlier Code writer. The runner vouches for the immediate closed predecessor;
+    // a path found on disk alone is never enough to adopt as input.
+    const preceding = this.host.previousWorkspace?.(row.launch_id);
+    const scratch = preceding && !preceding.snapshot ? preceding : undefined;
+    if (
+      scratch &&
+      (scratch.path !== row.path ||
+        !['captured', 'closed'].includes(scratch.status) ||
+        !scratch.retain)
+    )
+      throw new WorkspaceError('workspace_foreign_checkout');
+    if (previous && this.priorCaptureRefused(previous) && !row.read_only && scratch) {
+      const rejected = this.rejectedPath(previous);
+      const saved = pathStat(rejected);
+      if (saved && (!saved.isDirectory() || saved.isSymbolicLink()))
+        throw new WorkspaceError('workspace_foreign_checkout');
+      const pending = pathStat(preserved);
+      if (!saved && pending) {
+        if (!pending.isDirectory() || pending.isSymbolicLink())
+          throw new WorkspaceError('workspace_foreign_checkout');
+        renameSync(preserved, rejected);
+      }
+    }
+    const preservedInfo = pathStat(preserved);
+    if (preservedInfo) {
+      const info = preservedInfo;
+      if ((!previous && !scratch) || !info.isDirectory() || info.isSymbolicLink())
+        throw new WorkspaceError('workspace_foreign_checkout');
+    } else if (existsSync(row.path)) {
+      if (
+        lastVisible?.read_only &&
+        !scratch &&
+        !this.restoredReview(lastVisible, row.path) &&
+        (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
+      )
+        throw new WorkspaceError('workspace_foreign_checkout');
+      if (!previous && !scratch) {
+        if (!lastVisible || !this.restoredReview(lastVisible, row.path)) {
+          if (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
+            throw new WorkspaceError('workspace_foreign_checkout');
+        }
+      } else {
+        if (
+          scratch &&
+          !previous &&
+          pathStat(join(row.path, '.git')) &&
+          !(lastVisible && this.restoredReview(lastVisible, row.path)) &&
+          (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
+        )
+          throw new WorkspaceError('workspace_foreign_checkout');
+        if (previous) {
+          const dot = lstatSync(join(row.path, '.git'));
+          if (
+            !dot.isDirectory() ||
+            dot.isSymbolicLink() ||
+            existsSync(join(row.path, '.git/objects/info/alternates'))
+          )
+            throw new WorkspaceError('workspace_foreign_checkout');
+        }
+        renameSync(row.path, preserved);
+      }
+    }
+    // Only a completed prior launch can have owned this path. A preparation interrupted
+    // after the rename may have left a partial checkout; it has never run an agent.
+    if (pathStat(row.path)) rmSync(row.path, { recursive: true, force: true });
+    mkdirSync(row.path, { mode: 0o700 });
+    const bundle = join(dirname(cache), `checkout-${hash(row.launch_id)}.bundle`);
+    const pending = this.mergeMetadata(row);
+    const refs = [row.head_oid, ...(pending ? [pending.secondParent] : [])].map(
+      (commit) => `refs/merv/known/${commit}`,
+    );
+    try {
+      await this.git.ok(['--git-dir', cache, 'bundle', 'create', bundle, ...refs]);
+      await this.git.ok([
+        'init',
+        '--quiet',
+        `--template=${join(this.root, 'empty-template')}`,
+        row.path,
+      ]);
+      await this.git.ok(['bundle', 'unbundle', bundle], { cwd: row.path });
+    } finally {
+      rmSync(bundle, { force: true });
+    }
+    await this.git.ok(
+      row.branch
+        ? ['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid]
+        : ['checkout', '--quiet', '--force', '--detach', row.head_oid],
+      { cwd: row.path },
+    );
+    if (!pathStat(preserved) || (row.read_only && previous && this.priorCaptureRefused(previous)))
+      return;
+    const sourceHead = previous?.result_json
+      ? (JSON.parse(previous!.result_json) as SessionWorkspace).headOid
+      : previous?.head_oid;
+    if (sourceHead && !(await this.has(cache, sourceHead)))
+      throw new WorkspaceError('workspace_transfer_lost');
+    const tracked = sourceHead
+      ? new Set(
+          (
+            await this.git.ok([
+              '--git-dir',
+              cache,
+              'ls-tree',
+              '-r',
+              '-z',
+              '--name-only',
+              sourceHead,
+            ])
+          )
+            .split('\0')
+            .filter(Boolean),
+        )
+      : new Set<string>();
+    cpSync(preserved, row.path, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true,
+      force: false,
+      errorOnExist: false,
+      filter: (source, target) => {
+        if (source === preserved) return true;
+        const name = relative(preserved, source);
+        if (name === '.git' || name.startsWith(`.git${sep}`) || tracked.has(name)) return false;
+        const entry = lstatSync(source);
+        if (!(
+          entry.isDirectory() ||
+          entry.isSymbolicLink() ||
+          (entry.isFile() && entry.nlink === 1)
+        ))
+          throw new WorkspaceError('workspace_foreign_path');
+        const parent = realpathSync(dirname(target));
+        if (parent !== row.path && !parent.startsWith(row.path + sep))
+          throw new WorkspaceError('workspace_foreign_path');
+        return true;
+      },
+    });
   }
 
   /** Import only this checkout's immutable objects, never its mutable Git configuration. */

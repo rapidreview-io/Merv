@@ -375,6 +375,32 @@ from step 1 have to be done again.
 - **Rollback.** An older Main ignores `MERV_PI_MODELS` and runs every
   conversation on `gpt-6-luna`; the stored models are kept for a roll forward.
 
+## Retaining a CPU host between workflow phases
+
+Reuse is off by default. After the exact hosted image passes the retained-workflow Linux
+isolation and multi-phase gates, set `MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS=true` and
+`MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS` to a JSON array of approved `srp_` IDs.
+These are exact Sandboxes runtime profile IDs, not release IDs, provider names or image tags.
+The ID hashes the JSON array `[provider, offerId, releaseId, leaseSeconds, ttlSeconds]` with
+SHA-256 and prefixes `srp_`; use the rendered lease (clamped to 900 seconds for workflows)
+and the TTL default of 300. The profile identity is checked against the native runtime
+constructor by the renderer regression test.
+
+Workflows rent the first configured runtime. The renderer enables reuse only when that exact
+profile is approved. An empty or stale list keeps workflow execution enabled in the existing
+single-session mode. The hosted release switch deliberately preserves the approval list:
+a new image changes the profile ID and therefore falls back until its gates pass and its
+new ID is explicitly approved. Rollback enables reuse only if the restored profile was
+explicitly approved; an older unapproved image stays in single-session mode. Do not copy
+approval to a new hash based only on a successful Pi canary. Keep only reviewed profiles
+in the list, back up the private env and dry-run the renderer before recreating Main.
+
+Disabling reuse or removing an active profile's approval fences existing retained hosts and
+starts their normal Fleet cleanup. Make activation or retirement during a quiet window;
+retained files that were never uploaded are not a VM-loss recovery promise. Session actors,
+credentials, capture/transcript barriers, per-phase deadlines and billing remain independent
+for each phase; idle retention is bounded to five minutes and by the allocation deadline.
+
 ## Restarts and limits
 
 - Changing `hostedCodexPlatform` (including its model or effort) requires Main and

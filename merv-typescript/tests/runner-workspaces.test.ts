@@ -27,7 +27,11 @@ import { validateRunnerConfig } from '../packages/runner/src/index.js';
 
 function setup(
   t: TestContext,
-  options: { largeTrackedFile?: boolean; assignmentScratch?: boolean } = {},
+  options: {
+    largeTrackedFile?: boolean;
+    assignmentScratch?: boolean;
+    workInstanceId?: string;
+  } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-workspaces-'));
   const assignmentPath = options.assignmentScratch ? join(directory, 'assignments') : undefined;
@@ -85,7 +89,12 @@ function setup(
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: 'project', sourceId: 'source-digest' },
   });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(ledger, config, assignmentWorkspaceDirectory);
+  let manager = new GitWorkspaceManager(
+    ledger,
+    config,
+    assignmentWorkspaceDirectory,
+    options.workInstanceId,
+  );
   const reserve = (id: string) =>
     ledger.reserve({
       id,
@@ -124,7 +133,12 @@ function setup(
   const stop = (id: string) => ledger.end(id, 'cancelled_before_spawn', 'reserved');
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(ledger, config, assignmentWorkspaceDirectory);
+    manager = new GitWorkspaceManager(
+      ledger,
+      config,
+      assignmentWorkspaceDirectory,
+      options.workInstanceId,
+    );
     return manager;
   };
   t.after(() => {
@@ -182,6 +196,48 @@ test('isolated scratch cwd is outside the private ledger while Git storage stays
   assert.equal(await f.manager.capture(scratch), undefined);
   await f.manager.close(scratch);
   assert.equal(readFileSync(join(handle.path, 'result.txt'), 'utf8'), 'assignment output\n');
+});
+
+test('one work item retains exactly one scratch cwd across sequential sessions and controller restart', async (t) => {
+  const f = setup(t, { assignmentScratch: true, workInstanceId: 'instance' });
+  const paths: string[] = [];
+  for (const name of ['planner', 'design-reviewer', 'executor', 'results-reviewer']) {
+    const record = f.reserve(name);
+    const handle = await f.manager.prepare(record, f.session(name, { mode: 'none' }));
+    paths.push(handle.path);
+    if (name === 'planner')
+      writeFileSync(join(handle.path, 'dataset.txt'), 'retained research data');
+    assert.equal(readFileSync(join(handle.path, 'dataset.txt'), 'utf8'), 'retained research data');
+    f.stop(name);
+    await f.manager.capture(record);
+    await f.manager.close(record);
+    f.reopen();
+  }
+  assert.equal(new Set(paths).size, 1);
+  assert.equal(
+    paths[0],
+    join(f.assignmentWorkspaceDirectory!, createHash('sha256').update('instance').digest('hex')),
+  );
+  const other = f.reserve('other');
+  await assert.rejects(
+    f.manager.prepare(other, f.session('other', { mode: 'none' }, { instanceId: 'different' })),
+    /workspace_work_mismatch/,
+  );
+});
+
+test('a retained workspace cannot pass from a running or uncaptured session to another', async (t) => {
+  const f = setup(t, { assignmentScratch: true, workInstanceId: 'instance' });
+  const first = f.reserve('first'),
+    second = f.reserve('second');
+  const handle = await f.manager.prepare(first, f.session('first', { mode: 'none' }));
+  writeFileSync(join(handle.path, 'pending.txt'), 'must survive');
+  await assert.rejects(
+    f.manager.prepare(second, f.session('second', { mode: 'none' })),
+    /workspace_owned_by_another_launch/,
+  );
+  f.stop('first');
+  await assert.rejects(f.manager.close(first), /workspace_capture_required/);
+  assert.equal(readFileSync(join(handle.path, 'pending.txt'), 'utf8'), 'must survive');
 });
 
 test("an isolated machine takes no runner repository: its Git checkouts are its driver's", () => {

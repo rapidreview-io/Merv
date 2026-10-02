@@ -86,7 +86,7 @@ const LEASE = `s.id,s.instance_id,s.status,s.owner_hash,s.runner_id,x.j #>> '{ro
 const FROM = `FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
   LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
   LEFT JOIN session_runners r ON r.owner_hash=s.owner_hash AND r.runner_id=s.runner_id
-  LEFT JOIN session_managed_runners m ON m.bound_session_id=s.id`;
+  LEFT JOIN session_managed_runners m ON m.bound_session_id=s.id OR EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.allocation_id=m.allocation_id AND a.session_id=s.id)`;
 interface LeaseRow {
   id: string;
   instance_id: string;

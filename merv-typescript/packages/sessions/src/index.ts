@@ -473,6 +473,7 @@ export class LeasedSessions implements Sessions {
         { version: 8, sql: managedNoncePostgresMigration },
         { version: 9, sql: postgresMigrations[9] },
         { version: 10, sql: postgresMigrations[10] },
+        { version: 11, sql: postgresMigrations[11] },
       ]);
       this.credentials = new CredentialStore(state, this.clock);
       await this.credentials.initialize();
@@ -867,7 +868,8 @@ export class LeasedSessions implements Sessions {
     const managedHandoff =
       reason === 'handoff' &&
       (await tx.get(
-        'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?',
+        'SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=? UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?',
+        session.id,
         session.id,
       ));
     if (credential && !managedHandoff)
@@ -1952,7 +1954,8 @@ export class LeasedSessions implements Sessions {
           409,
         );
         if (caller.managed) {
-          const { row } = await this.managed.require(caller, tx);
+          const host = (await this.managed.require(caller, tx)).row;
+          const row = await this.managed.forSession(host, session.id, tx);
           check(
             row.source_json === canonical(session.source) && row.runner_id === session.runnerId,
             'session_forbidden',
@@ -2017,6 +2020,7 @@ export class LeasedSessions implements Sessions {
     hostRef: string,
     tx: Transaction,
   ): Promise<AccountIdentity | null> {
+    row = await this.managed.forSession(row, session.id, tx);
     check(
       row.source_json === canonical(session.source) && session.runnerId === row.runner_id,
       'session_forbidden',
@@ -2244,7 +2248,7 @@ export class LeasedSessions implements Sessions {
       if (live(session) && !(await this.handedOff(session, tx))) await this.reconcile(session, tx);
       const released = await this.closeReleased(session, control, tx);
       if (usage) await this.reportUsage(released, usage, tx);
-      if (caller.managed) await this.managed.acknowledgeRelease(caller, tx);
+      if (caller.managed) await this.managed.acknowledgeRelease(caller, session.id, tx);
       return released;
     });
   }

@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { deploymentSchema, fleetRuntimes, piModels, sandboxConnections } from './schema.mjs';
 
 const required = (name) => {
@@ -47,6 +48,18 @@ const json = (name) => {
 };
 const fleetEnabled = optIn('MERV_FLEET_ENABLED');
 const workflowEnabled = optIn('MERV_FLEET_WORKFLOW_ENABLED');
+const reuseWorkHosts = optIn('MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS');
+const approvedWorkHostProfiles =
+  process.env.MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS === undefined
+    ? []
+    : json('MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS');
+if (
+  !Array.isArray(approvedWorkHostProfiles) ||
+  approvedWorkHostProfiles.length > 32 ||
+  approvedWorkHostProfiles.some((id) => typeof id !== 'string' || !/^srp_[0-9a-f]{64}$/.test(id)) ||
+  new Set(approvedWorkHostProfiles).size !== approvedWorkHostProfiles.length
+)
+  throw new Error('Invalid MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS');
 const piEnabled = optIn('MERV_PI_ENABLED');
 const nativeComputeEnabled = optIn('MERV_SANDBOXES_NATIVE_ENABLED');
 if (nativeComputeEnabled && process.env.MERV_SANDBOXES_URL === undefined)
@@ -289,12 +302,29 @@ if (fleetEnabled) {
     }
     const modelApiKeyEnv = envName('MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV');
     if (!process.env[modelApiKeyEnv]) throw new Error('Fleet workflow credential is unavailable');
+    // Fleet workflows rent the first configured profile. Match SandboxRuntimeRunner's exact
+    // immutable identity after lease clamping. A release switch never grants reuse implicitly:
+    // unapproved images continue with the established one-session supervisor.
+    const profile = runtimes[0];
+    const defaultProfileId = `srp_${createHash('sha256')
+      .update(
+        JSON.stringify([
+          profile.provider,
+          profile.offerId,
+          profile.releaseId,
+          profile.leaseSeconds,
+          profile.ttlSeconds ?? 300,
+        ]),
+      )
+      .digest('hex')}`;
     config.plugins.push({
       id: 'fleet-workflow',
       name: '@merv/fleet/workflow',
       config: {
         enabled: true,
         people,
+        reuseWorkHosts: reuseWorkHosts && approvedWorkHostProfiles.includes(defaultProfileId),
+        reusableRuntimeProfileIds: approvedWorkHostProfiles,
         modelApiKeyEnv,
         baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
         maxAgents: integer('MERV_FLEET_WORKFLOW_MAX_AGENTS', 10, 1, 64),

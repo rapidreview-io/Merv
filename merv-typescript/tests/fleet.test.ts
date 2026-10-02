@@ -1521,3 +1521,26 @@ test('a new machine whose launch is refused is retried after a second; an older 
   await f.fleet.tick();
   assert.equal(launches(old.id), 2);
 });
+
+test('failed protected runtime stops independently of pending owner capture and release acknowledgement', async (t) => {
+  const f = await fixture(t);
+  const allocation = await f.fleet.request(f.caller, input('cleanup-failed'));
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const live = f.runtimes.byKey.values().next().value!;
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'running');
+  // Runtime inspection reports the failed supervisor; owner still owes all cleanup receipts.
+  f.owner.observe = async () => assert.fail('failed runtime must not wait for owner settlement');
+  Object.assign(live, { state: 'failed', ready: false, revision: live.revision + 1 });
+  await f.fleet.tick();
+  const stopping = await f.fleet.inspect(f.caller, allocation.id);
+  assert.equal(stopping.intent, 'stop');
+  assert.equal(stopping.phase, 'releasing');
+  assert.equal(
+    await f.state.transaction((tx) => f.fleet.admits(allocation.id, allocation.epoch, tx)),
+    false,
+  );
+  assert.deepEqual(f.runtimes.stopped, [live.sandboxId]);
+  f.runtimes.confirmStopped(live.sandboxId);
+  await f.fleet.tick();
+  assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
+});

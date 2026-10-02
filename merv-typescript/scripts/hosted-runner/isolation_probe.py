@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import select
 import signal
 import socket
@@ -340,7 +341,12 @@ def _report(workspace: Path, result: dict[str, object]) -> Path:
         pass
     _private(REPORT_DIR, 0o755, True)
     path = REPORT_DIR / f"{workspace.name}.json"
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+    if path.exists() or path.is_symlink():
+        _private(path, 0o444, False)
+    # Each session re-attests its actual ancestry. Publish the latest receipt
+    # atomically at the stable workspace path; never reuse a prior receipt.
+    temporary = REPORT_DIR / f".{workspace.name}-{secrets.token_hex(16)}.json"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
                          0o444)
     try:
         os.fchmod(descriptor, 0o444)
@@ -351,8 +357,9 @@ def _report(workspace: Path, result: dict[str, object]) -> Path:
             output.write(payload)
             output.flush()
         os.fsync(descriptor)
+        os.replace(temporary, path)
     except BaseException:
-        os.unlink(path)
+        temporary.unlink(missing_ok=True)
         raise
     finally:
         os.close(descriptor)
@@ -395,7 +402,7 @@ def attest_workflow(workspace: Path) -> Path:
         if (verified_roots != roots or verified_id != launch_id
                 or _socket(roots["guardian"]["pid"], launch_id) != endpoint):
             raise IsolationUnavailable("isolation targets changed during probe")
-        return _report(workspace, {"workspace": workspace.name, "roots": roots,
+        return _report(workspace, {"workspace": workspace.name, "launch_id": launch_id, "roots": roots,
                                    "socket": endpoint, "context": context, **child})
     except (OSError, ValueError, KeyError, IndexError) as error:
         raise IsolationUnavailable("isolation probe failed") from None

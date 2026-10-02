@@ -99,6 +99,8 @@ const configSchema = z
       .optional(),
     /** A managed machine admits at most one durable assignment during its lifetime. */
     oneAssignment: z.boolean().optional(),
+    /** Keep this hosted machine's workspace across separate sessions of exactly one work item. */
+    workInstanceId: z.string().min(1).max(200).optional(),
     capacity: z.number().int().min(0).max(256).optional(),
     pollIntervalMs: z.number().int().min(100).max(30_000).optional(),
     requestTimeoutMs: z.number().int().min(100).max(30_000).optional(),
@@ -120,17 +122,29 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
     'invalid_runner_config',
     'Runner profile names must be distinct',
   );
-  if (parsed.data.assignmentWorkspaceDirectory || parsed.data.oneAssignment)
+  if (
+    parsed.data.assignmentWorkspaceDirectory ||
+    parsed.data.oneAssignment ||
+    parsed.data.workInstanceId
+  )
     check(
       profiles.length === 1 &&
         profiles[0].harness === 'codex' &&
         !!profiles[0].isolatedLauncher &&
         profiles[0].parallelism === 1 &&
         parsed.data.capacity === 1 &&
-        (!parsed.data.assignmentWorkspaceDirectory || parsed.data.oneAssignment === true),
+        (!parsed.data.assignmentWorkspaceDirectory ||
+          parsed.data.oneAssignment === true ||
+          !!parsed.data.workInstanceId),
       'invalid_runner_config',
-      'One assignment requires one isolated Codex profile and capacity one',
+      'A hosted workspace requires one isolated Codex profile and capacity one',
     );
+  check(
+    !parsed.data.workInstanceId ||
+      (!!parsed.data.assignmentWorkspaceDirectory && !parsed.data.oneAssignment),
+    'invalid_runner_config',
+    'A retained work host requires an assignment root and sequential sessions',
+  );
   // An isolated machine's Git checkouts are its workspace driver's; the runner's own
   // repository gives it only scratch directories.
   check(
@@ -246,6 +260,7 @@ export class MachineRunner implements Runner {
   private readonly clock: () => number;
   private readonly autoPoll: boolean;
   private readonly sourceBearer: string;
+  private readonly resetAssignment?: () => Promise<void>;
   private state: RunnerSnapshot['state'] = 'starting';
   private lastError?: string;
   private timer?: ReturnType<typeof setInterval>;
@@ -268,9 +283,17 @@ export class MachineRunner implements Runner {
       autoPoll?: boolean;
       /** Workspace drivers other plugins own; whoever composes the machine supplies them. */
       drivers?: WorkspaceDriverFactory[];
+      /** Trusted hosted-runtime barrier: kill all assignment descendants and clear private state. */
+      resetAssignment?: () => Promise<void>;
     } = {},
   ) {
     const parsed = validateRunnerConfig(config);
+    check(
+      !parsed.workInstanceId || options.resetAssignment,
+      'invalid_runner_config',
+      'A retained work host requires an assignment cleanup barrier',
+    );
+    this.resetAssignment = parsed.workInstanceId ? options.resetAssignment : undefined;
     this.profiles = parsed.profiles;
     this.config = {
       ...parsed,
@@ -310,10 +333,24 @@ export class MachineRunner implements Runner {
     });
     this.host = new ProcessHost(this.ledger, source);
     try {
+      check(
+        !this.config.workInstanceId ||
+          this.ledger
+            .list()
+            .every(
+              (record) =>
+                (record.metadata.session as unknown as SessionView | undefined)?.instanceId ===
+                this.config.workInstanceId,
+            ),
+        'invalid_runner_config',
+        'Retained runner history belongs to another work item',
+      );
       this.workspaces = new GitWorkspaceManager(
         this.ledger,
         this.config.workspace,
         this.config.assignmentWorkspaceDirectory,
+        this.config.workInstanceId,
+        (id) => this.previousWorkspace(id),
       );
       for (const factory of options.drivers ?? [])
         try {
@@ -323,6 +360,8 @@ export class MachineRunner implements Runner {
               {
                 directory: this.ledger.directory,
                 assignmentWorkspaceDirectory: this.config.assignmentWorkspaceDirectory,
+                workInstanceId: this.config.workInstanceId,
+                previousWorkspace: (id) => this.previousWorkspace(id),
                 path: this.ledger.path,
                 terminal: (id) => terminalLaunch(this.ledger.get(id)!),
               },
@@ -386,6 +425,19 @@ export class MachineRunner implements Runner {
   private local(record: LaunchRecord): boolean {
     return typeof record.metadata.workspaceDriver !== 'string';
   }
+  private previousWorkspace(id: string) {
+    if (!this.config.workInstanceId) return undefined;
+    const record = this.ledger.previousSettled(id);
+    if (
+      !record ||
+      !terminalLaunch(record) ||
+      (record.metadata.session as unknown as SessionView | undefined)?.instanceId !==
+        this.config.workInstanceId
+    )
+      return undefined;
+    const workspace = this.driverOf(record)?.get(record.id);
+    return workspace?.status === 'closed' ? workspace : undefined;
+  }
   private occupied(record: LaunchRecord): boolean {
     const workspace = this.driverOf(record)?.get(record.id);
     return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
@@ -393,6 +445,9 @@ export class MachineRunner implements Runner {
   /** A managed machine admits one assignment in its lifetime. */
   private assigned(): boolean {
     return !!this.config.oneAssignment && this.ledger.count() > 0;
+  }
+  private managed(): boolean {
+    return !!(this.config.oneAssignment || this.config.workInstanceId);
   }
   /** The ledger detaches and bounds the patch; only the source bearer is known here. */
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
@@ -407,8 +462,10 @@ export class MachineRunner implements Runner {
     // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`) and names
     // `git.local` exactly when it has a repository of its own for work that names no driver.
     // A managed runner's capabilities must equal its enrolment, so it names only its drivers.
-    const marker = this.config.oneAssignment
-      ? []
+    const marker = this.managed()
+      ? this.config.workInstanceId
+        ? ['workflow.workhost.1']
+        : []
       : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
     // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
@@ -479,6 +536,9 @@ export class MachineRunner implements Runner {
     }
     this.ledger.settle(settled);
     if (this.stopping) return;
+    // One work host advances only after process cleanup, capture, release and transcript settled.
+    // A terminal process alone is not enough: its durable handoff may still be outstanding.
+    if (this.config.workInstanceId && this.ledger.open().length) leasing = false;
     // Existing uncertain requests are retried first, preserving their original platform and secret.
     for (const pending of this.ledger.pendingRequests()) {
       if (this.stopping || !leasing) break;
@@ -553,6 +613,11 @@ export class MachineRunner implements Runner {
         return;
       }
       this.lastDeclined = undefined;
+      check(
+        !this.config.workInstanceId || session.instanceId === this.config.workInstanceId,
+        'invalid_control_response',
+        'Retained machine received another work item',
+      );
       check(
         !this.config.oneAssignment ||
           this.ledger.list().every((record) => record.sessionId === session.id),
@@ -658,6 +723,10 @@ export class MachineRunner implements Runner {
       // What a failure costs: the workspace before the attach, the launch after it.
       let outcome: SessionReleaseOutcome = 'workspace_failed';
       try {
+        if (this.resetAssignment && record.metadata.assignmentPrepared !== true) {
+          await this.resetAssignment();
+          record = this.save(record.id, { assignmentPrepared: true });
+        }
         if (
           this.local(record) &&
           this.config.workspace &&
@@ -816,6 +885,12 @@ export class MachineRunner implements Runner {
    * once nothing is. One whose driver is gone waits for it.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
+    // ProcessHost proves its process group ended; the hosted boundary also removes escaped
+    // descendants. Never capture a tree a previous worker can still change.
+    if (this.resetAssignment && record.metadata.assignmentStopped !== true) {
+      await this.resetAssignment();
+      record = this.save(record.id, { assignmentStopped: true });
+    }
     if (record.metadata.usageReported !== true) {
       record = await this.declare(record);
       record = await this.release(record);
@@ -826,7 +901,7 @@ export class MachineRunner implements Runner {
       return false;
     }
     const workspace = driver.get(record.id);
-    if (!workspace || workspace.status === 'closed') return await this.deliver(record);
+    if (!workspace || workspace.status === 'closed') return await this.finishAssignment(record);
     const result = await driver.capture(record);
     // Work the capture moved aside or rescued is reported, never passed over in silence.
     const notes = this.ledger.get(record.id)?.metadata.workspaceNotes;
@@ -852,6 +927,15 @@ export class MachineRunner implements Runner {
       record = this.save(record.id, { workspaceReported: true });
     }
     await driver.close(record);
+    return await this.finishAssignment(record);
+  }
+  private async finishAssignment(record: LaunchRecord): Promise<boolean> {
+    // Capture helpers touch untrusted checkout content too. Close their descendants and
+    // private state before admitting the next independent agent, including after restart.
+    if (this.resetAssignment && record.metadata.assignmentSettled !== true) {
+      await this.resetAssignment();
+      record = this.save(record.id, { assignmentSettled: true });
+    }
     return await this.deliver(record);
   }
   /**
@@ -957,7 +1041,7 @@ export class MachineRunner implements Runner {
     // raced it still counts. Hosted stops and source-refusal halts stay counted: `released`
     // has no backoff, so a repeated eviction or a poison 401 would re-offer the work at once.
     const byStop =
-      !this.config.oneAssignment &&
+      !this.managed() &&
       (this.stopping || metadata.runnerStopped === true) &&
       ['controller_stop', 'external_stop', 'cancelled_before_spawn'].includes(record.reason ?? '');
     // A successful process exit does not prove that its workflow gate was completed.
@@ -967,7 +1051,7 @@ export class MachineRunner implements Runner {
       (byStop ? undefined : failed);
     let session: Session | undefined;
     // A managed runner acknowledges its local stop even when a handoff left no usage.
-    if (!remote || usage || this.config.oneAssignment) {
+    if (!remote || usage || this.managed()) {
       const input = remote
         ? { usage }
         : { outcome, reason: terminalReason(record), usage, deferral: deferralOf(record) };
@@ -1118,7 +1202,7 @@ export class MachineRunner implements Runner {
       // What this stop ends is released uncounted (see release()). The flag outlives a
       // controller that exits before those releases go out, and ended launches carry it too:
       // the same stop's group SIGTERM may have reached their guardian first.
-      if (!this.config.oneAssignment)
+      if (!this.managed())
         for (const record of this.ledger.open())
           if (record.metadata.usageReported !== true) this.save(record.id, { runnerStopped: true });
       await this.current;

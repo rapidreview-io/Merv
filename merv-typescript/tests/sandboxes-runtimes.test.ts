@@ -63,6 +63,7 @@ function fixture(
   t: TestContext,
   reply: (call: Call) => Response,
   runtimes: (typeof profile & { key: string })[] | null = [{ key: 'standard', ...profile }],
+  customJobReply = false,
 ) {
   const oldUrl = process.env[urlEnv];
   const oldToken = process.env[tokenEnv];
@@ -85,6 +86,13 @@ function fixture(
       namespace: headers.get('x-sandbox-namespace'),
     };
     calls.push(call);
+    if (call.path === '/v1/jobs/rtj_1' && !customJobReply)
+      return Response.json({
+        id: 'rtj_1',
+        sandbox_id: 'sbx_1',
+        namespace: connection.namespace,
+        state: 'running',
+      });
     if (call.path === '/v1/auth/me')
       return Response.json({ role: 'consumer', namespace: connection.namespace });
     return reply(call);
@@ -466,5 +474,78 @@ test('an old protected sandbox remains inspectable and stoppable after profile c
   await assert.rejects(service.runtimes!.launch(connection.projectId, old, 'run_1', 'secret'), {
     code: 'sandbox_runtime_unavailable',
   });
+  await service.close();
+});
+
+test('protected job exit fences reuse without pretending its capture or provider stop completed', async (t) => {
+  let jobState = 'running',
+    sandboxState = 'ready';
+  let wrongJob = false;
+  const { calls, service } = fixture(
+    t,
+    (call) => {
+      if (call.path === '/v1/sandboxes/sbx_1') return Response.json(record(sandboxState));
+      if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'GET')
+        return Response.json(launchReceipt('consumed'));
+      if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'DELETE') {
+        sandboxState = 'deleting';
+        return Response.json(record(sandboxState));
+      }
+      if (call.path === '/v1/jobs/rtj_1')
+        return Response.json({
+          id: wrongJob ? 'other-job' : 'rtj_1',
+          sandbox_id: 'sbx_1',
+          namespace: connection.namespace,
+          state: jobState,
+          command: 'private command',
+          error: { message: 'private diagnostic' },
+        });
+      throw Error('unexpected route');
+    },
+    [{ key: 'standard', ...profile }],
+    true,
+  );
+  const current: SandboxRuntimeHandle = {
+    sandboxId: 'sbx_1',
+    state: 'ready',
+    ready: true,
+    deleted: false,
+    leaseExpiresAt: '2099-01-01T00:00:00Z',
+    revision: 1,
+    launch: {
+      sandboxId: 'sbx_1',
+      launchId: 'rln_1',
+      operationKey: 'run_1',
+      releaseId,
+      jobId: 'rtj_1',
+      state: 'consumed',
+      deliveryState: 'launched',
+      expiresAt: '2099-01-01T00:00:00Z',
+    },
+  };
+  for (const state of ['queued', 'launching', 'running', 'cancel_requested']) {
+    jobState = state;
+    assert.equal(
+      (await service.runtimes!.inspect(connection.projectId, current)).ready,
+      true,
+      'live supervisor still owns capture and Pi idle lifetime',
+    );
+  }
+  for (const state of ['failed', 'cancelled', 'timed_out', 'succeeded']) {
+    jobState = state;
+    const exited = await service.runtimes!.inspect(connection.projectId, current);
+    assert.deepEqual([exited.state, exited.ready, exited.deleted], ['failed', false, false]);
+    assert.equal(JSON.stringify(exited).includes('private'), false);
+  }
+  wrongJob = true;
+  await assert.rejects(service.runtimes!.inspect(connection.projectId, current), {
+    code: 'sandbox_runtime_unavailable',
+  });
+  wrongJob = false;
+  const pending = await service.runtimes!.stop(connection.projectId, current);
+  assert.deepEqual([pending.state, pending.deleted], ['deleting', false]);
+  sandboxState = 'stopped';
+  assert.equal((await service.runtimes!.inspect(connection.projectId, pending)).deleted, true);
+  assert.equal(calls.filter((call) => call.method === 'DELETE').length, 1);
   await service.close();
 });

@@ -3,6 +3,10 @@ import type { DelegationSource, Transaction } from '@merv/contracts';
 import type { RunnerPlatform, Session } from './types.js';
 
 export interface ManagedRunnerBindingIdentity {
+  /** Opt-in affinity to one workflow instance across fresh sessions. */
+  workInstanceId?: string;
+  /** Per-phase cap, independent of the host deadline. */
+  stepSeconds?: number;
   allocationId: string;
   epoch: number;
   source: DelegationSource;
@@ -16,6 +20,11 @@ export type ManagedRunnerValidator = {
   admits(allocationId: string, epoch: number, tx: Transaction): Promise<boolean>;
   /** Whether its last look rented machines for this project's automatic work. */
   serves?(projectId: string): boolean;
+  /** Trusted phase directors; host registration and billing remain under its original source. */
+  assignmentSources?(
+    binding: ManagedRunnerBindingIdentity,
+    tx: Transaction,
+  ): Promise<DelegationSource[]>;
   /** A machine no longer current because a release retired its image, not for any fault. */
   retired?(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
 };
@@ -36,6 +45,7 @@ export interface ManagedModelGrant {
   expiresAt: string;
 }
 export interface ManagedRunnerInspection {
+  workInstanceId?: string;
   runnerId: string | null;
   /** After this no runner can enroll on the allocation. */
   enrollmentExpiresAt: string;
@@ -53,6 +63,8 @@ export interface ManagedRunnerInspection {
   } | null;
 }
 export interface ManagedBindingRow {
+  work_instance_id: string | null;
+  step_seconds: number | null;
   allocation_id: string;
   epoch: number;
   project_id: string;

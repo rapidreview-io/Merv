@@ -1,6 +1,8 @@
-/** Fixed one-assignment supervisor. Bootstrap carries expiring enrollment only; Codex calls the
+/** Hosted workflow supervisor. Bootstrap carries expiring enrollment only; Codex calls the
  *  model through Main's relay with its session bearer, so no provider key reaches the machine. */
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -13,12 +15,29 @@ const schema = z
     baseUrl: z.string().url(),
     projectId: z.string().min(1),
     enrollmentToken: z.string().regex(/^me_[0-9a-f]{64}$/),
+    workInstanceId: z.string().min(1).max(200).optional(),
   })
   .strict();
 const directory = '/var/lib/merv-runner';
 const launcher = '/opt/merv/runtime/assignment-probed.py';
 const codex = '/opt/merv/bin/codex';
 const assignmentRoot = '/workspace/assignments';
+const execute = promisify(execFile);
+const resetAssignment = async () => {
+  // No shell, paths, credentials or user-selected UID cross this root-only barrier.
+  try {
+    await execute(launcher, ['--reset'], {
+      cwd: '/',
+      env: { PATH: '/usr/bin:/bin' },
+      timeout: 30_000,
+      maxBuffer: 4096,
+    });
+  } catch {
+    throw Object.assign(new Error('Assignment cleanup failed'), {
+      code: 'assignment_cleanup_failed',
+    });
+  }
+};
 const status = (state: string) =>
   writeFileSync(
     `${directory}/status.json`,
@@ -74,14 +93,18 @@ async function main() {
       projectId: data.projectId,
       credentialEnv: 'MERV_HOSTED_SOURCE',
       capacity: 1,
-      oneAssignment: true,
+      ...(data.workInstanceId ? { workInstanceId: data.workInstanceId } : { oneAssignment: true }),
       assignmentWorkspaceDirectory: assignmentRoot,
       workspaceDrivers: ['code'],
       profiles: [
         { ...hostedCodexPlatform, executable: codex, isolatedLauncher: launcher, hosted: true },
       ],
     },
-    { autoPoll: false, drivers: [codeWorkspaceDriver] },
+    {
+      autoPoll: false,
+      drivers: [codeWorkspaceDriver],
+      ...(data.workInstanceId ? { resetAssignment } : {}),
+    },
   );
   delete process.env.MERV_HOSTED_SOURCE;
   controlToken = '';
@@ -100,9 +123,11 @@ async function main() {
     status('connected');
     while (!stopping) {
       const snapshot = runner.snapshot();
-      if (snapshot.launches.length > 1) throw new Error('one-assignment invariant failed');
+      if (!data.workInstanceId && snapshot.launches.length > 1)
+        throw new Error('one-assignment invariant failed');
       const launch = snapshot.launches[0];
       if (
+        !data.workInstanceId &&
         launch &&
         ['exited', 'stopped'].includes(launch.status) &&
         !launch.releasePending &&
@@ -112,10 +137,13 @@ async function main() {
         status('finished');
         return;
       }
-      if (!launch && Date.now() > emptyUntil) {
+      if (!data.workInstanceId && !launch && Date.now() > emptyUntil) {
         status('empty');
         return;
       }
+      if (snapshot.state === 'unauthorized') return;
+      if (snapshot.lastError === 'assignment_cleanup_failed')
+        throw new Error('assignment cleanup failed');
       await delay(500);
       await runner.tick();
     }

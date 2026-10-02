@@ -49,6 +49,10 @@ export interface WorkspaceDriverHost {
   directory: string;
   /** Image-provisioned root for assignment-owned independent hosted checkouts. */
   assignmentWorkspaceDirectory?: string;
+  /** A hosted machine retained for this one work item; every phase uses the same cwd. */
+  workInstanceId?: string;
+  /** Last fully settled phase of this same work item, authenticated by the runner's private ledger. */
+  previousWorkspace?(launchId: string): WorkspaceHandle | undefined;
   /** The ledger database, in which a driver may keep its own tables beside the runner's. */
   path: string;
   /** Whether the launch's process has provably stopped. */

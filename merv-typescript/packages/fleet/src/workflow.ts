@@ -33,6 +33,9 @@ import {
 const workflowConfig = z
   .object({
     enabled: z.boolean().default(false),
+    reuseWorkHosts: z.boolean().default(false),
+    /** Exact profile hashes include their protected image release; deployment opt-in only. */
+    reusableRuntimeProfileIds: z.array(z.string().min(1)).max(32).default([]),
     /** Whose choice of Fleet it serves: sign-in identities as 'issuer subject', or '*' for all. */
     people: z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))
@@ -53,6 +56,10 @@ const workflowConfig = z
 export type FleetWorkflowConfig = z.input<typeof workflowConfig>;
 
 const ownerKind = 'workflow';
+const workHostCapability = 'workflow.workhost.1';
+const workIdleMs = 300_000;
+const workId = (a: FleetAllocation) =>
+  a.owner.id.startsWith('work:') ? a.owner.id.slice(5) : undefined;
 const startupGraceMs = 60_000;
 const emptyRunnerGraceMs = 30_000;
 const releaseAckGraceMs = 120_000;
@@ -176,6 +183,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
           admits: async (allocationId, epoch, tx) =>
             await this.fleet.admits(allocationId, epoch, tx),
           serves: (projectId) => this.served.has(projectId),
+          assignmentSources: async (binding, tx) => [
+            binding.source,
+            await this.reviewer(binding.source, tx),
+          ],
           retired: async (binding, tx) => await this.fleet.retired(binding.allocationId, tx),
         }),
       );
@@ -207,6 +218,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
     return (
       this.accepted(a) &&
       a.deadlineAt > new Date(this.clock()).toISOString() &&
+      (!workId(a) ||
+        (this.config.reuseWorkHosts &&
+          this.config.reusableRuntimeProfileIds.includes(a.profileId))) &&
       !!(await this.director(a.source, tx))
     );
   }
@@ -365,9 +379,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
     targets: { instanceId: string; expectedRevision: number }[],
   ) {
     const ids = targets.map(targetId);
-    const allocations = (await this.fleet.listOwned(this, ids)).filter(
-      (a) => a.projectId === caller.projectId,
-    );
+    const allocations = (
+      await this.fleet.listOwned(this, [...ids, ...targets.map((t) => `work:${t.instanceId}`)])
+    ).filter((a) => a.projectId === caller.projectId);
     const grants = await this.retryGrants([caller.projectId]);
     const latest = new Map(
       allocations.filter((a) => ids.includes(a.owner.id)).map((a) => [a.owner.id, a.source]),
@@ -382,21 +396,24 @@ export class FleetWorkflowAdapter implements FleetOwner {
     return await Promise.all(
       targets.map(async ({ instanceId, expectedRevision }) => {
         const id = targetId({ instanceId, expectedRevision });
-        const attempts = allocations.filter((a) => a.owner.id === id);
+        const attempts = allocations.filter(
+          (a) => a.owner.id === id || a.owner.id === `work:${instanceId}`,
+        );
         const prior = grants.get(grantKey(caller.projectId, id))?.prior_allocations;
         const { unclaimed, cooldownUntil: until } = await this.streak(attempts, prior);
         const cooldownUntil = until > this.clock() ? new Date(until).toISOString() : null;
-        const state: keyof typeof retryNext = active.has(id)
-          ? 'active'
-          : !current.has(id)
-            ? 'not_current_demand'
-            : unclaimed >= unclaimedAttemptLimit
-              ? cooldownUntil
-                ? 'exhausted_cooldown'
-                : 'exhausted_unclaimed'
-              : cooldownUntil
-                ? 'cooldown'
-                : 'ready';
+        const state: keyof typeof retryNext =
+          active.has(id) || active.has(`work:${instanceId}`)
+            ? 'active'
+            : !current.has(id)
+              ? 'not_current_demand'
+              : unclaimed >= unclaimedAttemptLimit
+                ? cooldownUntil
+                  ? 'exhausted_cooldown'
+                  : 'exhausted_unclaimed'
+                : cooldownUntil
+                  ? 'cooldown'
+                  : 'ready';
         return {
           instanceId,
           expectedRevision,
@@ -516,18 +533,22 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** Fleet's own reviewer in the owner's project, vouched for by that owner, so a fresh agent
    * reviews what their hand may not: their and Pi's deliveries, and Code-provenance reviews. */
-  private async reviewer(source: DelegationSource): Promise<DelegationSource> {
+  private async reviewer(source: DelegationSource, tx?: Transaction): Promise<DelegationSource> {
     const { projectId } = source;
     const actorId =
       this.reviewers.get(projectId) ??
-      (await this.scope.serviceActor('fleet-review', projectId, undefined, 'reviewer')).actorId;
+      (await this.scope.serviceActor('fleet-review', projectId, tx, 'reviewer')).actorId;
     this.reviewers.set(projectId, actorId);
     return { actorId, projectId, kind: 'service', vouchedBy: source };
   }
   private async current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean> {
     if (
       canonical(binding.platform) !== canonical(hostedCodexPlatform) ||
-      canonical(binding.capabilities) !== canonical([...hostedCodexCapabilities])
+      canonical(binding.capabilities) !==
+        canonical([
+          ...hostedCodexCapabilities,
+          ...(binding.workInstanceId ? [workHostCapability] : []),
+        ])
     )
       return false;
     try {
@@ -538,6 +559,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
         a.deadlineAt > new Date(this.clock()).toISOString() &&
         a.epoch === binding.epoch &&
         a.profileId === binding.runtimeProfileId &&
+        workId(a) === binding.workInstanceId &&
+        (!binding.workInstanceId || binding.stepSeconds === this.config.stepMinutes * 60) &&
+        (!binding.workInstanceId ||
+          (this.config.reuseWorkHosts &&
+            this.config.reusableRuntimeProfileIds.includes(a.profileId))) &&
         a.deadlineAt === binding.expiresAt &&
         digest(a.source) === digest(binding.source)
       );
@@ -559,13 +585,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
       source: a.source,
       runtimeProfileId: a.profileId,
       platform: hostedCodexPlatform,
-      capabilities: [...hostedCodexCapabilities],
+      capabilities: [...hostedCodexCapabilities, ...(workId(a) ? [workHostCapability] : [])],
+      ...(workId(a)
+        ? { workInstanceId: workId(a)!, stepSeconds: this.config.stepMinutes * 60 }
+        : {}),
       expiresAt: a.deadlineAt,
     });
     return JSON.stringify({
       baseUrl: this.config.baseUrl,
       projectId: a.projectId,
       enrollmentToken,
+      ...(workId(a) ? { workInstanceId: workId(a)! } : {}),
     });
   }
   async observe(a: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
@@ -578,6 +608,17 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const observed = await this.sessions.inspectManaged(a.id, a.epoch);
     if (observed?.session) {
       const session = observed.session;
+      if (workId(a)) {
+        // The exact process acknowledgement is required for reuse. Timeout may stop the host,
+        // never authorize a successor while its producer could still run.
+        const closed = session.status === 'released' || session.status === 'expired';
+        if (!closed || session.capturePending) return 'running';
+        if (!session.releaseAcknowledged)
+          return this.clock() - Date.parse(session.closedAt!) >= releaseAckGraceMs
+            ? 'finished'
+            : 'running';
+        return this.clock() - Date.parse(session.closedAt!) >= workIdleMs ? 'finished' : 'running';
+      }
       // A runner whose acknowledgement was lost, as when Main restarts while it closes, never
       // sends another: past the grace its machine stops anyway. The relay metered its tokens.
       const acknowledged =
@@ -655,7 +696,9 @@ export class FleetWorkflowAdapter implements FleetOwner {
     this.served = new Set([...served.keys(), ...[...this.served].filter((p) => failed.has(p))]);
     const allocations = await this.fleet.listOwned(
       this,
-      [...served.values()].flatMap((wanted) => [...wanted.keys()]),
+      [...served.values()].flatMap((wanted) =>
+        [...wanted.keys()].flatMap((id) => [id, `work:${id.slice(0, id.lastIndexOf(':'))}`]),
+      ),
     );
     const newestRefused = Math.max(
       0,
@@ -674,7 +717,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
         a.intent === 'run' &&
         !launched(a) &&
         !failed.has(a.projectId) &&
-        !served.get(a.projectId)?.has(a.owner.id)
+        !(workId(a)
+          ? [...(served.get(a.projectId)?.keys() ?? [])].some((id) =>
+              id.startsWith(`${workId(a)}:`),
+            )
+          : served.get(a.projectId)?.has(a.owner.id))
       )
         await this.fleet.cancelOwned(this, a.id);
     if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
@@ -683,7 +730,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // The allocation names why Fleet rented the runner, but Sessions may assign it another
       // ready step. Once bound, that actual step consumes the coverage; the intended one waits.
       const session = (await this.sessions.inspectManaged(a.id, a.epoch))?.session;
-      covered.add(session ? targetId(session) : a.owner.id);
+      if (workId(a)) {
+        for (const id of served.get(a.projectId)?.keys() ?? [])
+          if (id.startsWith(`${workId(a)}:`)) covered.add(id);
+      } else covered.add(session ? targetId(session) : a.owner.id);
     }
     let slots = Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
@@ -693,7 +743,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
     let grants: Map<string, RetryGrant> | undefined;
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
-      const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === id);
+      const allocationOwnerId = this.config.reuseWorkHosts
+        ? `work:${id.slice(0, id.lastIndexOf(':'))}`
+        : id;
+      const attempts = allocations.filter(
+        (a) => a.projectId === projectId && a.owner.id === allocationOwnerId,
+      );
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work.
       grants ??= await this.retryGrants([...new Set(queue.map((item) => item.projectId))]);
@@ -706,11 +761,16 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // Count it too, or Fleet's idempotent request simply returns that busy allocation.
       const generation = attempts.length;
       try {
-        await this.fleet.request(sourceCaller(source), {
-          requestId: `wf:${digest({ id, generation })}`,
-          owner: { kind: ownerKind, id },
-          seconds: this.config.stepMinutes * 60 + 600,
-        });
+        await this.fleet.request(
+          sourceCaller(
+            this.config.reuseWorkHosts && source.kind === 'service' ? source.vouchedBy : source,
+          ),
+          {
+            requestId: `wf:${digest({ id: allocationOwnerId, generation })}`,
+            owner: { kind: ownerKind, id: allocationOwnerId },
+            seconds: this.config.stepMinutes * 60 + 600,
+          },
+        );
       } catch (error) {
         // A refusal, such as the payer's spend cap, passes over the project's other targets this
         // pass; only a project without a connection is no longer served.

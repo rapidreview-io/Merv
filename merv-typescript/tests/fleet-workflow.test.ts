@@ -1922,3 +1922,80 @@ test('a review step’s model calls count toward the owner who vouched for its d
   await setDailyTokens(h.state, voucher, charge.tokens + 1_000);
   assert.equal((await h.adapter.modelBudget(worker))?.blocked, true);
 });
+
+test('opted-in work host covers later review revisions and keeps a bounded idle machine', async (t) => {
+  const f = await fixture(t, {
+    reuseWorkHosts: true,
+    reusableRuntimeProfileIds: ['image-profile'],
+  });
+  f.demand([{ instanceId: 'task_reused', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  assert.equal(allocation.owner.id, 'work:task_reused');
+  const bootstrap = JSON.parse(await f.owner().bootstrap(allocation));
+  assert.equal(bootstrap.workInstanceId, 'task_reused');
+  assert.deepEqual((f.ensureInputs[0] as any).capabilities, [
+    ...hostedCodexCapabilities,
+    'workflow.workhost.1',
+  ]);
+  assert.equal((f.ensureInputs[0] as any).stepSeconds, 120 * 60);
+  assert.equal(
+    await f.state.transaction((tx) =>
+      f.owner().valid({ ...allocation, profileId: 'unreviewed-image' }, tx),
+    ),
+    false,
+  );
+  const binding = f.ensureInputs[0] as any;
+  assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), true);
+  const directors = await f.state.transaction((tx) =>
+    f.validator().assignmentSources!(binding, tx),
+  );
+  assert.equal(directors.length, 2);
+  assert.equal(directors[1]!.kind, 'service');
+  assert.equal(
+    await f.state.transaction((tx) => f.owner().payer!(directors[0]!, allocation.owner.id, tx)),
+    await f.state.transaction((tx) => f.owner().payer!(directors[1]!, allocation.owner.id, tx)),
+  );
+  allocation.runtime = { ...machine!, launch: { deliveryState: 'launched' } } as any;
+  allocation.phase = 'running';
+  f.inspections.set(allocation.id, {
+    workInstanceId: 'task_reused',
+    runnerId: 'reuse',
+    enrollmentExpiresAt,
+    session: {
+      id: 'old-phase',
+      instanceId: 'task_reused',
+      expectedRevision: 0,
+      status: 'released',
+      closedAt: '2026-09-22T00:00:00.000Z',
+      outcome: 'completed',
+      releaseAcknowledged: true,
+      capturePending: true,
+    },
+  });
+  f.demand([]);
+  f.demand([{ instanceId: 'task_reused', expectedRevision: 1 }], `review:${f.caller.projectId}`);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 1, 'review director must reuse the retained host');
+  assert.equal(
+    await f.owner().observe(allocation),
+    'running',
+    'capture blocks cleanup even after release ACK',
+  );
+  f.inspections.get(allocation.id)!.session!.capturePending = false;
+  assert.equal(
+    await f.owner().observe(allocation),
+    'running',
+    'successor phase has an idle window',
+  );
+  f.advance(299999);
+  assert.equal(await f.owner().observe(allocation), 'running');
+  f.advance(1);
+  assert.equal(await f.owner().observe(allocation), 'finished', 'idle retention is bounded');
+  assert.equal(
+    (
+      await f.adapter.retryStatus(f.caller, [{ instanceId: 'task_reused', expectedRevision: 1 }])
+    )[0]!.state,
+    'active',
+  );
+});
