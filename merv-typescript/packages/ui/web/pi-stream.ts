@@ -19,6 +19,8 @@ export interface PiCommand {
   proposals?: PiProposal[];
   /** The model that answered it, fixed when a worker claimed it. */
   model?: string;
+  /** When it ended, by the server's clock; null while it runs. */
+  completedAt?: string | null;
 }
 /** Mirrors the server's PiProposal. */
 export interface PiProposal {

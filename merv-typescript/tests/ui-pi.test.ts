@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { PiEvent } from '../packages/ui/web/pi-stream.js';
-import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import type { PiCommand, PiEvent } from '../packages/ui/web/pi-stream.js';
+import { click, jump, mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
 
 const { createElement, StrictMode } = await import('react');
 const { act } = await import('react-dom/test-utils');
-const { MemoryRouter } = await import('react-router-dom');
+const { MemoryRouter, useNavigate } = await import('react-router-dom');
 const { PiView } = await import('../packages/ui/web/views/pi.js');
+const { actOf, factsOf, labelOf, receiptOf, TOLD } =
+  await import('../packages/ui/web/views/pi-proposal.js');
+const { App } = await import('../packages/ui/web/app.js');
 const { piFrameParser } = await import('../packages/ui/web/pi-stream.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
 
@@ -1454,7 +1457,7 @@ test('the transcript marks where the machine changed between two turns', async (
   assert.equal(dividers[0].nextElementSibling?.textContent, 'Youthird');
 });
 
-test('a proposed call shows as the tool, its input and Run, which runs it once as the person', async (t) => {
+test('a proposed call reads as the act it performs and its facts, and Run as me runs it once as the person', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const proposals = [
@@ -1479,9 +1482,9 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
     () => state,
     () => [conversation()],
   );
-  const runs: Record<string, unknown>[] = [];
+  const requested: Record<string, unknown>[] = [];
   serve('/tools/pi.run', (_count, input) => {
-    runs.push(input);
+    requested.push(input);
     return input.proposalId === 'pip_halt'
       ? {
           status: 403,
@@ -1502,52 +1505,71 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
   await settle(10);
   const cards = () => [...document.querySelectorAll('.pi-proposal')];
   assert.equal(cards().length, 2);
-  // The tool, its exact input and the button: nothing else.
-  assert.equal(
-    cards()[0].textContent,
-    `fleet.halt${JSON.stringify({ id: 'flt_1' }, null, 2)}Run as me`,
+  // The act, its input as facts, and the control: the tool's name is only the hover title, and
+  // its JSON is not printed at all.
+  assert.deepEqual(
+    cards().map((card) => card.textContent),
+    ['Halt fleetFleetflt_1Run as me', 'Read artifactArtifactart_1ModedownloadRun as me'],
   );
-  const buttons = () => cards().map((card) => card.querySelector('button')!);
+  assert.deepEqual(
+    cards().map((card) => card.getAttribute('title')),
+    ['fleet.halt', 'artifact.read'],
+  );
+  const runs = () => cards().map((card) => card.querySelector<HTMLButtonElement>('button.btn'));
+  const ran = () => cards().map((card) => card.querySelector('.pi-proposal-ran')?.textContent);
   // While the turn runs, nothing can be run.
-  assert.ok(buttons().every((button) => button.disabled));
+  assert.ok(runs().every((button) => button!.disabled));
   state = snapshot(conversation(), [turn('completed')]);
   await act(async () => stream.push('snapshot', state));
-  assert.ok(buttons().every((button) => !button.disabled));
-  await act(async () => buttons()[1].click());
+  assert.ok(runs().every((button) => !button!.disabled));
+  await act(async () => runs()[1]!.click());
   await settle(10);
-  assert.deepEqual(runs[0], { id: 'conversation_1', commandId: 'c1', proposalId: 'pip_download' });
-  // A secret result shows only in its card, with its link live, and never reaches the agent.
-  const link = cards()[1].querySelector('a')!;
-  assert.equal(link.href, 'https://files.example/art_1?sig=abc');
+  assert.deepEqual(requested[0], {
+    id: 'conversation_1',
+    commandId: 'c1',
+    proposalId: 'pip_download',
+  });
+  // A secret result shows only in its card, standing open with its link live, and never reaches
+  // the agent.
+  const kept = cards()[1].querySelector<HTMLDetailsElement>('.pi-result')!;
+  assert.equal(kept.open, true);
+  assert.equal(kept.querySelector('a')!.href, 'https://files.example/art_1?sig=abc');
   assert.deepEqual(
     sent.map(({ text }) => text),
     ['Ran artifact.read; its result is shown only to me.'],
   );
   assert.ok(!JSON.stringify(sent).includes('sig=abc'));
-  // The turn that answered proposes nothing: the other call stays under its own turn, to run.
+  // The turn that answered proposes nothing: the other call stays under its own turn, to run,
+  // and the one that ran says so in a word where its control stood.
+  const told = command('c2', 'completed', [
+    { role: 'user', text: 'Ran artifact.read; its result is shown only to me.' },
+    { role: 'assistant', text: 'Downloaded.' },
+  ]);
   state = snapshot(conversation(), [
     turn('completed', { pip_download: { at: 'now', ok: true } }),
-    command('c2', 'completed', [
-      { role: 'user', text: 'Ran artifact.read; its result is shown only to me.' },
-      { role: 'assistant', text: 'Downloaded.' },
-    ]),
+    told,
   ]);
   await act(async () => stream.push('snapshot', state));
   assert.equal(cards().length, 2);
-  assert.equal(buttons()[1].disabled, true);
-  assert.equal(buttons()[1].textContent, 'Ran');
-  assert.equal(buttons()[0].disabled, false);
-  await act(async () => buttons()[0].click());
+  assert.deepEqual(ran(), [undefined, 'Ran']);
+  assert.equal(runs()[1], null);
+  assert.equal(runs()[0]!.disabled, false);
+  await act(async () => runs()[0]!.click());
   await settle(10);
   assert.equal(sent[1].text, 'fleet.halt was refused: Actor lacks admin permission');
+  const refusal = {
+    pip_download: { at: 'now', ok: true },
+    pip_halt: { at: 'now', ok: false, code: 'forbidden' },
+  };
+  state = snapshot(conversation(), [turn('completed', refusal), told]);
+  await act(async () => stream.push('snapshot', state));
+  assert.deepEqual(ran(), ['Refused', 'Ran']);
+  assert.ok(cards()[0].querySelector('.pi-proposal-ran.pi-refused'));
   // A later turn proposes the next step: the secret stays in its card under its own turn, and
   // the calls it held that are not secret give way.
   const revoke = { id: 'pip_revoke', name: 'actor.revoke_token', input: {}, at: 'later' };
   state = snapshot(conversation(), [
-    turn('completed', {
-      pip_download: { at: 'now', ok: true },
-      pip_halt: { at: 'now', ok: false, code: 'forbidden' },
-    }),
+    turn('completed', refusal),
     command('c2', 'completed', [{ role: 'assistant', text: 'Downloaded.' }]),
     {
       ...command('c3', 'completed', [{ role: 'assistant', text: 'Revoke the old one?' }]),
@@ -1556,11 +1578,14 @@ test('a proposed call shows as the tool, its input and Run, which runs it once a
   ]);
   await act(async () => stream.push('snapshot', state));
   assert.deepEqual(
-    cards().map((card) => card.querySelector('code')!.textContent),
-    ['artifact.read', 'actor.revoke_token'],
+    cards().map((card) => card.querySelector('.pi-proposal-act')!.textContent),
+    ['Read artifact', 'Revoke token'],
   );
-  assert.equal(cards()[0].querySelector('a')!.href, 'https://files.example/art_1?sig=abc');
-  assert.equal(buttons()[0].textContent, 'Ran');
+  assert.equal(
+    cards()[0].querySelector('.pi-result a')!.href,
+    'https://files.example/art_1?sig=abc',
+  );
+  assert.deepEqual(ran(), ['Ran', undefined]);
 });
 
 test('research.advance tells Pi the transition and every child ID while keeping the full Problem for the person', async (t) => {
@@ -1609,7 +1634,12 @@ test('research.advance tells Pi the transition and every child ID while keeping 
   assert.ok(told.includes('"revision":1'));
   assert.ok(!told.includes('Full Problem content'));
   assert.ok(told.length < 500);
-  const full = document.querySelector<HTMLPreElement>('.pi-proposal details pre')!;
+  // The whole of it stays in the card, read as a tree, its long Problem one press away.
+  const full = document.querySelector('.pi-proposal .pi-result')!;
+  const all = [...full.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Show all',
+  );
+  await act(async () => all!.click());
   assert.ok(full.textContent?.includes(result.problem.text));
 });
 
@@ -1857,8 +1887,8 @@ test('the transcript marks a switch of model, with a move of machine, from the t
   // The bar holds both pickers, and the proposed call sits under its turn, after the marks.
   assert.ok(model() && document.querySelector('.pi-machine-button'));
   assert.equal(
-    document.querySelector('.pi-messages > :last-child code')?.textContent,
-    'fleet.halt',
+    document.querySelector('.pi-messages > :last-child .pi-proposal-act')?.textContent,
+    'Halt fleet',
   );
   const dividers = [...document.querySelectorAll('.pi-divider')];
   assert.deepEqual(
@@ -1900,7 +1930,7 @@ const accessible = (element: Element, attribute = 'aria-labelledby') =>
   element.getAttribute('aria-label') ??
   element.textContent;
 
-test('each Run as me is named by the call it runs, and described by that call’s input', async (t) => {
+test('each Run as me is named by the act it runs, and described by that act’s facts', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const proposals = [
@@ -1915,16 +1945,16 @@ test('each Run as me is named by the call it runs, and described by that call’
   const buttons = [...document.querySelectorAll('.pi-proposal button')];
   assert.deepEqual(
     buttons.map((button) => accessible(button)),
-    ['Run as me fleet.halt', 'Run as me task.create'],
+    ['Run as me Halt fleet', 'Run as me New task'],
   );
   assert.deepEqual(
     buttons.map((button) => accessible(button, 'aria-describedby')),
-    proposals.map(({ input }) => JSON.stringify(input, null, 2)),
+    ['Fleetflt_1', 'Titlex'],
   );
   // Nothing visible was added to say it.
   assert.equal(
     document.querySelector('.pi-proposal')!.textContent,
-    `fleet.halt${JSON.stringify({ id: 'flt_1' }, null, 2)}Run as me`,
+    'Halt fleetFleetflt_1Run as me',
   );
 });
 
@@ -1985,4 +2015,440 @@ test('what Run as me tells the agent is kept in the composer when it cannot be s
   assert.equal(sent.length, 2);
   assert.equal(draft(), `${told}\n\nAnd then?`);
   assert.equal(document.querySelector('[role="alert"]')?.textContent, 'That model is not offered');
+});
+
+test('a call is titled by the act it performs, in the verb table’s words where it names one', () => {
+  const titles: [string, object, string][] = [
+    ['session.dispatch', { enabled: false, ownMachines: true }, 'Pause dispatch'],
+    ['session.dispatch', { enabled: true }, 'Start dispatch'],
+    ['session.halt', { sessionId: 'session_1' }, 'Halt lease'],
+    ['session.halt', {}, 'Halt all leases'],
+    ['research.advance', { researchId: 'research_1' }, 'Start next step'],
+    ['review.start', {}, 'Claim review'],
+    ['review.submit', {}, 'Submit verdict'],
+    ['task.submit_delivery', {}, 'Submit delivery'],
+    ['sandbox.extend', { id: 'sbx_1', seconds: 600 }, 'Extend lease'],
+    ['sandbox.release', { id: 'sbx_1' }, 'Release machine'],
+    ['task.create', {}, 'New task'],
+    ['research.create', {}, 'New cycle'],
+    // Otherwise the tool's own words: an action with an underscore says itself, any other comes
+    // before what it acts on.
+    ['usage.set_budget', {}, 'Set budget'],
+    ['research.end', {}, 'End research'],
+    ['code.publication.merge', {}, 'Merge publication'],
+  ];
+  for (const [name, input, title] of titles) assert.equal(actOf(name, input), title, name);
+});
+
+test('a call’s input reads as facts: keys in words, flags as Yes and No, nested values folded, machinery left out', () => {
+  assert.deepEqual(
+    factsOf('session.dispatch', {
+      enabled: false,
+      ownMachines: true,
+      requestId: 'request_1',
+      expectedRevision: 3,
+    }),
+    [
+      { key: 'enabled', label: 'Enabled', text: 'No' },
+      { key: 'ownMachines', label: 'Own machines', text: 'Yes' },
+    ],
+  );
+  assert.deepEqual(
+    factsOf('task.create', {
+      title: 'Seed sweep',
+      dependencies: ['wf_1', 'wf_2'],
+      seconds: 600,
+      deliverables: [{ title: 'Table' }],
+      budget: { maxTokens: 10 },
+      none: null,
+      blank: '',
+      nothing: [],
+    }),
+    [
+      { key: 'title', label: 'Title', text: 'Seed sweep' },
+      { key: 'dependencies', label: 'Dependencies', list: ['wf_1', 'wf_2'] },
+      { key: 'seconds', label: 'Seconds', text: '600' },
+      { key: 'deliverables', label: 'Deliverables', tree: [{ title: 'Table' }] },
+      { key: 'budget', label: 'Budget', tree: { maxTokens: 10 } },
+    ],
+  );
+  // A field holding a record's id is named by the record, a bare id by the record acted on.
+  assert.deepEqual(
+    ['sessionId', 'artifactIds', 'id', 'max_wall_minutes'].map((key) =>
+      labelOf('sandbox.extend', key),
+    ),
+    ['Session', 'Artifacts', 'Sandbox', 'Max wall minutes'],
+  );
+  // An input with nothing left to say has no facts.
+  assert.deepEqual(factsOf('research.advance', { requestId: 'r', expectedRevision: 0 }), []);
+});
+
+test('what Run told the agent is a receipt only where it answers a call that ran', () => {
+  const ran = { at: 'now', ok: true };
+  const create = { id: 'pip_create', name: 'task.create', input: { title: 'x' }, ran };
+  const halt = { id: 'pip_halt', name: 'session.halt', input: {}, ran: { at: 'now', ok: false } };
+  const read = { id: 'pip_read', name: 'artifact.read', input: {}, secret: true as const, ran };
+  const advance = { id: 'pip_advance', name: 'research.advance', input: {}, ran };
+  const end = { id: 'pip_end', name: 'research.end', input: {} };
+  const proposed = {
+    ...command('c1', 'completed', [{ role: 'user', text: 'Go' }]),
+    proposals: [create, halt, read, advance, end],
+  } as unknown as PiCommand;
+  const said = (text: string, role = 'user') =>
+    command('c3', 'completed', [{ role, text }]) as unknown as PiCommand;
+  const after = (text: string, role?: string) =>
+    receiptOf([proposed, said('Thanks', 'assistant'), said(text, role)], 2);
+  assert.deepEqual(after('Ran task.create: {"id":"wf_1"}'), {
+    proposal: create,
+    result: '{"id":"wf_1"}',
+  });
+  assert.deepEqual(after('session.halt was refused: Actor lacks admin permission'), {
+    proposal: halt,
+    refused: 'Actor lacks admin permission',
+  });
+  assert.deepEqual(after('Ran artifact.read; its result is shown only to me.'), { proposal: read });
+  assert.deepEqual(
+    after(
+      'Ran research.advance: {"id":"research_1","state":"researching"}. Re-read research.get and workflow.status_and_next for current details.',
+    ),
+    { proposal: advance, result: '{"id":"research_1","state":"researching"}' },
+  );
+  // A result cut where Run cuts it no longer parses, and is still the result.
+  const cut = `{"text":"${'a'.repeat(TOLD)}"}`.slice(0, TOLD);
+  assert.deepEqual(after(`Ran task.create: ${cut}`), { proposal: create, result: cut });
+  for (const [text, role] of [
+    // A message that merely begins with the word.
+    ['Ran the numbers again: anything new?'],
+    // A result that neither parses nor was cut short.
+    ['Ran task.create: and it worked'],
+    // A receipt that waited in the composer and went with the person's own words.
+    ['Ran task.create: {"id":"wf_1"}\n\nAnd then?'],
+    // A call that never ran, a call nobody proposed, and words that are not the person's.
+    ['Ran research.end: {}'],
+    ['Ran fleet.halt: {}'],
+    ['Ran task.create: {"id":"wf_1"}', 'assistant'],
+  ])
+    assert.equal(after(text!, role), null, text);
+  // Only the latest calls offer Run: once a later turn proposes, an earlier call is not answered.
+  const later = { ...proposed, id: 'c2', proposals: [end] } as unknown as PiCommand;
+  assert.equal(receiptOf([proposed, later, said('Ran task.create: {"id":"wf_1"}')], 2), null);
+});
+
+test('a card names the records its input points at, folds what is long or nested, and prints no machinery', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const task = `wf_${'a'.repeat(32)}`;
+  const goal = 'Rerun every setting with three seeds. '.repeat(6);
+  const create = {
+    id: 'pip_task',
+    name: 'task.create',
+    at: 'now',
+    input: {
+      title: 'Seed sweep',
+      goal,
+      dependencies: [task],
+      automatic: false,
+      deliverables: [{ title: 'Seed table' }],
+      requestId: 'request_1',
+      expectedRevision: 2,
+    },
+  };
+  const advance = {
+    id: 'pip_advance',
+    name: 'research.advance',
+    at: 'now',
+    input: { requestId: 'request_2', expectedRevision: 0 },
+  };
+  serve('/tools/ui.home', { body: { result: { tasks: [{ id: task, title: 'Weight decay' }] } } });
+  boot(
+    () =>
+      snapshot(conversation(), [{ ...command('c1', 'completed'), proposals: [create, advance] }]),
+    () => [conversation()],
+  );
+  await open();
+  await settle(20);
+  const [card, bare] = [...document.querySelectorAll('.pi-proposal')];
+  assert.deepEqual(
+    [...card.querySelectorAll('.kv-row')].map((row) => [
+      row.querySelector('dt')!.textContent,
+      row.querySelector('dd')!.textContent,
+    ]),
+    [
+      ['Title', 'Seed sweep'],
+      ['Goal', goal],
+      ['Dependencies', 'Weight decay'],
+      ['Automatic', 'No'],
+    ],
+  );
+  // An id reads as its record's name, and is the way to it.
+  assert.equal(card.querySelector('dd a')?.getAttribute('href'), `/tasks/${task}`);
+  // What is long is folded to its first lines, what is nested to its key, read as a tree once open.
+  assert.equal(card.querySelector<HTMLDetailsElement>('.pi-fact-long')?.open, false);
+  const nested = card.querySelector<HTMLDetailsElement>('.pi-fact-tree')!;
+  assert.equal(nested.querySelector('summary')!.textContent, 'Deliverables');
+  assert.ok(!nested.querySelector('.json'));
+  await act(async () => nested.querySelector('summary')!.click());
+  await settle(10);
+  assert.match(nested.querySelector('.json')!.textContent!, /Seed table/);
+  // No tool name, no JSON and no machinery are printed.
+  assert.doesNotMatch(card.textContent!, /task\.create|request|revision|[{}"]/i);
+  // A call with nothing left to say is its act alone, and its control describes nothing.
+  assert.equal(bare.textContent, 'Start next stepRun as me');
+  assert.equal(bare.querySelector('button')!.hasAttribute('aria-describedby'), false);
+});
+
+test('what came back for a run is one quiet line on the agent’s side, never a message of the person’s', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const ran = { at: 'now', ok: true };
+  const proposals = [
+    { id: 'pip_task', name: 'task.create', input: { title: 'Seed sweep' }, at: 'now', ran },
+    {
+      id: 'pip_halt',
+      name: 'session.halt',
+      input: { sessionId: 'session_1' },
+      at: 'now',
+      ran: { at: 'now', ok: false, code: 'forbidden' },
+    },
+    { id: 'pip_read', name: 'artifact.read', input: {}, secret: true, at: 'now', ran },
+  ];
+  const turn = (id: string, asked: string, answer: string) =>
+    command(id, 'completed', [
+      { role: 'user', text: asked },
+      { role: 'assistant', text: answer },
+    ]);
+  const created = { id: 'task_1', title: 'Seed sweep', state: 'planned' };
+  boot(
+    () =>
+      snapshot(conversation(), [
+        { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
+        turn('c2', `Ran task.create: ${JSON.stringify(created)}`, 'Created.'),
+        turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
+        turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
+        turn('c5', 'Ran the numbers again: anything new?', 'Nothing yet.'),
+      ]),
+    () => [conversation()],
+  );
+  await open();
+  const lines = () => [...document.querySelectorAll('.pi-receipt')];
+  assert.deepEqual(
+    lines().map((line) => line.querySelector('.pi-receipt-line')!.textContent),
+    ['RanNew taskResult', 'RefusedHalt lease·Actor lacks admin permission', 'RanRead artifact'],
+  );
+  // Only what the person typed is theirs.
+  assert.deepEqual(
+    [...document.querySelectorAll('.pi-message--user')].map((message) => message.textContent),
+    ['YouMake the task', 'YouRan the numbers again: anything new?'],
+  );
+  // Each stands where its turn's words did, before the agent's answer, and keeps the tool's
+  // name for the pointer alone.
+  assert.equal(lines()[0].nextElementSibling?.textContent, 'AgentCreated.');
+  assert.equal(lines()[0].getAttribute('title'), 'task.create');
+  // A refusal wears the refusal's colour; the sentence that stands for a secret opens nothing.
+  assert.ok(lines()[1].querySelector('.pi-receipt-word.pi-refused'));
+  assert.ok(!lines()[2].querySelector('details'));
+  // The result opens under its line, read as the tree it is.
+  assert.ok(!lines()[0].querySelector('.json'));
+  await act(async () => lines()[0].querySelector('summary')!.click());
+  await settle(10);
+  assert.match(lines()[0].querySelector('.json')!.textContent!, /Seed sweep.*planned/);
+});
+
+let go = (_path: string) => {};
+/** Hands the test the router's own way to go elsewhere, as a link in the page would. */
+function Navigator() {
+  const navigate = useNavigate();
+  go = (path) => navigate(path);
+  return null;
+}
+const operator = {
+  id: 'actor_1',
+  projectId: 'p1',
+  name: 'Operator',
+  role: 'operator',
+  active: true,
+};
+const grokking = { id: 'p1', name: 'Grokking replication', createdAt: '2026-09-01T00:00:00Z' };
+/** The whole app, signed in to p1 with the Agent's row, opened at `path`. */
+const openApp = async (path: string) => {
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', { body: { kind: 'actor', actor: operator, projects: [grokking] } });
+  serve('/tools/ui.shell', {
+    body: { result: { actor: operator, project: grokking, rows: [row], plugins: [] } },
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: [path] },
+      createElement(App),
+      createElement(Navigator),
+    ),
+  );
+  await settle(20);
+};
+const visit = async (path: string) => {
+  await act(async () => go(path));
+  await settle(20);
+};
+const dock = () => document.querySelector<HTMLElement>('.pi-dock');
+const asked = (count = 1) =>
+  requests.filter((request) => request.includes(`/tools/pi.list`)).length === count;
+const answered = [
+  command('c1', 'completed', [
+    { role: 'user', text: 'What is known?' },
+    { role: 'assistant', text: 'Two findings so far' },
+  ]),
+];
+
+test('the conversation stands beside other pages once its page was opened, and is the same one there', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const stream = boot(
+    () => snapshot(conversation(), answered),
+    () => [conversation()],
+  );
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await openApp('/elsewhere');
+  // Before the Agent page opens nothing is read, warmed or streamed, and nothing floats.
+  assert.ok(!dock());
+  assert.ok(!requests.some((request) => /pi\.|\/events/.test(request)));
+  await visit('/agent');
+  assert.match(text(), /Two findings so far/);
+  assert.ok(!dock());
+  await visit('/elsewhere');
+  const floating = dock()!;
+  assert.equal(floating.getAttribute('role'), 'complementary');
+  assert.equal(floating.getAttribute('aria-label'), 'Agent');
+  assert.match(floating.querySelector('.pi-messages')!.textContent!, /Two findings so far/);
+  // Its head: the conversation's name, how its turn stands, Expand and Close; none of the page's
+  // pickers and no Context.
+  assert.equal(floating.querySelector('.pi-dock-title')!.textContent, 'What is known?');
+  assert.equal(floating.querySelector('.pi-dock-head [role="status"]')!.textContent, 'Ready');
+  for (const control of ['Expand', 'Close']) {
+    const button = floating.querySelector(`button[aria-label="${control}"]`)!;
+    assert.equal(button.getAttribute('title'), control);
+    assert.ok(button.querySelector('svg'));
+  }
+  assert.ok(!floating.querySelector('.pi-switch, .pi-model, .pi-machine, .pi-context-button'));
+  // The stream went along with the person: no second list, no second stream.
+  assert.ok(asked(1));
+  assert.equal(requests.filter((request) => request.endsWith('/events')).length, 1);
+  assert.equal(stream.aborted, 0);
+  // The same composer: Enter sends into the same conversation.
+  await write('And the third?');
+  const area = floating.querySelector<HTMLTextAreaElement>('textarea')!;
+  assert.equal(area.rows, 2);
+  await act(async () => {
+    area.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+  });
+  await settle(10);
+  assert.deepEqual(
+    sent.map(({ id, text }) => [id, text]),
+    [['conversation_1', 'And the third?']],
+  );
+  // Expand goes back to the Agent page, where the window is never drawn, and starts nothing anew.
+  await act(async () =>
+    floating.querySelector<HTMLButtonElement>('[aria-label="Expand"]')!.click(),
+  );
+  await settle(20);
+  assert.ok(!dock());
+  assert.ok(document.querySelector('.pi-page .pi-bar'));
+  assert.ok(asked(1));
+});
+
+test('closed by hand the window stays shut until the Agent page opens again, and a phone never draws it', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const stream = boot(
+    () => snapshot(conversation(), answered),
+    () => [conversation()],
+  );
+  await openApp('/agent');
+  await visit('/elsewhere');
+  await act(async () => dock()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click());
+  assert.ok(!dock());
+  await visit('/elsewhere/further');
+  assert.ok(!dock());
+  // Closing it puts it away; the conversation is still connected.
+  assert.equal(stream.aborted, 0);
+  await visit('/agent');
+  await visit('/elsewhere');
+  assert.ok(dock());
+  assert.ok(asked(1));
+  await resize(false);
+  assert.ok(!dock());
+  await resize(true);
+  assert.ok(dock());
+});
+
+test('the window closes itself when the machine is released for inactivity, and the conversation with it', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const idle = (ms: number) =>
+    host('ready', { idleEndsAt: new Date(Date.now() + ms).toISOString() });
+  let state = snapshot(conversation(), answered, 0, [], true, idle(1500));
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  await openApp('/agent');
+  // On its own page the conversation stays as it is, whatever the machine does.
+  await settle(1600);
+  await visit('/elsewhere');
+  assert.ok(!dock());
+  assert.ok(stream.aborted >= 1);
+  // Opening the page again starts everything again.
+  state = snapshot(conversation(), answered, 1, [], true, idle(1500));
+  await visit('/agent');
+  assert.ok(asked(2));
+  await visit('/elsewhere');
+  assert.ok(dock());
+  await settle(1600);
+  assert.ok(!dock());
+  // A turn in flight keeps it open with the machine gone; once the turn ends, it closes.
+  state = snapshot(
+    { ...conversation(), activeCommandId: 'c2' },
+    [...answered, command('c2', 'starting', [{ role: 'user', text: 'Again?' }])],
+    2,
+    [],
+    true,
+    host('none'),
+  );
+  await visit('/agent');
+  await visit('/elsewhere');
+  await settle(20);
+  assert.ok(dock());
+  await act(async () =>
+    stream.push('snapshot', snapshot(conversation(), answered, 3, [], true, host('none'))),
+  );
+  await settle(20);
+  assert.ok(!dock());
+});
+
+test('with a server that says nothing of the machine, the window closes ten minutes after the last turn, unless a question is being written in it', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const ended = new Date(Date.now() - 600_000 + 1000).toISOString();
+  const { host: _none, ...silent } = snapshot(conversation(), [
+    { ...answered[0], completedAt: ended },
+  ]);
+  boot(
+    () => silent as ReturnType<typeof snapshot>,
+    () => [conversation()],
+  );
+  await openApp('/agent');
+  await visit('/elsewhere');
+  await write('One more question');
+  await settle(1100);
+  assert.ok(dock());
+  // With nothing left unsent it closes.
+  await write('');
+  await settle(20);
+  assert.ok(!dock());
 });

@@ -4685,8 +4685,9 @@ del.cut {
   background: var(--qualifies);
   animation: map-breathe 1.8s ease-in-out infinite;
 }
-/* One dot breathes: under the question while a turn runs, in the bar otherwise. */
-.pi-page:has(.pi-messages > .pi-state) .pi-bar .pi-state-dot {
+/* One dot breathes: under the question while a turn runs, in the bar or the dock's head otherwise. */
+.pi-page:has(.pi-messages > .pi-state) .pi-bar .pi-state-dot,
+.pi-dock:has(.pi-messages > .pi-state) .pi-dock-head .pi-state-dot {
   animation: none;
 }
 .pi-context-button {
@@ -4749,7 +4750,8 @@ del.cut {
   flex: 1;
   border-top: 1px solid var(--line);
 }
-/* A call the agent proposed: the tool, its exact input, and Run. */
+/* A call the agent proposed: the act it performs, its input as facts, and Run; once it ran, a
+   quiet word where Run stood, and what this page holds of its result in a fold. */
 .pi-proposal {
   display: grid;
   justify-items: start;
@@ -4759,15 +4761,69 @@ del.cut {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
-.pi-proposal pre {
-  max-width: 100%;
-  max-height: 12lh;
-  margin: 0;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
+.pi-proposal-act {
+  font-weight: 600;
+}
+.pi-proposal .kv {
+  grid-template-columns: fit-content(10em) minmax(0, 1fr);
+  row-gap: 2px;
+  font-size: var(--text-sm);
+}
+/* A long fact is its own fold: shut, its first two lines; open, all of it. */
+.pi-fact-long > summary {
+  display: flex;
+  align-items: flex-start;
+}
+.pi-fact-long > summary > .caret {
+  margin-top: 4px;
+}
+.pi-fact-long:not([open]) > summary > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.pi-proposal-ran,
+.pi-returned {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.pi-returned {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.pi-refused {
+  color: var(--refutes);
+}
+/* The folds a card and a receipt open, in the key's quiet ink until they are opened: a summary
+   a target tall that gives the height back to the line it stands on. */
+:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details) > summary {
+  display: inline-flex;
+  align-items: center;
+  padding-block: calc((var(--hit) - 20px) / 2);
+  margin-block: calc((20px - var(--hit)) / 2);
+  font-size: var(--text-sm);
+  color: var(--faint);
+}
+:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details) > summary:hover,
+:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details)[open] > summary {
+  color: var(--text);
+}
+/* What came back for a call the person ran: one quiet line on the agent's side, never a bubble
+   of the person's, with its result unfolding under it. */
+.pi-receipt {
+  max-width: min(100%, 72ch);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.pi-receipt-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
+}
+.pi-receipt-act {
+  color: var(--text);
 }
 /* Under a turn that ended early, after whatever it had written. */
 .pi-ended {
@@ -4811,6 +4867,70 @@ del.cut {
 .pi-error {
   color: var(--refutes);
   overflow-wrap: anywhere;
+}
+/* The Agent beside another page (views/pi-dock.tsx): a window over the page, at the lower right
+   until its head drags it elsewhere, holding the conversation, how its turn stands and a
+   composer. It stands above the page and under every menu and list that opens over it. */
+.pi-dock {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  height: min(560px, 70vh);
+  overflow: hidden;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.pi-dock-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.pi-dock-head:active {
+  cursor: grabbing;
+}
+.pi-dock-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+/* A long wait gives way before the conversation's name does. */
+.pi-dock-head .pi-state {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.pi-dock-head .pi-state > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pi-dock .pi-messages {
+  padding: var(--space-3);
+}
+.pi-dock > :is(.pi-error, .muted) {
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+}
+/* The composer keeps its two rows and puts its controls beside them, where the window has the room. */
+.pi-dock .pi-compose {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+.pi-dock .pi-compose .textarea {
+  resize: none;
 }
 
 /* Work: the map, and what is live ------------------------------------------ */

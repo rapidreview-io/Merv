@@ -8,6 +8,8 @@ import { dormantOwner, humanizeGroup } from './navigation';
 import { MOVED, VIEW_KINDS, viewFor } from './views';
 import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
+import { PiProvider } from './views/pi';
+import { PiDock } from './views/pi-dock';
 import { WorkView } from './views/work';
 
 /**
@@ -73,7 +75,8 @@ function Workspace() {
   }, []);
   const rows = shell.data?.rows ?? [];
   return (
-    <>
+    // The Agent's conversation outlives its page, and stands beside every other page in the dock.
+    <PiProvider>
       <ShellFrame
         open={open}
         onShow={() => setOpen(true)}
@@ -117,7 +120,8 @@ function Workspace() {
           )}
         </PageLede>
       </ShellFrame>
-    </>
+      <PiDock rows={rows} />
+    </PiProvider>
   );
 }
 

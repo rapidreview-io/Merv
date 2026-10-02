@@ -30,6 +30,7 @@ const PATHS = {
   edit: 'M4.5 19.5l1-4.2L16.6 4.2a1.7 1.7 0 0 1 2.4 0l.8.8a1.7 1.7 0 0 1 0 2.4L8.7 18.5zM14.5 6.3l3.2 3.2',
   plus: 'M12 5.5v13M5.5 12h13',
   close: 'm6.5 6.5 11 11M17.5 6.5l-11 11',
+  expand: 'M14 4.5h5.5V10M19.5 4.5l-6 6M10 19.5H4.5V14M4.5 19.5l6-6',
   check: 'm5 12.5 4.5 4.5L19 7.5',
   'chevron-right': 'm9.5 6 6 6-6 6',
   'chevron-left': 'm14.5 6-6 6 6 6',
@@ -99,6 +100,7 @@ const named = (name: IconName) => (props: IconProps) => <Icon name={name} {...pr
 export const EditIcon = named('edit');
 export const PlusIcon = named('plus');
 export const CloseIcon = named('close');
+export const ExpandIcon = named('expand');
 export const CheckIcon = named('check');
 export const ChevronRightIcon = named('chevron-right');
 export const ChevronLeftIcon = named('chevron-left');

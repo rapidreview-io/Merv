@@ -1,4 +1,17 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import {
+  createContext,
+  Fragment,
+  memo,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import {
   ApiError,
   call,
@@ -8,9 +21,10 @@ import {
   scopeVersion,
   useScopeVersion,
 } from '../api';
-import { Ago, relativeTime, useNow } from '../components';
+import { Ago, cx, KV, relativeTime, Summary, useNow, type KVRow } from '../components';
 import { ChevronsIcon } from '../icons';
-import { MarkdownPieces, useRecordNames } from '../markdown';
+import { JsonView, readJson } from '../json-view';
+import { MarkdownPieces, RecordText, useRecordNames, type RecordNames } from '../markdown';
 import {
   PiStreamError,
   readPiEvents,
@@ -27,6 +41,7 @@ import {
 } from '../pi-stream';
 import { stepped } from '../record-picker';
 import type { ViewProps } from './index';
+import { actOf, factsOf, receiptOf, type Fact, type Receipt } from './pi-proposal';
 
 /** The answer as it streams; `written` is the sequence of its latest words. */
 type TransientResponse = { commandId: string; text: string; progress: string; written: number };
@@ -219,9 +234,61 @@ const linked = (text: string) =>
       part
     ),
   );
-/** A call the agent proposed: the tool, Main's copy of its exact input, and Run, which runs it
- * once as the person and is heard with the tool's name and, as its description, that input.
- * Results kept here for the person are not sent to the agent. */
+/** What came back for a call: a tree where it is JSON, and otherwise text with its links live. */
+function Returned({ text }: { text: string }) {
+  const names = useRecordNames(text);
+  const json = useMemo(() => readJson(text), [text]);
+  return json ? (
+    <JsonView value={json.value} names={names} />
+  ) : (
+    <p className="pi-returned">{linked(text)}</p>
+  );
+}
+
+/** Past this many characters a fact is folded to its first lines. */
+const LONG = 160;
+/** One fact's words, as one piece of text, so names and links stay inside its sentence. */
+function FactValue({ fact, names }: { fact: Fact; names: RecordNames }) {
+  const items = 'list' in fact ? fact.list : 'text' in fact ? [fact.text] : [];
+  // A long one is its own fold: shut, its first lines; open, all of it.
+  if (items.length === 1 && items[0]!.length > LONG)
+    return (
+      <details className="pi-fact-long">
+        <Summary>
+          <span>
+            <RecordText text={items[0]!} names={names} plain />
+          </span>
+        </Summary>
+      </details>
+    );
+  return (
+    <span>
+      {items.map((item, at) => (
+        <Fragment key={at}>
+          {at > 0 && ', '}
+          <RecordText text={item} names={names} />
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+/** Something nested in a call's input: a fold named by its key, read as a tree once opened. */
+function Nested({ label, tree, names }: { label: string; tree: object; names: RecordNames }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="pi-fact-tree" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <Summary>{label}</Summary>
+      {open && <JsonView value={tree} names={names} />}
+    </details>
+  );
+}
+
+/**
+ * A call the agent proposed, in the product's words: the act it performs, its input as facts, and
+ * Run, which runs it once as the person and is heard by the act and described by the facts. The
+ * tool's own name is only the card's hover title. Once it ran, a quiet word stands where Run did,
+ * and a result this page holds for the person, never sent to the agent, stays in its fold.
+ */
 function Proposal({
   proposal,
   result,
@@ -234,31 +301,89 @@ function Proposal({
   run(): void;
 }) {
   const id = useId();
+  const facts = factsOf(proposal.name, proposal.input);
+  const names = useRecordNames(JSON.stringify(proposal.input) ?? '');
+  const ran = proposal.ran && (proposal.ran.ok === false ? 'Refused' : 'Ran');
   return (
-    <article className="pi-proposal">
-      <code id={`${id}tool`}>{proposal.name}</code>
-      <pre id={`${id}input`}>{JSON.stringify(proposal.input, null, 2)}</pre>
-      {result &&
-        (proposal.secret ? (
-          <pre>{linked(result)}</pre>
-        ) : (
-          <details>
-            <summary>Full result</summary>
-            <pre>{linked(result)}</pre>
-          </details>
-        ))}
-      <button
-        className="btn btn--sm"
-        type="button"
-        id={`${id}run`}
-        aria-labelledby={`${id}run ${id}tool`}
-        aria-describedby={`${id}input`}
-        disabled={disabled || !!proposal.ran}
-        onClick={run}
-      >
-        {!proposal.ran ? 'Run as me' : proposal.ran.ok === false ? 'Refused' : 'Ran'}
-      </button>
+    <article className="pi-proposal" title={proposal.name}>
+      <p className="pi-proposal-act" id={`${id}act`}>
+        {actOf(proposal.name, proposal.input)}
+      </p>
+      {facts.length > 0 && (
+        <div className="pi-proposal-facts" id={`${id}facts`}>
+          <KV
+            rows={facts.map(
+              (fact): KVRow =>
+                !('tree' in fact) && [fact.label, <FactValue fact={fact} names={names} />],
+            )}
+          />
+          {facts.map(
+            (fact) =>
+              'tree' in fact && (
+                <Nested key={fact.key} label={fact.label} tree={fact.tree} names={names} />
+              ),
+          )}
+        </div>
+      )}
+      {ran ? (
+        <span className={cx('pi-proposal-ran', ran === 'Refused' && 'pi-refused')}>{ran}</span>
+      ) : (
+        <button
+          className="btn btn--sm"
+          type="button"
+          id={`${id}run`}
+          aria-labelledby={`${id}run ${id}act`}
+          aria-describedby={facts.length ? `${id}facts` : undefined}
+          disabled={disabled}
+          onClick={run}
+        >
+          Run as me
+        </button>
+      )}
+      {result && (
+        // A result shown only to the person is what they ran it for, so it stands open.
+        <details className="pi-result" open={proposal.secret}>
+          <Summary>Full result</Summary>
+          <Returned text={result} />
+        </details>
+      )}
     </article>
+  );
+}
+
+/**
+ * What came back for a call the person ran, drawn as what it is: one quiet line on the agent's side
+ * of the transcript and never a message of the person's, though the agent was told it in their
+ * name. The result opens under the line from its fold; a refusal says why.
+ */
+function ReceiptLine({ receipt }: { receipt: Receipt }) {
+  const [open, setOpen] = useState(false);
+  const { proposal } = receipt;
+  const refused = 'refused' in receipt ? receipt.refused : undefined;
+  const result = 'result' in receipt ? receipt.result : undefined;
+  return (
+    <div className="pi-receipt" title={proposal.name}>
+      <div className="pi-receipt-line">
+        <span className={cx('pi-receipt-word', refused !== undefined && 'pi-refused')}>
+          {refused === undefined ? 'Ran' : 'Refused'}
+        </span>
+        <span className="pi-receipt-act">{actOf(proposal.name, proposal.input)}</span>
+        {refused !== undefined && (
+          <>
+            <span className="ghost" aria-hidden="true">
+              ·
+            </span>
+            <span>{refused}</span>
+          </>
+        )}
+        {result !== undefined && (
+          <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+            <Summary>Result</Summary>
+          </details>
+        )}
+      </div>
+      {open && result !== undefined && <Returned text={result} />}
+    </div>
   );
 }
 
@@ -511,18 +636,19 @@ function changed(all: PiCommand[], at: number, host?: PiHostView, models?: PiMod
   );
 }
 
-function PiConversationPage() {
+/**
+ * The open conversation: what the Agent page held, read, streamed and sent, now held by
+ * `PiProvider` so that it outlives the page. It begins as the page did when it opened.
+ */
+function useConversation() {
   const [conversations, setConversations] = useState<PiConversation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<PiSnapshot | null>(null);
   const [response, setResponse] = useState<TransientResponse | null>(null);
   const [draft, setDraft] = useState('');
-  // The conversations as the menu opened: an answer streaming meanwhile moves none of them.
-  const [menu, setMenu] = useState<PiConversation[] | null>(null);
-  const [context, setContext] = useState(false);
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
-  // The proposal running now, and full results this page alone holds for its person.
+  // The proposal running now, and full results held here alone, for the person.
   const [running, setRunning] = useState<string | null>(null);
   const [localResults, setLocalResults] = useState<Record<string, string>>({});
   const [refused, setRefused] = useState(false);
@@ -534,9 +660,9 @@ function PiConversationPage() {
   const pending = useRef<{ id: string; text: string } | null>(null);
   // The latest model pick on its way, which a send in that conversation waits for.
   const picking = useRef<{ id: string; done: Promise<boolean> } | null>(null);
+  // The composer and the transcript drawn now, on the page or in the dock: never both at once.
   const composer = useRef<HTMLTextAreaElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
-  const switcher = useRef<HTMLDivElement>(null);
   // The transcript follows new text until the reader scrolls away from its end.
   const following = useRef(true);
   const createId = useRef(identifier());
@@ -760,31 +886,20 @@ function PiConversationPage() {
   const phrase = (step === 'tool' && stage?.detail) || STAGE[step];
   // The words, their dot, and when the wait they name began: a wait counts its seconds, but not
   // while the stream that would end it is away.
-  const [words, tone, since]: [string, string, string?] = unavailable
+  const standing: [string, string, string?] = unavailable
     ? ['Unavailable', '']
     : !phrase
       ? [STATUS[status] ?? 'Ready', active ? 'active' : '']
       : WAITS.includes(step)
         ? [phrase, 'active', streamError ? undefined : stage?.since]
         : [phrase, active ? 'active' : step === 'ready' ? 'ready' : ''];
-  const state = (
-    <>
-      <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
-      <span>
-        {words}
-        {since && <Seconds since={since} skew={skew.current} />}
-      </span>
-    </>
-  );
   const follow = useRef(() => {
     const list = transcript.current;
     if (list && following.current) list.scrollTop = list.scrollHeight;
   }).current;
-  useLayoutEffect(follow);
   const named = snapshot?.conversation ?? conversations.find((item) => item.id === selected);
   const asked = snapshot?.commands[0]?.messages[0]?.text.replace(/\s+/g, ' ').trim();
   const title = named && named.title !== UNNAMED ? named.title : asked ? clip(asked) : UNNAMED;
-  useMenu(switcher, menu, () => setMenu(null));
 
   const open = async () => {
     const item = await call<PiConversation>('pi.create', { requestId: createId.current });
@@ -934,6 +1049,297 @@ function PiConversationPage() {
     }
   };
 
+  return {
+    conversations,
+    selected,
+    snapshot,
+    draft,
+    setDraft,
+    listed,
+    busy,
+    running,
+    localResults,
+    error,
+    streamError,
+    unavailable,
+    pending,
+    warming,
+    composer,
+    transcript,
+    following,
+    skew,
+    proposing,
+    active,
+    blocked,
+    visible,
+    host,
+    standing,
+    title,
+    follow,
+    warmUp,
+    create,
+    send,
+    run,
+    machine,
+    pickModel,
+    stop,
+    /** Another conversation, with nothing of this one's carried into it. */
+    switchTo: (id: string) => {
+      pending.current = null;
+      setDraft('');
+      setError('');
+      choose(id);
+    },
+    retryList: () => setReload((value) => value + 1),
+    retryStream: () => setSnapshotRetry((value) => value + 1),
+  };
+}
+export type Conversation = ReturnType<typeof useConversation>;
+
+interface Agent {
+  /** The open conversation; null until it is first drawn, and once it has ended. */
+  pi: Conversation | null;
+  /** From the first opening of the Agent page until the conversation ends. */
+  live: boolean;
+  /** The dock was closed by hand: it stays shut until the Agent page opens again. */
+  hidden: boolean;
+  /** The Agent page opened: the conversation begins, or goes on as it was left. */
+  start(): void;
+  /** The person's machine was released: the conversation ends, and its stream with it. */
+  end(): void;
+  hide(): void;
+}
+const AgentContext = createContext<Agent | null>(null);
+export const useAgent = () => useContext(AgentContext);
+
+/**
+ * Holds the Agent's conversation above the routes, so it outlives its page. Nothing is read,
+ * warmed or streamed until the Agent page first opens; from then on it stays connected while the
+ * person goes elsewhere, until it ends (views/pi-dock.tsx). The page opened after that begins it
+ * again exactly as the first opening did, and so does a change of scope.
+ */
+export function PiProvider({ children }: { children: ReactNode }) {
+  const scope = useScopeVersion();
+  const [open, setOpen] = useState({ live: false, opened: 0, hidden: false });
+  const [pi, setPi] = useState<Conversation | null>(null);
+  const controls = useMemo(
+    () => ({
+      start: () =>
+        setOpen((now) =>
+          !now.live
+            ? { live: true, opened: now.opened + 1, hidden: false }
+            : now.hidden
+              ? { ...now, hidden: false }
+              : now,
+        ),
+      end: () => setOpen((now) => (now.live ? { ...now, live: false } : now)),
+      hide: () => setOpen((now) => (now.hidden ? now : { ...now, hidden: true })),
+    }),
+    [],
+  );
+  const agent = useMemo(
+    () => ({ ...open, ...controls, pi: open.live ? pi : null }),
+    [open, controls, pi],
+  );
+  return (
+    <AgentContext.Provider value={agent}>
+      {children}
+      {open.live && <Live key={`${scope}:${open.opened}`} publish={setPi} />}
+    </AgentContext.Provider>
+  );
+}
+
+/** The conversation itself. It draws nothing: the page and the dock draw what it publishes. */
+const Live = memo(function Live({ publish }: { publish(pi: Conversation | null): void }) {
+  const pi = useConversation();
+  useLayoutEffect(() => publish(pi));
+  useLayoutEffect(() => () => publish(null), [publish]);
+  return null;
+});
+
+/** How the turn stands: its dot, its words, and the seconds a wait has lasted. */
+export function Standing({ pi }: { pi: Conversation }) {
+  const [words, tone, since] = pi.standing;
+  return (
+    <>
+      <span className={`pi-state-dot${tone && ` pi-state-dot--${tone}`}`} />
+      <span>
+        {words}
+        {since && <Seconds since={since} skew={pi.skew.current} />}
+      </span>
+    </>
+  );
+}
+
+/** The conversation's turns, drawn alike on the page and in the dock. */
+export function Transcript({ pi }: { pi: Conversation }) {
+  const { snapshot, host, proposing, localResults, active, busy, running, visible } = pi;
+  const { unavailable, selected, blocked, run, following, follow } = pi;
+  // Drawn afresh, on the page or in the dock, it opens at its latest words.
+  useLayoutEffect(() => {
+    following.current = true;
+  }, [following]);
+  useLayoutEffect(follow);
+  return (
+    <div
+      className="pi-messages"
+      ref={pi.transcript}
+      aria-label="Conversation messages"
+      aria-live="polite"
+      onScroll={(event) => {
+        const list = event.currentTarget;
+        following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+      }}
+    >
+      {snapshot?.commands.flatMap((item, at, all) => [
+        changed(all, at, host, snapshot.models),
+        ...item.messages.map((message, index) => {
+          const receipt = index === 0 && receiptOf(all, at);
+          return receipt ? (
+            <ReceiptLine key={`${item.id}-${index}`} receipt={receipt} />
+          ) : (
+            <article
+              className={`pi-message pi-message--${message.role}`}
+              key={`${item.id}-${index}`}
+            >
+              <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
+              {message.role === 'user' ? (
+                <div className="pi-message-text">{message.text}</div>
+              ) : (
+                <MarkdownPieces source={message.text} />
+              )}
+            </article>
+          );
+        }),
+        item.status === 'interrupted' && (
+          <p className="pi-ended" key={`${item.id}-ended`}>
+            {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
+          </p>
+        ),
+        // The latest calls the agent proposed stay under their turn until it proposes again,
+        // and a full result held here stays in its card while the conversation is open.
+        ...(item.proposals ?? [])
+          .filter((proposal) => item === proposing || proposal.id in localResults)
+          .map((proposal) => (
+            <Proposal
+              key={proposal.id}
+              proposal={proposal}
+              result={localResults[proposal.id]}
+              disabled={active || busy || !!running}
+              run={() => void run(item.id, proposal)}
+            />
+          )),
+      ])}
+      {visible && (visible.text || visible.progress) && (
+        <article className="pi-message pi-message--assistant pi-message--transient">
+          <span className="pi-speaker">Agent · live</span>
+          {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
+          {visible.progress && <p className="muted">{visible.progress}</p>}
+        </article>
+      )}
+      {active && !unavailable && (
+        // Where the eye waits; the bar above already says it aloud.
+        <p className="pi-state" aria-hidden="true">
+          <Standing pi={pi} />
+        </p>
+      )}
+      {selected && !snapshot ? (
+        <p className="muted">Loading conversation…</p>
+      ) : blocked ? (
+        <p className="muted" role="status">
+          {UNAVAILABLE}
+        </p>
+      ) : (
+        !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
+      )}
+    </div>
+  );
+}
+
+/** Where the next question is written: Enter sends it, and Stop ends an answer under way. */
+export function Composer({ pi, rows }: { pi: Conversation; rows: number }) {
+  const { draft, setDraft, busy, blocked, unavailable, active, send, stop, warmUp } = pi;
+  return (
+    <form
+      className="pi-compose"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void send();
+      }}
+    >
+      <label htmlFor="pi-draft" className="sr-only">
+        Message Agent
+      </label>
+      <textarea
+        id="pi-draft"
+        ref={pi.composer}
+        className="textarea"
+        rows={rows}
+        maxLength={32_000}
+        value={draft}
+        // Read-only rather than disabled while sending, so the cursor stays where it was.
+        readOnly={busy}
+        disabled={blocked}
+        onFocus={warmUp}
+        onChange={(event) => setDraft(event.target.value)}
+        enterKeyHint="send"
+        onKeyDown={(event) => {
+          // Enter sends; ⌘/Ctrl+Enter starts a new line, as do Shift+ and Option+Enter natively.
+          // Enter that picks an input-method candidate (229 in Safari) is the method's own.
+          const { key, keyCode, metaKey, ctrlKey, shiftKey, altKey, nativeEvent } = event;
+          if (key !== 'Enter' || shiftKey || altKey || nativeEvent.isComposing || keyCode === 229)
+            return;
+          event.preventDefault();
+          const area = event.currentTarget;
+          if (!(metaKey || ctrlKey)) void send();
+          // Typed as input, so it can be undone and React sees the box change; where the
+          // deprecated command is gone, put in by hand and announced as input.
+          else if (!area.readOnly && !document.execCommand?.('insertText', false, '\n')) {
+            area.setRangeText('\n', area.selectionStart, area.selectionEnd, 'end');
+            area.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }}
+      />
+      <div className="pi-compose-actions">
+        {active && (
+          <button
+            className="btn"
+            type="button"
+            disabled={busy || unavailable}
+            onClick={() => void stop()}
+          >
+            Stop
+          </button>
+        )}
+        <button
+          className="btn btn--primary"
+          type="submit"
+          disabled={busy || blocked || unavailable || active || !draft.trim()}
+        >
+          {busy ? 'Sending…' : pi.pending.current?.text === draft.trim() ? 'Retry send' : 'Send'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PiConversationPage() {
+  const { pi, start } = useAgent()!;
+  // Opening the page begins the conversation, or finds it as it was left.
+  useEffect(start, [start]);
+  // The conversations as the menu opened: an answer streaming meanwhile moves none of them.
+  const [menu, setMenu] = useState<PiConversation[] | null>(null);
+  const [context, setContext] = useState(false);
+  const switcher = useRef<HTMLDivElement>(null);
+  useMenu(switcher, menu, () => setMenu(null));
+  if (!pi)
+    return (
+      <div className="page-stage pi-page">
+        <p role="status">Opening conversations…</p>
+      </div>
+    );
+  const { listed, error, streamError, unavailable, busy, blocked, snapshot, host, title } = pi;
+  const { conversations, selected } = pi;
   return (
     <div className="page-stage pi-page">
       {!listed && !error && <p role="status">Opening conversations…</p>}
@@ -969,7 +1375,7 @@ function PiConversationPage() {
                   className="pi-menu-item"
                   onClick={() => {
                     setMenu(null);
-                    create();
+                    pi.create();
                   }}
                 >
                   New conversation
@@ -988,11 +1394,7 @@ function PiConversationPage() {
                       onClick={() => {
                         setMenu(null);
                         switcher.current?.querySelector('button')?.focus();
-                        if (item.id === selected) return;
-                        pending.current = null;
-                        setDraft('');
-                        setError('');
-                        choose(item.id);
+                        if (item.id !== selected) pi.switchTo(item.id);
                       }}
                     >
                       <span>{name}</span>
@@ -1008,12 +1410,12 @@ function PiConversationPage() {
               models={snapshot.models!}
               model={snapshot.conversation.model}
               busy={busy}
-              pick={pickModel}
+              pick={pi.pickModel}
             />
           )}
           {!blocked && snapshot && (
             <div className="pi-state" role="status">
-              {state}
+              <Standing pi={pi} />
             </div>
           )}
           {snapshot && (
@@ -1029,9 +1431,9 @@ function PiConversationPage() {
           {!blocked && !unavailable && host && (
             <Machine
               host={host}
-              skew={skew.current}
-              choose={(key) => void machine('pi.machine.set', { machine: key })}
-              stop={() => void machine('pi.machine.stop', {})}
+              skew={pi.skew.current}
+              choose={(key) => void pi.machine('pi.machine.set', { machine: key })}
+              stop={() => void pi.machine('pi.machine.stop', {})}
             />
           )}
         </div>
@@ -1039,75 +1441,7 @@ function PiConversationPage() {
       {listed && context && snapshot && (
         <Context id={snapshot.conversation.id} turns={snapshot.commands.length} />
       )}
-      {listed && (
-        <div
-          className="pi-messages"
-          ref={transcript}
-          aria-label="Conversation messages"
-          aria-live="polite"
-          onScroll={(event) => {
-            const list = event.currentTarget;
-            following.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
-          }}
-        >
-          {snapshot?.commands.flatMap((item, at, all) => [
-            changed(all, at, host, snapshot.models),
-            ...item.messages.map((message, index) => (
-              <article
-                className={`pi-message pi-message--${message.role}`}
-                key={`${item.id}-${index}`}
-              >
-                <span className="pi-speaker">{message.role === 'user' ? 'You' : 'Agent'}</span>
-                {message.role === 'user' ? (
-                  <div className="pi-message-text">{message.text}</div>
-                ) : (
-                  <MarkdownPieces source={message.text} />
-                )}
-              </article>
-            )),
-            item.status === 'interrupted' && (
-              <p className="pi-ended" key={`${item.id}-ended`}>
-                {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
-              </p>
-            ),
-            // The latest calls the agent proposed stay under their turn until it proposes again,
-            // and a full result this page holds stays in its card while the page is open.
-            ...(item.proposals ?? [])
-              .filter((proposal) => item === proposing || proposal.id in localResults)
-              .map((proposal) => (
-                <Proposal
-                  key={proposal.id}
-                  proposal={proposal}
-                  result={localResults[proposal.id]}
-                  disabled={active || busy || !!running}
-                  run={() => void run(item.id, proposal)}
-                />
-              )),
-          ])}
-          {visible && (visible.text || visible.progress) && (
-            <article className="pi-message pi-message--assistant pi-message--transient">
-              <span className="pi-speaker">Agent · live</span>
-              {visible.text && <LiveAnswer text={visible.text} follow={follow} />}
-              {visible.progress && <p className="muted">{visible.progress}</p>}
-            </article>
-          )}
-          {active && !unavailable && (
-            // Where the eye waits; the bar above already says it aloud.
-            <p className="pi-state" aria-hidden="true">
-              {state}
-            </p>
-          )}
-          {selected && !snapshot ? (
-            <p className="muted">Loading conversation…</p>
-          ) : blocked ? (
-            <p className="muted" role="status">
-              {UNAVAILABLE}
-            </p>
-          ) : (
-            !snapshot?.commands.length && <p className="muted">Ask a question to begin.</p>
-          )}
-        </div>
-      )}
+      {listed && <Transcript pi={pi} />}
       {error && (
         <p className="pi-error" role="alert">
           {error}
@@ -1119,93 +1453,23 @@ function PiConversationPage() {
         </p>
       )}
       {unavailable && (
-        <button
-          className="btn"
-          type="button"
-          onClick={() => setSnapshotRetry((value) => value + 1)}
-        >
+        <button className="btn" type="button" onClick={pi.retryStream}>
           Retry connection
         </button>
       )}
       {!listed && error && (
-        <button className="btn" type="button" onClick={() => setReload((value) => value + 1)}>
+        <button className="btn" type="button" onClick={pi.retryList}>
           Retry opening Agent
         </button>
       )}
-      {listed && (
-        <form
-          className="pi-compose"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send();
-          }}
-        >
-          <label htmlFor="pi-draft" className="sr-only">
-            Message Agent
-          </label>
-          <textarea
-            id="pi-draft"
-            ref={composer}
-            className="textarea"
-            rows={3}
-            maxLength={32_000}
-            value={draft}
-            // Read-only rather than disabled while sending, so the cursor stays where it was.
-            readOnly={busy}
-            disabled={blocked}
-            onFocus={warmUp}
-            onChange={(event) => setDraft(event.target.value)}
-            enterKeyHint="send"
-            onKeyDown={(event) => {
-              // Enter sends; ⌘/Ctrl+Enter starts a new line, as do Shift+ and Option+Enter natively.
-              // Enter that picks an input-method candidate (229 in Safari) is the method's own.
-              const { key, keyCode, metaKey, ctrlKey, shiftKey, altKey, nativeEvent } = event;
-              if (
-                key !== 'Enter' ||
-                shiftKey ||
-                altKey ||
-                nativeEvent.isComposing ||
-                keyCode === 229
-              )
-                return;
-              event.preventDefault();
-              const area = event.currentTarget;
-              if (!(metaKey || ctrlKey)) void send();
-              // Typed as input, so it can be undone and React sees the box change; where the
-              // deprecated command is gone, put in by hand and announced as input.
-              else if (!area.readOnly && !document.execCommand?.('insertText', false, '\n')) {
-                area.setRangeText('\n', area.selectionStart, area.selectionEnd, 'end');
-                area.dispatchEvent(new Event('input', { bubbles: true }));
-              }
-            }}
-          />
-          <div className="pi-compose-actions">
-            {active && (
-              <button
-                className="btn"
-                type="button"
-                disabled={busy || unavailable}
-                onClick={() => void stop()}
-              >
-                Stop
-              </button>
-            )}
-            <button
-              className="btn btn--primary"
-              type="submit"
-              disabled={busy || blocked || unavailable || active || !draft.trim()}
-            >
-              {busy ? 'Sending…' : pending.current?.text === draft.trim() ? 'Retry send' : 'Send'}
-            </button>
-          </div>
-        </form>
-      )}
+      {listed && <Composer pi={pi} rows={3} />}
     </div>
   );
 }
 
 export function PiView({ row }: ViewProps) {
   const scope = useScopeVersion();
+  const agent = useAgent();
   if (row.status.state === 'unavailable')
     return (
       <div className="page-stage pi-page">
@@ -1218,5 +1482,12 @@ export function PiView({ row }: ViewProps) {
         <p role="status">Agent unavailable. Select a project and sign in to continue.</p>
       </div>
     );
-  return <PiConversationPage key={`${scope}:${row.id}`} />;
+  // A page drawn where nothing holds the conversation above it holds its own.
+  return agent ? (
+    <PiConversationPage />
+  ) : (
+    <PiProvider key={`${scope}:${row.id}`}>
+      <PiConversationPage />
+    </PiProvider>
+  );
 }
