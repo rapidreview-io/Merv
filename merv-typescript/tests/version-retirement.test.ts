@@ -406,6 +406,7 @@ test('retiring the versions that can no longer start deletes their records and n
             .sort();
   }
   expected.session_managed_runners = [];
+  expected.session_managed_assignments = [];
   expected.experiment_compute_runs = [];
   expected.session_messages = [];
   const after = await snapshot(client);

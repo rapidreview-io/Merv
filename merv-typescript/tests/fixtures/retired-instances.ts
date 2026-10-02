@@ -400,7 +400,15 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
+    // Work-host bindings were introduced later as well. Rewind the empty child
+    // table before its parent so the current server can replay sessions@11.
+    await client.query('DROP TABLE session_managed_assignments');
     await client.query('DROP TABLE session_managed_runners');
+    await client.query('DROP FUNCTION session_managed_work_guard()');
+    await client.query('DROP FUNCTION session_managed_assignment_guard()');
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='sessions' AND version=11",
+    );
     await client.query('DROP TABLE experiment_compute_runs');
     await client.query(
       "DELETE FROM component_migrations WHERE component='experiments' AND version=5",
