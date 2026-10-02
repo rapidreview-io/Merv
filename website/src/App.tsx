@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
-  ArrowDown,
   ArrowUpRight,
-  Pause,
-  Play,
   RotateCcw,
   Plus,
   Minus,
   X,
   Database,
-  FileBox,
-  Layers3,
   LibraryBig,
   BrainCircuit,
 } from "lucide-react";
@@ -183,16 +178,50 @@ function Wire({
   d,
   active = false,
   markerEnd,
+  stroke,
 }: {
   d: string;
   active?: boolean;
   markerEnd?: string;
+  stroke?: string;
 }) {
   return (
     <g>
-      <path className="wire" d={d} markerEnd={markerEnd} />
+      <path className="wire" d={d} markerEnd={markerEnd} style={{ stroke }} />
       {active && <path className="wire-pulse" d={d} pathLength="100" />}
     </g>
+  );
+}
+function TailPulse({
+  fade,
+  d,
+  length,
+  dash,
+  seconds,
+}: {
+  fade: string;
+  d: string;
+  length: number;
+  dash: number;
+  seconds: number;
+}) {
+  // A pulse `dash` long over a run of `length` that dims out through the
+  // wire's fading tail.
+  const share = (100 * dash) / length;
+  return (
+    <path
+      className="wire-pulse"
+      d={d}
+      pathLength="100"
+      style={
+        {
+          stroke: `url(#${fade})`,
+          strokeDasharray: `${share} 112`,
+          "--dash": share,
+          animationDuration: `${seconds}s`,
+        } as CSSProperties
+      }
+    />
   );
 }
 function DagArrow({ id }: { id: string }) {
@@ -213,19 +242,37 @@ function DagArrow({ id }: { id: string }) {
     </defs>
   );
 }
+function Inflow({ id, from }: { id: string; from: number }) {
+  // Lines from the diagram above fade back in on their way into the task cards.
+  return (
+    <linearGradient
+      id={id}
+      className="wire-fade"
+      gradientUnits="userSpaceOnUse"
+      x1="0"
+      y1={from}
+      x2="0"
+      y2="16"
+    >
+      <stop stopOpacity="0" />
+      <stop offset="1" />
+    </linearGradient>
+  );
+}
 function useDiagramWidth() {
   const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(1080);
+  const [size, setSize] = useState({ width: 1080, px: 1080 });
   useEffect(() => {
     if (!ref.current) return;
     // Spread the columns on wide screens without stretching marks or adding height.
     const observer = new ResizeObserver(([entry]) => {
-      setWidth(Math.max(1080, entry.contentRect.width / 1.2));
+      const px = entry.contentRect.width;
+      setSize({ width: Math.max(1080, px / 1.2), px });
     });
     observer.observe(ref.current);
     return () => observer.disconnect();
   }, []);
-  return { ref, width };
+  return { ref, ...size };
 }
 function ResearchInput({
   x,
@@ -260,7 +307,7 @@ function ResearchInput({
       <text
         key={label}
         x={x}
-        y={kind === "user" ? y : y + 52}
+        y={kind === "user" ? y : y - 40}
         textAnchor="middle"
         className={`input-title ${kind === "user" ? "input-rotating" : ""}`}
       >
@@ -274,134 +321,192 @@ function ResearchInput({
     </g>
   );
 }
-function Ideas({
+function IdeasDiagram({
+  name,
+  width,
+  height,
+  reach,
+  band,
+  bandHeight,
+  r,
+  fan,
+  swing,
+  tail,
+  userInput,
   phase,
-  reduced,
-  stopped,
 }: {
+  name: string;
+  width: number;
+  height: number;
+  reach: number;
+  band: number;
+  bandHeight: number;
+  r: number;
+  fan: number;
+  swing: number;
+  tail: number;
+  userInput: string;
   phase: number;
-  reduced: boolean;
-  stopped: boolean;
 }) {
-  const { ref, width } = useDiagramWidth();
+  const c = width / 2;
+  const left = c - reach;
+  const right = c + reach;
+  const top = 230 - r;
+  const out = 230 + r + 2;
+  const split = height - 60;
+  const end = height + tail;
+  // The return line rises `swing` to the right of Evidence, outside the field.
+  const back = right + swing;
+  const dash = 0.28 * r;
+  const fade = `${name}-fade`;
+  const branches = [-fan, fan];
+  const returning = `${back} ${height}V230H${right + 30}`;
+  return (
+    <svg
+      className={name}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="Set your problem, model, or data. Merv provides the prior research and evidence, grouped inside the system. Together they produce parallel experiments, whose results return as evidence."
+    >
+      <linearGradient
+        id={fade}
+        className="pulse-fade"
+        gradientUnits="userSpaceOnUse"
+        x1="0"
+        y1={height}
+        x2="0"
+        y2={end}
+      >
+        <stop />
+        <stop offset="1" stopOpacity="0" />
+      </linearGradient>
+      <ResearchInput
+        x={c}
+        y={78}
+        kind="user"
+        label={userInput}
+        caption="Set by you"
+      />
+      <Wire d={`M${c} 116V152`} />
+      <g className="provided-context">
+        <title>Provided by Merv</title>
+        <rect
+          x={c - band}
+          y="152"
+          width={band * 2}
+          height={bandHeight}
+          className="provided-field"
+        />
+        <ResearchInput
+          x={left}
+          y={230}
+          kind="research"
+          label="Prior research"
+        />
+        <ResearchInput x={right} y={230} kind="evidence" label="Evidence" />
+        <Wire
+          d={`M${c} 152V${top - 6}M${left + 36} 230H${c - r - 6}M${right - 36} 230H${c + r + 6}`}
+        />
+        <path
+          d={`m${c - 4} ${top - 12} 4 6 4-6M${c - r - 12} 226l6 4-6 4M${c + r + 12} 226l-6 4 6 4`}
+          className="wire-arrow"
+        />
+        <circle cx={c} cy="230" r={r} className="idea-core" />
+        <path
+          d={`M${c - 19} 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z`}
+          fill="var(--slate-12)"
+        />
+        <circle cx={c} cy={top} r="3" className="accent-dot" />
+      </g>
+      {/* Work leaves toward the two task cards below; results return as evidence. */}
+      <Wire
+        d={`M${c} ${out}V${split}M${c - fan} ${height}V${split}H${c + fan}V${height}M${returning}`}
+      />
+      <path
+        d={`${branches.map((dx) => `M${c + dx - 4} ${height - 18}l4 6 4-6`).join("")}M${right + 36} 226l-6 4 6 4`}
+        className="wire-arrow"
+      />
+      {phase >= 20.5 && phase < 24 && (
+        <TailPulse
+          fade={fade}
+          d={`M${back} ${end}V${height}${returning.slice(returning.indexOf("V"))}`}
+          length={end - 230 + swing - 30}
+          dash={dash}
+          seconds={3}
+        />
+      )}
+      {(phase >= 23.5 || phase < 1.5) &&
+        branches.map((dx) => (
+          <TailPulse
+            key={dx}
+            fade={fade}
+            d={`M${c} ${out}V${split}H${c + dx}V${end}`}
+            length={end - out + fan}
+            dash={dash}
+            seconds={3.5}
+          />
+        ))}
+    </svg>
+  );
+}
+function Ideas({ phase, reduced }: { phase: number; reduced: boolean }) {
+  const { ref, width, px } = useDiagramWidth();
   const [inputIndex, setInputIndex] = useState(0);
   useEffect(() => {
-    if (stopped) return;
+    if (reduced) return;
     const timer = setInterval(() => {
       if (!document.hidden) setInputIndex((index) => (index + 1) % 3);
     }, 6000);
     return () => clearInterval(timer);
-  }, [stopped]);
-  const center = width / 2;
-  const left = width * 0.2;
-  const right = width * 0.8;
+  }, [reduced]);
   const userInput = reduced
     ? "Problem / Model / Data"
     : ["Problem", "Model", "Data"][inputIndex];
-  const description =
-    "Set your problem, model, or data. Merv provides the prior research and evidence, grouped inside the system. Together they produce parallel experiments for applied AI research.";
+  // The two outgoing lines sit over the task cards in the diagram below.
+  const fan = (width * 210) / 1080;
   return (
     <div className="idea-field" ref={ref}>
-      <svg
-        className="ideas-desktop"
-        viewBox={`0 0 ${width} 420`}
-        role="img"
-        aria-label={description}
+      <IdeasDiagram
+        name="ideas-desktop"
+        width={width}
+        height={460}
+        reach={fan + 60}
+        band={fan + 170}
+        bandHeight={176}
+        r={56}
+        fan={fan}
+        swing={140}
+        tail={(56 * width) / px}
+        userInput={userInput}
+        phase={phase}
+      />
+      <IdeasDiagram
+        name="ideas-mobile"
+        width={360}
+        height={430}
+        reach={116}
+        band={162}
+        bandHeight={168}
+        r={46}
+        fan={95}
+        swing={56}
+        tail={(44 * 360) / px}
+        userInput={userInput}
+        phase={phase}
+      />
+      <div
+        className="layer-bridge ideas-bridge"
+        aria-hidden="true"
+        style={
+          {
+            "--return": `${50 + ((fan + 200) / width) * 100}%`,
+          } as CSSProperties
+        }
       >
-        <ResearchInput
-          x={center}
-          y={78}
-          kind="user"
-          label={userInput}
-          caption="Set by you"
-        />
-        <Wire d={`M${center} 116V152`} />
-        <g className="provided-context">
-          <title>Provided by Merv</title>
-          <rect
-            x={width * 0.07}
-            y="152"
-            width={width * 0.86}
-            height="176"
-            className="provided-field"
-          />
-          <ResearchInput
-            x={left}
-            y={230}
-            kind="research"
-            label="Prior research"
-          />
-          <ResearchInput x={right} y={230} kind="evidence" label="Evidence" />
-          <Wire d={`M${center} 152V168`} />
-          <Wire d={`M${left + 36} 230H${center - 62}`} />
-          <Wire d={`M${right - 36} 230H${center + 62}`} />
-          <path
-            d={`m${center - 4} 162 4 6 4-6M${center - 68} 226l6 4-6 4M${center + 68} 226l-6 4 6 4`}
-            className="wire-arrow"
-          />
-          <circle cx={center} cy="230" r="56" className="idea-core" />
-          <path
-            d={`M${center - 19} 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z`}
-            fill="var(--slate-12)"
-          />
-          <circle cx={center} cy="174" r="3" className="accent-dot" />
-        </g>
-        <Wire d={`M${center} 288V420`} active={phase < 3} />
-        <text x={center + 16} y="373" className="svg-small">
-          Experiments
-        </text>
-        <path d={`m${center - 4} 402 4 6 4-6`} className="wire-arrow" />
-      </svg>
-      <svg
-        className="ideas-mobile"
-        viewBox="0 0 360 380"
-        role="img"
-        aria-label={description}
-      >
-        <ResearchInput
-          x={180}
-          y={78}
-          kind="user"
-          label={userInput}
-          caption="Set by you"
-        />
-        <Wire d="M180 116V152" />
-        <g className="provided-context">
-          <title>Provided by Merv</title>
-          <rect
-            x="0"
-            y="152"
-            width="360"
-            height="168"
-            className="provided-field"
-          />
-          <ResearchInput
-            x={55}
-            y={230}
-            kind="research"
-            label="Prior research"
-          />
-          <ResearchInput x={305} y={230} kind="evidence" label="Evidence" />
-          <Wire d="M180 152V178" />
-          <Wire d="M91 230H128" />
-          <Wire d="M269 230H232" />
-          <path
-            d="m176 172 4 6 4-6M122 226l6 4-6 4M238 226l-6 4 6 4"
-            className="wire-arrow"
-          />
-          <circle cx="180" cy="230" r="46" className="idea-core" />
-          <path
-            d="M161 242v-27h7l12 14 12-14h7v27h-8v-15l-11 13-11-13v15z"
-            fill="var(--slate-12)"
-          />
-          <circle cx="180" cy="184" r="3" className="accent-dot" />
-        </g>
-        <Wire d="M180 278V380" active={phase < 3} />
-        <text x="196" y="337" className="svg-small">
-          Experiments
-        </text>
-        <path d="m176 362 4 6 4-6" className="wire-arrow" />
-      </svg>
+        <i />
+        <i />
+        <i />
+      </div>
     </div>
   );
 }
@@ -438,6 +543,16 @@ function Dag({
           aria-hidden="true"
         >
           <DagArrow id="dag-arrow" />
+          <Inflow id="dag-inflow" from={-30} />
+          {[taskLeft.cx, taskRight.cx].map((x) => (
+            <Wire
+              key={x}
+              d={`M${x} -30V56`}
+              stroke="url(#dag-inflow)"
+              markerEnd="url(#dag-arrow)"
+              active={phase >= 0.5 && phase < 3.5}
+            />
+          ))}
           <Wire
             d={`M${taskLeft.cx} 178V254`}
             active={phase >= 7 && phase < 10}
@@ -463,6 +578,16 @@ function Dag({
           aria-hidden="true"
         >
           <DagArrow id="dag-arrow-mobile" />
+          <Inflow id="dag-inflow-mobile" from={-24} />
+          {[85, 275].map((x) => (
+            <Wire
+              key={x}
+              d={`M${x} -24V48`}
+              stroke="url(#dag-inflow-mobile)"
+              markerEnd="url(#dag-arrow-mobile)"
+              active={phase >= 0.5 && phase < 3.5}
+            />
+          ))}
           <Wire d="M85 155V218" active={phase >= 7 && phase < 10} />
           <Wire d="M85 218H60V278" markerEnd="url(#dag-arrow-mobile)" />
           <Wire d="M85 218H180V278" markerEnd="url(#dag-arrow-mobile)" />
@@ -754,41 +879,24 @@ function Fleet({
       </div>
       <div
         className="fabric-bottom"
-        aria-label="Datasets, checkpoints and evidence are retained after compute is released."
+        aria-label="Evidence is retained after compute is released."
       >
-        <svg
-          viewBox="0 0 1080 66"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <Wire d="M180 0V25H900V0M540 0V25" />
-          <Wire d="M540 25V66" active={phase >= 21 && phase < 24} />
+        <svg viewBox="0 0 24 66" aria-hidden="true">
+          <Wire d="M12 0V66" active={phase >= 21 && phase < 24} />
         </svg>
-        <div className="artifacts">
-          <div className="artifact-source">
-            <FileBox size={38} strokeWidth={1} aria-hidden="true" />
-            <span>Datasets</span>
-          </div>
-          <span className="artifact-connector" aria-hidden="true" />
-          <div
-            className="evidence-store"
-            role="img"
-            aria-label="Evidence store: a persistent database of run history and metrics, linked to datasets and checkpoints."
-          >
-            <Database
-              className="evidence-database"
-              size={100}
-              strokeWidth={0.5}
-              aria-hidden="true"
-            />
-            <strong>Evidence store</strong>
-            <span>Run history · metrics</span>
-          </div>
-          <span className="artifact-connector" aria-hidden="true" />
-          <div className="artifact-source">
-            <Layers3 size={38} strokeWidth={1} aria-hidden="true" />
-            <span>Checkpoints</span>
-          </div>
+        <div
+          className="evidence-store"
+          role="img"
+          aria-label="Evidence store: a persistent database of run history and metrics."
+        >
+          <Database
+            className="evidence-database"
+            size={100}
+            strokeWidth={0.5}
+            aria-hidden="true"
+          />
+          <strong>Evidence store</strong>
+          <span>Run history · metrics</span>
         </div>
       </div>
     </div>
@@ -796,11 +904,9 @@ function Fleet({
 }
 export default function App() {
   const [phase, setPhase] = useState(12),
-    [paused, setPaused] = useState(false),
     [reduced, setReduced] = useState(false),
     [selected, setSelected] = useState<string | null>(null),
-    [focus, setFocus] = useState<string | null>(null),
-    [active, setActive] = useState(0);
+    [focus, setFocus] = useState<string | null>(null);
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => setReduced(media.matches);
@@ -809,29 +915,14 @@ export default function App() {
     return () => media.removeEventListener("change", update);
   }, []);
   useEffect(() => {
-    if (paused || reduced) return;
+    if (reduced) return;
     const timer = setInterval(() => {
       if (!document.hidden) setPhase((p) => (p + 0.5) % 26);
     }, 500);
     return () => clearInterval(timer);
-  }, [paused, reduced]);
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) =>
-        entries.forEach((e) => {
-          if (e.isIntersecting)
-            setActive(Number((e.target as HTMLElement).dataset.layer));
-        }),
-      { rootMargin: "-20% 0px -45% 0px" },
-    );
-    document
-      .querySelectorAll("[data-layer]")
-      .forEach((n) => observer.observe(n));
-    return () => observer.disconnect();
-  }, []);
-  const stopped = paused || reduced;
+  }, [reduced]);
   return (
-    <div className={`site dark ${stopped ? "paused" : ""}`}>
+    <div className={`site dark ${reduced ? "paused" : ""}`}>
       <a href="#main" className="skip">
         Skip to content
       </a>
@@ -868,62 +959,16 @@ export default function App() {
               <span className="headline-subject">AI research.</span>
             </span>
           </h1>
-          <a
-            className="follow-loop"
-            href="#ideas"
-            aria-label="Explore the research loop"
-          >
-            <ArrowDown size={28} strokeWidth={1} />
-          </a>
-        </div>
-        <div className="system-controls">
-          <div className="layer-tabs" aria-label="Jump to a layer">
-            {["Inputs", "Experiments", "Compute"].map((s, i) => (
-              <a
-                href={"#" + ["ideas", "workloads", "infrastructure"][i]}
-                key={s}
-                aria-current={active === i ? "step" : undefined}
-              >
-                <span>{s}</span>
-              </a>
-            ))}
-          </div>
-          <button
-            onClick={() => setPaused(!paused)}
-            disabled={reduced}
-            aria-label={
-              reduced
-                ? "Animation disabled: reduced motion"
-                : stopped
-                  ? "Play simulation"
-                  : "Pause simulation"
-            }
-            title={
-              reduced
-                ? "Reduced motion"
-                : stopped
-                  ? "Play simulation"
-                  : "Pause simulation"
-            }
-          >
-            {stopped ? <Play size={13} /> : <Pause size={13} />}
-          </button>
         </div>
         <div className="research-system">
-          <section id="ideas" data-layer="0" className="layer idea-layer">
-            <div className="layer-title">
-              <h2>Research inputs.</h2>
-            </div>
-            <Ideas phase={phase} reduced={reduced} stopped={stopped} />
-          </section>
-          <div className="layer-bridge ideas-bridge" aria-hidden="true">
-            <i />
-          </div>
           <section
-            id="workloads"
-            data-layer="1"
-            className="layer workload-layer"
+            id="ideas"
+            className="layer idea-layer"
+            aria-label="Research inputs"
           >
+            <Ideas phase={phase} reduced={reduced} />
+          </section>
+          <section id="workloads" className="layer workload-layer">
             <div className="layer-title">
               <h2>Parallel experiments.</h2>
             </div>
@@ -932,11 +977,7 @@ export default function App() {
           <div className="layer-bridge dispatch-bridge" aria-hidden="true">
             <i />
           </div>
-          <section
-            id="infrastructure"
-            data-layer="2"
-            className="layer infra-layer"
-          >
+          <section id="infrastructure" className="layer infra-layer">
             <div className="layer-title">
               <h2>Compute optimized for agents.</h2>
             </div>
