@@ -26,10 +26,12 @@ COPY --chmod=0755 start-runtime.py assignment-probed.py boot /opt/merv/runtime/
 COPY --chmod=0755 start /opt/merv/runtime/start-runner
 # Codex's own Node launcher would stay alive beside Codex with the session bearer in a readable
 # environment; this wrapper execs the one vendored native binary with the variables it sets.
+# The shell keeps a fixed PATH, so expose Codex's official argv[0]-dispatched patch helper there.
 RUN native="$(find /opt/codex/node_modules -path '*/vendor/*/bin/codex' -type f)" && test -x "$native" \
  && mkdir -p /opt/merv/bin \
  && printf '#!/bin/sh\nexport CODEX_MANAGED_PACKAGE_ROOT=/opt/codex/node_modules/@openai/codex CODEX_MANAGED_BY_NPM=1\nexec %s "$@"\n' "$native" > /opt/merv/bin/codex \
- && chmod 0755 /opt/merv/bin/codex
+ && chmod 0755 /opt/merv/bin/codex \
+ && ln -s "$native" /usr/bin/apply_patch
 COPY --chmod=0644 pi/worker-main.mjs pi/package.json /opt/merv/pi/
 # Node keys its compile cache by UID, so the worker's identity fills it once and root then seals it.
 RUN install -d -o 12001 -g 12001 -m 0700 /opt/merv/pi/compile-cache

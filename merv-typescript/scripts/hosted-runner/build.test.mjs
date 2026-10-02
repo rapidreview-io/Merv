@@ -84,6 +84,7 @@ test('build.mjs emits the hosted payload and the Dockerfile installs it with the
     // Codex runs as its one native binary: no Node launcher holds the session bearer beside it.
     assert.match(dockerfile, /-path '\*\/vendor\/\*\/bin\/codex'.*\n.*\n.*exec %s "\$@"/);
     assert.doesNotMatch(dockerfile, /codex\.js/);
+    assert.match(dockerfile, /ln -s "\$native" \/usr\/bin\/apply_patch/);
     // A networked assignment can reach sshd on loopback, which takes no password; and the step's
     // server-side deadline, not a clock in the supervisor, ends a hosted launch.
     assert.match(dockerfile, /'PasswordAuthentication no\\nKbdInteractiveAuthentication no\\n'/);

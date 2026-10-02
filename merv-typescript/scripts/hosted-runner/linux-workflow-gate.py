@@ -29,12 +29,29 @@ PROBE = ("for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' <\"$f\" 2>/dev/null |
          "\"import socket; socket.create_connection(('127.0.0.1', %d), 5)\" && echo network-on; "
          "echo \"uid $(id -u) probe-done\"")
 probe_suffix = ''
+# Exercise the official helper through an advertised shell tool, within Codex's sandbox.
+# Python's subprocess avoids Codex's shell-text patch interception hiding a missing executable.
+PATCH_PROBE = r"""import os,subprocess
+from pathlib import Path
+assert os.getuid()==12001
+patch='*** Begin Patch\n*** Add File: gate-native-patch\n+first\n*** End Patch\n'
+created=subprocess.run(['apply_patch'],input=patch,text=True,capture_output=True)
+assert created.returncode==0 and Path('gate-native-patch').read_text()=='first\n'
+patch='*** Begin Patch\n*** Update File: gate-native-patch\n@@\n-first\n+second\n*** End Patch\n'
+updated=subprocess.run(['apply_patch'],input=patch,text=True,capture_output=True)
+assert updated.returncode==0 and Path('gate-native-patch').read_text()=='second\n'
+Path('gate-native-patch').unlink()
+patch='*** Begin Patch\n*** Add File: /tmp/merv-gate-outside-patch\n+outside\n*** End Patch\n'
+outside=subprocess.run(['apply_patch'],input=patch,text=True,capture_output=True)
+print('native-patch-workspace-ok')
+print('native-patch-outside-blocked' if outside.returncode!=0 and not Path('/tmp/merv-gate-outside-patch').exists() else 'native-patch-outside-allowed')
+"""
 
 
 def probe_command(port):
     return (PROBE % port) + ("; python3 -c \"import os,hashlib; "
           "assert hashlib.sha256(os.environ.get('HF_TOKEN','').encode()).hexdigest() == '" + hf_digest + "'; "
-          "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"") + probe_suffix
+          "assert os.environ.get('HF_ENDPOINT') == '" + hf_endpoint + "'; assert 'MERV_AGENT_SESSION_TOKEN' not in os.environ; print('hf-token-inherited')\"") + '; python3 -c ' + shlex.quote(PATCH_PROBE) + probe_suffix
 calls, outputs, holders, relay_credentials = [], [], set(), []
 
 
@@ -67,6 +84,9 @@ class Main(http.server.BaseHTTPRequestHandler):
         tools = body.get('tools', [])
         calls.append((self.command, self.path, sorted(body), {t.get('type') for t in tools} |
                       {t.get('type') for n in tools for t in n.get('tools', [])}))
+        # Never inject an unadvertised tool: that can execute despite being invisible to the model.
+        declared = tools + [t for n in tools for t in n.get('tools', [])]
+        assert any(t.get('type') == 'function' and t.get('name') == 'exec_command' for t in declared)
         answered = [i['output'] for i in body.get('input', []) if i.get('type') == 'function_call_output']
         if answered:
             outputs.extend(answered)
@@ -145,6 +165,9 @@ settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_sear
             'shell_environment_policy.experimental_use_profile=false',
             'shell_environment_policy.set={"PATH"="/usr/bin:/bin","HOME"="/home/assignment",'
             '"USER"="assignment","TMPDIR"="/tmp","LANG"="C.UTF-8"}',
+            'sandbox_workspace_write.writable_roots=[]',
+            'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+            'sandbox_workspace_write.exclude_slash_tmp=true',
             'sandbox_workspace_write.network_access=true', 'model_provider="merv"',
             'model_providers.merv={"name"="Merv","base_url"="%s/codex-model",'
             '"env_key"="MERV_AGENT_SESSION_TOKEN","wire_api"="responses"}' % base]
@@ -177,6 +200,10 @@ def checked_launch():
     assert all(c[:2] == ('POST', '/codex-model/responses') and set(c[2]) <= KEYS and c[3] <= TOOLS
                for c in calls), calls
     assert 'uid 12001 probe-done' in probe, probe
+    assert 'native-patch-workspace-ok' in probe, probe
+    assert not sandboxed or ('native-patch-outside-blocked' in probe and
+                             not Path('/tmp/merv-gate-outside-patch').exists()), probe
+    Path('/tmp/merv-gate-outside-patch').unlink(missing_ok=True)
     assert not sandboxed or ('readable ' not in probe and holders), probe
     assert 'network-on' in probe and 'hf-token-inherited' in probe, probe
     assert hf_token not in json.dumps(settings)
@@ -230,6 +257,19 @@ while True: time.sleep(1)
     (work / 'gate-descendant').unlink()
 
 
+# Positive control: the official helper permits this exact path for the assignment UID
+# outside Codex. A denied tool-shell write below therefore proves the sandbox boundary.
+outside_path = Path('/tmp/merv-gate-outside-patch')
+assert not outside_path.exists()
+control = subprocess.run(
+    ['/usr/bin/apply_patch'],
+    input=b'*** Begin Patch\n*** Add File: /tmp/merv-gate-outside-patch\n+control\n*** End Patch\n',
+    capture_output=True, user=12001, group=12001, extra_groups=[], cwd=work,
+    env={'PATH': '/usr/bin:/bin'}, timeout=10,
+)
+assert control.returncode == 0 and outside_path.read_text() == 'control\n'
+outside_path.unlink()
+
 request_keys, transcripts, sandbox_results = set(), [], []
 secret_values = [enrollment, model_key, session, hf_token]
 try:
@@ -270,6 +310,8 @@ print(json.dumps({
     'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted(request_keys),
     'noCredentialFileInCodexHome': True, 'shellNetworkOn': True, 'hfTokenInheritedByShell': True, 'hfTokenAbsentFromArgsConfigAndLogs': True, 'codexSandboxOnHost': sandboxed,
     **({'sessionBearerUnreadableFromShell': True} if sandboxed else {}),
+    'nativeShellAdvertised': True, 'nativePatchWorkspaceEdits': True,
+    **({'nativePatchOutsideWorkspaceDenied': True} if sandboxed else {}),
     'normalLaneExercised': True, 'retainedCodexLaunches': 2, 'retainedSameAbsoluteCwd': True,
     'retainedResearchPreserved': True, 'privateStateCanariesCleared': True,
     'detachedAssignmentDescendantsCleared': True, 'freshSessionCredentials': True,
