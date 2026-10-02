@@ -4575,8 +4575,8 @@ del.cut {
   flex: 1;
   border-top: 1px solid var(--line);
 }
-/* A call the agent proposed: the act it performs, its input as facts, and Run; once it ran, a
-   quiet word where Run stood, and what this page holds of its result in a fold. */
+/* A call the agent proposed: the act it performs, its input as facts, and Run; once it ran, how
+   it came out where Run stood. */
 .pi-proposal {
   display: grid;
   justify-items: start;
@@ -4608,12 +4608,9 @@ del.cut {
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.pi-proposal-ran,
 .pi-returned {
   font-size: var(--text-sm);
   color: var(--muted);
-}
-.pi-returned {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -4622,7 +4619,7 @@ del.cut {
 }
 /* The folds a card and a receipt open, in the key's quiet ink until they are opened: a summary
    a target tall that gives the height back to the line it stands on. */
-:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details) > summary {
+:is(.pi-fact-tree, .pi-receipt-line > details) > summary {
   display: inline-flex;
   align-items: center;
   padding-block: calc((var(--hit) - 20px) / 2);
@@ -4630,12 +4627,12 @@ del.cut {
   font-size: var(--text-sm);
   color: var(--faint);
 }
-:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details) > summary:hover,
-:is(.pi-fact-tree, .pi-result, .pi-receipt-line > details)[open] > summary {
+:is(.pi-fact-tree, .pi-receipt-line > details) > summary:hover,
+:is(.pi-fact-tree, .pi-receipt-line > details)[open] > summary {
   color: var(--text);
 }
-/* What came back for a call the person ran: one quiet line on the agent's side, never a bubble
-   of the person's, with its result unfolding under it. */
+/* How a call the person ran came out: one quiet line, in its card or on the agent's side, never a
+   bubble of the person's, with its result unfolding under it. */
 .pi-receipt {
   max-width: min(100%, 72ch);
   font-size: var(--text-sm);

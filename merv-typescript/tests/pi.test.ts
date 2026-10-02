@@ -1685,12 +1685,13 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
     shown.push((await f.pi.snapshot(f.operator, id)).stage.detail),
     call(...args)
   );
-  for (const name of ['project.get', 'shell.run']) {
+  // What each is, never its name: a read, then a write.
+  for (const name of ['project.get', 'task.create']) {
     const before = sequence();
     await f.pi.tool(token, { ...input, name, input: {} });
     assert.equal(sequence(), before + 2);
   }
-  assert.deepEqual(shown, ['Using project.get', 'Using shell.run']);
+  assert.deepEqual(shown, ['Reading', 'Making a change']);
   // Once the machine stops, the conversation's stage is forgotten.
   await f.pi.stopMachine(f.operator);
   await f.pi.tick();
@@ -1909,7 +1910,7 @@ test('a cold turn shows what it waits on, from the queue to the answer; a held w
   f.tools.call = async (...args) => ((reading = await stage()), call(...args));
   await f.pi.tool(token, { ...input, name: 'project.get', input: {} });
   f.tools.call = call;
-  assert.deepEqual([reading?.name, reading?.detail], ['tool', 'Using project.get']);
+  assert.deepEqual([reading?.name, reading?.detail], ['tool', 'Reading']);
   assert.equal((await stage()).name, 'thinking');
   f.advance(1000);
   await f.pi.progress(token, { ...input, events: [{ type: 'text', text: 'Answer' }] });

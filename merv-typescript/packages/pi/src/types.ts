@@ -132,7 +132,7 @@ export interface PiStage {
   name: PiStageName;
   /** When this stage began, so the UI can count seconds. */
   since: string;
-  /** A short human phrase, e.g. the tool being used. */
+  /** A short human phrase for a tool call: what it is (`Reading`), never the tool's name. */
   detail?: string;
 }
 /** A model a person may pick for a conversation (MERV_PI_MODELS), without the relay's effort. */

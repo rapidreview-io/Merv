@@ -9,7 +9,7 @@ const { createElement, StrictMode } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter, useNavigate } = await import('react-router-dom');
 const { PiView } = await import('../packages/ui/web/views/pi.js');
-const { actOf, factsOf, labelOf, receiptOf, TOLD } =
+const { actOf, factsOf, labelOf, receiptOf } =
   await import('../packages/ui/web/views/pi-proposal.js');
 const { App } = await import('../packages/ui/web/app.js');
 const { piFrameParser } = await import('../packages/ui/web/pi-stream.js');
@@ -1509,14 +1509,14 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   // its JSON is not printed at all.
   assert.deepEqual(
     cards().map((card) => card.textContent),
-    ['Halt fleetFleetflt_1Run as me', 'Read artifactArtifactart_1ModedownloadRun as me'],
+    ['Halt machineMachineflt_1Run as me', 'Download fileFileart_1Run as me'],
   );
   assert.deepEqual(
     cards().map((card) => card.getAttribute('title')),
     ['fleet.halt', 'artifact.read'],
   );
   const runs = () => cards().map((card) => card.querySelector<HTMLButtonElement>('button.btn'));
-  const ran = () => cards().map((card) => card.querySelector('.pi-proposal-ran')?.textContent);
+  const ran = () => cards().map((card) => card.querySelector('.pi-receipt-word')?.textContent);
   // While the turn runs, nothing can be run.
   assert.ok(runs().every((button) => button!.disabled));
   state = snapshot(conversation(), [turn('completed')]);
@@ -1531,8 +1531,8 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   });
   // A secret result shows only in its card, standing open with its link live, and never reaches
   // the agent.
-  const kept = cards()[1].querySelector<HTMLDetailsElement>('.pi-result')!;
-  assert.equal(kept.open, true);
+  const kept = cards()[1].querySelector('.pi-receipt')!;
+  assert.equal(kept.querySelector('details')!.open, true);
   assert.equal(kept.querySelector('a')!.href, 'https://files.example/art_1?sig=abc');
   assert.deepEqual(
     sent.map(({ text }) => text),
@@ -1540,7 +1540,7 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   );
   assert.ok(!JSON.stringify(sent).includes('sig=abc'));
   // The turn that answered proposes nothing: the other call stays under its own turn, to run,
-  // and the one that ran says so in a word where its control stood.
+  // and the one that ran says so where its control stood, and nowhere else.
   const told = command('c2', 'completed', [
     { role: 'user', text: 'Ran artifact.read; its result is shown only to me.' },
     { role: 'assistant', text: 'Downloaded.' },
@@ -1552,6 +1552,7 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   await act(async () => stream.push('snapshot', state));
   assert.equal(cards().length, 2);
   assert.deepEqual(ran(), [undefined, 'Ran']);
+  assert.equal(document.querySelector('.pi-messages > .pi-receipt'), null);
   assert.equal(runs()[1], null);
   assert.equal(runs()[0]!.disabled, false);
   await act(async () => runs()[0]!.click());
@@ -1564,7 +1565,19 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   state = snapshot(conversation(), [turn('completed', refusal), told]);
   await act(async () => stream.push('snapshot', state));
   assert.deepEqual(ran(), ['Refused', 'Ran']);
-  assert.ok(cards()[0].querySelector('.pi-proposal-ran.pi-refused'));
+  assert.ok(cards()[0].querySelector('.pi-receipt-word.pi-refused'));
+  // Once the agent has been told, the card says why as well.
+  const refused = command('c2b', 'completed', [
+    { role: 'user', text: 'fleet.halt was refused: Actor lacks admin permission' },
+    { role: 'assistant', text: 'Ask an admin.' },
+  ]);
+  state = snapshot(conversation(), [turn('completed', refusal), told, refused]);
+  await act(async () => stream.push('snapshot', state));
+  assert.equal(
+    cards()[0].querySelector('.pi-receipt')!.textContent,
+    'Refused·Actor lacks admin permission',
+  );
+  assert.equal(document.querySelector('.pi-messages > .pi-receipt'), null);
   // A later turn proposes the next step: the secret stays in its card under its own turn, and
   // the calls it held that are not secret give way.
   const revoke = { id: 'pip_revoke', name: 'actor.revoke_token', input: {}, at: 'later' };
@@ -1579,10 +1592,10 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   await act(async () => stream.push('snapshot', state));
   assert.deepEqual(
     cards().map((card) => card.querySelector('.pi-proposal-act')!.textContent),
-    ['Read artifact', 'Revoke token'],
+    ['Download file', 'Revoke token'],
   );
   assert.equal(
-    cards()[0].querySelector('.pi-result a')!.href,
+    cards()[0].querySelector('.pi-receipt a')!.href,
     'https://files.example/art_1?sig=abc',
   );
   assert.deepEqual(ran(), ['Ran', undefined]);
@@ -1634,8 +1647,11 @@ test('research.advance tells Pi the transition and every child ID while keeping 
   assert.ok(told.includes('"revision":1'));
   assert.ok(!told.includes('Full Problem content'));
   assert.ok(told.length < 500);
-  // The whole of it stays in the card, read as a tree, its long Problem one press away.
-  const full = document.querySelector('.pi-proposal .pi-result')!;
+  // The whole of it stays in the card, behind its fold, read as a tree, its long Problem one
+  // press away.
+  const full = document.querySelector('.pi-proposal .pi-receipt')!;
+  await act(async () => full.querySelector('summary')!.click());
+  await settle(10);
   const all = [...full.querySelectorAll('button')].find(
     (button) => button.textContent === 'Show all',
   );
@@ -1888,7 +1904,7 @@ test('the transcript marks a switch of model, with a move of machine, from the t
   assert.ok(model() && document.querySelector('.pi-machine-button'));
   assert.equal(
     document.querySelector('.pi-messages > :last-child .pi-proposal-act')?.textContent,
-    'Halt fleet',
+    'Halt machine',
   );
   const dividers = [...document.querySelectorAll('.pi-divider')];
   assert.deepEqual(
@@ -1945,16 +1961,16 @@ test('each Run as me is named by the act it runs, and described by that act’s 
   const buttons = [...document.querySelectorAll('.pi-proposal button')];
   assert.deepEqual(
     buttons.map((button) => accessible(button)),
-    ['Run as me Halt fleet', 'Run as me New task'],
+    ['Run as me Halt machine', 'Run as me New task'],
   );
   assert.deepEqual(
     buttons.map((button) => accessible(button, 'aria-describedby')),
-    ['Fleetflt_1', 'Titlex'],
+    ['Machineflt_1', 'Titlex'],
   );
   // Nothing visible was added to say it.
   assert.equal(
     document.querySelector('.pi-proposal')!.textContent,
-    'Halt fleetFleetflt_1Run as me',
+    'Halt machineMachineflt_1Run as me',
   );
 });
 
@@ -2030,12 +2046,21 @@ test('a call is titled by the act it performs, in the verb table’s words where
     ['sandbox.extend', { id: 'sbx_1', seconds: 600 }, 'Extend lease'],
     ['sandbox.release', { id: 'sbx_1' }, 'Release machine'],
     ['task.create', {}, 'New task'],
-    ['research.create', {}, 'New cycle'],
+    ['task.mark_failed', {}, 'Mark task failed'],
+    ['experiment.transition', { transition: 'abandon' }, 'Abandon experiment'],
+    ['experiment.transition', { transition: 'mark_failed' }, 'Mark experiment failed'],
+    ['code.publication.control', { action: 'retry' }, 'Retry publication'],
+    ['code.local.bind', {}, 'Bind repository'],
+    ['fleet.workflow_retry', {}, 'Retry on Fleet'],
     // Otherwise the tool's own words: an action with an underscore says itself, any other comes
-    // before what it acts on.
+    // before what it acts on, in the product's word for it.
     ['usage.set_budget', {}, 'Set budget'],
-    ['research.end', {}, 'End research'],
     ['code.publication.merge', {}, 'Merge publication'],
+    ['research.create', {}, 'New cycle'],
+    ['research.end', {}, 'End cycle'],
+    ['artifact.read', {}, 'Read file'],
+    ['artifact.read', { mode: 'download' }, 'Download file'],
+    ['fleet.halt', {}, 'Halt machine'],
   ];
   for (const [name, input, title] of titles) assert.equal(actOf(name, input), title, name);
 });
@@ -2048,10 +2073,12 @@ test('a call’s input reads as facts: keys in words, flags as Yes and No, neste
       requestId: 'request_1',
       expectedRevision: 3,
     }),
-    [
-      { key: 'enabled', label: 'Enabled', text: 'No' },
-      { key: 'ownMachines', label: 'Own machines', text: 'Yes' },
-    ],
+    // What the act said (Pause dispatch) is not said again.
+    [{ key: 'ownMachines', label: 'Own machines', text: 'Yes' }],
+  );
+  assert.deepEqual(
+    factsOf('experiment.transition', { experimentId: 'exp_1', transition: 'abandon' }),
+    [{ key: 'experimentId', label: 'Experiment', text: 'exp_1' }],
   );
   assert.deepEqual(
     factsOf('task.create', {
@@ -2072,12 +2099,13 @@ test('a call’s input reads as facts: keys in words, flags as Yes and No, neste
       { key: 'budget', label: 'Budget', tree: { maxTokens: 10 } },
     ],
   );
-  // A field holding a record's id is named by the record, a bare id by the record acted on.
+  // A field holding a record's id is named by the record, in the product's word for it, and a
+  // bare id by the record acted on.
   assert.deepEqual(
-    ['sessionId', 'artifactIds', 'id', 'max_wall_minutes'].map((key) =>
+    ['sessionId', 'artifactIds', 'researchId', 'instanceId', 'id', 'max_wall_minutes'].map((key) =>
       labelOf('sandbox.extend', key),
     ),
-    ['Session', 'Artifacts', 'Sandbox', 'Max wall minutes'],
+    ['Session', 'Files', 'Cycle', 'Unit', 'Sandbox', 'Max wall minutes'],
   );
   // An input with nothing left to say has no facts.
   assert.deepEqual(factsOf('research.advance', { requestId: 'r', expectedRevision: 0 }), []);
@@ -2113,14 +2141,13 @@ test('what Run told the agent is a receipt only where it answers a call that ran
     ),
     { proposal: advance, result: '{"id":"research_1","state":"researching"}' },
   );
-  // A result cut where Run cuts it no longer parses, and is still the result.
-  const cut = `{"text":"${'a'.repeat(TOLD)}"}`.slice(0, TOLD);
+  // A result cut where Run cuts it no longer parses, whatever the server trimmed from its end, and
+  // is still the result.
+  const cut = `{"text":"${'a'.repeat(3990)}`;
   assert.deepEqual(after(`Ran task.create: ${cut}`), { proposal: create, result: cut });
   for (const [text, role] of [
     // A message that merely begins with the word.
     ['Ran the numbers again: anything new?'],
-    // A result that neither parses nor was cut short.
-    ['Ran task.create: and it worked'],
     // A receipt that waited in the composer and went with the person's own words.
     ['Ran task.create: {"id":"wf_1"}\n\nAnd then?'],
     // A call that never ran, a call nobody proposed, and words that are not the person's.
@@ -2197,7 +2224,7 @@ test('a card names the records its input points at, folds what is long or nested
   assert.equal(bare.querySelector('button')!.hasAttribute('aria-describedby'), false);
 });
 
-test('what came back for a run is one quiet line on the agent’s side, never a message of the person’s', async (t) => {
+test('how a run came out is said once, in its card or on a quiet line, never as a message of the person’s', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const ran = { at: 'now', ok: true };
@@ -2218,28 +2245,42 @@ test('what came back for a run is one quiet line on the agent’s side, never a 
       { role: 'assistant', text: answer },
     ]);
   const created = { id: 'task_1', title: 'Seed sweep', state: 'planned' };
-  boot(
-    () =>
-      snapshot(conversation(), [
-        { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
-        turn('c2', `Ran task.create: ${JSON.stringify(created)}`, 'Created.'),
-        turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
-        turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
-        turn('c5', 'Ran the numbers again: anything new?', 'Nothing yet.'),
-      ]),
+  const turns = [
+    { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
+    turn('c2', `Ran task.create: ${JSON.stringify(created)}`, 'Created.'),
+    turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
+    turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
+    turn('c5', 'Ran the numbers again: anything new?', 'Nothing yet.'),
+  ];
+  let state = snapshot(conversation(), turns);
+  const stream = boot(
+    () => state,
     () => [conversation()],
   );
   await open();
   const lines = () => [...document.querySelectorAll('.pi-receipt')];
-  assert.deepEqual(
-    lines().map((line) => line.querySelector('.pi-receipt-line')!.textContent),
-    ['RanNew taskResult', 'RefusedHalt lease·Actor lacks admin permission', 'RanRead artifact'],
-  );
+  const said = () => lines().map((line) => line.querySelector('.pi-receipt-line')!.textContent);
+  // While its card is drawn, each outcome stands in the card, where Run stood, and nowhere else.
+  assert.deepEqual(said(), ['RanResult', 'Refused·Actor lacks admin permission', 'Ran']);
+  assert.ok(lines().every((line) => line.parentElement!.classList.contains('pi-proposal')));
   // Only what the person typed is theirs.
-  assert.deepEqual(
-    [...document.querySelectorAll('.pi-message--user')].map((message) => message.textContent),
-    ['YouMake the task', 'YouRan the numbers again: anything new?'],
-  );
+  const typed = () =>
+    [...document.querySelectorAll('.pi-message--user')].map((message) => message.textContent);
+  assert.deepEqual(typed(), ['YouMake the task', 'YouRan the numbers again: anything new?']);
+  // Once the agent proposes again the cards give way, and each outcome is a quiet line where the
+  // agent was told, named by the act.
+  const next = { id: 'pip_next', name: 'research.advance', input: {}, at: 'later' };
+  state = snapshot(conversation(), [
+    ...turns,
+    { ...command('c6', 'completed', [{ role: 'assistant', text: 'Next?' }]), proposals: [next] },
+  ]);
+  await act(async () => stream.push('snapshot', state));
+  assert.deepEqual(said(), [
+    'RanNew taskResult',
+    'RefusedHalt lease·Actor lacks admin permission',
+    'RanRead file',
+  ]);
+  assert.deepEqual(typed(), ['YouMake the task', 'YouRan the numbers again: anything new?']);
   // Each stands where its turn's words did, before the agent's answer, and keeps the tool's
   // name for the pointer alone.
   assert.equal(lines()[0].nextElementSibling?.textContent, 'AgentCreated.');

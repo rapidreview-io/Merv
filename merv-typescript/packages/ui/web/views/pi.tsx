@@ -284,18 +284,66 @@ function Nested({ label, tree, names }: { label: string; tree: object; names: Re
 }
 
 /**
+ * How a call the person ran came out, said once: the word, why it was refused, and what came back
+ * in a fold. It stands in the call's card while the card is drawn, and otherwise on a quiet line of
+ * its own where the agent was told, named by the act: never as a message of the person's. A
+ * result this page holds for the person alone stands open.
+ */
+function Outcome({
+  proposal,
+  receipt,
+  result,
+  named,
+}: {
+  proposal: PiProposal;
+  receipt?: Receipt;
+  result?: string;
+  named?: boolean;
+}) {
+  const [open, setOpen] = useState(!!proposal.secret);
+  const refused = receipt && 'refused' in receipt ? receipt.refused : undefined;
+  const failed = refused !== undefined || proposal.ran?.ok === false;
+  const shown = result ?? (receipt && 'result' in receipt ? receipt.result : undefined);
+  return (
+    <div className="pi-receipt" title={named ? proposal.name : undefined}>
+      <div className="pi-receipt-line">
+        <span className={cx('pi-receipt-word', failed && 'pi-refused')}>
+          {failed ? 'Refused' : 'Ran'}
+        </span>
+        {named && <span className="pi-receipt-act">{actOf(proposal.name, proposal.input)}</span>}
+        {refused && (
+          <>
+            <span className="ghost" aria-hidden="true">
+              ·
+            </span>
+            <span>{refused}</span>
+          </>
+        )}
+        {shown !== undefined && (
+          <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+            <Summary>Result</Summary>
+          </details>
+        )}
+      </div>
+      {open && shown !== undefined && <Returned text={shown} />}
+    </div>
+  );
+}
+
+/**
  * A call the agent proposed, in the product's words: the act it performs, its input as facts, and
  * Run, which runs it once as the person and is heard by the act and described by the facts. The
- * tool's own name is only the card's hover title. Once it ran, a quiet word stands where Run did,
- * and a result this page holds for the person, never sent to the agent, stays in its fold.
+ * tool's own name is only the card's hover title. Once it ran, how it came out stands where Run did.
  */
 function Proposal({
   proposal,
+  receipt,
   result,
   disabled,
   run,
 }: {
   proposal: PiProposal;
+  receipt?: Receipt;
   result?: string;
   disabled: boolean;
   run(): void;
@@ -303,7 +351,6 @@ function Proposal({
   const id = useId();
   const facts = factsOf(proposal.name, proposal.input);
   const names = useRecordNames(JSON.stringify(proposal.input) ?? '');
-  const ran = proposal.ran && (proposal.ran.ok === false ? 'Refused' : 'Ran');
   return (
     <article className="pi-proposal" title={proposal.name}>
       <p className="pi-proposal-act" id={`${id}act`}>
@@ -325,8 +372,8 @@ function Proposal({
           )}
         </div>
       )}
-      {ran ? (
-        <span className={cx('pi-proposal-ran', ran === 'Refused' && 'pi-refused')}>{ran}</span>
+      {proposal.ran || result !== undefined ? (
+        <Outcome proposal={proposal} receipt={receipt} result={result} />
       ) : (
         <button
           className="btn btn--sm"
@@ -340,50 +387,7 @@ function Proposal({
           Run as me
         </button>
       )}
-      {result && (
-        // A result shown only to the person is what they ran it for, so it stands open.
-        <details className="pi-result" open={proposal.secret}>
-          <Summary>Full result</Summary>
-          <Returned text={result} />
-        </details>
-      )}
     </article>
-  );
-}
-
-/**
- * What came back for a call the person ran, drawn as what it is: one quiet line on the agent's side
- * of the transcript and never a message of the person's, though the agent was told it in their
- * name. The result opens under the line from its fold; a refusal says why.
- */
-function ReceiptLine({ receipt }: { receipt: Receipt }) {
-  const [open, setOpen] = useState(false);
-  const { proposal } = receipt;
-  const refused = 'refused' in receipt ? receipt.refused : undefined;
-  const result = 'result' in receipt ? receipt.result : undefined;
-  return (
-    <div className="pi-receipt" title={proposal.name}>
-      <div className="pi-receipt-line">
-        <span className={cx('pi-receipt-word', refused !== undefined && 'pi-refused')}>
-          {refused === undefined ? 'Ran' : 'Refused'}
-        </span>
-        <span className="pi-receipt-act">{actOf(proposal.name, proposal.input)}</span>
-        {refused !== undefined && (
-          <>
-            <span className="ghost" aria-hidden="true">
-              ·
-            </span>
-            <span>{refused}</span>
-          </>
-        )}
-        {result !== undefined && (
-          <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-            <Summary>Result</Summary>
-          </details>
-        )}
-      </div>
-      {open && result !== undefined && <Returned text={result} />}
-    </div>
   );
 }
 
@@ -1180,6 +1184,12 @@ export function Transcript({ pi }: { pi: Conversation }) {
     following.current = true;
   }, [following]);
   useLayoutEffect(follow);
+  // What Run told the agent, by turn; and whether a call's card is drawn: the latest calls the
+  // agent proposed stay under their turn until it proposes again, and a full result held here
+  // stays in its card while the conversation is open.
+  const told = snapshot?.commands.map((_, at, all) => receiptOf(all, at)) ?? [];
+  const carded = (proposal: PiProposal) =>
+    !!proposing?.proposals?.includes(proposal) || proposal.id in localResults;
   return (
     <div
       className="pi-messages"
@@ -1194,9 +1204,16 @@ export function Transcript({ pi }: { pi: Conversation }) {
       {snapshot?.commands.flatMap((item, at, all) => [
         changed(all, at, host, snapshot.models),
         ...item.messages.map((message, index) => {
-          const receipt = index === 0 && receiptOf(all, at);
+          const receipt = index === 0 && told[at];
           return receipt ? (
-            <ReceiptLine key={`${item.id}-${index}`} receipt={receipt} />
+            !carded(receipt.proposal) && (
+              <Outcome
+                key={`${item.id}-${index}`}
+                named
+                proposal={receipt.proposal}
+                receipt={receipt}
+              />
+            )
           ) : (
             <article
               className={`pi-message pi-message--${message.role}`}
@@ -1216,14 +1233,13 @@ export function Transcript({ pi }: { pi: Conversation }) {
             {STOPPED[item.error ?? ''] ?? 'The agent stopped. Ask again.'}
           </p>
         ),
-        // The latest calls the agent proposed stay under their turn until it proposes again,
-        // and a full result held here stays in its card while the conversation is open.
         ...(item.proposals ?? [])
-          .filter((proposal) => item === proposing || proposal.id in localResults)
+          .filter(carded)
           .map((proposal) => (
             <Proposal
               key={proposal.id}
               proposal={proposal}
+              receipt={told.find((receipt) => receipt?.proposal === proposal) ?? undefined}
               result={localResults[proposal.id]}
               disabled={active || busy || !!running}
               run={() => void run(item.id, proposal)}

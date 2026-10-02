@@ -1756,15 +1756,18 @@ export class PiService implements Pi, FleetOwner {
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
     this.progressAt.set(key, this.clock());
+    // What the call is, for the person's page while it runs: never the tool's name.
     this.report(
       conversation.id,
       command.id,
       'tool',
       use
-        ? `Proposing ${value.name}`
+        ? 'Proposing an action'
         : value.name === 'machine.switch'
           ? 'Moving to a bigger machine'
-          : `Using ${value.name}`,
+          : definition && !('kind' in definition) && definition.readOnly
+            ? 'Reading'
+            : 'Making a change',
     );
     const result = await (
       use
@@ -1833,7 +1836,7 @@ export class PiService implements Pi, FleetOwner {
     if (result.created) this.streams.changed(turn.conversationId, turn.commandId);
     return {
       proposed: { id: result.proposal.id, name: result.proposal.name },
-      note: 'The person sees this exact call with a Run button; it runs as them only if they press it.',
+      note: 'The person sees this call as a card in plain words with a Run button; it runs as them only if they press it.',
     };
   }
 
