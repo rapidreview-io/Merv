@@ -189,10 +189,11 @@ test('a reviewed task says each check once, with the claim, the finding and the 
     ...CHECKS,
     'Reached 100% at step 1,640.',
     'The report records 100% at step 1,640.',
-    'Both thresholds are reported and the curve is retained.',
-    'Open the review',
   ])
     assert.equal(times(said), 1, `“${said}” is on the page once`);
+  // What the review said of the whole delivery, and the way to it, are its post in the thread.
+  for (const said of ['Both thresholds are reported and the curve is retained.', 'Open the review'])
+    assert.equal(times(said), 0, `“${said}” is the thread’s to say`);
 
   // Reading order inside a row: the check, the producer's claim, the reviewer's finding.
   const [first, second] = all('.crit');
@@ -216,14 +217,11 @@ test('a reviewed task says each check once, with the claim, the finding and the 
     return summary.textContent!.replace(meta, '').trim();
   };
   assert.equal(files[0]!.querySelector('.crit-file-meta')!.textContent, 'Markdown · 259 B');
-  // An earlier delivery opens from its own post in the thread, not from here.
+  // What was delivered, this round and every earlier one, opens from its own post in the
+  // thread and from the check that cites it; only the brief folds away here.
   assert.deepEqual(
     files.map((node) => [titled(node), node.open]),
-    [
-      ['Brief: reproduce grokking', false],
-      ['Delivery: grokking curve', false],
-      ['Delivery confirmations', false],
-    ],
+    [['Brief: reproduce grokking', false]],
   );
   assert.ok(!text().includes('first try'), 'the earlier round is the thread’s to tell');
   assert.ok(!text().includes('review_other'), 'another record’s review is not this task’s');

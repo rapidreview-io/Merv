@@ -402,7 +402,16 @@ function Card({
  * it and the map lays itself out again rather than being covered. Narrower than the layout
  * can draw, nothing is drawn, and the list under it says each relation in words.
  */
-export function WorkMap({ shapes, wave }: { shapes: WorkflowShape[] | undefined; wave: Wave }) {
+export function WorkMap({
+  shapes,
+  wave,
+  onDrawn,
+}: {
+  shapes: WorkflowShape[] | undefined;
+  wave: Wave;
+  /** Told whether the map is drawn, so the list under it does not say its lines again. */
+  onDrawn?(drawn: boolean): void;
+}) {
   const live = useContext(LiveContext);
   const { selected, onSelect } = useContext(Plane);
   const frame = useRef<HTMLDivElement>(null);
@@ -422,6 +431,8 @@ export function WorkMap({ shapes, wave }: { shapes: WorkflowShape[] | undefined;
     edges,
     width,
   );
+  const drawn = !!layout;
+  useEffect(() => void onDrawn?.(drawn), [drawn, onDrawn]);
   const names = new Map(units.map((unit) => [unit.key, unit.name]));
   // The unit in hand: itself, or the one a session or a machine in hand serves. It, or the
   // one under the pointer, stays lit with what it waits on and holds up.

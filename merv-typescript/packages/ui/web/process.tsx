@@ -137,7 +137,7 @@ export function diagramOfShape(shape: WorkflowShape, state: string): Diagram {
  * How long the record stood in each state, in milliseconds, from its recorded crossings:
  * the start opens the initial state, each crossing closes one state and opens the next,
  * and the state it stands in is still open at `now`. Staying in a state is no crossing,
- * and a state left in the instant it was entered has no time to say.
+ * and a state left within a second of entering it has no time to say.
  */
 export function stageTimes(graph: ProcessGraph, now: number): Map<string, number> {
   const first = graph.nodes.find((node) => node.initial);
@@ -158,7 +158,7 @@ export function stageTimes(graph: ProcessGraph, now: number): Map<string, number
     [state, since] = [crossing.to, crossing.at];
   }
   leave(now);
-  return spent;
+  return new Map([...spent].filter(([, ms]) => ms >= 1000));
 }
 
 /**

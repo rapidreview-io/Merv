@@ -29,7 +29,6 @@ import {
   BLANK,
   CriterionRows,
   Primary,
-  ReviewSummary,
   Unmet,
   drafted,
   type Confirmation,
@@ -282,9 +281,9 @@ function DeliveryDesk({
 /**
  * The page's one section. A check is stated once, in its row, with everything said
  * about it: the producer's claim, the reviewer's finding, the files either cites. The
- * review's own sentence stands over the rows, once, and the source documents fold
- * away under them by name, so nothing a row says is printed a second time further
- * down. A brief somebody wrote is open until something has been delivered; the one
+ * brief folds away under the rows. What was delivered, round by round, and what each
+ * review said of it are the thread's, under History, so no file and no verdict is
+ * said a second time. A brief somebody wrote is open until something has been delivered; the one
  * the server composes from the title, the goal and the checks says nothing the page
  * has not, and ends in instructions to the agent holding the tool, so it stays shut.
  */
@@ -306,7 +305,6 @@ export function TaskChecks({
     <div className="stack stack--lg">
       <div className="stack">
         {t.reviewId && !review && <LoadState loading={reviews.loading} error={reviews.error} />}
-        {review && <ReviewSummary review={review} />}
         <CriterionRows
           criteria={t.checks}
           confirmations={t.deliveryConfirmations}
@@ -326,14 +324,6 @@ export function TaskChecks({
           opened={!composed && !t.deliveryIds.length}
           meta
         />
-        {t.deliveryIds.map((artifactId) => (
-          <Evidence
-            key={artifactId}
-            artifactId={artifactId}
-            artifact={artifacts.get(artifactId)}
-            meta
-          />
-        ))}
       </div>
     </div>
   );

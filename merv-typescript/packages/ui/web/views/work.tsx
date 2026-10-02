@@ -341,8 +341,10 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
     data: items.length ? items : undefined,
     loadedAt: tasks.loadedAt ?? experiments.loadedAt,
   };
+  // Where the map is drawn its lines say what waits on what, so the rows do not say it again.
+  const [drawn, setDrawn] = useState(false);
   // One step in for each thing the row waits behind, on the name and on the line under it.
-  const step = (item: Item) => ({ '--depth': item.depth }) as CSSProperties;
+  const step = (item: Item) => ({ '--depth': drawn ? 0 : item.depth }) as CSSProperties;
   // What the map draws: every record still open or named by the cycle, and every line
   // between two of them, each said once by the task at one end of it.
   const wave: Wave = {
@@ -376,7 +378,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
       </div>
       {map && (
         <div className="wmap-stage">
-          <WorkMap shapes={shell.workflows} wave={wave} />
+          <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
           <LiveUnder />
         </div>
       )}
@@ -430,7 +432,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
             kind: item.kind,
             name: (
               <span className="chain" style={step(item)}>
-                {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
+                {!drawn && item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
                 <Link
                   className={cx('row-link', item.id === filter.openId && 'row-open')}
                   to={item.to}
@@ -462,7 +464,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
                   }
                 />
                 {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
-                {item.waits.length > 0 && (
+                {!drawn && item.waits.length > 0 && (
                   <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
                 )}
                 {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}

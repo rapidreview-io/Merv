@@ -78,6 +78,8 @@ const Probe = () => {
   }, [location, type]);
   return null;
 };
+/** Whether the map said it is drawn: the list under it then leaves its lines to the map. */
+let drawnNow: boolean | undefined;
 /** The wave's own records: none, unless a test is about what they add to the board. */
 let wave: unknown = { items: [], edges: [] };
 let shapes: unknown;
@@ -91,7 +93,7 @@ const under = (nameOf: (id: string) => string | undefined) =>
     WorkPlane as any,
     { nameOf },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    createElement(WorkMap as any, { shapes, wave }),
+    createElement(WorkMap as any, { shapes, wave, onDrawn: (now: boolean) => (drawnNow = now) }),
     createElement(LiveUnder),
     createElement(LiveLines, { id: 'wf_index' }),
     createElement(LiveLines, { id: 'wf_ablate' }),
@@ -275,6 +277,7 @@ test('without the room to draw there is no map, and what is live is still said u
   await mount(page());
   assert.equal(all('.wmap-node').length, 0);
   assert.equal($('svg.wmap-wires'), null);
+  assert.equal(drawnNow, false, 'the list under it is told, and says each relation in words');
   assert.equal($('.wmap')!.tabIndex, -1, 'a frame with nothing drawn takes no key');
   assert.match($('.live-head-line')!.textContent!, /^2 working/);
   assert.equal(all('.live-line').length, 5);
@@ -313,6 +316,7 @@ test('measured, the cards stand on the drawing, each prerequisite over what wait
   await mount(page());
   const cards = all('.wmap-node');
   assert.equal(cards.length, 5);
+  assert.equal(drawnNow, true, 'the list under it is told, and does not say the lines again');
   for (const item of cards)
     assert.match(item.getAttribute('style') ?? '', /left: \d+px; top: \d+px/);
   const svg = $('svg.wmap-wires')!;
