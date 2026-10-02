@@ -1495,7 +1495,7 @@ test('a new machine whose container still boots stays starting while its launch 
   );
 });
 
-test('a new machine whose launch is refused is retried after a second; an older one backs off', async (t) => {
+test('ambiguous launch failures back off even on a new machine', async (t) => {
   const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
   const launches = (id: string) => f.runtimes.launchKeys.filter((key) => key.startsWith(id)).length;
   const fresh = await f.fleet.request(f.caller, input('fresh'));
@@ -1503,7 +1503,10 @@ test('a new machine whose launch is refused is retried after a second; an older 
   f.runtimes.failLaunchOnce = true;
   await f.fleet.tick();
   const refused = await f.fleet.inspect(f.caller, fresh.id);
-  assert.deepEqual([refused.phase, refused.failures], ['uncertain', 0]);
+  assert.deepEqual([refused.phase, refused.failures], ['uncertain', 1]);
+  f.advance(1000);
+  await f.fleet.tick();
+  assert.equal(launches(fresh.id), 1);
   f.advance(1000);
   await f.fleet.tick();
   assert.equal(launches(fresh.id), 2);
@@ -1543,4 +1546,38 @@ test('failed protected runtime stops independently of pending owner capture and 
   f.runtimes.confirmStopped(live.sandboxId);
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'released');
+});
+
+test('successful inspections do not reset repeated launch failures or reopen the fast boot window', async (t) => {
+  const f = await fixture(t);
+  const { id } = await f.fleet.request(f.caller, input('launch-backoff'));
+  await f.fleet.tick();
+  f.runtimes.heartbeatOnInspect = true;
+  f.advance(61_000);
+  let failures = 0;
+  for (const delay of [2000, 4000, 8000, 16000, 32000, 60000, 60000]) {
+    f.runtimes.refuseLaunch = new MervError(
+      'sandbox_provider_unavailable',
+      'Protected runtime launch was refused',
+      503,
+    );
+    await f.fleet.tick();
+    const failed = await f.fleet.inspect(f.caller, id);
+    assert.equal(failed.phase, 'uncertain');
+    assert.equal(failed.failures, ++failures);
+    assert.equal(failed.error, 'runtime_unavailable');
+    assert.equal(f.runtimes.launchKeys.length, failures);
+    f.advance(delay - 1);
+    await f.fleet.tick();
+    assert.equal(f.runtimes.launchKeys.length, failures, 'do not retry before backoff elapses');
+    f.advance(1);
+  }
+  await f.fleet.tick();
+  const recovered = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(
+    [recovered.phase, recovered.failures, recovered.error, recovered.retryAt],
+    ['starting', 0, null, null],
+  );
+  assert.equal(f.runtimes.createKeys.length, 1);
+  assert.deepEqual([...new Set(f.runtimes.launchKeys)], [`${id}:launch`]);
 });

@@ -649,12 +649,7 @@ export class FleetService implements Fleet {
       const { revision: _revision, ...meaningful } = handle;
       return meaningful;
     };
-    if (
-      digest(facts(runtime)) === digest(facts(a.runtime)) &&
-      phase === a.phase &&
-      !a.error &&
-      !a.failures
-    )
+    if (digest(facts(runtime)) === digest(facts(a.runtime)) && phase === a.phase)
       return { ...a, runtime };
     return this.update(a.id, (current) => {
       check(
@@ -679,9 +674,6 @@ export class FleetService implements Fleet {
         : current.intent === 'stop'
           ? 'releasing'
           : phase;
-      current.retryAt = null;
-      current.failures = 0;
-      current.error = null;
     });
   }
   private async reconcile(full = true): Promise<boolean> {
@@ -697,6 +689,15 @@ export class FleetService implements Fleet {
         .map(async (a) => {
           try {
             await this.advance(a);
+            // Inspecting a healthy sandbox does not prove its launch, renewal or owner
+            // observation succeeded. Keep the failure streak until the whole pass succeeds.
+            if (a.error === 'runtime_unavailable')
+              await this.update(a.id, (current) => {
+                if (current.phase === 'released' || current.error !== 'runtime_unavailable') return;
+                current.retryAt = null;
+                current.failures = 0;
+                current.error = null;
+              });
           } catch (error) {
             report('fleet.retry', a, error);
             await this.update(a.id, (current) => {
@@ -710,6 +711,7 @@ export class FleetService implements Fleet {
               // the machine is still starting, not uncertain.
               const booting =
                 launching &&
+                current.failures === 0 &&
                 error instanceof MervError &&
                 error.code === 'sandbox_provider_unavailable';
               if (current.intent === 'stop') this.waitOutLease(current);
@@ -720,11 +722,11 @@ export class FleetService implements Fleet {
                   !(Date.parse(current.runtime?.leaseExpiresAt ?? '') > this.clock()))
               )
                 current.phase = 'uncertain';
-              if (!launching) current.failures++;
+              if (!booting) current.failures++;
               current.error = 'runtime_unavailable';
               current.retryAt = new Date(
                 this.clock() +
-                  (launching ? 1000 : Math.min(60_000, 1000 * 2 ** Math.min(current.failures, 6))),
+                  (booting ? 1000 : Math.min(60_000, 1000 * 2 ** Math.min(current.failures, 6))),
               ).toISOString();
             });
           }
