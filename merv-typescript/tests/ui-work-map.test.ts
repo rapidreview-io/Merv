@@ -420,9 +420,9 @@ test('a card says where its unit stands, and who is on it and where', async (t) 
   assert.equal($('[data-key="work:wf_old"]'), null);
   // The stage: its mark and its word, the one way everywhere.
   const index = card('work:wf_index');
-  const stage = index.querySelector('.status')!;
+  const stage = index.querySelector('.stage-mark')!;
   assert.equal(stage.textContent, 'in progress');
-  assert.ok(stage.querySelector('svg.stage-glyph'));
+  assert.ok(stage.querySelector('svg.stage-glyph--work'));
   // Who is on it and where takes the place of the board's own line, which said less.
   assert.deepEqual(
     [...index.querySelectorAll('.wmap-line')].map((line) => line.textContent),
@@ -434,8 +434,8 @@ test('a card says where its unit stands, and who is on it and where', async (t) 
   // A finished prerequisite is quiet, checked, and gives the line its upper end.
   const pin = card('work:wf_pin');
   assert.ok(pin.classList.contains('wmap-node--done'));
-  assert.equal(pin.querySelector('.status')!.textContent, 'done');
-  assert.ok(pin.querySelector('.stage-check'));
+  assert.equal(pin.querySelector('.stage-mark')!.textContent, 'done');
+  assert.ok(pin.querySelector('svg.stage-glyph--done .stage-sign'));
   assert.equal(all('.wmap-wire').length, 3);
   // One line for each relation, however many owners say it.
   assert.equal(all('.wmap-wire--waiting').length, 2);
@@ -530,6 +530,13 @@ test('pressing a card puts it in the address, docks its sidebar beside the map, 
   assert.equal($('.work-main')!.hidden, false, 'the map is never covered or hidden here');
   assert.equal(document.activeElement, $('#running-panel-title'));
   assert.equal(card('work:wf_index').getAttribute('aria-pressed'), 'true');
+  // Its stages are one card with one name, whichever plugin sent them and whatever it called them.
+  assert.equal($('.stage-card-title')!.textContent, 'Time in status');
+  assert.deepEqual(
+    all('.stage-card .stage-word').map((item) => item.textContent),
+    ['in progress', 'in review', 'done'],
+  );
+  assert.ok(!$('#running-panel')!.textContent!.includes('Progress'));
   // What it relates to stays; what it does not steps back, unless it needs a person.
   assert.ok(!card('work:wf_review').classList.contains('dim'));
   assert.ok(card('work:wf_draft').classList.contains('dim'));

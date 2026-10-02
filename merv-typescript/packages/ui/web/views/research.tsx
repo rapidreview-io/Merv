@@ -2,10 +2,10 @@ import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import type { ResearchRecord } from '@merv/research/models';
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
-import { LoadState, RecordPage, StatusPill } from '../components';
+import { LoadState, RecordPage } from '../components';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
-import { Gate, Relations } from '../process';
+import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
 import { CycleMove, WorkList } from './work';
@@ -36,7 +36,7 @@ function CycleDetail({ row, shell }: ViewProps) {
       back={<Link to={WORK.path}>← Work</Link>}
       kind={row.view.kind}
       name={record.name}
-      state={<StatusPill value={record.workflow.state} />}
+      state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
       act={
         <Gate graph={process.data} kind={row.view.kind}>
           {writable && (

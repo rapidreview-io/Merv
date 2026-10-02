@@ -34,6 +34,13 @@
      it, so it keeps the light blue when --active lifts for the dark ground. */
   --active-fill: #2563eb;
   --steel: #475569;
+  /* What a stage's mark wears (process.tsx), as Linear colours a status: work, a review,
+     what is running, the finish. They are drawn, never read, so they are chosen to be told
+     apart on each ground, not to carry type. */
+  --stage-work: #e0a100;
+  --stage-review: #e8590c;
+  --stage-live: #2f9e44;
+  --stage-done: #5e6ad2;
   /* One colour per record kind, per theme, each legible as an 11px label. */
   --kind-purple: #6d28d9;
   --kind-blue: #2563eb;
@@ -95,6 +102,10 @@ html[data-theme='dark'] {
   --refutes: #e5675a;
   --active: #60a5fa;
   --steel: #94a3b8;
+  --stage-work: #f2c94c;
+  --stage-review: #f08c3a;
+  --stage-live: #4cb782;
+  --stage-done: #7c86e6;
   --kind-purple: #a78bfa;
   --kind-blue: #60a5fa;
   --kind-teal: #14b8a6;
@@ -1352,60 +1363,99 @@ select.input,
 .status--dim {
   color: var(--faint);
 }
-/* A stage's mark (process.tsx): a ring filled as far round as the state is along its
-   program, whole and checked at the finish. It takes the ink of the word beside it. */
+/* A stage's mark (process.tsx), drawn the way Linear draws a status: a ring with a pie in
+   it, in the colour of what kind of standing the stage is — grey before work has begun,
+   yellow for work, orange for a review, green for what is running, and at the finish an
+   indigo disc with a check. Colour is the mark's alone; the word beside it is plain ink. */
 .stage-glyph {
   flex: none;
   overflow: visible;
+  color: var(--ghost);
+}
+.stage-glyph--work {
+  color: var(--stage-work);
+}
+.stage-glyph--review {
+  color: var(--stage-review);
+}
+.stage-glyph--live {
+  color: var(--stage-live);
+}
+.stage-glyph--done {
+  color: var(--stage-done);
+}
+.stage-glyph--bad {
+  color: var(--refutes);
 }
 .stage-ring {
   fill: none;
   stroke: currentcolor;
   stroke-width: 1.5;
-  stroke-linecap: round;
 }
 .stage-fill {
   fill: currentcolor;
 }
-.stage-check {
+/* The check or the cross on a filled disc is white on either ground. */
+.stage-sign {
   fill: none;
-  stroke: var(--bg-elev);
-  stroke-width: 1.5;
+  stroke: #ffffff;
+  stroke-width: 1.6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* Every state of a program, top to bottom: its mark, its word, the time spent there. The
-   one the record stands in is in ink; what it has not reached is quiet. */
+/* A state said beside a name: the mark, then the word. */
+.stage-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.stage-word {
+  display: inline-block;
+}
+.stage-word::first-letter {
+  text-transform: uppercase;
+}
+/* Time in status: one card, a row for each state of the program — its mark, its word, how
+   long the record stood there. No rules between the rows. The state it stands in is in
+   ink; what it has been through is quieter; what it has not reached is quieter still. */
+.stage-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elev);
+}
+.stage-card-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
 .stages {
   list-style: none;
-  border-top: 1px solid var(--line);
 }
 .stage {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 32px;
-  border-bottom: 1px solid var(--line);
-  font-size: var(--text-sm);
+  gap: 10px;
+  min-height: 34px;
+  font-size: var(--text-base);
   color: var(--muted);
-}
-.stage-name::first-letter {
-  text-transform: uppercase;
 }
 .stage-time {
   margin-left: auto;
+  color: var(--faint);
 }
 .stage--ahead {
   color: var(--faint);
 }
-.stage--ahead .stage-glyph {
-  color: var(--ghost);
-}
-.stage--here :is(.stage-name, .stage-time) {
+.stage--here,
+.stage--here .stage-time {
+  font-weight: 500;
   color: var(--text);
-}
-.stage--here .stage-name {
-  font-weight: 600;
 }
 
 /* Key/value and tables. -------------------------------------------------- */
@@ -5105,7 +5155,7 @@ del.cut {
   font-weight: 500;
   color: var(--muted);
 }
-.wmap-node--done .status {
+.wmap-node--done .stage-mark {
   color: var(--faint);
 }
 .wmap-node--attn {
@@ -5125,11 +5175,15 @@ del.cut {
 .wmap-node.dim .wmap-name {
   color: var(--muted);
 }
-.wmap-node.dim :is(.wmap-line, .status) {
+.wmap-node.dim :is(.wmap-line, .stage-mark) {
   color: var(--faint);
 }
-.wmap-node.dim .live-dot {
+.wmap-node.dim :is(.live-dot, .stage-glyph) {
   opacity: 0.42;
+}
+/* Red on this page is only ever what a person has to do: an end that failed is grey here. */
+.wmap-node .stage-glyph--bad {
+  color: var(--ghost);
 }
 /* A card too full is cut at its foot, never squeezed. */
 .wmap-node > * {

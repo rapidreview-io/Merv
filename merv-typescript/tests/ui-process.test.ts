@@ -127,7 +127,7 @@ test('every end is one node, named for how the record ended', async (t) => {
   assert.equal(document.querySelectorAll('.pd-track--behind').length, 1);
 });
 
-test('a stage is said the one way everywhere: its mark filled as far as the record is along, then its word', async (t) => {
+test('a stage is said the one way everywhere: a mark in the colour of its kind of standing, then its word', async (t) => {
   t.after(async () => await unmount());
   const shape = {
     name: 'experiment',
@@ -143,30 +143,62 @@ test('a stage is said the one way everywhere: its mark filled as far as the reco
   const mark = async (workflow: { workflow?: string; version?: number; state: string }) => {
     await unmount();
     await mount(createElement(StageMark, { shapes: [shape], workflow }));
-    return document.querySelector('.status')!;
+    return document.querySelector('.stage-mark')!;
   };
   const at = (state: string) => ({ workflow: 'experiment', version: 3, state });
+  const hue = (item: Element) =>
+    [...item.querySelector('svg')!.classList].find((name) => name.startsWith('stage-glyph--'));
   const running = await mark(at('running'));
+  // The word is plain ink; the colour is the mark's alone.
   assert.equal(running.textContent, 'running');
-  assert.ok(running.classList.contains('status--ok'));
   assert.equal(running.querySelector('svg')!.getAttribute('aria-hidden'), 'true');
-  // Further along, more of the ring is filled: the wedge of the third state is the larger.
+  assert.equal(hue(running), 'stage-glyph--live');
+  // Not begun is an empty grey ring; a review is orange; the further along, the fuller the pie.
+  const planned = await mark(at('planned'));
+  assert.equal(hue(planned), 'stage-glyph--idle');
+  assert.equal(planned.querySelector('path.stage-fill'), null);
   const wedge = (item: Element) => item.querySelector('path.stage-fill')!.getAttribute('d')!;
-  const [first, third] = [wedge(await mark(at('planned'))), wedge(await mark(at('running')))];
-  assert.match(first, / 0 1 /, 'under half a turn');
-  assert.match(third, / 1 1 /, 'over half a turn');
-  // The finish is whole and checked; an end the record took another way is barred.
-  assert.ok((await mark(at('complete'))).querySelector('.stage-check'));
+  const review = await mark(at('design_review'));
+  assert.equal(hue(review), 'stage-glyph--review');
+  assert.match(wedge(review), / 0 1 /, 'under half a turn');
+  assert.match(wedge(await mark(at('running'))), / 1 1 /, 'over half a turn');
+  // The finish is a disc with a check; an end the record took another way, one with a cross.
+  const done = await mark(at('complete'));
+  assert.equal(hue(done), 'stage-glyph--done');
+  assert.match(done.querySelector('.stage-sign')!.getAttribute('d')!, /^M4\.2 7\.3/);
   const stopped = await mark(at('abandoned'));
-  assert.equal(stopped.querySelector('.stage-check, .stage-fill'), null);
-  assert.equal(stopped.querySelectorAll('.stage-ring').length, 2);
-  // A program this build has no shape for keeps the plain dot.
+  assert.equal(hue(stopped), 'stage-glyph--bad');
+  assert.match(stopped.querySelector('.stage-sign')!.getAttribute('d')!, /l4\.2 4\.2M/);
+  // Work that is neither a review nor running is yellow.
+  const task = {
+    ...shape,
+    name: 'task',
+    initial: 'in_progress',
+    states: ['in_progress', 'done'],
+    terminal: ['done'],
+    edges: [{ from: 'in_progress', action: 'act', to: 'done' }],
+  };
+  await unmount();
+  await mount(
+    createElement(StageMark, {
+      shapes: [task],
+      workflow: { workflow: 'task', version: 3, state: 'in_progress' },
+    }),
+  );
+  assert.equal(hue(document.querySelector('.stage-mark')!), 'stage-glyph--work');
+  // A program this build has no shape for keeps a dot in the state's tone.
   const unknown = await mark({ workflow: 'elsewhere', state: 'running' });
   assert.equal(unknown.querySelector('svg'), null);
-  assert.ok(unknown.querySelector('.status-dot'));
+  assert.ok(unknown.querySelector('.status-dot.status--ok'));
+  // A record page that holds the record's own graph reads the stages from it.
+  await unmount();
+  await mount(
+    createElement(StageMark, { graph: graph as never, workflow: { state: 'design_review' } }),
+  );
+  assert.equal(hue(document.querySelector('.stage-mark')!), 'stage-glyph--review');
 });
 
-test('how long a record stood in each state is read from its crossings, and a state it came back to counts twice', async (t) => {
+test('how long a record stood in each state is read from its crossings, a state it came back to counted twice', async (t) => {
   t.after(async () => await unmount());
   const crossed = (from: string, to: string, times: [number, string][]) => ({
     from,
@@ -211,9 +243,15 @@ test('how long a record stood in each state is read from its crossings, and a st
   t.mock.timers.enable({ apis: ['Date'], now });
   await mount(createElement(StageList, { graph: looped as never }));
   const rows = [...document.querySelectorAll('.stages > li')];
+  // The mark, the word and the time: how often it came back is the thread's to tell.
   assert.deepEqual(
     rows.map((row) => row.textContent),
-    ['planned×22h', 'design review×21h', 'running', 'complete'],
+    ['planned2h', 'design review1h', 'running', 'complete'],
+  );
+  // What it has not reached is a grey ring, whatever colour it will wear.
+  assert.deepEqual(
+    rows.map((row) => [...row.querySelector('svg')!.classList].at(-1)),
+    ['stage-glyph--idle', 'stage-glyph--review', 'stage-glyph--idle', 'stage-glyph--idle'],
   );
   assert.equal(rows[1]!.getAttribute('aria-current'), 'step');
   assert.ok(rows[1]!.classList.contains('stage--here'));

@@ -176,7 +176,7 @@ function ReflectionList({ shell }: { shell: ShellData }) {
  * it, where it stands, its report in place, and the instructions it was given. Which
  * one is open is in the address, so a reload or a link lands on it.
  */
-export function ReflectionDetail({ row }: ViewProps) {
+export function ReflectionDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
   const nameOf = useActorNames();
@@ -207,7 +207,7 @@ export function ReflectionDetail({ row }: ViewProps) {
       back={<Link to={row.path}>← {row.label}</Link>}
       kind={row.view.kind}
       name={wave.title}
-      state={<StatusPill value={wave.workflow.state} />}
+      state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}
       act={<WaveGate id={wave.id} kind={row.view.kind} />}
       // Never `Synthesis`: one of the lenses is called that.
       title="Lenses"

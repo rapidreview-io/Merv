@@ -14,11 +14,10 @@ import {
   LoadState,
   RecordPage,
   Stamp,
-  StatusPill,
   timeRows,
   useArtifacts,
 } from '../components';
-import { Gate, Relations } from '../process';
+import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
 import { Thread, threadOf } from '../thread';
 import { signedInAdmin } from './code';
@@ -410,7 +409,7 @@ function TaskDetail({ row }: ViewProps) {
       kind={row.view.kind}
       name={t.title}
       standing={t.goal}
-      state={<StatusPill value={t.workflow.state} />}
+      state={<StageMark graph={process} workflow={t.workflow} />}
       act={
         process && (
           <Gate graph={process} kind={row.view.kind}>

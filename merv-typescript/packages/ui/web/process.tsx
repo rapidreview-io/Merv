@@ -162,29 +162,72 @@ export function stageTimes(graph: ProcessGraph, now: number): Map<string, number
 }
 
 /**
- * A stage's mark: a ring filled as far round as the state is along its program's working
- * states, whole and checked at the finish, barred where the record ended another way. It
- * is a state dot and takes the ink of the word beside it.
+ * How a stage is coloured, the way Linear colours a status: by what kind of standing it is,
+ * never by which program it belongs to. Not begun is grey, work is yellow, a review is
+ * orange, what is running is green, the finish is indigo; an end the record took another
+ * way is grey, or the refusal's red where it failed.
  */
-function StageGlyph({ steps, at }: { steps: Step[]; at: number }) {
+type Hue = 'idle' | 'work' | 'review' | 'live' | 'done' | 'bad' | 'off';
+const IDLE = ['planned', 'queued', 'requested', 'pending', 'draft'];
+const hueOf = (step: Step): Hue =>
+  step.end
+    ? !step.stopped
+      ? 'done'
+      : toneOf(step.state) === 'bad'
+        ? 'bad'
+        : 'off'
+    : IDLE.includes(step.state)
+      ? 'idle'
+      : step.state.includes('review')
+        ? 'review'
+        : toneOf(step.state) === 'ok'
+          ? 'live'
+          : 'work';
+
+/**
+ * A stage's mark: a ring, with a pie inside it filled as far round as the stage is along
+ * the work its program does — empty before any of it has begun, a filled disc with a check
+ * at the finish, one with a cross where the record ended another way. A stage the record
+ * has not reached (`ahead`) is the empty grey ring whatever it will be.
+ */
+function StageGlyph({
+  steps,
+  at,
+  size = 14,
+  ahead,
+}: {
+  steps: Step[];
+  at: number;
+  size?: number;
+  ahead?: boolean;
+}) {
   const step = steps[at]!;
-  const turn = ((at + 1) / steps.length) * 2 * Math.PI;
+  const hue = ahead ? 'idle' : hueOf(step);
+  const begun = steps.filter((item) => !item.end && hueOf(item) !== 'idle');
+  const turn = ((begun.indexOf(step) + 1) / (begun.length + 1)) * 2 * Math.PI;
   return (
-    <svg className="stage-glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-      {step.end && !step.stopped ? (
+    <svg
+      className={`stage-glyph stage-glyph--${hue}`}
+      width={size}
+      height={size}
+      viewBox="0 0 14 14"
+      aria-hidden="true"
+    >
+      {step.end && !ahead ? (
         <>
-          <circle className="stage-fill" cx="7" cy="7" r="6" />
-          <path className="stage-check" d="M4.3 7.3 6.2 9.1 9.8 5.2" />
+          <circle className="stage-fill" cx="7" cy="7" r="6.5" />
+          <path
+            className="stage-sign"
+            d={step.stopped ? 'M4.9 4.9l4.2 4.2M9.1 4.9l-4.2 4.2' : 'M4.2 7.3 6.2 9.2 9.9 5.1'}
+          />
         </>
       ) : (
         <>
-          <circle className="stage-ring" cx="7" cy="7" r="5.25" />
-          {step.end ? (
-            <path className="stage-ring" d="M4.5 7h5" />
-          ) : (
+          <circle className="stage-ring" cx="7" cy="7" r="5.75" />
+          {hue !== 'idle' && (
             <path
               className="stage-fill"
-              d={`M7 7V3.75A3.25 3.25 0 ${turn > Math.PI ? 1 : 0} 1 ${7 + 3.25 * Math.sin(turn)} ${7 - 3.25 * Math.cos(turn)}Z`}
+              d={`M7 7V3.5A3.5 3.5 0 ${turn > Math.PI ? 1 : 0} 1 ${7 + 3.5 * Math.sin(turn)} ${7 - 3.5 * Math.cos(turn)}Z`}
             />
           )}
         </>
@@ -205,56 +248,55 @@ function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[
   return shape ? diagramOfShape(shape, workflow.state).steps : [];
 }
 /**
- * A state said beside a name, the one way everywhere: its mark, then its word, in the tone
- * the state's pill wears. A program this build has no shape for keeps the plain dot.
+ * A state said beside a name, the one way everywhere: its mark in the stage's colour, then
+ * its word in plain ink. The stages come from the record's own graph where the page holds
+ * it, and otherwise from the deployed shape of its program; a program this build has no
+ * shape for keeps a dot in the tone the state's pill wears.
  */
 export function StageMark({
   shapes,
+  graph,
   workflow,
 }: {
-  shapes: WorkflowShape[] | undefined;
+  shapes?: WorkflowShape[];
+  graph?: ProcessGraph;
   workflow: Standing;
 }) {
-  const steps = stepsOf(shapes, workflow);
+  const steps = graph ? diagramOfGraph(graph).steps : stepsOf(shapes, workflow);
   const at = steps.findIndex((step) => step.current);
   return (
-    <span className={cx('status', `status--${toneOf(workflow.state)}`)}>
+    <span className="stage-mark">
       {at < 0 ? (
-        <span className="status-dot" aria-hidden="true" />
+        <span
+          className={cx('status-dot', `status--${toneOf(workflow.state)}`)}
+          aria-hidden="true"
+        />
       ) : (
         <StageGlyph steps={steps} at={at} />
       )}
-      {words(workflow.state)}
+      <span className="stage-word">{words(workflow.state)}</span>
     </span>
   );
 }
 
 /**
- * Every state of the program, top to bottom, as the record met it: the mark, the word, how
- * long it stood there and, where it came back, how many times. The one it stands in is in
- * ink; what it never reached is quiet.
+ * Time in status: every state of the program, top to bottom, as the record met it — the
+ * mark, the word, and how long it stood there. The one it stands in is in ink; what it has
+ * been through is quieter; what it never reached is a grey ring.
  */
 export function StageList({ graph }: { graph: ProcessGraph }) {
   const { steps } = diagramOfGraph(graph);
   const spent = stageTimes(graph, useNow(graph.terminal ? 0 : 30_000));
-  const visits = new Map(graph.nodes.map((node) => [node.state, node.entries + +node.initial]));
   return (
     <ol className="stages">
       {steps.map((step, at) => (
         <li
           key={step.state}
-          className={cx(
-            'stage',
-            step.current && `stage--here status--${toneOf(step.state)}`,
-            !step.entered && 'stage--ahead',
-          )}
+          className={cx('stage', step.current && 'stage--here', !step.entered && 'stage--ahead')}
           aria-current={step.current ? 'step' : undefined}
         >
-          <StageGlyph steps={steps} at={at} />
-          <span className="stage-name">{words(step.state)}</span>
-          {(visits.get(step.state) ?? 0) > 1 && (
-            <span className="faint tabular">×{visits.get(step.state)}</span>
-          )}
+          <StageGlyph steps={steps} at={at} size={18} ahead={!step.entered} />
+          <span className="stage-word">{words(step.state)}</span>
           {spent.has(step.state) && (
             <span className="stage-time tabular">{elapsed(spent.get(step.state)!)}</span>
           )}

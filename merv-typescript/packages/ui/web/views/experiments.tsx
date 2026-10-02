@@ -11,13 +11,12 @@ import {
   KV,
   LoadState,
   RecordPage,
-  StatusPill,
   relativeTime,
   timeRows,
   useArtifacts,
 } from '../components';
 import { Markdown, RecordText, useRecordNames } from '../markdown';
-import { Gate } from '../process';
+import { Gate, StageMark } from '../process';
 import { useSession } from '../session';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
@@ -115,7 +114,7 @@ function ExperimentRecord({
       back={<Link to={WORK.path}>← Work</Link>}
       kind="experiments"
       name={e.name}
-      state={<StatusPill value={e.workflow.state} />}
+      state={<StageMark graph={process} workflow={e.workflow} />}
       // The question it was opened to answer, as a task's goal stands under its title, and
       // what it came to directly under that, with the verdict that accepted it.
       standing={
