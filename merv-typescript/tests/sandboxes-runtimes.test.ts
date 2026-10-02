@@ -63,7 +63,6 @@ function fixture(
   t: TestContext,
   reply: (call: Call) => Response,
   runtimes: (typeof profile & { key: string })[] | null = [{ key: 'standard', ...profile }],
-  customJobReply = false,
 ) {
   const oldUrl = process.env[urlEnv];
   const oldToken = process.env[tokenEnv];
@@ -86,13 +85,6 @@ function fixture(
       namespace: headers.get('x-sandbox-namespace'),
     };
     calls.push(call);
-    if (call.path === '/v1/jobs/rtj_1' && !customJobReply)
-      return Response.json({
-        id: 'rtj_1',
-        sandbox_id: 'sbx_1',
-        namespace: connection.namespace,
-        state: 'running',
-      });
     if (call.path === '/v1/auth/me')
       return Response.json({ role: 'consumer', namespace: connection.namespace });
     return reply(call);
@@ -477,34 +469,23 @@ test('an old protected sandbox remains inspectable and stoppable after profile c
   await service.close();
 });
 
-test('protected job exit fences reuse without pretending its capture or provider stop completed', async (t) => {
-  let jobState = 'running',
-    sandboxState = 'ready';
-  let wrongJob = false;
-  const { calls, service } = fixture(
-    t,
-    (call) => {
-      if (call.path === '/v1/sandboxes/sbx_1') return Response.json(record(sandboxState));
-      if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'GET')
-        return Response.json(launchReceipt('consumed'));
-      if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'DELETE') {
-        sandboxState = 'deleting';
-        return Response.json(record(sandboxState));
-      }
-      if (call.path === '/v1/jobs/rtj_1')
-        return Response.json({
-          id: wrongJob ? 'other-job' : 'rtj_1',
-          sandbox_id: 'sbx_1',
-          namespace: connection.namespace,
-          state: jobState,
-          command: 'private command',
-          error: { message: 'private diagnostic' },
-        });
-      throw Error('unexpected route');
-    },
-    [{ key: 'standard', ...profile }],
-    true,
-  );
+test('protected receipt IDs support inspect, renew and stop without ordinary job records', async (t) => {
+  let sandboxState = 'ready';
+  const { calls, service } = fixture(t, (call) => {
+    if (call.path.startsWith('/v1/jobs/'))
+      return Response.json({ error: { code: 'sandbox_not_found' } }, { status: 404 });
+    if (call.path === '/v1/sandboxes/sbx_1' && call.method === 'GET')
+      return Response.json(record(sandboxState));
+    if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'GET')
+      return Response.json(launchReceipt(sandboxState === 'ready' ? 'consumed' : 'revoked'));
+    if (call.path === '/v1/sandboxes/sbx_1/renew' && call.method === 'POST')
+      return Response.json(record(sandboxState, 2));
+    if (call.path === '/v1/runtime/launches/rln_1' && call.method === 'DELETE') {
+      sandboxState = 'deleting';
+      return Response.json(record(sandboxState), { status: 202 });
+    }
+    throw Error(`unexpected route ${call.method} ${call.path}`);
+  });
   const current: SandboxRuntimeHandle = {
     sandboxId: 'sbx_1',
     state: 'ready',
@@ -523,29 +504,29 @@ test('protected job exit fences reuse without pretending its capture or provider
       expiresAt: '2099-01-01T00:00:00Z',
     },
   };
-  for (const state of ['queued', 'launching', 'running', 'cancel_requested']) {
-    jobState = state;
-    assert.equal(
-      (await service.runtimes!.inspect(connection.projectId, current)).ready,
-      true,
-      'live supervisor still owns capture and Pi idle lifetime',
-    );
-  }
-  for (const state of ['failed', 'cancelled', 'timed_out', 'succeeded']) {
-    jobState = state;
-    const exited = await service.runtimes!.inspect(connection.projectId, current);
-    assert.deepEqual([exited.state, exited.ready, exited.deleted], ['failed', false, false]);
-    assert.equal(JSON.stringify(exited).includes('private'), false);
-  }
-  wrongJob = true;
-  await assert.rejects(service.runtimes!.inspect(connection.projectId, current), {
-    code: 'sandbox_runtime_unavailable',
+  const observed = await service.runtimes!.inspect(connection.projectId, current);
+  assert.equal(observed.ready, true);
+  assert.equal(observed.launch?.jobId, 'rtj_1');
+  const renewed = await service.runtimes!.renew(connection.projectId, observed);
+  assert.equal(renewed.revision, 2);
+  assert.equal(renewed.launch?.jobId, 'rtj_1');
+  assert.deepEqual(calls.find((call) => call.path.endsWith('/renew'))?.body, {
+    lease_seconds: 1800,
   });
-  wrongJob = false;
-  const pending = await service.runtimes!.stop(connection.projectId, current);
+  const pending = await service.runtimes!.stop(connection.projectId, renewed);
   assert.deepEqual([pending.state, pending.deleted], ['deleting', false]);
+  assert.equal(pending.launch?.state, 'revoked');
   sandboxState = 'stopped';
-  assert.equal((await service.runtimes!.inspect(connection.projectId, pending)).deleted, true);
-  assert.equal(calls.filter((call) => call.method === 'DELETE').length, 1);
+  const stopped = await service.runtimes!.inspect(connection.projectId, pending);
+  assert.equal(stopped.deleted, true);
+  assert.equal((await service.runtimes!.stop(connection.projectId, stopped)).deleted, true);
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'DELETE').map((call) => call.path),
+    ['/v1/runtime/launches/rln_1'],
+  );
+  assert.equal(
+    calls.some((call) => call.path.startsWith('/v1/jobs/')),
+    false,
+  );
   await service.close();
 });
