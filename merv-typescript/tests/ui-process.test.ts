@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mount, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
-const { ProcessDiagram, diagramOfGraph, diagramOfShape } =
+const { ProcessDiagram, StageList, StageMark, diagramOfGraph, diagramOfShape, stageTimes } =
   await import('../packages/ui/web/process.js');
 
 const node = (
@@ -129,4 +129,100 @@ test('every end is one node, named for how the record ended', async (t) => {
   // It got as far as design review, and the drawing says so.
   assert.equal(document.querySelectorAll('.pd-node--behind').length, 2);
   assert.equal(document.querySelectorAll('.pd-track--behind').length, 1);
+});
+
+test('a stage is said the one way everywhere: its mark filled as far as the record is along, then its word', async (t) => {
+  t.after(async () => await unmount());
+  const shape = {
+    name: 'experiment',
+    version: 3,
+    initial: 'planned',
+    states: ['planned', 'design_review', 'running', 'complete', 'abandoned'],
+    terminal: ['complete', 'abandoned'],
+    edges: [
+      ...edges,
+      ...['planned', 'design_review', 'running'].map((from) => ({ from, to: 'abandoned' })),
+    ].map((edge) => ({ ...edge, action: 'act' })),
+  };
+  const mark = async (workflow: { workflow?: string; version?: number; state: string }) => {
+    await unmount();
+    await mount(createElement(StageMark, { shapes: [shape], workflow }));
+    return document.querySelector('.status')!;
+  };
+  const at = (state: string) => ({ workflow: 'experiment', version: 3, state });
+  const running = await mark(at('running'));
+  assert.equal(running.textContent, 'running');
+  assert.ok(running.classList.contains('status--ok'));
+  assert.equal(running.querySelector('svg')!.getAttribute('aria-hidden'), 'true');
+  // Further along, more of the ring is filled: the wedge of the third state is the larger.
+  const wedge = (item: Element) => item.querySelector('path.stage-fill')!.getAttribute('d')!;
+  const [first, third] = [wedge(await mark(at('planned'))), wedge(await mark(at('running')))];
+  assert.match(first, / 0 1 /, 'under half a turn');
+  assert.match(third, / 1 1 /, 'over half a turn');
+  // The finish is whole and checked; an end the record took another way is barred.
+  assert.ok((await mark(at('complete'))).querySelector('.stage-check'));
+  const stopped = await mark(at('abandoned'));
+  assert.equal(stopped.querySelector('.stage-check, .stage-fill'), null);
+  assert.equal(stopped.querySelectorAll('.stage-ring').length, 2);
+  // A program this build has no shape for keeps the plain dot.
+  const unknown = await mark({ workflow: 'elsewhere', state: 'running' });
+  assert.equal(unknown.querySelector('svg'), null);
+  assert.ok(unknown.querySelector('.status-dot'));
+});
+
+test('how long a record stood in each state is read from its crossings, and a state it came back to counts twice', async (t) => {
+  t.after(async () => await unmount());
+  const crossed = (from: string, to: string, times: [number, string][]) => ({
+    from,
+    to,
+    action: 'act',
+    traversals: times.map(([revision, at]) => ({
+      revision,
+      actorId: 'actor_1',
+      requestId: 'r',
+      at,
+    })),
+    status: null,
+    tool: null,
+  });
+  const looped = {
+    terminal: false,
+    nodes: [
+      { ...node('planned', { at: '2026-09-17T10:00:00.000Z' }), entries: 1 },
+      { ...node('design_review', { current: true, at: '2026-09-17T11:00:00.000Z' }), entries: 2 },
+      node('running'),
+      node('complete', { terminal: true }),
+    ],
+    edges: [
+      crossed('planned', 'design_review', [
+        [1, '2026-09-17T11:00:00.000Z'],
+        [3, '2026-09-17T12:30:00.000Z'],
+      ]),
+      crossed('design_review', 'planned', [[2, '2026-09-17T11:30:00.000Z']]),
+      // Staying in a state is no crossing.
+      crossed('design_review', 'design_review', [[4, '2026-09-17T12:45:00.000Z']]),
+      crossed('design_review', 'running', []),
+      crossed('running', 'complete', []),
+    ],
+  };
+  const now = Date.parse('2026-09-17T13:00:00.000Z');
+  const spent = stageTimes(looped as never, now);
+  const minutes = (state: string) => (spent.get(state) ?? 0) / 60_000;
+  assert.equal(minutes('planned'), 120, 'an hour, then an hour again after the return');
+  assert.equal(minutes('design_review'), 60, 'half an hour, then half an hour still open');
+  assert.equal(spent.has('running'), false);
+  // The list: every state top to bottom, the one it stands in marked, what it never reached quiet.
+  t.mock.timers.enable({ apis: ['Date'], now });
+  await mount(createElement(StageList, { graph: looped as never }));
+  const rows = [...document.querySelectorAll('.stages > li')];
+  assert.deepEqual(
+    rows.map((row) => row.textContent),
+    ['planned×22h', 'design review×21h', 'running', 'complete'],
+  );
+  assert.equal(rows[1]!.getAttribute('aria-current'), 'step');
+  assert.ok(rows[1]!.classList.contains('stage--here'));
+  assert.deepEqual(
+    rows.map((row) => row.classList.contains('stage--ahead')),
+    [false, false, true, true],
+  );
 });

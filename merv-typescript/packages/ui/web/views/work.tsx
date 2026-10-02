@@ -1,23 +1,32 @@
 import { useState, type CSSProperties } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import type { CodeProjectStatus } from '@merv/contracts/code';
 import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
-import { Chips, ListPage, Tabs, useListFilter, useWide } from '../list-filters';
+import { Chips, ListPage, Tabs, useListFilter } from '../list-filters';
 import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
 import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
-import { Dependency, RowDiagram } from '../process';
+import { Dependency, StageMark } from '../process';
 import { ArrowRightIcon } from '../icons';
 import { newest, useHome, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import type { Review } from './reviews';
 import type { Task } from './tasks';
+import {
+  LiveLines,
+  LiveProvider,
+  LiveUnder,
+  WorkMap,
+  WorkPlane,
+  useLiveAbove,
+  type Wave,
+} from './work-map';
 
 /**
  * The wave of work the project is on, in one page: the cycle that frames it in
@@ -113,7 +122,7 @@ export function chained<T extends { id: string; at: string }>(
     // What waits on several things stands under the last of them to be placed.
     if ([...(before.get(id) ?? [])].some((first) => !depth.has(first))) return;
     depth.set(id, at);
-    out.push({ ...known.get(id)!, depth: at, waits: waits.get(id) ?? [] });
+    out.push({ ...known.get(id)!, depth: at, waits: [...new Set(waits.get(id))] });
     for (const next of byRecent(after.get(id) ?? []))
       place(
         next,
@@ -126,7 +135,7 @@ export function chained<T extends { id: string; at: string }>(
   for (const item of items)
     if (!depth.has(item.id)) {
       depth.set(item.id, 0);
-      out.push({ ...item, depth: 0, waits: waits.get(item.id) ?? [] });
+      out.push({ ...item, depth: 0, waits: [...new Set(waits.get(item.id))] });
     }
   return out;
 }
@@ -239,9 +248,10 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
 /**
  * The list the wave is made of. It is the same list wherever it is mounted: the
  * Work page, and the left pane of every record it opens, so a record's siblings
- * stay on screen beside it.
+ * stay on screen beside it. On the Work page the map of the same work stands over it,
+ * drawn from the records this list already read.
  */
-export function WorkList({ shell }: { shell: ShellData }) {
+function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
   const [chosen, setChosen] = useState<string>();
   const { actor } = useSession();
   const nameOf = useActorNames();
@@ -333,6 +343,30 @@ export function WorkList({ shell }: { shell: ShellData }) {
   };
   // One step in for each thing the row waits behind, on the name and on the line under it.
   const step = (item: Item) => ({ '--depth': item.depth }) as CSSProperties;
+  // What the map draws: every record still open or named by the cycle, and every line
+  // between two of them, each said once by the task at one end of it.
+  const wave: Wave = {
+    items: items.map(({ id, kind, name, flow, at, state, named }) => ({
+      id,
+      kind,
+      name,
+      flow,
+      at,
+      held: isOpen(state) || named,
+    })),
+    edges: (tasks.data ?? []).flatMap((task) => [
+      ...(task.dependencies ?? []).map((on) => ({
+        from: on.id,
+        to: task.id,
+        waiting: !on.settled,
+      })),
+      ...(task.dependents ?? []).map((next) => ({
+        from: task.id,
+        to: next.id,
+        waiting: task.workflow.state !== 'done',
+      })),
+    ]),
+  };
   return (
     <>
       {/* The cycle stands where every other page's title line stands, and above the list
@@ -340,6 +374,12 @@ export function WorkList({ shell }: { shell: ShellData }) {
       <div className="page-lede">
         <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
       </div>
+      {map && (
+        <div className="wmap-stage">
+          <WorkMap shapes={shell.workflows} wave={wave} />
+          <LiveUnder />
+        </div>
+      )}
       <ListPage
         load={load}
         noun="work"
@@ -402,10 +442,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
             standing: (
               <div className="chain chain--under" style={step(item)}>
                 <ThreeStates
-                  execution={item.state}
-                  diagram={
-                    <RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />
-                  }
+                  stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
                   // A review is a record of its own, so the clause is the way to its verdict.
                   review={
                     said && review && reviewsPath
@@ -428,6 +465,8 @@ export function WorkList({ shell }: { shell: ShellData }) {
                 {item.waits.length > 0 && (
                   <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
                 )}
+                {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}
+                <LiveLines id={item.id} />
               </div>
             ),
           };
@@ -592,16 +631,16 @@ function CycleHead({
   );
 }
 
-export function WorkView({ shell }: { shell: ShellData }) {
-  const wide = useWide();
-  const experimentsRow = shell.rows.find((row) => row.view.kind === 'experiments');
-  const experiments = useTool<Experiment[]>(experimentsRow ? 'experiment.list' : null);
-  // Where a record stands beside its list, Work opens on the latest experiment: the list,
-  // the cycle and its move are all still on screen, and the page is never an empty pane.
-  const latest = newest(experiments.data ?? [], (item) => item.workflow.updatedAt)[0];
-  if (wide && experimentsRow && latest)
-    return <Navigate to={`${experimentsRow.path}/${latest.id}`} replace />;
-  // Until the list has answered there is nothing to choose between the two.
-  if (wide && experimentsRow && experiments.loading && !experiments.data) return null;
-  return <WorkList shell={shell} />;
+/** Beside an open record the list reads the board itself; under the map the page already has. */
+export function WorkList({ shell }: { shell: ShellData }) {
+  const nameOf = useActorNames();
+  const list = <WaveList shell={shell} />;
+  return useLiveAbove() ? list : <LiveProvider nameOf={nameOf}>{list}</LiveProvider>;
 }
+
+/** The Work page: the map of the wave, what is live on it, and the list under both. */
+export const WorkView = ({ shell }: { shell: ShellData }) => (
+  <WorkPlane nameOf={useActorNames()}>
+    <WaveList shell={shell} map />
+  </WorkPlane>
+);

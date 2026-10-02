@@ -83,8 +83,8 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
-test('Running is the first place under Agents, ahead of Fleet, Sessions and Code', () => {
-  // Sessions and Code declare the work group; the rail files them, and Running, under Agents.
+test('Fleet, Sessions and Code stand under Agents; what is running is on the Work page, not a row', () => {
+  // Sessions and Code declare the work group; the rail files them under Agents.
   const sections = buildNavigation([
     row('code', 'code', 'work', 25),
     row('sessions', 'sessions', 'work', 24),
@@ -94,7 +94,7 @@ test('Running is the first place under Agents, ahead of Fleet, Sessions and Code
   ]);
   assert.deepEqual(
     sections.map((section) => [section.label, section.rows.map((entry) => entry.id)]),
-    [['Agents', ['running', 'fleet', 'sessions', 'code']]],
+    [['Agents', ['fleet', 'sessions', 'code']]],
   );
 });
 

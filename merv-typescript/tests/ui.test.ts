@@ -381,8 +381,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     [
       ['Research', ['Files']],
       ['Work', ['Work', 'Reflections']],
-      // Running is the ui plugin's own place, and the first under Agents.
-      ['Agents', ['Running', 'Sessions', 'Code']],
+      // What is running is drawn on the Work page; its registration is no place of its own.
+      ['Agents', ['Sessions', 'Code']],
       ['Feed', ['Feed']],
     ],
   );

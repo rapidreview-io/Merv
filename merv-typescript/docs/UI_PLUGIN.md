@@ -54,11 +54,11 @@ Both are ordinary catalog tools, visible to agents as well as the browser.
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
 
-These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. `@merv/ui` registers the page itself as the `running` row (`/running`, first under Agents), with no status and no read of its own: the page reads these two tools (`views/running.tsx`).
+These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. `@merv/ui` still registers the `running` row (`/running`), with no status and no read of its own, so a link to a key keeps working: the rail does not show it, and the address opens the Work page with that key's sidebar. The Work page reads these two tools (`views/work-map.tsx`).
 
 ## Running contributions
 
-The Running page draws everything in flight from contributions that the owning plugins register in their existing ui adapters. `ctx.ui` carries the registry, so an adapter injects nothing new for it; Sandboxes' adapter alone also injects `scope`, the one boundary rule already allows, to offer Extend lease and Release machine only to a caller the tools would let act.
+The Work page draws everything in flight — its map, who is on each unit and where, and the sidebar of what is in hand — from contributions that the owning plugins register in their existing ui adapters. `ctx.ui` carries the registry, so an adapter injects nothing new for it; Sandboxes' adapter alone also injects `scope`, the one boundary rule already allows, to offer Extend lease and Release machine only to a caller the tools would let act.
 
 ```ts
 ctx.effect(() =>

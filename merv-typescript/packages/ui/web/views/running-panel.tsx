@@ -17,11 +17,11 @@ import { ArrowRightIcon, CloseIcon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
-import { ProcessDiagram, diagramOfGraph } from '../process';
+import { StageList } from '../process';
 import { Phrase, Reading, Target, silent, steadyText, valueText } from './running-phrase';
 
 /**
- * The sidebar of whatever is in hand on the Running page. Its owner wrote every word of it
+ * The sidebar of whatever is in hand on the Work page. Its owner wrote every word of it
  * in the six kinds of section the contract names, and the page only draws them: what the
  * thing is and how it stands, the controls its owner allows this reader, then its sections
  * in the order the board composed them, and the way to its own page last. It reads itself
@@ -325,12 +325,7 @@ function Body({ section }: { section: RunningSection }) {
         </p>
       );
     case 'ladder':
-      // The whole machine needs about 410px; a narrower sidebar scrolls it in its own block.
-      return (
-        <div className="running-ladder">
-          <ProcessDiagram {...diagramOfGraph(section.graph)} kind="running" />
-        </div>
-      );
+      return <StageList graph={section.graph} />;
     case 'stream':
       return <Stream items={section.items} />;
   }

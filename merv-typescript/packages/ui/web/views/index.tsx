@@ -1,5 +1,7 @@
 import type { ComponentType } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
+import { WORK } from '../navigation';
 import type { Row, ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
 import { CodeView } from './code';
@@ -12,7 +14,6 @@ import { CollectionView, RecordView } from './remote';
 import { ResearchView } from './research';
 import { ReflectionsView } from './research-programs';
 import { ReviewsView } from './reviews';
-import { RunningView } from './running';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
 import { TasksView } from './tasks';
@@ -33,6 +34,15 @@ export const MOVED: Record<string, string> = {
   knowledge: '/paper',
 };
 
+/**
+ * What is running is drawn on the Work page now. An address that named a thing in hand
+ * there (`?key=`) still opens that thing's sidebar, and the page a link carried goes with it.
+ */
+function Running() {
+  const { search, state } = useLocation();
+  return <Navigate to={{ pathname: WORK.path, search }} state={state} replace />;
+}
+
 const views: Record<string, ComponentType<ViewProps>> = {
   tasks: TasksView,
   reviews: ReviewsView,
@@ -40,7 +50,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   feed: FeedView,
   settings: SettingsView,
   sessions: SessionsView,
-  running: RunningView,
+  running: Running,
   code: CodeView,
   experiments: ExperimentsView,
   paper: PaperView,

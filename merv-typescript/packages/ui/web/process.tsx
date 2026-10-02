@@ -2,7 +2,8 @@ import { workRoute } from '@merv/contracts/running';
 import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import { useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { KindLabel, StatusPill, cx, kindStyle, words } from './components';
+import { KindLabel, StatusPill, cx, kindStyle, toneOf, useNow, words } from './components';
+import { elapsed } from './liveness';
 import type { WorkflowShape } from './shell-types';
 
 /**
@@ -132,6 +133,137 @@ export function diagramOfShape(shape: WorkflowShape, state: string): Diagram {
   };
 }
 
+/**
+ * How long the record stood in each state, in milliseconds, from its recorded crossings:
+ * the start opens the initial state, each crossing closes one state and opens the next,
+ * and the state it stands in is still open at `now`. Staying in a state is no crossing.
+ */
+export function stageTimes(graph: ProcessGraph, now: number): Map<string, number> {
+  const first = graph.nodes.find((node) => node.initial);
+  const crossings = graph.edges
+    .filter((edge) => edge.from !== edge.to)
+    .flatMap((edge) =>
+      edge.traversals.map(({ at, revision }) => ({ at: Date.parse(at), revision, to: edge.to })),
+    )
+    .sort((a, b) => a.revision - b.revision);
+  const spent = new Map<string, number>();
+  let state = first?.state;
+  let since = Date.parse(first?.firstEnteredAt ?? '');
+  const leave = (at: number) => {
+    if (state !== undefined && Number.isFinite(since) && Number.isFinite(at))
+      spent.set(state, (spent.get(state) ?? 0) + Math.max(0, at - since));
+  };
+  for (const crossing of crossings) {
+    leave(crossing.at);
+    [state, since] = [crossing.to, crossing.at];
+  }
+  leave(now);
+  return spent;
+}
+
+/**
+ * A stage's mark: a ring filled as far round as the state is along its program's working
+ * states, whole and checked at the finish, barred where the record ended another way. It
+ * is a state dot and takes the ink of the word beside it.
+ */
+function StageGlyph({ steps, at }: { steps: Step[]; at: number }) {
+  const step = steps[at]!;
+  const turn = ((at + 1) / steps.length) * 2 * Math.PI;
+  return (
+    <svg className="stage-glyph" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      {step.end && !step.stopped ? (
+        <>
+          <circle className="stage-fill" cx="7" cy="7" r="6" />
+          <path className="stage-check" d="M4.3 7.3 6.2 9.1 9.8 5.2" />
+        </>
+      ) : (
+        <>
+          <circle className="stage-ring" cx="7" cy="7" r="5.25" />
+          {step.end ? (
+            <path className="stage-ring" d="M4.5 7h5" />
+          ) : (
+            <path
+              className="stage-fill"
+              d={`M7 7V3.75A3.25 3.25 0 ${turn > Math.PI ? 1 : 0} 1 ${7 + 3.25 * Math.sin(turn)} ${7 - 3.25 * Math.cos(turn)}Z`}
+            />
+          )}
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** Where a record read from a list stands: the program it names, and its state. */
+type Standing = { workflow?: string; version?: number; state: string };
+/** That program's steps with the record's place marked; none for a program with no shape here. */
+function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
+  const shape = shapes?.find(
+    (item) =>
+      item.name === workflow.workflow &&
+      (workflow.version === undefined || item.version === workflow.version),
+  );
+  return shape ? diagramOfShape(shape, workflow.state).steps : [];
+}
+/**
+ * A state said beside a name, the one way everywhere: its mark, then its word, in the tone
+ * the state's pill wears. A program this build has no shape for keeps the plain dot.
+ */
+export function StageMark({
+  shapes,
+  workflow,
+}: {
+  shapes: WorkflowShape[] | undefined;
+  workflow: Standing;
+}) {
+  const steps = stepsOf(shapes, workflow);
+  const at = steps.findIndex((step) => step.current);
+  return (
+    <span className={cx('status', `status--${toneOf(workflow.state)}`)}>
+      {at < 0 ? (
+        <span className="status-dot" aria-hidden="true" />
+      ) : (
+        <StageGlyph steps={steps} at={at} />
+      )}
+      {words(workflow.state)}
+    </span>
+  );
+}
+
+/**
+ * Every state of the program, top to bottom, as the record met it: the mark, the word, how
+ * long it stood there and, where it came back, how many times. The one it stands in is in
+ * ink; what it never reached is quiet.
+ */
+export function StageList({ graph }: { graph: ProcessGraph }) {
+  const { steps } = diagramOfGraph(graph);
+  const spent = stageTimes(graph, useNow(graph.terminal ? 0 : 30_000));
+  const visits = new Map(graph.nodes.map((node) => [node.state, node.entries + +node.initial]));
+  return (
+    <ol className="stages">
+      {steps.map((step, at) => (
+        <li
+          key={step.state}
+          className={cx(
+            'stage',
+            step.current && `stage--here status--${toneOf(step.state)}`,
+            !step.entered && 'stage--ahead',
+          )}
+          aria-current={step.current ? 'step' : undefined}
+        >
+          <StageGlyph steps={steps} at={at} />
+          <span className="stage-name">{words(step.state)}</span>
+          {(visits.get(step.state) ?? 0) > 1 && (
+            <span className="faint tabular">×{visits.get(step.state)}</span>
+          )}
+          {spent.has(step.state) && (
+            <span className="stage-time tabular">{elapsed(spent.get(step.state)!)}</span>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 const CAP = 3.5;
 /** The corner of a bracket. */
 const TURN = 8;
@@ -143,7 +275,13 @@ export function ProcessDiagram({
   ways,
   kind,
   compact,
-}: Diagram & { kind?: string; compact?: boolean }) {
+  times,
+}: Diagram & {
+  kind?: string;
+  compact?: boolean;
+  /** How long the record stood in each state, by state; said under the state's name. */
+  times?: Map<string, number>;
+}) {
   const tip = useId().replaceAll(':', '');
   if (steps.length < 2) return null;
   const names = steps.map((step) => words(step.state));
@@ -183,7 +321,7 @@ export function ProcessDiagram({
   const width = x(last) + edge(last) + 1;
   const height = compact
     ? row + r + 2
-    : row + r + 18 + 11 * Math.max(...labels.map((label) => label.length));
+    : row + r + 18 + 11 * (Math.max(...labels.map((label) => label.length)) + +!!times?.size);
   return (
     <svg
       className={cx('pd', compact && 'pd--compact')}
@@ -264,9 +402,13 @@ export function ProcessDiagram({
             // The first and last labels sit flush with the drawing's own edges, so the
             // diagram holds the page's column on both sides.
             <text y={row + r + 17} textAnchor={index === 0 ? 'start' : step.end ? 'end' : 'middle'}>
-              {labels[index]!.map((word, line) => (
+              {[
+                ...labels[index]!,
+                ...(times?.has(step.state) ? [elapsed(times.get(step.state)!)] : []),
+              ].map((word, line) => (
                 <tspan
                   key={line}
+                  className={cx(line >= labels[index]!.length && 'pd-time')}
                   x={index === 0 ? 0 : step.end ? width : x(index)}
                   dy={line ? 11 : 0}
                 >
@@ -356,9 +498,13 @@ export function Gate({
   kind?: string;
   children?: ReactNode;
 }) {
+  // The page's own clock, ticking only while the record can still move.
+  const now = useNow(graph && !graph.terminal ? 30_000 : 0);
   return (
     <div className="stack">
-      {graph && <ProcessDiagram {...diagramOfGraph(graph)} kind={kind} />}
+      {graph && (
+        <ProcessDiagram {...diagramOfGraph(graph)} kind={kind} times={stageTimes(graph, now)} />
+      )}
       {graph?.dependencies
         .filter((item) => item.direction === 'depends_on' && (!item.settled || item.failed))
         .map((item) => (

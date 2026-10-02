@@ -1,8 +1,8 @@
 /**
- * The Running page, rendered from what the owners will send. Each test states one thing it
- * must never do: cover the board with its sidebar, lose the thing in hand on a poll, colour
- * anything red that no person has to act on, act on a control before naming what it ends,
- * print an identifier, or leave a reader looking at a heading over nothing.
+ * The map of work and what is live on it, rendered from what the owners send. Each test
+ * states one thing the page must never do: cover the map with its sidebar, lose the thing in
+ * hand on a poll, colour anything red that no person has to act on, act on a control before
+ * naming what it ends, print an identifier, or say a prerequisite waits that is settled.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,8 +17,18 @@ const { act } = await import('react-dom/test-utils');
 // components.tsx first: it and list-filters.tsx import each other through a view, and
 // only this order has every module evaluated before another one calls into it.
 await import('../packages/ui/web/components.js');
-const { RunningPage, RunningView, cadenceOf, nodeName, staleLane } =
-  await import('../packages/ui/web/views/running.js');
+const {
+  LiveLines,
+  LiveUnder,
+  WorkMap,
+  WorkPlane,
+  absorberOf,
+  cadenceOf,
+  liveOf,
+  mapOf,
+  staleLane,
+} = await import('../packages/ui/web/views/work-map.js');
+const { useActorNames } = await import('../packages/ui/web/views/people.js');
 const { streamRows } = await import('../packages/ui/web/views/running-panel.js');
 const { monoText } = await import('../packages/ui/web/views/running-phrase.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
@@ -48,7 +58,7 @@ const drawn = (width = 1200) => {
 const listed = () => {
   delete global.ResizeObserver;
 };
-/** The board's column narrowed or widened, as the sidebar opening beside it does. */
+/** The map's column narrowed or widened, as the sidebar opening beside it does. */
 const measure = async (width: number) => {
   measured = width;
   await act(async () => {
@@ -68,14 +78,26 @@ const Probe = () => {
   }, [location, type]);
   return null;
 };
-const page = (at = '/running', nameOf: (id: string) => string | undefined = () => undefined) =>
+/** The wave's own records: none, unless a test is about what they add to the board. */
+let wave: unknown = { items: [], edges: [] };
+let shapes: unknown;
+/**
+ * The page as the Work view stands it: the map, what is live under it, and — in place of
+ * the list, which is the wave's — the lines of who is on two of its units.
+ */
+const under = (nameOf: (id: string) => string | undefined) =>
   createElement(
-    MemoryRouter,
-    { initialEntries: [at] },
-    createElement(Probe),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    createElement(RunningPage as any, { nameOf }),
+    WorkPlane as any,
+    { nameOf },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createElement(WorkMap as any, { shapes, wave }),
+    createElement(LiveUnder),
+    createElement(LiveLines, { id: 'wf_index' }),
+    createElement(LiveLines, { id: 'wf_ablate' }),
   );
+const page = (at = '/work', nameOf: (id: string) => string | undefined = () => undefined) =>
+  createElement(MemoryRouter, { initialEntries: [at] }, createElement(Probe), under(nameOf));
 
 /** What the board and each sidebar answer; every sidebar key asked is kept, in order. */
 const asked: string[] = [];
@@ -148,7 +170,7 @@ const styled = () => {
   return () => sheet.remove();
 };
 
-test('three bands say what each holds, and what needs a person is counted beside it in red', async (t) => {
+test('under the map: how many are working, what needs a person in red, and each lane’s line with its control', async (t) => {
   t.after(unmount);
   drawn();
   const given = board();
@@ -159,16 +181,24 @@ test('three bands say what each holds, and what needs a person is counted beside
   };
   answers(given);
   await mount(page());
-  const headings = all('.running-band-title').map((item) => item.textContent);
-  assert.deepEqual(headings, ['Work 5 · 1 needs you', 'Sessions 4', 'Hardware 4 · 1 needs you']);
-  // Red beside a heading only above zero; a quiet line is ink, and needs nobody.
-  assert.equal(all('.running-needs').length, 2);
-  assert.ok(!card('session:session_ablate').classList.contains('running-attn'));
-  assert.ok(text().includes('Launch failed 2 times, retrying'));
+  // Two leases are live; one still starting and a machine being rented are not at work yet.
+  assert.match($('.live-head-line')!.textContent!, /^2 working/);
+  // Red beside the count only above zero; a quiet line is ink, and needs nobody.
+  assert.deepEqual(
+    all('.running-needs').map((item) => item.textContent),
+    ['2 need you'],
+  );
+  assert.ok(!card('work:wf_ablate').classList.contains('wmap-node--attn'));
+  assert.ok(card('work:wf_ablate').textContent!.includes('Launch failed 2 times, retrying'));
   // The Sessions line carries dispatch and its one control, which never wears the accent.
   const pause = button('Pause dispatch')!;
   assert.ok(pause && !pause.classList.contains('btn--primary'));
   assert.ok(text().includes('Dispatch running · Machines 2 · Free slots 1'));
+  // What is live and on no unit of work has a line of its own there, the way to its sidebar.
+  assert.deepEqual(
+    all('.live-head .live-line').map((item) => item.dataset.key),
+    ['sandbox:sbx_h100', 'sandbox:sbx_a10'],
+  );
 });
 
 test('what a lane needs of a person has its own line, never cut, with who ends the wait and the way there', async (t) => {
@@ -185,9 +215,9 @@ test('what a lane needs of a person has its own line, never cut, with who ends t
   };
   answers(given);
   await mount(page());
-  const line = $('[data-lane="sessions"] .running-lane-attn')!;
-  assert.ok(line, 'the red clause stands under the heading');
-  assert.equal(line.closest('.running-summary'), null, 'not squeezed into the heading’s line');
+  const line = $('.live-head .running-lane-attn')!;
+  assert.ok(line, 'the red clause stands under the lanes’ line');
+  assert.equal(line.closest('.running-summary'), null, 'not squeezed into the lane’s own line');
   const red = line.querySelector<HTMLElement>('.running-attn')!;
   assert.equal(red.textContent, 'No machine online · 3 waiting');
   for (const item of [line, red]) {
@@ -216,16 +246,14 @@ test('a change of cadence waits from the last answer, and never reads the board 
   assert.ok(reads('ui.running') >= 2, `the board was read ${reads('ui.running')} times`);
 });
 
-test('a lane whose source has never answered reads a dash and grey cells, and the board asks again soon', async (t) => {
+test('a lane whose source has never answered reads a dash, never a zero, and the board asks again soon', async (t) => {
   t.after(unmount);
   drawn();
   const given = board();
-  given.lanes.hardware = { nodes: [], summaries: [], needsYou: 0, failed: [], pending: true };
+  given.lanes.sessions = { nodes: [], summaries: [], needsYou: 0, failed: [], pending: true };
   answers(given);
   await mount(page());
-  assert.equal(all('.running-band-title').at(-1)!.textContent, 'Hardware —');
-  assert.equal(all('.running-ghost').length, 3);
-  assert.ok(!text().includes('Nothing is running'));
+  assert.match($('.live-head-line')!.textContent!, /^— working/);
   // How often the board is read: soon while a source is unknown, often while anything moves.
   assert.equal(cadenceOf(given), 2000);
   assert.equal(cadenceOf(board()), 5000);
@@ -240,27 +268,21 @@ test('a lane whose source has never answered reads a dash and grey cells, and th
   assert.equal(cadenceOf(undefined), 15000);
 });
 
-test('without the room to draw, each band is a list and every relation is said in words', async (t) => {
+test('without the room to draw there is no map, and what is live is still said under it', async (t) => {
   t.after(unmount);
   listed();
   answers();
   await mount(page());
-  assert.equal(all('.running-node').length, 0);
-  assert.equal($('svg.running-links'), null);
-  assert.equal(all('.running-row').length, 13);
-  for (const said of [
-    'waits on Rebuild citation index',
-    'works on Rebuild citation index',
-    'runs for Ablate retrieval depth',
-    'checks Sensitivity table',
-    'rented for Draft section 3.2',
-  ])
-    assert.ok(text().includes(said), `${said} is not on the page: ${text().slice(0, 600)}`);
+  assert.equal(all('.wmap-node').length, 0);
+  assert.equal($('svg.wmap-wires'), null);
+  assert.equal($('.wmap')!.tabIndex, -1, 'a frame with nothing drawn takes no key');
+  assert.match($('.live-head-line')!.textContent!, /^2 working/);
+  assert.equal(all('.live-line').length, 5);
 });
 
-test('a row’s relations are part of its name, and a prerequisite already settled is not waited on', async (t) => {
+test('what a card waits on is part of its name, said once, and a prerequisite already settled is not waited on', async (t) => {
   t.after(unmount);
-  listed();
+  drawn();
   const given = board();
   given.edges.push({
     from: 'work:wf_draft',
@@ -268,75 +290,254 @@ test('a row’s relations are part of its name, and a prerequisite already settl
     verb: 'waits on',
     waiting: false,
   });
+  // A card whose own line says something else still names what it waits on.
+  given.lanes.work.nodes[2]!.lines = [['Ready once it settles']];
   answers(given);
   await mount(page());
   const named = (key: string) => card(key).getAttribute('aria-label')!;
-  assert.match(named('session:session_index'), /, works on Rebuild citation index$/);
-  assert.match(named('check:base_7a1e'), /, checks Sensitivity table$/);
-  // Every word said under a row is in the name it is heard by.
-  for (const row of all('.running-row'))
-    for (const said of row.querySelectorAll('.running-relations > span'))
-      assert.ok(row.getAttribute('aria-label')!.includes(said.textContent!), said.textContent!);
-  const draft = card('work:wf_draft');
-  assert.ok(draft.textContent!.includes('waits on Ablate retrieval depth'));
-  assert.ok(!draft.textContent!.includes('waits on Rebuild citation index'));
-  assert.ok(!named('work:wf_draft').includes('waits on Rebuild citation index'));
+  assert.equal(
+    named('work:wf_review'),
+    'Task, Review citation index, Ready once it settles, Waits on Rebuild citation index',
+  );
+  assert.equal(named('work:wf_draft').match(/Waits on Ablate retrieval depth/g)!.length, 1);
+  assert.ok(!named('work:wf_draft').includes('Rebuild citation index'));
+  // The settled prerequisite still has its line, drawn whole; the open ones are dashed.
+  assert.equal(all('.wmap-wire').length, 3);
+  assert.equal(all('.wmap-wire--waiting').length, 2);
 });
 
-test('measured, the cards stand on the drawing, and the lines between bands wait for a card in hand', async (t) => {
+test('measured, the cards stand on the drawing, each prerequisite over what waits on it, and pointing lights a card’s lines', async (t) => {
   t.after(unmount);
   drawn(1200);
   answers();
   await mount(page());
-  const cards = all('.running-node');
-  assert.equal(cards.length, 13);
+  const cards = all('.wmap-node');
+  assert.equal(cards.length, 5);
   for (const item of cards)
     assert.match(item.getAttribute('style') ?? '', /left: \d+px; top: \d+px/);
-  const svg = $('svg.running-links')!;
+  const svg = $('svg.wmap-wires')!;
   assert.equal(svg.getAttribute('aria-hidden'), 'true');
   assert.equal(svg.getAttribute('width'), '1200');
-  // The prerequisites are always drawn; the relations between bands are not, until one is lit.
-  assert.equal(all('.running-wait').length, 2);
-  assert.equal(all('.running-link').length, 0);
-  assert.ok(all('.running-port').length > 0);
-  // Pointing at a card lights its relations while nothing is in hand.
+  const at = (key: string) => [parseFloat(card(key).style.left), parseFloat(card(key).style.top)];
+  for (const [first, then] of [
+    ['work:wf_index', 'work:wf_review'],
+    ['work:wf_ablate', 'work:wf_draft'],
+  ]) {
+    assert.equal(at(first!)[0], at(then!)[0], `${then} stands under ${first}`);
+    assert.ok(at(then!)[1]! > at(first!)[1]!);
+  }
+  assert.ok(card('work:wf_review').classList.contains('wmap-node--waiting'));
+  // A pulse runs only down a line whose upper end is being worked now.
+  assert.equal(all('.wmap-wire').length, 2);
+  assert.equal(all('.wmap-pulse').length, 2);
+  assert.equal(all('.wmap-wire.on').length, 0);
+  // Pointing at a card lights its lines while nothing is in hand.
   await act(async () => {
-    card('compute:c0ffee').dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+    card('work:wf_draft').dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
   });
-  assert.ok(all('.running-link.on').length > 0);
+  assert.equal(all('.wmap-wire.on').length, 1);
+  assert.equal(all('.wmap-wire.dim').length, 1);
 });
 
-test('pressing a card puts it in the address, docks its sidebar beside the board, and lights what it relates to', async (t) => {
+test('a card says where its unit stands, and who is on it and where', async (t) => {
+  t.after(unmount);
+  t.after(() => {
+    wave = { items: [], edges: [] };
+    shapes = undefined;
+  });
+  drawn(1200);
+  const flow = (state: string) => ({
+    state,
+    updatedAt: '2026-09-25T12:00:00Z',
+    workflow: 'task',
+    version: 6,
+  });
+  wave = {
+    items: [
+      {
+        id: 'wf_index',
+        kind: 'tasks',
+        name: 'Rebuild citation index',
+        flow: flow('in_progress'),
+        at: '2026-09-25T12:00:00Z',
+        held: true,
+      },
+      {
+        id: 'wf_review',
+        kind: 'tasks',
+        name: 'Review citation index',
+        flow: flow('in_progress'),
+        at: '2026-09-25T11:00:00Z',
+        held: true,
+      },
+      // Finished, and on the map only for what waits on it.
+      {
+        id: 'wf_pin',
+        kind: 'tasks',
+        name: 'Pin the tokenizer',
+        flow: flow('done'),
+        at: '2026-09-25T10:00:00Z',
+        held: false,
+      },
+      // Finished, with nothing waiting on it: not on the map.
+      {
+        id: 'wf_old',
+        kind: 'tasks',
+        name: 'Count the tokens',
+        flow: flow('done'),
+        at: '2026-09-25T09:00:00Z',
+        held: false,
+      },
+    ],
+    edges: [
+      { from: 'wf_pin', to: 'wf_index' },
+      { from: 'wf_index', to: 'wf_review', waiting: true },
+    ],
+  };
+  shapes = [
+    {
+      name: 'task',
+      version: 6,
+      initial: 'in_progress',
+      states: ['in_progress', 'in_review', 'done', 'abandoned'],
+      terminal: ['done', 'abandoned'],
+      edges: [
+        { from: 'in_progress', action: 'deliver', to: 'in_review' },
+        { from: 'in_review', action: 'return', to: 'in_progress' },
+        { from: 'in_review', action: 'pass', to: 'done' },
+        { from: 'in_progress', action: 'abandon', to: 'abandoned' },
+        { from: 'in_review', action: 'abandon', to: 'abandoned' },
+      ],
+    },
+  ];
+  answers();
+  await mount(page());
+  assert.equal(all('.wmap-node').length, 6);
+  assert.equal($('[data-key="work:wf_old"]'), null);
+  // The stage: its mark and its word, the one way everywhere.
+  const index = card('work:wf_index');
+  const stage = index.querySelector('.status')!;
+  assert.equal(stage.textContent, 'in progress');
+  assert.ok(stage.querySelector('svg.stage-glyph'));
+  // Who is on it and where takes the place of the board's own line, which said less.
+  assert.deepEqual(
+    [...index.querySelectorAll('.wmap-line')].map((line) => line.textContent),
+    ['Rebuild citation index on mac-studio'],
+  );
+  assert.ok(!index.textContent!.includes('Producer on it'));
+  // With nobody on it, the board's line says why.
+  assert.ok(card('work:wf_review').textContent!.includes('Waits on Rebuild citation index'));
+  // A finished prerequisite is quiet, checked, and gives the line its upper end.
+  const pin = card('work:wf_pin');
+  assert.ok(pin.classList.contains('wmap-node--done'));
+  assert.equal(pin.querySelector('.status')!.textContent, 'done');
+  assert.ok(pin.querySelector('.stage-check'));
+  assert.equal(all('.wmap-wire').length, 3);
+  // One line for each relation, however many owners say it.
+  assert.equal(all('.wmap-wire--waiting').length, 2);
+  assert.equal(
+    card('work:wf_index').getAttribute('aria-label'),
+    'Task, Rebuild citation index, in progress, Rebuild citation index',
+  );
+});
+
+test('the map joins the wave’s records to the board by key, and says who is on a unit and where', () => {
+  const given = board();
+  const { units, edges } = mapOf(given, {
+    items: [
+      {
+        id: 'wf_index',
+        kind: 'tasks',
+        name: 'Rebuild the index',
+        flow: { state: 'in_progress', updatedAt: '' },
+        at: '2',
+        held: true,
+      },
+      {
+        id: 'wf_pin',
+        kind: 'tasks',
+        name: 'Pin',
+        flow: { state: 'done', updatedAt: '' },
+        at: '1',
+        held: false,
+      },
+      {
+        id: 'wf_new',
+        kind: 'experiments',
+        name: 'Planned',
+        flow: { state: 'planned', updatedAt: '' },
+        at: '3',
+        held: true,
+      },
+    ],
+    edges: [{ from: 'wf_pin', to: 'wf_index' }],
+  });
+  // The board's cards lead in the board's order; then what the wave holds open; then what
+  // any of those waits on.
+  assert.deepEqual(
+    units.map((unit) => unit.key),
+    [
+      'work:wf_table',
+      'work:wf_index',
+      'work:wf_review',
+      'work:wf_ablate',
+      'work:wf_draft',
+      'work:wf_new',
+      'work:wf_pin',
+    ],
+  );
+  const index = units[1]!;
+  assert.equal(index.name, 'Rebuild the index', 'the record’s own name');
+  assert.equal(index.flow!.state, 'in_progress');
+  assert.equal(index.node!.dot, 'moving');
+  assert.equal(units[5]!.kind, 'Experiment');
+  assert.equal(units[5]!.node, undefined);
+  // The board says a prerequisite from the side of what waits; the map draws it from above.
+  assert.deepEqual(
+    edges.map((edge) => `${edge.from} > ${edge.to}`),
+    [
+      'work:wf_pin > work:wf_index',
+      'work:wf_index > work:wf_review',
+      'work:wf_ablate > work:wf_draft',
+    ],
+  );
+  assert.deepEqual(mapOf(undefined, undefined), { units: [], edges: [] });
+  // Who is on a unit: its sessions, the machines that serve it, never what it waits on.
+  const on = (key: string) => liveOf(given, key).map((node) => node.key);
+  assert.deepEqual(on('work:wf_ablate'), ['session:session_ablate', 'compute:c0ffee']);
+  assert.deepEqual(on('work:wf_draft'), ['session:session_draft', 'fleet:flt_spare']);
+  assert.deepEqual(on('work:wf_review'), []);
+  assert.deepEqual(liveOf(undefined, 'work:wf_index'), []);
+  assert.equal(absorberOf(given, 'fleet:flt_bound')!.key, 'session:session_ablate');
+  assert.equal(absorberOf(given, 'work:wf_gone'), undefined);
+});
+
+test('pressing a card puts it in the address, docks its sidebar beside the map, and lights what it relates to', async (t) => {
   t.after(unmount);
   drawn(1200);
   answers();
   await mount(page());
   await press(card('work:wf_index'));
-  assert.equal(where, '/running?key=work:wf_index');
+  assert.equal(where, '/work?key=work:wf_index');
   assert.equal(how, 'PUSH', 'opening a sidebar is a step Back can undo');
   assert.deepEqual(asked, ['work:wf_index']);
   assert.equal($('.running-plane')!.hasAttribute('data-open'), true);
   assert.equal($('#running-panel')!.hidden, false);
-  assert.equal($('.running-board')!.hidden, false, 'the board is never covered or hidden here');
+  assert.equal($('.work-main')!.hidden, false, 'the map is never covered or hidden here');
   assert.equal(document.activeElement, $('#running-panel-title'));
   assert.equal(card('work:wf_index').getAttribute('aria-pressed'), 'true');
   // What it relates to stays; what it does not steps back, unless it needs a person.
-  assert.ok(!card('session:session_index').classList.contains('dim'));
   assert.ok(!card('work:wf_review').classList.contains('dim'));
-  assert.ok(card('work:wf_ablate').classList.contains('dim'));
-  assert.ok(card('sandbox:sbx_a10').classList.contains('dim'));
-  assert.ok(
-    !card('work:wf_table').classList.contains('dim'),
-    'a card that needs a person never dims',
-  );
-  assert.equal(all('.running-link').length, 1);
-  // The sidebar narrows the board's column, and the drawing lays itself out again for it.
+  assert.ok(card('work:wf_draft').classList.contains('dim'));
+  for (const key of ['work:wf_table', 'work:wf_ablate'])
+    assert.ok(!card(key).classList.contains('dim'), 'a card that needs a person never dims');
+  assert.equal(all('.wmap-wire.on').length, 1);
+  assert.equal(all('.wmap-wire.dim').length, 1);
+  // The sidebar narrows the map's column, and the drawing lays itself out again for it.
   await measure(760);
-  assert.equal($('svg.running-links')!.getAttribute('width'), '760');
+  assert.equal($('svg.wmap-wires')!.getAttribute('width'), '760');
   const right = Math.max(
-    ...all('.running-node').map(
-      (item) => item.offsetLeft + parseFloat(item.style.left) + parseFloat(item.style.width),
-    ),
+    ...all('.wmap-node').map((item) => parseFloat(item.style.left) + parseFloat(item.style.width)),
   );
   assert.ok(right <= 760, 'no card stands under the sidebar');
   // A poll keeps the thing in hand.
@@ -345,17 +546,22 @@ test('pressing a card puts it in the address, docks its sidebar beside the board
     refreshTools('ui.running');
   });
   await settle(0);
-  assert.equal(where, '/running?key=work:wf_index');
+  assert.equal(where, '/work?key=work:wf_index');
   assert.equal(card('work:wf_index').getAttribute('aria-pressed'), 'true');
+  // The card of the unit an agent in hand is on stays lit, and the agent's own line is pressed.
+  await press(card('session:session_ablate'));
+  assert.equal(where, '/work?key=session:session_ablate');
+  assert.equal(card('work:wf_ablate').getAttribute('aria-pressed'), 'true');
+  assert.equal(card('session:session_ablate').getAttribute('aria-pressed'), 'true');
 });
 
 test('an address naming a card another absorbed opens that card, in place of the address', async (t) => {
   t.after(unmount);
   drawn();
   answers();
-  await mount(page('/running?key=fleet:flt_bound'));
+  await mount(page('/work?key=fleet:flt_bound'));
   await settle(0);
-  assert.equal(where, '/running?key=session:session_ablate');
+  assert.equal(where, '/work?key=session:session_ablate');
   assert.equal(how, 'REPLACE');
   assert.deepEqual(asked, ['session:session_ablate'], 'the absorbed key is never read');
   assert.ok(text().includes('Fleet machine'));
@@ -374,11 +580,11 @@ test('a key that is not on the board still opens its sidebar; one nobody answers
       live: false,
     },
   });
-  await mount(page('/running?key=session:session_closed'));
+  await mount(page('/work?key=session:session_closed'));
   assert.ok(text().includes('Released · completed'));
   await unmount();
   answers();
-  await mount(page('/running?key=session:session_gone'));
+  await mount(page('/work?key=session:session_gone'));
   assert.ok(text().includes('Not found'), text().slice(0, 400));
   assert.ok($('.running-close'), 'the sidebar can still be closed');
 });
@@ -421,7 +627,7 @@ test('a sidebar whose owner cannot answer yet says it could not load, never Not 
   await press(card('sandbox:sbx_a10'));
   assert.ok(text().includes('Could not load'), text().slice(0, 400));
   assert.ok(!text().includes('Not found'));
-  assert.equal(where, '/running?key=sandbox:sbx_a10', 'the sidebar stays open');
+  assert.equal(where, '/work?key=sandbox:sbx_a10', 'the sidebar stays open');
   assert.ok($('.running-close'), 'and can be closed');
   await settle(4200);
   assert.deepEqual(asked, ['sandbox:sbx_a10', 'sandbox:sbx_a10']);
@@ -467,9 +673,9 @@ test('Escape inside a guard only cancels it; outside, it closes the sidebar and 
   assert.ok(guard);
   await key(button('Cancel', guard)!, 'Escape');
   assert.equal($('.guard'), null, 'the guard closed');
-  assert.equal(where, '/running?key=session:session_ablate', 'and the sidebar did not');
+  assert.equal(where, '/work?key=session:session_ablate', 'and the sidebar did not');
   await key($('#running-panel-title')!, 'Escape');
-  assert.equal(where, '/running');
+  assert.equal(where, '/work');
   assert.equal($('#running-panel')!.hidden, true);
   assert.equal(document.activeElement, card('session:session_ablate'));
 });
@@ -490,11 +696,11 @@ test('an Escape a menu or a dialog takes as its own shuts that, and leaves the s
   t.after(() => menu.remove());
   item.focus();
   await key(item, 'Escape');
-  assert.equal(where, '/running?key=session:session_ablate');
+  assert.equal(where, '/work?key=session:session_ablate');
   assert.equal($('#running-panel')!.hidden, false);
   menu.setAttribute('role', 'dialog');
   await key(item, 'Escape');
-  assert.equal(where, '/running?key=session:session_ablate');
+  assert.equal(where, '/work?key=session:session_ablate');
   // Nor does one another control already took, wherever it was pressed.
   await act(async () => {
     const taken = new window.KeyboardEvent('keydown', {
@@ -505,17 +711,17 @@ test('an Escape a menu or a dialog takes as its own shuts that, and leaves the s
     taken.preventDefault();
     $('#running-panel-title')!.dispatchEvent(taken);
   });
-  assert.equal(where, '/running?key=session:session_ablate');
+  assert.equal(where, '/work?key=session:session_ablate');
   await key($('#running-panel-title')!, 'Escape');
-  assert.equal(where, '/running');
+  assert.equal(where, '/work');
 });
 
-test('the board’s keys leave a modified key to the browser, and a control in a band’s heading to itself', async (t) => {
+test('the map’s keys leave a modified key to the browser, and a control under the map to itself', async (t) => {
   t.after(unmount);
   drawn(1600);
   answers();
   await mount(page());
-  const graph = $('.running-graph')!;
+  const graph = $('.wmap')!;
   await key(graph, 'ArrowRight');
   const first = document.activeElement as HTMLElement;
   assert.equal(first.dataset.key, 'work:wf_table');
@@ -581,32 +787,45 @@ test('a key link in a sidebar swaps what it shows in place, and Close leaves the
     item.textContent?.includes('Review citation index'),
   )!;
   await press(jump);
-  assert.equal(where, '/running?key=work:wf_review');
+  assert.equal(where, '/work?key=work:wf_review');
   assert.equal(how, 'REPLACE', 'swapping inside an open sidebar adds nothing to history');
   assert.equal(card('work:wf_review').getAttribute('aria-pressed'), 'true');
   await press($('.running-close')!);
-  assert.equal(where, '/running');
+  assert.equal(where, '/work');
   assert.equal(how, 'POP', 'Close takes back the one step the opening added');
   assert.equal(document.activeElement, card('work:wf_review'));
 });
 
-test('red is only what a person has to do: a card, a row, a line — and never a clock of itself', async (t) => {
+test('red is only what a person has to do: a card, a line — and never a clock of itself', async (t) => {
   t.after(unmount);
   drawn();
   answers();
   await mount(page());
-  const red = all('.running-node.running-attn').map((item) => item.dataset.key);
-  assert.deepEqual(red.sort(), ['sandbox:sbx_h100', 'session:session_ablate', 'work:wf_table']);
+  // The held task, and the experiment whose agent has gone quiet: the card wears what any
+  // of who is on it needs.
+  const red = all('.wmap-node--attn').map((item) => item.dataset.key);
+  assert.deepEqual(red.sort(), ['work:wf_ablate', 'work:wf_table']);
   assert.deepEqual(
-    all('.running-dot--attn')
+    all('.wmap-node .live-dot--attn')
       .map((item) => item.closest<HTMLElement>('[data-key]')!.dataset.key)
       .sort(),
     red.sort(),
   );
-  // The held task keeps the word Done under the line that says why a person is needed.
-  assert.match(
-    card('work:wf_table').textContent!,
-    /Waiting on a person to merge the pull request.*Done/,
+  assert.deepEqual(
+    all('.live-line')
+      .filter((item) => item.querySelector('.live-dot--attn'))
+      .map((item) => item.dataset.key)
+      .sort(),
+    ['sandbox:sbx_h100', 'session:session_ablate'],
+  );
+  // What a person has to do stands where the unit's own line would.
+  assert.equal(
+    card('work:wf_table').querySelector('.wmap-line.running-attn')!.textContent,
+    'Waiting on a person to merge the pull request',
+  );
+  assert.equal(
+    card('work:wf_ablate').querySelector('.wmap-line.running-attn')!.textContent,
+    'Ablate retrieval depth · Quiet 34m',
   );
   await press(card('sandbox:sbx_h100'));
   const rows = all('.running-facts .kv-row');
@@ -622,24 +841,21 @@ test('red is only what a person has to do: a card, a row, a line — and never a
   assert.ok(text().includes('$16.74 · $32.40/h'));
 });
 
-test('an ending card steps back in faint ink, except for the red line saying what a person must do', async (t) => {
+test('a finished unit steps back in quiet ink, except for the red line saying what a person must do', async (t) => {
   t.after(unmount);
   t.after(styled());
-  for (const draw of [() => drawn(), listed]) {
-    draw();
-    answers();
-    await mount(page());
-    const held = card('work:wf_table');
-    assert.ok(held.classList.contains('running-look--quiet'));
-    const red = held.querySelector<HTMLElement>('.running-line.running-attn')!;
-    assert.equal(getComputedStyle(red).color, 'var(--refutes)');
-    const done = held.querySelector<HTMLElement>('.running-line--second')!;
-    assert.equal(getComputedStyle(done).color, 'var(--faint)');
-    await unmount();
-  }
+  drawn();
+  answers();
+  await mount(page());
+  const held = card('work:wf_table');
+  assert.ok(held.classList.contains('wmap-node--done'));
+  assert.ok(held.classList.contains('wmap-node--attn'), 'and keeps its red frame');
+  assert.equal(getComputedStyle(held.querySelector('.wmap-name')!).color, 'var(--muted)');
+  const red = held.querySelector<HTMLElement>('.wmap-line.running-attn')!;
+  assert.equal(getComputedStyle(red).color, 'var(--refutes)');
 });
 
-test('a quiet line is ink wherever it stands: on a card, on an ending card, in a sidebar’s head and under a band', async (t) => {
+test('a quiet line is ink wherever it stands: on a card, on an agent’s line, in a sidebar’s head and under the map', async (t) => {
   t.after(unmount);
   t.after(styled());
   drawn();
@@ -662,21 +878,29 @@ test('a quiet line is ink wherever it stands: on a card, on an ending card, in a
   panel.header.attention = quiet;
   answers(given, { 'session:session_ablate': panel });
   await mount(page());
-  assert.equal(all('.running-needs').length, 1, 'only the hardware band needs anyone');
-  for (const key of ['session:session_ablate', 'work:wf_table']) {
+  assert.deepEqual(
+    all('.running-needs').map((item) => item.textContent),
+    ['1 needs you'],
+    'only a machine needs anyone',
+  );
+  for (const key of ['work:wf_ablate', 'work:wf_table']) {
     const held = card(key);
-    assert.ok(!held.classList.contains('running-attn'), key);
-    assert.equal(held.querySelector('.running-attn, .running-dot--attn'), null, key);
+    assert.ok(!held.classList.contains('wmap-node--attn'), key);
+    assert.equal(held.querySelector('.running-attn, .live-dot--attn'), null, key);
   }
-  const line = (key: string) => card(key).querySelector<HTMLElement>('.running-line')!;
-  assert.equal(line('session:session_ablate').textContent, quiet.says[0]);
-  assert.equal(getComputedStyle(line('session:session_ablate')).color, 'var(--muted)');
-  // An ending card steps back, and its quiet line with it.
-  assert.equal(getComputedStyle(line('work:wf_table')).color, 'var(--faint)');
-  const lane = $('[data-lane="sessions"] .running-lane-attn')!;
+  const lines = (key: string) => [...card(key).querySelectorAll<HTMLElement>('.wmap-line')];
+  const said = lines('work:wf_ablate').find((line) => line.textContent!.includes(quiet.says[0]));
+  assert.equal(getComputedStyle(said!).color, 'var(--muted)');
+  assert.equal(lines('work:wf_table')[0]!.textContent, 'Ready · launch failed 2 times, retrying');
+  assert.equal(getComputedStyle(lines('work:wf_table')[0]!).color, 'var(--muted)');
+  // The agent's own line says it too, in ink, with a green dot and not a red one.
+  const agent = card('session:session_ablate');
+  assert.ok(agent.textContent!.includes(quiet.says[0]));
+  assert.equal(agent.querySelector('.running-attn, .live-dot--attn'), null);
+  const lane = $('.live-head .running-lane-attn')!;
   assert.equal(lane.textContent, 'Dispatch waiting');
   assert.equal(lane.querySelector('.running-attn'), null);
-  await press(card('session:session_ablate'));
+  await press(agent);
   const says = $('.running-says')!;
   assert.equal(says.textContent, quiet.says[0]);
   assert.ok(!says.classList.contains('running-attn'));
@@ -826,6 +1050,8 @@ test('a control the owner did not send is not drawn, and one it sent is its own 
 test('an operator reads names; a reader reads the words left for them, and a row of nothing goes', async (t) => {
   t.after(unmount);
   drawn();
+  // The Work view's own wiring: the names are the session's, read by an operator only.
+  const Named = () => under(useActorNames());
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const open = async (role: string) => {
     const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
@@ -845,9 +1071,8 @@ test('an operator reads names; a reader reads the words left for them, and a row
     await mount(
       createElement(
         MemoryRouter,
-        { initialEntries: ['/running?key=work:wf_index'] },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        createElement(SessionProvider, null, createElement(RunningView as any, {})),
+        { initialEntries: ['/work?key=work:wf_index'] },
+        createElement(SessionProvider, null, createElement(Named)),
       ),
     );
     await settle(20);
@@ -904,15 +1129,14 @@ test('the stream pins what is running, says a run of one tool once, and marks a 
   assert.ok(text().includes('6 of 19'));
 });
 
-test('no identifier is ever printed, on the board or in any sidebar', async (t) => {
+test('no identifier is ever printed, on the map or in any sidebar', async (t) => {
   t.after(unmount);
   drawn();
   answers();
   await mount(page());
   const ids = /(wf|session|sbx|flt|art)_[A-Za-z0-9]/;
   assert.doesNotMatch(text(), ids);
-  for (const item of all('.running-node'))
-    assert.doesNotMatch(item.getAttribute('aria-label')!, ids);
+  for (const item of all('.wmap-node')) assert.doesNotMatch(item.getAttribute('aria-label')!, ids);
   for (const key of ['work:wf_index', 'session:session_ablate', 'sandbox:sbx_h100']) {
     await press(card(key));
     assert.doesNotMatch(text(), ids, `the ${key} sidebar prints an id`);
@@ -941,7 +1165,7 @@ test('machine text prints an id inside it by its head and its tail, and titles a
   if (code.kind === 'facts') code.rows[0] = { label: 'Branch', value: [{ mono: branch }] };
   answers(board(now), { 'work:wf_index': task });
   await mount(page());
-  // Short machine text on a card is printed as it came, with nothing in its title.
+  // Short machine text on an agent's line is printed as it came, with nothing in its title.
   const tool = card('session:session_index').querySelector<HTMLElement>('.mono')!;
   assert.equal(tool.textContent, 'code.commit');
   assert.equal(tool.getAttribute('title'), null);
@@ -963,42 +1187,33 @@ test('a card is named by what it draws, and one that needs a person says what in
   answers();
   await mount(page());
   const named = (key: string) => card(key).getAttribute('aria-label')!;
-  assert.equal(named('session:session_ablate'), 'Ablate retrieval depth, Quiet, on a Fleet VM');
-  assert.equal(named('sandbox:sbx_h100'), '8× H100, aurora-sweep, Lease ending, $32.40/h');
   assert.equal(
-    named('session:session_index'),
-    'Rebuild citation index, code.commit, on mac-studio',
+    named('work:wf_table'),
+    'Task, Sensitivity table, Waiting on a person to merge the pull request, Code check',
+  );
+  assert.equal(
+    named('work:wf_index'),
+    'Task, Rebuild citation index, Producer on it, Rebuild citation index',
   );
   assert.equal(
     named('work:wf_review'),
     'Task, Review citation index, Waits on Rebuild citation index',
   );
-  assert.equal(card('sandbox:sbx_h100').title, 'aurora-sweep');
-  const reading = { now: { at: Date.now(), since: 0, stale: false }, nameOf: () => undefined };
-  assert.ok(nodeName(board().lanes.work.nodes[0]!, reading).includes('merge the pull request'));
+  // Its clocks are left out, so the name of a card in hand holds still while they tick.
+  assert.equal(
+    named('work:wf_ablate'),
+    'Experiment, Ablate retrieval depth, running, Ablate retrieval depth, GPU run',
+  );
+  for (const item of all('.wmap-node'))
+    assert.doesNotMatch(item.getAttribute('aria-label')!, /\d+[smhd]\b|\bago\b|\bleft\b/);
 });
 
-test('a card’s name holds still while the board’s clocks tick', () => {
-  const at = Date.now();
-  const given = board(at);
-  const reading = (ms: number) => ({
-    now: { at: at + ms, since: ms, stale: false },
-    nameOf: () => undefined,
-  });
-  for (const lane of ['work', 'sessions', 'hardware'] as const)
-    for (const node of given.lanes[lane].nodes) {
-      const names = [0, 1000, 61_000, 3_700_000].map((ms) => nodeName(node, reading(ms)));
-      assert.deepEqual(new Set(names).size, 1, `${node.key}: ${names.join(' | ')}`);
-      assert.doesNotMatch(names[0]!, /\d+[smhd]\b|\bago\b|\bleft\b/, node.key);
-    }
-});
-
-test('the keyboard walks the cards in reading order and down through the bands', async (t) => {
+test('the keyboard walks the cards in reading order, and straight down a chain', async (t) => {
   t.after(unmount);
   drawn(1600);
   answers();
   await mount(page());
-  const graph = $('.running-graph')!;
+  const graph = $('.wmap')!;
   assert.equal(graph.getAttribute('role'), 'group');
   assert.equal(graph.tabIndex, 0);
   await key(graph, 'ArrowRight');
@@ -1007,12 +1222,12 @@ test('the keyboard walks the cards in reading order and down through the bands',
   await key(first, 'j');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
   await key(document.activeElement!, 'ArrowDown');
-  assert.equal((document.activeElement as HTMLElement).dataset.key, 'session:session_index');
+  assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_review');
   await key(document.activeElement!, 'ArrowUp');
   assert.equal((document.activeElement as HTMLElement).dataset.key, 'work:wf_index');
 });
 
-test('on a phone the sidebar takes the list’s place, and closing it brings the list back on its row', async (t) => {
+test('on a phone the sidebar takes the page’s place, and closing it brings the page back on its line', async (t) => {
   t.after(unmount);
   listed();
   await resize(false);
@@ -1020,22 +1235,23 @@ test('on a phone the sidebar takes the list’s place, and closing it brings the
   await mount(page());
   const row = card('sandbox:sbx_h100');
   await press(row);
-  assert.equal($('.running-board')!.hidden, true);
+  assert.equal($('.work-main')!.hidden, true);
   assert.equal($('#running-panel')!.hidden, false);
   assert.ok(text().includes('aurora-sweep'));
   await key($('#running-panel-title')!, 'Escape');
-  assert.equal($('.running-board')!.hidden, false);
+  assert.equal($('.work-main')!.hidden, false);
   assert.equal($('#running-panel')!.hidden, true);
   assert.equal(document.activeElement, card('sandbox:sbx_h100'));
 });
 
-test('an empty board says nothing is running; a lane that did not load or went stale says so, naming no plugin', async (t) => {
+test('with nothing on the board nothing is said; a lane that did not load or went stale says so, naming no plugin', async (t) => {
   t.after(unmount);
   drawn();
   answers(emptyBoard());
   await mount(page());
-  assert.ok(text().includes('Nothing is running'), text().slice(0, 300));
-  assert.equal(all('.running-band-title').length, 0);
+  assert.equal($('.live-head'), null);
+  assert.equal(all('.wmap-node').length, 0);
+  assert.equal(text(), '');
   await unmount();
   drawn();
   const given = board();
@@ -1051,7 +1267,6 @@ test('an empty board says nothing is running; a lane that did not load or went s
   assert.ok(notes.every((note) => note.getAttribute('role') === 'status'));
   assert.ok(notes[0]!.classList.contains('error-message'));
   assert.ok(!text().includes('sandboxes'));
-  assert.ok(!text().includes('Nothing is running'));
 });
 
 test('every control reads from the verb table, and a machine without a heartbeat is offline, never quiet', () => {

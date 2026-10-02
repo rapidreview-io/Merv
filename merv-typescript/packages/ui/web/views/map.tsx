@@ -16,7 +16,7 @@ import { KV, KindLabel, LoadState, StatusPill, cx, kindOf, kindStyle, words } fr
 import { ArrowRightIcon } from '../icons';
 import { WORK } from '../navigation';
 import { RecordText, useRecordNames, type RecordNames } from '../markdown';
-import { RowDiagram } from '../process';
+import { StageMark } from '../process';
 import { bytes } from './artifacts';
 import { namesOf } from './people';
 import { standingOf, type Lines } from './overview';
@@ -237,8 +237,12 @@ export function Graph({
                 <RecordText text={node.name} names={names} plain />
               </span>
               <span className="map-node-foot">
-                <StatusPill value={node.state} />
-                {node.flow && <RowDiagram shapes={shapes} workflow={node.flow} kind={node.kind} />}
+                {/* Where the card stands is its workflow's own state, it wears the stage mark. */}
+                {node.flow?.state === node.state ? (
+                  <StageMark shapes={shapes} workflow={node.flow} />
+                ) : (
+                  <StatusPill value={node.state} />
+                )}
               </span>
               {/* With no room to draw a line, the record says what it points at. */}
               {!layout &&
