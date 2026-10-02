@@ -2159,6 +2159,26 @@ test('what Run told the agent is a receipt only where it answers a call that ran
   // Only the latest calls offer Run: once a later turn proposes, an earlier call is not answered.
   const later = { ...proposed, id: 'c2', proposals: [end] } as unknown as PiCommand;
   assert.equal(receiptOf([proposed, later, said('Ran task.create: {"id":"wf_1"}')], 2), null);
+  // Two calls of one tool are answered in the order they ran, whichever was proposed first.
+  const dispatch = (enabled: boolean, at: string) => ({
+    id: `pip_${enabled}`,
+    name: 'session.dispatch',
+    input: { enabled },
+    ran: { at, ok: true },
+  });
+  const [start, pause] = [
+    dispatch(true, '2026-10-02T20:11:00Z'),
+    dispatch(false, '2026-10-02T20:10:25Z'),
+  ];
+  const twice = [
+    { ...proposed, proposals: [start, pause] } as unknown as PiCommand,
+    said('Ran session.dispatch: {"enabled":false}'),
+    said('Ran session.dispatch: {"enabled":true}'),
+  ];
+  assert.deepEqual(
+    [1, 2].map((at) => receiptOf(twice, at)?.proposal),
+    [pause, start],
+  );
 });
 
 test('a card names the records its input points at, folds what is long or nested, and prints no machinery', async (t) => {

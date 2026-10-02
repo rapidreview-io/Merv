@@ -132,28 +132,37 @@ const ADVANCED = '. Re-read research.get and workflow.status_and_next for curren
 /** What came back for a call the person ran: its result as it was told, if any, or the refusal. */
 export type Receipt = { proposal: PiProposal } & ({ result?: string } | { refused: string });
 
+/** What a turn's first message tells of a call, where it says what Run says. */
+function toldOf(command?: PiCommand) {
+  const message = command?.messages[0];
+  if (message?.role !== 'user' || message.text.includes('\n\n')) return null;
+  const [secret, ran, refused] = [SECRET, RAN, REFUSED].map((said) => said.exec(message.text));
+  const tool = (secret ?? ran ?? refused)?.[1];
+  if (!tool) return null;
+  if (secret) return { tool };
+  if (refused) return { tool, refused: refused[2]! };
+  const told = ran![2]!;
+  return { tool, result: told.endsWith(ADVANCED) ? told.slice(0, -ADVANCED.length) : told };
+}
+
 /**
  * The receipt the first message of turn `at` is, or null where the person wrote it. It must say
  * what Run says, and answer a call that ran among the latest the agent proposed before it: the
- * only cards that offer Run. A receipt that waited in the composer and went with words of the
- * person's own after it is theirs.
+ * only cards that offer Run. Calls of one tool are answered in the order they ran. A receipt that
+ * waited in the composer and went with words of the person's own after it is theirs.
  */
 export function receiptOf(commands: PiCommand[], at: number): Receipt | null {
-  const message = commands[at]?.messages[0];
-  if (message?.role !== 'user' || message.text.includes('\n\n')) return null;
-  const { text } = message;
-  const [secret, ran, refused] = [SECRET.exec(text), RAN.exec(text), REFUSED.exec(text)];
-  const tool = (secret ?? ran ?? refused)?.[1];
-  const proposal =
-    tool &&
-    commands
-      .slice(0, at)
-      .filter((command) => command.proposals?.length)
-      .at(-1)
-      ?.proposals?.find((call) => call.name === tool && call.ran);
-  if (!proposal) return null;
-  if (secret) return { proposal };
-  if (refused) return { proposal, refused: refused[2]! };
-  const told = ran![2]!;
-  return { proposal, result: told.endsWith(ADVANCED) ? told.slice(0, -ADVANCED.length) : told };
+  const told = toldOf(commands[at]);
+  if (!told) return null;
+  const { tool, ...outcome } = told;
+  const from = commands
+    .slice(0, at)
+    .map((command) => !!command.proposals?.length)
+    .lastIndexOf(true);
+  const ran = (commands[from]?.proposals ?? [])
+    .filter((call) => call.name === tool && call.ran)
+    .sort((a, b) => a.ran!.at.localeCompare(b.ran!.at));
+  const earlier = commands.slice(from + 1, at).filter((turn) => toldOf(turn)?.tool === tool);
+  const proposal = ran[Math.min(earlier.length, ran.length - 1)];
+  return proposal ? { proposal, ...outcome } : null;
 }
