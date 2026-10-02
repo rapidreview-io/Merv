@@ -57,15 +57,12 @@ function Say({ clause }: { clause: Clause | null }) {
  */
 export function ThreeStates({
   execution,
-  diagram,
   stage,
   review,
   outcome,
   meta,
 }: {
   execution?: string | null;
-  /** The machine the state word belongs to, drawn small beside it. */
-  diagram?: ReactNode;
   /** Execution as its stage mark, where the record has a workflow: the mark and the word. */
   stage?: ReactNode;
   review?: Clause | null;
@@ -78,7 +75,6 @@ export function ThreeStates({
       {execution !== undefined && (
         <span className="states-clause">
           {execution ? <StatusPill value={execution} /> : <span className="states-absent">—</span>}
-          {diagram}
         </span>
       )}
       {review !== undefined && <Say clause={review} />}

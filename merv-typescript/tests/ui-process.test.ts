@@ -68,8 +68,7 @@ test('a record’s own graph marks one place, draws the way back, and names its 
   );
 });
 
-test('a row draws the same machine from the deployed shape, unlabelled', async (t) => {
-  t.after(async () => await unmount());
+test('a record read from a list is walked from the deployed shape: its place, and what is behind it', () => {
   const shape = {
     name: 'experiment',
     version: 3,
@@ -87,13 +86,10 @@ test('a row draws the same machine from the deployed shape, unlabelled', async (
     drawn.steps.filter((step) => step.current).map((step) => step.state),
     ['running'],
   );
-  await mount(createElement(ProcessDiagram, { ...drawn, compact: true }));
-  assert.equal(document.querySelectorAll('.pd-node--here').length, 1);
-  assert.equal(document.querySelectorAll('.pd-node--behind').length, 2);
-  // A row says where the record stands and nothing about the ways back.
-  assert.equal(document.querySelectorAll('.pd-arc').length, 0);
-  assert.equal(document.querySelectorAll('.pd-node text').length, 0);
-  assert.equal(document.querySelectorAll('.pd-node title').length, 4);
+  assert.deepEqual(
+    drawn.steps.map((step) => step.entered),
+    [true, true, true, false],
+  );
 });
 
 test('every end is one node, named for how the record ended', async (t) => {

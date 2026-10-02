@@ -16,7 +16,7 @@ import {
 } from '../components';
 import { ListPage, Tabs, splitRoutes, useListFilter } from '../list-filters';
 import { useCommand } from '../mutations';
-import { Gate, RowDiagram } from '../process';
+import { Gate, StageMark } from '../process';
 import { useScopeKey, useSession } from '../session';
 import type { ShellData } from '../shell-types';
 import { ThreeStates } from '../states';
@@ -161,8 +161,7 @@ function ReflectionList({ shell }: { shell: ShellData }) {
         ),
         standing: (
           <ThreeStates
-            execution={item.state}
-            diagram={<RowDiagram shapes={shell.workflows} workflow={item.flow} kind={item.kind} />}
+            stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
             meta={item.meta}
           />
         ),
@@ -191,7 +190,10 @@ export function ReflectionDetail({ row }: ViewProps) {
     );
   const tabs = [
     ...(wave.report ? [{ value: 'report', label: 'Report' }] : []),
-    ...wave.lenses.map((lens) => ({ value: lens.id, label: words(lens.perspective) })),
+    ...wave.lenses.map((lens) => ({
+      value: lens.id,
+      label: words(lens.perspective).replace(/^./, (first) => first.toUpperCase()),
+    })),
   ];
   const open = tabs.find((tab) => tab.value === params.get('lens'))?.value ?? tabs[0]?.value;
   const lens = wave.lenses.find((item) => item.id === open);
@@ -207,8 +209,8 @@ export function ReflectionDetail({ row }: ViewProps) {
       name={wave.title}
       state={<StatusPill value={wave.workflow.state} />}
       act={<WaveGate id={wave.id} kind={row.view.kind} />}
-      // The section is the synthesis once there is one; until then it is only its lenses.
-      title={wave.report ? 'Synthesis' : 'Lenses'}
+      // Never `Synthesis`: one of the lenses is called that.
+      title="Lenses"
       content={
         open && (
           <>

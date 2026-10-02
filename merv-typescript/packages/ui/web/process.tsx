@@ -136,7 +136,8 @@ export function diagramOfShape(shape: WorkflowShape, state: string): Diagram {
 /**
  * How long the record stood in each state, in milliseconds, from its recorded crossings:
  * the start opens the initial state, each crossing closes one state and opens the next,
- * and the state it stands in is still open at `now`. Staying in a state is no crossing.
+ * and the state it stands in is still open at `now`. Staying in a state is no crossing,
+ * and a state left in the instant it was entered has no time to say.
  */
 export function stageTimes(graph: ProcessGraph, now: number): Map<string, number> {
   const first = graph.nodes.find((node) => node.initial);
@@ -150,8 +151,7 @@ export function stageTimes(graph: ProcessGraph, now: number): Map<string, number
   let state = first?.state;
   let since = Date.parse(first?.firstEnteredAt ?? '');
   const leave = (at: number) => {
-    if (state !== undefined && Number.isFinite(since) && Number.isFinite(at))
-      spent.set(state, (spent.get(state) ?? 0) + Math.max(0, at - since));
+    if (state !== undefined && at > since) spent.set(state, (spent.get(state) ?? 0) + at - since);
   };
   for (const crossing of crossings) {
     leave(crossing.at);
@@ -274,18 +274,16 @@ export function ProcessDiagram({
   steps,
   ways,
   kind,
-  compact,
   times,
 }: Diagram & {
   kind?: string;
-  compact?: boolean;
   /** How long the record stood in each state, by state; said under the state's name. */
   times?: Map<string, number>;
 }) {
   const tip = useId().replaceAll(':', '');
   if (steps.length < 2) return null;
   const names = steps.map((step) => words(step.state));
-  const r = compact ? 3 : 6;
+  const r = 6;
   const last = steps.length - 1;
   // A label keeps one line where the stride between two nodes holds it, and breaks by word
   // where it does not. The first and last labels sit flush with the drawing's own edges,
@@ -302,29 +300,26 @@ export function ProcessDiagram({
     last === 1
       ? wide(0) + wide(1)
       : Math.max(wide(0) + wide(1) / 2, wide(last) + wide(last - 1) / 2);
-  const gap = compact ? 13 : Math.max(stride, flush + 14 - r);
+  const gap = Math.max(stride, flush + 14 - r);
   const x = (index: number) => r + 1 + index * gap;
   const here = steps.findIndex((step) => step.current);
   // The track is each step to the next; anything longer, forward or back, is a bracket
   // over it: up from its node, across, and straight down onto the node it reaches. The
   // further a way reaches the higher it runs, so a long way back clears a short one,
   // and the ways the record has taken are drawn last, over the ones it has not.
-  const arcs = compact
-    ? []
-    : ways
-        .filter((way) => way.to !== way.from + 1)
-        .sort((a, b) => Number(a.taken) - Number(b.taken));
+  const arcs = ways
+    .filter((way) => way.to !== way.from + 1)
+    .sort((a, b) => Number(a.taken) - Number(b.taken));
   const reach = [...new Set(arcs.map((way) => Math.abs(way.to - way.from)))].sort((a, b) => a - b);
   const lift = (way: Way) => 18 + reach.indexOf(Math.abs(way.to - way.from)) * 10;
-  const row = r + Math.max(compact ? 2 : 6, ...arcs.map((way) => lift(way) + 2));
-  const edge = (index: number) => r + (steps[index]!.end && !compact ? CAP : 0);
+  const row = r + Math.max(6, ...arcs.map((way) => lift(way) + 2));
+  const edge = (index: number) => r + (steps[index]!.end ? CAP : 0);
   const width = x(last) + edge(last) + 1;
-  const height = compact
-    ? row + r + 2
-    : row + r + 18 + 11 * (Math.max(...labels.map((label) => label.length)) + +!!times?.size);
+  const height =
+    row + r + 18 + 11 * (Math.max(...labels.map((label) => label.length)) + +!!times?.size);
   return (
     <svg
-      className={cx('pd', compact && 'pd--compact')}
+      className="pd"
       style={kindStyle(kind)}
       width={width}
       height={height}
@@ -391,56 +386,32 @@ export function ProcessDiagram({
             !step.current && step.entered && (index < here ? 'pd-node--behind' : 'pd-node--left'),
           )}
         >
-          {step.current && !step.end && !compact && (
+          {step.current && !step.end && (
             <circle className="pd-halo" cx={x(index)} cy={row} r={r + 5} />
           )}
-          {step.end && !compact && <circle className="pd-cap" cx={x(index)} cy={row} r={r + CAP} />}
-          <circle className="pd-dot" cx={x(index)} cy={row} r={step.end && compact ? r + 1 : r} />
-          {compact ? (
-            <title>{words(step.state)}</title>
-          ) : (
-            // The first and last labels sit flush with the drawing's own edges, so the
-            // diagram holds the page's column on both sides.
-            <text y={row + r + 17} textAnchor={index === 0 ? 'start' : step.end ? 'end' : 'middle'}>
-              {[
-                ...labels[index]!,
-                ...(times?.has(step.state) ? [elapsed(times.get(step.state)!)] : []),
-              ].map((word, line) => (
-                <tspan
-                  key={line}
-                  className={cx(line >= labels[index]!.length && 'pd-time')}
-                  x={index === 0 ? 0 : step.end ? width : x(index)}
-                  dy={line ? 11 : 0}
-                >
-                  {word}
-                </tspan>
-              ))}
-            </text>
-          )}
+          {step.end && <circle className="pd-cap" cx={x(index)} cy={row} r={r + CAP} />}
+          <circle className="pd-dot" cx={x(index)} cy={row} r={r} />
+          {/* The first and last labels sit flush with the drawing's own edges, so the
+              diagram holds the page's column on both sides. */}
+          <text y={row + r + 17} textAnchor={index === 0 ? 'start' : step.end ? 'end' : 'middle'}>
+            {[
+              ...labels[index]!,
+              ...(times?.has(step.state) ? [elapsed(times.get(step.state)!)] : []),
+            ].map((word, line) => (
+              <tspan
+                key={line}
+                className={cx(line >= labels[index]!.length && 'pd-time')}
+                x={index === 0 ? 0 : step.end ? width : x(index)}
+                dy={line ? 11 : 0}
+              >
+                {word}
+              </tspan>
+            ))}
+          </text>
         </g>
       ))}
     </svg>
   );
-}
-
-/** The same machine on a row: dots on a track, no labels, the state word on hover. */
-export function RowDiagram({
-  shapes,
-  workflow,
-  kind,
-}: {
-  shapes: WorkflowShape[] | undefined;
-  workflow: { workflow?: string; version?: number; state: string };
-  kind?: string;
-}) {
-  // The shape a record stands in, by the program it names; unknown draws nothing.
-  const shape = shapes?.find(
-    (item) =>
-      item.name === workflow.workflow &&
-      (workflow.version === undefined || item.version === workflow.version),
-  );
-  if (!shape) return null;
-  return <ProcessDiagram {...diagramOfShape(shape, workflow.state)} kind={kind} compact />;
 }
 
 /**

@@ -3486,12 +3486,6 @@ a.tile:hover small {
   --ink: var(--line-strong);
   --fill: var(--bg);
 }
-:where(.pd--compact .pd-node) {
-  --fill: var(--ink);
-}
-:where(.pd--compact .pd-node:last-child) {
-  --fill: none;
-}
 .pd-node--left {
   --ink: var(--pd-tint);
 }
@@ -3559,10 +3553,6 @@ a.tile:hover small {
   .pd-node .pd-halo {
     animation: none;
   }
-}
-.pd--compact {
-  display: inline-block;
-  vertical-align: middle;
 }
 
 /* Work lists: split pane and scope. -------------------------------------- */

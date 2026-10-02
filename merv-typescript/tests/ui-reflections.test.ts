@@ -131,9 +131,13 @@ test('a wave opens on its report with the change specification under it, then a 
   await settle(20);
   assert.deepEqual(
     tabs().map((tab) => tab.textContent),
-    ['Report', 'evidence', 'theory', 'methods', 'synthesis', 'next steps'],
+    ['Report', 'Evidence', 'Theory', 'Methods', 'Synthesis', 'Next steps'],
   );
   assert.deepEqual(pressed(), ['Report']);
+  assert.ok(
+    document.querySelector('section[aria-label="Lenses"]'),
+    'never Synthesis, which is a lens',
+  );
   assert.deepEqual(read(), ['What the sweeps show', 'Next wave']);
   assert.ok(text().includes('Change specification'));
   assert.equal(document.querySelector('.doc-read .md-h')?.textContent, 'Read from 1');
@@ -143,7 +147,7 @@ test('a wave opens on its report with the change specification under it, then a 
   await act(async () => (tabs()[2] as HTMLButtonElement).click());
   await settle(20);
   assert.equal(document.querySelector('#where')?.textContent, '?lens=wf_lens_2');
-  assert.deepEqual(pressed(), ['theory']);
+  assert.deepEqual(pressed(), ['Theory']);
   assert.ok(text().includes('Ada Byron'), 'who wrote it');
   assert.equal(document.querySelector('.record-page .cluster .status')?.textContent, 'complete');
   assert.deepEqual(read(), ['The theory lens']);
@@ -157,7 +161,7 @@ test('an address naming a lens lands on it, and a lens with no report is its lin
   t.after(async () => await unmount());
   await mount(page('/reflections/wf_wave?lens=wf_lens_5'));
   await settle(20);
-  assert.deepEqual(pressed(), ['next steps']);
+  assert.deepEqual(pressed(), ['Next steps']);
   assert.deepEqual(read(), [], 'nothing to read in place');
   assert.equal(document.querySelector('.record-page .cluster')?.textContent, 'reflecting');
   assert.ok(text().includes('Read the wave for its next steps.'));
@@ -167,8 +171,8 @@ test('before its report a wave opens on its first lens, and an address it cannot
   t.after(async () => await unmount());
   await mount(page('/reflections/wf_wave?lens=report', wave({ report: null, changeSpec: null })));
   await settle(20);
-  assert.equal(tabs()[0]?.textContent, 'evidence', 'no report, no tab for it');
-  assert.deepEqual(pressed(), ['evidence']);
+  assert.equal(tabs()[0]?.textContent, 'Evidence', 'no report, no tab for it');
+  assert.deepEqual(pressed(), ['Evidence']);
   assert.ok(document.querySelector('section[aria-label="Lenses"]'));
   assert.deepEqual(read(), ['The evidence lens']);
 });
