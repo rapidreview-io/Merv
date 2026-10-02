@@ -9,6 +9,7 @@ import { sandboxesPlugin } from '@merv/sandboxes';
 import { sandboxesUiPlugin } from '@merv/sandboxes/ui';
 import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 import { useRunSchema } from './database.js';
+import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
 import { beating, mcp, seedRunning } from './ui-demo-running.js';
 
@@ -25,6 +26,9 @@ import { beating, mcp, seedRunning } from './ui-demo-running.js';
  * `--git` seeds the Git model as well: a bound and imported repository, units with their
  * commits, the bases the server merged from them and one publication. It runs in this process
  * because a commit needs a leased session and a base needs a repository holding real commits.
+ *
+ * `--agent` adds the Agent page with the real Agent service, on a machine that is this process
+ * and a scripted model (scripts/ui-demo-agent.ts).
  *
  * Set both MERV_SANDBOXES_URL (the merv-sandboxes origin) and MERV_SANDBOXES_TOKEN (that
  * project's `sbxt_` consumer grant) to compose the optional sandboxes plugin for the demo
@@ -292,6 +296,7 @@ async function main() {
   // The Git machine last reported itself before the rest was seeded: beat once before ready.
   const beat = beating(url, boot.token, machines, leases);
   await beat();
+  if (process.argv.includes('--agent')) await seedAgent(app, url);
   const heartbeat = setInterval(() => void beat(), 20_000);
   heartbeat.unref();
 

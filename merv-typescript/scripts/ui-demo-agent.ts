@@ -1,0 +1,251 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import type { Context } from 'cordis';
+import { FleetService } from '@merv/fleet';
+import piPlugin from '@merv/pi';
+import piApiPlugin from '@merv/pi/api';
+import piToolsPlugin from '@merv/pi/tools';
+import piUiPlugin from '@merv/pi/ui';
+import { runPiWorker } from '@merv/pi/worker';
+import type { SandboxRuntimeHandle } from '@merv/sandboxes/types';
+import type { createApp } from '../src/app.js';
+import { FakeRuntimes } from '../tests/fixtures/runtimes.js';
+
+/**
+ * The Agent for the browser demo (`npm run demo:ui -- --agent`): the real Agent service, Fleet and
+ * worker, on a machine that is this process and a model that is the script below. Nothing leaves
+ * this computer: Fleet rents by starting the worker here, and the worker's model calls are
+ * answered by `scripted` instead of the relay. Everything the page is sent — stages, streamed
+ * words, proposals, what Run tells the agent, the machine and its idle release — is what
+ * production's page is sent. MERV_DEMO_AGENT_IDLE sets the idle release in seconds (600).
+ *
+ * The script reads the person's words: `pause` and `start` propose the dispatch switch, `claim`
+ * proposes a call that will be refused, `status` and `tasks` read first, `file` proposes a read
+ * whose result only the person sees, `new task` creates one, and anything else reads the project
+ * and answers at length.
+ */
+type Step = { call: string; input: object } | { say: string };
+const LONG = [
+  'Here is where the project stands.',
+  '',
+  '**Work.** Two tasks are in progress and one waits for review. The sweep over weight decay is the one to watch: its agent last reported forty seconds ago.',
+  '',
+  '**Next.** Once the held-out split is clean, the width ablation can start. Nothing needs you right now.',
+  '',
+  '| Unit | Stage |',
+  '| --- | --- |',
+  '| Clean the held-out split | In progress |',
+  '| Pin the evaluation seeds | In review |',
+].join('\n');
+const dispatch = (enabled: boolean): Step[] => [
+  { call: 'session.dispatch', input: { enabled } },
+  {
+    say: `I’ve proposed ${enabled ? 'starting' : 'pausing'} dispatch. It ${enabled ? 'lets agents take new work again' : 'stops agents from taking new work; work already leased keeps running'}. Run it when you are ready and tell me what happened.`,
+  },
+];
+/** The first record of a list the agent was shown, whole or as its index. */
+const newest = (shown: unknown) =>
+  ((Array.isArray(shown) ? shown : (shown as { index?: unknown[] })?.index)?.[0] as { id?: string })
+    ?.id;
+function plan(asked: string, read: (tool: string) => unknown): Step[] {
+  if (/^Ran \S+[:;]|was refused: /.test(asked))
+    return [
+      {
+        say: asked.startsWith('Ran')
+          ? 'Done, that is in place.'
+          : 'It was refused, so nothing changed.',
+      },
+    ];
+  if (/pause/i.test(asked)) return dispatch(false);
+  if (/claim/i.test(asked))
+    return [
+      { call: 'review.start', input: { reviewId: 'review_that_is_gone' } },
+      { say: 'I’ve proposed claiming that review for you.' },
+    ];
+  if (/\b(start|resume)\b/i.test(asked)) return dispatch(true);
+  if (/status|running/i.test(asked))
+    return [
+      { call: 'system.status', input: {} },
+      { call: 'workflow.status_and_next', input: {} },
+      { say: 'Dispatch is on, three machines are online and nothing is stuck.' },
+    ];
+  if (/new task/i.test(asked))
+    return [
+      {
+        call: 'task.create',
+        input: {
+          title: 'Plot the grokking step against weight decay',
+          goal: 'One figure that shows where generalization begins for each decay setting.',
+          checks: ['The figure covers all four settings', 'The data behind it is attached'],
+          requestId: `demo-agent-${randomUUID()}`,
+        },
+      },
+      { say: 'I created the task. A Fleet worker will pick it up once dispatch offers it.' },
+    ];
+  if (/tasks?/i.test(asked)) {
+    const first = newest(read('task.list'));
+    return [
+      { call: 'task.list', input: {} },
+      { say: first ? `The newest task is ${first}.` : 'There are no tasks yet.' },
+    ];
+  }
+  if (/file/i.test(asked)) {
+    const first = newest(read('artifact.list'));
+    return [
+      { call: 'artifact.list', input: {} },
+      ...(first ? [{ call: 'artifact.read', input: { artifactId: first, mode: 'download' } }] : []),
+      { say: 'I’ve proposed downloading that file. Only you see where it is.' },
+    ];
+  }
+  return [{ call: 'project.get', input: {} }, { say: LONG }];
+}
+
+type Item = { role?: string; type?: string; name?: string; call_id?: string; output?: string };
+/** The model's next move for one request: the turn's plan, as far along as its tool results. */
+function next(body: { input: (Item & { content?: { text?: string }[] | string })[] }): Step {
+  const from = body.input.findLastIndex((item) => item.role === 'user');
+  const content = body.input[from]?.content;
+  const asked = (Array.isArray(content) ? content.map((part) => part.text ?? '').join('') : '')
+    .split('\nUser message:\n')
+    .at(-1)!;
+  const after = body.input.slice(from + 1);
+  const read = (tool: string) => {
+    const call = after.find((item) => item.name === tool.replaceAll('.', '_'));
+    const output = after.find(
+      (item) => item.type === 'function_call_output' && item.call_id === call?.call_id,
+    );
+    try {
+      return JSON.parse(output?.output ?? 'null');
+    } catch {
+      return null;
+    }
+  };
+  const steps = plan(asked.trim(), read);
+  const done = after.filter((item) => item.type === 'function_call_output').length;
+  return steps[Math.min(done, steps.length - 1)]!;
+}
+
+/** One reply in the Responses stream's own events, its words a few at a time. */
+function stream(step: Step): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const id = randomUUID().replaceAll('-', '');
+  const item =
+    'call' in step
+      ? {
+          id: `fc_${id}`,
+          type: 'function_call',
+          call_id: `call_${id}`,
+          name: step.call.replaceAll('.', '_'),
+          arguments: JSON.stringify(step.input),
+        }
+      : {
+          id: `msg_${id}`,
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: step.say, annotations: [] }],
+        };
+  const words = 'say' in step ? (step.say.match(/\S+\s*/g) ?? []) : [];
+  return new ReadableStream({
+    async start(controller) {
+      const send = (event: object) =>
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      send({ type: 'response.created', response: { id: `resp_${id}` } });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      send({ type: 'response.output_item.added', output_index: 0, item });
+      for (const delta of words) {
+        send({ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta });
+        await new Promise((resolve) => setTimeout(resolve, 45));
+      }
+      send({ type: 'response.output_item.done', output_index: 0, item });
+      send({
+        type: 'response.completed',
+        response: {
+          id: `resp_${id}`,
+          status: 'completed',
+          incomplete_details: null,
+          output: [item],
+          usage: { input_tokens: 12, output_tokens: 8 },
+        },
+      });
+      controller.close();
+    },
+  });
+}
+const scripted: typeof fetch = async (input, init) => {
+  const request = new Request(input, init);
+  if (!request.url.endsWith('/pi-model/responses')) return fetch(request);
+  return new Response(stream(next(await request.json())), {
+    headers: { 'content-type': 'text/event-stream' },
+  });
+};
+
+/** The tests' machines, which are ready at once, with a launch that starts the worker in this
+ * process on the bootstrap Fleet delivered, a moment later as a machine loads its agent. */
+class Machines extends FakeRuntimes {
+  private readonly workers = new Map<string, AbortController>();
+  override async launch(
+    projectId: string,
+    current: SandboxRuntimeHandle,
+    key: string,
+    bootstrap?: string,
+  ) {
+    if (!this.workers.has(current.sandboxId)) {
+      const worker = new AbortController();
+      this.workers.set(current.sandboxId, worker);
+      setTimeout(
+        () =>
+          void runPiWorker(JSON.parse(bootstrap!), {
+            signal: worker.signal,
+            fetchImpl: scripted,
+          }).catch(() => {}),
+        2000,
+      );
+    }
+    return super.launch(projectId, current, key);
+  }
+  override async stop(projectId: string, current: SandboxRuntimeHandle) {
+    this.workers.get(current.sandboxId)?.abort();
+    await super.stop(projectId, current);
+    this.release(current.sandboxId);
+    return this.inspect(projectId, current);
+  }
+}
+
+/** Composes Fleet on the machines above and the Agent's plugins on it, as production composes them. */
+export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url: string) {
+  const host = await app.ctx.scope.bootstrap({
+    projectName: 'Agent host',
+    actorName: 'Agent host',
+  });
+  process.env.MERV_PI_SECRET ??= randomBytes(32).toString('base64url');
+  process.env.MERV_PI_MODEL_API_KEY ??= 'scripted';
+  process.env.MERV_DEMO_AGENT_HOST_KEY = host.token;
+  app.ctx.plugin({
+    name: 'demo-fleet',
+    inject: ['state', 'scope'],
+    async apply(ctx: Context) {
+      const fleet = new FleetService(ctx.state, ctx.scope, new Machines(), {
+        enabled: true,
+        pollIntervalMs: 1000,
+        hostProjectId: host.project.id,
+      });
+      await fleet.initialize();
+      ctx.effect(() => () => fleet.close());
+      ctx.provide('fleet', fleet);
+      fleet.start();
+    },
+  });
+  const pi = app.ctx.plugin(piPlugin, {
+    enabled: true,
+    baseUrl: url,
+    idleTimeoutSeconds: Number(process.env.MERV_DEMO_AGENT_IDLE ?? 600),
+    host: { projectId: host.project.id, credentialEnv: 'MERV_DEMO_AGENT_HOST_KEY' },
+    machines: [
+      { key: 'standard', label: 'Standard', slots: 3 },
+      { key: 'large', label: 'Large', slots: 4, agent: true },
+    ],
+    agentMoves: true,
+  });
+  for (const plugin of [piToolsPlugin, piApiPlugin, piUiPlugin]) app.ctx.plugin(plugin);
+  await pi.await();
+}

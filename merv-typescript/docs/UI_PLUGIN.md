@@ -93,7 +93,7 @@ Configuration: `{ "id": "ui", "name": "@merv/ui", "config": { "assets": "/path/t
 npm run build:ui
 ```
 
-`npm start` loads `config/default.json`, so the UI is available at `<url>/ui/` after that build. `npm run dev:ui` starts Vite with hot reload proxying tool calls to `http://127.0.0.1:3081` (override with `MERV_API`). `npm run demo:ui` starts a seeded server on port 3081 (`PORT` overrides), prints tokens for four actors, and accepts `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) and `quit` on stdin.
+`npm start` loads `config/default.json`, so the UI is available at `<url>/ui/` after that build. `npm run dev:ui` starts Vite with hot reload proxying tool calls to `http://127.0.0.1:3081` (override with `MERV_API`). `npm run demo:ui` starts a seeded server on port 3081 (`PORT` overrides), prints tokens for four actors, and accepts `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) and `quit` on stdin. `-- --agent` adds the Agent page on the real Agent service, with a machine that is the demo's own process and a scripted model (`scripts/ui-demo-agent.ts`), so the page and its floating window are checked against what the server really sends.
 
 ## Browser
 
