@@ -9,7 +9,7 @@ import { signedInEmail } from './auth';
 import { initials, personName } from './views/people';
 import { accountLines, buildNavigation, documentTitle, headed, topRows } from './navigation';
 import { stepped } from './record-picker';
-import { standingOf } from './views/overview';
+import { needsYou } from './views/overview';
 import { useHome } from './views/map-data';
 
 import type { Row, ShellData } from './shell-types';
@@ -75,7 +75,7 @@ function RailRow({
 function useNeedsYou(rows: Row[]): number {
   const { actor } = useSession();
   const home = useHome();
-  return standingOf(rows, home.data, actor, () => undefined).yours.length;
+  return needsYou(rows, home.data, actor, () => undefined).length;
 }
 
 /** The theme the page wears: the system's, as index.html follows it, until one is chosen here. */

@@ -1,8 +1,8 @@
 /**
- * Home and Now. Each test states one thing the two pages must do for a person:
- * say a move in a sentence of their own rather than the agent's instruction, keep
- * the ordering policy while doing it, put the control on the card, agree a word
- * with its number, and draw relations where a verb can never sit on a record.
+ * Home and Now. Each test states one thing the two pages must do for a person: say a move
+ * in a sentence of their own rather than the agent's instruction, list only what is the
+ * reader's to do, put the control on the card, and agree a word with its number. Whose
+ * hands everything else is in, and what waits on what, is the Work page's map.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,11 +13,9 @@ const { MemoryRouter, Routes, Route } = await import('react-router-dom');
 // components.tsx first: it and list-filters.tsx import each other through a view, and
 // only this order has every module evaluated before another one calls into it.
 await import('../packages/ui/web/components.js');
-const { StandingLine, recordSentence, reviewSentence, standingOf } =
+const { NeedsYou, needsYou, recordSentence, reviewSentence } =
   await import('../packages/ui/web/views/overview.js');
-const { CARD_H, graphOf, inFlightFirst, layoutOf, plural, share, verdictWord } =
-  await import('../packages/ui/web/views/map-data.js');
-const { Graph } = await import('../packages/ui/web/views/map.js');
+const { plural, share, verdictWord } = await import('../packages/ui/web/views/map-data.js');
 
 const row = (kind: string) => ({
   id: kind,
@@ -104,71 +102,31 @@ const home = (over: Record<string, unknown>) => ({
 
 test('a move is one sentence made from the gate’s facts, never the agent’s instruction', () => {
   const ready = (action: string) => ({ nextAction: { action }, dependencies: [] });
-  assert.equal(recordSentence('yours', ready('submit_delivery')), 'Deliver the work for review');
-  assert.equal(recordSentence('yours', ready('submit_design')), 'Submit the design for review');
-  assert.equal(recordSentence('yours', ready('submit_results')), 'Submit the results for review');
-  assert.equal(recordSentence('yours', ready('an_action_nobody_named')), 'Needs your input');
+  assert.equal(recordSentence(ready('submit_delivery')), 'Deliver the work for review');
+  assert.equal(recordSentence(ready('submit_design')), 'Submit the design for review');
+  assert.equal(recordSentence(ready('submit_results')), 'Submit the results for review');
+  assert.equal(recordSentence(ready('an_action_nobody_named')), 'Needs your input');
   assert.equal(
-    recordSentence('yours', {
+    recordSentence({
       nextAction: { action: 'end' },
       dependencies: [dependency('Baseline run', { failed: true, state: 'failed' })],
     }),
     'Decide what happens next: Baseline run failed',
   );
-
-  const idle = { nextAction: null, dependencies: [] };
-  assert.equal(recordSentence('agent', idle, 'Sweep agent'), 'With Sweep agent');
-  assert.equal(recordSentence('agent', idle), 'With its owner');
-  // Work that is out for review is not in its owner's hands, whoever began it.
-  const out = (currentGate: string) => ({ ...idle, currentGate });
-  assert.equal(recordSentence('agent', out('review_required'), 'Ada'), 'Waiting for a reviewer');
-  assert.equal(recordSentence('agent', out('independent_review'), 'Ada'), 'In review');
-  assert.equal(recordSentence('agent', out('delivery_required'), 'Ada'), 'With Ada');
-
-  const waits = (...list: string[]) => ({
-    nextAction: null,
-    dependencies: [
-      dependency('Settled', { settled: true }),
-      ...list.map((name) => dependency(name)),
-    ],
-  });
-  assert.equal(recordSentence('nobody', waits('Baseline run')), 'Waiting on Baseline run');
-  assert.equal(recordSentence('nobody', waits('A', 'B')), 'Waiting on A and B');
-  assert.equal(recordSentence('nobody', waits('A', 'B', 'C', 'D')), 'Waiting on A, B and 2 more');
-  assert.equal(recordSentence('nobody', idle), 'Waiting on earlier work');
-
-  // A gate the page cannot read says the server's own reason, and only waits without one.
-  assert.equal(recordSentence('unknown', idle), 'Waiting');
-  assert.equal(
-    recordSentence('unknown', { ...idle, blockers: [{ message: 'Fill the problem first' }] }),
-    'Fill the problem first',
-  );
-  // Work out for review reads as that whichever code its gate refuses with.
-  assert.equal(recordSentence('unknown', out('independent_review')), 'In review');
   // Work a review sent back says so, in the ask's own words.
   assert.equal(
-    recordSentence('yours', ready('submit_delivery'), undefined, true),
+    recordSentence(ready('submit_delivery'), true),
     'Changes requested: deliver the work for review',
   );
-  assert.equal(
-    recordSentence('unknown', {
-      nextAction: null,
-      dependencies: [dependency('Baseline run', { failed: true, state: 'failed' })],
-    }),
-    'Stopped: Baseline run failed',
-  );
 
-  assert.equal(reviewSentence('open', 'in_review'), 'Review this delivery');
-  assert.equal(reviewSentence('open', 'design_review'), 'Review this design');
-  assert.equal(reviewSentence('open', 'experiment_review'), 'Review these results');
-  assert.equal(reviewSentence('open'), 'Review this work');
-  assert.equal(reviewSentence('yours', 'in_review'), 'Finish your review');
-  assert.equal(reviewSentence('unclaimed', 'in_review'), 'Waiting for a reviewer');
-  assert.equal(reviewSentence('theirs', 'in_review', 'Ada'), 'In review with Ada');
-  assert.equal(reviewSentence('theirs'), 'In review');
+  assert.equal(reviewSentence(false, 'in_review'), 'Review this delivery');
+  assert.equal(reviewSentence(false, 'design_review'), 'Review this design');
+  assert.equal(reviewSentence(false, 'experiment_review'), 'Review these results');
+  assert.equal(reviewSentence(false), 'Review this work');
+  assert.equal(reviewSentence(true, 'in_review'), 'Finish your review');
 });
 
-test('the ordering policy holds: four codes, and an unknown one is never promoted', () => {
+test('only the reader’s own moves are listed, and a code the page cannot read is never promoted', () => {
   const data = home({
     tasks: [
       task('wf_mine', me.id),
@@ -203,33 +161,19 @@ test('the ordering policy holds: four codes, and an unknown one is never promote
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
-  const read = (bucket: keyof typeof lines) =>
-    lines[bucket].map((line: { id: string; sentence: string }) => [line.id, line.sentence]);
-  assert.deepEqual(read('yours'), [['wf_mine', 'Deliver the work for review']]);
-  // Whoever began the step holds it, ahead of the producer the task was written for.
-  assert.deepEqual(read('agent'), [['wf_theirs', 'With Sweep agent']]);
-  assert.deepEqual(read('nobody'), [['wf_waits', 'Waiting on Task wf_theirs']]);
+  const lines = needsYou(rows as any, data as any, me, named);
+  // What is with an agent, waits on other work, is simply running or has ended is not the
+  // reader's move, and neither is their own record under a code this page cannot read.
   assert.deepEqual(
-    read('unknown'),
-    [['wf_odd', 'Something new']],
-    'mine, and still not “needs you”',
+    lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
+    [['wf_mine', 'Deliver the work for review']],
   );
-
   // The server’s words are kept whole for whoever operates the agents, and only there.
-  assert.deepEqual(lines.yours[0].says, [INSTRUCTION, INPUT]);
-  // The reason that became the headline is not said again in the fold.
-  assert.deepEqual(lines.unknown[0].says, [INSTRUCTION]);
-  assert.ok(!lines.yours[0].sentence.includes('artifactIds'));
-
-  // A card carries a control only where a page of this app makes the move: a delivery
-  // has its desk on the task's own page, and nothing that is not the reader's has one.
-  assert.deepEqual(lines.yours[0].desk, {
-    label: 'Submit delivery',
-    to: '/tasks/wf_mine#deliver',
-  });
-  for (const other of [...lines.agent, ...lines.nobody, ...lines.unknown])
-    assert.equal(other.desk, undefined);
+  assert.deepEqual(lines[0].says, [INSTRUCTION, INPUT]);
+  assert.ok(!lines[0].sentence.includes('artifactIds'));
+  // A card carries a control only where a page of this app makes the move: a delivery has
+  // its desk on the task's own page.
+  assert.deepEqual(lines[0].desk, { label: 'Submit delivery', to: '/tasks/wf_mine#deliver' });
 });
 
 test('work whose delivery waits on the reader is theirs even when its gate reports no blocker', () => {
@@ -281,10 +225,12 @@ test('work whose delivery waits on the reader is theirs even when its gate repor
     ],
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
+  const lines = needsYou(rows as any, data as any, me, named);
   const yours = Object.fromEntries(
-    lines.yours.map((line: { id: string; sentence: string }) => [line.id, line]),
+    lines.map((line: { id: string; sentence: string }) => [line.id, line]),
   );
+  // Work an agent began, work that is another's, and work out for review with somebody else
+  // stay off the list; so does that review, which is its reviewer's.
   assert.deepEqual(Object.keys(yours).sort(), ['wf_fresh', 'wf_returned']);
   assert.equal(yours.wf_returned.sentence, 'Changes requested: deliver the work for review');
   assert.equal(yours.wf_fresh.sentence, 'Deliver the work for review');
@@ -292,16 +238,6 @@ test('work whose delivery waits on the reader is theirs even when its gate repor
     label: 'Submit delivery',
     to: '/tasks/wf_returned#deliver',
   });
-  // Work an agent began, and work that is another's, stay off the list while they run.
-  const all = [...lines.yours, ...lines.agent, ...lines.nobody, ...lines.unknown];
-  const ids = all.map((line: { id: string }) => line.id);
-  assert.ok(!ids.includes('wf_held') && !ids.includes('wf_theirs'));
-  // A record out for review is listed once, as its review.
-  assert.ok(!ids.includes('wf_out'), 'not as itself');
-  assert.deepEqual(
-    lines.agent.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
-    [['review_open', 'In review with Ada']],
-  );
 });
 
 test('a review is yours when the server says so and its gate lets you claim it, and claimed here only then', () => {
@@ -340,26 +276,17 @@ test('a review is yours when the server says so and its gate lets you claim it, 
     ],
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
-  const byId = Object.fromEntries(
-    [...lines.yours, ...lines.agent].map((line: { id: string }) => [line.id, line]),
-  );
-  assert.deepEqual(lines.yours.map((line: { id: string }) => line.id).sort(), [
-    'review_a',
-    'review_d',
-  ]);
+  const lines = needsYou(rows as any, data as any, me, named);
+  const byId = Object.fromEntries(lines.map((line: { id: string }) => [line.id, line]));
+  // A review the server would let this reader claim, but whose gate refuses the claim, is not
+  // the reader's move: a Git task's review waits for a leased reviewer (C2). Nor is one the
+  // server withholds, one somebody else holds, or one that is over.
+  assert.deepEqual(Object.keys(byId).sort(), ['review_a', 'review_d']);
   assert.equal(byId.review_a.sentence, 'Review this delivery');
   assert.equal(byId.review_a.who, 'Ada', 'whose work it is');
   assert.equal(byId.review_a.claim, 'review_a');
-  // A review the server would let this reader claim, but whose gate refuses the claim, is not
-  // the reader's move: a Git task's review waits for a leased reviewer (C2).
-  assert.equal(byId.review_b.sentence, 'Waiting for a reviewer');
-  assert.equal(byId.review_b.claim, undefined, 'a gate that is not ready offers no claim here');
   assert.equal(byId.review_d.sentence, 'Finish your review');
   assert.equal(byId.review_d.claim, undefined);
-  assert.equal(byId.review_c.sentence, 'Waiting for a reviewer');
-  assert.equal(byId.review_e.sentence, 'In review with Ada');
-  assert.equal(byId.review_f, undefined, 'a review that is over is on no list');
 });
 
 const line = (over: Record<string, unknown>) => ({
@@ -368,12 +295,11 @@ const line = (over: Record<string, unknown>) => ({
   name: 'Check training configuration',
   to: '/tasks/wf_1',
   at: new Date().toISOString(),
-  mine: true,
   sentence: 'Deliver the work for review',
   says: [INSTRUCTION, INPUT],
   ...over,
 });
-const standing = (lines: Record<string, unknown[]>, data: unknown = {}) =>
+const standing = (lines: unknown[], data: unknown = {}) =>
   createElement(
     MemoryRouter,
     { initialEntries: ['/now'] },
@@ -383,9 +309,9 @@ const standing = (lines: Record<string, unknown[]>, data: unknown = {}) =>
       createElement(Route, {
         path: '/now',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        element: createElement(StandingLine as any, {
+        element: createElement(NeedsYou as any, {
           rows,
-          lines: { yours: [], agent: [], nobody: [], unknown: [], ...lines },
+          lines,
           load: { loading: false, error: undefined, data, loadedAt: undefined },
         }),
       }),
@@ -399,15 +325,14 @@ const standing = (lines: Record<string, unknown[]>, data: unknown = {}) =>
 test('a needs-you card reads kind, name, sentence, who and when, and carries its control', async (t) => {
   t.after(async () => await unmount());
   await mount(
-    standing({
-      yours: [
-        line({ desk: { label: 'Submit delivery', to: '/tasks/wf_1#deliver' } }),
-        line({ id: 'wf_3', kind: 'experiments', sentence: 'Submit the design for review' }),
-      ],
-      agent: [line({ id: 'wf_2', name: 'Sweep', sentence: 'With Sweep agent', mine: false })],
-    }),
+    standing([
+      line({ desk: { label: 'Submit delivery', to: '/tasks/wf_1#deliver' } }),
+      line({ id: 'wf_3', kind: 'experiments', sentence: 'Submit the design for review' }),
+    ]),
   );
-  const [yours, undoable, agents] = [...document.querySelectorAll('.ov-row')];
+  assert.equal(document.querySelector('.ov-h')!.textContent, 'Needs you 2');
+  assert.equal(document.querySelectorAll('.ov-h').length, 1, 'one list: what is yours');
+  const [yours, undoable] = [...document.querySelectorAll('.ov-row')];
   assert.deepEqual(
     [...yours.querySelectorAll('.kind, .ov-name, .ov-say, .ov-meta time')].map(
       (node) => node.textContent,
@@ -423,7 +348,6 @@ test('a needs-you card reads kind, name, sentence, who and when, and carries its
     null,
     'a move no page can make offers no control: the name is already the way to the record',
   );
-  assert.equal(agents.querySelector('.btn'), null, 'a card that is not your move has no control');
 
   // The server’s instruction stays on the card for the curious, folded and never the headline.
   const said = yours.querySelector('details')!;
@@ -437,19 +361,17 @@ test('a review that is ready is claimed where it stands, and the page opens its 
   t.after(async () => await unmount());
   serve('/tools/review.start', { body: { result: { id: 'review_1', status: 'started' } } });
   await mount(
-    standing({
-      yours: [
-        line({
-          id: 'review_1',
-          kind: 'reviews',
-          to: '/reviews/review_1',
-          sentence: 'Review this delivery',
-          who: 'Ada',
-          says: [],
-          claim: 'review_1',
-        }),
-      ],
-    }),
+    standing([
+      line({
+        id: 'review_1',
+        kind: 'reviews',
+        to: '/reviews/review_1',
+        sentence: 'Review this delivery',
+        who: 'Ada',
+        says: [],
+        claim: 'review_1',
+      }),
+    ]),
   );
   assert.equal(document.querySelector('.ov-meta')!.textContent, 'Adajust now');
   assert.equal(document.querySelector('details'), null, 'nothing was said, so nothing is folded');
@@ -460,14 +382,14 @@ test('a review that is ready is claimed where it stands, and the page opens its 
 
 test('with nothing to do the page says so once, and an unwell row still needs someone', async (t) => {
   t.after(async () => await unmount());
-  await mount(standing({}));
+  await mount(standing([]));
   assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing needs you');
   assert.ok(!text().includes('Needs you'));
   await unmount();
 
   rows[0].status = { state: 'degraded', detail: 'The task store is read-only' } as never;
   t.after(() => (rows[0].status = {}));
-  await mount(standing({}));
+  await mount(standing([]));
   assert.equal(document.querySelector('.empty-state'), null);
   assert.ok(text().includes('The task store is read-only'));
 });
@@ -484,172 +406,6 @@ test('a word agrees with its number, a whole is said once, and a verdict is what
   assert.equal(verdictWord('fail'), 'failed');
   assert.equal(verdictWord('needs_changes'), 'asked for changes');
   assert.equal(verdictWord('something_else'), 'something else');
-});
-
-const graph = () =>
-  graphOf(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rows as any,
-    {
-      experiments: [
-        {
-          id: 'wf_exp',
-          name: 'decay-sweep',
-          intent: '',
-          ownerId: 'actor_ada',
-          workflow: flow('planned', '2026-09-20T09:30:00.000Z'),
-        },
-      ],
-      tasks: [
-        {
-          ...task('wf_done', 'actor_ada', 'done'),
-          workflow: flow('done', '2026-09-20T12:00:00.000Z'),
-        },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        {
-          ...task('wf_open', 'actor_ada'),
-          dependencies: [dependency('wf_done', { id: 'wf_done' })] as any,
-        },
-      ],
-      reviews: [
-        {
-          id: 'review_1',
-          subjectId: 'wf_done',
-          status: 'submitted',
-          reviewerId: 'actor_me',
-          verdict: 'pass',
-          createdAt: '2026-09-20T12:30:00.000Z',
-        },
-      ],
-      reflections: [],
-      paper: {
-        documents: {
-          results: {
-            current: {
-              revision: 1,
-              sections: [{ content: 'Retrieval findings' }],
-              updatedAt: '2026-09-20T10:00:00.000Z',
-            },
-            published: { publication: { source: { id: 'wf_exp' } } },
-          },
-        },
-      },
-    },
-    named,
-  );
-
-test('the graph is anchored to the page, and a verb is never written on a record', () => {
-  const { pool, edges } = graph();
-  // A review is never an object of the chart: it is a fact on the card of the work it judged.
-  assert.equal(
-    pool.find((node) => node.kind === 'reviews'),
-    undefined,
-  );
-  assert.ok(
-    pool.find((node) => node.id === 'wf_done')!.props.some(([label]) => label === 'Review'),
-  );
-  assert.ok(!edges.some((edge) => edge.verb === 'reviewed by'));
-  const nodes = [0, 1, 2, 3].flatMap((col) =>
-    inFlightFirst(pool.filter((node) => node.col === col)),
-  );
-  assert.deepEqual(
-    nodes.filter((node) => node.col === 1).map((node) => node.id),
-    ['wf_open', 'wf_exp', 'wf_done'],
-    'what is in flight leads its column, newest first, then what has ended',
-  );
-
-  assert.equal(layoutOf(nodes, edges, 390), null, 'too narrow to draw: the list says it in words');
-  const lone = nodes.filter((node) => node.col === 1);
-  assert.equal(layoutOf(lone, [], 1072), null, 'one column of records has nothing to draw between');
-
-  const layout = layoutOf(nodes, edges, 1072)!;
-  const xs = layout.columns.map((column) => column.x);
-  assert.equal(xs[0], 0, 'the first column stands on the page’s left edge');
-  assert.equal(xs.at(-1)! + layout.card, 1072, 'and the last on its right: no dead field');
-  assert.equal(layout.columns.length, 2, 'a column with no record is not laid out');
-
-  // A record stands level with what it is related to, so that line is straight.
-  const y = (id: string) => layout.at.get(id)!.y;
-  assert.equal(y('wf_exp'), y('paper:results'));
-  assert.deepEqual(layout.lines.map((item) => item.edge.verb).sort(), ['cites', 'depends on']);
-
-  // Every verb is written in the room between two columns, clear of every card.
-  for (const { x, y: at, anchor, edge } of layout.lines) {
-    const wide = edge.verb.length * 6.5;
-    const [left, right] =
-      anchor === 'middle'
-        ? [x - wide / 2, x + wide / 2]
-        : anchor === 'start'
-          ? [x, x + wide]
-          : [x - wide, x];
-    for (const node of nodes) {
-      const card = layout.at.get(node.id)!;
-      const over =
-        right > card.x && left < card.x + layout.card && at > card.y && at < card.y + CARD_H;
-      assert.ok(!over, `“${edge.verb}” is written over ${node.id}`);
-    }
-  }
-});
-
-test('a line past a column runs between the rows, and two verbs in one gap never share a line', () => {
-  const node = (id: string, col: number) => ({
-    id,
-    kind: 'tasks',
-    name: id,
-    to: `/tasks/${id}`,
-    at: '2026-09-20T10:00:00.000Z',
-    col,
-    state: 'done',
-    live: false,
-    props: [],
-  });
-  const nodes = [node('claim', 0), node('first', 1), node('second', 1), node('review', 3)];
-  const edges = [
-    { from: 'claim', to: 'review', verb: 'cites' },
-    { from: 'first', to: 'review', verb: 'reviewed by' },
-    { from: 'first', to: 'review', verb: 'depends on' },
-  ];
-  const layout = layoutOf(nodes, edges, 1072)!;
-  assert.equal(layout.columns.length, 3);
-
-  // The long line's level run is the one `L` of its path: it lies in no card's rows.
-  const long = layout.lines.find((line) => line.edge.verb === 'cites')!;
-  const lane = Number(/ L [\d.-]+ ([\d.-]+) /.exec(long.d)![1]);
-  for (const item of nodes) {
-    const card = layout.at.get(item.id)!;
-    assert.ok(lane <= card.y || lane >= card.y + CARD_H, `the lane crosses ${item.id}`);
-  }
-
-  // Two relations between the same two records would write their verbs on one spot.
-  const [one, other] = layout.lines.filter((line) => line.edge.from === 'first');
-  assert.equal(one!.x, other!.x);
-  assert.ok(Math.abs(one!.y - other!.y) >= 14, 'the second verb steps down a line');
-});
-
-test('with no room to draw a line, a record says what it points at in words', async (t) => {
-  t.after(async () => await unmount());
-  const { pool, edges } = graph();
-  await mount(
-    createElement(
-      MemoryRouter,
-      null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(Graph as any, {
-        nodes: pool,
-        edges,
-        more: [{ col: 1, count: 3, noun: 'work', to: '/work' }],
-        selected: null,
-        onSelect() {},
-      }),
-    ),
-  );
-  assert.equal(document.querySelector('svg.map-edges'), null);
-  const card = document.querySelector('[data-object="paper:results"]')!;
-  assert.equal(card.querySelector('.map-rel')!.textContent, 'cites Experiment decay-sweep');
-  assert.equal(card.getAttribute('aria-pressed'), 'false');
-  const more = document.querySelector<HTMLAnchorElement>('.map-more a')!;
-  assert.equal(more.textContent, '+3 more work');
-  assert.equal(more.getAttribute('href'), '/work');
 });
 
 test('a Code blocker whose next move is a person’s stands on Now, in the person’s words', () => {
@@ -683,8 +439,9 @@ test('a Code blocker whose next move is a person’s stands on Now, in the perso
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, { ...me, signedIn: true }, named);
-  const [line, ordinary] = lines.yours;
+  const lines = needsYou(rows as any, data as any, { ...me, signedIn: true }, named);
+  const [line, ordinary] = lines;
+  assert.equal(lines.length, 2);
   assert.equal(line?.id, 'wf_pub');
   assert.equal(line.sentence, 'Waiting on a person to merge the pull request');
   assert.equal(line.who, 'A signed-in operator');
@@ -699,24 +456,20 @@ test('a Code blocker whose next move is a person’s stands on Now, in the perso
   assert.equal(ordinary.sentence, 'Deliver the work for review');
   assert.equal(ordinary.who, undefined);
   assert.deepEqual(ordinary.desk, { label: 'Submit delivery', to: '/tasks/wf_quiet#deliver' });
-  assert.deepEqual([...lines.agent, ...lines.nobody, ...lines.unknown], []);
 
-  // The publication verbs answer a signed-in person and nobody else, so a reader — and an
-  // operator holding a key rather than an account — get the wait and no control at all.
+  // The publication verbs answer a signed-in person and nobody else, so for a reader — and
+  // an operator holding a key rather than an account — the wait is not theirs: it is the red
+  // card on the Work page's map.
   for (const other of [
     { id: me.id, role: 'reader', signedIn: true },
     { ...me, signedIn: false },
-  ]) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const reading = standingOf(rows as any, data as any, other, named);
+  ])
     assert.deepEqual(
-      reading.yours.map((item) => item.id),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      needsYou(rows as any, data as any, other, named).map((item: { id: string }) => item.id),
       ['wf_quiet'],
       other.role + String(other.signedIn),
     );
-    assert.equal(reading.unknown[0]?.sentence, 'Waiting on a person to merge the pull request');
-    assert.equal(reading.unknown[0]?.desk, undefined);
-  }
 });
 
 test('an operator’s move with no control here is still theirs, and promises nothing', () => {
@@ -745,14 +498,14 @@ test('an operator’s move with no control here is still theirs, and promises no
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, { ...me, signedIn: true }, named);
-  assert.equal(lines.yours[0]?.id, 'wf_off');
+  const lines = needsYou(rows as any, data as any, { ...me, signedIn: true }, named);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0]?.id, 'wf_off');
   assert.equal(
-    lines.yours[0].sentence,
+    lines[0].sentence,
     'Publication is disabled for this project until an operator clears it',
   );
-  assert.equal(lines.yours[0].desk, undefined, 'no page here makes this move');
-  assert.deepEqual([...lines.agent, ...lines.nobody, ...lines.unknown], []);
+  assert.equal(lines[0].desk, undefined, 'no page here makes this move');
 });
 
 test('a cycle its abandoned wave stopped names the wave, not the work it reflects on', () => {
@@ -780,14 +533,14 @@ test('a cycle its abandoned wave stopped names the wave, not the work it reflect
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
+  const lines = needsYou(rows as any, data as any, me, named);
   assert.deepEqual(
-    lines.yours.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
+    lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
     [['wf_cycle', 'Decide what happens next: Wave 1 abandoned']],
   );
 });
 
-test('a cycle its consolidation task stopped names the task; work it reflects on stops nothing', () => {
+test('work a cycle reflects on may fail and stop nothing: the next cycle still asks for its input', () => {
   const data = home({
     cycles: [
       { id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('consolidating') },
@@ -825,11 +578,12 @@ test('a cycle its consolidation task stopped names the task; work it reflects on
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
-  const sentences = (bucket: { id: string; sentence: string }[]) =>
-    bucket.map((line) => [line.id, line.sentence]);
-  assert.deepEqual(sentences(lines.unknown), [['wf_cycle', 'Stopped: Consolidate Wave 1 failed']]);
-  assert.deepEqual(sentences(lines.yours), [['wf_next', 'Needs your input']]);
+  const lines = needsYou(rows as any, data as any, me, named);
+  // The stopped cycle asks nothing of its owner here: its own page holds the retry and the end.
+  assert.deepEqual(
+    lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
+    [['wf_next', 'Needs your input']],
+  );
 });
 
 test('the review of a reflection wave is named by the wave it reviews', () => {
@@ -854,16 +608,13 @@ test('the review of a reflection wave is named by the wave it reviews', () => {
       },
     ],
   });
+  // One nobody may claim here is its reviewer's, and is not listed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lines = standingOf(rows as any, data as any, me, named);
-  assert.deepEqual(
-    lines.agent.map((line: { name?: unknown; sentence: string }) => [line.name, line.sentence]),
-    [['QA6 Ledgerline cycle: reflection', 'Waiting for a reviewer']],
-  );
+  assert.deepEqual(needsYou(rows as any, data as any, me, named), []);
   // One the viewer may claim is asked for as work: a wave is no delivery.
   data.reviews[0]!.claimable = true;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const yours = standingOf(rows as any, data as any, me, named).yours;
+  const yours = needsYou(rows as any, data as any, me, named);
   assert.deepEqual(
     yours.map((line: { name?: unknown; sentence: string }) => [line.name, line.sentence]),
     [['QA6 Ledgerline cycle: reflection', 'Review this work']],

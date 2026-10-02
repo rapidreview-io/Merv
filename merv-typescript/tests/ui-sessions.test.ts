@@ -114,11 +114,10 @@ test('the page states its subject without a click, in one liveness vocabulary', 
     // The runner says why its last lease request got nothing.
     'declined',
     'capacity full',
-    'Ready to assign 0',
   ])
     assert.ok(shown.includes(fact), `${fact} is not on the page: ${shown.slice(0, 800)}`);
-  // The queue names whose eligibility it reports, not a fleet backlog, where a pointer asks.
-  assert.ok(document.querySelector('h2[title="Eligible for this identity"]'));
+  // What waits for an agent is on the Work page's map, and is not listed here a second time.
+  assert.ok(!shown.includes('Ready to assign'));
   assert.ok(!shown.includes('Operations'), 'the subject must not sit behind a fold');
   assert.ok(!shown.includes('Extend'), 'no control the system cannot honour');
 });
@@ -158,9 +157,8 @@ test('state is carried by elements: a pill, one control, counts, and never a sen
   assert.ok(document.querySelector('.act-danger > button')?.textContent === 'Halt all leases');
   // An empty section is its name and a zero.
   assert.ok(shown.includes('Runners 0'), shown.slice(0, 400));
-  assert.ok(shown.includes('Ready to assign 1'), shown.slice(0, 600));
   // The purpose a lease is labelled with for its agent is dropped: the role says it.
-  assert.ok(shown.includes('Check training configuration'), shown);
+  assert.ok(shown.includes('Sweep weight decay'), shown);
   for (const gone of [
     'Work: ',
     'Review: ',
@@ -408,44 +406,6 @@ test('halt-all names every live lease under the click, past this read’s window
   assert.ok(shown.includes('Halt 240 live leases'), `the guard under-counted: ${shown}`);
   assert.ok(shown.includes('239 more'), shown);
   assert.ok(shown.includes('released back to the queue'), 'the guard promises no synchrony');
-});
-
-test('work ready to assign is named by a link as tall as a target', async (t) => {
-  t.after(unmount);
-  const tasks = { ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } };
-  serve('/tools/task.list', { body: { result: [{ id: 'wf_2' }] } });
-  serve('/tools/ui.read', () =>
-    read({
-      queue: [
-        {
-          instanceId: 'wf_2',
-          expectedRevision: 0,
-          label: 'Work: Check training configuration',
-          role: 'producer',
-          state: 'in_progress',
-        },
-      ],
-      queueTotal: 1,
-    }),
-  );
-  await mount(
-    createElement(
-      MemoryRouter,
-      { initialEntries: ['/sessions'] },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(AgentsPage as any, {
-        row,
-        shell: { rows: [row, tasks], plugins: [] },
-        me: 'me',
-      }),
-    ),
-  );
-  await settle(20);
-  // It stands alone in its cell, so it is a control: the shared class grows its target.
-  const link = document.querySelector<HTMLAnchorElement>('[aria-label="Ready to assign"] a')!;
-  assert.equal(link.getAttribute('href'), '/tasks/wf_2');
-  assert.equal(link.textContent, 'Check training configuration');
-  assert.ok(link.classList.contains('hit'));
 });
 
 test('choosing an agent brings its panel to the top of the view, and again once it has loaded', async (t) => {

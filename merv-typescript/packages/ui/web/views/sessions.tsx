@@ -7,7 +7,6 @@ import type {
   RunnerPresence,
   SessionSummary,
   SessionsProjectStatus,
-  WorkflowDispatchCandidate,
 } from '@merv/contracts/types';
 import { accountRequest, useTool } from '../api';
 import {
@@ -321,32 +320,12 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       />
     )),
   ];
-  const eligible = [
-    col<WorkflowDispatchCandidate>('label', 'Work', (candidate) => {
-      const route = routeOf(candidate.instanceId);
-      const name = <strong>{workName(candidate.label)}</strong>;
-      // The name stands alone in its cell, so it is a control and is as tall as one.
-      return route ? (
-        <Link className="hit" to={route.to}>
-          {name}
-        </Link>
-      ) : (
-        name
-      );
-    }),
-    col<WorkflowDispatchCandidate>('gate', 'Gate', (candidate) => (
-      <StatusPill value={candidate.state} />
-    )),
-    col<WorkflowDispatchCandidate>('role', 'Role', (candidate) => (
-      <span className="muted">{term(candidate.role)}</span>
-    )),
-  ];
   return (
     <>
-      {/* The page's subject is the page: dispatch, the machines, the leases and the
-          queue are what a person came for, so none of them waits behind a control.
-          Each says how it stands in an element — a pill, a count beside its name,
-          rows — and a section holding nothing is its name and a zero. */}
+      {/* The page's subject is the page: dispatch, the machines and the leases are what a
+          person came for, so none of them waits behind a control. Each says how it stands
+          in an element — a pill, a count beside its name, rows — and a section holding
+          nothing is its name and a zero. What waits for an agent is on the Work page's map. */}
       {status && (
         <div className="page-stage stack stack--lg sessions-ops">
           <section className="stack" aria-label="Dispatch">
@@ -493,23 +472,6 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                   Show all {status.sessions.length}
                 </button>
               </div>
-            )}
-          </section>
-          <section className="stack">
-            {/* The queue is what this identity may lease, not the fleet's backlog: the
-                runner's own key sees its own, and the heading's title says whose. */}
-            <h2 className="section-title" title="Eligible for this identity">
-              Ready to assign{' '}
-              <span className="section-n">{portion(status.queue.length, status.queueTotal)}</span>
-            </h2>
-            {status.queue.length > 0 && (
-              <Ruled
-                label="Ready to assign"
-                template="minmax(0, 1fr) 160px 104px 88px"
-                rows={status.queue}
-                keyOf={(candidate) => `${candidate.instanceId}:${candidate.expectedRevision}`}
-                columns={eligible}
-              />
             )}
           </section>
           {/* The number is the agents there are, as Home counts them; the ones that have

@@ -24,31 +24,28 @@ import { namesOf } from './people';
 import { newest, useHome, type Flow, type HomeData } from './map-data';
 
 /**
- * The standing line: what needs me, what is with an agent, what is waiting. One
- * column of record cards ordered by whose move each is (see `whose`), and each
- * says its move in one sentence a person reads, made from facts the gate carries —
- * the ready action, the blocker's code, the prerequisite's name, who holds it. The
- * server's own instruction is written for the agent holding the tool, so it is
- * never the headline: it stays on the card, folded, for whoever operates the
- * agents. A blocker another plugin published whose next move is a person's speaks
- * in the same voice, through the one vocabulary `code-blockers.ts` holds, and is
- * the one thing that puts ended work on this page at all — a publication nobody
- * has merged is a wait on a human and not a record that is running.
- * Every block is gated on its owning ui.shell row, so it goes quiet with
- * its plugin, and every fact on the page comes from the one read the rail and the
- * map share. An absent value is never rendered as zero and an error is never
- * rendered as empty.
+ * Now: what needs the reader. One column of record cards, each saying its move in one
+ * sentence a person reads, made from facts the gate carries — the ready action, a
+ * prerequisite that failed, whether a review sent it back. The server's own instruction is
+ * written for the agent holding the tool, so it is never the headline: it stays on the
+ * card, folded, for whoever operates the agents. A blocker another plugin published whose
+ * next move is this reader's speaks in the same voice, through the one vocabulary
+ * `code-blockers.ts` holds, and is the one thing that puts ended work on this page at all —
+ * a publication nobody has merged is a wait on a human and not a record that is running.
+ * Whose hands everything else is in, and what it waits on, is the Work page's map. Every
+ * card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every
+ * fact on the page comes from the one read the rail and Home share. An absent value is
+ * never rendered as zero and an error is never rendered as empty.
  */
 
-/** An open record, the sentence it stands on, and the way to act on it. */
-interface Line {
+/** An open record that is the reader's move, the sentence it stands on, and the way to act. */
+export interface Line {
   id: string;
   kind: string;
   name: ReactNode;
   to: string;
   at: string;
-  mine: boolean;
-  /** The move in plain words: the ask, or whose hands the record is in. */
+  /** The move in plain words. */
   sentence: string;
   /** Whose work it is, where the sentence does not already name them. */
   who?: string;
@@ -59,34 +56,26 @@ interface Line {
   /** The desk where the move is made, where a page of this app holds one. */
   desk?: { label: string; to: string };
 }
-/** Whose move a record is; one that is simply running is nobody's and is not listed. */
-type Whose = 'yours' | 'agent' | 'nobody' | 'unknown';
-export type Lines = Record<Whose, Line[]>;
 type Named = (id: string | null | undefined) => string | undefined;
 
-/** Codes meaning another role must act, as scope.require and the policies throw them. */
-const ROLE = ['forbidden', 'membership_required', 'stale_lease'];
-const ENDED = ['complete', 'abandoned', 'failed'];
 /** The cycle's refusals on a child of its own ending unapproved: its wave, its consolidation. */
 const STOPS = ['dependency_failed', 'integration_failed'];
 
 const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind === kind);
 
 /**
- * The whole ordering policy: four codes, and no promotion of what it cannot read. A
- * gate with no blocker is simply running — unless it holds the reader's own move
- * (`asked`): work sent back for changes, or never begun, reports only `begin` as
- * ready, which no page here sends, while its delivery already waits on the reader.
+ * Whether a record is its owner's move. A gate with no blocker is simply running — unless
+ * it holds the owner's own move (`asked`): work sent back for changes, or never begun,
+ * reports only `begin` as ready, which no page here sends, while its delivery already waits
+ * on them. Refused, it is theirs where it asks for their input, or where a prerequisite
+ * ended without succeeding and what happens next is theirs to decide.
  */
-const whose = (decision: WorkflowDecision, mine: boolean, asked: boolean): Whose | null => {
+const yours = (decision: WorkflowDecision, mine: boolean, asked: boolean) => {
   const codes = decision.blockers.map((blocker) => blocker.code);
-  if (!codes.length) return mine && asked ? 'yours' : null;
-  if (mine && codes.includes('input_required')) return 'yours';
-  // A prerequisite that ended without succeeding is the owner's decision, nobody's wait.
-  if (codes.includes('dependency_failed')) return mine ? 'yours' : 'unknown';
-  if (codes.some((code) => ROLE.includes(code))) return 'agent';
-  if (codes.includes('dependencies_pending')) return 'nobody';
-  return 'unknown';
+  return (
+    mine &&
+    (codes.length ? codes.includes('input_required') || codes.includes('dependency_failed') : asked)
+  );
 };
 
 /** What each ready action asks of the person whose record it is, by the action's own name. */
@@ -113,67 +102,27 @@ const READS: Record<string, string> = {
   design_review: 'Review this design',
   experiment_review: 'Review these results',
 };
-/** A gate that is a review's, not its owner's: the work is out of the owner's hands. */
-const REVIEWING: Record<string, string> = {
-  review_required: 'Waiting for a reviewer',
-  review_recovery_pending: 'Waiting for a reviewer',
-  independent_review: 'In review',
-};
-const listed = (names: string[]) =>
-  names.length > 2
-    ? `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
-    : names.join(' and ');
-
 /**
- * One record's move as a sentence. Every word comes from a fact of the gate: the
- * action that is ready, the gate's own name, a prerequisite's name and whether it
- * failed, the name of whoever holds the work, whether a review sent it back. A gate
- * this page cannot read carries the server's own reason — under a heading that
- * already says Waiting, the bare word would say nothing — and only waits without one.
+ * The owner's move as a sentence. Every word comes from a fact of the gate: a prerequisite
+ * that failed and its state, the action that is ready, whether a review sent the work back.
  */
 export function recordSentence(
-  bucket: Whose,
   gate: {
-    currentGate?: string;
     nextAction: { action: string } | null;
-    dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'settled' | 'failed'>[];
-    blockers?: { message: string }[];
+    dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'failed'>[];
   },
-  holder?: string,
   returned = false,
 ): string {
   const ended = gate.dependencies.find((item) => item.failed);
-  const failed = ended && `${ended.name} ${words(ended.state)}`;
-  const pending = gate.dependencies.filter((item) => !item.settled && !item.failed);
-  if (bucket === 'yours') {
-    if (failed) return `Decide what happens next: ${failed}`;
-    const ask = ASKS[gate.nextAction?.action ?? ''];
-    if (!ask) return 'Needs your input';
-    return returned ? `Changes requested: ${ask[0].toLowerCase()}${ask.slice(1)}` : ask;
-  }
-  // Work out for review is out of its owner's hands whichever code its gate refuses with.
-  const reviewing = REVIEWING[gate.currentGate ?? ''];
-  if (reviewing) return reviewing;
-  if (bucket === 'agent') return holder ? `With ${holder}` : 'With its owner';
-  if (bucket === 'nobody')
-    return pending.length
-      ? `Waiting on ${listed(pending.map((item) => item.name))}`
-      : 'Waiting on earlier work';
-  if (failed) return `Stopped: ${failed}`;
-  return gate.blockers?.find((item) => item.message)?.message ?? 'Waiting';
+  if (ended) return `Decide what happens next: ${ended.name} ${words(ended.state)}`;
+  const ask = ASKS[gate.nextAction?.action ?? ''];
+  if (!ask) return 'Needs your input';
+  return returned ? `Changes requested: ${ask[0].toLowerCase()}${ask.slice(1)}` : ask;
 }
 
-/** One open review's move: to be claimed, to be finished, or in someone else's hands. */
-export function reviewSentence(
-  standing: 'open' | 'yours' | 'unclaimed' | 'theirs',
-  subjectState?: string,
-  reviewer?: string,
-): string {
-  if (standing === 'open') return READS[subjectState ?? ''] ?? 'Review this work';
-  if (standing === 'yours') return 'Finish your review';
-  if (standing === 'unclaimed') return 'Waiting for a reviewer';
-  return reviewer ? `In review with ${reviewer}` : 'In review';
-}
+/** A review that is the reader's move: one to claim, or one of theirs to finish. */
+export const reviewSentence = (claimed: boolean, subjectState?: string) =>
+  claimed ? 'Finish your review' : (READS[subjectState ?? ''] ?? 'Review this work');
 
 /** What the server told whoever holds the tool: its instruction, then each refusal, once. */
 const said = ({ instruction, blockers }: WorkflowDecision) =>
@@ -192,17 +141,17 @@ const openWork = (home: HomeData | undefined): [string, Open[]][] => [
 ];
 
 /**
- * Sort every open record, and every open review, into whose move it is. The gate of
- * each one comes from the same read the page draws, so the order is one answer's
- * and never a race between twenty.
+ * Every open record, and every open review, that is the reader's move, newest first. The
+ * gate of each one comes from the same read the page draws, so the list is one answer's and
+ * never a race between twenty.
  */
-export function standingOf(
+export function needsYou(
   rows: Row[],
   home: HomeData | undefined,
   /** Who is reading, and whether they are a person: the publication verbs answer only one. */
   viewer: { id: string; role: string; signedIn?: boolean },
   named: Named,
-): Lines {
+): Line[] {
   const me = viewer.id;
   const gate = new Map((home?.workflows?.workflows ?? []).map((item) => [item.instanceId, item]));
   const work = openWork(home);
@@ -211,7 +160,7 @@ export function standingOf(
   const recordNames: RecordNames = new Map(
     work.flatMap(([, items]) => items.map((item) => [item.id, { name: item.name }] as const)),
   );
-  const lines: Lines = { yours: [], agent: [], nobody: [], unknown: [] };
+  const lines: Line[] = [];
   // A wave's review is named by the wave, and asked for as work: a wave is no delivery.
   const subjects = new Map<string, Omit<Open, 'workflow'> & { workflow?: Flow }>(
     (home?.reflections ?? []).map((r) => [r.id, { id: r.id, name: r.title, owner: r.ownerId }]),
@@ -219,7 +168,7 @@ export function standingOf(
   const reviewsRow = rowOf(rows, 'reviews');
   const reviews = reviewsRow ? (home?.reviews ?? []) : [];
   const openReviews = reviews.filter((item) => ['requested', 'started'].includes(item.status));
-  // A record out for review is listed once, as its review: that card names it and leads to it.
+  // A record out for review is its reviewer's move, never its owner's.
   const underReview = new Set(openReviews.map((item) => item.subjectId));
   // The newest verdict on a record, to tell work that was sent back from work never delivered.
   const lastVerdict = new Map<string, string | null>();
@@ -232,46 +181,41 @@ export function standingOf(
     const row = rowOf(rows, kind);
     for (const item of items) {
       subjects.set(item.id, item);
-      if (!row || underReview.has(item.id)) continue;
       const decision = gate.get(item.id);
+      if (!row || !decision || underReview.has(item.id)) continue;
       // A blocker another plugin published whose next move is a person's outranks the
       // record's own gate and stands here whatever that gate says — including on work
-      // that has ended and waits on somebody to carry its accepted code to main.
-      const held = decision && firstPersonMove(decision.providerBlockers ?? [], recordNames);
+      // that has ended and waits on somebody to carry its accepted code to main. Whose move
+      // it is and whether this app can make it are two questions: a move no page here
+      // carries out is still the reader's, with no control at all.
+      const held = firstPersonMove(decision.providerBlockers ?? [], recordNames);
       if (held) {
-        // Whose move it is and whether this app can make it are two questions: a move no
-        // page here carries out is still the reader's, and belongs under Needs you with no
-        // control at all. Only a wait on the server is nobody's.
-        const yours =
-          held.move.whose !== 'nobody' && viewer.role === 'operator' && !!viewer.signedIn;
-        lines[yours ? 'yours' : 'unknown'].push({
-          id: item.id,
-          kind,
-          name: item.name,
-          to: `${row.path}/${item.id}`,
-          at: held.blocker.since ?? item.workflow.updatedAt,
-          mine: item.owner === me,
-          sentence: held.move.sentence,
-          who: held.move.who,
-          says: [...said(decision), held.blocker.next].filter(
-            (text, index, all) =>
-              !!text && all.indexOf(text) === index && text !== held.move.sentence,
-          ) as string[],
-          ...(yours && held.move.control
-            ? { desk: { label: held.move.control.label, to: held.move.control.to } }
-            : {}),
-        });
+        if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
+          lines.push({
+            id: item.id,
+            kind,
+            name: item.name,
+            to: `${row.path}/${item.id}`,
+            at: held.blocker.since ?? item.workflow.updatedAt,
+            sentence: held.move.sentence,
+            who: held.move.who,
+            says: [...said(decision), held.blocker.next].filter(
+              (text, index, all) =>
+                !!text && all.indexOf(text) === index && text !== held.move.sentence,
+            ) as string[],
+            ...(held.move.control
+              ? { desk: { label: held.move.control.label, to: held.move.control.to } }
+              : {}),
+          });
         continue;
       }
-      if (decision ? decision.terminal : ENDED.includes(item.workflow.state)) continue;
-      const mine = item.owner === me;
+      if (decision.terminal) continue;
       // Whoever began the step holds it; before anyone has, it is its owner's.
-      const began = decision?.workStart?.actorId;
-      const ask = decision && (!began || began === me) ? askOf(decision) : undefined;
-      const bucket = decision && whose(decision, mine, !!ask);
-      if (!bucket || !decision) continue;
-      const next = (bucket === 'yours' && ask) || decision.nextAction;
-      const desk = bucket === 'yours' && next?.status !== 'blocked' && DESKS[next?.tool ?? ''];
+      const began = decision.workStart?.actorId;
+      const ask = !began || began === me ? askOf(decision) : undefined;
+      if (!yours(decision, item.owner === me, !!ask)) continue;
+      const next = ask || decision.nextAction;
+      const desk = next?.status !== 'blocked' && DESKS[next?.tool ?? ''];
       const verdict = lastVerdict.get(item.id);
       // A cycle is stopped only when its gate refuses on its own wave or consolidation task,
       // declared after the work it reflects on, which may fail and stop nothing.
@@ -282,18 +226,15 @@ export function standingOf(
         (item) => kind !== 'research' || !item.failed || item === stop,
       );
       const sentence = recordSentence(
-        bucket,
-        { ...decision, nextAction: next, dependencies },
-        (began !== me && named(began)) || named(item.owner),
+        { nextAction: next, dependencies },
         !!verdict && verdict !== 'pass',
       );
-      lines[bucket].push({
+      lines.push({
         id: item.id,
         kind,
         name: item.name,
         to: `${row.path}/${item.id}`,
         at: item.workflow.updatedAt,
-        mine,
         sentence,
         // Where the server's reason is the headline, the fold does not say it again.
         says: said(decision).filter((text) => text !== sentence),
@@ -305,7 +246,6 @@ export function standingOf(
     for (const review of openReviews) {
       // A review names its subject through the lists the other blocks already read.
       const subject = subjects.get(review.subjectId);
-      const held = review.reviewerId;
       // Claiming is offered here only where the subject's own gate says this caller may.
       const start = gate
         .get(review.subjectId)
@@ -316,24 +256,21 @@ export function standingOf(
       const mine =
         review.status === 'requested'
           ? !!review.claimable && start?.status !== 'blocked'
-          : held === me;
-      const standing = !held ? (mine ? 'open' : 'unclaimed') : held === me ? 'yours' : 'theirs';
-      lines[mine ? 'yours' : 'agent'].push({
+          : review.reviewerId === me;
+      if (!mine) continue;
+      lines.push({
         id: review.id,
         kind: 'reviews',
         name: subject?.name,
         to: `${reviewsRow.path}/${review.id}`,
         at: review.createdAt,
-        mine,
-        sentence: reviewSentence(standing, subject?.workflow?.state, named(held)),
-        who: mine ? named(subject?.owner) : undefined,
+        sentence: reviewSentence(!!review.reviewerId, subject?.workflow?.state),
+        who: named(subject?.owner),
         says: [],
-        claim: standing === 'open' && start?.status === 'ready' ? review.id : undefined,
+        claim: !review.reviewerId && start?.status === 'ready' ? review.id : undefined,
       });
     }
-  for (const bucket of Object.keys(lines) as Whose[])
-    lines[bucket] = newest(lines[bucket], (line) => line.at);
-  return lines;
+  return newest(lines, (line) => line.at);
 }
 
 /**
@@ -379,10 +316,9 @@ function Move({ line }: { line: Line }) {
 
 /**
  * One card, read top to bottom in the order a person scans it: the kind, the
- * record's name, the sentence, who and when — and, where it is the reader's move,
- * the control at its end.
+ * record's name, the sentence, who and when, and the control at its end.
  */
-function Card({ line, acts }: { line: Line; acts?: boolean }) {
+function Card({ line }: { line: Line }) {
   return (
     <li className="record ov-row">
       <div className="ov-body">
@@ -404,7 +340,7 @@ function Card({ line, acts }: { line: Line; acts?: boolean }) {
           </details>
         )}
       </div>
-      {acts && <Move line={line} />}
+      <Move line={line} />
     </li>
   );
 }
@@ -427,34 +363,33 @@ function Block({ title, count, children }: { title: string; count?: number; chil
   );
 }
 
-/** The three lists, from lines already sorted: what is yours, then whose move the rest is. */
-export function StandingLine({
+/** What needs the reader: their own moves, then every row that cannot speak for itself. */
+export function NeedsYou({
   rows,
   lines,
   load,
 }: {
   rows: Row[];
-  lines: Lines;
+  lines: Line[];
   load: Pick<Loaded<HomeData>, 'loading' | 'error' | 'data' | 'loadedAt'>;
 }) {
   // A row that cannot speak for itself needs someone, and says so in its own state.
   const unwell = rows.filter(
     (row) => row.status.state === 'degraded' || row.status.state === 'unavailable',
   );
-  const waiting = [...lines.nobody, ...lines.unknown];
-  const clear = !lines.yours.length && !unwell.length;
+  const count = lines.length + unwell.length;
   return (
     <>
       <LoadState {...load} columns={2} />
-      {load.data && clear && (
+      {load.data && !count && (
         <div className="ov-clear">
           <EmptyState icon="check" title="Nothing needs you" />
         </div>
       )}
-      {!clear && (
-        <Block title="Needs you" count={lines.yours.length + unwell.length}>
-          {lines.yours.map((line) => (
-            <Card key={line.id} line={line} acts />
+      {count > 0 && (
+        <Block title="Needs you" count={count}>
+          {lines.map((line) => (
+            <Card key={line.id} line={line} />
           ))}
           {unwell.map((row) => (
             <li className="record ov-row" key={row.id}>
@@ -470,20 +405,6 @@ export function StandingLine({
           ))}
         </Block>
       )}
-      {lines.agent.length > 0 && (
-        <Block title="With an agent" count={lines.agent.length}>
-          {lines.agent.map((line) => (
-            <Card key={line.id} line={line} />
-          ))}
-        </Block>
-      )}
-      {waiting.length > 0 && (
-        <Block title="Waiting" count={waiting.length}>
-          {waiting.map((line) => (
-            <Card key={line.id} line={line} />
-          ))}
-        </Block>
-      )}
     </>
   );
 }
@@ -493,7 +414,7 @@ export function OverviewView({ shell }: { shell: ShellData }) {
   const home = useHome();
   // The publication verbs refuse a key and a bearer actor outright, so whether the reader
   // is a person is part of whose move a Code blocker is.
-  const lines = standingOf(
+  const lines = needsYou(
     shell.rows,
     home.data,
     { ...session.actor, signedIn: session.account.kind === 'user' },
@@ -502,7 +423,7 @@ export function OverviewView({ shell }: { shell: ShellData }) {
   return (
     <div className="page-stage overview">
       <h1 className="page-title">Now</h1>
-      <StandingLine rows={shell.rows} lines={lines} load={home} />
+      <NeedsYou rows={shell.rows} lines={lines} load={home} />
     </div>
   );
 }

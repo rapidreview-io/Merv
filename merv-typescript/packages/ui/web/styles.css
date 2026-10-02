@@ -163,8 +163,7 @@ a:hover,
 .history-record-link:hover,
 .history-record-link[aria-expanded='true'],
 .feed a:hover,
-.verdict-jump:hover,
-.map-relation:hover {
+.verdict-jump:hover {
   color: var(--active);
 }
 button {
@@ -3268,48 +3267,13 @@ a.tile:hover small {
     grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   }
 }
-/* The object graph: one measured frame, cards placed in it, edges behind them. */
-.map-graph {
-  position: relative;
-}
-.map-edges {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-/* A relation is a hairline that ends in an arrowhead, in the ink kept for what is
-   drawn and never read: a divider's grey is too pale for a line that has to be
-   followed across the page. Its verb is written across it in read ink, on the
-   page's own ground so the line never strikes it out. */
-.map-edge path {
-  fill: none;
-  stroke: var(--ghost);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.map-edge text {
-  font-size: var(--text-xs);
-  font-weight: 500;
-  fill: var(--muted);
-  dominant-baseline: central;
-  paint-order: stroke;
-  stroke: var(--bg);
-  stroke-width: 6px;
-  stroke-linejoin: round;
-}
-.map-edge.on path {
-  stroke: var(--active);
-}
-/* A record on the map is a card, because on a graph the card is the object: it is
-   what a line ends at and what the pointer picks up. Its ground covers a line
-   passing behind it, and its hairline darkens under the pointer. */
+/* A branch said as a card where the Code canvas has no room to draw (code-canvas.tsx):
+   the card is the object the pointer picks up, and its hairline darkens under it. */
 .map-node {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  height: 96px;
   overflow: hidden;
   text-align: left;
   cursor: pointer;
@@ -3342,22 +3306,14 @@ a.tile:hover small {
   border-color: var(--active);
   box-shadow: 0 0 0 1px var(--active);
 }
-.map-more {
-  font-size: var(--text-sm);
-  color: var(--muted);
-}
-/* Where lines cannot be drawn — one column of records, or a narrow page — the same
-   cards flow as a grid, and each says in words what it points at. */
+/* The cards flow as a grid, and each says in words what it points at. */
 .map-graph--stacked {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: var(--space-2);
 }
-.map-graph--stacked > :is(.plane-title, .map-more, .map-props, .code-card) {
+.map-graph--stacked > :is(.plane-title, .code-card) {
   grid-column: 1 / -1;
-}
-.map-graph--stacked .map-node {
-  height: auto;
 }
 .map-graph--stacked .map-node-foot {
   padding-top: var(--space-1);
@@ -3375,43 +3331,6 @@ a.tile:hover small {
   align-self: center;
   flex: none;
 }
-/* The property card: what the selected object is, and the one way out. It is
-   the one surface that keeps a frame, because the card itself is the object. */
-.map-props {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  background: var(--bg-elev);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  animation: map-slide 200ms ease-out both;
-}
-.map-props-name {
-  font-size: var(--text-lg);
-  font-weight: 600;
-}
-.map-props .kv {
-  width: 100%;
-  font-size: var(--text-sm);
-  margin: 2px 0;
-}
-.map-relation {
-  background: none;
-  border: 0;
-  font-size: var(--text-sm);
-  color: var(--muted);
-  cursor: pointer;
-  text-align: left;
-}
-.map-relation b {
-  color: var(--text);
-  font-weight: 600;
-}
-.map-relation .kind {
-  display: inline;
-}
 .map-open {
   display: inline-flex;
   align-items: center;
@@ -3421,30 +3340,19 @@ a.tile:hover small {
   font-size: var(--text-sm);
   font-weight: 500;
 }
-/* Motion earns its place by directing attention: one pulse for the move that is
-   yours, a breath only on what is live right now, focus that dims what is not
-   connected, and a number that moves only when its record moved. Nothing here
-   animates because a poll happened, and all of it goes still on request. */
+/* Motion earns its place by directing attention: a breath only on what is live right
+   now, focus that dims what is not connected, and a number that moves only when its
+   record moved. Nothing here animates because a poll happened, and all of it goes still
+   on request. */
 @keyframes map-rise {
   from {
     opacity: 0;
     transform: translateY(6px);
   }
 }
-@keyframes map-slide {
-  from {
-    opacity: 0;
-    transform: translateX(14px);
-  }
-}
 @keyframes map-breathe {
   50% {
     opacity: 0.3;
-  }
-}
-@keyframes map-pulse {
-  50% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--kind, var(--active)) 22%, transparent);
   }
 }
 @keyframes map-roll {
@@ -3457,13 +3365,9 @@ a.tile:hover small {
 .map-now {
   animation: map-rise 260ms ease-out both;
 }
-.map-node,
-.map-edge path,
-.map-edge text {
+.map-node {
   transition:
     opacity 180ms ease,
-    stroke 180ms ease,
-    fill 180ms ease,
     box-shadow 180ms ease;
 }
 /* What is not connected steps back, and is still read: a dimmed card is a button
@@ -3471,27 +3375,6 @@ a.tile:hover small {
    ring on the chosen card is what says which one is chosen. */
 .map-node.dim {
   opacity: 0.72;
-}
-.map-edge.dim {
-  opacity: 0.42;
-}
-.map-node.pulse {
-  animation: map-pulse 2.4s ease-in-out infinite;
-}
-.map-node.live .status-dot {
-  animation: map-breathe 1.8s ease-in-out infinite;
-}
-.map-edge {
-  pointer-events: auto;
-}
-.map-edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 12;
-}
-.map-edge.on text,
-.map-edge:hover text {
-  fill: var(--active);
 }
 .plane-value.changed {
   animation: map-roll 380ms ease-out;
