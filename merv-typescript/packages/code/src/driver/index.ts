@@ -10,7 +10,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -845,41 +844,10 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   private async checkout(cache: string, row: WorkspaceRow, retryPreparing = false): Promise<void> {
-    if (this.assignmentRoot) {
-      if (this.sharedWorkKey()) return this.checkoutShared(cache, row, retryPreparing);
-      this.assignmentPath(row.path);
-      const dot = join(row.path, '.git');
-      if (!existsSync(dot)) {
-        if (existsSync(row.path)) throw new WorkspaceError('workspace_foreign_checkout');
-        privateDirectory(row.path);
-        const bundle = join(dirname(cache), `checkout-${hash(row.launch_id)}.bundle`);
-        const pending = this.mergeMetadata(row);
-        const refs = [row.head_oid, ...(pending ? [pending.secondParent] : [])].map(
-          (commit) => `refs/merv/known/${commit}`,
-        );
-        try {
-          await this.git.ok(['--git-dir', cache, 'bundle', 'create', bundle, ...refs]);
-          await this.git.ok([
-            'init',
-            '--quiet',
-            `--template=${join(this.root, 'empty-template')}`,
-            row.path,
-          ]);
-          await this.git.ok(['bundle', 'unbundle', bundle], { cwd: row.path });
-        } finally {
-          rmSync(bundle, { force: true });
-        }
-      } else if (!lstatSync(dot).isDirectory() || existsSync(join(dot, 'objects/info/alternates')))
-        throw new WorkspaceError('workspace_foreign_checkout');
-      await this.git.ok(
-        row.branch
-          ? ['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid]
-          : ['checkout', '--quiet', '--force', '--detach', row.head_oid],
-        { cwd: row.path },
-      );
-      await this.git.ok(['clean', '-fdq'], { cwd: row.path });
-      return;
-    }
+    if (this.assignmentRoot)
+      return this.sharedWorkKey()
+        ? this.checkoutShared(cache, row, retryPreparing)
+        : this.checkoutAssignment(cache, row);
     privateDirectory(dirname(row.path));
     await this.git.ok(['--git-dir', cache, 'worktree', 'prune']);
     if (!existsSync(join(row.path, '.git'))) {
@@ -902,6 +870,41 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     await this.git.ok(['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid], {
       cwd: row.path,
     });
+    await this.git.ok(['clean', '-fdq'], { cwd: row.path });
+  }
+
+  /** All hosted phases materialize Code's frozen head with independent Git metadata. */
+  private async checkoutAssignment(cache: string, row: WorkspaceRow): Promise<void> {
+    this.assignmentPath(row.path);
+    const dot = join(row.path, '.git');
+    if (!existsSync(dot)) {
+      if (existsSync(row.path)) throw new WorkspaceError('workspace_foreign_checkout');
+      privateDirectory(row.path);
+      const bundle = join(dirname(cache), `checkout-${hash(row.launch_id)}.bundle`);
+      const pending = this.mergeMetadata(row);
+      const refs = [row.head_oid, ...(pending ? [pending.secondParent] : [])].map(
+        (commit) => `refs/merv/known/${commit}`,
+      );
+      try {
+        await this.git.ok(['--git-dir', cache, 'bundle', 'create', bundle, ...refs]);
+        await this.git.ok([
+          'init',
+          '--quiet',
+          `--template=${join(this.root, 'empty-template')}`,
+          row.path,
+        ]);
+        await this.git.ok(['bundle', 'unbundle', bundle], { cwd: row.path });
+      } finally {
+        rmSync(bundle, { force: true });
+      }
+    } else if (!lstatSync(dot).isDirectory() || existsSync(join(dot, 'objects/info/alternates')))
+      throw new WorkspaceError('workspace_foreign_checkout');
+    await this.git.ok(
+      row.branch
+        ? ['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid]
+        : ['checkout', '--quiet', '--force', '--detach', row.head_oid],
+      { cwd: row.path },
+    );
     await this.git.ok(['clean', '-fdq'], { cwd: row.path });
   }
 
@@ -944,33 +947,21 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         renameSync(preserved, rejected);
       }
     }
-    const preservedInfo = pathStat(preserved);
-    if (preservedInfo) {
-      const info = preservedInfo;
+    const info = pathStat(preserved);
+    if (info) {
       if ((!previous && !scratch) || !info.isDirectory() || info.isSymbolicLink())
         throw new WorkspaceError('workspace_foreign_checkout');
     } else if (existsSync(row.path)) {
-      if (
-        lastVisible?.read_only &&
-        !scratch &&
-        !this.restoredReview(lastVisible, row.path) &&
-        (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
-      )
-        throw new WorkspaceError('workspace_foreign_checkout');
-      if (!previous && !scratch) {
-        if (!lastVisible || !this.restoredReview(lastVisible, row.path)) {
-          if (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
-            throw new WorkspaceError('workspace_foreign_checkout');
-        }
-      } else {
-        if (
-          scratch &&
-          !previous &&
-          pathStat(join(row.path, '.git')) &&
-          !(lastVisible && this.restoredReview(lastVisible, row.path)) &&
-          (!retryPreparing || lstatSync(row.path).uid !== process.getuid?.())
-        )
+      const restored = lastVisible && this.restoredReview(lastVisible, row.path);
+      const preparing = retryPreparing && lstatSync(row.path).uid === process.getuid?.();
+      if (!restored && !preparing) {
+        // Accept only a known writer or settled scratch without foreign Git metadata.
+        if (lastVisible?.read_only && !scratch)
           throw new WorkspaceError('workspace_foreign_checkout');
+        if (!previous && (!scratch || pathStat(join(row.path, '.git'))))
+          throw new WorkspaceError('workspace_foreign_checkout');
+      }
+      if (previous || scratch) {
         if (previous) {
           const dot = lstatSync(join(row.path, '.git'));
           if (
@@ -986,30 +977,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     // Only a completed prior launch can have owned this path. A preparation interrupted
     // after the rename may have left a partial checkout; it has never run an agent.
     if (pathStat(row.path)) rmSync(row.path, { recursive: true, force: true });
-    mkdirSync(row.path, { mode: 0o700 });
-    const bundle = join(dirname(cache), `checkout-${hash(row.launch_id)}.bundle`);
-    const pending = this.mergeMetadata(row);
-    const refs = [row.head_oid, ...(pending ? [pending.secondParent] : [])].map(
-      (commit) => `refs/merv/known/${commit}`,
-    );
-    try {
-      await this.git.ok(['--git-dir', cache, 'bundle', 'create', bundle, ...refs]);
-      await this.git.ok([
-        'init',
-        '--quiet',
-        `--template=${join(this.root, 'empty-template')}`,
-        row.path,
-      ]);
-      await this.git.ok(['bundle', 'unbundle', bundle], { cwd: row.path });
-    } finally {
-      rmSync(bundle, { force: true });
-    }
-    await this.git.ok(
-      row.branch
-        ? ['checkout', '--quiet', '--force', '-B', row.branch, row.head_oid]
-        : ['checkout', '--quiet', '--force', '--detach', row.head_oid],
-      { cwd: row.path },
-    );
+    await this.checkoutAssignment(cache, row);
     if (!pathStat(preserved) || (row.read_only && previous && this.priorCaptureRefused(previous)))
       return;
     const sourceHead = previous?.result_json
