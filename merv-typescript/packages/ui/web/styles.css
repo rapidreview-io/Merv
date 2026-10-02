@@ -1419,7 +1419,8 @@ select.input,
 }
 /* Time in status: one card, a row for each state of the program — its mark, its word, how
    long the record stood there. No rules between the rows. The state it stands in is in
-   ink; what it has been through is quieter; what it has not reached is quieter still. */
+   ink, and its mark alone is in colour; what it has been through is quieter; what it has
+   not reached is quieter still. */
 .stage-card {
   display: flex;
   flex-direction: column;
@@ -1456,6 +1457,11 @@ select.input,
 .stage--here .stage-time {
   font-weight: 500;
   color: var(--text);
+}
+/* In the card colour says one thing, where the record stands: the marks of the stages it has
+   been through keep their shape and lose their colour. */
+.stage:not(.stage--here, .stage--ahead) .stage-glyph {
+  color: var(--faint);
 }
 
 /* Key/value and tables. -------------------------------------------------- */

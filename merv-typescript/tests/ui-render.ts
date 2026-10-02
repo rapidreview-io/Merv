@@ -14,6 +14,7 @@
  * That is why every consumer imports this module first and everything else with
  * a dynamic import.
  */
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import type { ReactElement } from 'react';
 
@@ -176,6 +177,16 @@ export async function unmount(): Promise<void> {
   media.wide = true;
 }
 /** What a person reads on the page, which is what every assertion here is about. */
+/** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
+export const styled = () => {
+  const sheet = document.createElement('style');
+  sheet.textContent = readFileSync(
+    new URL('../packages/ui/web/styles.css', import.meta.url),
+    'utf8',
+  );
+  document.head.appendChild(sheet);
+  return () => sheet.remove();
+};
 export const text = (): string => host?.textContent ?? '';
 export async function click(label: string): Promise<void> {
   const control = [...(host?.querySelectorAll('button') ?? [])].find((button) =>

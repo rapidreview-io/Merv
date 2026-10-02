@@ -168,14 +168,35 @@ export function mapOf(
       };
     }),
     // One line for each relation, however many owners say it.
-    edges: [
+    edges: direct([
       ...new Map(
         edges
           .filter((edge) => keys.has(edge.from) && keys.has(edge.to))
           .map((edge) => [`${edge.from}>${edge.to}`, edge]),
       ).values(),
-    ],
+    ]),
   };
+}
+
+/**
+ * The lines worth drawing: a prerequisite the unit already reaches through another of its
+ * prerequisites is not drawn to it again, since the line through the nearer one says it. A line
+ * goes only while what is left still leads from its upper end to its lower one.
+ */
+function direct(edges: MapEdge[]): MapEdge[] {
+  let kept = edges;
+  for (const edge of edges) {
+    const rest = kept.filter((other) => other !== edge);
+    const seen = new Set([edge.from]);
+    const reaches = (key: string): boolean =>
+      key === edge.to ||
+      rest.some(
+        (next) =>
+          next.from === key && !seen.has(next.to) && !!seen.add(next.to) && reaches(next.to),
+      );
+    if (reaches(edge.from)) kept = rest;
+  }
+  return kept;
 }
 
 /**

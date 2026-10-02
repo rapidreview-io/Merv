@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mount, unmount } from './ui-render.js';
+import { mount, styled, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
 const { Gate, StageList, StageMark, stagesOfGraph, stagesOfShape, stageTimes } =
@@ -68,6 +68,30 @@ test('a record’s gate is one card of every state of its program, the one it st
   );
   // The drawn ladder is gone: a stage is said one way, on a record's page as everywhere.
   assert.equal(document.querySelector('svg.pd'), null);
+});
+
+test('in the card only the stage the record stands in wears its colour', async (t) => {
+  t.after(async () => await unmount());
+  t.after(styled());
+  const at = '2026-09-17T10:00:00.000Z';
+  const running = {
+    ...graph,
+    nodes: [
+      node('planned', { at }),
+      node('design_review', { at }),
+      node('running', { current: true, at }),
+      node('complete', { terminal: true }),
+    ],
+  };
+  await mount(createElement(StageList, { graph: running as never }));
+  // What it has been through keeps its mark's shape in grey, a review's orange included;
+  // where it stands is green, as running is; what it has not reached is the faintest ring.
+  assert.deepEqual(
+    [...document.querySelectorAll('.stages > li .stage-glyph')].map(
+      (glyph) => getComputedStyle(glyph).color,
+    ),
+    ['var(--faint)', 'var(--faint)', 'var(--stage-live)', 'var(--ghost)'],
+  );
 });
 
 test('a record read from a list is walked from the deployed shape: its place, and what is behind it', () => {

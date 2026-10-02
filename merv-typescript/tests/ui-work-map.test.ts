@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
+import { mount, requests, resize, serve, settle, styled, text, unmount } from './ui-render.js';
 import { board, emptyBoard, sandboxPanel, sessionPanel, taskPanel } from './ui-running-fixtures.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -161,16 +161,6 @@ const button = (label: string, within: ParentNode = document) =>
     (item) => item.textContent?.trim() === label,
   );
 const reads = (tool: string) => requests.filter((line) => line === `POST /tools/${tool}`).length;
-/** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
-const styled = () => {
-  const sheet = document.createElement('style');
-  sheet.textContent = readFileSync(
-    new URL('../packages/ui/web/styles.css', import.meta.url),
-    'utf8',
-  );
-  document.head.appendChild(sheet);
-  return () => sheet.remove();
-};
 
 test('under the map: how many are working, what needs a person in red, and each lane’s line with its control', async (t) => {
   t.after(unmount);
@@ -506,6 +496,51 @@ test('the map joins the wave’s records to the board by key, and says who is on
     ],
   );
   assert.deepEqual(mapOf(undefined, undefined), { units: [], edges: [] });
+  // A prerequisite reached through another one is still a card, and has no line of its own
+  // to what waits on both: the line through the nearer one says it.
+  const record = (id: string, held = false) => ({
+    id,
+    kind: 'tasks',
+    name: id,
+    flow: { state: held ? 'planned' : 'done', updatedAt: '' },
+    at: id,
+    held,
+  });
+  const drawn = (wave: { from: string; to: string }[], ids: string[], open = ['c']) =>
+    mapOf(undefined, { items: ids.map((id) => record(id, open.includes(id))), edges: wave });
+  const lines = (...given: Parameters<typeof drawn>) =>
+    drawn(...given)
+      .edges.map((edge) => `${edge.from.slice(5)}>${edge.to.slice(5)}`)
+      .sort();
+  const chain = [
+    { from: 'a', to: 'c' },
+    { from: 'a', to: 'b' },
+    { from: 'b', to: 'c' },
+  ];
+  assert.deepEqual(lines(chain, ['a', 'b', 'c']), ['a>b', 'b>c']);
+  assert.deepEqual(
+    drawn(chain, ['a', 'b', 'c'])
+      .units.map((unit) => unit.key)
+      .sort(),
+    ['work:a', 'work:b', 'work:c'],
+  );
+  // With the one between them not on the map, the far one's line is all there is.
+  assert.deepEqual(lines(chain, ['a', 'c']), ['a>c']);
+  // Two ways down that meet again are both drawn; only the line that skips a way is not.
+  const diamond = [
+    { from: 'a', to: 'b' },
+    { from: 'a', to: 'd' },
+    { from: 'b', to: 'c' },
+    { from: 'd', to: 'c' },
+  ];
+  const all = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(lines(diamond, all, all), ['a>b', 'a>d', 'b>c', 'd>c']);
+  assert.deepEqual(lines([...diamond, { from: 'a', to: 'c' }], all, all), [
+    'a>b',
+    'a>d',
+    'b>c',
+    'd>c',
+  ]);
   // Who is on a unit: its sessions, the machines that serve it, never what it waits on.
   const on = (key: string) => liveOf(given, key).map((node) => node.key);
   assert.deepEqual(on('work:wf_ablate'), ['session:session_ablate', 'compute:c0ffee']);
