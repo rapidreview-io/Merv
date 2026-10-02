@@ -62,13 +62,9 @@ interface Reflection {
 }
 
 /** The gate this wave stands at, derived from its own record. */
-function WaveGate({ id, kind, children }: { id: string; kind: string; children?: ReactNode }) {
+function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
-  return (
-    <Gate graph={process.error ? undefined : process.data} kind={kind}>
-      {children}
-    </Gate>
-  );
+  return <Gate graph={process.error ? undefined : process.data}>{children}</Gate>;
 }
 
 function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
@@ -208,7 +204,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
       kind={row.view.kind}
       name={wave.title}
       state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}
-      act={<WaveGate id={wave.id} kind={row.view.kind} />}
+      act={<WaveGate id={wave.id} />}
       // Never `Synthesis`: one of the lenses is called that.
       title="Lenses"
       content={

@@ -32,7 +32,7 @@ import { ListPage, matches, splitRoutes, useListFilter } from '../list-filters';
 import { elapsed, say, type Liveness } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
-import { ProcessDiagram } from '../process';
+import { TimeInStatus } from '../process';
 import { firstSentence } from '../states';
 import type { ViewProps } from './index';
 import { at, list, money, num, phrase, records, str, unit, type Json } from './remote-fields';
@@ -302,9 +302,9 @@ function Section({ section, ...facts }: { section: UiSection } & Facts) {
         )}
       />
     );
-  // A ladder is a process read as steps, so it is drawn as one: each step to the next.
+  // A ladder is a process read as its stages, so it is said as every other one is.
   return (
-    <ProcessDiagram
+    <TimeInStatus
       steps={items.map((step, index) => ({
         state: str(at(step, section.step)),
         end: index === items.length - 1,
@@ -312,7 +312,6 @@ function Section({ section, ...facts }: { section: UiSection } & Facts) {
         current: str(at(step, section.state)) === 'here',
         entered: str(at(step, section.state)) !== 'next',
       }))}
-      ways={items.slice(1).map((_, index) => ({ from: index, to: index + 1, taken: false }))}
     />
   );
 }

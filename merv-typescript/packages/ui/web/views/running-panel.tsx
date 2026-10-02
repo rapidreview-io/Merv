@@ -325,13 +325,7 @@ function Body({ section }: { section: RunningSection }) {
         </p>
       );
     case 'ladder':
-      // A workflow's stages are one card with one name, whichever plugin sends them.
-      return (
-        <section className="stage-card" aria-label="Time in status">
-          <h3 className="stage-card-title">Time in status</h3>
-          <StageList graph={section.graph} />
-        </section>
-      );
+      return <StageList graph={section.graph} />;
     case 'stream':
       return <Stream items={section.items} />;
   }
@@ -352,7 +346,8 @@ function Section({ section: sent }: { section: RunningSection }) {
     </>
   );
   const heading = cx('running-section-head', section.attention && 'running-attn');
-  // The card of stages carries its own name: the owner's title for it is not drawn.
+  // A workflow's stages are one card with one name, whichever plugin sends them: the owner's
+  // title for it is not drawn.
   if (section.kind === 'ladder') return <Body section={section} />;
   if (section.folded)
     return (

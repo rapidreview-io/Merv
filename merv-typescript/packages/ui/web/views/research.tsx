@@ -38,7 +38,7 @@ function CycleDetail({ row, shell }: ViewProps) {
       name={record.name}
       state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
       act={
-        <Gate graph={process.data} kind={row.view.kind}>
+        <Gate graph={process.data}>
           {writable && (
             // The stack would stretch the one control to the pane's width.
             <div className="cluster">

@@ -127,7 +127,7 @@ function ExperimentRecord({
           {e.conclusion && <Markdown source={e.conclusion} />}
         </>
       }
-      act={process && <Gate graph={process} kind="experiments" />}
+      act={process && <Gate graph={process} />}
       title="Evidence"
       content={
         currentEvidence.length || figures.length || shown ? (

@@ -410,13 +410,7 @@ function TaskDetail({ row }: ViewProps) {
       name={t.title}
       standing={t.goal}
       state={<StageMark graph={process} workflow={t.workflow} />}
-      act={
-        process && (
-          <Gate graph={process} kind={row.view.kind}>
-            {delivery.desk}
-          </Gate>
-        )
-      }
+      act={process && <Gate graph={process}>{delivery.desk}</Gate>}
       title="Checks"
       content={<TaskChecks task={t} reviews={reviews} draft={delivery.draft} />}
       history={

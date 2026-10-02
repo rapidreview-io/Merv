@@ -1,14 +1,14 @@
 /**
- * The workflow diagram: one place marked, every way back drawn over the track, every
- * end one node. The layout is the program's own — states in the order its edges reach
- * them — so these assertions are about what a person sees, not how the paths are written.
+ * A workflow read as its stages: every state of the program in the order its edges reach
+ * them, one place marked, every end one stage. The order is the program's own, so these
+ * assertions are about what a person reads, not how a mark is drawn.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mount, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
-const { ProcessDiagram, StageList, StageMark, diagramOfGraph, diagramOfShape, stageTimes } =
+const { Gate, StageList, StageMark, stagesOfGraph, stagesOfShape, stageTimes } =
   await import('../packages/ui/web/process.js');
 
 const node = (
@@ -46,26 +46,28 @@ const graph = {
   })),
 };
 
-test('a record’s own graph marks one place, draws the way back, and names its states', async (t) => {
+test('a record’s gate is one card of every state of its program, the one it stands in marked', async (t) => {
   t.after(async () => await unmount());
-  await mount(
-    createElement(ProcessDiagram, { ...diagramOfGraph(graph as never), kind: 'experiments' }),
-  );
-  assert.equal(document.querySelectorAll('.pd-node--here').length, 1);
-  assert.equal(document.querySelectorAll('.pd-node--here title').length, 0);
-  // Three steps of track forward, and the one way back as an arc over it.
-  assert.equal(document.querySelectorAll('.pd-track').length, 3);
-  assert.equal(document.querySelectorAll('.pd-arc').length, 1);
-  // Behind, here, not reached, and one end cap: every state of the program is drawn.
-  assert.equal(document.querySelectorAll('.pd-node').length, 4);
-  assert.equal(document.querySelectorAll('.pd-node--behind').length, 1);
-  assert.equal(document.querySelectorAll('.pd-cap').length, 1);
+  await mount(createElement(Gate, { graph: { ...graph, dependencies: [] } as never }));
+  const card = document.querySelector('section.stage-card')!;
+  assert.equal(card.getAttribute('aria-label'), 'Time in status');
+  assert.equal(card.querySelector('.stage-card-title')!.textContent, 'Time in status');
+  const rows = [...card.querySelectorAll('.stages > li')];
   assert.deepEqual(
-    [...document.querySelectorAll('.pd-node text')].map((label) =>
-      [...label.querySelectorAll('tspan')].map((word) => word.textContent).join(' '),
-    ),
+    rows.map((row) => row.querySelector('.stage-word')!.textContent),
     ['planned', 'design review', 'running', 'complete'],
   );
+  assert.deepEqual(
+    rows.map((row) => row.getAttribute('aria-current')),
+    [null, 'step', null, null],
+  );
+  // Behind and here are read; what the record never reached is quiet.
+  assert.deepEqual(
+    rows.map((row) => row.classList.contains('stage--ahead')),
+    [false, false, true, true],
+  );
+  // The drawn ladder is gone: a stage is said one way, on a record's page as everywhere.
+  assert.equal(document.querySelector('svg.pd'), null);
 });
 
 test('a record read from a list is walked from the deployed shape: its place, and what is behind it', () => {
@@ -77,27 +79,28 @@ test('a record read from a list is walked from the deployed shape: its place, an
     terminal: ['complete'],
     edges: edges.map((edge) => ({ ...edge, action: 'act' })),
   };
-  const drawn = diagramOfShape(shape, 'running');
+  const steps = stagesOfShape(shape, 'running');
   assert.deepEqual(
-    drawn.steps.map((step) => step.state),
+    steps.map((step) => step.state),
     ['planned', 'design_review', 'running', 'complete'],
   );
   assert.deepEqual(
-    drawn.steps.filter((step) => step.current).map((step) => step.state),
+    steps.filter((step) => step.current).map((step) => step.state),
     ['running'],
   );
   assert.deepEqual(
-    drawn.steps.map((step) => step.entered),
+    steps.map((step) => step.entered),
     [true, true, true, false],
   );
 });
 
-test('every end is one node, named for how the record ended', async (t) => {
+test('every end is one stage, named for how the record ended', async (t) => {
   t.after(async () => await unmount());
   const out = ['abandoned', 'failed'].flatMap((to) =>
     ['planned', 'design_review', 'running'].map((from) => ({ from, to })),
   );
   const ended = {
+    terminal: true,
     nodes: [
       node('planned', { at: '2026-09-17T10:00:00.000Z' }),
       node('design_review', { at: '2026-09-17T11:00:00.000Z' }),
@@ -106,25 +109,27 @@ test('every end is one node, named for how the record ended', async (t) => {
       node('failed', { terminal: true }),
       node('complete', { terminal: true }),
     ],
-    edges: [...edges, ...out],
+    edges: [...edges, ...out].map((edge) => ({ ...edge, traversals: [] })),
   };
-  const drawn = diagramOfGraph(ended as never);
+  const steps = stagesOfGraph(ended as never);
   assert.deepEqual(
-    drawn.steps.map((step) => step.state),
-    ['planned', 'design_review', 'running', 'abandoned'],
+    steps.map((step) => [step.state, step.end, step.stopped, step.current]),
+    [
+      ['planned', false, false, false],
+      ['design_review', false, false, false],
+      ['running', false, false, false],
+      ['abandoned', true, true, true],
+    ],
   );
-  // No way out is drawn: the track still leads to the finish the program has.
+  await mount(createElement(StageList, { graph: ended as never }));
+  const rows = [...document.querySelectorAll('.stages > li')];
+  // It got as far as design review, and the card says so; the end it took wears a cross.
   assert.deepEqual(
-    drawn.ways.filter((way) => way.to === 3).map((way) => way.from),
-    [2],
+    rows.map((row) => row.classList.contains('stage--ahead')),
+    [false, false, true, false],
   );
-  await mount(createElement(ProcessDiagram, drawn));
-  assert.equal(document.querySelectorAll('.pd-node--stopped .pd-cap').length, 1);
-  assert.equal(document.querySelectorAll('.pd-node--here').length, 0);
-  assert.equal(document.querySelectorAll('.pd-halo').length, 0);
-  // It got as far as design review, and the drawing says so.
-  assert.equal(document.querySelectorAll('.pd-node--behind').length, 2);
-  assert.equal(document.querySelectorAll('.pd-track--behind').length, 1);
+  assert.ok(rows[3]!.querySelector('svg.stage-glyph--bad .stage-sign'));
+  assert.equal(rows[3]!.getAttribute('aria-current'), 'step');
 });
 
 test('a stage is said the one way everywhere: a mark in the colour of its kind of standing, then its word', async (t) => {

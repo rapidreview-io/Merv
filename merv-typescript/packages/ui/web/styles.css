@@ -1424,6 +1424,7 @@ select.input,
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  max-width: 26rem;
   padding: var(--space-4) var(--space-4) var(--space-3);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -3379,115 +3380,6 @@ a.tile:hover small {
 .plane-value.changed {
   animation: map-roll 380ms ease-out;
 }
-/* The workflow, drawn. Working states left to right on one track, then one capped end;
-   an arc over the track for every way back, tinted once the record has taken it. Where
-   the record stands is the filled node in its kind's colour and the one thing on the
-   page that moves; what is behind it is tinted, a state it left and may reach again is
-   ringed, what it never reached is an outline, and an end it reached by a way out is
-   grey and carries that way's name. */
-.pd {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  overflow: visible;
-  --pd-tint: color-mix(in srgb, var(--kind, var(--active)) 45%, var(--line-strong));
-}
-.pd-track,
-.pd-arc {
-  fill: none;
-  stroke: var(--line-strong);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-}
-.pd-arc {
-  stroke-width: 1.25;
-  stroke-linejoin: round;
-}
-.pd-tip {
-  fill: var(--line-strong);
-}
-.pd-track--behind,
-.pd-arc--taken {
-  stroke: var(--pd-tint);
-}
-.pd-tip--taken {
-  fill: var(--pd-tint);
-}
-/* A node is two colours, and each mark of the record sets them. On a row a node is a
-   dot of its own ink, and the end is a ring until the record reaches it. */
-:where(.pd-node) {
-  --ink: var(--line-strong);
-  --fill: var(--bg);
-}
-.pd-node--left {
-  --ink: var(--pd-tint);
-}
-.pd-node--behind {
-  --ink: var(--pd-tint);
-  --fill: var(--ink);
-}
-.pd-node--here {
-  --ink: var(--kind, var(--active));
-  --fill: var(--ink);
-}
-.pd-node--stopped {
-  --ink: var(--muted);
-  --fill: var(--ink);
-}
-.pd-node circle {
-  fill: var(--fill);
-  stroke: var(--ink);
-  stroke-width: 1.5;
-}
-.pd-node .pd-cap {
-  fill: none;
-  stroke-width: 1.25;
-}
-.pd-node text {
-  fill: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-.pd-node--here text,
-.pd-node--stopped text {
-  fill: var(--text);
-}
-/* How long the record stood in a state, under the state's name, as a person writes it. */
-.pd-node .pd-time {
-  fill: var(--faint);
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-}
-/* Work is under way where the record stands: one slow ring leaves the node. An end is
-   at rest, and so is every row of a list. */
-.pd-node .pd-halo {
-  fill: var(--kind, var(--active));
-  stroke: none;
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: pd-ping 2.6s ease-out infinite;
-}
-@keyframes pd-ping {
-  0% {
-    opacity: 0.32;
-    transform: scale(0.55);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: scale(1);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pd-node .pd-halo {
-    animation: none;
-  }
-}
-
 /* Work lists: split pane and scope. -------------------------------------- */
 /* Above 1080px a record opens beside the list that sent you to it. Nothing is
    boxed: one hairline divides the two panes, the list keeps its own rows, and
