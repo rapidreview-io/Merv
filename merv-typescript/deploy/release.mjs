@@ -17,19 +17,36 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { parseArgs } from 'node:util';
 import { NODE_IMAGE, packageSource, publishLedgers, root } from './source-archive.mjs';
 
-const args = process.argv.slice(2);
-const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
+const { values: args, tokens } = parseArgs({
+  tokens: true,
+  options: {
+    help: { type: 'boolean' },
+    host: { type: 'string', default: 'ResearchSuite_Control' },
+    public: { type: 'string', default: 'https://experiments.rapidreview.io' },
+    sandboxes: { type: 'string' },
+    resume: { type: 'string' },
+    'dry-run': { type: 'boolean' },
+    'skip-hosted': { type: 'boolean' },
+    'no-rollback': { type: 'boolean' },
+  },
+});
+if (args.help) {
+  console.log(
+    'Usage: node deploy/release.mjs [--host HOST] [--public ORIGIN] [--sandboxes PATH] [--dry-run] [--resume RELEASE] [--skip-hosted] [--no-rollback]',
+  );
+  process.exit(0);
+}
 const sandboxes = (() => {
-  const index = args.indexOf('--sandboxes');
-  if (index < 0) return undefined;
-  const value = args[index + 1];
+  const value = args.sandboxes;
+  if (value === undefined) return undefined;
   if (
     !value ||
     value.startsWith('--') ||
     /[\x00-\x1f\x7f]/.test(value) ||
-    args.lastIndexOf('--sandboxes') !== index
+    tokens.filter((token) => token.kind === 'option' && token.name === 'sandboxes').length > 1
   )
     throw new Error('--sandboxes requires one checkout path');
   const path = resolve(value);
@@ -37,12 +54,12 @@ const sandboxes = (() => {
     throw new Error('--sandboxes must name a Git checkout directory');
   return path;
 })();
-const host = opt('--host', 'ResearchSuite_Control');
-const dryRun = args.includes('--dry-run');
-const noRollback = args.includes('--no-rollback');
-const resume = opt('--resume');
+const host = args.host;
+const dryRun = args['dry-run'];
+const noRollback = args['no-rollback'];
+const resume = args.resume;
 const PRODUCTION = 'https://experiments.rapidreview.io';
-const PUBLIC = opt('--public', PRODUCTION);
+const PUBLIC = args.public;
 // The origin is interpolated into the remote job's approved-origin check, so it is an origin
 // and nothing else: no path, no credentials, no shell metacharacters.
 if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(PUBLIC))
@@ -222,7 +239,7 @@ if (local && PUBLIC === PRODUCTION && ![0, 1, 4].includes(hosted('--resume'))) {
 }
 // The hosted run after Main's release refuses pins that differ from the host's record: refuse them
 // here instead, before Main names them.
-if (local && PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted('--check') !== 0) {
+if (local && PUBLIC === PRODUCTION && !args['skip-hosted'] && hosted('--check') !== 0) {
   console.error("The hosted pins differ from the host's record (above); Main was not released.");
   process.exit(1);
 }
@@ -267,7 +284,7 @@ log(
   `\`${release}\` | \`${vm.imageId.slice(7, 19)}\` | ${vm.plugins} | ${ok ? 'pass' : 'CHECK'} | vm ${vm.health}/${vm.ui}/${vm.anonymous}/${vm.approvedOrigin}/${vm.unapprovedOrigin}, public ${pub.health}/${pub.ui}, assets ${pub.assets} | previous image \`${vm.previousImage}\``,
 );
 if (!ok) process.exit(1);
-if (PUBLIC === PRODUCTION && !args.includes('--skip-hosted') && hosted() !== 0) {
+if (PUBLIC === PRODUCTION && !args['skip-hosted'] && hosted() !== 0) {
   console.error('Main is released; the hosted image release did not complete (see above).');
   process.exit(1);
 }

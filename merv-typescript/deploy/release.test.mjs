@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync } fr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { parseArgs } from 'node:util';
 
 const source = readFileSync(new URL('./release.mjs', import.meta.url), 'utf8');
 const definition = source.slice(
@@ -81,16 +82,21 @@ ${failure}
 
 const sandboxDefinition = source.slice(
   source.indexOf('const sandboxes ='),
-  source.indexOf('const host = opt('),
+  source.indexOf('const host = args.host;'),
 );
-const parseSandboxes = new Function(
+const validateSandboxes = new Function(
   'args',
+  'tokens',
   'existsSync',
   'statSync',
   'join',
   'resolve',
   `${sandboxDefinition}\nreturn sandboxes;`,
 );
+const parseSandboxes = (args, ...helpers) => {
+  const parsed = parseArgs({ args, tokens: true, options: { sandboxes: { type: 'string' } } });
+  return validateSandboxes(parsed.values, parsed.tokens, ...helpers);
+};
 const hostedDefinition = source.slice(
   source.indexOf('const hosted ='),
   source.indexOf('// A hosted run left open'),

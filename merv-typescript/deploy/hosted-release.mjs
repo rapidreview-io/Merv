@@ -61,6 +61,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 import { NODE_IMAGE, packageSource, publishLedgers, root, sh, sha256 } from './source-archive.mjs';
 
 // Merv paths, relative to merv-typescript, watched besides the last build's bundle inputs: the
@@ -307,23 +308,38 @@ async function detached(args) {
 }
 
 async function main(args) {
-  const opt = (k, d) => {
-    const value = args[args.indexOf(k) + 1];
-    return args.includes(k) && value && !value.startsWith('--') ? value : d;
-  };
-  const dryRun = args.includes('--dry-run');
-  if (!dryRun && !args.includes('--check') && !process.env.MERV_HOSTED_DRIVER)
-    return detached(args);
-  const host = opt('--host', 'ResearchSuite_Control');
+  const { values } = parseArgs({
+    args,
+    options: {
+      help: { type: 'boolean' },
+      host: { type: 'string', default: 'ResearchSuite_Control' },
+      sandboxes: { type: 'string' },
+      wrangler: { type: 'string' },
+      'canary-credential': { type: 'string' },
+      'drain-minutes': { type: 'string', default: '15' },
+      'dry-run': { type: 'boolean' },
+      'mint-canary': { type: 'boolean' },
+      check: { type: 'boolean' },
+      resume: { type: 'boolean' },
+      abandon: { type: 'boolean' },
+    },
+  });
+  if (values.help) {
+    console.log(
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+    );
+    return 0;
+  }
+  const dryRun = values['dry-run'];
+  if (!dryRun && !values.check && !process.env.MERV_HOSTED_DRIVER) return detached(args);
+  const host = values.host;
   const git = (a, cwd = root) => sh('git', a, cwd).trim();
   // The defaults sit in the main checkout, which a worktree shares its Git directory with.
   const checkout = dirname(resolve(root, git(['rev-parse', '--git-common-dir'])));
-  const sandboxes = resolve(opt('--sandboxes', join(checkout, 'output/fleet-sandboxes')));
+  const sandboxes = resolve(values.sandboxes ?? join(checkout, 'output/fleet-sandboxes'));
   const wrangler = resolve(
-    opt(
-      '--wrangler',
+    values.wrangler ??
       join(checkout, 'output/fleet-cloudflare-tools/node_modules/wrangler/bin/wrangler.js'),
-    ),
   );
   const head = git(['rev-parse', 'HEAD']);
   const atHead = (path) => JSON.parse(git(['show', `${head}:./${path}`]));
@@ -331,7 +347,10 @@ async function main(args) {
   const templates = Object.fromEntries(Object.entries(APPS).map(([p, file]) => [p, atHead(file)]));
   const template = templates[STANDARD]; // every app runs the same bridge Worker
   const bridge = dirname(dirname(template.main)); // the bridge Worker's directory in Sandboxes
-  const canary = { ...seed.canary, credential: opt('--canary-credential', seed.canary.credential) };
+  const canary = {
+    ...seed.canary,
+    credential: values['canary-credential'] ?? seed.canary.credential,
+  };
   const driver = randomUUID();
   const stamp = () => new Date().toISOString().replace(/[-:]|\.\d+/g, '');
   const ssh = (argv, input) =>
@@ -445,7 +464,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       : `a rollback needs ${wrangler}, signed in (whoami exit ${who.status})`;
   };
 
-  if (args.includes('--mint-canary')) {
+  if (values['mint-canary']) {
     if (!clean()) return 2;
     const run = `${stamp()}-canary`;
     upload(run, sandboxesHead());
@@ -461,7 +480,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     live = { state: null, active: null };
   }
   const { current, inputs } = live.state ?? seed;
-  if (args.includes('--check')) {
+  if (values.check) {
     if (live.active) {
       console.error(`hosted run ${live.active} is open`);
       return 2;
@@ -476,7 +495,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`Live pins differ from the host's record: ${problems.join('; ')}`);
     return problems.length ? 2 : 0;
   }
-  const mode = args.includes('--abandon') ? 'abandon' : 'resume';
+  const mode = values.abandon ? 'abandon' : 'resume';
   if (live.active) {
     const doing = { abandon: 'abandoning it', resume: 'finishing it' }[mode];
     console.log(
@@ -484,7 +503,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     );
     return dryRun ? 0 : clean() ? await drive(live.active, mode) : 2;
   }
-  if (args.includes('--resume') || mode === 'abandon') {
+  if (values.resume || mode === 'abandon') {
     console.log('No hosted run is open.');
     return 0;
   }
@@ -508,7 +527,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
     current,
     canary,
     nodeImage: NODE_IMAGE,
-    drainSeconds: Number(opt('--drain-minutes', '15')) * 60,
+    drainSeconds: Number(values['drain-minutes']) * 60,
   };
   console.log(describePlan(plan));
   if (dryRun && plan.lane !== 'none') {
