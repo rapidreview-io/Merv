@@ -701,6 +701,12 @@ test('an Escape a menu or a dialog takes as its own shuts that, and leaves the s
   menu.setAttribute('role', 'dialog');
   await key(item, 'Escape');
   assert.equal(where, '/work?key=session:session_ablate');
+  // Nor does one pressed inside the Agent's window, which stands beside the page.
+  menu.removeAttribute('role');
+  menu.className = 'pi-dock';
+  await key(item, 'Escape');
+  assert.equal(where, '/work?key=session:session_ablate');
+  menu.className = '';
   // Nor does one another control already took, wherever it was pressed.
   await act(async () => {
     const taken = new window.KeyboardEvent('keydown', {

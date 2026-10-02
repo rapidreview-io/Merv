@@ -661,8 +661,9 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     (cards.find((card) => card.dataset.key === key) ?? main.current)?.focus();
   }, [asked]);
   // Escape closes the sidebar wherever the cursor is — except inside a guard, where it
-  // means Cancel and has already been taken, and inside a menu or a dialog, such as the
-  // rail's account menu, whose own Escape shuts it and must not close this as well.
+  // means Cancel and has already been taken, inside the Agent's window, which is another
+  // conversation, and inside a menu or a dialog, such as the rail's account menu, whose own
+  // Escape shuts it and must not close this as well.
   const closing = useRef(close);
   closing.current = close;
   useEffect(() => {
@@ -670,7 +671,7 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       const from = event.target as Element | null;
-      if (from?.closest?.(`.guard, ${OWN_ESCAPE}, ${TYPING}`)) return;
+      if (from?.closest?.(`.guard, .pi-dock, ${OWN_ESCAPE}, ${TYPING}`)) return;
       event.preventDefault();
       closing.current();
     };
