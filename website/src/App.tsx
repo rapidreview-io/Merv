@@ -267,7 +267,8 @@ function useDiagramWidth() {
     // Spread the columns on wide screens without stretching marks or adding height.
     const observer = new ResizeObserver(([entry]) => {
       const px = entry.contentRect.width;
-      setSize({ width: Math.max(1080, px / 1.2), px });
+      // A hidden container measures zero; keep the last real size.
+      if (px) setSize({ width: Math.max(1080, px / 1.2), px });
     });
     observer.observe(ref.current);
     return () => observer.disconnect();
