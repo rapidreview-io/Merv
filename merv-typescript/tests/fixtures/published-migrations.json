@@ -614,7 +614,7 @@
       "component": "sessions",
       "version": 11,
       "hash": "f79eac8e70323cb01ad5954da7b9245f64daaaccf714a05b7fa7b750970be2f5",
-      "published": false
+      "published": true
     },
     {
       "component": "tasks",

@@ -743,9 +743,12 @@ print(json.dumps(res))`,
 test('the canary releases a Pi v2 machine as its person would, then checks it served the release', () => {
   const out = py(
     `${scratch}${twoApps}vm.credential=lambda path:{'projectId':'p'};vm.whoami=lambda c:None
-vm.secrets.token_hex=lambda n:'beef';vm.time.sleep=lambda s:None
+vm.secrets.token_hex=lambda n:'beef'
+clock=[0];vm.time.monotonic=lambda:clock[0]
+vm.time.sleep=lambda seconds:clock.__setitem__(0,clock[0]+seconds)
 for app in apps.values(): app['health']={'errors':[],'instances':{'failed':0}}
-def canary(v2=True,releases=True):
+def canary(v2=True,releases=True,deleted=True,release_after=0):
+    clock[0]=0
     calls,phase=[],['active']
     def tool(c,name,body,tries=12):
         calls.append(name)
@@ -755,11 +758,13 @@ def canary(v2=True,releases=True):
         return {'pi.create':{'id':'conv1'},'pi.send':{'id':'cmd1'},'pi.snapshot':{'commands':[command]}}.get(name,{})
     def main_read(query,*p):
         if 'launch' in query: return {'n':int(p==('fa_1','${OLD}'))}
-        return {'n':int(p==('fa_1',) and phase[0]!='released')}
+        assert \"phase = 'released'\" in query and \"->'runtime'->>'deleted' = 'true'\" in query
+        return {'n':int(p==('fa_1',) and phase[0]=='released' and deleted and clock[0]>=release_after)}
     vm.tool,vm.main_read=tool,main_read
     try: return [step.canary({'releaseId':'${OLD}'}),calls]
     except RuntimeError as e: return [str(e),calls]
-res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False)}
+res={'v2':canary(),'v1':canary(v2=False),'held':canary(releases=False),
+     'phaseOnly':canary(deleted=False),'late':canary(release_after=327),'deadline':canary(release_after=601)}
 apps['cloudflare-fleet-large']['image']='reg@sha256:old';res['large']=canary()
 print(json.dumps(res))`,
   );
@@ -770,6 +775,11 @@ print(json.dumps(res))`,
   // Pi v1 has no machine to release: its pi.stop releases the conversation's.
   assert.equal(out.v1[0].released, true);
   assert.match(out.held[0], /^canary_failed .*"released": false/);
+  assert.match(out.phaseOnly[0], /^canary_failed .*"released": false/);
+  assert.equal(out.late[0].released, true);
+  assert.equal(out.late[0].seconds, 327);
+  assert.match(out.deadline[0], /^canary_failed .*"released": false/);
+  assert.match(out.deadline[0], /"seconds": 600/);
   assert.match(out.large[0], /^canary_failed .*"apps": \{"cloudflare-fleet-large": false\}/);
 });
 
@@ -1026,4 +1036,110 @@ print(json.dumps(res))`);
   assert.match(out.busy, /holds the host lock/);
   assert.match(out.pending, /recovery snapshot restart is pending/);
   assert.equal(out.released, true);
+});
+
+test('native application status retries only transient HTTP reads within the sbx deadline', () => {
+  const result = py(`import ast,asyncio,contextlib,types
+class ProviderUnavailableError(Exception):
+    def __init__(self,status):
+        super().__init__('native status unavailable')
+        self.details={'status':status,'path':'DO-NOT-LOG-PATH'}
+    def add_note(self,note): self.__notes__=[*getattr(self,'__notes__',[]),note]
+class AuthorizationError(Exception): pass
+node=next(n for n in ast.parse(vm.SBX).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='application_status')
+budgets=[];sleeps=[]
+@contextlib.asynccontextmanager
+async def timeout(seconds):
+    budgets.append(seconds)
+    yield
+async def sleep(delay): sleeps.append(delay)
+ns={'asyncio':types.SimpleNamespace(timeout=timeout,sleep=sleep),'ProviderUnavailableError':ProviderUnavailableError}
+exec(compile(ast.Module(body=[node],type_ignores=[]),'<native-status-test>','exec'),ns)
+class Driver:
+    _account_id='account';_application_id='application'
+    def __init__(self,sequence): self.sequence=iter(sequence);self.calls=[]
+    async def _native_result(self,path):
+        self.calls.append(path)
+        value=next(self.sequence)
+        if isinstance(value,Exception): raise value
+        return value
+async def main():
+    cases=[]
+    for statuses in ([], [429,503], [500], [502], [504], [599]):
+        budgets.clear();sleeps.clear()
+        expected=({'id':'application','configuration':{'image':'digest'}},{'success':True})
+        d=Driver([*[ProviderUnavailableError(s) for s in statuses],expected])
+        assert await ns['application_status'](d)==expected
+        assert len(d.calls)==len(statuses)+1
+        assert set(d.calls)=={'/accounts/account/containers/applications/application'}
+        assert budgets==[45] and sleeps==list(range(1,len(d.calls)))
+        cases.append(len(d.calls))
+    for error in [AuthorizationError('401'),AuthorizationError('403'),*[ProviderUnavailableError(s) for s in (401,403,404,200,None,'503',True,600)],TimeoutError('read deadline'),ValueError('bad response')]:
+        budgets.clear();sleeps.clear();d=Driver([error])
+        try: await ns['application_status'](d)
+        except Exception as caught: assert caught is error
+        else: raise AssertionError('error was swallowed')
+        assert len(d.calls)==1 and not sleeps
+    budgets.clear();sleeps.clear()
+    errors=[ProviderUnavailableError(s) for s in (503,429,502)]
+    d=Driver(errors)
+    try: await ns['application_status'](d)
+    except ProviderUnavailableError as caught:
+        assert caught is errors[-1]
+        assert caught.__notes__==['Cloudflare application status GET: HTTP 502, attempt 3/3']
+        assert 'DO-NOT-LOG-PATH' not in str(caught.__notes__)
+    else: raise AssertionError('exhaustion was swallowed')
+    assert budgets==[45] and sleeps==[1,2]
+    print(json.dumps({'successAttempts':cases,'exhaustedAttempts':len(d.calls),'maximumReadSeconds':45}))
+asyncio.run(main())`);
+  assert.deepEqual(result, {
+    successAttempts: [1, 3, 2, 2, 2, 2],
+    exhaustedAttempts: 3,
+    maximumReadSeconds: 45,
+  });
+});
+
+test('native application read timeout cancels its request without retrying', () => {
+  const result = py(`import ast,asyncio,contextlib,types
+class ProviderUnavailableError(Exception):
+    details={'status':503}
+node=next(n for n in ast.parse(vm.SBX).body if isinstance(n,ast.AsyncFunctionDef) and n.name=='application_status')
+budgets=[];sleeps=[]
+@contextlib.asynccontextmanager
+async def timeout(seconds):
+    budgets.append(seconds)
+    if hasattr(asyncio,'timeout'):
+        async with asyncio.timeout(0.001): yield
+    else:
+        # Test compatibility for macOS's Python 3.9; native control uses 3.11.
+        timer=asyncio.get_running_loop().call_later(0.001,asyncio.current_task().cancel)
+        try: yield
+        except asyncio.CancelledError: raise asyncio.TimeoutError from None
+        finally: timer.cancel()
+async def sleep(delay): sleeps.append(delay)
+ns={'asyncio':types.SimpleNamespace(timeout=timeout,sleep=sleep),'ProviderUnavailableError':ProviderUnavailableError}
+exec(compile(ast.Module(body=[node],type_ignores=[]),'<native-timeout-test>','exec'),ns)
+class Driver:
+    _account_id='account';_application_id='application';calls=0;cancelled=False
+    def __init__(self,hang_at): self.hang_at=hang_at
+    async def _native_result(self,path):
+        self.calls+=1
+        if self.calls<self.hang_at: raise ProviderUnavailableError('HTTP 503')
+        try: await asyncio.Event().wait()
+        finally: self.cancelled=True
+async def main():
+    results=[]
+    for hang_at in (1,2):
+        budgets.clear();sleeps.clear();d=Driver(hang_at)
+        try: await ns['application_status'](d)
+        except asyncio.TimeoutError: pass
+        else: raise AssertionError('timeout was swallowed')
+        assert budgets==[45] and sleeps==list(range(1,hang_at))
+        results.append({'calls':d.calls,'cancelled':d.cancelled})
+    print(json.dumps(results))
+asyncio.run(main())`);
+  assert.deepEqual(result, [
+    { calls: 1, cancelled: true },
+    { calls: 2, cancelled: true },
+  ]);
 });

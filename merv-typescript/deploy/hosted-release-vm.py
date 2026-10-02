@@ -83,6 +83,23 @@ SBX = r'''import asyncio,json,os
 from sqlalchemy import text
 from merv_sandboxes.config import Settings
 from merv_sandboxes.runtime import Container
+from merv_sandboxes.errors import ProviderUnavailableError
+async def application_status(d):
+    # Only this read-only GET retries. Preserve the native request timeout;
+    # cap the whole read at 45s inside sbx's 60s process deadline.
+    async with asyncio.timeout(45):
+        for attempt in range(1,4):
+            try:
+                return await d._native_result(
+                    f'/accounts/{d._account_id}/containers/applications/{d._application_id}')
+            except ProviderUnavailableError as exc:
+                status=exc.details.get('status')
+                transient=type(status) is int and (status==429 or 500<=status<=599)
+                if not transient or attempt==3:
+                    if type(status) is int:
+                        exc.add_note(f'Cloudflare application status GET: HTTP {status}, attempt {attempt}/3')
+                    raise
+                await asyncio.sleep(attempt)
 async def main():
     c=Container(Settings.load())
     try:
@@ -99,7 +116,7 @@ async def main():
             if not b:
                 raise SystemExit(os.environ['MERV_PROVIDER']+' is not an enabled Sandboxes provider')
             d=b.driver
-            a,_=await d._native_result(f'/accounts/{d._account_id}/containers/applications/{d._application_id}')
+            a,_=await application_status(d)
             g=a.get('configuration') or {}
             print(json.dumps({'id':a.get('id'),'name':a.get('name'),'version':a.get('version'),'image':g.get('image'),
               'maxInstances':a.get('max_instances'),'ssh':bool((g.get('wrangler_ssh') or {}).get('enabled')),
@@ -717,18 +734,22 @@ class Step:
         allocation = command.get('runtimeId')  # the machine that served the turn
         served = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
                            "data_json::jsonb->'runtime'->'launch'->>'releaseId' = $2", allocation, target)['n']
-        for _ in range(60):
-            live = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
-                             "phase <> 'released'", allocation)['n']
-            if not live:
+        # Native deletion and Fleet retries can each back off for a minute. Wait for
+        # observed stop, not just Fleet's lease-expiry fallback freeing its slot.
+        released, release_deadline = False, time.monotonic() + 600
+        while time.monotonic() < release_deadline:
+            released = main_read("SELECT count(*)::int AS n FROM {s}.fleet_allocations WHERE id = $1 AND "
+                                 "phase = 'released' AND data_json::jsonb->'runtime'->>'deleted' = 'true'",
+                                 allocation)['n'] == 1
+            if released:
                 break
-            time.sleep(3)
+            time.sleep(min(3, max(0, release_deadline - time.monotonic())))
         image = native()['image']
         apps = {p: native(p) for p in self.apps() if p != PROVIDER}
         result = {'conversation': conversation, 'status': command.get('status'), 'error': command.get('error'),
                   'reply': any(word in m.get('text', '') for m in command.get('messages', [])
                                if m.get('role') == 'assistant'),
-                  'servedByRelease': served > 0, 'released': not live,
+                  'servedByRelease': served > 0, 'released': released,
                   'apps': {p: n['image'] == image and not n.get('rollout') and (n.get('health') or {}).get(
                       'errors') == [] and not n['health'].get('instances', {}).get('failed') for p, n in apps.items()},
                   'seconds': round(time.monotonic() - started)}
