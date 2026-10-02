@@ -8,7 +8,6 @@ import { useCommand } from '../mutations';
 import { WORK } from '../navigation';
 import { RecordPicker, filePick } from '../record-picker';
 import {
-  Ago,
   Evidence,
   Failure,
   KV,
@@ -16,12 +15,12 @@ import {
   RecordPage,
   Stamp,
   StatusPill,
-  Summary,
   timeRows,
   useArtifacts,
 } from '../components';
 import { Gate, Relations } from '../process';
 import { useSession } from '../session';
+import { Thread, threadOf } from '../thread';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
 import { useActorNames } from './people';
@@ -29,7 +28,6 @@ import { DELIVER } from './overview';
 import {
   BLANK,
   CriterionRows,
-  FindingPill,
   Primary,
   ReviewSummary,
   Unmet,
@@ -61,41 +59,6 @@ export interface Task {
   dependencies: WorkflowDependency[];
   dependents: WorkflowDependency[];
   createdAt: string;
-}
-
-/**
- * What was delivered before the delivery the checks now state. A task keeps only its
- * newest delivery, so an earlier one is read from the review that pinned it: the word
- * that review came back with is the way to its verdict, and the files it pinned still
- * open in place. Newest first, behind one quiet disclosure.
- */
-function EarlierDeliveries({ task: t, rounds }: { task: Task; rounds: Review[] }) {
-  const artifacts = useArtifacts();
-  if (!rounds.length) return null;
-  const current = new Set([t.briefId, ...t.deliveryIds]);
-  return (
-    <details className="crit-file">
-      <Summary>
-        Earlier deliveries <span className="section-n">{rounds.length}</span>
-      </Summary>
-      <div className="stack">
-        {[...rounds].reverse().map((round) => (
-          <div className="stack" key={round.id}>
-            <p className="cluster">
-              <Link to={`/reviews/${round.id}`}>Review</Link>
-              <FindingPill value={round.verdict ?? round.status} />
-              <Ago at={round.createdAt} className="muted" />
-            </p>
-            {round.artifactIds
-              .filter((id) => !current.has(id))
-              .map((id) => (
-                <Evidence key={id} artifactId={id} artifact={artifacts.get(id)} meta />
-              ))}
-          </div>
-        ))}
-      </div>
-    </details>
-  );
 }
 
 /** How the server titles the brief it composes from a task's title, goal and checks. */
@@ -336,8 +299,7 @@ export function TaskChecks({
   draft?: Drafting;
 }) {
   const artifacts = useArtifacts();
-  const rounds = (reviews.data ?? []).filter((review) => review.subjectId === t.id);
-  const review = rounds.find((item) => item.id === t.reviewId);
+  const review = reviews.data?.find((item) => item.id === t.reviewId);
   const brief = artifacts.get(t.briefId);
   const composed = !brief || brief.title.startsWith(COMPOSED);
   return (
@@ -372,7 +334,6 @@ export function TaskChecks({
             meta
           />
         ))}
-        <EarlierDeliveries task={t} rounds={rounds.filter((item) => item.id !== t.reviewId)} />
       </div>
     </div>
   );
@@ -447,6 +408,12 @@ function TaskDetail({ row }: ViewProps) {
         <LoadState {...record} back={{ to: WORK.path, label: 'Work' }} />
       </div>
     );
+  // Deliveries, the reviews that answered them and the returns, once the reviews are read;
+  // a list that could not be read leaves the thread to the graph alone.
+  const rounds = t.reviewId ? (reviews.data ?? (reviews.error ? [] : undefined)) : [];
+  const thread = rounds
+    ? threadOf({ graph: process, reviews: rounds, subject: t.id, briefId: t.briefId, nameOf })
+    : [];
   return (
     <RecordPage
       back={<Link to={WORK.path}>← Work</Link>}
@@ -464,14 +431,19 @@ function TaskDetail({ row }: ViewProps) {
       title="Checks"
       content={<TaskChecks task={t} reviews={reviews} draft={delivery.draft} />}
       history={
-        t.failure ? (
+        thread.length || t.failure ? (
           <>
-            <h3 className="ev-role">Why this task ended</h3>
-            <p className="record-prose">{t.failure.reason}</p>
-            <p className="muted">
-              {nameOf(t.failure.actorId) && `${nameOf(t.failure.actorId)} · `}
-              <Stamp at={t.failure.createdAt} />
-            </p>
+            {thread.length > 0 && <Thread entries={thread} />}
+            {t.failure && (
+              <>
+                <h3 className="ev-role">Why this task ended</h3>
+                <p className="record-prose">{t.failure.reason}</p>
+                <p className="muted">
+                  {nameOf(t.failure.actorId) && `${nameOf(t.failure.actorId)} · `}
+                  <Stamp at={t.failure.createdAt} />
+                </p>
+              </>
+            )}
           </>
         ) : undefined
       }

@@ -1,9 +1,10 @@
 /**
  * The task page and the field that chooses records. Each test states one thing they
  * must do: say a check once with everything said about it, keep the brief open only
- * until something is delivered, keep an earlier delivery reachable, let a producer
- * deliver from the page alone — a file from their own disk included — and let a person
- * choose a record by name, by keyboard, without ever reading or typing an id.
+ * until something is delivered, let a producer deliver from the page alone — a file
+ * from their own disk included — and let a person choose a record by name, by
+ * keyboard, without ever reading or typing an id. An earlier delivery is reached from
+ * the thread (ui-thread.test.ts).
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -215,20 +216,16 @@ test('a reviewed task says each check once, with the claim, the finding and the 
     return summary.textContent!.replace(meta, '').trim();
   };
   assert.equal(files[0]!.querySelector('.crit-file-meta')!.textContent, 'Markdown · 259 B');
+  // An earlier delivery opens from its own post in the thread, not from here.
   assert.deepEqual(
     files.map((node) => [titled(node), node.open]),
     [
       ['Brief: reproduce grokking', false],
       ['Delivery: grokking curve', false],
       ['Delivery confirmations', false],
-      ['Earlier deliveries 1', false],
     ],
   );
-  // The earlier round is the way to its own verdict and still opens what it pinned.
-  const round = files[3]!;
-  assert.equal(round.querySelector('a')?.getAttribute('href'), '/reviews/review_before');
-  assert.equal(round.querySelector('.crit-pill')?.textContent, 'needs changes');
-  assert.match(round.querySelectorAll('summary')[1]!.textContent!, /^Delivery: first try/);
+  assert.ok(!text().includes('first try'), 'the earlier round is the thread’s to tell');
   assert.ok(!text().includes('review_other'), 'another record’s review is not this task’s');
   assert.doesNotMatch(text(), /art_0|wf_task/, 'no identifier is printed');
 });

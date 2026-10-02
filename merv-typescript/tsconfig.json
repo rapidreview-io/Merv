@@ -30,10 +30,12 @@
     "tests/ui-keys.test.ts",
     "tests/ui-markdown.test.ts",
     "tests/ui-paper.test.ts",
+    "tests/ui-reflections.test.ts",
     "tests/ui-reviews.test.ts",
     "tests/ui-work-map.test.ts",
     "tests/ui-shell.test.ts",
     "tests/ui-tasks.test.ts",
+    "tests/ui-thread.test.ts",
     "tests/ui-huggingface.test.ts"
   ]
 }

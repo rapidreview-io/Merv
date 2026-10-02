@@ -2946,6 +2946,75 @@ select.input,
   overflow-wrap: anywhere;
 }
 
+/* Thread. ----------------------------------------------------------------- */
+/* What happened to a unit of work (thread.tsx), oldest first, in the feed's posts
+   and quiet lines at a document's measure. One hairline runs down the gutter from
+   the first disc to the last entry, under the discs and through the dots, so a
+   loop reads as one line of conversation. */
+.thread {
+  max-width: 72ch;
+  list-style: none;
+}
+.thread > li {
+  position: relative;
+  /* Where the entry's disc or dot is centred: the hairline starts and ends there. */
+  --mid: 25px;
+}
+.thread > .feed-line {
+  --mid: 18px;
+}
+.thread > li::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 12.5px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.thread > li:first-child::before {
+  top: var(--mid);
+}
+.thread > li:last-child::before {
+  bottom: calc(100% - var(--mid));
+}
+/* The disc and the dot stand over the hairline. */
+.thread .feed-avatar,
+.thread-dot {
+  position: relative;
+}
+.thread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ghost);
+}
+/* The part a person played follows their name, and the time keeps the right edge. */
+.thread-role {
+  flex: none;
+  margin-right: auto;
+}
+/* The role, and the way to a review — a post's quiet last line, as a feed post's
+   file is. */
+.thread-role,
+.thread .hit {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.thread-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* An experiment's conclusion stands whole under its question, read as a document. */
+.page-summary > .md,
+.page-summary > .ev-role {
+  margin-top: var(--space-3);
+}
+.page-summary > .ev-role + .md {
+  margin-top: 0;
+}
+
 /* Experiment record. ------------------------------------------------------ */
 .ev-role {
   display: block;

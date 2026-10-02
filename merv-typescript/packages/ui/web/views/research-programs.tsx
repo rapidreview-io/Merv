@@ -1,28 +1,26 @@
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTool } from '../api';
 import {
   Ago,
   Failure,
   Field,
-  KV,
   LoadState,
   RecordPage,
-  Ruled,
   StatusPill,
   Submit,
   Summary,
-  col,
   cx,
   words,
 } from '../components';
-import { ListPage, splitRoutes, useListFilter } from '../list-filters';
+import { ListPage, Tabs, splitRoutes, useListFilter } from '../list-filters';
 import { useCommand } from '../mutations';
 import { Gate, RowDiagram } from '../process';
 import { useScopeKey, useSession } from '../session';
 import type { ShellData } from '../shell-types';
 import { ThreeStates } from '../states';
+import { ArtifactBody, type Artifact } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
@@ -31,11 +29,6 @@ import { ReviewSummary } from './reviews';
 const REFLECTIONS = '/reflections';
 
 // Browser read models intentionally omit server services and authentication types.
-interface Artifact {
-  id: string;
-  title: string;
-  hash: string;
-}
 interface Workflow {
   workflow: string;
   state: string;
@@ -66,15 +59,6 @@ interface Reflection {
     reviewerId: string | null;
     returnTo?: string;
   } | null;
-}
-type Lens = Reflection['lenses'][number];
-
-function EvidenceLink({ artifact }: { artifact: Artifact }) {
-  return (
-    <Link to={`/artifacts/${artifact.id}`} title={`${artifact.id}\nSHA-256 ${artifact.hash}`}>
-      {artifact.title}
-    </Link>
-  );
 }
 
 /** The gate this wave stands at, derived from its own record. */
@@ -187,11 +171,17 @@ function ReflectionList({ shell }: { shell: ShellData }) {
   );
 }
 
-function ReflectionDetail({ row, shell }: ViewProps) {
+/**
+ * A wave read aggregated first: its report, the synthesis, as the document it is with
+ * the change specification under it, then a tab for each lens on its own — who wrote
+ * it, where it stands, its report in place, and the instructions it was given. Which
+ * one is open is in the address, so a reload or a link lands on it.
+ */
+export function ReflectionDetail({ row }: ViewProps) {
   const { id = '' } = useParams();
-  const { actor } = useSession();
   const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
   const nameOf = useActorNames();
+  const [params, setParams] = useSearchParams();
   const wave = data.error ? undefined : data.data;
   if (!wave)
     return (
@@ -199,6 +189,17 @@ function ReflectionDetail({ row, shell }: ViewProps) {
         <LoadState {...data} back={{ to: row.path, label: row.label }} />
       </div>
     );
+  const tabs = [
+    ...(wave.report ? [{ value: 'report', label: 'Report' }] : []),
+    ...wave.lenses.map((lens) => ({ value: lens.id, label: words(lens.perspective) })),
+  ];
+  const open = tabs.find((tab) => tab.value === params.get('lens'))?.value ?? tabs[0]?.value;
+  const lens = wave.lenses.find((item) => item.id === open);
+  const choose = (value: string) => {
+    const next = new URLSearchParams(params);
+    next.set('lens', value);
+    setParams(next, { replace: true });
+  };
   return (
     <RecordPage
       back={<Link to={row.path}>← {row.label}</Link>}
@@ -207,41 +208,46 @@ function ReflectionDetail({ row, shell }: ViewProps) {
       state={<StatusPill value={wave.workflow.state} />}
       act={<WaveGate id={wave.id} kind={row.view.kind} />}
       // The section is the synthesis once there is one; until then it is only its lenses.
-      title={wave.report ? 'Synthesis' : 'Perspectives'}
+      title={wave.report ? 'Synthesis' : 'Lenses'}
       content={
-        <>
-          {wave.report && <h3 className="ev-role">Independent perspectives</h3>}
-          <Ruled
-            label="Perspectives"
-            template="minmax(0, 1.6fr) 120px minmax(0, 1fr) minmax(0, 1.4fr)"
-            rows={wave.lenses}
-            keyOf={(lens) => lens.id}
-            columns={[
-              col<Lens>('lens', 'Perspective', (lens) => (
-                <details>
-                  <Summary>{lens.perspective.replaceAll('_', ' ')}</Summary>
+        open && (
+          <>
+            <div className="tabs tabs--strip">
+              <Tabs label="Lenses" options={tabs} value={open} onChange={choose} />
+            </div>
+            {open === 'report' && wave.report && (
+              <>
+                <ArtifactBody artifactId={wave.report.id} metadata={wave.report} />
+                {wave.changeSpec && (
+                  <>
+                    <h3 className="ev-role">Change specification</h3>
+                    <ArtifactBody artifactId={wave.changeSpec.id} metadata={wave.changeSpec} />
+                  </>
+                )}
+              </>
+            )}
+            {lens && (
+              <div className="stack" key={lens.id}>
+                <p className="cluster muted">
+                  {nameOf(lens.producerId) && (
+                    <>
+                      {nameOf(lens.producerId)}
+                      <span className="ghost">·</span>
+                    </>
+                  )}
+                  <StatusPill value={lens.workflow.state} />
+                </p>
+                {lens.artifact && (
+                  <ArtifactBody artifactId={lens.artifact.id} metadata={lens.artifact} />
+                )}
+                <details className="ov-said">
+                  <Summary>Instructions</Summary>
                   <p>{lens.instructions}</p>
                 </details>
-              )),
-              col<Lens>('state', 'State', (lens) => <StatusPill value={lens.workflow.state} />),
-              col<Lens>('producer', 'Contributor', (lens) => nameOf(lens.producerId)),
-              col<Lens>('report', 'Report', (lens) =>
-                lens.artifact ? <EvidenceLink artifact={lens.artifact} /> : null,
-              ),
-            ]}
-          />
-          {wave.report && (
-            <KV
-              rows={[
-                ['Report', <EvidenceLink artifact={wave.report} />],
-                !!wave.changeSpec && [
-                  'Change specification',
-                  <EvidenceLink artifact={wave.changeSpec} />,
-                ],
-              ]}
-            />
-          )}
-        </>
+              </div>
+            )}
+          </>
+        )
       }
       related={
         wave.review && (

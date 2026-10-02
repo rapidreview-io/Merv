@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import type { CodeUnit } from '@merv/contracts/code-units';
@@ -7,24 +7,22 @@ import { useTool } from '../api';
 import { splitRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
-  Ago,
   Evidence,
   KV,
   LoadState,
   RecordPage,
   StatusPill,
-  cx,
   relativeTime,
   timeRows,
   useArtifacts,
-  words,
 } from '../components';
 import { Markdown, RecordText, useRecordNames } from '../markdown';
 import { Gate } from '../process';
 import { useSession } from '../session';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
-import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
+import { ThreeStates, newestReview, reviewClause } from '../states';
+import { Thread, threadOf } from '../thread';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
 import { WorkList } from './work';
@@ -81,65 +79,6 @@ export function EvidenceFiles({
   );
 }
 
-/**
- * What a row of the wave states beside its state, in the same grammar: what an
- * independent reader decided and what the science came to. Neither is derived from
- * the other — a passing verdict is not an outcome — and a fact the record does not
- * carry yet is left out rather than named as missing. The state itself stands
- * beside the title, where every record's does, so it is not said again here.
- */
-function StandingLine({
-  experiment: e,
-  review,
-  stage,
-  reviewer,
-}: {
-  experiment: Experiment;
-  review?: Review;
-  stage: string;
-  reviewer: ReactNode;
-}) {
-  const said = reviewClause(review, reviewer);
-  const outcome = firstSentence(e.conclusion);
-  if (!said && !outcome) return null;
-  return (
-    <ThreeStates
-      review={said ?? undefined}
-      outcome={outcome ? { detail: outcome } : undefined}
-      meta={said ? stage : undefined}
-    />
-  );
-}
-
-/**
- * Every round the record sealed, newest first: the gate it was read at, the word
- * it came back with, and when. The round is the way to its own verdict, where the
- * criteria and the reviewer's findings are already written down.
- */
-function Rounds({ experiment: e, reviews }: { experiment: Experiment; reviews: Review[] }) {
-  if (!e.submissions.length) return null;
-  return (
-    <>
-      <h3 className="ev-role">Rounds</h3>
-      {[...e.submissions].reverse().map((s) => {
-        const review = reviews.find((item) => item.id === s.reviewId);
-        const word = review?.verdict ?? review?.status;
-        return (
-          <p key={s.id}>
-            <Link to={`/reviews/${s.reviewId}`}>{STAGE[s.stage]}</Link>{' '}
-            {word && (
-              <span className={cx('crit-word', review?.verdict && `crit-word--${word}`)}>
-                {words(word)}
-              </span>
-            )}
-            <Ago at={s.createdAt} className="muted" />
-          </p>
-        );
-      })}
-    </>
-  );
-}
-
 function ExperimentRecord({
   experiment: e,
   process,
@@ -158,17 +97,18 @@ function ExperimentRecord({
   // The publication verbs answer a signed-in operator and nobody else, so the Code
   // section is told who is reading before it offers the move.
   const { actor, account } = useSession();
-  const mine = (reviews ?? []).filter((review) => review.subjectId === e.id);
-  const newest = newestReview(mine, e.id);
+  const newest = newestReview(reviews, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
+  // What the newest review decided, or where it stands until it has; a passing verdict
+  // is not an outcome, so the conclusion is said apart from it, whole.
+  const said = reviewClause(newest, newest?.reviewerId ? nameOf(newest.reviewerId) : null);
   const currentEvidence = e.evidence.filter(
     (item) => item.current && item.attemptIndex === e.attempt.index,
   );
   const figures = e.submissions.at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = ['failed', 'abandoned'].includes(e.workflow.state);
-  // The header already says a conclusion of one sentence; History holds one that says more.
-  const concluded = !!e.conclusion && e.conclusion.trim() !== firstSentence(e.conclusion);
+  const thread = reviews ? threadOf({ graph: process, reviews, subject: e.id, nameOf }) : [];
   const names = useRecordNames(e.intent);
   return (
     <RecordPage
@@ -176,18 +116,16 @@ function ExperimentRecord({
       kind="experiments"
       name={e.name}
       state={<StatusPill value={e.workflow.state} />}
-      // The question it was opened to answer, as a task's goal stands under its title.
+      // The question it was opened to answer, as a task's goal stands under its title, and
+      // what it came to directly under that, with the verdict that accepted it.
       standing={
         <>
           <span>
             <RecordText text={e.intent} names={names} />
           </span>
-          <StandingLine
-            experiment={e}
-            review={newest}
-            stage={stage ? STAGE[stage] : 'Review'}
-            reviewer={newest?.reviewerId ? nameOf(newest.reviewerId) : null}
-          />
+          {said && <ThreeStates review={said} meta={stage ? STAGE[stage] : 'Review'} />}
+          {ended && e.conclusion && <span className="ev-role">Why this experiment ended</span>}
+          {e.conclusion && <Markdown source={e.conclusion} />}
         </>
       }
       act={process && <Gate graph={process} kind="experiments" />}
@@ -209,19 +147,7 @@ function ExperimentRecord({
           </>
         ) : undefined
       }
-      history={
-        concluded || e.submissions.length ? (
-          <>
-            {concluded && (
-              <>
-                <h3 className="ev-role">{ended ? 'Why this experiment ended' : 'Conclusion'}</h3>
-                <Markdown source={e.conclusion!} />
-              </>
-            )}
-            <Rounds experiment={e} reviews={mine} />
-          </>
-        ) : undefined
-      }
+      history={thread.length ? <Thread entries={thread} /> : undefined}
       description={e.details ? <Markdown source={e.details} /> : undefined}
       code={
         unit && <UnitCode unit={unit} named={nameOf} signedIn={signedInAdmin(actor, account)} />
@@ -268,7 +194,8 @@ function ExperimentDetail({ row }: ViewProps) {
     <ExperimentRecord
       experiment={record.data.experiment}
       process={record.data.process}
-      reviews={reviews.data}
+      // A list that could not be read leaves the thread to the graph alone.
+      reviews={reviews.data ?? (reviews.error ? [] : undefined)}
       exhibit={exhibit.data}
       unit={record.data.codeUnit}
       nameOf={nameOf}

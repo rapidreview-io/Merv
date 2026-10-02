@@ -257,6 +257,54 @@ test('an owner the default leaves out decides the review as owner, with one cont
   assert.ok(text().includes(taken));
 });
 
+test('a decided review leads with what it found short and its sentence; the checks follow', async (t) => {
+  t.after(async () => await unmount());
+  const findings = ['met', 'not_met', 'not_verified', 'waived'];
+  serve('/tools/review.get', {
+    body: {
+      result: {
+        ...claimed,
+        criteria: ['First check.', 'Second check.', 'Third check.', 'Fourth check.'],
+        status: 'submitted',
+        verdict: 'needs_changes',
+        returnTo: 'planned',
+        synopsis: 'The design names no matched control run.',
+        findings: findings.map((status, index) => ({
+          criterionNumber: index + 1,
+          status,
+          evidenceIds: [],
+          notes: `Finding ${index + 1}.`,
+        })),
+      },
+    },
+  });
+  await mount(page());
+  await settle(10);
+  const said = text();
+  const order = [
+    '2 of 4 not met',
+    'The design names no matched control run.',
+    'Returned to planned',
+    'Check 4 was waived.',
+    'Check 3 was not verified.',
+    'Checks',
+    'First check.',
+  ].map((line) => [line, said.indexOf(line)] as const);
+  assert.ok(
+    order.every(([, at]) => at >= 0),
+    `every line is on the page: ${said}`,
+  );
+  assert.deepEqual(
+    order.map(([line]) => line),
+    [...order].sort((a, b) => a[1] - b[1]).map(([line]) => line),
+  );
+  assert.equal(said.split('The design names no matched control run.').length, 2, 'said once');
+  assert.ok(
+    ![...document.querySelectorAll('.ev-role')].some((label) => label.textContent === 'Verdict'),
+    'no block after the checks repeats it',
+  );
+});
+
 test('a verdict the owner gave as owner says so where it says who gave it', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/review.get', {

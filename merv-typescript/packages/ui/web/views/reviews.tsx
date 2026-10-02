@@ -95,6 +95,12 @@ export const FindingPill = ({ value }: { value: string }) => (
   <span className={cx('crit-word', 'crit-pill', `crit-word--${value}`)}>{words(value)}</span>
 );
 
+/** How many checks a verdict found short — not met, or not verified — said only where any were. */
+export const notMet = ({ findings }: Pick<Review, 'findings'>) => {
+  const short = findings.filter((item) => ['not_met', 'not_verified'].includes(item.status));
+  return short.length ? `${short.length} of ${findings.length} not met` : undefined;
+};
+
 /**
  * The review's one line on the record it judged: the word it came back with — or
  * where it stands until it has one — its sentence, and the way to the verdict page.
@@ -365,7 +371,15 @@ export function ReviewDetail() {
         </>
       }
       act={
-        r.verdict ? undefined : (
+        // The word and who gave it stand in the header; what they said leads the page.
+        r.verdict ? (
+          <div className="stack">
+            {notMet(r) && <p className="muted">{notMet(r)}</p>}
+            <p className="verdict-said">{r.synopsis ?? r.notes}</p>
+            {r.returnTo && <p className="muted">Returned to {words(r.returnTo)}</p>}
+            {stated}
+          </div>
+        ) : (
           <>
             {stated}
             <Controls review={r} guidance={guidance} values={values} onDone={review.reload} />
@@ -401,15 +415,6 @@ export function ReviewDetail() {
                   meta
                 />
               ))}
-            </div>
-          )}
-          {/* The word and who gave it stand in the header; here is what they said. */}
-          {r.verdict && (
-            <div className="stack">
-              <h3 className="ev-role">Verdict</h3>
-              <p className="verdict-said">{r.synopsis ?? r.notes}</p>
-              {r.returnTo && <p className="muted">Returned to {words(r.returnTo)}</p>}
-              {stated}
             </div>
           )}
         </div>
