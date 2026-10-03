@@ -297,7 +297,7 @@ export function Integrations({ shell }: ViewProps) {
       {!code && !allowance && !compute.loading && nativeAvailable === false && (
         <EmptyState kind="settings" icon="link" title="No integrations" />
       )}
-      {allowance && (
+      {allowance && nativeAvailable === false && (
         <KV
           rows={[
             [

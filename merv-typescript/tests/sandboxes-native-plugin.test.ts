@@ -189,6 +189,8 @@ test('native plugin waits for all owners and migration before publishing provide
     accountId: null,
     memberId: null,
     connectedAt: null,
+    funding: 'personal',
+    managedAvailable: false,
     url: 'https://sandbox.invalid/ui',
   });
   assert.equal((await fetch(`${f.url}/sandboxes/connection/callback/finish`)).status, 404);

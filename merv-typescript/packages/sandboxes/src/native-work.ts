@@ -104,6 +104,7 @@ export class NativeWorkService implements NativeSandboxWork {
   }
   async connected(projectId: string, tx?: Transaction): Promise<boolean> {
     const row = await this.connections.current(projectId, tx);
+    if (this.connections.config.managed && !row?.billing_subject) return false;
     return !!row && !row.revoke_pending;
   }
   private row(sql: Sql, project: string, kind: NativeWorkKind, work: string) {
@@ -121,6 +122,12 @@ export class NativeWorkService implements NativeSandboxWork {
     if (existing) return;
     const connection = await this.connections.current(project, tx);
     valid(connection && !connection.revoke_pending);
+    check(
+      !this.connections.config.managed || connection.billing_subject,
+      'sandbox_managed_required',
+      'Enable Merv-managed ML in project integrations first',
+      409,
+    );
     await tx.run(
       'INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES(?,?,?,?)',
       project,
@@ -235,6 +242,7 @@ export class NativeWorkService implements NativeSandboxWork {
         (reply.revoked_at === null || typeof reply.revoked_at === 'string'),
     );
     return this.state.transaction(async (tx) => {
+      await this.connections.assertReady(work.project_id, tx);
       const current = await this.row(tx, work.project_id, work.work_kind, work.work_id);
       valid(current && current.connection_id === connection.id);
       valid(
@@ -264,6 +272,7 @@ export class NativeWorkService implements NativeSandboxWork {
     kind: NativeWorkKind,
     attempt: string,
   ) {
+    await this.connections.assertReady(session.projectId, sql);
     const work = await this.row(sql, session.projectId, kind, session.instanceId);
     const revoked = await sql.get(
       'SELECT lease_id FROM sandbox_native_revoked_leases WHERE lease_id=?',
@@ -318,6 +327,12 @@ export class NativeWorkService implements NativeSandboxWork {
     const policy = session.execution.policy;
     if (policy.readOnly && policy.workspace?.mode !== 'none' && policy.workspace?.retain) return [];
     const connection = await this.connections.get(connectionId);
+    check(
+      !this.connections.config.managed || connection.billing_subject,
+      'sandbox_managed_required',
+      'This work needs Merv-managed ML funding before execution',
+      409,
+    );
     let work = await this.state.read((sql) => this.live(sql, session, connectionId, kind, attempt));
     work = await this.ensure(work, connection);
     const assignment = await this.state.transaction(async (tx) => {
@@ -546,6 +561,7 @@ export class NativeWorkService implements NativeSandboxWork {
     }
   }
   private async fresh(work: NativeWorkRow): Promise<void> {
+    await this.state.read((sql) => this.connections.assertReady(work.project_id, sql));
     const current = await this.state.read((sql) =>
       this.row(sql, work.project_id, work.work_kind, work.work_id),
     );

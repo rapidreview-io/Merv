@@ -62,6 +62,9 @@ if (
   throw new Error('Invalid MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS');
 const piEnabled = optIn('MERV_PI_ENABLED');
 const nativeComputeEnabled = optIn('MERV_SANDBOXES_NATIVE_ENABLED');
+const managedMlEnabled = optIn('MERV_SANDBOXES_MANAGED_ML_ENABLED');
+if (managedMlEnabled && (!nativeComputeEnabled || !process.env.MERV_SANDBOXES_ML_NAMESPACE))
+  throw new Error('Managed ML requires native compute and the ML consumption grant');
 if (nativeComputeEnabled && process.env.MERV_SANDBOXES_URL === undefined)
   throw new Error('Native compute requires MERV_SANDBOXES_URL');
 if (workflowEnabled && !fleetEnabled) throw new Error('Fleet workflow requires MERV_FLEET_ENABLED');
@@ -189,6 +192,7 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
         : [],
     };
   }
+  if (managedMlEnabled) native.managed = { namespace: ml.namespace, tokenEnv: ml.tokenEnv };
   if (fleetEnabled) {
     runtimes =
       process.env.MERV_FLEET_RUNTIMES === undefined

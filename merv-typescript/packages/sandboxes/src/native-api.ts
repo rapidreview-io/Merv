@@ -32,6 +32,7 @@ export function nativeRoutes(connections?: NativeConnections): MountHandler {
         '/sandboxes/connection',
         '/sandboxes/connection/start',
         '/sandboxes/connection/finish',
+        '/sandboxes/connection/managed',
       ].includes(r.url.pathname)
     )
       throw new MervError('not_found', 'Unknown compute endpoint', 404);
@@ -60,6 +61,8 @@ export function nativeRoutes(connections?: NativeConnections): MountHandler {
         'invalid_input',
         'Compute controls expect an empty object',
       );
+      if (r.url.pathname === '/sandboxes/connection/managed')
+        return connections.enableManaged(caller);
       if (r.url.pathname === '/sandboxes/connection/start') {
         const result = await connections.begin(caller);
         res.setHeader('set-cookie', result.cookie);

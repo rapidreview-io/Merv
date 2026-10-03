@@ -150,6 +150,13 @@ const configuration = z
         applicationSecretEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
         encryptionKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
         publicOrigin: z.string().url(),
+        managed: z
+          .object({
+            namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
+            tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -277,12 +284,22 @@ export class SandboxService implements Sandboxes {
         parsed.data.refreshMs,
         parsed.data.ml,
       );
+      const admit = () =>
+        check(
+          !parsed.data.native?.managed,
+          'compute_native_required',
+          'Use Merv-managed ML through the native compute connection',
+          409,
+        );
       this.compute = {
         since: adapter.since,
         offers: (projectId) => this.#run(projectId, (id) => adapter.offers(id)),
         allowance: (projectId) => this.#run(projectId, (id) => adapter.allowance(id)),
         submit: (projectId, spec) =>
-          this.#run({ projectId, spec }, ({ projectId, spec }) => adapter.submit(projectId, spec)),
+          this.#run(
+            { projectId, spec },
+            ({ projectId, spec }) => (admit(), adapter.submit(projectId, spec)),
+          ),
         get: (projectId, runId) =>
           this.#run({ projectId, runId }, ({ projectId, runId }) => adapter.get(projectId, runId)),
         logs: (projectId, runId) =>
@@ -298,7 +315,7 @@ export class SandboxService implements Sandboxes {
         retain: (projectId, objectId) =>
           this.#run({ projectId, objectId }, (i) => adapter.retain(i.projectId, i.objectId)),
         rent: (projectId, input) =>
-          this.#run({ projectId, input }, (i) => adapter.rent(i.projectId, i.input)),
+          this.#run({ projectId, input }, (i) => (admit(), adapter.rent(i.projectId, i.input))),
         findRental: (projectId, key) =>
           this.#run({ projectId, key }, (i) => adapter.findRental(i.projectId, i.key)),
         inspectRental: (projectId, sandboxId) =>

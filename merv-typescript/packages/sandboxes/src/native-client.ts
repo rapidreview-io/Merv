@@ -87,6 +87,7 @@ export class NativeSandboxClient {
     options: {
       method?: 'GET' | 'POST' | 'DELETE';
       application?: boolean;
+      scope?: { namespace: string; subject: string };
       body?: Json;
       query?: Record<string, string>;
     } = {},
@@ -115,6 +116,12 @@ export class NativeSandboxClient {
           ...(options.application
             ? { 'x-sandbox-application-secret': secret }
             : { authorization: `Bearer ${secret}` }),
+          ...(options.scope
+            ? {
+                'x-sandbox-namespace': options.scope.namespace,
+                'x-sandbox-subject': options.scope.subject,
+              }
+            : {}),
           accept: 'application/json',
           ...(options.body ? { 'content-type': 'application/json' } : {}),
         },
