@@ -68,3 +68,17 @@ configuration-render tests; TypeScript server and UI type checks. The companion
 patch passes the managed delegation, existing delegation and account billing
 suites, Python type checking for its four changed modules, and Ruff. Tests use
 local PostgreSQL and fake infrastructure; no paid provider is started.
+
+## Recovery boundary
+
+This adds `sandboxes-native@2`. The pre-change Merv image rejects a database ahead
+of its migration list, so an image-only rollback to that release is insufficient.
+Before enabling the flag, retain a verified recovery snapshot and a compatible
+fallback image that includes migration 2 with managed funding disabled. Keep
+compute paused through a coordinated service/configuration cutover.
+
+The companion Sandboxes change needs no schema migration. Do not roll that
+service back while managed roots remain live: older token authentication does
+not revalidate their issuing application grant. First revoke those roots with
+the new service, confirm revocation, and disable new managed enrollment. Preserve
+all closed-work evidence and accounting records throughout recovery.
