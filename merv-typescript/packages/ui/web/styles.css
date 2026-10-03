@@ -266,9 +266,9 @@ time,
     opacity 110ms ease,
     visibility 0s 190ms;
 }
-/* With the rail hidden the page clears the edge control instead of sitting under it. */
+/* With the rail hidden the page clears the edge control inside its gutter, not beside it. */
 .shell--nosb .main {
-  padding-left: 34px;
+  padding-left: max(0px, 74px - var(--page-pad-x));
 }
 .sb-edge {
   position: fixed;
@@ -554,8 +554,9 @@ time,
 }
 
 /* Page grammar. --------------------------------------------------------- */
-/* A page is the screen less one gutter that grows with it. Nothing stops at a
-   column, because what has to stay readable inside it says so itself, below. */
+/* A page is the screen beside the rail less one gutter, the same on each side, that grows
+   with it. Nothing stops at a column, because what has to stay readable inside it says so
+   itself, below. */
 .page-stage {
   padding: var(--page-pad-top) var(--page-pad-x) 60px;
 }
@@ -3392,7 +3393,7 @@ a.tile:hover small {
    the open row is marked by the soft ground under it and nothing else. */
 .split {
   display: grid;
-  grid-template-columns: clamp(320px, 30%, 560px) minmax(0, 1fr);
+  grid-template-columns: calc(var(--page-pad-x) + clamp(296px, 30%, 536px)) minmax(0, 1fr);
   align-items: start;
 }
 .split-list {
@@ -3409,12 +3410,13 @@ a.tile:hover small {
   min-height: 100vh;
   border-left: 1px solid var(--line);
 }
-.split .page-stage {
-  padding-inline: var(--space-5);
+/* Both panes keep the page's gutter at their outer edges, so the list stands where it
+   stood before a record opened beside it. */
+.split-list :is(.page-stage, .page-lede, .wmap-stage) {
+  padding-inline: var(--page-pad-x) var(--space-5);
 }
-/* The cycle's title line keeps the list's own edge in the narrow pane. */
-.split .page-lede {
-  padding-inline: var(--space-5);
+.split-record .page-stage {
+  padding-inline: var(--space-5) var(--page-pad-x);
 }
 
 /* Agents pages: liveness, countdown, guard -------------------------------- */
@@ -4337,7 +4339,7 @@ del.cut {
 
 /* Agent: the conversation has the window. One slim bar says which conversation it is, how its
    turn stands and the machine it runs on; the transcript scrolls between that bar and the
-   composer. */
+   composer. The three are one column at a reading width, centred in the page. */
 .main:has(> .pi-page) {
   display: flex;
   flex-direction: column;
@@ -4346,7 +4348,8 @@ del.cut {
 .pi-page.page-stage {
   flex: 1;
   min-height: 0;
-  max-width: 1040px;
+  width: min(100%, 880px + 2 * var(--page-pad-x));
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -4845,9 +4848,6 @@ del.cut {
 }
 .wmap-stage:not(:has(.wmap-node, .live-head)) {
   display: none;
-}
-.split .wmap-stage {
-  padding-inline: var(--space-5);
 }
 /* The drawing: one measured frame, the lines behind the cards. */
 .wmap {
