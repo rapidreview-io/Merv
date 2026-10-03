@@ -30,7 +30,7 @@
   let selected = null;
   let hovered = null;
   let pendingFrame = 0;
-  let currentView = 'map';
+  let currentView = 'hierarchy';
   const el = (tag, className, text) => {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -115,7 +115,7 @@
     inspector.replaceChildren();
     if (!target) {
       inspector.append(
-        el('span', 'kicker', 'Field notes'),
+        el('span', 'kicker', 'Hierarchy working draft'),
         el('h2', '', 'Follow a thread.'),
         el(
           'p',
@@ -129,7 +129,7 @@
           '“Requires” points to a dependency. “Used by” shows the plugins that need it. Click any name in this panel to follow the connection.',
         ),
       );
-      heading('Start with the shared foundation');
+      heading('Read the stack from the bottom up');
       links(['scope', 'state']);
       heading('Or follow the research');
       links(['experiments', 'knowledge']);
@@ -288,19 +288,16 @@
     const target = hovered ?? selected,
       focal = members(target),
       relations = new Map([...focal].map((id) => [id, 'self']));
-    const visible = target
+    const visible = nodes.has(target)
       ? data.edges.filter((edge) => focal.has(edge.from) || focal.has(edge.to))
-      : data.edges.filter(
-          (edge) =>
-            nodes.get(edge.from)?.kind === 'service' && groupOf(edge.from) !== groupOf(edge.to),
-        );
+      : [];
     for (const edge of visible) {
       if (focal.has(edge.from) && !focal.has(edge.to)) relations.set(edge.to, 'out');
       if (focal.has(edge.to) && !focal.has(edge.from)) relations.set(edge.from, 'in');
     }
-    const network = target
+    const network = nodes.has(target)
       ? data.network.filter((edge) => focal.has(edge.from) || focal.has(edge.to))
-      : data.network;
+      : [];
     for (const edge of network)
       for (const id of [edge.from, edge.to]) if (!relations.has(id)) relations.set(id, 'network');
     map.classList.toggle('tracing', !!target);
@@ -502,6 +499,7 @@
     showDetails(target);
     trace();
     dependencyDAG.setSelected(target);
+    hierarchyView.setSelected(target);
     detailJump.hidden = !target;
     detailJump.textContent = 'View details ↓';
     announcement.textContent = target
@@ -511,11 +509,13 @@
   }
   function updateLocation() {
     const hash =
-      currentView === 'tree'
-        ? `#dag${selected ? '/' + encodeURIComponent(selected) : ''}`
-        : selected
-          ? `#${encodeURIComponent(selected)}`
-          : location.pathname + location.search;
+      currentView === 'hierarchy'
+        ? `#hierarchy${selected ? '/' + encodeURIComponent(selected) : ''}`
+        : currentView === 'tree'
+          ? `#dag${selected ? '/' + encodeURIComponent(selected) : ''}`
+          : selected
+            ? `#${encodeURIComponent(selected)}`
+            : '#map';
     try {
       history.replaceState(null, '', hash);
     } catch {
@@ -523,18 +523,20 @@
     }
   }
   const dependencyDAG = createDependencyDAG({ data, select });
+  const hierarchyView = createPluginHierarchy({ data, select });
   function setView(view) {
     currentView = view;
-    for (const id of ['map', 'tree']) {
+    for (const id of ['hierarchy', 'map', 'tree']) {
       document.getElementById(`${id}-page`).hidden = id !== view;
       document.getElementById(`${id}-view`).setAttribute('aria-pressed', String(id === view));
     }
     hovered = null;
     dependencyDAG.setSelected(selected);
+    hierarchyView.setSelected(selected);
     if (view === 'map') requestAnimationFrame(trace);
     updateLocation();
   }
-  for (const id of ['map', 'tree'])
+  for (const id of ['hierarchy', 'map', 'tree'])
     document.getElementById(`${id}-view`).addEventListener('click', () => setView(id));
   document.getElementById('overview').addEventListener('click', () => select(null));
   detailJump.addEventListener('click', () => {
@@ -591,7 +593,7 @@
   });
   resize.observe(groupsHost);
   function restoreLocation() {
-    currentView = 'map';
+    currentView = 'hierarchy';
     selected = null;
     let initial;
     try {
@@ -599,7 +601,9 @@
     } catch {
       initial = '';
     }
-    if (
+    if (initial === 'hierarchy' || initial.startsWith('hierarchy/')) {
+      initial = initial.includes('/') ? initial.slice(initial.indexOf('/') + 1) : '';
+    } else if (
       initial === 'dag' ||
       initial.startsWith('dag/') ||
       initial === 'tree' ||
@@ -607,6 +611,10 @@
     ) {
       currentView = 'tree';
       initial = initial.includes('/') ? initial.slice(initial.indexOf('/') + 1) : '';
+    }
+    if (initial === 'map') {
+      currentView = 'map';
+      initial = '';
     }
     if (
       initial &&

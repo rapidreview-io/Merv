@@ -12,6 +12,11 @@ interface InventoryPlugin {
   runtime: string;
   defaultConfiguration: boolean;
 }
+interface Hierarchy {
+  root: { label: string; purpose: string; source: string };
+  layers: { id: string; label: string; purpose: string; members: string[] }[];
+  boundaries: { id: string; label: string; purpose: string; members: string[]; kinds?: string[] }[];
+}
 interface Inventory {
   snapshot: string;
   plugins: InventoryPlugin[];
@@ -76,6 +81,7 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
       description: string;
     }[];
     plugins: Record<string, { label: string; purpose: string }>;
+    hierarchy: Hierarchy;
   };
   const providers = new Map(
     inventory.plugins.flatMap((p) => p.provides.map((id) => [id, p] as const)),
@@ -134,7 +140,42 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
   );
   if (edges.length !== inventory.directDependencyCount)
     throw new Error('Dependency inventory is inconsistent');
+  const hierarchy = notes.hierarchy;
+  const placement = new Map<string, number>();
+  hierarchy.layers.forEach((layer, level) => {
+    for (const id of layer.members) {
+      if (placement.has(id)) throw new Error(`Duplicate hierarchy placement: ${id}`);
+      placement.set(id, level);
+    }
+  });
+  const boundaries = hierarchy.boundaries.map((boundary) => ({
+    ...boundary,
+    members: [
+      ...boundary.members,
+      ...nodes.filter((node) => boundary.kinds?.includes(node.kind)).map((node) => node.id),
+    ],
+  }));
+  const assigned = [...placement.keys(), ...boundaries.flatMap((boundary) => boundary.members)];
+  if (
+    new Set(assigned).size !== assigned.length ||
+    assigned.length !== nodes.length ||
+    assigned.some((id) => !nodes.some((node) => node.id === id))
+  )
+    throw new Error('Every plugin must have exactly one hierarchy placement');
+  const upward = edges.filter(
+    (edge) =>
+      placement.has(edge.from) &&
+      placement.has(edge.to) &&
+      placement.get(edge.from)! < placement.get(edge.to)!,
+  );
+  const peers = edges.filter(
+    (edge) =>
+      placement.has(edge.from) &&
+      placement.has(edge.to) &&
+      placement.get(edge.from) === placement.get(edge.to),
+  );
   const data = {
+    hierarchy: { ...hierarchy, boundaries, upward, peers },
     snapshot: inventory.snapshot,
     groups: notes.groups,
     nodes,
@@ -178,7 +219,9 @@ export function writeArchitectureExplorer(root: string, inventory: Inventory): v
     .replace('/* EXPLORER_CSS */', () => readFileSync(resolve(directory, 'style.css'), 'utf8'))
     .replace('/* EXPLORER_DATA */', () => JSON.stringify(data).replaceAll('<', '\\u003c'))
     .replace('/* EXPLORER_JS */', () =>
-      ['dag.js', 'app.js'].map((file) => readFileSync(resolve(directory, file), 'utf8')).join('\n'),
+      ['dag.js', 'hierarchy.js', 'app.js']
+        .map((file) => readFileSync(resolve(directory, file), 'utf8'))
+        .join('\n'),
     );
   writeFileSync(resolve(directory, 'index.html'), html);
   writeFileSync(resolve(directory, 'data.json'), JSON.stringify(data, null, 2) + '\n');

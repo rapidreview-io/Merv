@@ -24,7 +24,8 @@ const plugins: {
   runtime: 'server' | 'machine';
   defaultConfiguration: boolean;
 }[] = [];
-for (const file of walk(resolve(root, 'packages')).filter(
+const sources = [...walk(resolve(root, 'packages')), ...walk(resolve(root, 'src'))];
+for (const file of sources.filter(
   (p) => p.includes('/src/') && p.endsWith('.ts') && !p.includes('/node_modules/'),
 )) {
   const source = ts.createSourceFile(
@@ -75,7 +76,7 @@ for (const file of walk(resolve(root, 'packages')).filter(
           owner = sourcePath.split('/')[1];
         const kind = file.endsWith('/tools.ts')
           ? 'tools'
-          : file.endsWith('/ui.ts')
+          : /(?:\/|-)ui\.ts$/.test(file)
             ? 'ui'
             : file.endsWith('/api.ts')
               ? 'api'

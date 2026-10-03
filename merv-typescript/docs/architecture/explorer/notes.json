@@ -87,7 +87,7 @@
     },
     "sandboxes": {
       "label": "Sandboxes",
-      "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies."
+      "purpose": "Connects to the remote compute service over HTTP for resources, durable jobs and retained outputs. Optional API, Artifacts, State, Scope and Sessions bindings enable delegation, evidence and managed compute. Its tool adapter enforces project permissions."
     },
     "nisa": {
       "label": "Nisa",
@@ -119,7 +119,7 @@
     },
     "code": {
       "label": "Code",
-      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency."
+      "purpose": "Owns the durable project Git repository, objects, branches, writer coordination and optional GitHub synchronization. Managed Git works without GitHub. Research-specific acceptance and publication rules belong to Code Research."
     },
     "artifacts": {
       "label": "Artifacts",
@@ -168,6 +168,122 @@
     "research": {
       "label": "Research",
       "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Research bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Research publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff."
+    },
+    "merv-legacy-history-ui": {
+      "label": "Legacy history \u00b7 UI adapter",
+      "purpose": "Optional read-only browser for research imported from the previous backend. Requires State, Scope and UI; preserves historical records without resuming old workflows."
+    },
+    "codeResearch": {
+      "label": "Code Research",
+      "purpose": "Connects Git to research workflows: scoped workspaces, exact captures, accepted bases, independent review and publication. Uses the shared core Code owner and retains cleanup as structured durable state."
+    },
+    "fleet": {
+      "label": "Fleet",
+      "purpose": "Owns machine allocation, leases and resource lifecycle through Sandboxes. Allocation and worker session authority remain separate."
+    },
+    "fleetWorkflow": {
+      "label": "Fleet Workflow",
+      "purpose": "Connects workflow session dispatch to Fleet-hosted workers, preserving assignment authority, runtime identity and lease recovery."
+    },
+    "pi": {
+      "label": "Pi",
+      "purpose": "Owns interactive agent conversations, isolated warm workers, checkpoints, streaming and recovery of uncertain effects."
+    },
+    "secrets": {
+      "label": "Secrets",
+      "purpose": "Stores encrypted third-party credentials and supplies scoped credential access, including the authorized Hugging Face proxy."
     }
+  },
+  "hierarchy": {
+    "root": {
+      "label": "System composition root",
+      "purpose": "src/cli.ts \u2192 src/app.ts + configuration assemble the deployment. Cordis resolves dependencies and owns plugin lifecycle. The root wires capabilities together; it does not own research decisions.",
+      "source": "src/app.ts"
+    },
+    "layers": [
+      {
+        "id": "primitives",
+        "label": "Primitives",
+        "purpose": "Store bytes and records; verify account identity.",
+        "members": ["state", "blobs", "identity"]
+      },
+      {
+        "id": "authority",
+        "label": "Authority & durable events",
+        "purpose": "Turn primitives into project permissions, protected credentials and reliable events.",
+        "members": ["scope", "secrets", "domainEvents"]
+      },
+      {
+        "id": "capabilities",
+        "label": "Shared platform capabilities",
+        "purpose": "Reusable objects, repositories, callable operations and workflow state.",
+        "members": ["artifacts", "code", "tools", "workflows"]
+      },
+      {
+        "id": "execution",
+        "label": "Execution & context",
+        "purpose": "Allocate workers, authorize sessions, assemble context and record activity.",
+        "members": ["fleet", "sessions", "contextBuilder", "feed"]
+      },
+      {
+        "id": "domain",
+        "label": "Domain & agent capabilities",
+        "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
+        "members": ["paper", "reviews", "codeResearch", "pi"]
+      },
+      {
+        "id": "work",
+        "label": "Research work",
+        "purpose": "Use the platform to deliver tasks and execute reviewed experiments.",
+        "members": ["tasks", "experiments"]
+      },
+      {
+        "id": "synthesis",
+        "label": "Project knowledge & synthesis",
+        "purpose": "Read across work and turn completed evidence into reviewed reflection.",
+        "members": ["knowledge", "reflections"]
+      },
+      {
+        "id": "coordination",
+        "label": "Research coordination",
+        "purpose": "Choose and advance the research cycle using the capabilities below.",
+        "members": ["research"]
+      }
+    ],
+    "boundaries": [
+      {
+        "id": "integrations",
+        "label": "External service adapters",
+        "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
+        "members": ["sandboxes", "mounts", "nisa", "web"]
+      },
+      {
+        "id": "runtime",
+        "label": "Execution bindings",
+        "purpose": "Fleet Workflow binds dispatch to hosting. Runner executes on a separate machine. These connect execution boundaries.",
+        "members": ["fleetWorkflow", "runner"]
+      },
+      {
+        "id": "transport",
+        "label": "HTTP / MCP boundary",
+        "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
+        "members": ["api"],
+        "kinds": ["api"]
+      },
+      {
+        "id": "tool-adapters",
+        "label": "Agent tool adapters",
+        "purpose": "Expose a domain through the shared Tools registry, which lives in layer 2.",
+        "members": [],
+        "kinds": ["tools"]
+      },
+      {
+        "id": "ui-adapters",
+        "label": "Browser UI & adapters",
+        "purpose": "Present domain capabilities. The UI shell and its views sit beside the stack.",
+        "members": ["ui"],
+        "kinds": ["ui"]
+      }
+    ]
   }
 }

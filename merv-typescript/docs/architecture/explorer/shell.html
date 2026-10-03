@@ -14,11 +14,17 @@
       <div class="edition"><span id="snapshot"></span><span>Source snapshot, not live server status</span></div>
     </header>
     <nav class="view-tabs" aria-label="Architecture views">
-      <button id="map-view" type="button" aria-pressed="true" aria-controls="map-page">01 · Sketch map</button>
-      <button id="tree-view" type="button" aria-pressed="false" aria-controls="tree-page">02 · Dependency DAG</button>
+      <button id="hierarchy-view" type="button" aria-pressed="true" aria-controls="hierarchy-page">01 · Hierarchy</button>
+      <button id="map-view" type="button" aria-pressed="false" aria-controls="map-page">02 · Sketch map</button>
+      <button id="tree-view" type="button" aria-pressed="false" aria-controls="tree-page">03 · Dependency DAG</button>
     </nav>
     <div class="workbench">
-      <section class="paper" id="map-page" aria-label="Interactive plugin dependency map">
+      <section class="paper hierarchy-paper" id="hierarchy-page" aria-label="Plugin responsibility hierarchy">
+        <header class="hierarchy-intro"><span class="eyebrow">Responsibility hierarchy · working proposal</span><h2>Build upward. Keep the boundaries clear.</h2><p>Primitives at the bottom, research coordination at the top. These are proposed responsibility layers; the lines show actual declared dependencies. UI, tools and transport are exposure boundaries, not higher research layers.</p><button type="button" id="hierarchy-clear">Clear selection</button><p id="hierarchy-status" aria-live="polite"></p></header>
+        <div id="hierarchy-map"><svg id="hierarchy-edges" aria-hidden="true"></svg><div id="hierarchy-stack"></div><aside id="hierarchy-boundaries" aria-label="Adapters and execution boundaries"></aside></div>
+        <div class="hierarchy-checks" id="hierarchy-checks"></div>
+      </section>
+      <section class="paper" id="map-page" aria-label="Interactive plugin dependency map" hidden>
         <div class="binding" aria-hidden="true"></div>
         <div class="page-top"><span id="inventory"></span><button id="overview" type="button">↶ Whole map</button></div>
         <div class="map" id="map"><svg id="wires" aria-hidden="true"></svg><div class="groups" id="groups"></div></div>
@@ -28,9 +34,9 @@
       <section class="paper tree-paper" id="tree-page" aria-label="Plugin dependency DAG" hidden>
         <div class="binding" aria-hidden="true"></div>
         <header class="tree-intro">
-          <span class="eyebrow">One node per plugin · every dependency visible</span>
+          <span class="eyebrow">One node per plugin · relationships on demand</span>
           <h2>The complete dependency DAG.</h2>
-          <p>Arrows run from a plugin down to the services it requires. Shared services appear once, with multiple incoming arrows. Hide adapters to focus on the service plugins.</p>
+          <p>Lines are hidden until you hover, focus or select a plugin. Arrows run from a plugin down to the services it requires. Shared services appear once, with multiple incoming arrows. Hide adapters to focus on the service plugins.</p>
         </header>
         <div class="tree-controls">
           <label>Find a plugin<input id="dag-search" type="search" placeholder="Name or package…" autocomplete="off"></label>
@@ -47,7 +53,7 @@
       </section>
       <aside class="inspector" id="inspector" aria-label="Plugin details"></aside>
     </div>
-    <footer class="page-footer"><span>Built from Cordis declarations. Internal edges appear when you select a plugin.</span><span>Next chapter: Reflection, consolidation & publication.</span></footer>
+    <footer class="page-footer"><span>Built from Cordis declarations. Internal edges appear when you select a plugin.</span><span>Hierarchy is a design proposal; dependencies are read from source.</span></footer>
     <div class="sr-only" id="announcement" aria-live="polite"></div>
     <button class="detail-jump" id="detail-jump" type="button" hidden>View details ↓</button>
   </main>

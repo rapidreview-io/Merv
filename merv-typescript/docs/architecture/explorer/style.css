@@ -838,7 +838,7 @@ h1 {
   fill: none;
   stroke: #9d927e;
   stroke-width: 1.5;
-  opacity: 0.7;
+  opacity: 0;
 }
 .dag-node {
   position: absolute;
@@ -894,7 +894,7 @@ h1 {
   opacity: 0.45;
 }
 #dag-canvas.tracing .dag-edge:not([data-relation]) {
-  opacity: 0.12;
+  opacity: 0;
 }
 .dag-edge[data-relation='out'] {
   stroke: var(--out);
@@ -923,4 +923,143 @@ h1 {
   background: #e8ddc7;
   border: 1px solid #8a4f30;
   color: var(--out);
+}
+
+/* Responsibility hierarchy: readable cards first, relationships only on demand. */
+.hierarchy-paper {
+  padding: 28px;
+}
+.hierarchy-intro h2 {
+  font: 32px/1.1 var(--hand);
+  margin: 10px 0;
+}
+.hierarchy-intro p {
+  max-width: 780px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+#hierarchy-status {
+  color: var(--muted);
+  min-height: 40px;
+}
+#hierarchy-map {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
+  gap: 32px;
+}
+#hierarchy-stack,
+#hierarchy-boundaries {
+  min-width: 0;
+}
+#hierarchy-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  overflow: visible;
+}
+.hierarchy-root,
+.hierarchy-layer,
+.hierarchy-boundary {
+  position: relative;
+  border: 1px solid #b5a78f;
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: 4px;
+}
+.hierarchy-root {
+  border: 2px solid #77654c;
+  background: #e9dfcc;
+}
+.hierarchy-layer {
+  background: #f5f0e5;
+  border-left: 4px solid #a4957c;
+}
+.hierarchy-layer[data-level='0'] {
+  border-left-color: #4e6d70;
+  background: #e8eeea;
+}
+.hierarchy-layer[data-level='7'] {
+  border-left-color: #8a4f30;
+}
+.hierarchy-boundary {
+  border-style: dashed;
+  background: #f7f3eb;
+}
+.hierarchy-root h3,
+.hierarchy-layer h3,
+.hierarchy-boundary h3 {
+  font: 21px/1.2 var(--hand);
+  margin: 0 0 6px;
+}
+.hierarchy-root p,
+.hierarchy-layer p,
+.hierarchy-boundary p,
+.hierarchy-side-intro p {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin: 8px 0 12px;
+}
+.hierarchy-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hierarchy-node {
+  position: relative;
+  z-index: 3;
+  padding: 7px 10px;
+  font-size: 12px;
+  text-align: left;
+  background: var(--paper);
+  border: 1px solid #b5a78f;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.hierarchy-node[data-relation='self'] {
+  outline: 2px solid #715538;
+  background: #e8ddc7;
+}
+.hierarchy-node[data-relation='out'] {
+  border-color: var(--out);
+  color: var(--out);
+}
+.hierarchy-node[data-relation='in'] {
+  border-color: var(--in);
+  color: var(--in);
+}
+.hierarchy-edge {
+  fill: none;
+  stroke-width: 2;
+}
+.hierarchy-edge.out {
+  stroke: var(--out);
+}
+.hierarchy-edge.in {
+  stroke: var(--in);
+}
+.hierarchy-checks {
+  border-top: 1px solid #b5a78f;
+  margin-top: 20px;
+  padding-top: 15px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.hierarchy-checks h3 {
+  font: 23px/1.2 var(--hand);
+}
+.hierarchy-warning {
+  color: #8a4f30;
+}
+@media (max-width: 800px) {
+  #hierarchy-map {
+    grid-template-columns: 1fr;
+  }
+  .hierarchy-paper {
+    padding: 18px;
+  }
 }

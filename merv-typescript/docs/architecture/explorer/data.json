@@ -1,4 +1,192 @@
 {
+  "hierarchy": {
+    "root": {
+      "label": "System composition root",
+      "purpose": "src/cli.ts → src/app.ts + configuration assemble the deployment. Cordis resolves dependencies and owns plugin lifecycle. The root wires capabilities together; it does not own research decisions.",
+      "source": "src/app.ts"
+    },
+    "layers": [
+      {
+        "id": "primitives",
+        "label": "Primitives",
+        "purpose": "Store bytes and records; verify account identity.",
+        "members": [
+          "state",
+          "blobs",
+          "identity"
+        ]
+      },
+      {
+        "id": "authority",
+        "label": "Authority & durable events",
+        "purpose": "Turn primitives into project permissions, protected credentials and reliable events.",
+        "members": [
+          "scope",
+          "secrets",
+          "domainEvents"
+        ]
+      },
+      {
+        "id": "capabilities",
+        "label": "Shared platform capabilities",
+        "purpose": "Reusable objects, repositories, callable operations and workflow state.",
+        "members": [
+          "artifacts",
+          "code",
+          "tools",
+          "workflows"
+        ]
+      },
+      {
+        "id": "execution",
+        "label": "Execution & context",
+        "purpose": "Allocate workers, authorize sessions, assemble context and record activity.",
+        "members": [
+          "fleet",
+          "sessions",
+          "contextBuilder",
+          "feed"
+        ]
+      },
+      {
+        "id": "domain",
+        "label": "Domain & agent capabilities",
+        "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
+        "members": [
+          "paper",
+          "reviews",
+          "codeResearch",
+          "pi"
+        ]
+      },
+      {
+        "id": "work",
+        "label": "Research work",
+        "purpose": "Use the platform to deliver tasks and execute reviewed experiments.",
+        "members": [
+          "tasks",
+          "experiments"
+        ]
+      },
+      {
+        "id": "synthesis",
+        "label": "Project knowledge & synthesis",
+        "purpose": "Read across work and turn completed evidence into reviewed reflection.",
+        "members": [
+          "knowledge",
+          "reflections"
+        ]
+      },
+      {
+        "id": "coordination",
+        "label": "Research coordination",
+        "purpose": "Choose and advance the research cycle using the capabilities below.",
+        "members": [
+          "research"
+        ]
+      }
+    ],
+    "boundaries": [
+      {
+        "id": "integrations",
+        "label": "External service adapters",
+        "purpose": "Upstream integrations support several layers. Their position here does not make them research logic.",
+        "members": [
+          "sandboxes",
+          "mounts",
+          "nisa",
+          "web"
+        ]
+      },
+      {
+        "id": "runtime",
+        "label": "Execution bindings",
+        "purpose": "Fleet Workflow binds dispatch to hosting. Runner executes on a separate machine. These connect execution boundaries.",
+        "members": [
+          "fleetWorkflow",
+          "runner"
+        ]
+      },
+      {
+        "id": "transport",
+        "label": "HTTP / MCP boundary",
+        "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
+        "members": [
+          "api",
+          "merv-code-research-api",
+          "merv-pi-api",
+          "merv-scope-api",
+          "merv-secrets-api",
+          "merv-sessions-api"
+        ],
+        "kinds": [
+          "api"
+        ]
+      },
+      {
+        "id": "tool-adapters",
+        "label": "Agent tool adapters",
+        "purpose": "Expose a domain through the shared Tools registry, which lives in layer 2.",
+        "members": [
+          "merv-artifact-tools",
+          "merv-code-tools",
+          "merv-experiments-tools",
+          "merv-feed-tools",
+          "merv-fleet-tools",
+          "merv-knowledge-tools",
+          "merv-nisa-tools",
+          "merv-paper-tools",
+          "merv-pi-tools",
+          "merv-reflection-tools",
+          "merv-research-tools",
+          "merv-review-tools",
+          "merv-sandboxes-tools",
+          "merv-scope-tools",
+          "merv-sessions-tools",
+          "merv-task-tools",
+          "merv-web-tools",
+          "merv-workflow-tools"
+        ],
+        "kinds": [
+          "tools"
+        ]
+      },
+      {
+        "id": "ui-adapters",
+        "label": "Browser UI & adapters",
+        "purpose": "Present domain capabilities. The UI shell and its views sit beside the stack.",
+        "members": [
+          "ui",
+          "merv-artifact-ui",
+          "merv-code-ui",
+          "merv-experiments-ui",
+          "merv-feed-ui",
+          "merv-fleet-ui",
+          "merv-legacy-history-ui",
+          "merv-mounts-ui",
+          "merv-paper-ui",
+          "merv-pi-ui",
+          "merv-reflection-ui",
+          "merv-research-ui",
+          "merv-review-ui",
+          "merv-sandboxes-ui",
+          "merv-sessions-ui",
+          "merv-task-ui"
+        ],
+        "kinds": [
+          "ui"
+        ]
+      }
+    ],
+    "upward": [],
+    "peers": [
+      {
+        "from": "codeResearch",
+        "to": "reviews",
+        "optional": true
+      }
+    ]
+  },
   "snapshot": "2026-10-03",
   "groups": [
     {
@@ -313,7 +501,7 @@
       "group": "coordination",
       "owner": "code",
       "label": "Code",
-      "purpose": "Retains code-commit requests, exact command and final-session capture references, and immutable proposal manifests. Also owns optional project GitHub connections and repository selection through its existing API/UI adapters. Runner executes Git; GitHub adds no Cordis dependency.",
+      "purpose": "Owns the durable project Git repository, objects, branches, writer coordination and optional GitHub synchronization. Managed Git works without GitHub. Research-specific acceptance and publication rules belong to Code Research.",
       "exposedTools": []
     },
     {
@@ -341,8 +529,8 @@
       "id": "codeResearch",
       "group": "other",
       "owner": "codeResearch",
-      "label": "codeResearch",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Code Research",
+      "purpose": "Connects Git to research workflows: scoped workspaces, exact captures, accepted bases, independent review and publication. Uses the shared core Code owner and retains cleanup as structured durable state.",
       "exposedTools": [
         {
           "name": "code.commit",
@@ -436,8 +624,8 @@
       "id": "merv-code-research-api",
       "group": "front",
       "owner": "codeResearch",
-      "label": "codeResearch · api adapter",
-      "purpose": "Connects codeResearch to the API registry. This adapter owns no domain state.",
+      "label": "Code Research · api adapter",
+      "purpose": "Connects Code Research to the API registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -455,8 +643,8 @@
       "id": "merv-code-tools",
       "group": "front",
       "owner": "codeResearch",
-      "label": "codeResearch · tools adapter",
-      "purpose": "Connects codeResearch to the Tools registry. This adapter owns no domain state.",
+      "label": "Code Research · tools adapter",
+      "purpose": "Connects Code Research to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
           "name": "code.commit",
@@ -550,8 +738,8 @@
       "id": "merv-code-ui",
       "group": "front",
       "owner": "codeResearch",
-      "label": "codeResearch · ui adapter",
-      "purpose": "Connects codeResearch to the UI registry. This adapter owns no domain state.",
+      "label": "Code Research · ui adapter",
+      "purpose": "Connects Code Research to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -946,8 +1134,8 @@
       "id": "fleet",
       "group": "other",
       "owner": "fleet",
-      "label": "fleet",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Fleet",
+      "purpose": "Owns machine allocation, leases and resource lifecycle through Sandboxes. Allocation and worker session authority remain separate.",
       "exposedTools": [
         {
           "name": "fleet.drain",
@@ -986,8 +1174,8 @@
       "id": "merv-fleet-tools",
       "group": "front",
       "owner": "fleet",
-      "label": "fleet · tools adapter",
-      "purpose": "Connects fleet to the Tools registry. This adapter owns no domain state.",
+      "label": "Fleet · tools adapter",
+      "purpose": "Connects Fleet to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
           "name": "fleet.drain",
@@ -1027,8 +1215,8 @@
       "id": "merv-fleet-ui",
       "group": "front",
       "owner": "fleet",
-      "label": "fleet · ui adapter",
-      "purpose": "Connects fleet to the UI registry. This adapter owns no domain state.",
+      "label": "Fleet · ui adapter",
+      "purpose": "Connects Fleet to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1052,8 +1240,8 @@
       "id": "fleetWorkflow",
       "group": "other",
       "owner": "fleetWorkflow",
-      "label": "fleetWorkflow",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Fleet Workflow",
+      "purpose": "Connects workflow session dispatch to Fleet-hosted workers, preserving assignment authority, runtime identity and lease recovery.",
       "exposedTools": []
     },
     {
@@ -1142,6 +1330,25 @@
           "readOnly": true
         }
       ]
+    },
+    {
+      "plugin": "merv-legacy-history-ui",
+      "source": "src/legacy-history-ui.ts",
+      "provides": [],
+      "requires": [
+        "state",
+        "scope",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "merv-legacy-history-ui",
+      "group": "front",
+      "label": "Legacy history · UI adapter",
+      "purpose": "Optional read-only browser for research imported from the previous backend. Requires State, Scope and UI; preserves historical records without resuming old workflows.",
+      "exposedTools": []
     },
     {
       "plugin": "merv-mounts",
@@ -1332,8 +1539,8 @@
       "id": "pi",
       "group": "other",
       "owner": "pi",
-      "label": "pi",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Pi",
+      "purpose": "Owns interactive agent conversations, isolated warm workers, checkpoints, streaming and recovery of uncertain effects.",
       "exposedTools": [
         {
           "name": "pi.create",
@@ -1407,8 +1614,8 @@
       "id": "merv-pi-api",
       "group": "front",
       "owner": "pi",
-      "label": "pi · api adapter",
-      "purpose": "Connects pi to the API registry. This adapter owns no domain state.",
+      "label": "Pi · api adapter",
+      "purpose": "Connects Pi to the API registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1426,8 +1633,8 @@
       "id": "merv-pi-tools",
       "group": "front",
       "owner": "pi",
-      "label": "pi · tools adapter",
-      "purpose": "Connects pi to the Tools registry. This adapter owns no domain state.",
+      "label": "Pi · tools adapter",
+      "purpose": "Connects Pi to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
           "name": "pi.create",
@@ -1501,8 +1708,8 @@
       "id": "merv-pi-ui",
       "group": "front",
       "owner": "pi",
-      "label": "pi · ui adapter",
-      "purpose": "Connects pi to the UI registry. This adapter owns no domain state.",
+      "label": "Pi · ui adapter",
+      "purpose": "Connects Pi to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -1925,7 +2132,7 @@
       "group": "mounts",
       "owner": "sandboxes",
       "label": "Sandboxes",
-      "purpose": "Connects to the remote compute service over HTTP, reads its published views and scoped records, and extends or releases sandbox leases. Its tool adapter enforces project write permission; its UI adapter publishes the service's views. The provider owns upstream credentials and has no injected Cordis dependencies.",
+      "purpose": "Connects to the remote compute service over HTTP for resources, durable jobs and retained outputs. Optional API, Artifacts, State, Scope and Sessions bindings enable delegation, evidence and managed compute. Its tool adapter enforces project permissions.",
       "exposedTools": [
         {
           "name": "sandbox.extend",
@@ -2166,8 +2373,8 @@
       "id": "secrets",
       "group": "other",
       "owner": "secrets",
-      "label": "secrets",
-      "purpose": "New provider discovered in source; add its explanatory note in explorer/notes.json.",
+      "label": "Secrets",
+      "purpose": "Stores encrypted third-party credentials and supplies scoped credential access, including the authorized Hugging Face proxy.",
       "exposedTools": []
     },
     {
@@ -2185,8 +2392,8 @@
       "id": "merv-secrets-api",
       "group": "front",
       "owner": "secrets",
-      "label": "secrets · api adapter",
-      "purpose": "Connects secrets to the API registry. This adapter owns no domain state.",
+      "label": "Secrets · api adapter",
+      "purpose": "Connects Secrets to the API registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -3284,6 +3491,21 @@
       "optional": false
     },
     {
+      "from": "merv-legacy-history-ui",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "merv-legacy-history-ui",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-legacy-history-ui",
+      "to": "ui",
+      "optional": false
+    },
+    {
       "from": "mounts",
       "to": "tools",
       "optional": false
@@ -3855,10 +4077,10 @@
     }
   ],
   "counts": {
-    "plugins": 68,
+    "plugins": 69,
     "providers": 31,
-    "adapters": 37,
-    "dependencies": 190
+    "adapters": 38,
+    "dependencies": 193
   },
   "network": [
     {
