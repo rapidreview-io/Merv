@@ -300,7 +300,6 @@ export const RETIRED: (Instance & { reason: string })[] = [
 export const KEPT_TABLES = [
   'code_units',
   'code_edges',
-  'code_proposals',
   'code_commands',
   'session_service_work',
   'paper_proposals',
@@ -663,16 +662,6 @@ async function keptRows(client: pg.Client, { projectId, actorId }: Seed['history
     relation: 'based_on',
     target_ref: 'acceptance:r-exp4@1',
     created_at: at,
-  });
-  await insert(client, 'code_proposals', {
-    id: 'cp-r-exp4',
-    project_id: projectId,
-    instance_id: 'r-exp4',
-    revision: 1,
-    session_id: 's-r-exp4',
-    request_id: 'proposal-r-exp4',
-    input_hash: 'hash',
-    proposal_json: { instanceId: 'r-exp4' },
   });
   await insert(client, 'code_commands', {
     id: 'cc-r-exp4',

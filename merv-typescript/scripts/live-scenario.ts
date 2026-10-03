@@ -20,7 +20,7 @@ const RUN_ID = randomBytes(4).toString('hex');
  *   node --import tsx scripts/live-scenario.ts --brief <file> --out <dir> \
  *     [--base-url <url> --project <projectId> --token-env <ENV_NAME>] [--local] \
  *     [--only <name>[,<name>]] [--stop-after <state>] [--max-rounds <n>] \
- *     [--timeout-minutes <n>] [--github] [--harness codex|claude] \
+ *     [--timeout-minutes <n>] [--harness codex|claude] \
  *     [--model <model>] [--effort <effort>] \
  *     [--sandboxes-url <MCP endpoint, e.g. https://sandboxes.example/mcp> --sandboxes-token-env <ENV_NAME>]
  *
@@ -530,8 +530,6 @@ interface Options {
   model?: string;
   effort?: string;
   sandboxesUrl?: string;
-  /** The runner fetches the project's linked GitHub repository for Git-workspace records. */
-  github?: boolean;
   /** Which agent CLI does the work: Codex (the default) or Claude Code. */
   harness: 'codex' | 'claude';
   sandboxesTokenEnv?: string;
@@ -544,7 +542,7 @@ function parseArgs(argv: string[]): Options {
     const arg = argv[index];
     assert.ok(arg.startsWith('--'), `Unexpected argument ${arg}`);
     const name = arg.slice(2);
-    if (name === 'local' || name === 'github') flags.add(name);
+    if (name === 'local') flags.add(name);
     else {
       const value = argv[++index];
       assert.ok(value !== undefined && !value.startsWith('--'), `--${name} needs a value`);
@@ -585,7 +583,6 @@ function parseArgs(argv: string[]): Options {
     model: values.get('model'),
     effort: values.get('effort'),
     sandboxesUrl: values.get('sandboxes-url'),
-    github: flags.has('github'),
     harness: (values.get('harness') ?? 'codex') as 'codex' | 'claude',
     sandboxesTokenEnv: values.get('sandboxes-token-env'),
   };
@@ -811,7 +808,6 @@ async function main(options: Options) {
       credentialEnv: options.tokenEnv,
       capacity: 2,
       pollIntervalMs: 8000,
-      ...(options.github ? { workspace: { github: true as const } } : {}),
       profiles: [
         {
           name: `scenario-${options.harness}`,

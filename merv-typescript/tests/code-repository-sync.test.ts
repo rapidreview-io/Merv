@@ -24,7 +24,7 @@ async function fixture(t: TestContext) {
     }),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core, {
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, core, {
       config: { settleMs: 60000 },
       remote: {
         read: async (_caller, use) =>

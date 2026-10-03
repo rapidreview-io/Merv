@@ -1,4 +1,5 @@
 import type { State } from '@merv/contracts';
+import { withoutTriggers } from '@merv/contracts/retired-instances';
 
 const schema = `CREATE TABLE code_publications (
   proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,
@@ -41,7 +42,33 @@ export const publicationMigration = {
       .join('\n'),
 };
 
+/**
+ * A sealed proposal's publication carried no approval envelope. Proposals are retired, so their
+ * publications and merge requests go with them; every remaining row publishes a unit.
+ */
+const proposal =
+  "(record_json::jsonb->'approval' IS NULL OR record_json::jsonb->'approval' = 'null'::jsonb)";
+const retireProposals = {
+  version: 3,
+  sql: [
+    withoutTriggers(
+      'code_publication_requests',
+      ['publication_guard_5'],
+      `DELETE FROM code_publication_requests WHERE (project_id, result_json::jsonb->>'proposalId') IN (SELECT project_id, proposal_id FROM code_publications WHERE ${proposal});`,
+    ),
+    withoutTriggers(
+      'code_publications',
+      ['publication_guard_3'],
+      `DELETE FROM code_publications WHERE ${proposal};`,
+    ),
+  ].join('\n'),
+};
+
 /** Preserve deployed migration identities while storage remains available without research. */
 export async function migratePublications(state: State): Promise<void> {
-  await state.migrate('code_publications', [{ version: 1, sql: schema }, publicationMigration]);
+  await state.migrate('code_publications', [
+    { version: 1, sql: schema },
+    publicationMigration,
+    retireProposals,
+  ]);
 }

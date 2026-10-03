@@ -74,9 +74,7 @@ async function fixture(t: TestContext) {
       },
     }),
   );
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, core),
-  );
+  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
   const boot = await scope.bootstrap({ projectName: 'Experiment assignments', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,

@@ -111,6 +111,12 @@
       "published": true
     },
     {
+      "component": "code_commands",
+      "version": 2,
+      "hash": "7036dce7e43d9583067469539516922c9724c5a013a4470e01280e0fc230ce7c",
+      "published": false
+    },
+    {
       "component": "code_github",
       "version": 1,
       "hash": "c0850ecb0595bf8daf60039f0c8a0f4e66ab8a54d7869bbb8b8e6e863e9b41ba",
@@ -126,7 +132,8 @@
       "component": "code_github_transport",
       "version": 1,
       "hash": "66ac21e0403bfbeb3e7f5241cb8e01ec3f323ee664edd01421656d80862e5b9b",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_pending_merges",
@@ -138,7 +145,8 @@
       "component": "code_proposals",
       "version": 1,
       "hash": "5219eaab1374a70aefd067f09831e72037095d69486b9ecef96a4394fdf20e82",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_publications",
@@ -151,6 +159,12 @@
       "version": 2,
       "hash": "b74108b332e4955a1cbb56923311eef51c582c1b31dd1155d432d24021a7677e",
       "published": true
+    },
+    {
+      "component": "code_publications",
+      "version": 3,
+      "hash": "f900510583f848d4c2edb563deecb7bc7cdd93f31db71dedca0197a0881af0d9",
+      "published": false
     },
     {
       "component": "code_units",

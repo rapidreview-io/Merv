@@ -347,7 +347,7 @@ test('retiring the versions that can no longer start deletes their records and n
   );
   assert.deepEqual(
     first.C6!.map((row) => Number(row.kept)),
-    [1, 1, 1, 1, 1],
+    [1, 1, 1, 1],
     'one kept Code row of each kind names a retired instance',
   );
   assert.equal(first.C7, undefined);
@@ -433,7 +433,6 @@ test('retiring the versions that can no longer start deletes their records and n
   // Only the records kept on purpose still name a retired instance.
   assert.deepEqual([...new Set(second.C9!.map((row) => row.table_name))].sort(), [
     'code_edges',
-    'code_proposals',
     'code_units',
     'paper_proposals',
     'session_service_work',

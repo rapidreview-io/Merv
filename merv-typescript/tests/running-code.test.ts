@@ -54,7 +54,6 @@ async function fixture(t: TestContext) {
       f.state,
       f.scope,
       f.sessions,
-      f.artifacts,
       f.workflows,
       { ...core, github: remote.github },
       {

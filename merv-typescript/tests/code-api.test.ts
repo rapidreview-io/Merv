@@ -8,7 +8,6 @@ import { ProjectScope } from '@merv/scope';
 import {
   codeCommandCompletionSchema,
   codeCommandControlSchema,
-  codeTransportInputSchema,
   MervError,
   parsed,
   type Caller,
@@ -432,14 +431,6 @@ test('GitHub publication and transport HTTP routes enforce authentication, proje
   f.provider.mergePublication = async () => {
     throw new Error('unused');
   };
-  // Code parses the transport body itself; this stand-in parses as Code does.
-  f.provider.transportGrant = async (_caller, input) => {
-    parsed(codeTransportInputSchema, input, 'invalid_code_input');
-    throw new Error('unused');
-  };
-  f.provider.verifyTransport = async () => {
-    throw new Error('unused');
-  };
   const dispose = f.register(f.provider);
   t.after(dispose);
   const headers = { authorization: `Bearer ${f.boot.token}`, 'content-type': 'application/json' };
@@ -473,26 +464,13 @@ test('GitHub publication and transport HTTP routes enforce authentication, proje
       .status,
     400,
   );
+  // The GitHub checkpoint transport is retired; its routes are gone.
   assert.equal(
     (await fetch(`${f.url}/code/transport/grant`, { method: 'POST', headers, body: '{}' })).status,
-    400,
-  );
-  assert.equal(
-    (await fetch(`${f.url}/code/transport/grant`, { method: 'POST', body: '{}' })).status,
-    401,
+    404,
   );
   assert.equal(calls, 2);
   dispose();
   assert.equal((await fetch(`${f.url}/code/publications`, { headers })).status, 503);
-  assert.equal(
-    (
-      await fetch(`${f.url}/code/transport/grant`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ ...control, operation: 'fetch' }),
-      })
-    ).status,
-    503,
-  );
   assert.equal(calls, 2);
 });

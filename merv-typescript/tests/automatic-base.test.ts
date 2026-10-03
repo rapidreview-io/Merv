@@ -80,18 +80,14 @@ async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-automatic-base-'));
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const artifacts = await createService(
-    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
-  );
+  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
   const core = await createService(new CoreCodeService(state, scope, {}));
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, core),
-  );
+  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
   // The subscription the Code plugin makes, so a transition reaches Code as it does in the app.
   const unsubscribe = await events.subscribe({
     id: 'code.reconcile.v1',

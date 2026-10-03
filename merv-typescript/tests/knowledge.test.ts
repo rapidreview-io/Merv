@@ -66,7 +66,7 @@ async function fixture(t: TestContext) {
         },
       }),
     );
-    code = await createService(new CodeService(state, scope, sessions, artifacts, workflows, core));
+    code = await createService(new CodeService(state, scope, sessions, workflows, core));
     experiments = await createService(
       new ExperimentService(
         state,
@@ -210,7 +210,7 @@ for (const name of ['knowledge', 'experiments'] as const) {
     const available = async () => {
       if (name === 'knowledge') {
         assert.equal(
-          (await f.knowledge.resolve(f.reader, ['code-proposal:missing']))[0].status,
+          (await f.knowledge.resolve(f.reader, ['code-commit:missing']))[0].status,
           'missing',
         );
       } else {
@@ -225,7 +225,7 @@ for (const name of ['knowledge', 'experiments'] as const) {
     const unavailable = async () => {
       if (name === 'knowledge') {
         assert.equal(
-          (await f.knowledge.resolve(f.reader, ['code-proposal:missing']))[0].status,
+          (await f.knowledge.resolve(f.reader, ['code-commit:missing']))[0].status,
           'unavailable',
         );
       } else {
@@ -291,7 +291,6 @@ test('Scoped references distinguish missing, unsupported and unpublished without
     'paper:unknown',
     'session_absent',
     'codecmd_absent',
-    'codeprop_absent',
   ];
   t.mock.method(f.artifacts, 'read', () => assert.fail('Metadata resolver must not read bytes'));
   t.mock.method(f.workflows, 'evaluate', () => assert.fail('Resolver must not evaluate guidance'));
@@ -320,7 +319,6 @@ test('Scoped references distinguish missing, unsupported and unpublished without
       'unsupported',
       'unsupported',
       'unsupported',
-      'missing',
       'missing',
       'missing',
     ],

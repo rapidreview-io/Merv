@@ -24,8 +24,6 @@ import {
   type CodeCommitCommand,
   type CodeCommitReceipt,
   type WorkflowWorkspacePolicy,
-  codeTransportGrantSchema,
-  type CodeTransportGrant,
   type WorkspaceHandle,
 } from '@merv/contracts';
 import type { Session, SessionWorkspace } from '@merv/sessions/types';
@@ -39,7 +37,7 @@ import {
   type LocalJson,
 } from './ledger.js';
 
-export type GitWorkspaceConfig = { repository: string; baseRef: string } | { github: true };
+export type GitWorkspaceConfig = { repository: string; baseRef: string };
 export type { WorkspaceHandle } from '@merv/contracts';
 type WorkspaceRow = {
   launch_id: string;
@@ -1071,15 +1069,6 @@ export class GitWorkspaceManager {
   }
   private async repository(fresh = false): Promise<RepositoryRow> {
     if (!this.config) throw new WorkspaceError('workspace_repository_required');
-    if ('github' in this.config) {
-      const row = this.repositoryRow();
-      if (!row || row.status !== 'ready' || !row.repository_id.startsWith('github:'))
-        throw new WorkspaceError('workspace_github_prepare_required');
-      this.within(this.root, row.bare_path);
-      marker(join(row.bare_path, 'merv-repository.json'), repositoryIdentity(row));
-      await this.validateRepository(row.bare_path);
-      return row;
-    }
     let row = this.repositoryRow();
     // The configured source is read only to bootstrap or to add a checkout (`fresh`): running
     // launches finish on the repository they started with, whatever the configuration says now.
@@ -1183,130 +1172,6 @@ export class GitWorkspaceManager {
     marker(join(temporary, 'merv-repository.json'), repositoryIdentity(row));
     renameSync(temporary, row.bare_path);
     syncPath(this.root);
-  }
-  /** Import pinned objects into this machine's private repository, without storing a remote or credential. */
-  syncGitHub(value: CodeTransportGrant, references: string[] = []): Promise<void> {
-    return this.run({ value, references }, async ({ value, references }) => {
-      const grant = codeTransportGrantSchema.parse(value);
-      if (!this.config || !('github' in this.config) || grant.target)
-        throw new WorkspaceError('workspace_github_config_required');
-      const url = this.githubUrl(grant);
-      let row = this.repositoryRow();
-      if (
-        row &&
-        (row.repository_id !== grant.repositoryId ||
-          row.source_path !== url ||
-          row.base_ref !== grant.baseBranch)
-      )
-        throw new WorkspaceError('workspace_repository_changed');
-      if (!row)
-        row = this.insertRepositoryRow(grant.repositoryId, url, grant.baseBranch, grant.baseOid);
-      await this.materializeBare(row, 'github-bootstrap', async (temporary) => {
-        await this.git(['init', '--bare', `--template=${this.emptyTemplate}`, temporary]);
-      });
-      marker(join(row.bare_path, 'merv-repository.json'), repositoryIdentity(row));
-      await this.validateRepository(row.bare_path);
-      const commits = [...new Set([row.initial_oid, grant.baseOid, ...references.map(oid)])];
-      if (commits.length > 200) throw new WorkspaceError('workspace_reference_limit');
-      for (const sha of commits) {
-        if ((await this.optionalRef(row.bare_path, `refs/merv/imports/${sha}`)) === sha) continue;
-        await this.remoteGit(grant, [
-          '--git-dir',
-          row.bare_path,
-          'fetch',
-          '--no-tags',
-          '--no-recurse-submodules',
-          '--no-write-fetch-head',
-          url,
-          `${sha}:refs/merv/imports/${sha}`,
-        ]);
-        if ((await this.rev(row.bare_path, sha)) !== sha)
-          throw new WorkspaceError('workspace_base_missing');
-      }
-      await this.git([
-        '--git-dir',
-        row.bare_path,
-        'update-ref',
-        'refs/merv/central',
-        grant.baseOid,
-      ]);
-      this.db.prepare("UPDATE runner_repository SET status='ready' WHERE singleton=1").run();
-    });
-  }
-  /** Create an immutable checkpoint ref. The absent-ref lease prevents even a concurrent fast-forward replacement. */
-  pushGitHub(value: CodeTransportGrant): Promise<void> {
-    return this.run(value, async (value) => {
-      const grant = codeTransportGrantSchema.parse(value),
-        target = grant.target;
-      if (!target) throw new WorkspaceError('workspace_push_target_required');
-      const row = await this.repository(),
-        url = this.githubUrl(grant);
-      if (
-        row.repository_id !== grant.repositoryId ||
-        row.source_path !== url ||
-        row.base_ref !== grant.baseBranch
-      )
-        throw new WorkspaceError('workspace_repository_changed');
-      if (
-        (await this.rev(row.bare_path, target.headOid)) !== target.headOid ||
-        oid(
-          await this.git(['--git-dir', row.bare_path, 'rev-parse', `${target.headOid}^{tree}`]),
-        ) !== target.treeOid
-      )
-        throw new WorkspaceError('workspace_push_object_mismatch');
-      const ref = `refs/heads/${target.branch}`;
-      const remote = async () => {
-        const output = (
-          await this.remoteGit(grant, ['--git-dir', row.bare_path, 'ls-remote', '--refs', url, ref])
-        ).trim();
-        if (!output) return null;
-        const parts = output.split(/\s+/);
-        if (parts.length !== 2 || parts[1] !== ref)
-          throw new WorkspaceError('workspace_remote_ref_invalid');
-        return oid(parts[0]);
-      };
-      const existing = await remote();
-      if (existing === target.headOid) return;
-      if (existing) throw new WorkspaceError('workspace_remote_ref_conflict');
-      try {
-        await this.remoteGit(grant, [
-          '--git-dir',
-          row.bare_path,
-          'push',
-          '--porcelain',
-          `--force-with-lease=${ref}:`,
-          url,
-          `${target.headOid}:${ref}`,
-        ]);
-      } catch (error) {
-        // A disconnected response may follow a successful push. Only the exact remote object proves success.
-        if ((await remote()) !== target.headOid) throw error;
-      }
-      if ((await remote()) !== target.headOid)
-        throw new WorkspaceError('workspace_remote_ref_conflict');
-    });
-  }
-  private githubUrl(grant: CodeTransportGrant) {
-    if (
-      grant.repository.split('/').some((part) => part === '.' || part === '..') ||
-      Date.parse(grant.expiresAt) <= Date.now()
-    )
-      throw new WorkspaceError('workspace_github_grant_invalid');
-    return `https://github.com/${grant.repository}.git`;
-  }
-  private remoteGit(grant: CodeTransportGrant, args: string[]) {
-    // Secret exists only in this trusted Git child's environment, never its argv, saved config,
-    // runner journal or worker environment. Git diagnostics are always replaced with safe codes.
-    return this.git(
-      ['-c', 'protocol.https.allow=always', '-c', 'http.followRedirects=false', ...args],
-      240000,
-      false,
-      {
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${grant.token}`).toString('base64')}`,
-      },
-    );
   }
   private async validateRepository(bare: string): Promise<void> {
     for (const component of ['config', 'objects', 'refs', 'worktrees'])

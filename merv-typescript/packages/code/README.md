@@ -16,11 +16,11 @@ GitHub is separately optional: a local repository does not require a GitHub conn
 
 ## Composition and ownership
 
-| Component              | Responsibilities                                                                                   | Required services                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `@merv/code`           | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope                                                      |
-| `@merv/code-research`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Artifacts, Workflows, Domain Events |
-| Code research adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeResearch plus Tools, API or UI                                |
+| Component              | Responsibilities                                                                                   | Required services                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `@merv/code`           | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope                                           |
+| `@merv/code-research`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Domain Events |
+| Code research adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeResearch plus Tools, API or UI                     |
 
 The utility owns repository locks and the GitHub client. The integration releases its own
 operations when unloaded. Technical changes to bindings and writers notify optional

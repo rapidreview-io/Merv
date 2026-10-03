@@ -26,7 +26,7 @@ async function fixture(t: Parameters<typeof resolutionFixture>[0]) {
     }),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
   );
   await f.state.transaction((tx) => code.ensureRepository(f.admin, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
@@ -217,7 +217,7 @@ test('a wake during a slow creation transaction initializes promptly after commi
     }),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core, {
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, core, {
       config: { sweepSeconds: 3600 },
     }),
   );

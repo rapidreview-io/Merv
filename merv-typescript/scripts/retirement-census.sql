@@ -182,9 +182,6 @@ FROM code_edges e
 WHERE EXISTS (SELECT 1 FROM census_r r WHERE starts_with(e.target_ref, 'acceptance:' || r.id || '@'))
   AND NOT EXISTS (SELECT 1 FROM census_r r WHERE e.source_ref = 'unit:' || r.id)
 UNION ALL
-SELECT 'C6', 'code_proposals of R', count(*)
-FROM code_proposals WHERE instance_id IN (SELECT id FROM census_r)
-UNION ALL
 SELECT 'C6', 'code_commands of sessions of R', count(*)
 FROM code_commands WHERE session_id IN (SELECT id FROM census_s);
 

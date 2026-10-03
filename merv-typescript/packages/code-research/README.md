@@ -31,5 +31,4 @@ commit, so changing the project base cannot rewrite work already pinned to an ol
 Connection, retained server history, accepted changes and remote publication remain visible
 as distinct states. Connecting a repository is not approval to merge a research outcome.
 
-The adapter retains the legacy command/proposal and workflow evidence needed for recovery.
 Review provenance is read through the Reviews service rather than its private tables.

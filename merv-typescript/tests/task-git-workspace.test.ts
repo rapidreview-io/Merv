@@ -57,9 +57,7 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
       },
     }),
   );
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, core),
-  );
+  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
   const unbindCode = tasks.bindCode(code);
   const boot = await scope.bootstrap({ projectName: 'Git tasks', actorName: 'Owner' });
   const source: Caller = {

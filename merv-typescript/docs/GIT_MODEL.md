@@ -606,7 +606,7 @@ Acceptance is a write-once section of the unit row; base result is a write-once 
 Reuse existing:
 
 - `code_commands` for legacy/session commit requests.
-- `code_proposals` and `code_publications`.
+- `code_publications`.
 - Task checkpoints, task command replay, workflow history and limit grants.
 - Review records and review command replay.
 - Domain events for audited health/control changes.

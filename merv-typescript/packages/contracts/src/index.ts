@@ -36,8 +36,6 @@ export type {
   CodePublicationMerge,
   CodePublicationApi,
 } from './code-publications.js';
-export { codeTransportInputSchema, codeTransportGrantSchema } from './code-transport.js';
-export type { CodeTransportInput, CodeTransportGrant } from './code-transport.js';
 export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,

@@ -73,22 +73,18 @@ const configSchema = z
     workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
     /** A local source repository; the runner creates and owns its private Git copy. */
     workspace: z
-      .union([
-        z.object({ github: z.literal(true) }).strict(),
-        z
-          .object({
-            repository: z
-              .string()
-              .min(1)
-              .refine((value) => !/[\0\r\n]/.test(value)),
-            baseRef: z
-              .string()
-              .min(1)
-              .max(200)
-              .refine((value) => !value.startsWith('-') && !/[\0\r\n]/.test(value)),
-          })
-          .strict(),
-      ])
+      .object({
+        repository: z
+          .string()
+          .min(1)
+          .refine((value) => !/[\0\r\n]/.test(value)),
+        baseRef: z
+          .string()
+          .min(1)
+          .max(200)
+          .refine((value) => !value.startsWith('-') && !/[\0\r\n]/.test(value)),
+      })
+      .strict()
       .optional(),
     /** Existing image-provisioned scratch root outside the private ledger, for isolated Codex. */
     assignmentWorkspaceDirectory: z
@@ -421,10 +417,6 @@ export class MachineRunner implements Runner {
     const name = record.metadata.workspaceDriver;
     return typeof name === 'string' ? this.drivers.get(name) : this.workspaces;
   }
-  /** Whether the launch uses the runner's own repository, which alone may involve GitHub. */
-  private local(record: LaunchRecord): boolean {
-    return typeof record.metadata.workspaceDriver !== 'string';
-  }
   private previousWorkspace(id: string) {
     if (!this.config.workInstanceId) return undefined;
     const record = this.ledger.previousSettled(id);
@@ -570,10 +562,6 @@ export class MachineRunner implements Runner {
         ...(declared.effort ? { effort: declared.effort } : {}),
       });
       await this.acquire(pending);
-    }
-    if (this.config.workspace && 'github' in this.config.workspace) {
-      // External publication is recoverable and must not stop local worker supervision.
-      await this.client.syncPublications().catch(() => {});
     }
     const records = this.ledger.open();
     this.state =
@@ -727,27 +715,6 @@ export class MachineRunner implements Runner {
           await this.resetAssignment();
           record = this.save(record.id, { assignmentPrepared: true });
         }
-        if (
-          this.local(record) &&
-          this.config.workspace &&
-          'github' in this.config.workspace &&
-          effectiveWorkspace(session.execution.policy).mode !== 'none'
-        ) {
-          const grant = await this.client.transportGrant({
-            sessionId: session.id,
-            runnerId: session.runnerId,
-            hostRef: record.id,
-            operation: 'fetch',
-          });
-          try {
-            const references = Object.values(session.execution.references)
-              .flat()
-              .filter((v): v is string => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v));
-            await this.workspaces.syncGitHub(grant, references);
-          } finally {
-            await this.client.revokeGrant(grant);
-          }
-        }
         const driver = this.driverOf(record);
         if (!driver) throw new WorkspaceDeferred('driver_absent', 'workspace_driver_missing');
         const workspace = await driver.prepare(record, session);
@@ -836,7 +803,6 @@ export class MachineRunner implements Runner {
     check(driver, 'workspace_driver_missing', 'This runner does not carry that driver');
     if (!driver.pendingCommits) return; // A lifecycle-only driver runs no Code commands.
     const workspaces = driver as Required<WorkspaceDriver>; // The contract: all four or none.
-    const local = this.local(record);
     const perform = async (command: CodeCommitCommand) => {
       // A restart may owe only a receipt, even after the worker or workspace has closed.
       // The manager distinguishes proven outcomes from an interrupted Git operation.
@@ -851,15 +817,6 @@ export class MachineRunner implements Runner {
       }
       const outcome = workspaces.commitOutcome(command.id);
       check(outcome, 'code_operation_uncertain', 'Git operation has no proven outcome', 503);
-      if (local && 'receipt' in outcome && outcome.receipt.repositoryId.startsWith('github:')) {
-        await this.publishGit({
-          sessionId: command.sessionId,
-          runnerId: command.runnerId,
-          hostRef: command.hostRef,
-          operation: 'checkpoint',
-          receipt: outcome.receipt,
-        });
-      }
       await this.answer(() => this.client.completeCodeCommand(command, outcome));
       workspaces.acknowledgeCommit(command.id);
     };
@@ -912,15 +869,6 @@ export class MachineRunner implements Runner {
     );
     // Only an attached checkout has a result to report; the session is closed by now.
     if (result && record.metadata.attached === true && record.metadata.workspaceReported !== true) {
-      if (this.local(record) && result.repositoryId.startsWith('github:') && !workspace.readOnly) {
-        await this.publishGit({
-          sessionId: record.sessionId,
-          runnerId: this.ledger.runnerId,
-          hostRef: record.id,
-          operation: 'capture',
-          workspace: result,
-        });
-      }
       await this.answer(() =>
         this.client.workspaceResult(record.sessionId, this.ledger.runnerId, record.id, result),
       );
@@ -1144,15 +1092,6 @@ export class MachineRunner implements Runner {
         : this.ledger.pendingRequests().length,
       launches: this.stopped ? this.finalLaunches : this.summaries(),
     };
-  }
-  private async publishGit(input: import('@merv/contracts').CodeTransportInput) {
-    const grant = await this.client.transportGrant(input);
-    try {
-      await this.workspaces.pushGitHub(grant);
-      await this.client.verifyTransport(input);
-    } finally {
-      await this.client.revokeGrant(grant);
-    }
   }
   private disposeDrivers(): void {
     this.workspaces.dispose();

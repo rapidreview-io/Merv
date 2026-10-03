@@ -32,7 +32,7 @@ export async function managedServices(
     }),
   );
   const code = await createService(
-    new CodeService(host.state, host.scope, sessions, host.artifacts, host.workflows, core),
+    new CodeService(host.state, host.scope, sessions, host.workflows, core),
   );
   await host.state.transaction((tx) => code.ensureRepository(caller, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();

@@ -180,13 +180,9 @@ test('explicit compatibility configuration completes historical scratch work wit
   assert.equal((await f.app.ctx.knowledge.resolve(f.owner, [f.source.id]))[0].status, 'resolved');
   assert.deepEqual(
     (
-      await f.app.ctx.knowledge.resolve(f.owner, [
-        'code-proposal:missing',
-        'code-commit:missing',
-        'session-final:missing',
-      ])
+      await f.app.ctx.knowledge.resolve(f.owner, ['code-commit:missing', 'session-final:missing'])
     ).map((ref) => ref.status),
-    ['unavailable', 'unavailable', 'unavailable'],
+    ['unavailable', 'unavailable'],
   );
   await assert.rejects(async () => await f.experiment('Needs-code', 'git'), {
     code: 'code_unavailable',
@@ -253,7 +249,7 @@ test('explicit compatibility configuration completes historical scratch work wit
   assert.deepEqual(record.integrations, []);
   assert.equal((await f.experiment('Now-with-code', 'git')).workspace, 'git');
   assert.equal(
-    (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
+    (await f.app.ctx.knowledge.resolve(f.owner, ['code-commit:missing']))[0].status,
     'missing',
   );
 });
@@ -318,7 +314,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
       [],
     );
     assert.equal(
-      (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
+      (await f.app.ctx.knowledge.resolve(f.owner, ['code-commit:missing']))[0].status,
       'unavailable',
     );
     const current = await f.app.ctx.sessions.run(
@@ -339,7 +335,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
       'experiment.design',
     );
     assert.equal(
-      (await f.app.ctx.knowledge.resolve(f.owner, ['code-proposal:missing']))[0].status,
+      (await f.app.ctx.knowledge.resolve(f.owner, ['code-commit:missing']))[0].status,
       'missing',
     );
     assert.equal(f.app.status().find(({ id }) => id === 'code-tools')?.state, 'active');

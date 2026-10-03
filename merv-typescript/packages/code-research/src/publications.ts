@@ -26,8 +26,6 @@ import {
   PublicationIncident,
   type PublicationHost,
 } from './publication-host.js';
-import type { CodeTransportService } from './transport.js';
-import type { CodeProposal } from './types.js';
 
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
 export interface CodeUnitPublicationSeal {
@@ -71,8 +69,7 @@ export class CodePublicationService implements CodePublicationApi {
     private state: State,
     private scope: Scope,
     private github: CodeGitHubService,
-    private transport: CodeTransportService,
-    private host?: PublicationHost,
+    private host: PublicationHost,
   ) {}
   async initialize() {
     await migratePublications(this.state);
@@ -107,46 +104,6 @@ export class CodePublicationService implements CodePublicationApi {
     );
     check(row, 'publication_not_found', 'GitHub publication not found in this project', 404);
     return row;
-  }
-  async enqueue(caller: Caller, proposal: CodeProposal, tx: Transaction) {
-    ({ caller, proposal } = structuredClone({ caller, proposal }));
-    this.state.assertTransaction(tx);
-    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
-    const binding = await this.transport.bindingForProposal(proposal.producer.sessionId, tx);
-    check(
-      binding && proposal.receipt.repositoryId === `github:${binding.repository.id}`,
-      'github_conflict',
-      'Proposal repository binding is unavailable',
-      409,
-    );
-    // Record verified local facts even if publication authority has since expired.
-    // Every external operation independently rechecks the frozen binding and current authority.
-    const record: CodePublication = {
-      proposalId: proposal.id,
-      instanceId: proposal.instanceId,
-      manifestHash: proposal.manifestHash,
-      repository: binding?.repository.fullName ?? '',
-      repositoryId: binding?.repository.id ?? 0,
-      connectionRevision: binding?.revision ?? 0,
-      branch: `merv/proposals/${proposal.id}`,
-      baseBranch: binding?.baseBranch ?? 'main',
-      baseOid: proposal.receipt.baseOid,
-      headOid: proposal.receipt.headOid,
-      treeOid: proposal.receipt.treeOid,
-      title: clip(proposal.summary, 240),
-      createdAt: now(),
-      review: null,
-      pull: null,
-      merge: null,
-      lastError: null,
-    };
-    await tx.run(
-      'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json) VALUES(?,?,?,?) ON CONFLICT(proposal_id) DO NOTHING',
-      proposal.id,
-      caller.projectId,
-      canonical(record),
-      canonical(binding),
-    );
   }
   /**
    * Opens the publication of an accepted unit with its passing review already sealed.
@@ -194,49 +151,6 @@ export class CodePublicationService implements CodePublicationApi {
         verdict: 'pass',
         recordedAt: at,
       }),
-    );
-  }
-  /** Trusted domain hook only: invoked in the same transaction that commits its independent verdict. */
-  async recordReview(
-    caller: Caller,
-    proposal: CodeProposal,
-    reviewId: string,
-    verdict: NonNullable<CodePublication['review']>['verdict'],
-    tx: Transaction,
-  ) {
-    ({ caller, proposal } = structuredClone({ caller, proposal }));
-    this.state.assertTransaction(tx);
-    if (!proposal.receipt.repositoryId.startsWith('github:')) return;
-    await this.scope.require(caller, 'review', tx);
-    check(
-      caller.actorId !== proposal.producer.actorId,
-      'self_review',
-      'The producer cannot approve its own publication',
-      403,
-    );
-    const row = await this.row(caller, proposal.id, tx),
-      record = this.decode(row);
-    check(
-      record.manifestHash === proposal.manifestHash && record.headOid === proposal.receipt.headOid,
-      'publication_conflict',
-      'The review does not match the immutable proposal',
-      409,
-    );
-    if (record.review) {
-      check(
-        record.review.id === reviewId &&
-          record.review.actorId === caller.actorId &&
-          record.review.verdict === verdict,
-        'publication_conflict',
-        'This publication already has a different review verdict',
-        409,
-      );
-      return;
-    }
-    await tx.run(
-      "UPDATE code_publications SET review_json=?,synced_at='' WHERE proposal_id=?",
-      canonical({ id: reviewId, actorId: caller.actorId, verdict, recordedAt: now() }),
-      proposal.id,
     );
   }
   async publications(caller: Caller) {
@@ -322,7 +236,7 @@ export class CodePublicationService implements CodePublicationApi {
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
     const original = this.decode(row);
     let mainParent: string | undefined;
-    if (original.approval && pull.merged && !original.verified) {
+    if (pull.merged && !original.verified) {
       try {
         check(
           !original.incident,
@@ -336,7 +250,7 @@ export class CodePublicationService implements CodePublicationApi {
           'A merge occurred without a retained human intent',
           409,
         );
-        mainParent = await this.host!.verify(caller, original, pull.mergeCommitSha);
+        mainParent = await this.host.verify(caller, original, pull.mergeCommitSha);
       } catch (error) {
         if (error instanceof MervError && error.code === 'code_publication_incident')
           await this.state.transaction(async (tx) => {
@@ -353,7 +267,7 @@ export class CodePublicationService implements CodePublicationApi {
               canonical(pull),
               row.proposal_id,
             );
-            await this.host!.reconcile(caller, tx);
+            await this.host.reconcile(caller, tx);
           });
         throw error;
       }
@@ -382,36 +296,35 @@ export class CodePublicationService implements CodePublicationApi {
           row.proposal_id,
         );
       }
-      if (pull.merged && record.approval && !record.verified) {
-        await this.host!.check(caller, record, tx);
+      if (pull.merged && !record.verified) {
+        await this.host.check(caller, record, tx);
         await tx.run(
           'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
           record.proposalId,
         );
-        await this.host!.apply(caller, record, 'published', tx);
-        await this.host!.main(caller, pull.mergeCommitSha!, tx);
+        await this.host.apply(caller, record, 'published', tx);
+        await this.host.main(caller, pull.mergeCommitSha!, tx);
         // Commit the wake-up with the verified receipt and admitted main, never with a preview.
         await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
           unitId: record.instanceId,
           commitSha: pull.mergeCommitSha!,
         });
-      } else if (record.approval?.source === 'unit' && reading(record.pull) !== reading(pull))
+      } else if (reading(record.pull) !== reading(pull))
         // A unit's blocker is read back from this row, so it follows the pull request the
         // moment one opens, and again when it closes unmerged: until then the wait said no
         // pull request existed, and named nobody who could end it.
-        await this.host!.reconcile(caller, tx);
+        await this.host.reconcile(caller, tx);
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }
   /** A reviewed local integration needs no remote, but retains the same review certificate. */
   private async publishLocal(caller: Caller, row: Row, lock: string) {
     const record = this.decode(row);
-    check(this.host, 'code_store_unavailable', 'Managed repository storage is required', 503);
     await this.host.verifyLocal(caller, record);
     await this.state.transaction(async (tx) => {
       const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
       await this.scope.require(caller, 'write', tx);
-      await this.host!.check(caller, current, tx);
+      await this.host.check(caller, current, tx);
       const project = await tx.get<{ main_json: string }>(
         'SELECT main_json FROM code_projects WHERE project_id=?',
         caller.projectId,
@@ -425,7 +338,7 @@ export class CodePublicationService implements CodePublicationApi {
           "UPDATE code_publications SET stale=1,settled=1,error='code_main_changed' WHERE proposal_id=?",
           row.proposal_id,
         );
-        await this.host!.apply(caller, current, 'stale', tx);
+        await this.host.apply(caller, current, 'stale', tx);
         return;
       }
       await tx.run(
@@ -440,8 +353,8 @@ export class CodePublicationService implements CodePublicationApi {
         }),
         row.proposal_id,
       );
-      await this.host!.main(caller, record.headOid, tx);
-      await this.host!.apply(caller, current, 'published', tx);
+      await this.host.main(caller, record.headOid, tx);
+      await this.host.apply(caller, current, 'published', tx);
       await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
         destination: 'local',
         unitId: record.instanceId,
@@ -462,8 +375,7 @@ export class CodePublicationService implements CodePublicationApi {
     await this.scope.require(caller, 'write');
     const records = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const active =
-        "(record_json::jsonb->'approval' IS NULL OR record_json::jsonb->'approval' = 'null'::jsonb OR record_json::jsonb->'approval'->>'source' = 'unit')";
+      const active = "record_json::jsonb->'approval'->>'source' = 'unit'";
       return (
         await tx.all<Row>(
           `SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? AND ${active} ORDER BY synced_at,proposal_id LIMIT 1`,
@@ -492,22 +404,17 @@ export class CodePublicationService implements CodePublicationApi {
               return this.owned(caller, row.proposal_id, lock, tx);
             });
           }
-          const hosted = !!this.decode(row).approval;
-          await (
-            hosted
-              ? this.github.publicationAutomation.bind(this.github)
-              : this.github.automation.bind(this.github)
-          )(
+          await this.github.publicationAutomation(
             caller,
             'write',
             JSON.parse(row.binding_json),
             async (client, token) => {
               const current = this.decode(row);
               let pull: GitHubPullRequest;
-              if (hosted && !current.stale) {
-                await this.host!.rules(caller, client, token, current, false);
-                await this.state.transaction((tx) => this.host!.check(caller, current, tx));
-                await this.host!.snapshot(caller, current);
+              if (!current.stale) {
+                await this.host.rules(caller, client, token, current, false);
+                await this.state.transaction((tx) => this.host.check(caller, current, tx));
+                await this.host.snapshot(caller, current);
               }
               if (current.pull)
                 pull = await client.pull(token, current.repository, current.pull.number);
@@ -524,24 +431,6 @@ export class CodePublicationService implements CodePublicationApi {
                 );
                 if (found.length) pull = found[0];
                 else {
-                  // Creation may have succeeded before a previous process lost its reply.
-                  // Always recover that PR before settling a rejected proposal.
-                  if (current.review && current.review.verdict !== 'pass') {
-                    await this.state.transaction(async (tx) => {
-                      const result = await tx.run(
-                        'UPDATE code_publications SET settled=1,error=NULL WHERE proposal_id=? AND lock_id=?',
-                        current.proposalId,
-                        lock,
-                      );
-                      check(
-                        result.changes === 1,
-                        'publication_busy',
-                        'Publication reconciliation was superseded',
-                        409,
-                      );
-                    });
-                    return;
-                  }
                   await client.ensureBranch(
                     token,
                     current.repository,
@@ -557,9 +446,7 @@ export class CodePublicationService implements CodePublicationApi {
                       // This body is what a signed-in operator reads before the one
                       // irreversible action in the design, so it names the kind of work it
                       // is publishing and what the hash it asks them to trust actually is.
-                      body: current.approval
-                        ? `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`
-                        : `Merv proposal ${current.proposalId}\n\nExact commit: ${current.headOid}\nManifest SHA-256: ${current.manifestHash}\n\nMerv's independent verdict is tracked separately from GitHub reviews.`,
+                      body: `Merv unit publication ${current.proposalId}\n\nUnit: ${current.instanceId}\nExact commit: ${current.headOid}\nAcceptance SHA-256: ${current.manifestHash}\n\nMerv's independent review of this unit is tracked separately from GitHub reviews.`,
                     });
                   } catch (error) {
                     const recovered = await client.pulls(token, current.repository, {
@@ -572,25 +459,16 @@ export class CodePublicationService implements CodePublicationApi {
                 }
               }
               this.pinned(current, pull);
-              // A review may have arrived while the remote PR was being created. Reload its immutable verdict.
-              const latest = await this.state.transaction((tx) =>
-                this.row(caller, current.proposalId, tx),
-              );
-              const review = this.decode(latest).review;
-              if (pull.state === 'open' && review) {
-                if (hosted && review.verdict === 'pass')
-                  await client.appStatus(
-                    token,
-                    current.repository,
-                    current.headOid,
-                    publicationApproval,
-                    true,
-                  );
-                if (review.verdict !== 'pass')
-                  pull = await client.updatePull(token, current.repository, pull.number, {
-                    state: 'closed',
-                  });
-                else if (pull.draft) {
+              // A unit's publication is opened with its passing review already sealed.
+              if (pull.state === 'open' && current.review?.verdict === 'pass') {
+                await client.appStatus(
+                  token,
+                  current.repository,
+                  current.headOid,
+                  publicationApproval,
+                  true,
+                );
+                if (pull.draft) {
                   await client.readyPull(token, pull.nodeId);
                   pull = await client.pull(token, current.repository, pull.number);
                 }
@@ -641,7 +519,7 @@ export class CodePublicationService implements CodePublicationApi {
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
       check(
-        !record.approval || record.approval.source === 'unit',
+        record.approval?.source === 'unit',
         'publication_retired',
         'This publication belongs to a retired workflow',
         409,
@@ -705,7 +583,7 @@ export class CodePublicationService implements CodePublicationApi {
         record.merge.actorId === caller.actorId &&
         record.merge.commitSha === record.pull.mergeCommitSha &&
         !!record.merge.commitSha &&
-        (!record.approval || record.verified)
+        record.verified
       )
         return record;
       // A released publication keeps a passing review and an open pull request, so only its
@@ -717,11 +595,7 @@ export class CodePublicationService implements CodePublicationApi {
         'This publication is finished; it can no longer be merged',
         409,
       );
-      return (
-        record.approval
-          ? this.github.publicationAutomation.bind(this.github)
-          : this.github.automation.bind(this.github)
-      )(
+      return this.github.publicationAutomation(
         caller,
         'write',
         JSON.parse(row.binding_json),
@@ -730,48 +604,45 @@ export class CodePublicationService implements CodePublicationApi {
           let pull = await client.pull(token, record.repository, record.pull!.number);
           this.pinned(record, pull);
           if (pull.merged) return this.save(caller, row, lock, pull);
-          let requiredChecks: string[] = [];
-          if (record.approval) {
-            const main = await client.branch(token, record.repository, record.baseBranch);
-            await this.host!.import(caller, record, main.sha);
-            if (!(await this.host!.ancestor(caller.projectId, main.sha, record.headOid))) {
-              const closed =
-                pull.state === 'open'
-                  ? await client.updatePull(token, record.repository, pull.number, {
-                      state: 'closed',
-                    })
-                  : null;
-              await this.state.transaction(async (tx) => {
-                await this.scope.require(caller, 'admin', tx);
-                await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-                await this.owned(caller, record.proposalId, lock, tx);
-                await this.host!.check(caller, record, tx);
-                await this.host!.main(caller, main.sha, tx);
-                // An accepted unit publishes once. A stale row settles here.
+          const main = await client.branch(token, record.repository, record.baseBranch);
+          await this.host.import(caller, record, main.sha);
+          if (!(await this.host.ancestor(caller.projectId, main.sha, record.headOid))) {
+            const closed =
+              pull.state === 'open'
+                ? await client.updatePull(token, record.repository, pull.number, {
+                    state: 'closed',
+                  })
+                : null;
+            await this.state.transaction(async (tx) => {
+              await this.scope.require(caller, 'admin', tx);
+              await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
+              await this.owned(caller, record.proposalId, lock, tx);
+              await this.host.check(caller, record, tx);
+              await this.host.main(caller, main.sha, tx);
+              // An accepted unit publishes once. A stale row settles here.
+              await tx.run(
+                "UPDATE code_publications SET stale=1,settled=1,synced_at='' WHERE proposal_id=?",
+                record.proposalId,
+              );
+              if (closed)
                 await tx.run(
-                  "UPDATE code_publications SET stale=1,settled=1,synced_at='' WHERE proposal_id=?",
+                  'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
+                  canonical(closed),
                   record.proposalId,
                 );
-                if (closed)
-                  await tx.run(
-                    'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
-                    canonical(closed),
-                    record.proposalId,
-                  );
-                await this.host!.apply(caller, record, 'stale', tx);
-              });
-              return this.decode(
-                await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
-              );
-            }
-            requiredChecks = await this.host!.rules(caller, client, token, record);
-            check(
-              await client.appStatus(token, record.repository, record.headOid, publicationApproval),
-              'publication_review_required',
-              'The exact approved head must carry merv/consolidation-approved',
-              409,
+              await this.host.apply(caller, record, 'stale', tx);
+            });
+            return this.decode(
+              await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
             );
           }
+          const requiredChecks = await this.host.rules(caller, client, token, record);
+          check(
+            await client.appStatus(token, record.repository, record.headOid, publicationApproval),
+            'publication_review_required',
+            'The exact approved head must carry merv/consolidation-approved',
+            409,
+          );
           check(
             pull.state === 'open' && !pull.draft && pull.base.sha === input.expectedBase,
             'github_base_changed',
@@ -787,14 +658,13 @@ export class CodePublicationService implements CodePublicationApi {
             409,
           );
           check(
-            (!record.approval ||
-              (await client.requiredChecks(
-                token,
-                record.repository,
-                record.headOid,
-                requiredChecks,
-                inspection.checks,
-              ))) &&
+            (await client.requiredChecks(
+              token,
+              record.repository,
+              record.headOid,
+              requiredChecks,
+              inspection.checks,
+            )) &&
               (inspection.statusCount === 0 || inspection.commitStatus === 'success') &&
               inspection.checks.every(
                 (c) =>
@@ -824,7 +694,7 @@ export class CodePublicationService implements CodePublicationApi {
               'The exact approved publication must still be current',
               409,
             );
-            if (latest.approval) await this.host!.check(caller, latest, tx);
+            await this.host.check(caller, latest, tx);
             if (latest.merge?.requestId === input.requestId)
               check(
                 latest.merge.expectedBase === input.expectedBase &&
@@ -889,13 +759,7 @@ export class CodePublicationService implements CodePublicationApi {
             'A signed-in human must merge',
             403,
           );
-          if (
-            current.approval &&
-            current.merge &&
-            !current.verified &&
-            !current.stale &&
-            !current.incident
-          ) {
+          if (current.merge && !current.verified && !current.stale && !current.incident) {
             check(
               current.merge.requestId === input.requestId &&
                 current.merge.actorId === caller.actorId,
@@ -903,7 +767,7 @@ export class CodePublicationService implements CodePublicationApi {
               'The human merge intent changed',
               409,
             );
-            await this.host!.check(caller, current, tx);
+            await this.host.check(caller, current, tx);
           }
         },
       );

@@ -17,7 +17,7 @@ or workflow mutation. Gate and next-action guidance stays in Workflows.
 
 `project.references` resolves up to 200 input references in order. Supported
 explicit forms are `task:ID`, `experiment:ID`, `reflection:ID`, `research:ID`,
-`artifact:ID`, `review:ID`, `code-proposal:ID`, `code-commit:ID` and
+`artifact:ID`, `review:ID`, `code-commit:ID` and
 `session-final:ID`; supported record-ID prefixes also work, and a `wf_` ID names
 its task, experiment, reflection wave or research cycle. Results distinguish
 resolved, missing and unsupported. No lookup falls back to another project. A resolved code

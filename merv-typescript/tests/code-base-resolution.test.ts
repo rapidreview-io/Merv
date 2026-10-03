@@ -31,7 +31,7 @@ async function fixture(t: TestContext, human = false) {
   await f.sessions.setDispatch(f.admin, { enabled: true });
   const core = await createService(new CoreCodeService(f.state, f.scope, {}));
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
   );
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
   const root = join(f.directory, 'code');

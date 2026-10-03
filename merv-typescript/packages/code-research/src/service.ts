@@ -17,7 +17,6 @@ import {
   type FaultPoint,
 } from '@merv/code/store/operations';
 import type {
-  Artifacts,
   Caller,
   CodeAcceptedSince,
   Scope,
@@ -37,14 +36,12 @@ import type { Sessions } from '@merv/sessions/types';
 import { CodeBaseService } from './bases.js';
 import { CodeCaptureReader } from './captures.js';
 import { CodeCommandService } from './commands.js';
-import { CodeProposalService } from './proposals.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
 import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
 import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
-import { CodeTransportService } from './transport.js';
 import type { Code } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { archiveCommit } from './base-check.js';
@@ -63,7 +60,7 @@ export interface CodeStoreOptions {
   autoMerge?: boolean;
 }
 
-/** One Code capability; immutable proposals and machine commands retain separate records. */
+/** One Code capability over machine commands, units, bases and publications. */
 export class CodeService extends CodeCommandService implements Code {
   async source(
     projectId: string,
@@ -111,7 +108,6 @@ export class CodeService extends CodeCommandService implements Code {
     );
     return await archiveCommit(store.repositories.git, env, receipt.headOid);
   }
-  private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
   private readonly writerStore: CodeWriterService;
@@ -120,7 +116,6 @@ export class CodeService extends CodeCommandService implements Code {
   private baseStore?: CodeBaseService;
   private protocol?: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
-  readonly transport: CodeTransportService;
   private publicationStore: CodePublicationService;
   private publicationHost: PublicationHost;
   private readonly board: CodeRunningReader;
@@ -143,7 +138,6 @@ export class CodeService extends CodeCommandService implements Code {
     state: State,
     scope: Scope,
     sessions: Sessions,
-    artifacts: Artifacts,
     workflows: Workflows,
     utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories'>,
     repositories: CodeStoreOptions = {},
@@ -154,7 +148,6 @@ export class CodeService extends CodeCommandService implements Code {
     this.baseScope = scope;
     this.github = utility.github;
     this.writerStore = utility.writers;
-    this.transport = new CodeTransportService(state, sessions, this, this.github);
     this.publicationHost = new PublicationHost(
       state,
       scope,
@@ -184,7 +177,6 @@ export class CodeService extends CodeCommandService implements Code {
       state,
       scope,
       this.github,
-      this.transport,
       this.publicationHost,
     );
     this.board = new CodeRunningReader(state, scope, workflows, {
@@ -198,9 +190,6 @@ export class CodeService extends CodeCommandService implements Code {
 
       this.captureReader = new CodeCaptureReader(state, scope, sessions);
       try {
-        this.proposalStore = await createService(
-          new CodeProposalService(this, state, scope, sessions, artifacts),
-        );
         this.unitStore = await createService(
           new CodeUnitService(state, scope, workflows, this, this.writerStore, sessions),
         );
@@ -256,7 +245,6 @@ export class CodeService extends CodeCommandService implements Code {
         // The mirror reads the project's GitHub link, so it only starts looking for refs to
         // publish once that store exists.
         this.mirrorStore?.initialize();
-        await this.transport.initialize();
         await this.publicationStore.initialize();
         await migrateRepositorySync(state);
       } catch (error) {
@@ -267,12 +255,6 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async capture(...args: Parameters<CodeCaptureReader['capture']>) {
     return await this.captureReader.capture(...args);
-  }
-  transportGrant(caller: Caller, input: unknown) {
-    return this.network(() => this.transport.grant(caller, input));
-  }
-  verifyTransport(caller: Caller, input: unknown) {
-    return this.network(() => this.transport.verify(caller, input));
   }
   override async completeCommand(caller: Caller, value: unknown) {
     caller = structuredClone(caller);
@@ -288,30 +270,25 @@ export class CodeService extends CodeCommandService implements Code {
         : null;
       const writer =
         binding && (await this.writerStore.row(tx, binding.projectId, binding.instanceId));
-      if (!writer || Number(writer.generation) === 0)
-        await this.transport.requireCheckpoint(input, tx);
+      // Only Code's own repository admits a commit now; nothing verifies one on GitHub.
+      check(
+        !(
+          (!writer || Number(writer.generation) === 0) &&
+          'receipt' in input &&
+          input.receipt?.repositoryId.startsWith('github:')
+        ),
+        'code_upload_required',
+        'A commit to a GitHub repository succeeds only once Code admitted it',
+        409,
+      );
       if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
       return super.completeCommand(caller, input);
     };
     const tx = this.storage.ambient;
     return tx ? complete(tx) : this.storage.transaction(complete);
   }
-  async seal(
-    caller: Caller,
-    input: Parameters<CodeProposalService['seal']>[1],
-    binding: Parameters<CodeProposalService['seal']>[2],
-    tx: Transaction,
-  ) {
-    caller = structuredClone(caller);
-    const proposal = await this.proposalStore.seal(caller, input, binding, tx);
-    await this.publicationStore.enqueue(caller, proposal, tx);
-    return proposal;
-  }
   controlPublication(caller: Caller, input: unknown): Promise<unknown> {
     return this.publicationHost.control(caller, input);
-  }
-  recordPublicationReview(...args: Parameters<CodePublicationService['recordReview']>) {
-    return this.publicationStore.recordReview(...args);
   }
   publications(...args: Parameters<CodePublicationService['publications']>) {
     return this.publicationStore.publications(...args);
@@ -642,9 +619,6 @@ export class CodeService extends CodeCommandService implements Code {
         ),
     };
   }
-  async proposal(...args: Parameters<CodeProposalService['proposal']>) {
-    return await this.proposalStore.proposal(...args);
-  }
   override async close(): Promise<void> {
     this.publicationClosed = true;
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
@@ -653,7 +627,6 @@ export class CodeService extends CodeCommandService implements Code {
     // read must be refused before this method first yields.
     const merging = this.baseStore?.close();
     this.captureReader?.close();
-    this.proposalStore?.close();
     this.unitStore?.close();
     super.close();
     // Every read is refused from here on. Running admissions still reach the database, which

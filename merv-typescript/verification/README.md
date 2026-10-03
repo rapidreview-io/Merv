@@ -144,6 +144,9 @@ both pinned artifact reads and production `review.submit` dispatch. The producer
 recovered from a sandbox-blocked heredoc; no MCP call failed. This is the latest
 checkpoint. The synthetic domain is not the production experiment/reflection or
 consolidation program, and the retained source hashes do not assert otherwise.
+Sealed Code proposals and the GitHub checkpoint transport were removed on
+2026-10-03; both records are preserved unchanged for audit history, and the
+scripts and tests they name no longer exist.
 
 `claims.json` records 566 passing tests for project facts, revision conflicts,
 immutable command receipts, project/session authority and actual plugin removal.

@@ -17,8 +17,6 @@ import type { Code } from './types.js';
 export type CodeRoutes = Pick<
   Code,
   | 'github'
-  | 'transportGrant'
-  | 'verifyTransport'
   | 'nextCommand'
   | 'completeCommand'
   | 'publications'
@@ -154,8 +152,8 @@ async function publicationRequest(req: IncomingMessage, r: ApiRequest, code: Cod
 }
 
 /**
- * `/code`: GitHub's OAuth callback (public), then the authenticated GitHub, publication, Git
- * transport, workspace (`/code/v2/`) and command controls. Each decides its caller once before
+ * `/code`: GitHub's OAuth callback (public), then the authenticated GitHub, publication,
+ * workspace (`/code/v2/`) and command controls. Each decides its caller once before
  * its body; Code parses every body it is handed and authorizes each effect itself. A managed
  * runner's credential already confines it to the routes its protocol uses.
  */
@@ -170,15 +168,6 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       return await publicationRequest(req, r, code);
     if (path === '/code/github' || path.startsWith('/code/github/'))
       return await githubRequest(req, res, r, code.github);
-    if (path === '/code/transport/grant' || path === '/code/transport/verify') {
-      if (req.method !== 'POST' || r.url.search)
-        throw new MervError('invalid_input', 'Use POST without query parameters');
-      const caller = await r.caller();
-      const input = await r.json(undefined, 8192);
-      return path.endsWith('/grant')
-        ? await code.transportGrant(caller, input)
-        : await code.verifyTransport(caller, input);
-    }
     if (path.startsWith('/code/v2/')) {
       if (r.url.search)
         throw new MervError('invalid_input', 'Code routes do not accept query parameters');

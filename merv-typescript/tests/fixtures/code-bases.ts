@@ -88,13 +88,9 @@ export async function baseFixture(t: TestContext, enabled = true) {
   for (const [branch, oid] of Object.entries(seed.commits))
     writeFileSync(join(bare, 'refs', 'heads', branch), `${oid}\n`);
   const commits = seed.commits;
-  const artifacts = await createService(
-    new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))),
-  );
+  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))));
   const core = await createService(new CoreCodeService(state, scope, {}));
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, core),
-  );
+  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
   let changes = 0;
   const hooks = {
     changed: async () => void (changes += 1),

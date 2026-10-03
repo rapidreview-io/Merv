@@ -47,4 +47,16 @@ ${postgresGuard(
 )}
 ${postgresGuard('code_commands', 'no_delete', 'DELETE', 'Code commands are retained')}
 `,
+  // Sealed proposals and the GitHub checkpoint transport are retired with their records; commit
+  // commands remain, because every workspace upload delivers one.
+  2: `
+DROP TABLE IF EXISTS code_proposals, code_github_workspaces, code_github_pushes;
+DROP FUNCTION IF EXISTS code_proposals_no_update_guard(), code_proposals_no_delete_guard();
+DO $code_legacy$
+BEGIN
+  IF to_regclass('component_migrations') IS NOT NULL THEN
+    DELETE FROM component_migrations WHERE component IN ('code_proposals','code_github_transport');
+  END IF;
+END $code_legacy$;
+`,
 };

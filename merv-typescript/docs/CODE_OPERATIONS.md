@@ -2,7 +2,7 @@
 
 The Code plugin lets a running worker request a Git checkpoint without giving the worker write access to private Git metadata. Code stores the request and its immutable result. The existing machine Runner performs the fixed Git operation in that worker's assigned checkout.
 
-Code also supports [immutable proposal sealing](CODE_PROPOSALS.md) inside an admitting domain transaction. Accepted Git units marked for publication use an independently reviewed pull request and a human-requested merge, subject to the checks below. A successful checkpoint is evidence of a commit; it is not an approval or a published project head.
+Accepted Git units marked for publication use an independently reviewed pull request and a human-requested merge, subject to the checks below. A successful checkpoint is evidence of a commit; it is not an approval or a published project head.
 
 ## Plugin boundaries
 
@@ -22,13 +22,13 @@ Code. Its adapters are optional for startup and remain pending until Code return
 No workflow is silently converted from Git to non-Git, and no agent is restarted
 merely because this optional service changes.
 
-| Plugin            | Direct Cordis dependencies        | Responsibility                                                                                 |
-| ----------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Code              | State, Scope, Sessions, Artifacts | Durable command identity, worker admission, source ownership, immutable receipts and proposals |
-| code-tools        | Code, Tools                       | `code.commit` and `code.operation`                                                             |
-| code-research-api | Code, API                         | Source-authenticated command retrieval and completion over `/code`                             |
-| code-ui           | Code, UI                          | Recent operations and sealed proposals in the Code page                                        |
-| Runner            | None; separate machine context    | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts     |
+| Plugin            | Direct Cordis dependencies     | Responsibility                                                                             |
+| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| Code              | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
+| code-tools        | Code, Tools                    | `code.commit` and `code.operation`                                                         |
+| code-research-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
+| code-ui           | Code, UI                       | Recent operations and publications in the Code page                                        |
+| Runner            | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
 
@@ -253,8 +253,8 @@ confined to `POST /mcp` and can never reach it. The adapter forwards opaque JSON
 only Code interprets them. `workspace` gives a machine the manifest of what to prepare,
 `uploads`/`finalize` begin a transfer, `uploads/<id>/parts/<offset>` carry it,
 `uploads/<id>/complete` admits it, and `downloads` with `downloads/<id>/read` serve a bundle
-back. The legacy `/code/transport/*` grant routes are untouched and still serve
-GitHub-mode machines on the legacy workflow versions.
+back. It is the only workspace transport: the GitHub checkpoint transport and its
+`/code/transport/*` routes were removed on 2026-10-03.
 
 ## Trust boundary
 

@@ -202,33 +202,6 @@ test('Code failure acknowledgement must match the local terminal error, never a 
     await assert.rejects(async () => client(body).completeCodeCommand(command, outcome), invalid);
 });
 
-test('transport grants must name the push target that was asked for', async () => {
-  const grant = {
-    repositoryId: 'github:101',
-    repository: 'fixture/private',
-    revision: 1,
-    baseBranch: 'main',
-    baseOid: receipt.baseOid,
-    target: { branch: 'codex/push', headOid: receipt.headOid, treeOid: receipt.treeOid },
-    token: 'synthetic-token',
-    expiresAt: '2099-01-01T00:00:00Z',
-  };
-  for (const changedReply of [false, true]) {
-    const input = {
-      sessionId: session.id,
-      runnerId: session.runnerId,
-      hostRef: command.hostRef,
-      operation: 'checkpoint' as const,
-      receipt,
-    };
-    const reply = structuredClone(grant);
-    if (changedReply) reply.target.headOid = '4'.repeat(40);
-    const pending = client(reply).transportGrant(input);
-    if (changedReply) await assert.rejects(pending, invalid);
-    else assert.deepEqual(await pending, grant);
-  }
-});
-
 test('Code controls send only the bound control fields and keep the source bearer out of their bodies', async () => {
   const requests: { url: string; init: RequestInit }[] = [];
   const connection = new RunnerClient(

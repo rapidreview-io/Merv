@@ -33,7 +33,7 @@ async function fixture(t: TestContext, connected = false) {
   const branches = remote?.branches ?? new Map<string, string>();
   const legacyCore = await createService(new CoreCodeService(f.state, f.scope, {}));
   const legacy = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, legacyCore),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, legacyCore),
   );
   await legacy.close();
   await legacyCore.close();
@@ -60,7 +60,6 @@ async function fixture(t: TestContext, connected = false) {
       f.state,
       f.scope,
       f.sessions,
-      f.artifacts,
       f.workflows,
       { ...core, github: remote?.github ?? core.github },
       {

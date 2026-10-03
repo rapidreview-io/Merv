@@ -1,5 +1,4 @@
 import type {
-  Artifact,
   Caller,
   CodeAcceptedSince,
   CodeBasePin,
@@ -7,7 +6,6 @@ import type {
   CodeCommandRecord,
   CodeCommitCommand,
   CodeCommitInput,
-  CodeCommitReceipt,
   CodeLocalBindInput,
   CodeProjectBinding,
   CodeProjectStatus,
@@ -15,8 +13,6 @@ import type {
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
-  Data,
-  DelegationSource,
   RunningMark,
   RunningNode,
   RunningPanelPart,
@@ -24,7 +20,6 @@ import type {
   RunningSummary,
   SessionWorkspace,
   Transaction,
-  WorkflowDispatchAdmission,
 } from '@merv/contracts';
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
@@ -41,53 +36,6 @@ export interface CodeCommands {
   /** Each control parses its own input, so callers hand it the body they received. */
   nextCommand(caller: Caller, input: unknown): Promise<CodeCommitCommand | null>;
   completeCommand(caller: Caller, input: unknown): Promise<CodeCommandRecord>;
-  close(): void;
-}
-export interface CodeProposalInput {
-  commandId: string;
-  summary: string;
-  artifactIds: string[];
-  /** Trusted program-selected inputs; every other artifact must be authored by this worker. */
-  pinnedInputIds?: string[];
-  /** Domain-owned provenance, supplied by the admitting program. */
-  provenance?: Data;
-  requestId: string;
-}
-export interface CodeProposal {
-  id: string;
-  projectId: string;
-  instanceId: string;
-  /** Immutable sequence within this project and workflow instance, starting at one. */
-  revision: number;
-  createdAt: string;
-  producer: { actorId: string; sessionId: string; source: DelegationSource };
-  workflow: {
-    name: string;
-    version: number;
-    state: string;
-    revision: number;
-    policyHash: string;
-    registrationId: string;
-  };
-  command: CodeCommitCommand;
-  receipt: CodeCommitReceipt;
-  summary: string;
-  artifacts: Artifact[];
-  pinnedInputIds: string[];
-  provenance: Data;
-  admission: WorkflowDispatchAdmission;
-  manifestHash: string;
-  manifestArtifact: Artifact;
-}
-export interface CodeProposals {
-  /** Seal inside the actual program command's transaction and existing session invocation. */
-  seal(
-    caller: Caller,
-    input: CodeProposalInput,
-    admission: WorkflowDispatchAdmission,
-    tx: Transaction,
-  ): Promise<CodeProposal>;
-  proposal(caller: Caller, proposalId: string, tx?: Transaction): Promise<CodeProposal>;
   close(): void;
 }
 export type { CodeCaptureRef } from '@merv/contracts/types';
@@ -244,7 +192,6 @@ export interface CodeRunning {
 export interface Code
   extends
     CodeCommands,
-    CodeProposals,
     CodeCaptures,
     CodeUnits,
     CodeWriters,
@@ -254,14 +201,8 @@ export interface Code
   bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;
-  /** The legacy Git transport grant and its receipt; each parses its own input. */
-  transportGrant(
-    caller: Caller,
-    input: unknown,
-  ): Promise<import('@merv/contracts').CodeTransportGrant>;
-  verifyTransport(caller: Caller, input: unknown): Promise<{ verified: boolean }>;
   /**
-   * The second workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
+   * The workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
    * bytes of one part. Each parses what it receives. Absent where the server keeps no
    * repositories, and once Code is closing.
    */
@@ -275,14 +216,6 @@ export interface Code
     instanceId: string,
     commandId: string,
   ): Promise<{ bytes: Uint8Array; sha256: string }>;
-  /** Domain-only hook; no HTTP or MCP route can create an independent-review verdict. */
-  recordPublicationReview(
-    caller: Caller,
-    proposal: CodeProposal,
-    reviewId: string,
-    verdict: 'pass' | 'needs_changes' | 'fail',
-    tx: Transaction,
-  ): Promise<void>;
 }
 declare module 'cordis' {
   interface Context {

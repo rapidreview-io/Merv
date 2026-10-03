@@ -63,8 +63,8 @@ next actions. Domain services retain ownership of their records; Knowledge
 passes one State transaction through their public read contracts.
 
 Reference input supports record IDs and explicit `task:`, `experiment:`,
-`reflection:`, `research:`, `artifact:`, `review:`, `code-proposal:`,
-`code-commit:` and `session-final:`
+`reflection:`, `research:`, `artifact:`, `review:`, `code-commit:` and
+`session-final:`
 prefixes. The resolver distinguishes `resolved`, `missing`,
 `unsupported` and `unavailable`. A foreign-project ID is missing in this
 project. Unsupported services are not fabricated. A resolved code-capture

@@ -37,7 +37,6 @@ const errorCode = (error: unknown) =>
 const missingCodes = new Set([
   'not_found',
   'experiment_not_found',
-  'code_proposal_not_found',
   'code_capture_not_found',
   'session_not_found',
 ]);
@@ -143,7 +142,6 @@ export class KnowledgeService implements Knowledge {
       kind = [
         ['art_', 'artifact'],
         ['review_', 'review'],
-        ['codeprop_', 'code-proposal'],
         ['codecmd_', 'code-commit'],
         ['session_', 'session-final'],
         ['wf_', 'work-item'],
@@ -218,18 +216,6 @@ export class KnowledgeService implements Knowledge {
             hash: review.snapshotHash,
           })
         : missing('review');
-    }
-    if (kind === 'code-proposal') {
-      const code = this.code;
-      if (!code) return { ref, status: 'unavailable', kind: 'code-proposal', id };
-      const proposal = await this.optional(async () => await code.proposal(caller, id, tx));
-      return proposal
-        ? resolved('code-proposal', {
-            label: proposal.summary,
-            revision: proposal.revision,
-            hash: proposal.manifestHash,
-          })
-        : missing('code-proposal');
     }
     if (kind === 'session-final' || kind === 'code-commit') {
       const code = this.code;

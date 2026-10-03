@@ -45,9 +45,7 @@ async function fixture(t: TestContext, withUnits = true) {
   const state = await openState();
   const migrate = state.migrate.bind(state);
   const scope = await createService(new ProjectScope(state));
-  const artifacts = await createService(
-    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
-  );
+  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -63,7 +61,7 @@ async function fixture(t: TestContext, withUnits = true) {
     };
     try {
       core = await createService(new CoreCodeService(state, scope, {}));
-      const service = new CodeService(state, scope, sessions, artifacts, workflows, core);
+      const service = new CodeService(state, scope, sessions, workflows, core);
       await service.initialize();
       assert.equal(skipped, !units);
       return service;

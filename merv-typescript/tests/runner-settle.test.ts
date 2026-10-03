@@ -376,22 +376,22 @@ test('a launch whose driver is not composed is released but settles only once it
   assert.equal(fake.releases(session.id).length, 1);
 });
 
-test('a Code receipt refused until GitHub is pushed is kept and replayed on the next tick', async (t) => {
-  let pushed = false;
+test('a Code receipt refused with a retried code is kept and replayed on the next tick', async (t) => {
+  let settled = false;
   const fake = server(
     () => null,
     undefined,
     (path) =>
-      !pushed && path === '/code/commands/complete'
-        ? new Refusal(409, 'github_push_required')
+      !settled && path === '/code/commands/complete'
+        ? new Refusal(409, 'transaction_conflict')
         : undefined,
   );
   const acknowledged: string[] = [];
   let command: CodeCommitCommand | undefined;
-  // The stand-in knows no Code route; once pushed, it answers the completion as Code would.
+  // The stand-in knows no Code route; once settled, it answers the completion as Code would.
   const fetcher: typeof fetch = async (input, init) => {
     const reply = await fake.fetch(input as string, init);
-    if (!pushed || !String(input).endsWith('/code/commands/complete')) return reply;
+    if (!settled || !String(input).endsWith('/code/commands/complete')) return reply;
     return Response.json({
       operation: { command, status: 'failed', receipt: null, error: 'workspace_stopped' },
     });
@@ -431,13 +431,13 @@ test('a Code receipt refused until GitHub is pushed is kept and replayed on the 
   const runner = f.make([factory]);
   await runner.start();
   assert.equal(completions().length, 1);
-  assert.equal(runner.snapshot().lastError, 'github_push_required');
+  assert.equal(runner.snapshot().lastError, 'transaction_conflict');
   assert.deepEqual(acknowledged, [], 'a retried refusal is not an answer');
   await runner.tick();
   assert.equal(completions().length, 2, 'replayed on the next tick');
   assert.deepEqual(acknowledged, []);
   assert.deepEqual(open(f), [id]);
-  pushed = true;
+  settled = true;
   await runner.tick();
   assert.equal(completions().length, 3);
   assert.deepEqual(acknowledged, ['command_receipt']);

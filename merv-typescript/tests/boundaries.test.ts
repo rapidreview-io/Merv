@@ -122,7 +122,7 @@ const capabilities: Record<string, readonly string[]> = {
   secrets: ['state'],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope'],
-  codeResearch: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
+  codeResearch: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // Legacy transport stands alone; native connection owners are conditional below.

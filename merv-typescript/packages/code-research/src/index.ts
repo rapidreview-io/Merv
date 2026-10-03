@@ -31,7 +31,7 @@ const configuration = z
 export const codePlugin = {
   name: 'merv-code-research',
   Config: configuration,
-  inject: ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domainEvents'],
+  inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
   async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
     rejectRetiredBackup(config.repositories);
     await ctx.effect(async function* () {
@@ -40,7 +40,6 @@ export const codePlugin = {
           ctx.state,
           ctx.scope,
           ctx.sessions,
-          ctx.artifacts,
           ctx.workflows,
           ctx.code,
           (({ mirrorSeconds, autoMerge, ...store }) => ({

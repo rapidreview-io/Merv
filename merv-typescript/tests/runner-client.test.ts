@@ -425,7 +425,7 @@ test('a refusal is final only when asking again cannot change the answer', () =>
   // Authentication, timeouts, rate limits, unreachable or failing servers are asked again.
   for (const status of [0, 401, 408, 429, 500, 503])
     assert.equal(final(status), false, `${status}`);
-  for (const code of ['transaction_conflict', 'invalid_control_response', 'github_push_required'])
+  for (const code of ['transaction_conflict', 'invalid_control_response'])
     assert.equal(final(409, code), false, code);
 });
 

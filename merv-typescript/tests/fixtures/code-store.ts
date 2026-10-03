@@ -180,9 +180,7 @@ export async function codeStoreFixture(
   const schema = schemaFor();
   const state = await openState(undefined, { schema });
   const scope = await createService(new ProjectScope(state));
-  const artifacts = await createService(
-    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
-  );
+  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -207,7 +205,7 @@ export async function codeStoreFixture(
         },
       }),
     );
-    code = new CodeService(state, scope, seen, artifacts, workflows, core, {
+    code = new CodeService(state, scope, seen, workflows, core, {
       ...options,
       config: { settleMs: 60_000, ...config, ...options.config },
     });
@@ -231,7 +229,7 @@ export async function codeStoreFixture(
   };
   // This fixture represents an existing runner-local binding, predating managed initialization.
   core = await createService(new CoreCodeService(state, scope, {}));
-  code = await createService(new CodeService(state, scope, seen, artifacts, workflows, core));
+  code = await createService(new CodeService(state, scope, seen, workflows, core));
   await boundProject(state, admin.projectId, mainOid, 'fixture-repository');
   await open();
   const paths = new CodeRepositories({ root, quotaBytes: 0, reservedFreeBytes: 0 }).paths(

@@ -361,7 +361,7 @@ flowchart TB
 | `@merv/tasks`           | Brief/delivery rules, task records, installed task graph and atomic review routing        | State, scope, workflows, artifacts, reviews, contextBuilder |
 | `@merv/feed`            | Immutable project posts, artifact attachments, cursor reads and durable activity          | State, scope, artifacts                                     |
 | `@merv/sessions`        | Scoped worker leases, activation, source fencing and runner controls                      | State, scope, workflows, domainEvents                       |
-| `@merv/code`            | Durable commit commands, immutable receipts and sealed proposals                          | State, scope, sessions, artifacts                           |
+| `@merv/code`            | Code's repositories, retained Git facts, writer fencing and GitHub connection             | State, scope                                                |
 | `@merv/mounts`          | External MCP catalogs and per-caller connections, each carrying an exact upstream binding | Tools, scope                                                |
 | `@merv/api`             | Generic tool registry, runtime argument validation, HTTP/MCP transport and draining       | Registry: scope. Transport: scope, registry, identity       |
 | `@merv/runner`          | Machine-local process ownership, Git workspaces and fixed commit execution over HTTP      | None; separate machine context                              |
@@ -374,7 +374,7 @@ For example, an artifacts-only Cordis application can install `statePlugin`, `bl
 
 **State and scope have the most foundational dependents.** State has thirteen direct consumers and Scope has seventeen in the current inventory. Their contracts stay limited to storage transactions and identity/access, so neither acquires task or review rules.
 
-**Artifacts is the shared evidence dependency.** Tasks, reviews, Code proposals and feed attachments use the same immutable files and metadata; future programs can reuse that capability. Workflows is the corresponding reusable execution-state component, currently consumed by the task program. These services remain useful when the Merv task program is absent.
+**Artifacts is the shared evidence dependency.** Tasks, reviews and feed attachments use the same immutable files and metadata; future programs can reuse that capability. Workflows is the corresponding reusable execution-state component, currently consumed by the task program. These services remain useful when the Merv task program is absent.
 
 **The tool registry is an exposure hub.** Eight feature tool adapters, the HTTP/MCP transport, UI and optional Mounts meet there. The feature cores do not depend on it, and the registry imports no feature implementation. Adding a tool means registering a validated handler from its owner; it does not add a task-specific dispatch branch to the gateway. Cordis owns activation and registration disposal, while each service owns its durable records and rules.
 
@@ -395,8 +395,7 @@ The runtime is pinned to **`cordis@4.0.0-rc.10`**. It is upstream Cordis, not th
 
 The current stack includes an optional plugin UI, shared-identity verification and
 generic mounts for external Nisa and sandbox capabilities. Automatic assignment,
-native execution, Git workspace capture, queued `code.commit` and immutable proposal sealing
-are integrated. The synthetic proposal/review acceptance workflow exercises production service APIs;
+native execution, Git workspace capture and queued `code.commit` are integrated;
 the actual Experiments, Reflections and Consolidation programs now use these foundations.
 Central publication, general merges, cross-machine Git transport and remaining runner
 operations remain open. Coding agents invoke the

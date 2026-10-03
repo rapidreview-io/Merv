@@ -18,14 +18,7 @@ export interface KnowledgeRecords {
   publication: KnowledgePublication;
 }
 export type KnowledgeReferenceKind =
-  | 'task'
-  | 'experiment'
-  | 'artifact'
-  | 'review'
-  | 'code-proposal'
-  | 'code-capture'
-  | 'reflection'
-  | 'research';
+  'task' | 'experiment' | 'artifact' | 'review' | 'code-capture' | 'reflection' | 'research';
 export interface KnowledgeReference {
   ref: string;
   status: 'resolved' | 'missing' | 'unsupported' | 'unavailable';

@@ -1,14 +1,12 @@
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { z } from 'zod';
-import type { CodeProposal } from '@merv/code-research/types';
 import type {
   Caller,
   CodeCommandRecord,
@@ -20,7 +18,7 @@ import type { ApplicationConfig } from '../src/config.js';
 
 const oid = (digit: string) => digit.repeat(40);
 
-test('Cordis Code removal withdraws its tools, controls and UI while commands, receipts and sealed proposals survive reload', async (t) => {
+test('Cordis Code removal withdraws its tools, controls and UI while commands and receipts survive reload', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-unload-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -88,8 +86,6 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
             tools: [
               { name: 'code.commit', alternatives: [{}] },
               { name: 'code.operation', alternatives: [{}] },
-              // Test-domain admission only; no production seal tool is added.
-              { name: 'fixture.seal', alternatives: [{}] },
             ],
             workspace: {
               mode: 'persistent',
@@ -256,74 +252,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands, r
   assert.equal(finished.status, 'succeeded');
   assert.deepEqual(finished.receipt, receipt);
 
-  // Admit a genuine MCP session command through the registry and create actual
-  // worker-authored evidence. Only the Git attachment/receipt above is synthetic.
-  const disposeSeal = app.ctx.tools.register({
-    name: 'fixture.seal',
-    description: 'Test-domain command that seals a successful assigned checkpoint.',
-    inputSchema: z.object({ commandId: z.string().min(1) }).strict(),
-    handler: async (caller, input) =>
-      await app.ctx.state.transaction(async (tx) => {
-        const evidence = await app.ctx.artifacts.create(
-          caller,
-          {
-            title: 'Retained verification',
-            content:
-              'This fixture supplied a matching synthetic runner receipt; no real Git execution is claimed.',
-          },
-          tx,
-        );
-        return await app.ctx.codeResearch.seal(
-          caller,
-          {
-            commandId: input.commandId,
-            summary: 'Retain the exact checkpoint and evidence through Code reload.',
-            artifactIds: [evidence.id],
-            provenance: { fixture: 'code-unload' },
-            requestId: 'seal',
-          },
-          { tool: 'fixture.seal', input },
-          tx,
-        );
-      }),
-  });
-  let proposal: CodeProposal;
-  try {
-    proposal = await invoke<CodeProposal>('fixture.seal', { commandId: queued.command.id });
-  } finally {
-    await disposeSeal();
-  }
-  const proposalProvider = app.ctx.codeResearch;
-  const manifest = await app.ctx.artifacts.read(source, proposal.manifestArtifact.id);
-  assert.equal(manifest.encoding, 'utf8');
-  const manifestHash = createHash('sha256').update(manifest.content).digest('hex');
-  assert.equal(proposal.manifestHash, manifestHash);
-  assert.equal(proposal.manifestArtifact.hash, manifestHash);
-  assert.equal(proposal.producer.actorId, session.actorId);
-  assert.equal(proposal.producer.sessionId, session.id);
-  assert.equal(proposal.manifestArtifact.createdBy, session.actorId);
-  assert.ok(proposal.artifacts.every((artifact) => artifact.createdBy === session.actorId));
-  assert.deepEqual(proposal.receipt, receipt);
-  // A sealed proposal is read on the record that made it, one at a time, and it survives
-  // the capability that sealed it being taken away and put back.
-  assert.deepEqual(await app.ctx.codeResearch.proposal(source, proposal.id), proposal);
+  // Commands and their receipts survive the capability being taken away and put back.
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   await app.setEnabled('code', false);
-  await assert.rejects(async () => await proposalProvider.proposal(source, proposal.id), {
-    code: 'code_unavailable',
-  });
   await app.setEnabled('code', true);
-  assert.notEqual(app.ctx.codeResearch, proposalProvider);
-  assert.deepEqual(await app.ctx.codeResearch.proposal(source, proposal.id), proposal);
-  assert.deepEqual(await app.ctx.artifacts.read(source, proposal.manifestArtifact.id), manifest);
-  const sealedEvents = (await app.ctx.state.events(boot.project.id)).filter(
-    (event) => event.type === 'code.proposal_sealed',
-  );
-  assert.equal(sealedEvents.length, 1);
-  assert.equal(sealedEvents[0].subjectId, proposal.id);
-  assert.equal(sealedEvents[0].data.manifestHash, manifestHash);
-  assert.equal(sealedEvents[0].data.manifestArtifactId, proposal.manifestArtifact.id);
-  t.diagnostic(`Reload preserved canonical proposal manifest SHA-256 ${manifestHash}`);
   assert.deepEqual(await invoke('code.operation', { commandId: queued.command.id }), finished);
   assert.deepEqual(await invoke('code.commit', input), finished);
   assert.deepEqual((await ok('/code/commands/complete', completion)).operation, finished);
