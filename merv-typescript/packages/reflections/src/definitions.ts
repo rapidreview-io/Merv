@@ -81,25 +81,34 @@ export const REFLECTION_CRITERIA = [
 /** Asked only when the change specification is a structured plan the next wave will create. */
 export const CHANGE_SPEC_CRITERION =
   'Every next-wave work item follows from cited lens evidence, has checkable Done-when checks or a falsifiable question, and orders cheap feasibility work before the experiments that depend on it; rejected alternatives and carried-over work are recorded honestly, and a stop decision is justified.';
-/**
- * Version 7 of the three stage recipes. Only the lens recipe is still registered; synthesis@7 and
- * review@7 served the retired reflection@2 and remain only as the text version 8 is derived from,
- * whose hash is pinned.
- */
-const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
+/** How a worker reaches the live records behind its context, whichever way the context lists them. */
+const liveRecords =
+  "Read the live inventory with project.records; task.list repeats its task records. If Research is available, research.list identifies this wave's cycle by reflectionId and its researchDependencies name the selected work; research.lineage shows predecessor cycle digests. Verify those tasks and experiments through task.get, experiment.get_state, review.get and artifact.read before saying work was not done. Paper content can lag accepted current-cycle results; reconcile record and evidence times with paper.read before concluding. Refresh live records when needed.";
+/** Current format-2 recipes. Retired recipe construction is not a runtime dependency;
+ * preserve the published version, instructions and section ordering directly. */
+export const ITEM_RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage) => ({
   name: `reflection.${stage}`,
-  version: 7,
+  version: stage === 'lens' ? 12 : 13,
   kind: stage === 'review' ? 'review' : 'work',
   recipe: {
     instructions:
-      stage === 'lens'
+      (stage === 'lens'
         ? 'Independently examine the live project research from your assigned perspective. Do not consult other lens outputs. Verify sources before forming conclusions.'
         : stage === 'synthesis'
           ? 'Reconcile all five independent lens reports against the current research. Preserve disagreement and uncertainty. Produce an evidence-linked synthesis report and explicit proposed change specification.'
-          : 'Independently verify the synthesis report and change specification against all five lens reports and the current research. You own the project paper update: reconcile cross-experiment Methods and Results against the evidence, retaining disagreements and limits. Add comprehensive detail when it helps explain the project’s trajectory, how understanding has changed and what comes next; there is no brevity requirement for reflection-review paper updates. When reflection.get returns a plan, the change specification is structured: if the project owner chooses to create the next wave, research.advance creates exactly these tasks and experiments, so verify every item, its checks or question and its ordering against the evidence. Reading assertions is not verification.',
+          : 'Independently verify the synthesis report and change specification against all five lens reports and the current research. You own the project paper update: reconcile cross-experiment Methods and Results against the evidence, retaining disagreements and limits. Add comprehensive detail when it helps explain the project’s trajectory, how understanding has changed and what comes next; there is no brevity requirement for reflection-review paper updates. When reflection.get returns a plan, the change specification is structured: if the project owner chooses to create the next wave, research.advance creates exactly these tasks and experiments, so verify every item, its checks or question and its ordering against the evidence. Reading assertions is not verification.') +
+      (stage === 'lens'
+        ? ''
+        : ' Every new task and experiment has managed Git storage, independently of GitHub. Submit a version-3 plan without workspace fields. Dependencies determine the base: never supply baseTaskId, a commit or a branch.') +
+      ' Use the project paper’s Problem, scope, goals and current findings to place this reflection in the project’s trajectory. Read any abbreviated paper sections with paper.read. Verify newer evidence before changing established conclusions.' +
+      (stage === 'lens'
+        ? ''
+        : " In a next-wave plan, each task's Done-when checks must be achievable and independently reviewable before any work that depends on it starts. A dependent experiment's design submission and review belong to that experiment's own gate; do not require them for acceptance of its prerequisite task. Check this ordering in the change specification before submitting or approving it.") +
+      ` Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool, and a section with sources left unlisted for lack of room says how many and which tools reach them. ${liveRecords}`,
     sections: [
       { key: 'assignment', title: 'Exact assignment and perspective', required: true },
-      { key: 'research', title: 'Live research access', required: true },
+      { key: 'projectPaper', title: 'Project paper and document revisions', required: true },
+      { key: 'research', title: 'Live research access', required: false },
       { key: 'lenses', title: 'Independent lens reports', required: stage !== 'lens' },
       { key: 'submission', title: 'Exact submitted synthesis', required: stage === 'review' },
       { key: 'assessment', title: 'Review criteria and claim', required: stage === 'review' },
@@ -121,107 +130,10 @@ const RECIPES: TaskTypeDefinition[] = ['lens', 'synthesis', 'review'].map((stage
       stage === 'lens'
         ? 'Write an evidence-linked UTF-8 report with a nonempty Summary section. Save it with artifact.create, then reflection.submit_lens with lensId, artifactId, expectedRevision and requestId.'
         : stage === 'synthesis'
-          ? 'Retain your own report as an immutable text artifact. Retain the change specification either as text, which leaves all follow-on work for the owner to create by hand, or as an application/json artifact (mediaType application/json, at most 64000 bytes) that the owner can turn into the next wave without retyping it: {version: 1, changes: prose scope and consolidation changes (at most 8000 characters), next: {decision: "continue", name: next research cycle name, rationale} or {decision: "stop", reason: goal_met | no_worthwhile_next_step | needs_owner, rationale}, items: at most 12 of {key, kind: "task", title, goal, checks: 1-12 distinct one-line checks, dependsOn, rationale} or {key, kind: "experiment", name, question, details, dependsOn, rationale}, carriedOver: at most 20 of {workflowId, reason} naming existing tasks or experiments the next cycle still waits on, rejected: [{title, reason}]}. Every listed field is required and no other is accepted. A key is lowercase letters, digits and hyphens; dependsOn holds keys of other items without cycles; an experiment depends only on tasks, and a plan holds at most 7 experiments; goal, question and details are at most 4000 characters and each rationale or reason at most 1000. A stop decision has no items and no carriedOver; a continue decision has at least one of either. Call reflection.submit with the report and change specification IDs, reflectionId, expectedRevision and requestId. The reviewer owns the paper update. Stop for independent review.'
+          ? 'Retain your own report as an immutable text artifact. Retain the change specification either as text, which leaves all follow-on work for the owner to create by hand, or as an application/json artifact (mediaType application/json, at most 64000 bytes) that the owner can turn into the next wave without retyping it: {version: 3, changes: prose scope and consolidation changes (at most 8000 characters), next: {decision: "continue", name: next research cycle name, rationale} or {decision: "stop", reason: goal_met | no_worthwhile_next_step | needs_owner, rationale}, items: at most 12 of {key, kind: "task", title, goal, checks: 1-12 distinct one-line checks, dependsOn, rationale} or {key, kind: "experiment", name, question, details, dependsOn, rationale}, carriedOver: at most 20 of {workflowId, reason} naming existing tasks or experiments the next cycle still waits on, rejected: [{title, reason}]}. Every listed field is required and no other is accepted. A key is lowercase letters, digits and hyphens; dependsOn holds keys of other items without cycles; an experiment depends only on tasks, and a plan holds at most 7 experiments; goal, question and details are at most 4000 characters and each rationale or reason at most 1000. A stop decision has no items and no carriedOver; a continue decision has at least one of either. Call reflection.submit with the report and change specification IDs, reflectionId, expectedRevision and requestId. The reviewer owns the paper update. Stop for independent review.'
           : 'Use review.submit with the exact claimId and expectedRevision, verdict, verification notes, synopsis and one finding per criterion. A pass approves this immutable report. For needs_changes or fail choose returnTo synthesizing to retain the lenses, or reflecting to require five fresh lens reports.' +
             ' You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.',
-    maxChars: 24000,
-  },
-}));
-
-const LENS_RECIPE = RECIPES.find((recipe) => recipe.name === 'reflection.lens')!;
-/** Synthesis and review for reflection@3 and @4, whose plans declare a workspace per item. */
-const WORKSPACE_RECIPES: TaskTypeDefinition[] = RECIPES.filter(
-  (recipe) => recipe.name !== 'reflection.lens',
-).map((recipe) => ({
-  ...recipe,
-  version: 8,
-  recipe: {
-    ...recipe.recipe,
-    instructions: `${recipe.recipe.instructions} Every version-2 plan item declares workspace: {provider: "none"} or {provider: "code", version: 1}. Choose code when the item's deliverable is code in the project's repository; choose none for analysis, reports or other work that needs no repository checkout. Verify that each declaration matches its deliverable. Dependencies determine the base: never supply baseTaskId, a commit or a branch.`,
-    outputInstructions:
-      recipe.name === 'reflection.synthesis'
-        ? recipe.recipe.outputInstructions
-            .replace('{version: 1,', '{version: 2,')
-            .replaceAll('dependsOn, rationale}', 'dependsOn, rationale, workspace}')
-        : recipe.recipe.outputInstructions,
-  },
-}));
-
-/** Assignments carry the project paper. */
-const PROJECT_PAPER_RECIPES: TaskTypeDefinition[] = [LENS_RECIPE, ...WORKSPACE_RECIPES].map(
-  (definition) => ({
-    ...definition,
-    version: 9,
-    recipe: {
-      ...definition.recipe,
-      instructions: `${definition.recipe.instructions} Use the project paper’s Problem, scope, goals and current findings to place this reflection in the project’s trajectory. Read any abbreviated paper sections with paper.read. Verify newer evidence before changing established conclusions.`,
-      sections: [
-        ...definition.recipe.sections.slice(0, 1),
-        { key: 'projectPaper', title: 'Project paper and document revisions', required: true },
-        ...definition.recipe.sections.slice(1),
-      ],
-      maxChars: 32000,
-    },
-  }),
-);
-
-/** Keep published recipe hashes intact while teaching new plans the prerequisite boundary. */
-const DEPENDENCY_SAFE_RECIPES: TaskTypeDefinition[] = PROJECT_PAPER_RECIPES.map((definition) =>
-  definition.name === 'reflection.lens'
-    ? definition
-    : {
-        ...definition,
-        version: 10,
-        recipe: {
-          ...definition.recipe,
-          instructions: `${definition.recipe.instructions} In a next-wave plan, each task's Done-when checks must be achievable and independently reviewable before any work that depends on it starts. A dependent experiment's design submission and review belong to that experiment's own gate; do not require them for acceptance of its prerequisite task. Check this ordering in the change specification before submitting or approving it.`,
-        },
-      },
-);
-
-/** How a worker reaches the live records behind its context, whichever way the context lists them. */
-const liveRecords =
-  "Read the live inventory with project.records; task.list repeats its task records. If Research is available, research.list identifies this wave's cycle by reflectionId and its researchDependencies name the selected work; research.lineage shows predecessor cycle digests. Verify those tasks and experiments through task.get, experiment.get_state, review.get and artifact.read before saying work was not done. Paper content can lag accepted current-cycle results; reconcile record and evidence times with paper.read before concluding. Refresh live records when needed.";
-/** Ranked source items replace all-or-nothing sections without changing published recipes. */
-const HIERARCHICAL_RECIPES: TaskTypeDefinition[] = DEPENDENCY_SAFE_RECIPES.map((definition) => ({
-  ...definition,
-  version: definition.version + 1,
-  recipe: {
-    ...definition.recipe,
-    instructions: `${definition.recipe.instructions} The context first lists every source with its retrieval tool and then includes whole source bodies in priority order. An item absent from Selected full content is still evidence to open with its retrieval tool. ${liveRecords}`,
-    sections: definition.recipe.sections.map((section) =>
-      section.key === 'research' ? { ...section, required: false } : section,
-    ),
-  },
-}));
-
-/**
- * The current recipes: format 2, the item renderer. The assignment and the review criteria are
- * always embedded; every other source is embedded whole, highest priority first, while it fits,
- * and otherwise listed by one line, so a mature paper never crowds out the assignment.
- */
-const LEGACY_ITEM_RECIPES: TaskTypeDefinition[] = HIERARCHICAL_RECIPES.map((definition, i) => ({
-  ...definition,
-  version: definition.version + 1,
-  recipe: {
-    ...definition.recipe,
-    instructions: `${DEPENDENCY_SAFE_RECIPES[i]!.recipe.instructions} Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool, and a section with sources left unlisted for lack of room says how many and which tools reach them. ${liveRecords}`,
+    maxChars: 32000,
     format: 2,
-  },
-}));
-
-/** Current instructions remove the workspace decision; every newly created item uses Git. */
-export const ITEM_RECIPES: TaskTypeDefinition[] = LEGACY_ITEM_RECIPES.map((definition) => ({
-  ...definition,
-  version: definition.version + 1,
-  recipe: {
-    ...definition.recipe,
-    instructions: definition.recipe.instructions.replace(
-      / Every version-2 plan item declares workspace:.*?Dependencies determine the base:/,
-      ' Every new task and experiment has managed Git storage, independently of GitHub. Submit a version-3 plan without workspace fields. Dependencies determine the base:',
-    ),
-    outputInstructions: definition.recipe.outputInstructions
-      .replace('{version: 2,', '{version: 3,')
-      .replaceAll('dependsOn, rationale, workspace}', 'dependsOn, rationale}'),
   },
 }));

@@ -1,6 +1,6 @@
 import type { CodeProjectStatus } from '@merv/contracts/code';
 import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';
 import {
   Ago,
@@ -48,35 +48,6 @@ export const status = (p: CodePublication) =>
               : p.pull
                 ? 'draft'
                 : 'pending';
-
-/** One read of the publications for the whole page, so the graph and the rows agree. */
-export function usePublications() {
-  const epoch = useScopeVersion();
-  const [rows, setRows] = useState<CodePublication[]>([]);
-  const [error, setError] = useState('');
-  const alive = useRef(false);
-  const load = useCallback(async () => {
-    const value = await request<{ publications: CodePublication[] }>();
-    if (alive.current && epoch === scopeVersion()) setRows(value.publications);
-  }, [epoch]);
-  useEffect(() => {
-    alive.current = true;
-    setRows([]);
-    setError('');
-    const poll = () =>
-      void load().catch((e: unknown) => {
-        if (alive.current && epoch === scopeVersion())
-          setError(e instanceof Error ? e.message : 'Publications could not be read');
-      });
-    poll();
-    const timer = setInterval(poll, 10_000);
-    return () => {
-      alive.current = false;
-      clearInterval(timer);
-    };
-  }, [epoch, load]);
-  return { rows, error, reload: load };
-}
 
 type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
 
@@ -213,23 +184,19 @@ function MergeGuard({
 
 export function GitHubPublications({
   rows,
-  error,
-  reload,
+  onDone,
   operator,
   named,
   controls,
-  onControlled,
 }: {
   rows: CodePublication[];
-  error: string;
-  reload(): Promise<void>;
+  onDone(): void;
   /** True where the reader may sync and merge: an operator signed in as a person. */
   operator: boolean;
   /** Who reviewed and who merged, by name; nobody is named by an identifier. */
   named(id: string | null | undefined): string | undefined;
   /** Where the project publishes at all: what its merges wait on besides a review. */
   controls?: Controls;
-  onControlled(): void;
 }) {
   const epoch = useScopeVersion();
   const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
@@ -383,12 +350,7 @@ export function GitHubPublications({
             busy={busy}
             onMerged={() => {
               seen.current.delete(p.proposalId);
-              void reload().catch((error: unknown) => {
-                if (epoch === scopeVersion())
-                  setFailed(
-                    error instanceof Error ? error.message : 'Publications could not be read',
-                  );
-              });
+              onDone();
             }}
           />
         )}
@@ -434,7 +396,7 @@ export function GitHubPublications({
             onClick={() =>
               void act(async () => {
                 await request('/sync', {});
-                await reload();
+                onDone();
               })
             }
           >
@@ -442,8 +404,8 @@ export function GitHubPublications({
           </button>
         )}
       </div>
-      {operator && controls && <Canary controls={controls} onDone={onControlled} />}
-      {(error || failed) && <p role="alert">{error || failed}</p>}
+      {operator && controls && <Canary controls={controls} onDone={onDone} />}
+      {failed && <p role="alert">{failed}</p>}
       {rows.length > 0 && <div className="rows">{rows.map(row)}</div>}
     </section>
   );

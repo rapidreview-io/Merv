@@ -181,23 +181,15 @@ const recipeNames: Record<ActiveState, string> = {
   running: 'experiment.execute',
   experiment_review: 'experiment.attempt_review',
 };
-const previousInstructions: Record<ActiveState, string> = {
-  planned:
-    'Design an experiment that can test its stated question. Distinguish the hypothesis from established evidence. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
-  design_review:
-    'Independently test whether the exact pinned design can answer its research question. Examine controls, baselines, leakage, evaluation and feasibility. A structurally complete plan can still be scientifically unsound. Grade only the pinned submission.',
-  running:
-    'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
-  experiment_review:
-    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
-};
 const instructions: Record<ActiveState, string> = {
   planned:
     'Design an experiment that can test its stated question as one step toward the project paper’s Problem, scope and goals. It need not achieve the whole project goal alone. Read any abbreviated paper sections with paper.read and distinguish established findings from the hypothesis. Preserve source-specified methods when the question calls for reproduction; identify each deliberate departure and limit the conclusion accordingly. Define matched controls, data, metrics, evaluation conditions and decision criteria. Planning waits for the tasks this experiment depends on and is written against their outputs.',
   design_review:
     'Independently test whether the exact pinned design can answer its research question and make the stated contribution toward the project paper’s goals. An experiment may be an intermediate step; do not require it to complete the whole project. Read any abbreviated paper sections with paper.read. Compare source-specified methods with the plan when it claims reproduction, and check that departures are explicit and the promised conclusion is limited accordingly. Examine controls, baselines, leakage, evaluation and feasibility. A structurally complete plan can still be scientifically unsound. Grade only the pinned submission.',
-  running: previousInstructions.running,
-  experiment_review: previousInstructions.experiment_review,
+  running:
+    'Execute the exact approved plan below. Recover completed work and retained outputs before rerunning after interruption. Preserve errors and failed runs. Compare observations with the planned criteria without treating a negative finding as failed execution. Do not replace the approved plan with a newer upload.',
+  experiment_review:
+    'Independently assess the exact submitted results against the pinned approved plan. Verify counts, metrics, deviations and conclusions from retained evidence. A passing experiment can refute its hypothesis. Separate a flawed design from execution or reporting that can be repaired under the same plan.',
 };
 const handoffs: Record<ActiveState, string> = {
   planned:
@@ -260,13 +252,18 @@ const reading =
 const verifying =
   ' Open what you are judging rather than judging the summary of it: artifact.read returns the retained bytes of everything pinned to this submission, and a criterion you mark met on text you were handed rather than evidence you opened yourself says so in its notes.';
 
-const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state) => ({
+/** Current format-2 recipes, constructed directly without retired intermediate versions.
+ * Published versions and recipe bytes are immutable; only their construction is shared. */
+export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
-  version: 9,
+  version: state === 'experiment_review' ? 12 : 11,
   kind: reviewing(state) ? 'review' : 'work',
   recipe: {
-    instructions: previousInstructions[state] + reading + (reviewing(state) ? verifying : ''),
-    // One recipe serves every program version, so it says when the feasibility text applies.
+    instructions:
+      instructions[state] +
+      reading +
+      (reviewing(state) ? verifying : '') +
+      ' Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.',
     outputInstructions:
       handoffs[state] +
       (gatedHandoffs[state]
@@ -275,6 +272,7 @@ const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state)
     maxChars: 160_000,
     sections: [
       { key: 'experiment', title: 'Experiment and exact assignment', required: true },
+      { key: 'projectPaper', title: 'Project paper and document revisions', required: false },
       {
         key: 'approvedPlan',
         title: 'Exact approved plan',
@@ -287,59 +285,15 @@ const previousExperimentRecipes: TaskTypeDefinition[] = activeStates.map((state)
       },
       { key: 'evidence', title: 'Selected evidence and retained work', required: reviewing(state) },
       { key: 'feedback', title: 'Previous review and interruption feedback', required: false },
-    ],
-  },
-}));
-const attemptReviewRecipe = previousExperimentRecipes.find(
-  (definition) => definition.name === 'experiment.attempt_review',
-)!;
-const paperRecipes: TaskTypeDefinition[] = previousExperimentRecipes.map((definition) => ({
-  ...definition,
-  version: 10,
-  recipe: {
-    ...definition.recipe,
-    instructions:
-      instructions[activeStates.find((state) => recipeNames[state] === definition.name)!] +
-      reading +
-      (definition.kind === 'review' ? verifying : ''),
-  },
-}));
-const exhibitRecipe: TaskTypeDefinition = {
-  ...attemptReviewRecipe,
-  version: 11,
-  recipe: {
-    ...attemptReviewRecipe.recipe,
-    instructions: instructions.experiment_review + reading + verifying,
-    sections: [
-      ...attemptReviewRecipe.recipe.sections,
-      {
-        key: 'exhibitReference',
-        title: 'Metrics exhibit (read the retained artifact to verify its source mapping)',
-        required: true,
-      },
-    ],
-  },
-};
-/**
- * The recipes the program registers: format 2, the item renderer. The experiment record and the
- * pinned review are always embedded; the paper, the approved plan, the evidence and the feedback
- * are embedded whole, highest priority first, while they fit, and otherwise listed by one line.
- * Figures and the generated metrics exhibit are only listed. The earlier, format-less versions
- * above are retired and serve only as the text these derive from.
- */
-export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = [
-  ...paperRecipes.filter((definition) => definition.name !== exhibitRecipe.name),
-  exhibitRecipe,
-].map((definition) => ({
-  ...definition,
-  version: definition.version + 1,
-  recipe: {
-    ...definition.recipe,
-    instructions: `${definition.recipe.instructions} Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool.`,
-    sections: [
-      definition.recipe.sections[0]!,
-      { key: 'projectPaper', title: 'Project paper and document revisions', required: false },
-      ...definition.recipe.sections.slice(1),
+      ...(state === 'experiment_review'
+        ? [
+            {
+              key: 'exhibitReference',
+              title: 'Metrics exhibit (read the retained artifact to verify its source mapping)',
+              required: true,
+            },
+          ]
+        : []),
     ],
     format: 2 as const,
   },

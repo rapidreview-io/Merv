@@ -8,6 +8,8 @@ What production still serves from the import:
 - Imported artifacts as ordinary native artifacts. Those over the 2 MB inline limit (up to 512 MiB) are read through the authorized 60-minute download in [production blob storage](PRODUCTION_BLOBS.md#large-retained-artifacts).
 - The `legacy_foundation_imports` receipt table and the `legacy-foundation-import` and `legacy-history` migrations. Their published hashes stay pinned by `tests/published-migrations.test.ts`.
 
+The remaining history export, projection and import planners have also been removed. There is no supported re-import or bootstrap path for Python snapshots. Recovery uses a [native PostgreSQL and Code snapshot restore](RECOVERY_SNAPSHOTS.md), which preserves the existing archive rows, receipt fingerprints and stored content hashes without re-projecting them. Historical fields, including publication graph IDs and review evidence, remain opaque stored data returned by the same authorized reader. Test and UI-demo fixtures seed trusted synthetic archive rows directly; they are not an importer or recovery tool.
+
 The sections below describe the source as it was observed before the import.
 
 ## Observed inventory — 2026-09-16
