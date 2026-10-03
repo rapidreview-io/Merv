@@ -1,0 +1,388 @@
+From 95a8d1d08de04f00023dec8702fbcab96fb87018 Mon Sep 17 00:00:00 2001
+From: Gural Nuriyev <guralben@gmail.com>
+Date: Fri, 2 Oct 2026 17:07:59 -0700
+Subject: [PATCH] Add grant-scoped managed ML delegation and aggregate
+ allowance reads
+
+---
+ .../merv_sandboxes/api/routes/delegations.py  |  37 ++++
+ control/src/merv_sandboxes/auth/delegation.py |  43 ++++-
+ control/src/merv_sandboxes/auth/tokens.py     |  21 +++
+ control/src/merv_sandboxes/config.py          |   2 +
+ control/tests/test_managed_connections.py     | 165 ++++++++++++++++++
+ docs/integration/delegation-contract.md       |  24 +++
+ 6 files changed, 290 insertions(+), 2 deletions(-)
+ create mode 100644 control/tests/test_managed_connections.py
+
+diff --git a/control/src/merv_sandboxes/api/routes/delegations.py b/control/src/merv_sandboxes/api/routes/delegations.py
+index f8a1709..2828a86 100644
+--- a/control/src/merv_sandboxes/api/routes/delegations.py
++++ b/control/src/merv_sandboxes/api/routes/delegations.py
+@@ -36,6 +36,43 @@ class ActionBody(Frozen):
+     id: str = Field(min_length=1, max_length=48)
+ 
+ 
++class ManagedConnectionBody(Frozen):
++    project_ref: str = Field(min_length=1, max_length=256)
++    request_key: str = Field(min_length=1, max_length=256)
++    token_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
++
++
++@router.post("/connections", status_code=201)
++async def managed_connection(
++    body: ManagedConnectionBody, container: ContainerDep, principal: PrincipalDep
++) -> dict[str, Any]:
++    # Namespace and payer come solely from the authenticated application grant;
++    # only operator-approved grant IDs gain managed host access; callers cannot
++    # set caps, choose another payer, or supply a delegation policy.
++    if principal.role != "consumer" or principal.grant_kind:
++        raise AuthorizationError("a managed application consumption grant is required")
++    return await container.delegation.create_connection(
++        principal,
++        application_id=principal.application_id,
++        project_ref=body.project_ref,
++        member_id=principal.member_id,
++        source_namespace=principal.namespace,
++        policy={},
++        request_key=body.request_key,
++        token_hash=body.token_hash,
++    )
++
++
++@router.get("/allowance")
++async def allowance(container: ContainerDep, principal: PrincipalDep) -> dict[str, Any]:
++    if principal.grant_kind:
++        async with container.db.transaction() as conn:
++            await container.delegation.root_in(conn, principal)
++    elif principal.role != "consumer" or not principal.application_id:
++        raise AuthorizationError("an application or connection credential is required")
++    return {"budgets": await container.delegation.allowance(principal)}
++
++
+ @router.get("/connection")
+ async def connection(container: ContainerDep, principal: PrincipalDep) -> dict[str, Any]:
+     async with container.db.transaction() as conn:
+diff --git a/control/src/merv_sandboxes/auth/delegation.py b/control/src/merv_sandboxes/auth/delegation.py
+index 28f25ac..4f94b55 100644
+--- a/control/src/merv_sandboxes/auth/delegation.py
++++ b/control/src/merv_sandboxes/auth/delegation.py
+@@ -76,7 +76,19 @@ class DelegationService:
+         token_hash: str,
+         consenting_user_id: str | None = None,
+     ) -> dict[str, Any]:
+-        principal.require_admin()
++        managed = principal.role == "consumer" and not principal.grant_kind
++        if managed:
++            if (
++                not principal.application_id
++                or principal.token_id not in self.c.settings.managed_delegation_grants
++                or application_id != principal.application_id
++                or member_id != principal.member_id
++                or source_namespace != principal.namespace
++                or consenting_user_id is not None
++            ):
++                raise AuthorizationError("application cannot delegate this compute authority")
++        else:
++            principal.require_admin()
+         for value in (application_id, project_ref, request_key):
+             _reference(value)
+         if not re.fullmatch(r"[a-f0-9]{64}", token_hash):
+@@ -101,12 +113,25 @@ class DelegationService:
+             "capture_output_bytes": capture_bytes,
+             "max_lease_seconds": max_lease,
+             "idle_seconds": idle,
+-            "allow_host": principal.account_id == self.c.settings.delegated_operator_account_id,
++            "allow_host": managed
++            or principal.account_id == self.c.settings.delegated_operator_account_id,
+         }
++        if managed:
++            # This grant remains the authority for every descendant admission. Revoking
++            # or expiring it must retire issued roots too, without rewriting their history.
++            frozen["application_grant_id"] = principal.token_id
+         key = digest(["connection", principal.account_id, application_id, project_ref, request_key])
+         fingerprint = digest([member_id, frozen, token_hash, consenting_user_id])
+         async with self.c.db.transaction() as conn:
+             await account_lock(conn, principal.account_id)
++            if managed:
++                await self.c.tokens.authorize_grant_in(
++                    conn,
++                    grant_id=principal.token_id,
++                    account_id=principal.account_id,
++                    namespace=source_namespace,
++                    member_id=member_id,
++                )
+             if consenting_user_id:
+                 authorized = await conn.scalar(
+                     text(
+@@ -133,6 +158,20 @@ class DelegationService:
+                 .all()
+             )
+             policies = BillingService.effective_policies([dict(p) for p in policy_rows], member_id)
++            if managed and not any(
++                p["scope"] == "member"
++                and p["target"] == member_id
++                and p["window"] == "month"
++                and p["metric"] == "money"
++                and p["currency"] == "USD"
++                and p["provider"] is None
++                and p["source"] is None
++                and p["cap"] is not None
++                for p in policies
++            ):
++                raise ValidationError(
++                    "managed connections require an aggregate monthly member allowance"
++                )
+             if self.c.settings.default_monthly_cap is not None and not any(
+                 p["scope"] == "namespace"
+                 and p["target"] == source_namespace
+diff --git a/control/src/merv_sandboxes/auth/tokens.py b/control/src/merv_sandboxes/auth/tokens.py
+index 836c119..0f10afd 100644
+--- a/control/src/merv_sandboxes/auth/tokens.py
++++ b/control/src/merv_sandboxes/auth/tokens.py
+@@ -239,6 +239,27 @@ class TokenService:
+         )
+         if active is None:
+             raise AuthorizationError("connected account or member is unavailable")
++        issuer_id = (root["delegation_policy_json"] or {}).get("application_grant_id")
++        if issuer_id:
++            issuer = (
++                (await connection.execute(select(api_tokens).where(api_tokens.c.id == issuer_id)))
++                .mappings()
++                .first()
++            )
++            if (
++                issuer is None
++                or issuer["grant_kind"]
++                or issuer["role"] != "consumer"
++                or issuer["application_id"] != root["application_id"]
++            ):
++                raise AuthorizationError("managed connection issuer is unavailable")
++            await self.authorize_grant_in(
++                connection,
++                grant_id=issuer_id,
++                account_id=root["account_id"],
++                namespace=root["namespace"],
++                member_id=root["member_id"],
++            )
+         if root["consenting_user_id"]:
+             active_admin = await connection.scalar(
+                 text(
+diff --git a/control/src/merv_sandboxes/config.py b/control/src/merv_sandboxes/config.py
+index 406f387..6d45ed2 100644
+--- a/control/src/merv_sandboxes/config.py
++++ b/control/src/merv_sandboxes/config.py
+@@ -204,6 +204,8 @@ class GatewayConfig(BaseModel):
+ 
+ class Settings(BaseSettings):
+     delegated_operator_account_id: str = ""
++    # Only these exact consumption grant IDs may create managed project roots.
++    managed_delegation_grants: tuple[str, ...] = ()
+ 
+     model_config = SettingsConfigDict(
+         env_prefix="SANDBOXES_", env_nested_delimiter="__", extra="ignore"
+diff --git a/control/tests/test_managed_connections.py b/control/tests/test_managed_connections.py
+new file mode 100644
+index 0000000..adff575
+--- /dev/null
++++ b/control/tests/test_managed_connections.py
+@@ -0,0 +1,165 @@
++"""Managed project roots share an account subject's aggregate allowance."""
++
++import asyncio
++from decimal import Decimal
++
++import pytest
++
++from merv_sandboxes.auth.tokens import hash_token
++from merv_sandboxes.billing import Policy
++from merv_sandboxes.errors import AuthorizationError, ValidationError
++from merv_sandboxes.models import Money
++from merv_sandboxes.registry import CreateSandboxRequest
++
++from .test_delegation import assignment
++
++
++async def managed(container, client):
++    grant = await container.tokens.create(
++        namespace="managed", application_id="merv-ml", open_subjects=True
++    )
++    first = await container.tokens.authenticate(grant.secret, subject="account-a")
++    await container.registry.billing.set_policy(
++        first.account_id,
++        "account-allowance",
++        Policy(scope="member_default", target=first.account_id, window="month", cap=Decimal(500)),
++    )
++    container.settings.managed_delegation_grants = (grant.token_id,)
++    client.headers.update(
++        {
++            "Authorization": "Bearer " + grant.secret,
++            "X-Sandbox-Namespace": "managed",
++            "X-Sandbox-Subject": "account-a",
++        }
++    )
++    return grant, first
++
++
++async def root(client, project):
++    bearer = "sbxt_managed_connection_" + project
++    body = {"project_ref": project, "request_key": project, "token_hash": hash_token(bearer)}
++    response = await client.post("/v1/delegations/connections", json=body)
++    assert response.status_code == 201, response.text
++    replay = await client.post("/v1/delegations/connections", json=body)
++    assert replay.json() == response.json()
++    return bearer, response.json()
++
++
++async def test_two_projects_share_500_but_another_account_has_its_own(container, client):
++    grant, first = await managed(container, client)
++    secret_a, a = await root(client, "project-a")
++    secret_b, b = await root(client, "project-b")
++    assert a["member_id"] == b["member_id"] == first.member_id
++    assert a["connection_id"] != b["connection_id"]
++    client.headers["X-Sandbox-Subject"] = "account-b"
++    secret_c, c = await root(client, "project-c")
++    assert c["member_id"] != a["member_id"]
++    agents = []
++    for index, secret in enumerate((secret_a, secret_b, secret_c)):
++        principal = await container.tokens.authenticate(secret)
++        work = await container.delegation.ensure_work(
++            principal, work_ref="work", work_kind="experiment"
++        )
++        agent, _, _ = await assignment(container, principal, work, lease=f"lease-{index}")
++        agents.append(agent)
++
++    async def rent(agent, key):
++        offer = await container.providers.offer(
++            agent.namespace, provider="fake", offer_id="tiny:east"
++        )
++        # A $300 reservation exercises the real account-locked admission calculator.
++        offer = offer.model_copy(
++            update={"hourly_price": Money(currency="USD", amount=Decimal(300))}
++        )
++        return await container.registry.create(
++            namespace=agent.namespace,
++            member_id=agent.member_id,
++            grant_id=agent.token_id,
++            request=CreateSandboxRequest(
++                provider="fake", offer_id="tiny:east", lease_seconds=3600, idempotency_key=key
++            ),
++            offer=offer,
++            login_user="sandbox",
++        )
++
++    results = await asyncio.gather(
++        rent(agents[0], "a"), rent(agents[1], "b"), return_exceptions=True
++    )
++    assert sum(isinstance(r, ValidationError) for r in results) == 1, results
++    assert sum(not isinstance(r, Exception) for r in results) == 1, results
++    await rent(agents[2], "c")
++    allowance = await client.get("/v1/delegations/allowance")
++    assert allowance.status_code == 200
++    member_budget = next(b for b in allowance.json()["budgets"] if b["scope"] == "member")
++    assert Decimal(member_budget["cap"]) == 500
++    assert Decimal(member_budget["reserved"]) == 300
++    # A root cannot change payer/namespace, set policy, or authorize a different project work.
++    client.headers.clear()
++    client.headers["Authorization"] = "Bearer " + secret_a
++    assert (
++        await client.post(
++            "/v1/delegations/connections",
++            json={
++                "project_ref": "escaped",
++                "request_key": "escaped",
++                "token_hash": hash_token("escaped"),
++            },
++        )
++    ).status_code == 403
++    # Revoking the issuing application also revokes descendants for admission.
++    await container.tokens.revoke(grant.token_id)
++    with pytest.raises(AuthorizationError):
++        await container.tokens.authenticate(secret_a)
++    with pytest.raises(AuthorizationError):
++        await container.tokens.authenticate("sbxt_lease-0")
++
++
++async def test_managed_issuance_requires_opt_in_and_bound_authority(container, client):
++    grant, _ = await managed(container, client)
++    body = {"project_ref": "p", "request_key": "p", "token_hash": hash_token("sbxt_example")}
++    container.settings.managed_delegation_grants = ()
++    assert (await client.post("/v1/delegations/connections", json=body)).status_code == 403
++    container.settings.managed_delegation_grants = (grant.token_id,)
++    assert (
++        await client.post("/v1/delegations/connections", json={**body, "member_id": "other"})
++    ).status_code == 400
++    client.headers["X-Sandbox-Namespace"] = "foreign"
++    assert (await client.post("/v1/delegations/connections", json=body)).status_code == 403
++    client.headers["X-Sandbox-Namespace"] = "managed"
++    await container.tokens.revoke(grant.token_id)
++    assert (await client.post("/v1/delegations/connections", json=body)).status_code == 401
++
++
++async def test_same_application_name_is_not_a_managed_grant(container, client):
++    await managed(container, client)
++    other = await container.tokens.create(
++        namespace="other", application_id="merv-ml", open_subjects=True
++    )
++    client.headers.update(
++        {"Authorization": "Bearer " + other.secret, "X-Sandbox-Namespace": "other"}
++    )
++    response = await client.post(
++        "/v1/delegations/connections",
++        json={"project_ref": "p", "request_key": "p", "token_hash": hash_token("sbxt_other")},
++    )
++    assert response.status_code == 403
++
++
++async def test_managed_grant_requires_a_member_cap(container, client):
++    grant = await container.tokens.create(
++        namespace="uncapped", application_id="managed", open_subjects=True
++    )
++    container.settings.managed_delegation_grants = (grant.token_id,)
++    client.headers.update(
++        {
++            "Authorization": "Bearer " + grant.secret,
++            "X-Sandbox-Namespace": "uncapped",
++            "X-Sandbox-Subject": "owner",
++        }
++    )
++    response = await client.post(
++        "/v1/delegations/connections",
++        json={"project_ref": "p", "request_key": "p", "token_hash": hash_token("sbxt_uncapped")},
++    )
++    assert response.status_code == 400
++    assert "monthly member allowance" in response.text
+diff --git a/docs/integration/delegation-contract.md b/docs/integration/delegation-contract.md
+index a2937d4..30adcc9 100644
+--- a/docs/integration/delegation-contract.md
++++ b/docs/integration/delegation-contract.md
+@@ -43,3 +43,27 @@ Original work/member/namespace/producer records remain unchanged. The fresh root
+ must pass current account/member/human authority checks. No machine, mutation,
+ assignment, workflow or capture-list authority is transferred; a different payer
+ account/application/project cannot recover these reads. The retired root stays revoked.
++
++
++## Managed application funding
++
++`POST /v1/delegations/connections` uses an existing consumption bearer with
++`X-Sandbox-Namespace` and `X-Sandbox-Subject`. Its exact token ID must be present in
++`SANDBOXES_MANAGED_DELEGATION_GRANTS` (a JSON array). Application names alone do not
++authorize managed funding. The body contains only `project_ref`, `request_key`, and
++`token_hash`; the reply has the normal connection receipt shape. Persist the
++request key and bearer before calling: an exact replay recovers the same root.
++
++The subject must identify the integrating application's account, shared by all
++of that account's projects. The root fixes that member and namespace. Managed
++roots inherit the approved grant's host-provider funding under infrastructure
++policies and require a finite, unfiltered USD monthly member allowance. Merv's
++configured allowance is $500/month. They preserve namespace ceilings through the
++same aggregate policy/resource checks used by ordinary consent. Descendants
++revalidate the issuing consumption grant on authentication and admission;
++revoking or expiring that grant disables the delegated authority as well.
++
++`GET /v1/delegations/allowance` accepts a connection bearer or application
++consumption bearer and returns `{budgets:[...]}` for its member and parent account,
++including accrued, reserved, available, and accounting-completeness fields. It
++does not expose other members' budget rows or authorize policy writes.
+-- 
+2.39.3 (Apple Git-146)
+

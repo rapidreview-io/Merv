@@ -25,6 +25,11 @@ per-person compute cap bounds Standard and Large together.
 
 ## ML allowance
 
+The current policy is **$500 per Merv account per UTC month**, shared across
+its projects. Follow [managed ML rollout](../docs/managed-ml-accounts.md) to enable
+native account funding. The bootstrap procedure below describes the older
+project-scoped connection and must not be rerun to migrate existing accounts.
+
 After the Sandboxes image with open application subjects is running, run once in
 a drained window from the live release's deploy directory:
 

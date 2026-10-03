@@ -45,6 +45,7 @@ export interface NativeSandboxesConfig {
   applicationSecretEnv: string;
   encryptionKeyEnv: string;
   publicOrigin: string;
+  managed?: { namespace: string; tokenEnv: string };
 }
 
 export interface NativeConnectionStatus {
@@ -55,4 +56,7 @@ export interface NativeConnectionStatus {
   accountId: string | null;
   memberId: string | null;
   connectedAt: string | null;
+  funding?: 'managed' | 'personal';
+  managedAvailable?: boolean;
+  allowance?: Json;
 }

@@ -77,12 +77,22 @@ CREATE TABLE sandbox_native_captures (
 );
 `,
   },
+  {
+    version: 2,
+    sql: `
+ALTER TABLE sandbox_native_connections ADD COLUMN billing_subject TEXT;
+ALTER TABLE sandbox_native_flows ADD COLUMN billing_subject TEXT;
+CREATE UNIQUE INDEX sandbox_native_managed_flow ON sandbox_native_flows(project_id)
+ WHERE billing_subject IS NOT NULL AND completed_at IS NULL;
+`,
+  },
 ];
 
 export interface NativeConnectionRow {
   id: string;
   project_id: string;
   root_id: string;
+  billing_subject: string | null;
   account_id: string;
   member_id: string;
   credentials: string;

@@ -9,6 +9,24 @@ export interface SandboxesConnectionStatus {
   memberId?: string | null;
   connectedAt?: string | null;
   url: string | null;
+  funding?: 'managed' | 'personal';
+  managedAvailable?: boolean;
+  allowance?: {
+    budgets: {
+      scope: string;
+      target: string;
+      window: string;
+      metric: string;
+      currency: string;
+      provider: string | null;
+      source: string | null;
+      cap: string | null;
+      accrued: string;
+      reserved: string;
+      available: string | null;
+      accounting_complete: boolean;
+    }[];
+  };
 }
 
 const request = <T,>(action = '', method = 'GET', body?: object) =>
@@ -60,7 +78,7 @@ export function SandboxesConnection({
         },
         (failure: unknown) => {
           if (!current()) return;
-          onAvailable?.(false);
+          onAvailable?.(!(failure instanceof ApiError && failure.status === 404));
           if (!(failure instanceof ApiError && failure.status === 404))
             setError(
               failure instanceof Error
@@ -77,12 +95,33 @@ export function SandboxesConnection({
     };
   }, [epoch, current, finish, onAvailable]);
 
-  async function change(action: 'start' | 'disconnect') {
+  useEffect(() => {
+    if (!status?.connected || status.funding !== 'managed') return;
+    const timer = setInterval(() => {
+      void request<SandboxesConnectionStatus>().then(
+        (value) => {
+          if (current()) {
+            setStatus(value);
+            setError(undefined);
+          }
+        },
+        () => {
+          if (current()) setError('Compute usage could not be refreshed.');
+        },
+      );
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [current, status?.connected, status?.funding]);
+
+  async function change(action: 'start' | 'managed' | 'disconnect') {
     if (busy || !current()) return;
     setBusy(true);
     setError(undefined);
     try {
-      if (action === 'start') {
+      if (action === 'managed') {
+        const value = await request<SandboxesConnectionStatus>('/managed', 'POST', {});
+        if (current()) setStatus(value);
+      } else if (action === 'start') {
         const value = await request<{ url: string }>('/start', 'POST', {});
         if (current()) window.location.assign(value.url);
       } else {
@@ -99,19 +138,47 @@ export function SandboxesConnection({
     }
   }
   if (!status?.available && !error) return null;
+  const managed = status?.funding === 'managed';
+  const budget = status?.allowance?.budgets
+    .filter(
+      (b) =>
+        b.scope === 'member' &&
+        b.target === status.memberId &&
+        b.window === 'month' &&
+        b.metric === 'money' &&
+        b.currency === 'USD' &&
+        !b.provider &&
+        !b.source &&
+        b.cap !== null,
+    )
+    .sort((a, b) => Number(a.cap) - Number(b.cap))[0];
   return (
     <section className="stack" aria-label="Sandboxes compute">
       <h2 className="section-title">Compute</h2>
       {status?.available && (
         <>
           <p className="muted">
-            Use your Supabase account in Merv or Sandboxes to see the same compute and spending.
+            {status.managedAvailable
+              ? 'Merv-managed ML is funded by the project owner’s Merv account. Its monthly allowance is shared across that account’s projects.'
+              : 'Use your Supabase account in Merv or Sandboxes to see the same compute and spending.'}
           </p>
           <p role="status">
-            {status.connected
-              ? 'This project bills the account you approved.'
-              : 'Allow this project to use compute.'}
+            {managed
+              ? 'This project uses Merv-managed ML.'
+              : status.managedAvailable
+                ? 'Enable Merv-managed ML to run compute.'
+                : status.connected
+                  ? 'This project bills the account you approved.'
+                  : 'Allow this project to use compute.'}
           </p>
+          {managed && budget && (
+            <p role="status">
+              ${Number(budget.accrued).toFixed(2)} used · ${Number(budget.reserved).toFixed(2)}{' '}
+              reserved of ${Number(budget.cap).toFixed(0)} per account this month (UTC).
+              {!budget.accounting_complete &&
+                ' Accounting is incomplete; new compute may be blocked.'}
+            </p>
+          )}
           {status.connected && (
             <p className="muted">
               Disconnect blocks new access. Existing rentals and admitted jobs continue until they
@@ -119,17 +186,17 @@ export function SandboxesConnection({
             </p>
           )}
           <div className="cluster">
-            {!status.connected && (
+            {(!status.connected || (status.managedAvailable && !managed)) && (
               <button
                 type="button"
                 className="btn btn--primary"
                 disabled={busy}
-                onClick={() => void change('start')}
+                onClick={() => void change(status.managedAvailable ? 'managed' : 'start')}
               >
-                Enable compute
+                {status.managedAvailable ? 'Enable Merv-managed ML' : 'Enable compute'}
               </button>
             )}
-            {status.connected && status.url && (
+            {status.connected && !managed && status.url && (
               <a className="btn btn--primary" href={status.url} target="_blank" rel="noreferrer">
                 View compute
               </a>

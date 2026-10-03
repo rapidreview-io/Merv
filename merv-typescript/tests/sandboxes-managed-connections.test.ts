@@ -1,0 +1,253 @@
+import test, { type TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { createService, sha256Hex, type Caller } from '@merv/contracts';
+import { ProjectScope } from '@merv/scope';
+import { NativeConnections } from '../packages/sandboxes/src/native-connections.js';
+import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
+import { managedAccountSubject } from '../packages/sandboxes/src/account-billing.js';
+import { openState } from './fixtures/state.js';
+import { deferred } from './fixtures/deferred.js';
+
+async function fixture(t: TestContext) {
+  const state = await openState();
+  const scope = await createService(new ProjectScope(state));
+  await state.migrate('sandboxes-native', nativeMigrations);
+  t.after(() => state.close());
+  const project = async (subject: string, requestId: string): Promise<Caller> => {
+    const principal = await scope.acceptVerifiedIdentity({
+      issuer: 'https://identity.example/auth/v1',
+      subject,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    const created = await scope.createProject(principal, { name: requestId, requestId });
+    return scope.caller(principal, created.id);
+  };
+  const a = await project('owner-a', 'a');
+  const roots = new Map<
+    string,
+    { connection_id: string; project_ref: string; account_id: string; member_id: string }
+  >();
+  const subjects: string[] = [];
+  const calls: string[] = [];
+  const controls = {
+    lose: false,
+    resources: false,
+    racingResource: false,
+    pause: undefined as ReturnType<typeof deferred<void>> | undefined,
+    entered: deferred<void>(),
+  };
+  const fetcher: typeof fetch = async (input, options) => {
+    const path = new URL(String(input)).pathname;
+    calls.push(`${options?.method ?? 'GET'} ${path}`);
+    const headers = new Headers(options?.headers);
+    const body = options?.body ? JSON.parse(String(options.body)) : {};
+    const json = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    if (path === '/v1/delegations/connections') {
+      assert.equal(headers.get('authorization'), 'Bearer sbxt_managed_test_token');
+      assert.equal(headers.get('x-sandbox-namespace'), 'managed');
+      const subject = headers.get('x-sandbox-subject')!;
+      assert.match(subject, /^merv_account_[a-f0-9]{64}$/);
+      subjects.push(subject);
+      roots.set(
+        body.token_hash,
+        roots.get(body.token_hash) ?? {
+          connection_id: `root_${roots.size}`,
+          project_ref: body.project_ref,
+          account_id: 'managed_account',
+          member_id: subject,
+        },
+      );
+      controls.entered.resolve();
+      await controls.pause?.promise;
+      if (controls.lose) {
+        controls.lose = false;
+        throw new Error('lost reply');
+      }
+      return json(roots.get(body.token_hash), 201);
+    }
+    if (path.endsWith('/resources'))
+      return json({
+        workflows: controls.resources ? [{ id: 'historical' }] : [],
+        jobs: [],
+        sandboxes: [],
+        next: { workflows: null, jobs: null, sandboxes: null },
+      });
+    if (options?.method === 'DELETE') {
+      if (controls.racingResource) controls.resources = true;
+      return new Response(null, { status: 204 });
+    }
+    if (path === '/v1/delegations/allowance')
+      return json({ budgets: [{ scope: 'member', cap: '500' }] });
+    if (path === '/v1/delegations/connection') {
+      const secret = headers.get('authorization')!.slice('Bearer '.length);
+      return json(roots.get(sha256Hex(secret)) ?? {}, roots.has(sha256Hex(secret)) ? 200 : 404);
+    }
+    return json({}, 404);
+  };
+  const config = {
+    applicationId: 'merv',
+    applicationSecretEnv: 'APP',
+    encryptionKeyEnv: 'KEY',
+    publicOrigin: 'http://127.0.0.1:4317',
+    managed: { namespace: 'managed', tokenEnv: 'ML' },
+  };
+  const reopen = () =>
+    new NativeConnections(
+      state,
+      scope,
+      config,
+      'http://127.0.0.1:8000',
+      {
+        APP: 'synthetic_app_secret',
+        KEY: Buffer.alloc(32, 8).toString('base64url'),
+        ML: 'sbxt_managed_test_token',
+      },
+      fetcher,
+    );
+  return { state, scope, a, project, roots, subjects, calls, controls, reopen, service: reopen() };
+}
+
+test('managed funding shares creator identity across projects and separates accounts', async (t) => {
+  const f = await fixture(t);
+  const b = await f.project('owner-a', 'b'),
+    c = await f.project('owner-b', 'c');
+  const [a, otherProject, otherAccount] = await Promise.all([
+    f.service.enableManaged(f.a),
+    f.service.enableManaged(b),
+    f.service.enableManaged(c),
+  ]);
+  assert.equal(a.memberId, otherProject.memberId);
+  assert.notEqual(a.memberId, otherAccount.memberId);
+  assert.notEqual(a.connectionId, otherProject.connectionId);
+  assert.equal(a.funding, 'managed');
+  assert.deepEqual(a.allowance, { budgets: [{ scope: 'member', cap: '500' }] });
+  assert.deepEqual(await f.reopen().enableManaged(f.a), a);
+  assert.equal(f.roots.size, 3);
+  await assert.rejects(f.service.begin(f.a), { code: 'sandbox_managed_required' });
+  await assert.rejects(
+    f.state.read((tx) => managedAccountSubject('imported-without-owner', tx)),
+    { code: 'compute_account_missing' },
+  );
+});
+
+test('lost managed issuance reply reuses the durable request and bearer after restart', async (t) => {
+  const f = await fixture(t);
+  f.controls.lose = true;
+  await assert.rejects(f.service.enableManaged(f.a), { code: 'sandbox_unavailable' });
+  const result = await f.reopen().enableManaged(f.a);
+  assert.equal(result.connected, true);
+  assert.equal(f.roots.size, 1);
+});
+
+test('disconnect fences managed issuance in flight', async (t) => {
+  const f = await fixture(t);
+  f.controls.pause = deferred<void>();
+  const pending = f.service.enableManaged(f.a);
+  await f.controls.entered.promise;
+  await f.service.disconnect(f.a);
+  f.controls.pause.resolve();
+  await assert.rejects(pending, { code: 'sandbox_connection_conflict' });
+  assert.equal((await f.service.status(f.a)).connected, false);
+  await f.service.reconcileRevocations();
+  assert.ok(f.calls.includes('DELETE /v1/delegations/connection'));
+});
+
+async function prior(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at)
+      VALUES('old',?,'old_root','personal','old_member',?,?)`,
+      f.a.projectId,
+      f.service.credentials.seal({ bearer: 'sbxt_personal_test_token' }, 'connection:old'),
+      new Date().toISOString(),
+    );
+    await tx.run(
+      'INSERT INTO sandbox_native_projects(project_id,connection_id) VALUES(?,?)',
+      f.a.projectId,
+      'old',
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_grant_id,namespace)
+      VALUES(?,'experiment','pilot','old','old_work','old_ns')`,
+      f.a.projectId,
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_grant_id,namespace,closed_at)
+      VALUES(?,'task','foundation','old','historical_work','historical_ns',?)`,
+      f.a.projectId,
+      new Date().toISOString(),
+    );
+  });
+}
+
+test('empty issued pilot migrates after revocation while completed work retains its provenance', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  const result = await f.service.enableManaged(f.a);
+  const pilot = await f.state.read((tx) =>
+    tx.get<any>("SELECT * FROM sandbox_native_work WHERE work_id='pilot'"),
+  );
+  assert.equal(pilot.connection_id, result.connectionId);
+  assert.equal(pilot.native_grant_id, null);
+  assert.equal(pilot.closed_at, null);
+  const closed = await f.state.read((tx) =>
+    tx.get<any>("SELECT * FROM sandbox_native_work WHERE work_id='foundation'"),
+  );
+  assert.equal(closed.connection_id, 'old');
+  assert.equal(closed.native_grant_id, 'historical_work');
+  assert.deepEqual(
+    f.calls.filter((x) => x.includes('/works/')),
+    [
+      'GET /v1/delegations/works/old_work/resources',
+      'DELETE /v1/delegations/works/old_work',
+      'GET /v1/delegations/works/old_work/resources',
+    ],
+  );
+});
+
+test('work with retained resources cannot be silently rebound to managed funding', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  f.controls.resources = true;
+  await assert.rejects(f.service.enableManaged(f.a), { code: 'sandbox_migration_required' });
+  assert.equal((await f.service.status(f.a)).connectionId, 'old');
+  assert.ok(!f.calls.includes('DELETE /v1/delegations/works/old_work'));
+});
+
+test('active assignments block a funding change before external issuance', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO sandbox_native_assignments
+    (lease_id,session_id,project_id,work_kind,work_id,attempt_ref,profile,expires_at,credentials)
+    VALUES('lease','session',?,'experiment','pilot','attempt','execute',?,'pending')`,
+      f.a.projectId,
+      new Date(Date.now() + 3600000).toISOString(),
+    ),
+  );
+  await assert.rejects(f.service.enableManaged(f.a), { code: 'sandbox_migration_required' });
+  assert.equal(f.roots.size, 0);
+  assert.equal((await f.service.status(f.a)).connectionId, 'old');
+});
+
+test('a resource admitted before revocation prevents rebinding and preserves the old record', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  f.controls.racingResource = true;
+  await assert.rejects(f.service.enableManaged(f.a), { code: 'sandbox_migration_required' });
+  assert.ok(f.calls.includes('DELETE /v1/delegations/works/old_work'));
+  const pilot = await f.state.read((tx) =>
+    tx.get<any>("SELECT * FROM sandbox_native_work WHERE work_id='pilot'"),
+  );
+  assert.equal(pilot.connection_id, 'old');
+  assert.equal(pilot.native_grant_id, 'old_work');
+  await assert.rejects(
+    f.state.read((tx) => f.service.assertReady(f.a.projectId, tx)),
+    { code: 'sandbox_connection_pending' },
+  );
+});

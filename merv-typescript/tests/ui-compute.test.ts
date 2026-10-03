@@ -100,3 +100,61 @@ test('failed consent completion preserves the callback for an exact retry', asyn
   assert.equal(window.location.search, '?sandboxes=complete');
   assert.doesNotMatch(text(), /View compute/);
 });
+
+test('native Personal compute never displays the unrelated legacy managed allowance', async (t) => {
+  t.after(unmount);
+  serve('/sandboxes/connection', { body: connected });
+  serve('/tools/compute.offers', {
+    body: {
+      result: {
+        entitled: true,
+        allowance: {
+          month_to_date: [{ currency: 'USD', amount: '12.4' }],
+          cap: { currency: 'USD', amount: '500' },
+        },
+        offers: [],
+      },
+    },
+  });
+  await mount(createElement(Integrations, props));
+  assert.match(text(), /bills the account you approved/);
+  assert.doesNotMatch(text(), /\$12\.40|of \$500/);
+});
+
+test('managed compute displays the enforced account usage and enables without Personal consent', async (t) => {
+  t.after(unmount);
+  serve('/sandboxes/connection', { body: { ...disconnected, managedAvailable: true } });
+  serve('/sandboxes/connection/managed', {
+    body: {
+      ...connected,
+      funding: 'managed',
+      managedAvailable: true,
+      allowance: {
+        budgets: [
+          {
+            scope: 'member',
+            target: 'member-a',
+            window: 'month',
+            metric: 'money',
+            currency: 'USD',
+            cap: '500',
+            accrued: '12.4',
+            reserved: '8',
+            available: '479.6',
+            provider: null,
+            source: null,
+            accounting_complete: true,
+          },
+        ],
+      },
+    },
+  });
+  await mount(createElement(SandboxesConnection));
+  await click('Enable Merv-managed ML');
+  assert.ok(requests.includes('POST /sandboxes/connection/managed'));
+  assert.match(text(), /\$12\.40 used/);
+  assert.match(text(), /\$8\.00 reserved/);
+  assert.match(text(), /\$500 per account this month/);
+  assert.match(text(), /shared across that account’s projects/);
+  assert.doesNotMatch(text(), /bills the account you approved/);
+});

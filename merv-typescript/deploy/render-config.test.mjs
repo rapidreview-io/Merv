@@ -715,3 +715,30 @@ test('work-host reuse requires opt-in and exact current image profile; upgrades 
     );
   assert.notEqual(run({ ...enabled, MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS: 'yes' }).status, 0);
 });
+
+test('managed ML requires both native and ML configuration and never renders its bearer', (t) => {
+  const { run, plugin, output } = renderer(t);
+  const settings = {
+    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
+    MERV_SANDBOXES_MANAGED_ML_ENABLED: 'true',
+    MERV_SANDBOXES_URL: 'https://sandboxes.example',
+    MERV_SANDBOXES_APPLICATION_ID: 'merv',
+    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
+    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
+    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
+    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_managed',
+    MERV_SANDBOXES_ML_SINCE: '2026-09-25T12:00:00+00:00',
+  };
+  assert.equal(run(settings).status, 0);
+  assert.deepEqual(plugin('sandboxes').config.native.managed, {
+    namespace: 'merv-ml',
+    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
+  });
+  assert.ok(!readFileSync(output, 'utf8').includes(settings.MERV_SANDBOXES_ML_TOKEN));
+  for (const invalid of [
+    { MERV_SANDBOXES_NATIVE_ENABLED: 'false' },
+    { MERV_SANDBOXES_ML_NAMESPACE: undefined },
+    { MERV_SANDBOXES_ML_TOKEN: '' },
+  ])
+    assert.notEqual(run({ ...settings, ...invalid }).status, 0);
+});

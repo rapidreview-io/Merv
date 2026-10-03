@@ -1,17 +1,19 @@
 import { randomBytes } from 'node:crypto';
+import { managedAccountSubject } from './account-billing.js';
 import {
   check,
   digest,
   sha256Hex,
   newId,
   type Caller,
+  type Json,
   type Scope,
   type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
 import { NativeCredentials, NativeSandboxClient, nativeOrigin } from './native-client.js';
-import type { NativeConnectionRow } from './native-schema.js';
+import type { NativeConnectionRow, NativeWorkRow } from './native-schema.js';
 import type { NativeConnectionStatus, NativeSandboxesConfig } from './native-types.js';
 
 interface Flow {
@@ -25,6 +27,7 @@ interface Flow {
   code: string | null;
   completed_at: string | null;
   reconcile_after: string | null;
+  billing_subject?: string | null;
 }
 interface FlowSecrets {
   bearer: string;
@@ -80,6 +83,18 @@ export class NativeConnections {
     check(value, 'sandbox_setup_required', 'Sandboxes sign-in is not configured', 503);
     return value;
   }
+  async assertReady(projectId: string, tx: Sql): Promise<void> {
+    check(
+      !(await tx.get(
+        `SELECT 1 FROM sandbox_native_flows WHERE project_id=?
+      AND billing_subject IS NOT NULL AND completed_at IS NULL LIMIT 1`,
+        projectId,
+      )),
+      'sandbox_connection_pending',
+      'Managed compute funding is being reconciled',
+      409,
+    );
+  }
   async current(projectId: string, tx?: Sql): Promise<NativeConnectionRow | undefined> {
     const read = (sql: Sql) =>
       sql.get<NativeConnectionRow>(
@@ -106,7 +121,7 @@ export class NativeConnections {
       .bearer;
   }
   async status(caller: Caller): Promise<NativeConnectionStatus> {
-    return this.state.snapshot(() =>
+    const status = await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
         await this.authorize(caller, tx, false);
         const connection = await this.current(caller.projectId, tx);
@@ -117,13 +132,210 @@ export class NativeConnections {
           accountId: connection?.account_id ?? null,
           memberId: connection?.member_id ?? null,
           connectedAt: connection?.connected_at ?? null,
+          funding: connection?.billing_subject ? ('managed' as const) : ('personal' as const),
+          managedAvailable: !!this.config.managed,
           url: `${this.client.origin}/ui`,
         };
       }),
     );
+    if (status.connected && status.funding === 'managed') {
+      const connection = await this.get(status.connectionId!);
+      return {
+        ...status,
+        allowance: await this.client.request<Json>(
+          '/v1/delegations/allowance',
+          this.bearer(connection),
+        ),
+      };
+    }
+    return status;
+  }
+  async enableManaged(caller: Caller): Promise<NativeConnectionStatus> {
+    const managed = this.config.managed;
+    const token = managed && this.environment[managed.tokenEnv];
+    check(managed && token, 'sandbox_setup_required', 'Managed ML is not configured', 503);
+    const row = await this.state.transaction(async (tx) => {
+      await this.authorize(caller, tx);
+      const previous = await this.current(caller.projectId, tx);
+      const subject = await managedAccountSubject(caller.projectId, tx);
+      if (previous?.billing_subject === subject) return null;
+      check(
+        !(await tx.get(
+          `SELECT 1 FROM sandbox_native_assignments WHERE project_id=?
+        AND revoked_at IS NULL AND expires_at>? LIMIT 1`,
+          caller.projectId,
+          this.now(),
+        )),
+        'sandbox_migration_required',
+        'Wait for active compute assignments to end before changing funding',
+        409,
+      );
+      const pending = await tx.get<Flow>(
+        'SELECT * FROM sandbox_native_flows WHERE project_id=? AND billing_subject IS NOT NULL AND completed_at IS NULL',
+        caller.projectId,
+      );
+      if (pending) {
+        check(
+          pending.operator_ref === operator(caller) &&
+            pending.expires_at > this.now() &&
+            pending.previous_connection_id === (previous?.id ?? null) &&
+            pending.billing_subject === subject,
+          'sandbox_connection_pending',
+          'A compute connection is still being reconciled',
+          409,
+        );
+        return pending;
+      }
+      const id = newId('sbxc');
+      const payload: FlowSecrets = {
+        bearer: `sbxt_${secret()}`,
+        verifier: secret(),
+        state: secret(),
+        exchangeStartedAt: this.now(),
+        recoverAfter: new Date(this.clock() + 630_000).toISOString(),
+      };
+      await tx.run(
+        `INSERT INTO sandbox_native_flows(id,project_id,operator_ref,previous_connection_id,browser_hash,expires_at,payload,billing_subject)
+         VALUES(?,?,?,?,?,?,?,?)`,
+        id,
+        caller.projectId,
+        operator(caller),
+        previous?.id ?? null,
+        digest(secret()),
+        new Date(this.clock() + 600_000).toISOString(),
+        this.credentials.seal(payload, `flow:${id}`),
+        subject,
+      );
+      return (await tx.get<Flow>('SELECT * FROM sandbox_native_flows WHERE id=?', id))!;
+    });
+    if (!row) return this.status(caller);
+    const payload = this.credentials.open<FlowSecrets>(row.payload, `flow:${row.id}`);
+    const receipt = await this.client.request<ConnectionReceipt>(
+      '/v1/delegations/connections',
+      token,
+      {
+        method: 'POST',
+        scope: { namespace: managed.namespace, subject: row.billing_subject! },
+        body: {
+          project_ref: row.project_id,
+          request_key: row.id,
+          token_hash: sha256Hex(payload.bearer),
+        },
+      },
+    );
+    await this.saveReceipt(row, payload, receipt);
+    const moving = await this.state.read((sql) =>
+      sql.all<NativeWorkRow>(
+        'SELECT * FROM sandbox_native_work WHERE project_id=? AND closed_at IS NULL',
+        caller.projectId,
+      ),
+    );
+    for (const work of moving) {
+      if (!work.native_grant_id) continue;
+      const old = await this.get(work.connection_id);
+      const path = `/v1/delegations/works/${work.native_grant_id}`;
+      const empty = async () => {
+        const resources = await this.client.request<{
+          workflows: unknown[];
+          jobs: unknown[];
+          sandboxes: unknown[];
+          next: Record<string, unknown>;
+        }>(`${path}/resources`, this.bearer(old));
+        check(
+          ['workflows', 'jobs', 'sandboxes'].every(
+            (key) =>
+              Array.isArray(resources[key as 'jobs']) && resources[key as 'jobs'].length === 0,
+          ) &&
+            resources.next &&
+            Object.values(resources.next).every((value) => value === null),
+          'sandbox_migration_required',
+          'Existing compute resources must retain their original funding history',
+          409,
+        );
+      };
+      await empty();
+      // Retire the old grant, then check again: a request admitted just before
+      // revocation must not be orphaned or attributed to the replacement root.
+      await this.client.request(path, this.bearer(old), { method: 'DELETE' });
+      await empty();
+    }
+    await this.state.transaction(async (tx) => {
+      await this.authorize(caller, tx);
+      const fresh = await tx.get<Flow>('SELECT * FROM sandbox_native_flows WHERE id=?', row.id);
+      if (fresh?.completed_at) return;
+      const current = await this.current(caller.projectId, tx);
+      check(
+        fresh &&
+          fresh.expires_at > this.now() &&
+          (current?.id ?? null) === row.previous_connection_id,
+        'sandbox_connection_conflict',
+        'Compute authority changed while enabling managed ML',
+        409,
+      );
+      check(
+        !(await tx.get(
+          `SELECT 1 FROM sandbox_native_assignments WHERE project_id=?
+        AND revoked_at IS NULL AND expires_at>? LIMIT 1`,
+          caller.projectId,
+          this.now(),
+        )),
+        'sandbox_migration_required',
+        'Compute assignments changed while switching funding',
+        409,
+      );
+      const currentWork = await tx.all<NativeWorkRow>(
+        'SELECT * FROM sandbox_native_work WHERE project_id=? AND closed_at IS NULL',
+        caller.projectId,
+      );
+      check(
+        digest(
+          currentWork
+            .map((w) => [w.work_kind, w.work_id, w.connection_id, w.native_grant_id])
+            .sort(),
+        ) ===
+          digest(
+            moving.map((w) => [w.work_kind, w.work_id, w.connection_id, w.native_grant_id]).sort(),
+          ),
+        'sandbox_connection_conflict',
+        'Compute work changed while switching funding',
+        409,
+      );
+      await tx.run(
+        `INSERT INTO sandbox_native_projects(project_id,connection_id) VALUES(?,?)
+        ON CONFLICT(project_id) DO UPDATE SET connection_id=EXCLUDED.connection_id`,
+        caller.projectId,
+        row.id,
+      );
+      await tx.run(
+        'UPDATE sandbox_native_work SET connection_id=?,native_grant_id=NULL,namespace=NULL,evidence_checked_at=NULL,last_error=NULL WHERE project_id=? AND closed_at IS NULL',
+        row.id,
+        caller.projectId,
+      );
+      await tx.run('UPDATE sandbox_native_connections SET revoke_pending=FALSE WHERE id=?', row.id);
+      await tx.run('UPDATE sandbox_native_flows SET completed_at=? WHERE id=?', this.now(), row.id);
+      if (
+        row.previous_connection_id &&
+        !(await tx.get(
+          'SELECT 1 FROM sandbox_native_work WHERE connection_id=? LIMIT 1',
+          row.previous_connection_id,
+        ))
+      )
+        await tx.run(
+          'UPDATE sandbox_native_connections SET revoked_at=?,revoke_pending=TRUE WHERE id=?',
+          this.now(),
+          row.previous_connection_id,
+        );
+    });
+    return this.status(caller);
   }
   async begin(caller: Caller): Promise<{ url: string; cookie: string }> {
     // Missing credentials fail before persisting a flow or redirecting the browser.
+    check(
+      !this.config.managed,
+      'sandbox_managed_required',
+      'Use Merv-managed ML for this project',
+      409,
+    );
     const applicationSecret = this.applicationSecret();
     const id = newId('sbxc'),
       browser = secret();
@@ -265,8 +477,8 @@ export class NativeConnections {
     this.validateReceipt(receipt, row.project_id);
     await this.state.transaction(async (tx) => {
       await tx.run(
-        `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at,revoke_pending)
-         VALUES(?,?,?,?,?,?,?,TRUE) ON CONFLICT(id) DO NOTHING`,
+        `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at,revoke_pending,billing_subject)
+         VALUES(?,?,?,?,?,?,?,TRUE,?) ON CONFLICT(id) DO NOTHING`,
         row.id,
         row.project_id,
         receipt.connection_id,
@@ -274,6 +486,7 @@ export class NativeConnections {
         receipt.member_id,
         this.credentials.seal({ bearer: payload.bearer }, `connection:${row.id}`),
         this.now(),
+        row.billing_subject ?? null,
       );
       const stored = await tx.get<NativeConnectionRow>(
         'SELECT * FROM sandbox_native_connections WHERE id=?',
@@ -344,6 +557,12 @@ export class NativeConnections {
     try {
       await this.state.transaction(async (tx) => {
         await this.authorize(caller, tx);
+        check(
+          !this.config.managed,
+          'sandbox_managed_required',
+          'Use Merv-managed ML for this project',
+          409,
+        );
         const currentFlow = await this.flow(tx, cookie);
         if (currentFlow.completed_at) return;
         const current = await this.current(caller.projectId, tx);
