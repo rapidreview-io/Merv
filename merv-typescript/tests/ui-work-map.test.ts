@@ -733,6 +733,32 @@ test('Escape inside a guard only cancels it; outside, it closes the sidebar and 
   assert.equal(document.activeElement, card('session:session_ablate'));
 });
 
+test('Maximize gives the sidebar the page’s place; Restore or Escape gives it back, and closing forgets it', async (t) => {
+  t.after(unmount);
+  drawn(1200);
+  answers();
+  await mount(page());
+  await press(card('work:wf_index'));
+  await press($('button[aria-label="Maximize"]')!);
+  assert.equal($('.running-plane')!.hasAttribute('data-full'), true);
+  assert.equal($('.work-main')!.hidden, true, 'the page steps aside');
+  assert.equal(where, '/work?key=work:wf_index');
+  // Escape takes one step back: the sidebar beside the page again, still open.
+  await key($('#running-panel-title')!, 'Escape');
+  assert.equal($('.running-plane')!.hasAttribute('data-full'), false);
+  assert.equal($('.work-main')!.hidden, false);
+  assert.equal(where, '/work?key=work:wf_index');
+  await press($('button[aria-label="Maximize"]')!);
+  await press($('button[aria-label="Restore"]')!);
+  assert.equal($('.work-main')!.hidden, false);
+  // Shut while maximized, the next sidebar opens beside the page.
+  await press($('button[aria-label="Maximize"]')!);
+  await press($('button[aria-label="Close"]')!);
+  assert.equal(where, '/work');
+  await press(card('work:wf_index'));
+  assert.equal($('.running-plane')!.hasAttribute('data-full'), false);
+});
+
 test('an Escape a menu or a dialog takes as its own shuts that, and leaves the sidebar open', async (t) => {
   t.after(unmount);
   drawn();

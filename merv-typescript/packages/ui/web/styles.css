@@ -4807,6 +4807,29 @@ del.cut {
     border-left: 1px solid var(--line);
   }
 }
+/* Maximized, the sidebar is the page: everything beside the rail, its head across the top and
+   its sections in as many reading columns as the width holds, each section kept whole. */
+.running-plane[data-full] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.running-plane[data-full] .running-panel {
+  position: static;
+  max-height: none;
+  padding-left: var(--page-pad-x);
+  border-left: 0;
+}
+.running-plane[data-full] .running-sidebar {
+  display: block;
+  columns: 440px;
+  column-gap: calc(2 * var(--space-5));
+}
+.running-plane[data-full] .running-sidebar > * {
+  break-inside: avoid;
+  margin-bottom: var(--space-5);
+}
+.running-plane[data-full] .running-sidebar > :is(.running-panel-head, .running-acts) {
+  column-span: all;
+}
 @container running (max-width: 899.98px) {
   .work-main:not([hidden]) + .running-panel {
     border-top: 1px solid var(--line);
@@ -5124,7 +5147,8 @@ del.cut {
   gap: var(--space-2);
   min-height: var(--hit);
 }
-.running-close {
+.running-ends {
+  display: flex;
   margin-left: auto;
 }
 .running-panel-title {

@@ -31,6 +31,7 @@ const PATHS = {
   plus: 'M12 5.5v13M5.5 12h13',
   close: 'm6.5 6.5 11 11M17.5 6.5l-11 11',
   expand: 'M14 4.5h5.5V10M19.5 4.5l-6 6M10 19.5H4.5V14M4.5 19.5l6-6',
+  restore: 'M19.5 10H14V4.5M14 10l6-6M4.5 14H10v5.5M10 14l-6 6',
   check: 'm5 12.5 4.5 4.5L19 7.5',
   'chevron-right': 'm9.5 6 6 6-6 6',
   'chevron-left': 'm14.5 6-6 6 6 6',
@@ -101,6 +102,7 @@ export const EditIcon = named('edit');
 export const PlusIcon = named('plus');
 export const CloseIcon = named('close');
 export const ExpandIcon = named('expand');
+export const RestoreIcon = named('restore');
 export const CheckIcon = named('check');
 export const ChevronRightIcon = named('chevron-right');
 export const ChevronLeftIcon = named('chevron-left');

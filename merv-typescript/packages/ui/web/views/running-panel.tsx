@@ -13,7 +13,7 @@ import type {
 } from '@merv/contracts/running';
 import { refreshTools, useTool } from '../api';
 import { ConfirmAction, LoadState, Ruled, Summary, col, cx, useNow, words } from '../components';
-import { ArrowRightIcon, CloseIcon } from '../icons';
+import { ArrowRightIcon, CloseIcon, ExpandIcon, RestoreIcon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
@@ -402,6 +402,8 @@ export function RunningSidebar({
   target,
   attention,
   moving,
+  full,
+  onFull,
   onClose,
   onMissing,
   nameOf,
@@ -411,6 +413,9 @@ export function RunningSidebar({
   attention?: RunningAttention;
   /** The board draws this thing live, so its sidebar is read at the live pace from the start. */
   moving?: boolean;
+  /** Whether the sidebar has the page's place, and the control that gives or takes it. */
+  full?: boolean;
+  onFull?(): void;
   onClose(): void;
   /** Where no owner answers for the key, the page the link that opened it named instead. */
   onMissing?(): void;
@@ -443,15 +448,28 @@ export function RunningSidebar({
     if (top < 0 || top > window.innerHeight - 96) head.current.scrollIntoView?.({ block: 'start' });
   }, [loaded]);
   const close = (
-    <button
-      type="button"
-      className="btn-icon running-close"
-      aria-label="Close"
-      title="Close"
-      onClick={onClose}
-    >
-      <CloseIcon />
-    </button>
+    <span className="running-ends">
+      {onFull && (
+        <button
+          type="button"
+          className="btn-icon"
+          aria-label={full ? 'Restore' : 'Maximize'}
+          title={full ? 'Restore' : 'Maximize'}
+          onClick={onFull}
+        >
+          {full ? <RestoreIcon /> : <ExpandIcon />}
+        </button>
+      )}
+      <button
+        type="button"
+        className="btn-icon running-close"
+        aria-label="Close"
+        title="Close"
+        onClick={onClose}
+      >
+        <CloseIcon />
+      </button>
+    </span>
   );
   if (!data)
     return (

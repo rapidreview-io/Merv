@@ -661,8 +661,12 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
   // which Back and Close both take away; swapping what it shows replaces it.
   const pushed = useRef(false);
   const refocus = useRef<RunningKey | null>(null);
+  // Maximized, the sidebar has the page's place beside the rail until it is restored or shut.
+  const [full, setFull] = useState(false);
   useEffect(() => {
-    if (!asked) pushed.current = false;
+    if (asked) return;
+    pushed.current = false;
+    setFull(false);
   }, [asked]);
   const select = (key: RunningKey | null, how: 'push' | 'replace', route?: string) => {
     const next = new URLSearchParams(params);
@@ -698,12 +702,12 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
     const cards = [...(main.current?.querySelectorAll<HTMLElement>('[data-key]') ?? [])];
     (cards.find((card) => card.dataset.key === key) ?? main.current)?.focus();
   }, [asked]);
-  // Escape closes the sidebar wherever the cursor is — except inside a guard, where it
+  // Escape restores a maximized sidebar and closes one beside the page, wherever the cursor is — except inside a guard, where it
   // means Cancel and has already been taken, inside the Agent's window, which is another
   // conversation, and inside a menu or a dialog, such as the rail's account menu, whose own
   // Escape shuts it and must not close this as well.
   const closing = useRef(close);
-  closing.current = close;
+  closing.current = full ? () => setFull(false) : close;
   useEffect(() => {
     if (!asked) return;
     const onKey = (event: KeyboardEvent) => {
@@ -735,8 +739,17 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
                 Showing the state that loaded <Ago at={board.loadedAt} />.
               </p>
             )}
-            <div className="running-plane" data-open={target ? '' : undefined}>
-              <div className="work-main" ref={main} tabIndex={-1} hidden={!!target && !roomy}>
+            <div
+              className="running-plane"
+              data-open={target ? '' : undefined}
+              data-full={target && full ? '' : undefined}
+            >
+              <div
+                className="work-main"
+                ref={main}
+                tabIndex={-1}
+                hidden={!!target && (!roomy || full)}
+              >
                 {children}
               </div>
               <aside
@@ -751,6 +764,8 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
                     target={target}
                     attention={absorber?.attention}
                     moving={!!absorber?.dot}
+                    full={full}
+                    onFull={roomy ? () => setFull(!full) : undefined}
                     onClose={close}
                     onMissing={fallback ? () => navigate(fallback, { replace: true }) : undefined}
                     nameOf={nameOf}
